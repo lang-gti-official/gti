@@ -1,58 +1,216 @@
 import std.tcp;
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
+import std.vector;
+import std.chrono;
+import std.format;
 
-extern "C" {
-  void gti_test_set_socket_result(int32_t value);
-  int32_t gti_test_close_calls();
+// Every traffic case uses an ephemeral loopback port, so the fixture needs no
+// external network and never collides with another test.
+std::tcp::socket_address loopback_any() {
+  return std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
 }
 
-int32_t automatic_close_count() {
-  {
-    auto opened = std::tcp::open();
-    if (!opened) {
-      return -1;
-    }
-  }
-  return gti_test_close_calls();
+std::chrono::nanoseconds milliseconds(int64_t count) {
+  return std::chrono::nanoseconds(count * int64_t(1000000));
 }
 
-int32_t moved_close_count() {
-  {
-    mut auto opened = std::tcp::socket::open();
-    if (!opened) {
-      return -1;
-    }
-    auto moved = std::move(opened);
-    if (!moved || !moved.value().is_open()) {
-      return -1;
-    }
+std::byte_buffer bytes_of(std::string_view text) {
+  mut std::byte_buffer bytes{text.size()};
+  mut std::size_t index = 0;
+  while (index < text.size()) {
+    bytes[index] = uint8_t(text[index]);
+    index++;
   }
-  return gti_test_close_calls();
+  return std::move(bytes);
 }
 
-int32_t failed_close_count() {
-  {
-    mut auto opened = std::tcp::open();
-    if (!opened) {
-      return -1;
-    }
-    auto closed = opened.value().close();
-    if (closed || closed.error() != std::tcp::errc::close_failed) {
-      return -1;
-    }
+expected<int32_t, std::tcp::errc> traffic() {
+  auto any = loopback_any();
+  mut auto server = ?std::tcp::listener::bind(any);
+  auto bound = ?server.local_address();
+  if (!bound.is_ipv4() || bound.port() == uint16_t(0)) { return 1; }
+  mut auto client = ?std::tcp::stream::connect(bound, milliseconds(int64_t(2000)));
+  mut auto peer = ?server.accept();
+  ?client.set_nodelay(true);
+  ?client.set_keepalive(true);
+  ?client.set_write_timeout(milliseconds(int64_t(1000)));
+  if (!client.flush()) { return 18; }
+
+  // Detailed send/receive with a half-close: the receiver observes EOF.
+  auto hello = bytes_of("hello");
+  auto hello_view = hello.as_span();
+  ?client.send_all(hello_view);
+  mut std::byte_buffer inbox{std::size_t(8)};
+  mut std::size_t total = 0;
+  while (total < std::size_t(5)) {
+    mut auto window = inbox.as_mutable_span();
+    mut auto rest = window.subspan(total, std::size_t(8) - total);
+    std::size_t count = ?peer.receive(rest);
+    if (count == std::size_t(0)) { return 2; }
+    total += count;
   }
-  return gti_test_close_calls();
+  if (inbox[std::size_t(0)] != uint8_t(104) || inbox[std::size_t(4)] != uint8_t(111)) { return 3; }
+
+  // std::io conformance: write_all and a buffered line reader over streams.
+  auto lines = bytes_of("first line\nsecond\n");
+  auto lines_view = lines.as_span();
+  auto written = std::io::write_all(client, lines_view);
+  if (!written || written.value() != lines.size()) { return 4; }
+  ?client.shutdown(std::tcp::shutdown_mode::write);
+  {
+    mut std::io::buffered_reader<std::tcp::stream> reader{peer, std::size_t(4)};
+    mut std::string line = std::string();
+    auto first = std::io::getline(reader, line);
+    if (!first || line != "first line") { return 5; }
+    auto second = std::io::getline(reader, line);
+    if (!second || line != "second") { return 6; }
+    auto end = std::io::getline(reader, line);
+    if (end || end.error().code != std::io_errc::end_of_file) { return 7; }
+  }
+
+  // Endpoint addresses agree across the connection and format through std::format.
+  auto client_local = ?client.local_address();
+  auto server_peer = ?peer.peer_address();
+  auto client_peer = ?client.peer_address();
+  if (client_local != server_peer || client_peer != bound) { return 8; }
+  std::string rendered = std::format("{}", client_peer);
+  std::string expected_text = bound.to_string();
+  if (rendered != expected_text) { return 9; }
+
+  // Timeouts and readiness.
+  ?client.set_read_timeout(milliseconds(int64_t(20)));
+  mut std::byte_buffer scratch{std::size_t(4)};
+  mut auto scratch_view = scratch.as_mutable_span();
+  auto timed = client.receive(scratch_view);
+  if (timed || timed.error() != std::tcp::errc::timed_out) { return 10; }
+  auto quiet = client.wait_readable(milliseconds(int64_t(5)));
+  if (quiet || quiet.error() != std::tcp::errc::timed_out) { return 11; }
+  ?client.wait_writable(milliseconds(int64_t(1000)));
+  ?client.set_nonblocking(true);
+  auto empty = client.receive(scratch_view);
+  if (empty || empty.error() != std::tcp::errc::would_block) { return 12; }
+
+  // Explicit close is reported once; later operations report not_open.
+  ?client.close();
+  auto again = client.close();
+  if (again || again.error() != std::tcp::errc::not_open) { return 13; }
+  auto after = client.receive(scratch_view);
+  if (after || after.error() != std::tcp::errc::not_open) { return 14; }
+  auto io_after = client.read_some(scratch_view);
+  if (io_after || io_after.error() != std::io_errc::invalid_stream) { return 15; }
+
+  // A nonblocking listener reports would_block, and waits time out.
+  ?server.set_nonblocking(true);
+  auto none = server.accept();
+  if (none || none.error() != std::tcp::errc::would_block) { return 16; }
+  auto idle = server.wait_acceptable(milliseconds(int64_t(5)));
+  if (idle || idle.error() != std::tcp::errc::timed_out) { return 17; }
+  return 0;
+}
+
+// Destruction closes a listener exactly once, and a move transfers that duty:
+// the moved-from scope ending must not close the moved-to listener.
+expected<int32_t, std::tcp::errc> ownership() {
+  auto any = loopback_any();
+  mut std::tcp::socket_address closed_port = any;
+  {
+    mut auto scoped = ?std::tcp::listener::bind(any);
+    closed_port = ?scoped.local_address();
+  }
+  auto refused = std::tcp::stream::connect(closed_port);
+  if (refused || refused.error() != std::tcp::errc::connection_refused) { return 20; }
+
+  mut auto bound = std::tcp::listener::bind(any);
+  if (!bound) { return 21; }
+  std::tcp::listener kept = std::move(bound).value();
+  auto kept_address = ?kept.local_address();
+  {
+    std::tcp::listener moved = std::move(kept);
+    mut auto reached = ?std::tcp::stream::connect(kept_address);
+    if (!reached.is_open()) { return 22; }
+  }
+  auto gone = std::tcp::stream::connect(kept_address);
+  if (gone || gone.error() != std::tcp::errc::connection_refused) { return 23; }
+
+  // Binding a port that a live listener holds fails with address_in_use.
+  auto holder = ?std::tcp::listener::bind(any);
+  auto held = ?holder.local_address();
+  auto clash = std::tcp::listener::bind(held);
+  if (clash || clash.error() != std::tcp::errc::address_in_use) { return 24; }
+  auto negative = std::tcp::stream::connect(held, std::chrono::nanoseconds(int64_t(-1)));
+  if (negative || negative.error() != std::tcp::errc::invalid_argument) { return 25; }
+  return 0;
+}
+
+int32_t addresses() {
+  auto four = std::tcp::ipv4_address::parse("192.168.0.255");
+  if (!four || four.value().octet(std::size_t(3)) != uint8_t(255)) { return 30; }
+  if (std::tcp::ipv4_address::parse("256.1.1.1") || std::tcp::ipv4_address::parse("1.2.3") ||
+      std::tcp::ipv4_address::parse("01.2.3.4") || std::tcp::ipv4_address::parse("1.2.3.4 ")) {
+    return 31;
+  }
+  if (!std::tcp::ipv4_address::loopback().is_loopback() ||
+      !std::tcp::ipv4_address::any().is_unspecified()) {
+    return 32;
+  }
+
+  auto six = std::tcp::ipv6_address::parse("2001:DB8:0:0:1:0:0:1");
+  if (!six || six.value().to_string() != "2001:db8::1:0:0:1") { return 33; }
+  auto compressed = std::tcp::ipv6_address::parse("fe80::");
+  if (!compressed || compressed.value().segment(std::size_t(0)) != uint16_t(0xfe80) ||
+      compressed.value().to_string() != "fe80::") {
+    return 34;
+  }
+  auto mapped = std::tcp::ipv6_address::parse("::ffff:192.0.2.128");
+  auto direct = std::tcp::ipv6_address::mapped(std::tcp::ipv4_address(uint8_t(192), uint8_t(0), uint8_t(2), uint8_t(128)));
+  if (!mapped || mapped.value() != direct || direct.to_string() != "::ffff:192.0.2.128") { return 35; }
+  if (std::tcp::ipv6_address::parse("1::2::3") || std::tcp::ipv6_address::parse(":1::") ||
+      std::tcp::ipv6_address::parse("1:2:3:4:5:6:7:8:9") || std::tcp::ipv6_address::parse("12345::") ||
+      std::tcp::ipv6_address::parse("1:2:3:4:5:6:7") || !std::tcp::ipv6_address::parse("1::")) {
+    return 36;
+  }
+  if (std::tcp::ipv6_address::loopback().to_string() != "::1" ||
+      std::tcp::ipv6_address::any().to_string() != "::") {
+    return 37;
+  }
+
+  auto endpoint = std::tcp::socket_address::parse("[fe80::1%7]:8080");
+  if (!endpoint || !endpoint.value().is_ipv6() || endpoint.value().scope_id() != uint32_t(7) ||
+      endpoint.value().port() != uint16_t(8080) || endpoint.value().to_string() != "[fe80::1%7]:8080") {
+    return 38;
+  }
+  auto plain = std::tcp::socket_address::parse("10.0.0.1:0");
+  if (!plain || plain.value().to_string() != "10.0.0.1:0" || plain.value().ipv6()) { return 39; }
+  auto host = plain.value().ipv4();
+  if (!host || host.value() != std::tcp::ipv4_address(uint8_t(10), uint8_t(0), uint8_t(0), uint8_t(1))) { return 40; }
+  if (plain.value().with_port(uint16_t(443)).port() != uint16_t(443)) { return 41; }
+  if (std::tcp::socket_address::parse("10.0.0.1") || std::tcp::socket_address::parse("10.0.0.1:65536") ||
+      std::tcp::socket_address::parse("[::1]") || std::tcp::socket_address::parse("[::1]:") ||
+      std::tcp::socket_address::parse("::1:80") || std::tcp::socket_address::parse("[::1%x]:80")) {
+    return 42;
+  }
+
+  // Numeric resolution needs no name service.
+  auto resolved = std::tcp::resolve("127.0.0.1", uint16_t(9));
+  if (!resolved || resolved.value().empty() ||
+      resolved.value()[std::size_t(0)] != std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(9))) {
+    return 43;
+  }
+  auto blank = std::tcp::resolve("", uint16_t(9));
+  if (blank || blank.error() != std::tcp::errc::invalid_address) { return 44; }
+  return 0;
 }
 
 int main() {
-  gti_test_set_socket_result(-1);
-  auto failed = std::tcp::open();
-  if (failed || failed.error() != std::tcp::errc::open_failed) {
-    return 1;
-  }
-  gti_test_set_socket_result(17);
-  if (automatic_close_count() != 1 || moved_close_count() != 2 ||
-      failed_close_count() != 3) {
-    return 2;
-  }
-  return 0;
+  int32_t parsed = addresses();
+  if (parsed != 0) { return parsed; }
+  auto moved = traffic();
+  if (!moved) { return 50; }
+  if (moved.value() != 0) { return moved.value(); }
+  auto owned = ownership();
+  if (!owned) { return 51; }
+  return owned.value();
 }

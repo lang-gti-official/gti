@@ -779,8 +779,9 @@ The current implemented foundation includes:
   transfer- and
   share-capable but promises neither lock freedom, stable layout, nor native
   ABI compatibility; and
-- `std.tcp` POSIX IPv4 stream-socket creation and close through a move-only
-  `std::tcp::socket` owner with typed creation and close errors; and
+- `std.tcp` IPv4/IPv6 addresses, name resolution, and move-only
+  `std::tcp::stream` and `std::tcp::listener` owners with typed errors,
+  timeouts, nonblocking mode and `std::io` reader/writer conformance; and
 - `std.filesystem` a move-only `std::filesystem::path` giving C++'s
   decomposition (`root_name`, `root_directory`, `root_path`, `relative_path`,
   `parent_path`, `filename`, `stem`, `extension`), the matching `has_*`

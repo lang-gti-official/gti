@@ -66,26 +66,18 @@ forgeable native handle. The public layer exposes no native descriptor or raw
 buffer. See
 [`docs/language/io.md`](../docs/language/io.md) for the exact contract.
 
-`std.tcp` provides the first POSIX-only public networking ownership slice.
-`std::tcp::open()` returns
-`expected<std::tcp::socket, std::tcp::errc>` by forwarding to the public static
-factory `std::tcp::socket::open()`. The move-only socket keeps its descriptor
-behind the compiler-private implementation detail
-`gti_internal::tcp_socket_handle`, and its descriptor-adopting constructor is
-private as a second factory-boundary check. Application source cannot name the
-handle or the adopting constructor; only compiler-trusted standard-library
-source can construct it. Both the TCP handle and the `std.cstdio` file
-handle use
-`[[no_transfer, no_share]]`, so their native thread affinity is explicit even
-though each current representation is only an integer descriptor.
-
+`std.tcp` provides POSIX TCP networking. IPv4/IPv6 addresses, endpoint
+parsing and RFC 5952 formatting are ordinary source values;
+`std::tcp::stream` and `std::tcp::listener` are move-only owners whose private
+`gti_internal::tcp_socket_handle` application source cannot name. The handle
+is `[[unsafe_transfer, no_share]]`: a descriptor may move to another thread,
+but an owner is never shared. Streams satisfy `std::io::reader` and
+`std::io::writer`, so the `std.io` buffering and transfer helpers apply.
 Explicit `close()` reports `close_failed` or `not_open`; lexical destruction
-performs one best-effort close when the socket remains open. The module binds
-the exact C symbols `socket` and `close`, rejects Windows or unknown targets at
-import time, and currently opens only an unconnected IPv4 stream socket. It
-does not expose a descriptor, address, connect, accept, send, or receive API
-through the public wrapper; the `gti_internal` declarations remain
-compiler-private implementation details. See
+performs one best-effort close. Native work goes through the versioned
+`gti_rt_tcp_*_v1` runtime entries, which hide `sockaddr` layout, constants,
+`errno` and `SIGPIPE` handling. Importing the module on Windows or an unknown
+target is a compile-time error. See
 [`docs/language/tcp.md`](../docs/language/tcp.md) for the exact contract.
 
 `std.http` provides an owned move-only URL abstraction and a synchronous

@@ -282,7 +282,7 @@ is a teaching helper, not a production server.
 | `034-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `035-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `036-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
-| `037-tcp-socket-owner.gti` | a move-only `std::tcp::socket` owner over the POSIX C ABI |
+| `037-tcp-socket-owner.gti` | move-only `std::tcp` listener and stream owners exchanging bytes over loopback |
 | `038-vector-emplace.gti` | move-aware dynamic storage, checked and unsafe unchecked access, read-only iteration and membership search, and in-place construction |
 | `039-raw-pointers.gti` | one-level raw pointers, unsafe declaration/call contracts, lexical `unsafe`, and pointer arithmetic |
 | `040-loan-flow-edges.gti` | bounded switch-exit and immediate-`break` retained-loan endings |
@@ -507,16 +507,12 @@ stream socket, and immediately closes it without sending network traffic. It
 demonstrates direct native interoperability; portable application code should
 prefer a GTI standard-library wrapper when one is available.
 
-`037-tcp-socket-owner.gti` builds that wrapper in ordinary GTI source. The
-descriptor stays private, explicit close reports a typed error, and lexical
-cleanup closes any still-open socket exactly once. The first `std::tcp` slice
-uses the Linux/macOS values `AF_INET = 2` and `SOCK_STREAM = 1` and does not yet
-expose addresses, connection setup, or traffic buffers. `std::tcp::open()` is
-the convenience construction path over `std::tcp::socket::open()`: it validates
-the native result and returns an owning, move-only `expected` containing the
-socket. The descriptor-adopting constructor is private. Explicit close
-invalidates the private handle before calling POSIX `close`, so a native close
-failure cannot be retried or accidentally closed again by cleanup.
+`037-tcp-socket-owner.gti` uses the standard-library wrapper instead. It binds
+a listener to an ephemeral loopback port, connects a stream, accepts the peer,
+sends with `send_all`, half-closes with `shutdown`, and reads to end of stream.
+Each owner keeps its descriptor private and closes it exactly once; explicit
+`close()` reports a typed error and a second call reports `not_open`. The
+program needs no network access.
 
 `039-raw-pointers.gti` keeps pointer formation, reads, writes, and arithmetic in
 a small `unsafe` block and demonstrates an `unsafe` function with separate

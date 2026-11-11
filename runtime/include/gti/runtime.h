@@ -12,6 +12,7 @@
 #include "gti/random.h"
 #include "gti/runtime_execution.h"
 #include "gti/runtime_failure.h"
+#include "gti/tcp.h"
 
 #include <stdint.h>
 

@@ -1,15 +1,26 @@
 export module tcp;
 
 #if target.os == "windows"
-#error "std/tcp currently exposes only the POSIX socket ABI."
+#error "std/tcp currently exposes only the POSIX socket runtime."
 #endif
 
 #if target.os == "unknown"
 #error "std/tcp requires a supported POSIX target."
 #endif
 
+import std.span;
+import std.vector;
+import std.string;
+import std.io;
+import std.cstdio;
+import std.chrono;
+import std.format;
+
 export namespace gti_internal {
-[[no_transfer, no_share]] class tcp_socket_handle {
+// The owned native descriptor. It is never exposed to application code; the
+// public owners below hold it and close it exactly once. A descriptor is a
+// process-wide resource, so moving ownership to another thread is sound.
+[[unsafe_transfer, no_share]] class tcp_socket_handle {
   mut int32_t descriptor;
 
 public:
@@ -21,6 +32,10 @@ public:
     return this.descriptor >= 0;
   }
 
+  int32_t get() {
+    return this.descriptor;
+  }
+
   int32_t release() mut {
     int32_t value = this.descriptor;
     this.descriptor = -1;
@@ -30,71 +45,1019 @@ public:
 
 namespace runtime {
 extern "C" {
-int32_t socket(int32_t domain, int32_t type, int32_t protocol);
-int32_t close(int32_t descriptor);
+uint32_t gti_rt_tcp_connect_v1(const uint8_t* address, int64_t timeout_ms, int32_t* output_descriptor);
+uint32_t gti_rt_tcp_listen_v1(const uint8_t* address, int32_t backlog, uint32_t flags, int32_t* output_descriptor);
+uint32_t gti_rt_tcp_accept_v1(int32_t listener, uint8_t* output_peer, int32_t* output_descriptor);
+uint32_t gti_rt_tcp_read_v1(int32_t descriptor, uint8_t* output, uint64_t capacity, uint64_t* output_count);
+uint32_t gti_rt_tcp_write_v1(int32_t descriptor, const uint8_t* input, uint64_t length, uint64_t* output_count);
+uint32_t gti_rt_tcp_shutdown_v1(int32_t descriptor, uint32_t how);
+uint32_t gti_rt_tcp_close_v1(int32_t descriptor);
+uint32_t gti_rt_tcp_local_address_v1(int32_t descriptor, uint8_t* output);
+uint32_t gti_rt_tcp_peer_address_v1(int32_t descriptor, uint8_t* output);
+uint32_t gti_rt_tcp_set_option_v1(int32_t descriptor, uint32_t option, int64_t value);
+uint32_t gti_rt_tcp_wait_v1(int32_t descriptor, uint32_t interest, int64_t timeout_ms, uint32_t* output_ready);
+uint32_t gti_rt_tcp_resolve_v1(gti_internal::text_view host, uint32_t port, uint32_t family, uint8_t* output, uint64_t capacity, uint64_t* output_count);
 }
 }
 }
 
 export namespace std {
 namespace tcp {
+/// Recoverable socket outcomes. The runtime classifies host error numbers into
+/// these stable categories; no native error number crosses the boundary.
 enum class errc {
-  open_failed,
-  close_failed,
+  would_block,
+  timed_out,
+  connection_refused,
+  connection_reset,
+  connection_aborted,
+  not_connected,
+  broken_pipe,
+  address_in_use,
+  address_unavailable,
+  network_unreachable,
+  host_unreachable,
+  permission_denied,
+  invalid_argument,
+  invalid_address,
+  name_not_found,
+  name_resolution_failed,
+  resource_exhausted,
+  unsupported,
   not_open,
+  close_failed,
+  failed,
 };
 
-// A POSIX IPv4 stream-socket owner. The native descriptor remains private;
-// address, connection, and traffic operations wait for reviewed C ABI records
-// and bounded byte-buffer inputs.
-class socket {
-  mut gti_internal::tcp_socket_handle handle;
+/// Which direction `stream::shutdown` ends.
+enum class shutdown_mode {
+  read,
+  write,
+  both,
+};
 
-  socket(gti_internal::tcp_socket_handle value)
-      : handle(std::move(value)) {}
+enum class address_family {
+  ipv4,
+  ipv6,
+};
+
+namespace detail {
+errc from_status(uint32_t status) {
+  switch (status) {
+  case uint32_t(1): return errc::would_block;
+  case uint32_t(2): return errc::timed_out;
+  case uint32_t(3): return errc::connection_refused;
+  case uint32_t(4): return errc::connection_reset;
+  case uint32_t(5): return errc::connection_aborted;
+  case uint32_t(6): return errc::not_connected;
+  case uint32_t(7): return errc::broken_pipe;
+  case uint32_t(8): return errc::address_in_use;
+  case uint32_t(9): return errc::address_unavailable;
+  case uint32_t(10): return errc::network_unreachable;
+  case uint32_t(11): return errc::host_unreachable;
+  case uint32_t(12): return errc::permission_denied;
+  case uint32_t(13): return errc::invalid_argument;
+  case uint32_t(14): return errc::name_not_found;
+  case uint32_t(15): return errc::name_resolution_failed;
+  case uint32_t(16): return errc::resource_exhausted;
+  case uint32_t(17): return errc::unsupported;
+  default: return errc::failed;
+  }
+}
+
+expected<void, errc> check(uint32_t status) {
+  if (status != uint32_t(0)) {
+    return unexpected(from_status(status));
+  }
+  return;
+}
+
+// A timeout in whole milliseconds, rounded up so a positive duration never
+// becomes "no wait". Negative durations are rejected by the callers.
+int64_t timeout_milliseconds(std::chrono::nanoseconds timeout) {
+  int64_t count = timeout.count();
+  int64_t whole = count / int64_t(1000000);
+  if (count % int64_t(1000000) != int64_t(0)) {
+    return whole + int64_t(1);
+  }
+  return whole;
+}
+
+void append_decimal(mut string& output, uint64_t value) {
+  string digits = std::to_string(value);
+  output.append(digits.view());
+}
+
+void append_hex(mut string& output, uint32_t value) {
+  mut char digits[4] = {'0', '0', '0', '0'};
+  mut size_t count = 0;
+  mut uint32_t rest = value;
+  while (true) {
+    uint32_t digit = rest % uint32_t(16);
+    mut uint8_t code = uint8_t(digit + uint32_t(48));
+    if (digit >= uint32_t(10)) {
+      code = uint8_t(digit + uint32_t(87));
+    }
+    digits[count] = char(code);
+    count++;
+    rest = rest / uint32_t(16);
+    if (rest == uint32_t(0)) {
+      break;
+    }
+  }
+  while (count > size_t(0)) {
+    count--;
+    output.push_back(digits[count]);
+  }
+}
+
+int32_t hex_value(char c) {
+  uint8_t code = uint8_t(c);
+  if (code >= uint8_t(48) && code <= uint8_t(57)) {
+    return int32_t(code) - 48;
+  }
+  if (code >= uint8_t(97) && code <= uint8_t(102)) {
+    return int32_t(code) - 87;
+  }
+  if (code >= uint8_t(65) && code <= uint8_t(70)) {
+    return int32_t(code) - 55;
+  }
+  return -1;
+}
+
+// Parses a dotted-quad starting at `first` and ending exactly at `last`.
+// Each part is 1-3 decimal digits without a leading zero, at most 255.
+expected<uint32_t, errc> parse_ipv4_bits(string_view text, size_t first, size_t last) {
+  mut uint32_t bits = 0;
+  mut size_t position = first;
+  mut size_t part = 0;
+  while (part < size_t(4)) {
+    if (part > size_t(0)) {
+      if (position >= last || text[position] != '.') {
+        return unexpected(errc::invalid_address);
+      }
+      position++;
+    }
+    size_t start = position;
+    mut uint32_t value = 0;
+    while (position < last && position - start < size_t(4)) {
+      int32_t digit = hex_value(text[position]);
+      if (digit < 0 || digit > 9 || uint8_t(text[position]) > uint8_t(57)) {
+        break;
+      }
+      value = value * uint32_t(10) + uint32_t(digit);
+      position++;
+    }
+    size_t length = position - start;
+    if (length == size_t(0) || length > size_t(3) || value > uint32_t(255) ||
+        (length > size_t(1) && text[start] == '0')) {
+      return unexpected(errc::invalid_address);
+    }
+    bits = (bits << uint32_t(8)) | value;
+    part++;
+  }
+  if (position != last) {
+    return unexpected(errc::invalid_address);
+  }
+  return bits;
+}
+
+expected<uint32_t, errc> parse_port(string_view text, size_t first, size_t last) {
+  if (first >= last || last - first > size_t(5)) {
+    return unexpected(errc::invalid_address);
+  }
+  mut uint32_t value = 0;
+  mut size_t position = first;
+  while (position < last) {
+    int32_t digit = hex_value(text[position]);
+    if (digit < 0 || digit > 9 || uint8_t(text[position]) > uint8_t(57)) {
+      return unexpected(errc::invalid_address);
+    }
+    value = value * uint32_t(10) + uint32_t(digit);
+    position++;
+  }
+  if (value > uint32_t(65535)) {
+    return unexpected(errc::invalid_address);
+  }
+  return value;
+}
+}
+
+/// An IPv4 host address, stored as its 32-bit value in host order.
+class ipv4_address {
+  uint32_t bits;
 
 public:
-  socket(socket& other) = delete;
-  socket(socket&& other) = default;
+  constexpr ipv4_address(uint32_t value) : bits(value) {}
+  constexpr ipv4_address(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
+      : bits((uint32_t(a) << uint32_t(24)) | (uint32_t(b) << uint32_t(16)) |
+             (uint32_t(c) << uint32_t(8)) | uint32_t(d)) {}
 
-  static expected<socket, errc> open() {
-    // GTI currently targets the shared Linux/macOS values AF_INET = 2 and
-    // SOCK_STREAM = 1.
-    int32_t descriptor = gti_internal::runtime::socket(2, 1, 0);
-    if (descriptor < 0) {
-      return unexpected(errc::open_failed);
+  /// 127.0.0.1
+  static ipv4_address loopback() { return ipv4_address(uint32_t(0x7f000001)); }
+  /// 0.0.0.0, the wildcard listening address.
+  static ipv4_address any() { return ipv4_address(uint32_t(0)); }
+
+  /// Parses strict dotted-quad text such as "192.168.0.1".
+  static expected<ipv4_address, errc> parse(string_view text) {
+    uint32_t value = ?detail::parse_ipv4_bits(text, size_t(0), text.size());
+    return ipv4_address(value);
+  }
+
+  constexpr uint32_t to_uint32() { return this.bits; }
+
+  /// The octet at `index` (0 is the most significant); index must be below 4.
+  uint8_t octet(size_t index) {
+    gti_internal::require_container_argument(index < size_t(4));
+    return uint8_t((this.bits >> uint32_t(24 - 8 * int32_t(index))) & uint32_t(255));
+  }
+
+  bool is_loopback() { return (this.bits >> uint32_t(24)) == uint32_t(127); }
+  bool is_unspecified() { return this.bits == uint32_t(0); }
+
+  string to_string() {
+    mut string text = string();
+    mut size_t index = 0;
+    while (index < size_t(4)) {
+      if (index > size_t(0)) {
+        text.push_back('.');
+      }
+      detail::append_decimal(text, uint64_t(this.octet(index)));
+      index++;
     }
-    return socket(gti_internal::tcp_socket_handle(descriptor));
+    return std::move(text);
   }
 
-  ~socket() {
-    // Cleanup is best-effort because destruction cannot report a close error;
-    // callers that need the result must use close() explicitly.
-    if (this.handle.is_valid()) {
-      [[discard]] gti_internal::runtime::close(this.handle.release());
+  bool operator==(ipv4_address& other) { return this.bits == other.bits; }
+  bool operator!=(ipv4_address& other) { return this.bits != other.bits; }
+};
+
+/// An IPv6 host address, stored as two 64-bit halves in host order.
+class ipv6_address {
+  uint64_t high;
+  uint64_t low;
+
+public:
+  constexpr ipv6_address(uint64_t high_bits, uint64_t low_bits)
+      : high(high_bits), low(low_bits) {}
+
+  /// ::1
+  static ipv6_address loopback() { return ipv6_address(uint64_t(0), uint64_t(1)); }
+  /// ::, the wildcard listening address.
+  static ipv6_address any() { return ipv6_address(uint64_t(0), uint64_t(0)); }
+
+  /// The IPv4-mapped form ::ffff:a.b.c.d.
+  static ipv6_address mapped(ipv4_address address) {
+    return ipv6_address(uint64_t(0), uint64_t(0xffff00000000) | uint64_t(address.to_uint32()));
+  }
+
+  constexpr uint64_t high_bits() { return this.high; }
+  constexpr uint64_t low_bits() { return this.low; }
+
+  /// The 16-bit group at `index` (0 is the most significant); index below 8.
+  uint16_t segment(size_t index) {
+    gti_internal::require_container_argument(index < size_t(8));
+    if (index < size_t(4)) {
+      return uint16_t((this.high >> uint64_t(48 - 16 * int32_t(index))) & uint64_t(0xffff));
+    }
+    return uint16_t((this.low >> uint64_t(48 - 16 * (int32_t(index) - 4))) & uint64_t(0xffff));
+  }
+
+  bool is_loopback() { return this.high == uint64_t(0) && this.low == uint64_t(1); }
+  bool is_unspecified() { return this.high == uint64_t(0) && this.low == uint64_t(0); }
+
+  /// Parses RFC 4291 text: eight hex groups, at most one "::" run, and an
+  /// optional trailing dotted-quad. Zone suffixes belong to socket_address.
+  static expected<ipv6_address, errc> parse(string_view text) {
+    return parse_range(text, size_t(0), text.size());
+  }
+
+  /// Parses the IPv6 text in `text[first, length)`.
+  static expected<ipv6_address, errc> parse_range(string_view text, size_t first, size_t length) {
+    if (first > length || length > text.size()) {
+      return unexpected(errc::invalid_address);
+    }
+    mut uint16_t groups[8] = {};
+    mut size_t count = 0;
+    mut size_t gap = 8;
+    mut size_t position = first;
+    if (length - first >= size_t(2) && text[first] == ':' && text[first + size_t(1)] == ':') {
+      gap = 0;
+      position = first + size_t(2);
+    } else if (length > first && text[first] == ':') {
+      return unexpected(errc::invalid_address);
+    }
+    while (position < length) {
+      if (count >= size_t(8)) {
+        return unexpected(errc::invalid_address);
+      }
+      size_t start = position;
+      mut uint32_t value = 0;
+      while (position < length && position - start < size_t(5)) {
+        int32_t digit = detail::hex_value(text[position]);
+        if (digit < 0) {
+          break;
+        }
+        value = value * uint32_t(16) + uint32_t(digit);
+        position++;
+      }
+      if (position < length && text[position] == '.') {
+        // An embedded IPv4 tail occupies the last two groups.
+        if (count > size_t(6)) {
+          return unexpected(errc::invalid_address);
+        }
+        uint32_t bits = ?detail::parse_ipv4_bits(text, start, length);
+        groups[count] = uint16_t(bits >> uint32_t(16));
+        groups[count + size_t(1)] = uint16_t(bits & uint32_t(0xffff));
+        count += size_t(2);
+        position = length;
+        break;
+      }
+      size_t digits = position - start;
+      if (digits == size_t(0) || digits > size_t(4)) {
+        return unexpected(errc::invalid_address);
+      }
+      groups[count] = uint16_t(value);
+      count++;
+      if (position == length) {
+        break;
+      }
+      if (text[position] != ':') {
+        return unexpected(errc::invalid_address);
+      }
+      position++;
+      if (position < length && text[position] == ':') {
+        if (gap != size_t(8)) {
+          return unexpected(errc::invalid_address);
+        }
+        gap = count;
+        position++;
+      } else if (position == length) {
+        return unexpected(errc::invalid_address);
+      }
+    }
+    if (gap == size_t(8)) {
+      if (count != size_t(8)) {
+        return unexpected(errc::invalid_address);
+      }
+    } else if (count > size_t(7)) {
+      return unexpected(errc::invalid_address);
+    }
+    // Expand the "::" run by shifting the groups that followed it.
+    mut uint16_t full[8] = {};
+    mut size_t index = 0;
+    while (index < count) {
+      if (index < gap) {
+        full[index] = groups[index];
+      } else {
+        full[index + (size_t(8) - count)] = groups[index];
+      }
+      index++;
+    }
+    mut uint64_t high = 0;
+    mut uint64_t low = 0;
+    index = 0;
+    while (index < size_t(4)) {
+      high = (high << uint64_t(16)) | uint64_t(full[index]);
+      low = (low << uint64_t(16)) | uint64_t(full[index + size_t(4)]);
+      index++;
+    }
+    return ipv6_address(high, low);
+  }
+
+  /// RFC 5952 canonical text: lowercase, no leading zeros, the longest run
+  /// of two or more zero groups (the first on ties) replaced by "::", and
+  /// IPv4-mapped addresses written as "::ffff:a.b.c.d".
+  string to_string() {
+    if (this.high == uint64_t(0) && (this.low >> uint64_t(32)) == uint64_t(0xffff)) {
+      // RFC 5952 section 5: IPv4-mapped addresses keep dotted-quad notation.
+      mut string mapped_text = string();
+      mapped_text.append("::ffff:");
+      string quad = ipv4_address(uint32_t(this.low & uint64_t(0xffffffff))).to_string();
+      mapped_text.append(quad.view());
+      return std::move(mapped_text);
+    }
+    mut size_t best_start = 8;
+    mut size_t best_length = 0;
+    mut size_t index = 0;
+    while (index < size_t(8)) {
+      if (this.segment(index) == uint16_t(0)) {
+        size_t start = index;
+        while (index < size_t(8) && this.segment(index) == uint16_t(0)) {
+          index++;
+        }
+        if (index - start > best_length) {
+          best_start = start;
+          best_length = index - start;
+        }
+      } else {
+        index++;
+      }
+    }
+    if (best_length < size_t(2)) {
+      best_start = 8;
+      best_length = 0;
+    }
+    mut string text = string();
+    index = 0;
+    while (index < size_t(8)) {
+      if (index == best_start) {
+        text.append("::");
+        index += best_length;
+        continue;
+      }
+      if (index > size_t(0) && index != best_start + best_length) {
+        text.push_back(':');
+      }
+      detail::append_hex(text, uint32_t(this.segment(index)));
+      index++;
+    }
+    return std::move(text);
+  }
+
+  bool operator==(ipv6_address& other) {
+    return this.high == other.high && this.low == other.low;
+  }
+  bool operator!=(ipv6_address& other) { return !(this == other); }
+};
+
+/// An IP address and port: the endpoint of a stream socket.
+class socket_address {
+  address_family kind;
+  uint64_t high;
+  uint64_t low;
+  uint16_t port_number;
+  uint32_t scope;
+
+  socket_address(address_family family, uint64_t high_bits, uint64_t low_bits,
+                 uint16_t port, uint32_t scope_id)
+      : kind(family), high(high_bits), low(low_bits), port_number(port),
+        scope(scope_id) {}
+
+public:
+  socket_address(ipv4_address address, uint16_t port)
+      : kind(address_family::ipv4), high(uint64_t(0)),
+        low(uint64_t(address.to_uint32())), port_number(port),
+        scope(uint32_t(0)) {}
+  socket_address(ipv6_address address, uint16_t port, uint32_t scope_id = uint32_t(0))
+      : kind(address_family::ipv6), high(address.high_bits()),
+        low(address.low_bits()), port_number(port), scope(scope_id) {}
+
+  /// Parses "a.b.c.d:port", "[v6]:port" or "[v6%scope]:port" with a numeric
+  /// scope id. Host names are not accepted here; use `resolve`.
+  static expected<socket_address, errc> parse(string_view text) {
+    size_t length = text.size();
+    if (length > size_t(0) && text[0] == '[') {
+      mut size_t close = 1;
+      while (close < length && text[close] != ']') {
+        close++;
+      }
+      if (close >= length || close + size_t(1) >= length || text[close + size_t(1)] != ':') {
+        return unexpected(errc::invalid_address);
+      }
+      mut size_t host_end = 1;
+      while (host_end < close && text[host_end] != '%') {
+        host_end++;
+      }
+      mut uint32_t scope_id = 0;
+      if (host_end < close) {
+        size_t zone = host_end + size_t(1);
+        if (zone >= close || close - zone > size_t(10)) {
+          return unexpected(errc::invalid_address);
+        }
+        mut uint64_t value = 0;
+        mut size_t position = zone;
+        while (position < close) {
+          int32_t digit = detail::hex_value(text[position]);
+          if (digit < 0 || digit > 9 || uint8_t(text[position]) > uint8_t(57)) {
+            return unexpected(errc::invalid_address);
+          }
+          value = value * uint64_t(10) + uint64_t(digit);
+          position++;
+        }
+        if (value > uint64_t(0xffffffff)) {
+          return unexpected(errc::invalid_address);
+        }
+        scope_id = uint32_t(value);
+      }
+      ipv6_address host = ?ipv6_address::parse_range(text, size_t(1), host_end);
+      uint32_t port = ?detail::parse_port(text, close + size_t(2), length);
+      return socket_address(host, uint16_t(port), scope_id);
+    }
+    mut size_t colon = length;
+    while (colon > size_t(0) && text[colon - size_t(1)] != ':') {
+      colon--;
+    }
+    if (colon == size_t(0)) {
+      return unexpected(errc::invalid_address);
+    }
+    uint32_t bits = ?detail::parse_ipv4_bits(text, size_t(0), colon - size_t(1));
+    uint32_t port = ?detail::parse_port(text, colon, length);
+    return socket_address(ipv4_address(bits), uint16_t(port));
+  }
+
+  address_family family() { return this.kind; }
+  bool is_ipv4() { return this.kind == address_family::ipv4; }
+  bool is_ipv6() { return this.kind == address_family::ipv6; }
+
+  /// The IPv4 host; `invalid_address` for an IPv6 endpoint.
+  expected<ipv4_address, errc> ipv4() {
+    if (this.kind != address_family::ipv4) {
+      return unexpected(errc::invalid_address);
+    }
+    return ipv4_address(uint32_t(this.low));
+  }
+
+  /// The IPv6 host; `invalid_address` for an IPv4 endpoint.
+  expected<ipv6_address, errc> ipv6() {
+    if (this.kind != address_family::ipv6) {
+      return unexpected(errc::invalid_address);
+    }
+    return ipv6_address(this.high, this.low);
+  }
+
+  uint16_t port() { return this.port_number; }
+  uint32_t scope_id() { return this.scope; }
+
+  /// The same host with another port.
+  socket_address with_port(uint16_t port) {
+    return socket_address(this.kind, this.high, this.low, port, this.scope);
+  }
+
+  /// "a.b.c.d:port" or "[v6]:port", with "%scope" when nonzero.
+  string to_string() {
+    mut string text = string();
+    if (this.kind == address_family::ipv4) {
+      string host = ipv4_address(uint32_t(this.low)).to_string();
+      text.append(host.view());
+    } else {
+      text.push_back('[');
+      string host = ipv6_address(this.high, this.low).to_string();
+      text.append(host.view());
+      if (this.scope != uint32_t(0)) {
+        text.push_back('%');
+        detail::append_decimal(text, uint64_t(this.scope));
+      }
+      text.push_back(']');
+    }
+    text.push_back(':');
+    detail::append_decimal(text, uint64_t(this.port_number));
+    return std::move(text);
+  }
+
+  bool operator==(socket_address& other) {
+    return this.kind == other.kind && this.high == other.high &&
+           this.low == other.low && this.port_number == other.port_number &&
+           this.scope == other.scope;
+  }
+  bool operator!=(socket_address& other) { return !(this == other); }
+
+  // The runtime's 24-byte encoded record; see runtime/include/gti/tcp.h.
+  void encode(mut uint8_t[24]& record) {
+    mut size_t index = 0;
+    while (index < size_t(24)) {
+      record[index] = uint8_t(0);
+      index++;
+    }
+    record[0] = this.kind == address_family::ipv4 ? uint8_t(4) : uint8_t(6);
+    record[2] = uint8_t(this.port_number >> uint16_t(8));
+    record[3] = uint8_t(this.port_number & uint16_t(255));
+    record[4] = uint8_t(this.scope >> uint32_t(24));
+    record[5] = uint8_t((this.scope >> uint32_t(16)) & uint32_t(255));
+    record[6] = uint8_t((this.scope >> uint32_t(8)) & uint32_t(255));
+    record[7] = uint8_t(this.scope & uint32_t(255));
+    if (this.kind == address_family::ipv4) {
+      index = 0;
+      while (index < size_t(4)) {
+        record[size_t(8) + index] =
+            uint8_t((this.low >> uint64_t(24 - 8 * int32_t(index))) & uint64_t(255));
+        index++;
+      }
+      return;
+    }
+    index = 0;
+    while (index < size_t(8)) {
+      record[size_t(8) + index] =
+          uint8_t((this.high >> uint64_t(56 - 8 * int32_t(index))) & uint64_t(255));
+      record[size_t(16) + index] =
+          uint8_t((this.low >> uint64_t(56 - 8 * int32_t(index))) & uint64_t(255));
+      index++;
     }
   }
 
-  bool is_open() {
-    return this.handle.is_valid();
+  static expected<socket_address, errc> decode(uint8_t[24]& record, size_t offset = size_t(0)) {
+    uint8_t tag = record[offset];
+    uint16_t port = uint16_t((uint16_t(record[offset + size_t(2)]) << uint16_t(8)) |
+                             uint16_t(record[offset + size_t(3)]));
+    if (tag == uint8_t(4)) {
+      mut uint32_t bits = 0;
+      mut size_t index = 0;
+      while (index < size_t(4)) {
+        bits = (bits << uint32_t(8)) | uint32_t(record[offset + size_t(8) + index]);
+        index++;
+      }
+      return socket_address(ipv4_address(bits), port);
+    }
+    if (tag != uint8_t(6)) {
+      return unexpected(errc::unsupported);
+    }
+    mut uint32_t scope_id = 0;
+    mut uint64_t high = 0;
+    mut uint64_t low = 0;
+    mut size_t index = 0;
+    while (index < size_t(4)) {
+      scope_id = (scope_id << uint32_t(8)) | uint32_t(record[offset + size_t(4) + index]);
+      index++;
+    }
+    index = 0;
+    while (index < size_t(8)) {
+      high = (high << uint64_t(8)) | uint64_t(record[offset + size_t(8) + index]);
+      low = (low << uint64_t(8)) | uint64_t(record[offset + size_t(16) + index]);
+      index++;
+    }
+    return socket_address(ipv6_address(high, low), port, scope_id);
   }
+};
 
-  expected<void, errc> close() mut {
+/// A connected TCP stream. It owns its descriptor, closes it once (explicitly
+/// with `close()` or at destruction), and may move to another thread.
+///
+/// `receive`/`send` report detailed `errc` outcomes. `read_some`,
+/// `write_some` and `flush` satisfy `std::io::reader` and `std::io::writer`,
+/// so the std::io buffered adapters and transfer helpers work on a stream.
+[[unsafe_transfer, no_share]] class stream {
+  mut gti_internal::tcp_socket_handle handle;
+
+  expected<void, errc> require_open() {
     if (!this.handle.is_valid()) {
       return unexpected(errc::not_open);
     }
+    return;
+  }
 
-    // POSIX close failure is not generally retryable. Invalidate ownership
-    // before the native call so both success and failure close exactly once.
-    if (gti_internal::runtime::close(this.handle.release()) != 0) {
-      return unexpected(errc::close_failed);
+  static expected<stream, errc> connect_with(socket_address& address, int64_t timeout_ms) {
+    mut uint8_t record[24] = {};
+    address.encode(record);
+    mut int32_t descriptor = -1;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_connect_v1(&record[0], timeout_ms, &descriptor);
     }
+    ?detail::check(status);
+    return stream(gti_internal::tcp_socket_handle(descriptor));
+  }
+
+  expected<socket_address, errc> address_of(bool peer) {
+    ?this.require_open();
+    mut uint8_t record[24] = {};
+    mut uint32_t status = 0;
+    unsafe {
+      if (peer) {
+        status = gti_internal::runtime::gti_rt_tcp_peer_address_v1(this.handle.get(), &record[0]);
+      } else {
+        status = gti_internal::runtime::gti_rt_tcp_local_address_v1(this.handle.get(), &record[0]);
+      }
+    }
+    ?detail::check(status);
+    return socket_address::decode(record);
+  }
+
+  expected<void, errc> set_option(uint32_t option, int64_t value) mut {
+    ?this.require_open();
+    return detail::check(gti_internal::runtime::gti_rt_tcp_set_option_v1(this.handle.get(), option, value));
+  }
+
+  expected<void, errc> wait_for(uint32_t interest, int64_t timeout_ms) {
+    ?this.require_open();
+    mut uint32_t ready = 0;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_wait_v1(this.handle.get(), interest, timeout_ms, &ready);
+    }
+    return detail::check(status);
+  }
+
+public:
+  // Adopts a descriptor. Only trusted std sources can name the handle type
+  // (GTI-S2058), so applications cannot adopt or forge a descriptor.
+  stream(gti_internal::tcp_socket_handle value) : handle(std::move(value)) {}
+  stream(stream& other) = delete;
+  stream(stream&& other) = default;
+
+  /// Connects to `address`, waiting as long as the host allows.
+  static expected<stream, errc> connect(socket_address& address) {
+    return connect_with(address, int64_t(-1));
+  }
+
+  /// Connects to `address`, failing with `timed_out` once `timeout` elapses.
+  static expected<stream, errc> connect(socket_address& address, std::chrono::nanoseconds timeout) {
+    if (timeout.count() < int64_t(0)) {
+      return unexpected(errc::invalid_argument);
+    }
+    return connect_with(address, detail::timeout_milliseconds(timeout));
+  }
+
+  ~stream() {
+    // Destruction cannot report a close error; call close() when it matters.
+    if (this.handle.is_valid()) {
+      [[discard]] gti_internal::runtime::gti_rt_tcp_close_v1(this.handle.release());
+    }
+  }
+
+  bool is_open() { return this.handle.is_valid(); }
+
+  /// Receives at most `output.size()` bytes. Zero means the peer finished
+  /// sending (or `output` is empty). A nonblocking stream with no data
+  /// reports `would_block`; an expired read timeout reports `timed_out`.
+  expected<size_t, errc> receive(mut mutable_span<uint8_t>& output) mut {
+    ?this.require_open();
+    if (output.empty()) { return size_t(0); }
+    size_t capacity = output.size();
+    mut uint64_t count = 0;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_read_v1(
+          this.handle.get(), &output[size_t(0)], uint64_t(capacity), &count);
+    }
+    ?detail::check(status);
+    if (count > uint64_t(capacity)) { return unexpected(errc::failed); }
+    return size_t(count);
+  }
+
+  /// Sends a prefix of `input` and returns its length (possibly partial).
+  expected<size_t, errc> send(span<uint8_t>& input) mut {
+    ?this.require_open();
+    if (input.empty()) { return size_t(0); }
+    size_t length = input.size();
+    mut uint64_t count = 0;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_write_v1(
+          this.handle.get(), &input[size_t(0)], uint64_t(length), &count);
+    }
+    ?detail::check(status);
+    if (count > uint64_t(length)) { return unexpected(errc::failed); }
+    return size_t(count);
+  }
+
+  /// Sends every byte of `input`, retrying partial sends.
+  expected<void, errc> send_all(span<uint8_t>& input) mut {
+    size_t length = input.size();
+    mut size_t done = 0;
+    while (done < length) {
+      auto rest = input.subspan(done, length - done);
+      size_t count = ?this.send(rest);
+      if (count == size_t(0)) { return unexpected(errc::broken_pipe); }
+      done += count;
+    }
+    return;
+  }
+
+  /// std::io::reader conformance; detailed failures collapse to `read_failed`.
+  expected<size_t, std::io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+    auto received = this.receive(output);
+    if (!received) {
+      if (received.error() == errc::not_open) { return unexpected(std::io_errc::invalid_stream); }
+      return unexpected(std::io_errc::read_failed);
+    }
+    return received.value();
+  }
+
+  /// std::io::writer conformance; detailed failures collapse to `write_failed`.
+  expected<size_t, std::io_errc> write_some(span<uint8_t>& input) mut {
+    auto sent = this.send(input);
+    if (!sent) {
+      if (sent.error() == errc::not_open) { return unexpected(std::io_errc::invalid_stream); }
+      return unexpected(std::io_errc::write_failed);
+    }
+    return sent.value();
+  }
+
+  /// A stream has no user-space buffer; sent bytes are already with the host.
+  expected<void, std::io_errc> flush() mut {
+    if (!this.handle.is_valid()) { return unexpected(std::io_errc::invalid_stream); }
+    return;
+  }
+
+  /// Ends one or both directions; the descriptor stays owned until close.
+  expected<void, errc> shutdown(shutdown_mode how) mut {
+    ?this.require_open();
+    mut uint32_t native = 2;
+    if (how == shutdown_mode::read) {
+      native = 0;
+    } else if (how == shutdown_mode::write) {
+      native = 1;
+    }
+    return detail::check(gti_internal::runtime::gti_rt_tcp_shutdown_v1(this.handle.get(), native));
+  }
+
+  expected<socket_address, errc> local_address() { return this.address_of(false); }
+  expected<socket_address, errc> peer_address() { return this.address_of(true); }
+
+  /// In nonblocking mode `receive` and `send` report `would_block` instead of
+  /// waiting; pair it with `wait_readable`/`wait_writable`.
+  expected<void, errc> set_nonblocking(bool enabled) mut {
+    return this.set_option(uint32_t(0), enabled ? int64_t(1) : int64_t(0));
+  }
+
+  /// Disables (true) or restores (false) Nagle's small-segment coalescing.
+  expected<void, errc> set_nodelay(bool enabled) mut {
+    return this.set_option(uint32_t(1), enabled ? int64_t(1) : int64_t(0));
+  }
+
+  expected<void, errc> set_keepalive(bool enabled) mut {
+    return this.set_option(uint32_t(4), enabled ? int64_t(1) : int64_t(0));
+  }
+
+  /// Bounds each blocking `receive`; a zero duration removes the bound.
+  expected<void, errc> set_read_timeout(std::chrono::nanoseconds timeout) mut {
+    if (timeout.count() < int64_t(0)) { return unexpected(errc::invalid_argument); }
+    return this.set_option(uint32_t(2), detail::timeout_milliseconds(timeout));
+  }
+
+  /// Bounds each blocking `send`; a zero duration removes the bound.
+  expected<void, errc> set_write_timeout(std::chrono::nanoseconds timeout) mut {
+    if (timeout.count() < int64_t(0)) { return unexpected(errc::invalid_argument); }
+    return this.set_option(uint32_t(3), detail::timeout_milliseconds(timeout));
+  }
+
+  /// Waits until a `receive` would not block, or fails with `timed_out`.
+  expected<void, errc> wait_readable(std::chrono::nanoseconds timeout) {
+    if (timeout.count() < int64_t(0)) { return unexpected(errc::invalid_argument); }
+    return this.wait_for(uint32_t(1), detail::timeout_milliseconds(timeout));
+  }
+
+  /// Waits until a `send` would not block, or fails with `timed_out`.
+  expected<void, errc> wait_writable(std::chrono::nanoseconds timeout) {
+    if (timeout.count() < int64_t(0)) { return unexpected(errc::invalid_argument); }
+    return this.wait_for(uint32_t(2), detail::timeout_milliseconds(timeout));
+  }
+
+  /// Closes the descriptor once. A failed close is not retried by a later
+  /// call or by destruction; a second call reports `not_open`.
+  expected<void, errc> close() mut {
+    ?this.require_open();
+    uint32_t status = gti_internal::runtime::gti_rt_tcp_close_v1(this.handle.release());
+    if (status != uint32_t(0)) { return unexpected(errc::close_failed); }
+    return;
+  }
+
+};
+
+/// A listening TCP socket that accepts `stream`s.
+[[unsafe_transfer, no_share]] class listener {
+  mut gti_internal::tcp_socket_handle handle;
+
+  listener(gti_internal::tcp_socket_handle value) : handle(std::move(value)) {}
+
+  expected<void, errc> require_open() {
+    if (!this.handle.is_valid()) {
+      return unexpected(errc::not_open);
+    }
+    return;
+  }
+
+public:
+  listener(listener& other) = delete;
+  listener(listener&& other) = default;
+
+  /// Binds and listens on `address` with address reuse enabled. Port 0 asks
+  /// the host for an ephemeral port; read it back with `local_address()`.
+  /// `backlog` <= 0 selects the host default queue length.
+  static expected<listener, errc> bind(socket_address& address, int32_t backlog = int32_t(0)) {
+    mut uint8_t record[24] = {};
+    address.encode(record);
+    mut int32_t descriptor = -1;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_listen_v1(&record[0], backlog, uint32_t(1), &descriptor);
+    }
+    ?detail::check(status);
+    return listener(gti_internal::tcp_socket_handle(descriptor));
+  }
+
+  ~listener() {
+    if (this.handle.is_valid()) {
+      [[discard]] gti_internal::runtime::gti_rt_tcp_close_v1(this.handle.release());
+    }
+  }
+
+  bool is_open() { return this.handle.is_valid(); }
+
+  /// Accepts one connection. The returned stream is blocking regardless of
+  /// this listener's mode; a nonblocking listener with nothing pending
+  /// reports `would_block`.
+  expected<stream, errc> accept() mut {
+    ?this.require_open();
+    mut uint8_t peer[24] = {};
+    mut int32_t descriptor = -1;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_accept_v1(this.handle.get(), &peer[0], &descriptor);
+    }
+    ?detail::check(status);
+    return stream(gti_internal::tcp_socket_handle(descriptor));
+  }
+
+  expected<socket_address, errc> local_address() {
+    ?this.require_open();
+    mut uint8_t record[24] = {};
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_local_address_v1(this.handle.get(), &record[0]);
+    }
+    ?detail::check(status);
+    return socket_address::decode(record);
+  }
+
+  expected<void, errc> set_nonblocking(bool enabled) mut {
+    ?this.require_open();
+    return detail::check(gti_internal::runtime::gti_rt_tcp_set_option_v1(
+        this.handle.get(), uint32_t(0), enabled ? int64_t(1) : int64_t(0)));
+  }
+
+  /// Waits until `accept` would not block, or fails with `timed_out`.
+  expected<void, errc> wait_acceptable(std::chrono::nanoseconds timeout) {
+    ?this.require_open();
+    if (timeout.count() < int64_t(0)) { return unexpected(errc::invalid_argument); }
+    mut uint32_t ready = 0;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_wait_v1(
+          this.handle.get(), uint32_t(1), detail::timeout_milliseconds(timeout), &ready);
+    }
+    return detail::check(status);
+  }
+
+  expected<void, errc> close() mut {
+    ?this.require_open();
+    uint32_t status = gti_internal::runtime::gti_rt_tcp_close_v1(this.handle.release());
+    if (status != uint32_t(0)) { return unexpected(errc::close_failed); }
     return;
   }
 };
 
-expected<socket, errc> open() {
-  return socket::open();
+/// Resolves `host` (a name or numeric address) to stream endpoints carrying
+/// `port`, in resolver preference order. At most 16 endpoints are returned.
+expected<vector<socket_address>, errc> resolve(string_view host, uint16_t port) {
+  if (host.empty()) {
+    return unexpected(errc::invalid_address);
+  }
+  mut uint8_t records[384] = {};
+  mut uint64_t count = 0;
+  mut uint32_t status = 0;
+  unsafe {
+    status = gti_internal::runtime::gti_rt_tcp_resolve_v1(
+        host, uint32_t(port), uint32_t(0), &records[0], uint64_t(16), &count);
+  }
+  ?detail::check(status);
+  mut vector<socket_address> endpoints = vector<socket_address>();
+  mut size_t index = 0;
+  while (index < size_t(count) && index < size_t(16)) {
+    mut uint8_t record[24] = {};
+    mut size_t byte = 0;
+    while (byte < size_t(24)) {
+      record[byte] = records[index * size_t(24) + byte];
+      byte++;
+    }
+    auto decoded = socket_address::decode(record);
+    if (decoded) {
+      endpoints.push_back(decoded.value());
+    }
+    index++;
+  }
+  if (endpoints.empty()) {
+    return unexpected(errc::name_not_found);
+  }
+  return std::move(endpoints);
 }
 }
 }
+
+// Addresses format through the std::format protocol, e.g. format("{}", peer).
+export for concept std::formatting<std::tcp::ipv4_address> {
+  expected<void, std::format_errc> format(std::tcp::ipv4_address& value, mut std::string& output,
+                                          std::format_spec& spec) {
+    std::string text = value.to_string();
+    output.append(text.view());
+    return;
+  }
+};
+
+export for concept std::formatting<std::tcp::ipv6_address> {
+  expected<void, std::format_errc> format(std::tcp::ipv6_address& value, mut std::string& output,
+                                          std::format_spec& spec) {
+    std::string text = value.to_string();
+    output.append(text.view());
+    return;
+  }
+};
+
+export for concept std::formatting<std::tcp::socket_address> {
+  expected<void, std::format_errc> format(std::tcp::socket_address& value, mut std::string& output,
+                                          std::format_spec& spec) {
+    std::string text = value.to_string();
+    output.append(text.view());
+    return;
+  }
+};
