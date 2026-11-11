@@ -16196,9 +16196,14 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
   // whole caller storage; borrowing it keeps everything it reaches borrowed.
   static const bool signatureClaims =
       !legacyBorrowChecker();
+  // A result in a stored class region may borrow storage inside the
+  // external referent of that region's reference (a projection of it).
+  const bool storedProjection =
+      signatureClaims && source && source->externalPrefix &&
+      mapping.origin == BorrowOriginKind::Receiver;
   return source &&
          (source->referent == result->reference.arguments.front() ||
-          (contained && contained->empty()) ||
+          storedProjection || (contained && contained->empty()) ||
           (signatureClaims && !source->externalPrefix &&
            mapping.sourceFields.empty())) &&
          (mapping.access == AccessMode::ReadOnly ||

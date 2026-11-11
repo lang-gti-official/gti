@@ -5029,13 +5029,15 @@ public:
   void replace(T next) mut { this.value = next; }
 };
 
-class WrappedRange<T> {
-  SingleRange<T>& internal;
+// The adapter's result names the region of its stored range reference, so
+// it borrows the range, not the adapter shell.
+class WrappedRange<T, lifetime r> {
+  SingleRange<T>&<r> internal;
 
 public:
-  WrappedRange(SingleRange<T>& source) : internal(source) {}
+  WrappedRange(SingleRange<T>&<r> source) : internal(source) {}
 
-  BorrowingIterator<T> begin() {
+  BorrowingIterator<T, r> begin() {
     return internal.begin();
   }
 };
@@ -7803,12 +7805,14 @@ int main() {
 void testStoredCarrierReturnProvenance() {
   const std::string projectedSource = R"(
 struct Counter { mut int value = 4;  public: Counter() = default; };
-class ProjectedCarrier {
-  Counter& owner;
+// RFC 0004: results in the stored region borrow the external owner, not the
+// carrier shell; an elided result would borrow the receiver.
+class ProjectedCarrier<lifetime a> {
+  Counter&<a> owner;
 public:
-  ProjectedCarrier(Counter& source) : owner(source) {}
-  int& relay() { return this.read(); }
-  int& read() { return this.owner.value; }
+  ProjectedCarrier(Counter&<a> source) : owner(source) {}
+  int&<a> relay() { return this.read(); }
+  int&<a> read() { return this.owner.value; }
 };
 int main() {
   mut Counter owner{};
@@ -7850,11 +7854,11 @@ public:
   T& get() { return this.payload; }
   void set(T value) mut { this.payload = value; }
 };
-class BorrowedBox<T> {
-  ValueBox<T>& owner;
+class BorrowedBox<T, lifetime a> {
+  ValueBox<T>&<a> owner;
 public:
-  BorrowedBox(ValueBox<T>& owner) : owner(owner) {}
-  T& get() { return this.owner.get(); }
+  BorrowedBox(ValueBox<T>&<a> owner) : owner(owner) {}
+  T&<a> get() { return this.owner.get(); }
 };
 int main() {
   mut ValueBox<int> owner{4};
@@ -8046,14 +8050,16 @@ int main() {
                mutation);
   }
 
+  // The accessors name the stored region: an elided result would borrow the
+  // carrier shell, which `relay_carrier` later moves.
   const std::string validSource = R"(
-class ReadCarrier {
+class ReadCarrier<lifetime a> {
 public:
-  int& referent;
+  int&<a> referent;
   mut int shell = 0;
-  ReadCarrier(int& source) : referent(source) {}
-  int& identity() { return this.referent; }
-  int& relay_call() { return this.identity(); }
+  ReadCarrier(int&<a> source) : referent(source) {}
+  int&<a> identity() { return this.referent; }
+  int&<a> relay_call() { return this.identity(); }
 };
 
 int& relay_reference(int& source) { return source; }
@@ -10094,12 +10100,14 @@ public:
   void replace(T next) mut { this.value = next; }
 };
 
-class ReadingView<T> {
-  T& value;
+// RFC 0004: the views and the callable name their stored region, so a view
+// the callable returns borrows the reading, not the movable callable shell.
+class ReadingView<T, lifetime a> {
+  T&<a> value;
 
 public:
-  ReadingView(T& source) : value(source) {}
-  T& get() { return this.value; }
+  ReadingView(T&<a> source) : value(source) {}
+  T&<a> get() { return this.value; }
 };
 
 class IntViewFactory {
@@ -10117,16 +10125,16 @@ public:
   DirectPayload(int initial) : value(initial) {}
 };
 
-class ViewCallable<T> {
-  T& source;
+class ViewCallable<T, lifetime a> {
+  T&<a> source;
 
 public:
-  ViewCallable(T& value) : source(value) {}
-  ReadingView<T> operator()() {
-    return ReadingView<T>(this.source);
+  ViewCallable(T&<a> value) : source(value) {}
+  ReadingView<T, a> operator()() {
+    return ReadingView<T, a>(this.source);
   }
-  ReadingView<T> operator[](uint64_t index) {
-    return ReadingView<T>(this.source);
+  ReadingView<T, a> operator[](uint64_t index) {
+    return ReadingView<T, a>(this.source);
   }
 };
 

@@ -480,7 +480,38 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
   if (info == nullptr)
     return;
   std::vector<SemanticLoanPlace> places;
-  if (currentReturnType.kind == SemanticType::Reference)
+  const Expr *returned = value.get();
+  while (const auto *group = exprAs<Grouping>(returned))
+    returned = group->expression().get();
+  const auto *call = exprAs<Call>(returned);
+  const ResolvedCallInfo *resolved =
+      call == nullptr ? nullptr : semanticModel.findCall(*call);
+  const FunctionInfo *callee =
+      resolved == nullptr || resolved->function == 0
+          ? nullptr
+          : semanticModel.findFunction(resolved->function);
+  if (currentReturnType.kind == SemanticType::Reference && callee != nullptr &&
+      callee->ownerClass != 0 && !callee->staticMember &&
+      callee->declaration != nullptr &&
+      resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+    // A method call's reference result is supplied by its receiver object.
+    // A result in the callee's own stored region is supplied by references
+    // that receiver stores, so a call on this receiver in the same region
+    // returns no storage the receiver owns.
+    const auto *member = exprAs<Get>(call->callee().get());
+    const bool thisReceiver =
+        member == nullptr || exprAs<This>(member->object().get()) != nullptr;
+    const auto calleeLifetime =
+        explicitLifetimeResult(*callee->declaration, {}, callee->ownerClass);
+    if (thisReceiver && callee->ownerClass == owner &&
+        calleeLifetime.classBinder && calleeLifetime.classStoresRegion &&
+        calleeLifetime.region == lifetime.region)
+      return;
+    if (member != nullptr)
+      places = {loanPlace(member->object())};
+    else
+      places = loanPlaces(value);
+  } else if (currentReturnType.kind == SemanticType::Reference)
     places = loanPlaces(value);
   else
     for (const auto &dependency : storedBorrowDependencies(value))
@@ -1791,8 +1822,11 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       if (wholeReceiver && source.origin == BorrowOriginKind::Receiver &&
           source.reference.kind == SemanticType::Reference)
         continue;
-      // A stored reference supplies only a referent of its own type.
+      // A stored reference supplies only a referent of its own type, except
+      // that a result in its class region may also borrow storage inside
+      // that referent (Rust: `&'r R` supplies `&'r i32` to a field of R).
       if (source.reference.kind == SemanticType::Reference &&
+          !(storedOnly && source.origin == BorrowOriginKind::Receiver) &&
           (source.reference.arguments.size() != 1 ||
            path.reference.arguments.size() != 1 ||
            source.reference.arguments.front() !=
