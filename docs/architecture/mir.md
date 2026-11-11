@@ -3323,12 +3323,17 @@ the outlives relationships between them from its own CFG, places, loans and
 calls. It then checks the body against two kinds of contract only: its own
 signature contract (what results and stored fields may borrow from) and the
 contracts of the callees it invokes. It never reproduces a semantic supplier
-inventory. Semantics and MIR are compared at signature-contract level, and a
+inventory. It is the only body-local borrow checker, and MIR derives each
+loan's end points from its own CFG; generic bodies are checked per concrete
+instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
-same diagnostic codes as the corresponding ownership errors. MIR types and
+same diagnostic codes as the corresponding ownership errors, with the loan's
+origin and its later use as related notes. `mirBorrowDiagnostics` in
+`src/compiler/frontend.cpp` maps MIR rejections to them, and the LSP publishes
+the same diagnostics. MIR types and
 both backends see only erased types; lifetimes never change MIR shape, layout
 or emitted code, so a lifetime-free program produces the same MIR as before
 RFC 0004.

@@ -376,7 +376,8 @@ invalid, misplaced and conflicting policies publish the shared `GTI-S2059`
 diagnostic. Neither CLI nor LSP offers a fix that accepts an unsafe promise.
 
 Function-declaration and selected-call signatures retain `[[noreturn]]`,
-`[[track_caller]]`, `[[discardable]]`, explicit `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`,
+`[[track_caller]]`, `[[discardable]]`, an explicit result region (or its
+compatibility spelling `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`),
 and `unsafe` from the resolved `FunctionInfo`. The borrow-origin parameter name
 comes from the resolved formal parameter index, not from reparsing the attribute;
 inferred borrow origins do not invent explicit annotations. Contract

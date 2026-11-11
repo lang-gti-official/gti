@@ -3101,7 +3101,8 @@ Checked reference parameters preserve read/mutable access. A reference result
 must identify exactly one whole reference parameter and its permitted access.
 The producer's semantic/MIR return summary must agree; projected/conditional,
 global and aggregate-carried origins reject. The virtual declaration publishes
-`[[borrowed_from(argN)]]`, and ordinary semantic/MIR loan rules check consumer
+that parameter as the result's region (`T&<a>` on parameter N), and ordinary
+MIR loan rules check consumer
 escape, mutation and aliasing. This does not yet export custom ownership/drop
 recipes or a general lifetime dependency graph.
 
