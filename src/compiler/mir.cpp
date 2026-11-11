@@ -3424,13 +3424,16 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                        block.id, instruction.id);
       }
       // A call whose borrowed-result contract is read-only publishes a
-      // shared result; no producer may widen it to exclusive access. A
-      // carrier result's scalar access is not its paths' permissions, which
-      // its complete contract states one by one.
+      // shared result; no producer may widen it to exclusive access. The
+      // access is exact for a reference result and for a receiver contract,
+      // which accounts for every stored path; an argument-supplied carrier's
+      // scalar access does not describe its paths one by one.
       if (!legacyBorrowChecker() &&
-          instruction.info.type.kind == SemanticType::Reference &&
           (instruction.kind == MirInstructionKind::Call ||
            instruction.kind == MirInstructionKind::Construct) &&
+          (instruction.info.type.kind == SemanticType::Reference ||
+           (instruction.kind == MirInstructionKind::Call &&
+            instruction.borrowOrigin == BorrowOriginKind::Receiver)) &&
           instruction.borrowOrigin != BorrowOriginKind::None &&
           instruction.borrowAccess == AccessMode::ReadOnly &&
           body.loans[*instruction.loan - 1].access == AccessMode::Mutable) {

@@ -7148,9 +7148,11 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
                   });
           const bool borrows = type.kind == SemanticType::Reference ||
                                (inventory && !inventory->empty());
+          // A carrier result keeps every borrowing supplier, each at its own
+          // access; only a mutable reference result needs a mutable one.
           if (borrows &&
-              (contract.access == AccessMode::ReadOnly || mutableExternal ||
-               borrowAccess(type) == AccessMode::Mutable))
+              (!reference || contract.access == AccessMode::ReadOnly ||
+               mutableExternal || borrowAccess(type) == AccessMode::Mutable))
             suppliers.push_back(position);
         }
         if (suppliers.empty()) {
@@ -7158,12 +7160,15 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
           return contract;
         }
         // As for an elided contract, the primary supplier is the first one
-        // whose access matches the result's; each keeps its own in MIR.
+        // whose access matches a reference result's, or the first shared one
+        // of a carrier; each keeps its own access in MIR.
+        const AccessMode primaryAccess =
+            reference ? contract.access : AccessMode::ReadOnly;
         if (const auto matching = std::find_if(
                 suppliers.begin(), suppliers.end(),
                 [&](std::size_t position) {
                   return position < expanded.size() &&
-                         borrowAccess(expanded[position]) == contract.access;
+                         borrowAccess(expanded[position]) == primaryAccess;
                 });
             matching != suppliers.end() && matching != suppliers.begin())
           std::rotate(suppliers.begin(), matching, matching + 1);
