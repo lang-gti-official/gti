@@ -5306,6 +5306,54 @@ private:
                                              : loan->storedDependency;
   }
 
+  // The reference a stored-reference payload extraction selects: the
+  // extracted payload's path and type within the carrier's enum, guarded by
+  // the extracted alternative. A transferring extraction moves the carrier's
+  // own dependency group.
+  [[nodiscard]] std::optional<MirReferenceSelection>
+  selectedPayloadReference(const MirInstruction &producer,
+                           HirValueId carrier) const {
+    if (producer.operands.size() != 1 || !producer.enumVariant ||
+        !producer.payloadIndex || !producer.payloadExtractionKind)
+      return std::nullopt;
+    const MirPlace *place = output.findPlace(producer.operands.front().place);
+    if (place == nullptr)
+      return std::nullopt;
+    SemanticType enumeration = place->type;
+    if (enumeration.kind == SemanticType::Reference &&
+        enumeration.arguments.size() == 1)
+      enumeration = SemanticType(enumeration.arguments.front());
+    const auto owner = std::find_if(program.enumDeclarations().begin(),
+                                    program.enumDeclarations().end(),
+                                    [&](const HirEnum &candidate) {
+                                      return candidate.type == enumeration;
+                                    });
+    if (owner == program.enumDeclarations().end())
+      return std::nullopt;
+    const auto alternative =
+        std::find_if(owner->enumerators.begin(), owner->enumerators.end(),
+                     [&](const HirEnumerator &candidate) {
+                       return candidate.variantIndex == *producer.enumVariant;
+                     });
+    if (alternative == owner->enumerators.end() ||
+        *producer.payloadIndex >= alternative->payloadSymbols.size() ||
+        *producer.payloadIndex >= alternative->payloadTypes.size())
+      return std::nullopt;
+    MirReferenceSelection selected{
+        .carrier = place->id,
+        .fields = {alternative->payloadSymbols[*producer.payloadIndex]},
+        .conditions = {{.enumeration = enumeration,
+                        .variant = alternative->variantIndex}},
+        .reference = alternative->payloadTypes[*producer.payloadIndex]};
+    if (*producer.payloadExtractionKind ==
+        PayloadExtractionKind::TransferReference) {
+      selected.transferredFrom = loanForValue(carrier);
+      if (output.findLoan(selected.transferredFrom) == nullptr)
+        return std::nullopt;
+    }
+    return selected;
+  }
+
   // The shape of the retained Stored group a binding is initialized from,
   // from MIR facts alone. The group is lifecycle-bound when its carrier type
   // is. It names the carrier type's single unconditional stored reference
@@ -5463,22 +5511,16 @@ private:
         valid = false;
         return;
       }
-      MirReferenceSelection selected{.value = resolved->id,
-                                     .carrier =
-                                         producer->operands.front().place,
-                                     .fields = selection.fields,
-                                     .conditions = selection.conditions,
-                                     .reference = selection.reference};
-      if (selection.transferredFrom != 0) {
-        const auto source = semanticLoans.find(selection.transferredFrom);
-        if (source == semanticLoans.end() || source->second == id ||
-            output.findLoan(source->second) == nullptr ||
-            *producer->payloadExtractionKind !=
-                PayloadExtractionKind::TransferReference) {
-          valid = false;
-          return;
-        }
-        selected.transferredFrom = source->second;
+      auto derived = selectedPayloadReference(*producer, selection.carrier);
+      if (!derived) {
+        valid = false;
+        return;
+      }
+      MirReferenceSelection selected = std::move(*derived);
+      selected.value = resolved->id;
+      if (selected.transferredFrom == id) {
+        valid = false;
+        return;
       }
       if (lowered.referenceSelection &&
           *lowered.referenceSelection != selected) {
