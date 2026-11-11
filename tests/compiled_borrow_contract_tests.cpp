@@ -77,9 +77,13 @@ int main() {
     CompiledScalarSignature signature{
         encoded, read, {}, writePersistentType(read, registry), second};
     const auto symbol = compiledScalarSymbol(signature);
-    expect(compiledInterfaceCallableSource(signature).find(
-               "[[borrowed_from(arg1)]]") != std::string::npos,
-           "facade lost selected argument dependency");
+    {
+      const auto facade = compiledInterfaceCallableSource(signature);
+      expect(facade.find("<lifetime a>(") != std::string::npos &&
+                 facade.find("&<a> arg1") != std::string::npos &&
+                 facade.find("borrowed_from") == std::string::npos,
+             "facade lost selected argument dependency");
+    }
     signature.borrow.parameter = 0;
     expect(compiledScalarSymbol(signature) != symbol,
            "different borrow origin reused the native symbol");
