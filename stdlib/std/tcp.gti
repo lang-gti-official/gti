@@ -1031,6 +1031,408 @@ expected<vector<socket_address>, errc> resolve(string_view host, uint16_t port) 
   }
   return std::move(endpoints);
 }
+
+/// Connects to the first reachable endpoint of `host:port`, trying resolved
+/// addresses in order. The last attempt's error is returned when none connect.
+expected<stream, errc> connect(string_view host, uint16_t port) {
+  vector<socket_address> endpoints = ?resolve(host, port);
+  mut errc last = errc::name_not_found;
+  for (auto& endpoint : endpoints) {
+    auto attempt = stream::connect(endpoint);
+    if (attempt) {
+      return std::move(attempt).value();
+    }
+    last = attempt.error();
+  }
+  return unexpected(last);
+}
+
+/// As `connect(host, port)`, bounding each attempt by `timeout`.
+expected<stream, errc> connect(string_view host, uint16_t port, std::chrono::nanoseconds timeout) {
+  vector<socket_address> endpoints = ?resolve(host, port);
+  mut errc last = errc::name_not_found;
+  for (auto& endpoint : endpoints) {
+    auto attempt = stream::connect(endpoint, timeout);
+    if (attempt) {
+      return std::move(attempt).value();
+    }
+    last = attempt.error();
+  }
+  return unexpected(last);
+}
+
+/// Binds a listener on the first resolved address of `host:port` that binds.
+/// Use "0.0.0.0" or "::" for every interface and port 0 for an ephemeral port.
+expected<listener, errc> listen(string_view host, uint16_t port, int32_t backlog = int32_t(0)) {
+  vector<socket_address> endpoints = ?resolve(host, port);
+  mut errc last = errc::name_not_found;
+  for (auto& endpoint : endpoints) {
+    auto attempt = listener::bind(endpoint, backlog);
+    if (attempt) {
+      return std::move(attempt).value();
+    }
+    last = attempt.error();
+  }
+  return unexpected(last);
+}
+
+/// A stream with owned read-ahead and write-behind buffers.
+///
+/// Reading follows the fill/view/consume protocol: `fill` or `fill_until`
+/// make bytes available, `buffered()` and `peek(n)` view them in place as a
+/// span borrowing this object (no copy), and `consume(n)` discards them. The
+/// view must end before the next mutating call, which the borrow checker
+/// enforces.
+///
+/// Writes collect in the output buffer until it fills or `flush_output()`
+/// runs. Destruction discards unflushed output, matching
+/// std::io::buffered_writer: flush and check the result before dropping.
+///
+/// The type satisfies std::io::reader, std::io::writer and
+/// std::io::buffered_source, so std::io::getline, read_exact and copy work.
+[[unsafe_transfer, no_share]] class buffered_stream {
+  mut stream inner;
+  mut byte_buffer input;
+  mut size_t start = 0;
+  mut size_t finish = 0;
+  mut byte_buffer output;
+  mut size_t pending = 0;
+
+  // Moves unread bytes to the front so the free tail is as large as possible.
+  void compact() mut {
+    if (this.start == size_t(0)) {
+      return;
+    }
+    size_t count = this.finish - this.start;
+    mut size_t index = 0;
+    while (index < count) {
+      this.input[index] = this.input[this.start + index];
+      index++;
+    }
+    this.start = 0;
+    this.finish = count;
+  }
+
+  // Receives once into the free tail; returns the count (0 at end of stream).
+  expected<size_t, errc> receive_more() mut {
+    this.compact();
+    size_t capacity = this.input.size();
+    if (this.finish == capacity) {
+      return unexpected(errc::resource_exhausted);
+    }
+    mut auto storage = this.input.as_mutable_span();
+    mut auto tail = storage.subspan(this.finish, capacity - this.finish);
+    size_t count = ?this.inner.receive(tail);
+    this.finish += count;
+    return count;
+  }
+
+public:
+  /// Wraps `connection` with `capacity`-byte input and output buffers. A
+  /// zero capacity is promoted to one byte.
+  buffered_stream(stream connection, size_t capacity = size_t(8192))
+      : inner(std::move(connection)),
+        input(byte_buffer(capacity == size_t(0) ? size_t(1) : capacity)),
+        output(byte_buffer(capacity == size_t(0) ? size_t(1) : capacity)) {}
+  buffered_stream(buffered_stream& other) = delete;
+  buffered_stream(buffered_stream&& other) = default;
+
+  /// The wrapped stream, for addresses, timeouts and other options. Reading
+  /// or writing through it bypasses the buffers.
+  mut stream&<this> get() mut { return this.inner; }
+
+  /// Bytes received and not yet consumed.
+  size_t available() { return this.finish - this.start; }
+
+  /// Bytes written and not yet flushed.
+  size_t unflushed() { return this.pending; }
+
+  /// Returns the available count, receiving once only when nothing is
+  /// available. Zero means the peer finished sending.
+  expected<size_t, errc> fill() mut {
+    if (this.start == this.finish) {
+      this.start = 0;
+      this.finish = 0;
+      ?this.receive_more();
+    }
+    return this.finish - this.start;
+  }
+
+  /// Receives until the available bytes contain `delimiter` and returns the
+  /// length of the frame through it. At end of stream it returns the
+  /// remaining (unterminated) count, zero when nothing is left. A frame
+  /// longer than the buffer fails with `resource_exhausted`.
+  expected<size_t, errc> fill_until(uint8_t delimiter) mut {
+    mut size_t scanned = 0;
+    while (true) {
+      while (this.start + scanned < this.finish) {
+        if (this.input[this.start + scanned] == delimiter) {
+          return scanned + size_t(1);
+        }
+        scanned++;
+      }
+      size_t count = ?this.receive_more();
+      if (count == size_t(0)) {
+        return this.finish - this.start;
+      }
+    }
+  }
+
+  /// Every available byte, borrowed from this object's buffer.
+  span<uint8_t, this> buffered() {
+    auto all = this.input.as_span();
+    return all.subspan(this.start, this.finish - this.start);
+  }
+
+  /// The first `count` available bytes; `count` must not exceed available().
+  span<uint8_t, this> peek(size_t count) {
+    gti_internal::require_container_argument(count <= this.finish - this.start);
+    auto all = this.input.as_span();
+    return all.subspan(this.start, count);
+  }
+
+  /// Discards `count` available bytes; `count` must not exceed available().
+  void consume(size_t count) mut {
+    gti_internal::require_container_argument(count <= this.finish - this.start);
+    this.start += count;
+  }
+
+  /// Replaces `line` with the next newline-terminated line, without the "\n"
+  /// or a preceding "\r", and returns the bytes consumed (zero at end of
+  /// stream). A final unterminated line is returned as is.
+  expected<size_t, errc> read_line(mut string& line) mut {
+    line.clear();
+    size_t length = ?this.fill_until(uint8_t(10));
+    mut size_t text = length;
+    if (text > size_t(0) && this.input[this.start + text - size_t(1)] == uint8_t(10)) {
+      text--;
+      if (text > size_t(0) && this.input[this.start + text - size_t(1)] == uint8_t(13)) {
+        text--;
+      }
+    }
+    mut size_t index = 0;
+    while (index < text) {
+      line.push_back(char(this.input[this.start + index]));
+      index++;
+    }
+    this.start += length;
+    return length;
+  }
+
+  /// Fills `destination` completely; end of stream first is `connection_aborted`.
+  expected<void, errc> read_exact(mut mutable_span<uint8_t>& destination) mut {
+    size_t length = destination.size();
+    mut size_t done = 0;
+    while (done < length) {
+      size_t ready = ?this.fill();
+      if (ready == size_t(0)) {
+        return unexpected(errc::connection_aborted);
+      }
+      mut size_t count = length - done;
+      if (count > ready) {
+        count = ready;
+      }
+      mut size_t index = 0;
+      while (index < count) {
+        destination[done + index] = this.input[this.start + index];
+        index++;
+      }
+      this.start += count;
+      done += count;
+    }
+    return;
+  }
+
+  /// Queues every byte of `bytes`, sending whenever the output buffer fills.
+  expected<void, errc> write(span<uint8_t>& bytes) mut {
+    size_t length = bytes.size();
+    size_t capacity = this.output.size();
+    mut size_t done = 0;
+    while (done < length) {
+      if (this.pending == capacity) {
+        ?this.flush_output();
+      }
+      mut size_t count = capacity - this.pending;
+      if (count > length - done) {
+        count = length - done;
+      }
+      mut size_t index = 0;
+      while (index < count) {
+        this.output[this.pending + index] = bytes[done + index];
+        index++;
+      }
+      this.pending += count;
+      done += count;
+    }
+    return;
+  }
+
+  /// Queues the UTF-8 code units of `text`.
+  expected<void, errc> write_text(string_view text) mut {
+    size_t length = text.size();
+    size_t capacity = this.output.size();
+    mut size_t done = 0;
+    while (done < length) {
+      if (this.pending == capacity) {
+        ?this.flush_output();
+      }
+      mut size_t count = capacity - this.pending;
+      if (count > length - done) {
+        count = length - done;
+      }
+      mut size_t index = 0;
+      while (index < count) {
+        this.output[this.pending + index] = uint8_t(text[done + index]);
+        index++;
+      }
+      this.pending += count;
+      done += count;
+    }
+    return;
+  }
+
+  /// Sends every queued byte. On failure the unsent suffix stays queued.
+  expected<void, errc> flush_output() mut {
+    mut size_t sent = 0;
+    while (sent < this.pending) {
+      auto all = this.output.as_span();
+      auto rest = all.subspan(sent, this.pending - sent);
+      auto count = this.inner.send(rest);
+      if (!count || count.value() == size_t(0)) {
+        // Keep the unsent suffix at the front for a later retry.
+        mut size_t index = 0;
+        while (sent + index < this.pending) {
+          this.output[index] = this.output[sent + index];
+          index++;
+        }
+        this.pending -= sent;
+        if (!count) {
+          return unexpected(count.error());
+        }
+        return unexpected(errc::broken_pipe);
+      }
+      sent += count.value();
+    }
+    this.pending = 0;
+    return;
+  }
+
+  /// Flushes, then ends the write direction so the peer observes end of stream.
+  expected<void, errc> finish_output() mut {
+    ?this.flush_output();
+    return this.inner.shutdown(shutdown_mode::write);
+  }
+
+  // std::io conformance: detailed errors collapse to std::io_errc values.
+  expected<size_t, std::io_errc> read_some(mut mutable_span<uint8_t>& destination) mut {
+    if (destination.empty()) {
+      return size_t(0);
+    }
+    auto ready = this.fill();
+    if (!ready) {
+      return unexpected(std::io_errc::read_failed);
+    }
+    mut size_t count = ready.value();
+    if (count > destination.size()) {
+      count = destination.size();
+    }
+    mut size_t index = 0;
+    while (index < count) {
+      destination[index] = this.input[this.start + index];
+      index++;
+    }
+    this.start += count;
+    return count;
+  }
+
+  expected<size_t, std::io_errc> fill_buffer() mut {
+    auto ready = this.fill();
+    if (!ready) {
+      return unexpected(std::io_errc::read_failed);
+    }
+    return ready.value();
+  }
+
+  expected<size_t, std::io_errc> write_some(span<uint8_t>& bytes) mut {
+    auto queued = this.write(bytes);
+    if (!queued) {
+      return unexpected(std::io_errc::write_failed);
+    }
+    return bytes.size();
+  }
+
+  expected<void, std::io_errc> flush() mut {
+    auto sent = this.flush_output();
+    if (!sent) {
+      return unexpected(std::io_errc::flush_failed);
+    }
+    return;
+  }
+};
+
+/// What a connection handler asks `serve` to do next.
+enum class serve_control {
+  proceed,
+  stop,
+};
+
+/// Handles one accepted connection. A type opts in with a conformance block:
+///
+///     for concept std::tcp::connection_handler<Echo> {
+///       expected<std::tcp::serve_control, std::tcp::errc>
+///       handle(mut Echo& self, std::tcp::stream connection,
+///              std::tcp::socket_address peer) { ... }
+///     };
+///
+/// The handler owns the connection, so it can wrap it (for example in a
+/// buffered_stream) or move it elsewhere; it closes when the handler drops it.
+[[unsatisfied("A connection handler has a 'for concept std::tcp::connection_handler<H>' block defining 'expected<std::tcp::serve_control, std::tcp::errc> handle(mut H&, std::tcp::stream, std::tcp::socket_address)'.")]]
+concept connection_handler<H> {
+  expected<serve_control, errc> handle(mut H& handler, stream connection, socket_address peer);
+};
+
+/// Counts reported by `serve`.
+struct serve_summary {
+  size_t accepted;
+  size_t failed;
+  serve_summary(size_t accepted_count, size_t failed_count)
+      : accepted(accepted_count), failed(failed_count) {}
+};
+
+/// Accepts connections one at a time and transfers each to `handler`. A handler error drops only
+/// that connection; `serve_control::stop` ends the loop. Accept failures
+/// caused by one aborted client (`connection_aborted`, `connection_reset`)
+/// are skipped; any other accept failure ends the loop with that error.
+expected<serve_summary, errc> serve<H>(mut listener& server, mut H& handler)
+    requires connection_handler<H> {
+  mut size_t accepted = 0;
+  mut size_t failed = 0;
+  while (true) {
+    auto next = server.accept();
+    if (!next) {
+      errc reason = next.error();
+      if (reason == errc::connection_aborted || reason == errc::connection_reset) {
+        continue;
+      }
+      return unexpected(reason);
+    }
+    stream connection = std::move(next).value();
+    accepted++;
+    auto peer = connection.peer_address();
+    if (!peer) {
+      failed++;
+      continue;
+    }
+    auto outcome = connection_handler<H>::handle(handler, std::move(connection), peer.value());
+    if (!outcome) {
+      failed++;
+      continue;
+    }
+    if (outcome.value() == serve_control::stop) {
+      return serve_summary(accepted, failed);
+    }
+  }
+}
 }
 }
 

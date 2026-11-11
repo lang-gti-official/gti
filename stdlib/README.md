@@ -73,6 +73,10 @@ parsing and RFC 5952 formatting are ordinary source values;
 is `[[unsafe_transfer, no_share]]`: a descriptor may move to another thread,
 but an owner is never shared. Streams satisfy `std::io::reader` and
 `std::io::writer`, so the `std.io` buffering and transfer helpers apply.
+The ergonomic layer is source over that core: host/port `connect` and
+`listen`, `buffered_stream` (fill/view/consume framing with
+`span<uint8_t, this>` views), and `serve`, which drives any application type
+with a `for concept std::tcp::connection_handler` block.
 Explicit `close()` reports `close_failed` or `not_open`; lexical destruction
 performs one best-effort close. Native work goes through the versioned
 `gti_rt_tcp_*_v1` runtime entries, which hide `sockaddr` layout, constants,

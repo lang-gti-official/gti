@@ -1,0 +1,16 @@
+import std.tcp;
+
+// serve accepts only types with a connection_handler conformance block.
+class Unrelated {
+public:
+  Unrelated() = default;
+};
+
+int main() {
+  auto any = std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
+  mut auto server = std::tcp::listener::bind(any);
+  if (!server) { return 1; }
+  mut Unrelated handler{};
+  auto served = std::tcp::serve(server.value(), handler);
+  return 0;
+}

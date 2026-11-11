@@ -2940,6 +2940,49 @@
       }
     },
     {
+      "id": "tcp_serve",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_tcp_serve.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "tcp_serve_requires_handler",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/stdlib_surface_tcp_serve_requires_handler.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2029",
+          "connection_handler",
+          "A connection handler has a 'for concept std::tcp::connection_handler<H>' block"
+        ]
+      }
+    },
+    {
+      "id": "tcp_threads",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_tcp_threads.gti",
+      "execution_profile": "concurrent",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "testing",
       "mode": "run",
       "source": "tests/fixtures/stdlib_surface_testing.gti",
@@ -7529,6 +7572,25 @@
       "source": "stdlib/std/tcp.gti",
       "status": "executable",
       "operations": [
+        "std::tcp::buffered_stream::available",
+        "std::tcp::buffered_stream::buffered",
+        "std::tcp::buffered_stream::consume",
+        "std::tcp::buffered_stream::fill",
+        "std::tcp::buffered_stream::fill_buffer",
+        "std::tcp::buffered_stream::fill_until",
+        "std::tcp::buffered_stream::finish_output",
+        "std::tcp::buffered_stream::flush",
+        "std::tcp::buffered_stream::flush_output",
+        "std::tcp::buffered_stream::get",
+        "std::tcp::buffered_stream::peek",
+        "std::tcp::buffered_stream::read_exact",
+        "std::tcp::buffered_stream::read_line",
+        "std::tcp::buffered_stream::read_some",
+        "std::tcp::buffered_stream::unflushed",
+        "std::tcp::buffered_stream::write",
+        "std::tcp::buffered_stream::write_some",
+        "std::tcp::buffered_stream::write_text",
+        "std::tcp::connect",
         "std::tcp::ipv4_address::any",
         "std::tcp::ipv4_address::is_loopback",
         "std::tcp::ipv4_address::is_unspecified",
@@ -7545,6 +7607,7 @@
         "std::tcp::ipv6_address::parse",
         "std::tcp::ipv6_address::segment",
         "std::tcp::ipv6_address::to_string",
+        "std::tcp::listen",
         "std::tcp::listener::accept",
         "std::tcp::listener::bind",
         "std::tcp::listener::close",
@@ -7553,6 +7616,7 @@
         "std::tcp::listener::set_nonblocking",
         "std::tcp::listener::wait_acceptable",
         "std::tcp::resolve",
+        "std::tcp::serve",
         "std::tcp::socket_address::ipv4",
         "std::tcp::socket_address::ipv6",
         "std::tcp::socket_address::is_ipv4",
@@ -7583,12 +7647,19 @@
         "std::tcp::stream::write_some"
       ],
       "case_ids": [
-        "tcp"
+        "tcp",
+        "tcp_serve",
+        "tcp_serve_requires_handler",
+        "tcp_threads"
       ],
       "required_instantiations": [],
       "evidence": [
+        "docs/language/tcp.md",
+        "examples/193-tcp-line-server.gti",
         "tests/fixtures/stdlib_surface_tcp.gti",
-        "docs/language/tcp.md"
+        "tests/fixtures/stdlib_surface_tcp_serve.gti",
+        "tests/fixtures/stdlib_surface_tcp_serve_requires_handler.gti",
+        "tests/fixtures/stdlib_surface_tcp_threads.gti"
       ]
     },
     {

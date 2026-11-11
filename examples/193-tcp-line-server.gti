@@ -1,0 +1,92 @@
+// A line-oriented TCP service written with the ergonomic std::tcp layer.
+//
+// - std::tcp::listen / std::tcp::connect take a host and port.
+// - std::tcp::serve accepts connections and hands each one to any type that
+//   implements the std::tcp::connection_handler protocol concept.
+// - std::tcp::buffered_stream frames input with fill_until and lends the
+//   frame as a span borrowing its buffer (no copy) until consume().
+//
+// The program talks to itself over loopback, so it needs no network access.
+import std.tcp;
+import std.span;
+import std.string;
+import std.vector;
+import std.format;
+
+// The service: reply to "sum a b" with the sum, to anything else with "?".
+class Calculator {
+public:
+  mut int32_t requests = 0;
+  Calculator() = default;
+};
+
+// Parses a decimal field of the borrowed frame starting at `index`.
+int64_t number_at(std::span<uint8_t>& frame, mut std::size_t& index) {
+  mut int64_t value = 0;
+  while (index < frame.size() && frame[index] >= uint8_t(48) && frame[index] <= uint8_t(57)) {
+    value = value * int64_t(10) + int64_t(frame[index] - uint8_t(48));
+    index++;
+  }
+  return value;
+}
+
+for concept std::tcp::connection_handler<Calculator> {
+  expected<std::tcp::serve_control, std::tcp::errc> handle(mut Calculator& service, std::tcp::stream connection,
+                                                           std::tcp::socket_address peer) {
+    mut std::tcp::buffered_stream client{std::move(connection)};
+    while (true) {
+      std::size_t length = ?client.fill_until(uint8_t(10));
+      if (length == std::size_t(0)) {
+        break;
+      }
+      service.requests++;
+      mut std::string reply = std::string();
+      {
+        // The frame borrows client's buffer; it must end before consume().
+        auto frame = client.peek(length);
+        if (length > std::size_t(4) && frame[std::size_t(0)] == uint8_t(115) &&
+            frame[std::size_t(1)] == uint8_t(117) && frame[std::size_t(2)] == uint8_t(109)) {
+          mut std::size_t index = 4;
+          int64_t left = number_at(frame, index);
+          index++;
+          int64_t right = number_at(frame, index);
+          reply = std::format("{}\n", left + right);
+        } else {
+          reply = std::format("?\n");
+        }
+      }
+      client.consume(length);
+      ?client.write_text(reply.view());
+    }
+    ?client.finish_output();
+    return std::tcp::serve_control::stop;
+  }
+};
+
+expected<void, std::tcp::errc> demo() {
+  mut auto server = ?std::tcp::listen("127.0.0.1", uint16_t(0));
+  auto endpoint = ?server.local_address();
+
+  // The client sends its whole request batch first; the host queues the
+  // connection, so one thread can play both roles.
+  mut std::tcp::buffered_stream client{?std::tcp::connect("127.0.0.1", endpoint.port())};
+  ?client.write_text("sum 2 40\n");
+  ?client.write_text("hello\n");
+  ?client.write_text("sum 1000 337\n");
+  ?client.finish_output();
+
+  mut Calculator service{};
+  auto summary = ?std::tcp::serve(server, service);
+  std::println(std::format("served {} connection(s), {} request(s)", summary.accepted, service.requests));
+
+  mut std::string line = std::string();
+  while (?client.read_line(line) != std::size_t(0)) {
+    std::println(std::format("reply: {}", line));
+  }
+  return;
+}
+
+int main() {
+  auto outcome = demo();
+  return outcome ? 0 : 1;
+}

@@ -1,0 +1,38 @@
+import std.tcp;
+import std.thread;
+import std.span;
+import std.vector;
+
+// Stream and listener owners are transfer-capable: an accepted connection
+// moves into a worker thread, which owns and closes it.
+class Responder {
+  mut std::tcp::stream connection;
+public:
+  Responder(std::tcp::stream value) : connection(std::move(value)) {}
+  void operator()() mut {
+    mut std::vector<uint8_t> reply{std::size_t(1)};
+    reply[std::size_t(0)] = uint8_t(42);
+    auto view = reply.as_span();
+    [[discard]] this.connection.send_all(view);
+  }
+};
+
+expected<int32_t, std::tcp::errc> run() {
+  auto any = std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
+  mut auto server = ?std::tcp::listener::bind(any);
+  auto endpoint = ?server.local_address();
+  mut auto client = ?std::tcp::stream::connect(endpoint);
+  auto started = std::thread::start(Responder(?server.accept()));
+  if (!started) { return 1; }
+  mut std::thread worker = std::move(started).value();
+  mut std::vector<uint8_t> inbox{std::size_t(1)};
+  mut auto window = inbox.as_mutable_span();
+  std::size_t count = ?client.receive(window);
+  if (!worker.join()) { return 2; }
+  return count == std::size_t(1) && inbox[std::size_t(0)] == uint8_t(42) ? 0 : 3;
+}
+
+int main() {
+  auto result = run();
+  return result ? result.value() : 4;
+}
