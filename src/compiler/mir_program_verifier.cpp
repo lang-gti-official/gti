@@ -2503,8 +2503,12 @@ mirFieldTypeThroughBases(const MirProgram &program,
             argumentPlace &&
             (argumentPlace->type.kind == SemanticType::Lambda ||
              argumentPlace->type.kind == SemanticType::FunctionItem);
+        // RFC 0004: a stateless function item lent to a call whose result
+        // borrows nothing (checked below) needs no confined parameter.
         const bool confined =
             !callable ||
+            (!legacyBorrowChecker() &&
+             argumentPlace->type.kind == SemanticType::FunctionItem) ||
             (functionTarget &&
              std::any_of(functionTarget->callableParameters.begin(),
                          functionTarget->callableParameters.end(),

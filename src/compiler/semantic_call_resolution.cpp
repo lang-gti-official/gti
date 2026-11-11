@@ -4296,6 +4296,15 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
       continue;
     }
     const FunctionInfo *target = semanticModel.findFunction(resolved.function);
+    // RFC 0004: a function item holds no state, so its borrowed temporary
+    // matters only while the call can use it. A result whose signature
+    // borrows nothing cannot retain it, and MIR checks that the temporary
+    // outlives every other use; no body-classified confinement is needed.
+    if (signatureContractDefaults() && target != nullptr &&
+        target->returnType.kind != SemanticType::Reference &&
+        target->returnBorrowOrigin == BorrowOriginKind::None &&
+        !typeTraits(target->returnType).containsBorrowedState)
+      continue;
     for (const std::size_t index : resolved.ephemeralBorrowArguments) {
       if (index >= call->arguments().size()) {
         continue;
