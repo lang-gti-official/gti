@@ -5543,6 +5543,22 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
         semanticModel.findDeferredCallableCall(*call) != nullptr)
       return;
   }
+  // Likewise any call whose trailing argument expands a declaration-wide
+  // pack, such as a lambda invoked with `args...`: it has no arity, so no
+  // result category, before the concrete instance reanalysis checks it.
+  if (value) {
+    const Expr *candidate = value.get();
+    while (const auto *group = exprAs<Grouping>(candidate))
+      candidate = group->expression().get();
+    if (const auto *call = exprAs<Call>(candidate);
+        call != nullptr && !call->arguments().empty() &&
+        exprAs<PackExpansion>(call->arguments().back().get()) != nullptr)
+      if (const SemanticType *pack =
+              semanticModel.findType(*call->arguments().back());
+          pack != nullptr && pack->kind == SemanticType::TypePack &&
+          !pack->concretePack)
+        return;
+  }
   if (info == nullptr || info->category != ValueCategory::Place) {
     report(expressionToken(value),
            "Reference return requires an addressable value, not a "

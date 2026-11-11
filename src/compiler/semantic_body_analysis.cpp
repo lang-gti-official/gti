@@ -11155,7 +11155,34 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     // parameters leave an elided lambda result ambiguous (Rust E0106).
     const bool ambiguous =
         signatureContractDefaults() && summary.parameters.size() > 1;
-    if (summary.origin == BorrowOriginKind::Argument && !ambiguous) {
+    // A result written as the class's callable pattern result, with the
+    // pattern's pack as its final parameter, is supplied by that pack's
+    // lanes alone, exactly as for a method of the class.
+    std::optional<std::size_t> patternLane;
+    if (const auto pack =
+            signatureContractDefaults() && currentClass
+                ? callablePatternResultPack(expr.returnType(),
+                                            expr.parameters(), *currentClass)
+                : std::nullopt) {
+      std::size_t lanes = 0;
+      for (std::size_t position = *pack;
+           position < lambdaReturn.parameterTypes.size(); ++position) {
+        const SemanticType &lane = lambdaReturn.parameterTypes[position];
+        if (lane.kind == SemanticType::Reference &&
+            (returnType.referenceAccess == AccessMode::ReadOnly ||
+             lane.referenceAccess == AccessMode::Mutable)) {
+          patternLane = position;
+          ++lanes;
+        }
+      }
+      if (lanes != 1)
+        patternLane.reset();
+    }
+    if (patternLane) {
+      lambdaReturn.origin = BorrowOriginKind::Argument;
+      lambdaReturn.parameter = *patternLane;
+      lambdaReturn.access = returnType.referenceAccess;
+    } else if (summary.origin == BorrowOriginKind::Argument && !ambiguous) {
       lambdaReturn.origin = summary.origin;
       lambdaReturn.parameter = summary.parameter;
       lambdaReturn.access = summary.access;

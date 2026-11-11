@@ -3062,6 +3062,12 @@ private:
   [[nodiscard]] std::optional<std::size_t>
   callablePatternResultPack(const FunctionDecl &syntax,
                             ClassId ownerClass) const;
+  // The same rule for any callable written in the class: a lambda whose
+  // result and final pack repeat the pattern's (`-> R&<r>`, `Args...`).
+  [[nodiscard]] std::optional<std::size_t>
+  callablePatternResultPack(const TypeRef &result,
+                            std::span<const Parameter> parameters,
+                            ClassId ownerClass) const;
   // RFC 0004 declaration rules: every region a signature names is bound
   // (GTI-S2128), and a result region a function binds has a supplying
   // parameter (GTI-S2127).
