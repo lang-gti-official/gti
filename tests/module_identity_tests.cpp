@@ -109,7 +109,7 @@ return 0;
 
 export ReadView escape(){int local=1; return ReadView(local);}
 )GTI",
-       R"GTI(GTI-S2045)GTI"},
+       R"GTI(GTI-S2127)GTI"},
       {R"GTI(enum)GTI",
        R"GTI(export module a;
 enum Message { text(std::string_view value), none };)GTI",
@@ -172,6 +172,17 @@ export int b(){mut int first=1; mut int second=2; Selected selected{first,second
                    "constructor summaries use defining-module identities in "
                    "either import order");
           } else {
+            if (result.semanticValid ||
+                std::none_of(result.diagnostics.begin(),
+                             result.diagnostics.end(),
+                             [&](const auto &diagnostic) {
+                               return diagnostic.code == test.code;
+                             })) {
+              std::cerr << test.name << " cached=" << cached << '\n';
+              for (const auto &diagnostic : result.diagnostics)
+                std::cerr << diagnostic.code << ": " << diagnostic.message
+                          << '\n';
+            }
             expect(result.sourceValid && result.syntaxValid &&
                        !result.semanticValid &&
                        std::any_of(result.diagnostics.begin(),
@@ -184,7 +195,8 @@ export int b(){mut int first=1; mut int second=2; Selected selected{first,second
                                     [](const auto &diagnostic) {
                                       return diagnostic.code == "GTI-B0001";
                                     }),
-                   "exact retained origins reject mutation/escape before MIR");
+                   "exact retained origins reject mutation/escape with a user "
+                   "diagnostic");
           }
         }
       }

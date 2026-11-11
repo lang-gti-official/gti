@@ -26,6 +26,12 @@ int main() {
         .analyze(root / "tests" / "reference-payload-semantic.gti", source,
                  {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   };
+  // RFC 0004: MIR is the borrow checker, so borrow rejections need MIR.
+  const auto analyzeMir = [&](const std::string &source) {
+    return lang::Frontend().analyze(
+        root / "tests" / "reference-payload-semantic.gti", source,
+        {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  };
   const auto acceptedSemantics = [&](const lang::FrontendResult &result) {
     for (const auto &diagnostic : result.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -145,7 +151,7 @@ int main() { return 0; }
   expect(owners.size() == 2 && owners[0].root == owners[1].root &&
              owners[0].projections != owners[1].projections,
          "separate reference fields retain distinct exact external places");
-  const auto conflict = analyze(R"gti(
+  const auto conflict = analyzeMir(R"gti(
 enum Reading { empty, item(mut int& value) };
 int inspect(mut Reading input) {
   switch (input) {
@@ -211,7 +217,7 @@ int main() { return 0; }
   }
   expect(transferred.size() == 2,
          "consuming two mutable reference fields publishes two successors");
-  const auto transferredConflict = analyze(R"gti(
+  const auto transferredConflict = analyzeMir(R"gti(
 enum Reading { empty, item(mut int& value) };
 int consume(mut Reading input) {
   switch (std::move(input)) {
@@ -551,7 +557,7 @@ int main() {
   for (const std::string body :
        {"result = produce(owner, true); return int(error.size());",
         "auto moved = std::move(result); return int(error.size());"}) {
-    const auto invalidated = analyze(observedPrefix + R"gti(
+    const auto invalidated = analyzeMir(observedPrefix + R"gti(
 int main() {
   int owner = 3;
   mut auto result = produce(owner, true);
@@ -1015,7 +1021,7 @@ int main() {
           "std::move(view).take(); } int main() { return 0; }",
           "int main() { mut int owner = 42; auto view = View(owner); owner = "
           "7; return view.read(); }"}) {
-      const auto result = analyze(wrapper + suffix);
+      const auto result = analyzeMir(wrapper + suffix);
       expect(result.syntaxValid && !result.semanticValid,
              "borrowed class cannot escape a local or invalidate a live "
              "external owner");
@@ -1065,7 +1071,7 @@ int main() {
           "int main() { mut int owner = 1; auto view = "
           "GenericView<int>(owner); GenericView<int> copied = view; owner = 2; "
           "return copied.read(); }"}) {
-      const auto result = analyze(generic + suffix);
+      const auto result = analyzeMir(generic + suffix);
       expect(result.syntaxValid && !result.semanticValid,
              "concrete generic borrow proofs reject local escape and live-copy "
              "mutation");

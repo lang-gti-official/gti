@@ -286,7 +286,7 @@ Packet<int&, int> bad() {
   return Packet<int&, int>(local);
 }
 )",
-           "GTI-S2045", "outlives the result");
+           "GTI-S2127", "does not live for 'static'");
   rejected(owned + borrowed + R"(
 int main() {
   mut int owner = 42;

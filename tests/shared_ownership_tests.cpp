@@ -211,14 +211,16 @@ void checkRejections() {
            return base->read();
          })",
   };
+  // Borrow conflicts are MIR's authority, so negatives run through MIR.
   for (const auto &source : sources) {
-    const auto frontend = analyze(source);
-    if (frontend.hirValid || !frontend.syntaxValid) {
+    const auto frontend = analyze(source, lang::FrontendPhase::Mir);
+    if (frontend.canGenerateCode() || !frontend.syntaxValid) {
+      std::cerr << source << '\n';
       dump(frontend);
     }
     require(frontend.syntaxValid,
             "negative cases must reach semantic checking");
-    require(!frontend.hirValid,
+    require(!frontend.canGenerateCode(),
             "unsafe shared-owner operation must be rejected");
     require(std::any_of(frontend.diagnostics.begin(),
                         frontend.diagnostics.end(),
