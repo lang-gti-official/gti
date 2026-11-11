@@ -10571,6 +10571,22 @@ private:
     return true;
   }
 
+  // Under signature contracts an accessor of a carrier borrows the carrier
+  // shell: its call-result chain is rooted there, with the carrier's owner
+  // group as the chain root's stored dependency rather than its parent.
+  [[nodiscard]] bool shellRootedCallResultChain(MirLoanId outermost,
+                                                MirLoanId owner,
+                                                HirValueId valueId,
+                                                AccessMode access) const {
+    if (legacyBorrowChecker() || owner == 0 ||
+        !retainableCallResultChain(outermost, 0, valueId, access))
+      return false;
+    const MirLoan *root = output.findLoan(outermost);
+    while (root != nullptr && root->parent != 0)
+      root = output.findLoan(root->parent);
+    return root != nullptr && root->storedDependency == owner;
+  }
+
   static void removeLoanFromState(
       MirLoanId loan, std::vector<Scope> &scopeState,
       std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
@@ -12952,7 +12968,9 @@ private:
               desired->access != AccessMode::ReadOnly ||
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(existing, found->second, valueId,
-                                          desired->access))) {
+                                          desired->access) &&
+               !shellRootedCallResultChain(existing, found->second, valueId,
+                                           desired->access))) {
             reject(valueId, "reference initializer's accessor result does not "
                             "retain the selected owner and access");
           }
