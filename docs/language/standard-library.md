@@ -907,8 +907,35 @@ index overloads are constexpr and retain checked bounds. The
 demonstrates this with bounded demonstration hashes, byte lengths, and texture
 classification. The hashes are not collision-free asset identifiers.
 
-The existing `std::MAX_UINT64` constant is exactly 18446744073709551615, not
-the signed 64-bit maximum.
+### Numeric Limits
+
+`std.numeric` names the range of every built-in numeric type as a `constexpr`
+constant, so each is usable in `static_assert`, fixed-array extents and other
+required constant contexts as well as at runtime:
+
+| Constant | Type | Value |
+| --- | --- | --- |
+| `std::MIN_INT8`, `std::MAX_INT8` | `int8_t` | -128, 127 |
+| `std::MIN_INT16`, `std::MAX_INT16` | `int16_t` | -32768, 32767 |
+| `std::MIN_INT32`, `std::MAX_INT32` | `int32_t` | -2147483648, 2147483647 |
+| `std::MIN_INT64`, `std::MAX_INT64` | `int64_t` | -9223372036854775808, 9223372036854775807 |
+| `std::MAX_UINT8` | `uint8_t` | 255 |
+| `std::MAX_UINT16` | `uint16_t` | 65535 |
+| `std::MAX_UINT32` | `uint32_t` | 4294967295 |
+| `std::MAX_UINT64` | `uint64_t` | 18446744073709551615 |
+| `std::MAX_FLOAT`, `std::MAX_DOUBLE` | `float`, `double` | largest finite value, (2 - 2^-23) * 2^127 and (2 - 2^-52) * 2^1023 |
+| `std::LOWEST_FLOAT`, `std::LOWEST_DOUBLE` | `float`, `double` | most negative finite value, the negated maximum |
+| `std::MIN_FLOAT`, `std::MIN_DOUBLE` | `float`, `double` | smallest positive normal value, 2^-126 and 2^-1022 |
+| `std::TRUE_MIN_FLOAT`, `std::TRUE_MIN_DOUBLE` | `float`, `double` | smallest positive subnormal value, 2^-149 and 2^-1074 |
+| `std::EPSILON_FLOAT`, `std::EPSILON_DOUBLE` | `float`, `double` | distance from 1 to the next larger value, 2^-23 and 2^-52 |
+
+Unsigned minimums are zero and have no constant. `std::MAX_UINT64` is also the
+largest `std::size_t`; `std::MIN_INT64` and `std::MAX_INT64` bound
+`std::ptrdiff_t`. As with C++ `numeric_limits<T>::min()`, the floating `MIN_`
+constants are the smallest positive normal values, not the most negative ones;
+use `LOWEST_` for those. Each floating constant holds the exact IEEE-754 bits
+named above, and each integer constant has its declared fixed-width type.
+Infinity and NaN are not limits and have no constants.
 
 ### Numeric Input
 

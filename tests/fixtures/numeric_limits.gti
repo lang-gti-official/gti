@@ -1,0 +1,99 @@
+import std.numeric;
+
+// The integer and IEEE-754 limit constants, checked against exact identities
+// rather than a second spelling of the same digits: integer extrema wrap into
+// each other, and every floating limit is rebuilt from 1 by exact power-of-two
+// scaling. Infinity is detected as a value above the finite maximum.
+
+// Integer limits are usable in required constant contexts.
+static_assert(std::MIN_INT8 == -128 && std::MAX_INT8 == 127);
+static_assert(std::MIN_INT16 == -32768 && std::MAX_INT16 == 32767);
+static_assert(std::MIN_INT32 == -2147483648 && std::MAX_INT32 == 2147483647);
+static_assert(std::MAX_INT64 == 9223372036854775807);
+static_assert(std::MIN_INT64 + std::MAX_INT64 == int64_t(-1));
+static_assert(std::MAX_UINT8 == 255 && std::MAX_UINT16 == 65535);
+static_assert(std::MAX_UINT32 == 4294967295);
+static_assert(std::MAX_UINT64 == 18446744073709551615);
+
+constexpr int8_t wrapped_int8 = std::wrapping_add(std::MAX_INT8, int8_t(1));
+constexpr uint32_t wrapped_uint32 = std::wrapping_add(std::MAX_UINT32, uint32_t(1));
+constexpr float constant_float_max = std::MAX_FLOAT;
+constexpr double constant_double_min = std::MIN_DOUBLE;
+
+float scale_float(float value, int32_t exponent) {
+  mut float result = value;
+  for (mut int32_t step = 0; step < exponent; step++) { result = result * 2.0; }
+  for (mut int32_t step = exponent; step < 0; step++) { result = result * 0.5; }
+  return result;
+}
+
+double scale_double(double value, int32_t exponent) {
+  mut double result = value;
+  for (mut int32_t step = 0; step < exponent; step++) { result = result * 2.0d; }
+  for (mut int32_t step = exponent; step < 0; step++) { result = result * 0.5d; }
+  return result;
+}
+
+bool check_signed() {
+  if (wrapped_int8 != std::MIN_INT8) { return false; }
+  if (std::wrapping_sub(std::MIN_INT8, int8_t(1)) != std::MAX_INT8) { return false; }
+  if (std::wrapping_add(std::MAX_INT16, int16_t(1)) != std::MIN_INT16) { return false; }
+  if (std::wrapping_add(std::MAX_INT32, int32_t(1)) != std::MIN_INT32) { return false; }
+  if (std::wrapping_add(std::MAX_INT64, int64_t(1)) != std::MIN_INT64) { return false; }
+  if (std::checked_add(std::MAX_INT64, int64_t(1)).has_value()) { return false; }
+  if (std::checked_sub(std::MIN_INT64, int64_t(1)).has_value()) { return false; }
+  return std::checked_sub(std::MIN_INT32, int32_t(0)).value() == std::MIN_INT32;
+}
+
+bool check_unsigned() {
+  if (std::wrapping_add(std::MAX_UINT8, uint8_t(1)) != uint8_t(0)) { return false; }
+  if (std::wrapping_add(std::MAX_UINT16, uint16_t(1)) != uint16_t(0)) { return false; }
+  if (wrapped_uint32 != uint32_t(0)) { return false; }
+  if (std::wrapping_add(std::MAX_UINT64, uint64_t(1)) != uint64_t(0)) { return false; }
+  // Each unsigned maximum is the next width's 2^N - 1.
+  if (uint16_t(std::MAX_UINT8) * uint16_t(257) != std::MAX_UINT16) { return false; }
+  if (uint32_t(std::MAX_UINT16) * uint32_t(65537) != std::MAX_UINT32) { return false; }
+  return uint64_t(std::MAX_UINT32) * uint64_t(4294967297) == std::MAX_UINT64;
+}
+
+bool check_float() {
+  if (std::EPSILON_FLOAT != scale_float(1.0, -23)) { return false; }
+  if (1.0 + std::EPSILON_FLOAT == 1.0 || 1.0 + std::EPSILON_FLOAT * 0.5 != 1.0) {
+    return false;
+  }
+  if (std::MIN_FLOAT != scale_float(1.0, -126)) { return false; }
+  if (std::TRUE_MIN_FLOAT != scale_float(1.0, -149)) { return false; }
+  if (std::TRUE_MIN_FLOAT * 0.5 != 0.0) { return false; }
+  if (std::MAX_FLOAT != scale_float(2.0 - std::EPSILON_FLOAT, 127)) { return false; }
+  if (constant_float_max != std::MAX_FLOAT) { return false; }
+  // The maximum is finite, and one more doubling overflows to infinity.
+  if (std::MAX_FLOAT - std::MAX_FLOAT != 0.0) { return false; }
+  if (!(std::MAX_FLOAT * 2.0 > std::MAX_FLOAT)) { return false; }
+  if (std::LOWEST_FLOAT != -std::MAX_FLOAT) { return false; }
+  return std::LOWEST_FLOAT * 2.0 < std::LOWEST_FLOAT;
+}
+
+bool check_double() {
+  if (std::EPSILON_DOUBLE != scale_double(1.0d, -52)) { return false; }
+  if (1.0d + std::EPSILON_DOUBLE == 1.0d ||
+      1.0d + std::EPSILON_DOUBLE * 0.5d != 1.0d) {
+    return false;
+  }
+  if (std::MIN_DOUBLE != scale_double(1.0d, -1022)) { return false; }
+  if (constant_double_min != std::MIN_DOUBLE) { return false; }
+  if (std::TRUE_MIN_DOUBLE != scale_double(1.0d, -1074)) { return false; }
+  if (std::TRUE_MIN_DOUBLE * 0.5d != 0.0d) { return false; }
+  if (std::MAX_DOUBLE != scale_double(2.0d - std::EPSILON_DOUBLE, 1023)) { return false; }
+  if (std::MAX_DOUBLE - std::MAX_DOUBLE != 0.0d) { return false; }
+  if (!(std::MAX_DOUBLE * 2.0d > std::MAX_DOUBLE)) { return false; }
+  if (std::LOWEST_DOUBLE != -std::MAX_DOUBLE) { return false; }
+  return std::LOWEST_DOUBLE * 2.0d < std::LOWEST_DOUBLE;
+}
+
+int main() {
+  if (!check_signed()) { return 1; }
+  if (!check_unsigned()) { return 2; }
+  if (!check_float()) { return 3; }
+  if (!check_double()) { return 4; }
+  return 0;
+}

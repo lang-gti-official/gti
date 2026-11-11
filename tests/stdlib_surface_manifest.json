@@ -1960,6 +1960,20 @@
       }
     },
     {
+      "id": "numeric-limits",
+      "mode": "run",
+      "source": "tests/fixtures/numeric_limits.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "numeric-source-storage",
       "mode": "run",
       "source": "examples/033-source-concepts.gti",
@@ -6152,7 +6166,28 @@
       "source": "stdlib/std/numeric.gti",
       "status": "executable",
       "operations": [
+        "std::EPSILON_DOUBLE",
+        "std::EPSILON_FLOAT",
+        "std::LOWEST_DOUBLE",
+        "std::LOWEST_FLOAT",
+        "std::MAX_DOUBLE",
+        "std::MAX_FLOAT",
+        "std::MAX_INT16",
+        "std::MAX_INT32",
+        "std::MAX_INT64",
+        "std::MAX_INT8",
+        "std::MAX_UINT16",
+        "std::MAX_UINT32",
         "std::MAX_UINT64",
+        "std::MAX_UINT8",
+        "std::MIN_DOUBLE",
+        "std::MIN_FLOAT",
+        "std::MIN_INT16",
+        "std::MIN_INT32",
+        "std::MIN_INT64",
+        "std::MIN_INT8",
+        "std::TRUE_MIN_DOUBLE",
+        "std::TRUE_MIN_FLOAT",
         "std::accumulate",
         "std::checked_add",
         "std::checked_mul",
@@ -6174,6 +6209,7 @@
       "case_ids": [
         "numeric",
         "numeric-boundaries",
+        "numeric-limits",
         "constexpr-library"
       ],
       "required_instantiations": [
@@ -6197,7 +6233,8 @@
         "tests/numeric_boundaries_runtime_test.py",
         "tests/fixtures/numeric_boundaries.gti",
         "tests/fixtures/numeric_boundaries_oracle.cpp",
-        "tests/fixtures/numeric_boundaries_failure.gti"
+        "tests/fixtures/numeric_boundaries_failure.gti",
+        "tests/fixtures/numeric_limits.gti"
       ]
     },
     {
