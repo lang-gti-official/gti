@@ -5022,6 +5022,10 @@ private:
           if (receiver != nullptr &&
               receiver->info.category == ValueCategory::Value &&
               receiver->info.type.kind == SemanticType::Class) {
+            // A folded immediate construction defines its value only once
+            // emitted; the dependency walk leaves constants to their use.
+            if (receiver->programConstantSubstitution)
+              emitProgramConstantSubstitution(*receiver);
             const auto copy = assignmentSnapshots.find(receiver->id);
             place = appendPlace({.root = MirPlaceRootKind::Value,
                                  .value = copy == assignmentSnapshots.end()
