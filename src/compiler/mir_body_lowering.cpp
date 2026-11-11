@@ -4795,8 +4795,14 @@ private:
                       alternative) == lowered.additionalDependencies.end())
           lowered.additionalDependencies.push_back(std::move(alternative));
     }
+    // RFC 0004: a composed carrier's suppliers keep their own argument
+    // access in MIR, which owns loans; the retired semantic model widened a
+    // read-only supplier to the composition's strongest access.
+    const bool composedSupplier =
+        !legacyBorrowChecker() && lowered.kind == MirLoanKind::Stored &&
+        !loan.entry && !loan.additionalDependencies.empty();
     if (lowered.access == AccessMode::ReadOnly &&
-        loan.access == AccessMode::Mutable) {
+        loan.access == AccessMode::Mutable && !composedSupplier) {
       valid = false;
       return;
     }
