@@ -353,7 +353,11 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   // the same programs from their bodies.
   static const bool signatureContracts =
       !legacyBorrowChecker();
-  if (signatureContracts &&
+  // An out-of-class definition repeats a declaration whose signature, not
+  // the definition's spelling, states the contract.
+  const bool separateDefinition =
+      function.declaration != nullptr && function.declaration != &syntax;
+  if (signatureContracts && !separateDefinition &&
       (function.ownerClass == 0 || function.staticMember) &&
       syntax.returnType().reference && !syntax.returnType().referenceLifetime &&
       !syntax.hasFunctionAttribute("borrowed_from") &&
