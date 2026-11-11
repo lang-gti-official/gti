@@ -9302,12 +9302,22 @@ auto SemanticVisitor::Impl::receiverModeForObject(
   }
   // A text field relay returns what a dependent temporary holds in that
   // field, its owner's text, never a view of the temporary itself.
+  // MIR materializes a fresh borrowed carrier receiver only from a directly
+  // resolved producer; a virtually dispatched one keeps the S2081 rejection.
+  const auto virtualCarrierProducer = [&] {
+    if (info == nullptr || !info->traits.containsBorrowedState)
+      return false;
+    const auto *call = exprAs<Call>(transparentTemporaryProducer(receiver));
+    const ResolvedCallInfo *resolved =
+        call == nullptr ? nullptr : semanticModel.findCall(*call);
+    return resolved != nullptr && resolved->dispatch == CallDispatch::Virtual;
+  };
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
        ephemeralBorrowResultSupported(function) ||
        (isTextDependentValue(*info) && receiverTextFieldRelay(function))) &&
       (freshTemporaryReceiverValue(receiver).eligible ||
-       consumingReceiverValue(receiver))) {
+       (consumingReceiverValue(receiver) && !virtualCarrierProducer()))) {
     return function.receiverMutability == ReceiverMutability::Mutable
                ? CallReceiverMode::FreshTemporaryMutable
                : CallReceiverMode::FreshTemporaryRead;
