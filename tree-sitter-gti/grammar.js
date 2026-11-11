@@ -25,6 +25,7 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$.generic_argument_profile_clause, $._base_type],
     [$.function_declaration, $.macro_declaration],
     [$.macro_declaration, $._qualified_identifier],
     [$.generic_argument_profile_clause, $.generic_parameter],
@@ -811,7 +812,8 @@ module.exports = grammar({
         repeat(seq(field("pattern", $.identifier), ",")),
         field("pattern", choice(
           "void",
-          seq(optional("mut"), $.identifier, $.reference_declarator),
+          seq(optional("mut"), choice($.identifier, $.primitive_type),
+              $.reference_declarator),
         )),
         repeat(seq(",", field("pattern", $.type))),
         repeat(seq(",", field("lifetime_parameter", $.lifetime_parameter))),

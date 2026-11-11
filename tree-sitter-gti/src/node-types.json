@@ -3349,6 +3349,10 @@
             "named": false
           },
           {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
             "type": "reference_declarator",
             "named": true
           },

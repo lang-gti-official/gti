@@ -5342,8 +5342,17 @@
                     ]
                   },
                   {
-                    "type": "SYMBOL",
-                    "name": "identifier"
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "SYMBOL",
+                        "name": "identifier"
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "primitive_type"
+                      }
+                    ]
                   },
                   {
                     "type": "SYMBOL",
@@ -10529,6 +10538,10 @@
     }
   ],
   "conflicts": [
+    [
+      "generic_argument_profile_clause",
+      "_base_type"
+    ],
     [
       "function_declaration",
       "macro_declaration"
