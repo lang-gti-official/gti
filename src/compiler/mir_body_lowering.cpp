@@ -17104,8 +17104,23 @@ private:
               parent = output.findLoan(parent->parent);
             }
             if (!seen.empty() && parent == nullptr &&
-                bodyReturnBorrowOrigin() == BorrowOriginKind::Receiver)
-              return true;
+                bodyReturnBorrowOrigin() == BorrowOriginKind::Receiver) {
+              // The outermost body-local loan must borrow receiver storage:
+              // a local object's own storage (even one carrying a stored
+              // dependency on the receiver) does not outlive the body.
+              const MirLoan *outermost = &candidate;
+              for (const MirLoanId id : seen)
+                if (const MirLoan *ancestor = output.findLoan(id);
+                    ancestor != nullptr && ancestor->parent == 0)
+                  outermost = ancestor;
+              const MirPlace *root = output.findPlace(outermost->source);
+              return root == nullptr ||
+                     !((root->root == MirPlaceRootKind::Binding &&
+                        (root->projections.empty() ||
+                         root->projections.front().kind !=
+                             MirProjectionKind::Dereference)) ||
+                       root->root == MirPlaceRootKind::Temporary);
+            }
             return summarized && parent != nullptr &&
                    parent->kind == MirLoanKind::Parameter && parent->entry &&
                    std::find(parent->carriers.begin(), parent->carriers.end(),
@@ -17181,6 +17196,18 @@ private:
             // it is never a child of a body-local loan, which ends here. A
             // parent that was a stored owner authority becomes the stored
             // dependency.
+            // A child of a body-local reborrow chain that reaches no caller
+            // authority (it ends in a local object's own storage) cannot be
+            // published: the returned borrow outlives that storage.
+            const MirLoan *localParent =
+                loan.parent != 0 ? output.findLoan(loan.parent) : nullptr;
+            if (loan.kind == MirLoanKind::Return && localParent != nullptr &&
+                localParent->kind == MirLoanKind::Local &&
+                !localParent->entry && !localParent->escapes &&
+                bodyReturnBorrowOrigin() == BorrowOriginKind::Receiver) {
+              rejectSource(*statement.value, MirBorrowRejectionKind::Escape);
+              return;
+            }
             if (loan.parent != 0) {
               const MirLoan &parent = output.loans[loan.parent - 1];
               if (loan.storedDependency == 0 &&
@@ -17699,7 +17726,10 @@ MirBody MirLowerer::lowerBody(
           anchor = tokenSpan(token);
       errors.push_back({.body = {kind, owner},
                         .source = anchor ? anchor : sourceFor(rejection->first),
-                        .message = "lambda borrows an enclosing capture",
+                        .message = rejection->second ==
+                                           MirBorrowRejectionKind::NestedCapture
+                                       ? "lambda borrows an enclosing capture"
+                                       : "returned borrow outlives local storage",
                         .borrow = {.kind = rejection->second}});
     } else if (const auto &rejection = lowerer->rejection(); rejection)
       errors.push_back({.body = {kind, owner},

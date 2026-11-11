@@ -3597,7 +3597,9 @@ public:
 };
 int main() { return 0; }
 )",
-                 "local child reborrow cannot escape"),
+                 // MIR rejects the escape of the local object's own field.
+                 mirBorrowAuthority() ? "does not outlive the function"
+                                      : "local child reborrow cannot escape"),
          "a local carrier's external dependency cannot extend its owned field");
   const lang::FrontendResult disjointIndexes =
       lang::Frontend().analyze("disjoint-index-borrows.gti", R"(

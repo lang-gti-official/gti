@@ -393,7 +393,21 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       related.push_back(
           {tokenSpan(token), "The overlapping borrow originates here."});
   };
+  // A body's user rejection explains why its construction stopped; any
+  // structural failure it caused in the same body is a consequence of that
+  // rejection, not an internal error.
+  std::vector<MirBodyAddress> rejectedBodies;
+  for (const MirLoweringError &error : mir.errors)
+    if (error.borrow.kind != MirBorrowRejectionKind::None && error.source)
+      rejectedBodies.push_back(error.body);
   for (const MirLoweringError &error : mir.errors) {
+    if (error.borrow.kind == MirBorrowRejectionKind::None &&
+        std::any_of(rejectedBodies.begin(), rejectedBodies.end(),
+                    [&](const MirBodyAddress &body) {
+                      return body.kind == error.body.kind &&
+                             body.owner == error.body.owner;
+                    }))
+      continue;
     // The provisional program proof reports an escape without a body source.
     if ((error.borrow.kind == MirBorrowRejectionKind::Escape ||
          error.borrow.kind == MirBorrowRejectionKind::Supplier) &&
