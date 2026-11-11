@@ -435,7 +435,9 @@ std::resource_ref<std::process_resource> escape() {
 }
 int main() { return 0; }
 )",
-           "GTI-S2045",
+           // RFC 0004: no input supplies the result, so it is implicitly
+           // 'static' and the local resource cannot reach it.
+           "GTI-S2127",
            "a resource binding cannot outlive its checked resource");
 
   const std::string resettable = R"(

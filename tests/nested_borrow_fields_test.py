@@ -121,7 +121,10 @@ int main() { mut int value = 1; Bad bad{value}; bad.write(); return 0; }
         "nested-lifecycle-guard": "GTI-S2045",
         "owned-sibling-copy": "GTI-S2003",
         "owner-mutation": "GTI-S2017",
-        "local-owner-return": "GTI-S2045",
+        # RFC 0004: `bad()` has no borrow-carrying input, so its result is
+        # implicitly 'static'; MIR reports the local's escape as a region
+        # failure.
+        "local-owner-return": "GTI-S2127",
         "exclusive-copy": "GTI-S2003",
         "exclusive-extraction-copy": "GTI-S2003",
         "reseat-field": "GTI-S2003",
