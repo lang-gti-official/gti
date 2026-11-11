@@ -3754,13 +3754,30 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             write && externalCarrierTransfer && loan.escapes
                 ? body.findPlace(loan.source)
                 : nullptr;
+        // A returned reference borrowed directly from the carrier place
+        // designates the shell itself, not the caller-owned referent it
+        // carries: destroying that shell invalidates the returned reference.
+        const auto returnsShellReference = [&](const MirPlace *source) {
+          if (body.returnType.kind != SemanticType::Reference)
+            return false;
+          for (const MirBlock &candidate : body.blocks)
+            for (const MirInstruction &borrow : candidate.instructions)
+              if (borrow.kind == MirInstructionKind::Borrow && borrow.loan &&
+                  *borrow.loan == loan.id && borrow.operands.size() == 1 &&
+                  (borrow.operands.front().kind == MirOperandKind::BorrowRead ||
+                   borrow.operands.front().kind ==
+                       MirOperandKind::BorrowWrite) &&
+                  borrow.operands.front().place == source->id)
+                return true;
+          return false;
+        };
         const auto isReturnedCarrier = [&](const MirPlace *source) {
           if (source == nullptr || accessed == nullptr ||
               source->root != MirPlaceRootKind::Binding)
             return false;
           if (source->traits.containsBorrowedState &&
               source->projections.empty() && accessed->id == source->id)
-            return true;
+            return !returnsShellReference(source);
           if (accessed->root != MirPlaceRootKind::Binding ||
               accessed->binding != source->binding ||
               !accessed->projections.empty())

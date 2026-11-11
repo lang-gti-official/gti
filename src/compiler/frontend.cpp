@@ -276,15 +276,18 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     const MirLoan *loan = body ? body->findLoan(error.borrow.loan) : nullptr;
     return loan != nullptr && loan->escapes ? loan : nullptr;
   };
-  // The escaping loan borrows a projection of a by-value parameter that
-  // carries borrowed state: the parameter's shell, not the owner it borrows.
+  // The escaping loan borrows a by-value parameter that carries borrowed
+  // state, or a projection of it: the parameter's shell, not the owner it
+  // borrows. A whole-shell borrow counts only when the body returns a
+  // reference; a returned carrier value transfers the shell instead.
   const auto byValueCarrierShell = [&](const MirLoweringError &error) {
     const MirLoan *loan = escapingLoan(error);
     const MirBody *body =
         findMirBody(program, error.body.kind, error.body.owner);
     const MirPlace *source = loan ? body->findPlace(loan->source) : nullptr;
     if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
-        source->projections.empty())
+        (source->projections.empty() &&
+         body->returnType.kind != SemanticType::Reference))
       return false;
     for (const auto &function : program.functionInstances())
       if (function.id == error.body.owner)
@@ -389,12 +392,26 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
           escapeSpan(error.body.kind, error.body.owner, error.block)
               .value_or(*error.source);
       if (!staticResult(error.body.kind, error.body.owner) &&
-          byValueCarrierShell(error))
+          byValueCarrierShell(error)) {
+        const MirBody *body =
+            findMirBody(program, error.body.kind, error.body.owner);
+        const MirLoan *loan = escapingLoan(error);
+        const MirPlace *source = body->findPlace(loan->source);
         add(span,
-            "Returned reference is a projection of the by-value carrier "
-            "shell rather than its external owner dependency.",
+            source->projections.empty()
+                ? "Returned reference refers to the by-value carrier shell "
+                  "rather than its external owner dependency."
+                : "Returned reference is a projection of the by-value "
+                  "carrier shell rather than its external owner dependency.",
             "GTI-S2085");
-      else
+        if (!check.diagnostics.empty() &&
+            check.diagnostics.back().code == "GTI-S2085" &&
+            check.diagnostics.back().hints.empty())
+          check.diagnostics.back().hints.emplace_back(
+              "Return the carrier value itself, or return its one exact "
+              "stored referent with the same type; ordinary carrier fields "
+              "and shell projections cannot escape.");
+      } else
         addEscape(span, error.body.kind, error.body.owner);
     } else if (error.temporaryDestroyed) {
       add(*error.source,
