@@ -983,7 +983,12 @@ void emitSourcePreflight(Session &session,
             instruction.functionTarget
                 ? program.findFunctionInstance(*instruction.functionTarget)
                 : nullptr;
-        if (target && target->linkage == LanguageLinkage::C)
+        // A process-memory runtime operation (gti_rt_malloc_v1 and its
+        // family) is a runtime binding with its own contract, not a native C
+        // call this ABI witnesses.
+        if (target && target->linkage == LanguageLinkage::C &&
+            target->processMemoryOperation ==
+                ProcessMemoryRuntimeOperation::None)
           require(nativeCDirectCallContract(program, session.program().target(),
                                             function.body, instruction),
                   "source preflight needs every real C call's exact witness");

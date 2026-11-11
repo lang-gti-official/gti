@@ -620,6 +620,25 @@ reference packs that construct borrowed carriers need further integration. Named
 reference storage; its typed-storage obligations remain the dependent RFC 0003
 work.
 
+MIR checks every body against signature contracts only, so some programs Rust
+accepts are still rejected, never the reverse:
+
+- A region cannot travel through a type argument: `transform` with a mapper
+  returning `int&<static>` is rejected (GTI-S2022), unlike Rust's
+  `Result::map` over a `U` that carries a lifetime.
+- A result region cannot name both the receiver's stored region and a
+  parameter (`int&<a> operator()(int&<a> input) &&` in `C<lifetime a>`).
+- A relay through more than one stored reference of a by-value carrier
+  (`c.referent.next`) is a GTI-S2085 supplier rejection.
+- A carrier from a virtual call cannot serve as a temporary receiver
+  (GTI-S2081), and a binding that borrows a temporary receiver holding no
+  borrowed state is rejected even when unused (GTI-S2045).
+- A record factory with two distinct regions
+  (`Two<f, s> make<lifetime f, lifetime s>(int&<f>, int&<s>)`) is rejected;
+  one shared region over every supplier is accepted.
+- A borrow conflict inside a generic body is reported for each concrete
+  instance, not at the definition.
+
 ### Reference places and endpoints
 
 Assignment targets are checked by their resolved place category and access,
