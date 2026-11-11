@@ -6784,6 +6784,16 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
   summary.access = borrowAccess(returnType);
   if (ownerClass != 0 && !staticMember) {
     summary.origin = BorrowOriginKind::Receiver;
+    // RFC 0004: an elided carrier result borrows the whole receiver, so any
+    // mutable stored reference in it borrows the receiver exclusively.
+    if (signatureContractDefaults() &&
+        returnType.kind != SemanticType::Reference) {
+      const auto paths = storedReferencePaths(returnType);
+      if (std::any_of(paths.begin(), paths.end(), [](const auto &path) {
+            return path.reference.referenceAccess == AccessMode::Mutable;
+          }))
+        summary.access = AccessMode::Mutable;
+    }
     return summary;
   }
 

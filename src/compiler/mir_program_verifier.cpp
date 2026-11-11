@@ -7557,9 +7557,32 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
           "owner-dependent return is missing its escaping loan", block.id);
     }
     const MirLoan *loan = body.findLoan(*block.terminator.returnLoan);
+    // A mixed carrier returned from its receiver publishes each field with
+    // its own access; an exclusive field makes the whole result exclusive.
+    const bool mixedExclusiveResult =
+        loan != nullptr && instance.returnBorrowAccess == AccessMode::Mutable &&
+        instance.returnType.kind != SemanticType::Reference &&
+        std::any_of(loan->additionalDependencies.begin(),
+                    loan->additionalDependencies.end(),
+                    [](const auto &dependency) {
+                      return dependency.access == AccessMode::Mutable;
+                    });
+    // Without a field map the summary is one whole-receiver borrow: an
+    // exclusive field it returns makes that borrow exclusive for callers.
+    const bool understatedReceiverResult =
+        loan != nullptr && instance.returnBorrowFields.empty() &&
+        instance.returnBorrowOrigin == BorrowOriginKind::Receiver &&
+        instance.returnType.kind != SemanticType::Reference &&
+        instance.returnBorrowAccess != AccessMode::Mutable &&
+        (loan->access == AccessMode::Mutable ||
+         std::any_of(loan->additionalDependencies.begin(),
+                     loan->additionalDependencies.end(),
+                     [](const auto &dependency) {
+                       return dependency.access == AccessMode::Mutable;
+                     }));
     if (loan == nullptr || loan->kind != MirLoanKind::Return ||
-        !loan->escapes ||
-        (!completeConditionalResult &&
+        !loan->escapes || understatedReceiverResult ||
+        (!completeConditionalResult && !mixedExclusiveResult &&
          loan->access != instance.returnBorrowAccess)) {
       return verificationFailure(
           body, instance.id,
