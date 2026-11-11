@@ -2007,13 +2007,29 @@ mirFieldTypeThroughBases(const MirProgram &program,
                                       functionTarget->returnBorrowOrigin,
                                       functionTarget->returnBorrowParameter,
                                       functionTarget->returnBorrowFields);
+      // A carrier result with a proven complete contract that never names
+      // the consumed shell itself carries only the external referents its
+      // stored references reach (`View<a> carrier() &&` in `C<lifetime a>`).
+      const bool externalCarrierResult =
+          !legacyBorrowChecker() &&
+          functionTarget != nullptr &&
+          functionTarget->returnType.kind != SemanticType::Reference &&
+          functionTarget->completeReturnBorrow &&
+          std::none_of(
+              functionTarget->completeReturnBorrow->dependencies.begin(),
+              functionTarget->completeReturnBorrow->dependencies.end(),
+              [](const BorrowedFieldOrigin &dependency) {
+                return dependency.origin == BorrowOriginKind::Receiver &&
+                       dependency.sourceFields.empty();
+              });
       if (functionTarget != nullptr &&
           functionTarget->receiverMutability == ReceiverMutability::Consuming &&
           !consumedTextField &&
           (functionTarget->returnType.kind == SemanticType::Reference ||
            functionTarget->returnBorrowOrigin != BorrowOriginKind::None ||
            instruction.info.traits.containsBorrowedState) &&
-          !(functionTarget->returnType.kind == SemanticType::Reference &&
+          !((functionTarget->returnType.kind == SemanticType::Reference ||
+             externalCarrierResult) &&
             completeReturnProof(functionTarget->id))) {
         return verificationFailure(body, owner,
                                    "consuming receiver invocation cannot "
@@ -2199,21 +2215,28 @@ mirFieldTypeThroughBases(const MirProgram &program,
              (functionTarget->returnType.kind == SemanticType::Reference &&
               functionTarget->returnType.referenceAccess ==
                   AccessMode::ReadOnly));
+        // A read-only reference, or (RFC 0004) a carrier, whose complete
+        // contract reaches only referents the consumed temporary's stored
+        // references designate, never the temporary itself.
+        const bool referenceResult =
+            functionTarget != nullptr &&
+            functionTarget->returnType.kind == SemanticType::Reference;
         const bool externalConsumingReference =
             functionTarget && borrowedCarrier && mutableInput &&
             functionTarget->receiverMutability ==
                 ReceiverMutability::Consuming &&
-            functionTarget->returnType.kind == SemanticType::Reference &&
-            functionTarget->returnType.referenceAccess ==
-                AccessMode::ReadOnly &&
+            (referenceResult ? functionTarget->returnType.referenceAccess ==
+                                   AccessMode::ReadOnly
+                             : !legacyBorrowChecker()) &&
             functionTarget->completeReturnBorrow &&
             !functionTarget->completeReturnBorrow->dependencies.empty() &&
             std::all_of(
                 functionTarget->completeReturnBorrow->dependencies.begin(),
                 functionTarget->completeReturnBorrow->dependencies.end(),
-                [](const auto &dependency) {
+                [&](const auto &dependency) {
                   return dependency.origin == BorrowOriginKind::Receiver &&
-                         dependency.resultFields.empty() &&
+                         (!referenceResult ||
+                          dependency.resultFields.empty()) &&
                          !dependency.sourceFields.empty() &&
                          dependency.access == AccessMode::ReadOnly;
                 });

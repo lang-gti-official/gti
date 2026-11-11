@@ -5437,6 +5437,10 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
     if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr)
       validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
+    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
+        currentClass)
+      validateReturnedReceiverRegion(*currentFunctionDeclaration,
+                                     *currentClass, stmt.value());
     noteReturnedFormalReference(*stmt.value());
     if (expressionNeverReturns(stmt.value().get()))
       return;
@@ -5488,6 +5492,10 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   recordRawResult(stmt.value());
   if (typeTraits(currentReturnType).containsBorrowedState) {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
+    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
+        currentClass)
+      validateReturnedReceiverRegion(*currentFunctionDeclaration,
+                                     *currentClass, stmt.value());
   }
   if (currentReturnType.kind == SemanticType::StringView ||
       currentReturnType.kind == SemanticType::CString) {

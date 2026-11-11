@@ -3102,6 +3102,10 @@ private:
   // as long as the shortest; each must outlive the declared result region.
   void validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
+  // A result in a region the class stores is supplied by references the
+  // receiver stores, never by storage the receiver owns (GTI-S2127).
+  void validateReturnedReceiverRegion(const FunctionDecl &syntax,
+                                      ClassId owner, const ExprPtr &value);
   // `requires outlives<T, r>` on a callee: the type bound to T must outlive
   // r in the caller, by a declared or implied bound (GTI-S2127).
   void validateCallTypeOutlives(const Call &call, const FunctionDecl &callee);

@@ -457,6 +457,57 @@ auto SemanticVisitor::Impl::validateReturnedFieldRegion(
   }
 }
 
+auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
+    const FunctionDecl &syntax, ClassId owner, const ExprPtr &value) -> void {
+  if (!value || owner == 0 || !signatureContractDefaults())
+    return;
+  const auto lifetime = explicitLifetimeResult(syntax, {}, owner);
+  if (!lifetime.classBinder || !lifetime.classStoresRegion)
+    return;
+  const ExpressionInfo *info = semanticModel.findExpression(*value);
+  if (info == nullptr)
+    return;
+  std::vector<SemanticLoanPlace> places;
+  if (currentReturnType.kind == SemanticType::Reference)
+    places = loanPlaces(value);
+  else
+    for (const auto &dependency : storedBorrowDependencies(value))
+      places.push_back(dependency.place);
+  // A receiver place crosses a stored reference when it dereferences one or
+  // projects a reference-typed field: it names that reference's referent.
+  const auto crossesStoredReference = [&](const SemanticLoanPlace &place) {
+    for (const auto &projection : place.projections) {
+      if (projection.kind == PlaceProjectionKind::Dereference)
+        return true;
+      if (projection.kind != PlaceProjectionKind::Field)
+        continue;
+      const SymbolRecord *field = semanticModel.database().findSymbol(projection.field);
+      if (field == nullptr && instanceBaseModel != nullptr)
+        field = instanceBaseModel->database().findSymbol(projection.field);
+      if (field == nullptr)
+        return true; // Unknown structure: leave the proof to MIR.
+      if (field->type.kind == SemanticType::Reference)
+        return true;
+    }
+    return false;
+  };
+  if (std::none_of(places.begin(), places.end(),
+                   [&](const SemanticLoanPlace &place) {
+                     return place.receiver && place.root == 0 &&
+                            !crossesStoredReference(place);
+                   }))
+    return;
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2127", DiagnosticPhase::Semantics, expressionToken(value),
+      "The result declares region '" + lifetime.region +
+          "', which the receiver supplies only through the references it "
+          "stores, but this return borrows storage the receiver owns.");
+  diagnostic.hints.emplace_back(
+      "Return a reference stored in region '" + lifetime.region +
+      "', or declare a result borrowed from 'this'.");
+  diagnostics.emplace_back(std::move(diagnostic));
+}
+
 auto SemanticVisitor::Impl::declaredOutlives(const FunctionDecl &syntax) const
     -> std::vector<std::pair<std::string, std::string>> {
   std::vector<std::pair<std::string, std::string>> relations;
