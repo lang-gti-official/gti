@@ -382,7 +382,17 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       check.internal = true;
       continue;
     }
-    if (error.borrow.kind == MirBorrowRejectionKind::Escape)
+    if (error.borrow.kind == MirBorrowRejectionKind::NestedCapture) {
+      const std::size_t before = check.diagnostics.size();
+      add(*error.source,
+          "A lambda cannot borrow an enclosing lambda's by-reference "
+          "capture.",
+          "GTI-S2045");
+      if (check.diagnostics.size() > before)
+        check.diagnostics.back().hints.emplace_back(
+          "Capture the original owner in the enclosing lambda by value, or "
+          "pass the borrowed value to the inner lambda as a parameter.");
+    } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addEscape(*error.source, error.body.kind, error.body.owner);
     else if (exitDropUnderReturnedBorrow(error)) {
       // The exit drop sits in a cleanup block; name the return that

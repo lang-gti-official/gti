@@ -48,7 +48,7 @@ int main() {
     expect(!result.canGenerateCode() &&
                hasDiagnosticCode(result.diagnostics, code) &&
                !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
-           name + " is rejected by semantics, not the backend");
+           name + " is rejected with a user diagnostic, not an ICE");
   };
   const auto sharedCapture = positive("shared-capture", R"(
 int main() {
@@ -462,6 +462,8 @@ void require_layout<T>() requires std::layout_queryable<T> {}
 int main() { require_layout<std::erased_object>(); return 0; }
 )",
            "GTI-S2029");
+  // RFC 0004: no input supplies the borrowed result, so it is implicitly
+  // 'static'; MIR rejects the local callable as a region escape.
   negative("function-ref-cannot-outlive-local-callable", R"(
 import std.functional;
 std::function_ref<int()> bad() {
@@ -470,7 +472,7 @@ std::function_ref<int()> bad() {
 }
 int main() { return 0; }
 )",
-           "GTI-S2045");
+           "GTI-S2127");
   negative("function-ref-retains-shared-capture-origin", R"(
 import std.functional;
 int main() {
@@ -630,6 +632,8 @@ int main() {
 }
 )",
            "GTI-S2017");
+  // RFC 0004: no input supplies the borrowed result, so it is implicitly
+  // 'static'; MIR rejects the local callable as a region escape.
   negative("borrowed-callable-outlives-owner", R"(
 import std.functional;
 std::function_ref<int()> bad() {
@@ -639,7 +643,7 @@ std::function_ref<int()> bad() {
 }
 int main() { auto escaped = bad(); return escaped(); }
 )",
-           "GTI-S2045");
+           "GTI-S2127");
   negative("exclusive-function-ref-conflicting-call", R"(
 import std.functional;
 int invoke(mut std::function_ref<int() mut>& callback, mut int& owner) {

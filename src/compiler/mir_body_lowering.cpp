@@ -668,6 +668,12 @@ public:
   rejection() const {
     return firstRejection;
   }
+  // A source program MIR refuses with a user diagnostic rather than an ICE.
+  [[nodiscard]] const std::optional<std::pair<HirValueId,
+                                              MirBorrowRejectionKind>> &
+  userRejection() const {
+    return firstUserRejection;
+  }
 
 private:
   void reject(HirValueId value, std::string message) {
@@ -675,6 +681,13 @@ private:
     if (!firstRejection)
       firstRejection = std::pair{value, std::move(message)};
   }
+  void rejectSource(HirValueId value, MirBorrowRejectionKind kind) {
+    valid = false;
+    if (!firstUserRejection)
+      firstUserRejection = std::pair{value, kind};
+  }
+  std::optional<std::pair<HirValueId, MirBorrowRejectionKind>>
+      firstUserRejection;
   struct Scope {
     std::vector<MirPlaceId> drops;
     std::vector<MirLoanId> loans;
@@ -12678,6 +12691,12 @@ private:
           valid = false;
           continue;
         }
+        // Semantics names no keyed place for an enclosing lambda's
+        // by-reference capture, so this body cannot protect its owner.
+        if (!dependency.place.valid() && source->capture != 0) {
+          rejectSource(value->id, MirBorrowRejectionKind::NestedCapture);
+          continue;
+        }
         if (source->key != dependency.place) {
           auto projected = *source;
           projected.id = 0;
@@ -17600,7 +17619,18 @@ MirBody MirLowerer::lowerBody(
       }
       return selected;
     };
-    if (const auto &rejection = lowerer->rejection(); rejection)
+    if (const auto &rejection = lowerer->userRejection(); rejection) {
+      std::optional<SourceSpan> anchor;
+      if (const HirValue *rejected = body.findValue(rejection->first);
+          rejected != nullptr && rejected->source != nullptr)
+        if (const Token token = expressionAnchorToken(*rejected->source);
+            !token.lexeme.empty())
+          anchor = tokenSpan(token);
+      errors.push_back({.body = {kind, owner},
+                        .source = anchor ? anchor : sourceFor(rejection->first),
+                        .message = "lambda borrows an enclosing capture",
+                        .borrow = {.kind = rejection->second}});
+    } else if (const auto &rejection = lowerer->rejection(); rejection)
       errors.push_back({.body = {kind, owner},
                         .source = sourceFor(rejection->first),
                         .message = rejection->second});
@@ -17658,7 +17688,8 @@ MirBody MirLowerer::lowerBody(
                temporaryDestroyed &&
                error.borrow.kind == MirBorrowRejectionKind::Conflict});
     }
-    if (!lowerer->rejection() && lowerer->proof().valid())
+    if (!lowerer->rejection() && !lowerer->userRejection() &&
+        lowerer->proof().valid())
       errors.push_back({.body = {kind, owner},
                         .source = sourceFor(0),
                         .message = "body lowering rejected its checked HIR "
