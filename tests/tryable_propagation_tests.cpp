@@ -953,15 +953,32 @@ public:
   Envelope(Guard value) : guard(std::move(value)) {}
 };
 )gti";
-  rejected(guarded + R"gti(
+  // RFC 0004: a shared reference copied out of a cleanup-bound carrier's
+  // field names the field's external referent, which outlives the carrier
+  // (Rust accepts returning a `&'a T` field of a value with Drop). MIR keeps
+  // the carrier's own loan through its cleanup. An exclusive reference
+  // cannot leave a carrier whose cleanup still uses it.
+  accepted(guarded + R"gti(
 int&<a> escape<lifetime a>(Guard<a> value) { return value.owner; }
-int main() { return 0; }
+int main() { int owner = 7; return escape(Guard(owner)) - 7; }
 )gti",
-           "GTI-S2017", "cleanup-bound carrier cannot escape");
-  rejected(guarded + R"gti(
+           "a shared field reference outlives its cleanup-bound carrier");
+  accepted(guarded + R"gti(
 int&<a> escape<lifetime a>(Envelope<a> value) {
   return value.guard.owner;
 }
+int main() { int owner = 7; return escape(Envelope(Guard(owner))) - 7; }
+)gti",
+           "a nested shared field reference outlives its cleanup-bound "
+           "carrier");
+  rejected(R"gti(
+class Guard {
+public:
+  mut int& owner;
+  Guard(mut int& value) : owner(value) {}
+  ~Guard() { this.owner = 0; }
+};
+mut int&<a> escape<lifetime a>(mut Guard<a> value) { return value.owner; }
 int main() { return 0; }
 )gti",
            "GTI-S2017", "cleanup-bound carrier cannot escape");

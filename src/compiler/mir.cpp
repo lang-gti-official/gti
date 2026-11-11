@@ -3763,6 +3763,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           // and designates the stored referent. A loan of a body-owned
           // carrier object itself protects that object, whose drop the
           // escaping loan cannot survive.
+          // An exclusive result cannot survive a cleanup-bound carrier's
+          // drop: its cleanup still uses the same referent.
           if (source->traits.containsBorrowedState &&
               source->projections.empty() && accessed->id == source->id)
             return std::any_of(
@@ -3770,6 +3772,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 [&](const MirLoan &entry) {
                   const auto *entrySource = body.findPlace(entry.source);
                   return entry.entry && entry.kind == MirLoanKind::Stored &&
+                         !(entry.lifecycleBound &&
+                           loan.access == AccessMode::Mutable) &&
                          entry.parent == 0 && entry.storedDependency == 0 &&
                          !entry.designatedFields.empty() &&
                          entrySource != nullptr &&
@@ -14747,9 +14751,12 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
               std::next(current) == block.instructions.end()) {
             return false;
           }
-          // A cleanup-bound local carrier keeps its group until its drop;
+          // A cleanup-bound local carrier, or a cleanup-bound by-value
+          // carrier parameter's exact entry, keeps its group until its drop;
           // the field's own external dependency publishes independently.
-          if (localFieldSource && retained->lifecycleBound)
+          if ((localFieldSource ||
+               (exactStoredCarrierEntry && referenceTransfer)) &&
+              retained->lifecycleBound)
             return true;
           const MirInstruction &retire = *std::next(current);
           return retire.kind == MirInstructionKind::EndBorrow && retire.loan &&

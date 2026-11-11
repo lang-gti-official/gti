@@ -16703,10 +16703,16 @@ private:
                                  .type = value->info.type}},
                    .loan = published,
                    .info = value->info});
-              (void)appendInstruction({.kind = MirInstructionKind::EndBorrow,
-                                       .hirValue = *statement.value,
-                                       .loan = storedCarrierEntry});
-              removeLoanFromState(storedCarrierEntry, scopes, bindingLoans);
+              // A cleanup-bound carrier parameter keeps its entry group
+              // until its own exit drop: its destructor still reads the
+              // stored references.
+              if (!retainedLoan.lifecycleBound) {
+                (void)appendInstruction(
+                    {.kind = MirInstructionKind::EndBorrow,
+                     .hirValue = *statement.value,
+                     .loan = storedCarrierEntry});
+                removeLoanFromState(storedCarrierEntry, scopes, bindingLoans);
+              }
               output.loans[published - 1].escapes = true;
               borrow = {.kind = MirOperandKind::Loan,
                         .place = runtimePlace,

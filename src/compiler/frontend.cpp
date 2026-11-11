@@ -406,8 +406,6 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             "shell rather than its external owner dependency.",
             "GTI-S2085");
       else {
-        const std::size_t before = check.diagnostics.size();
-        addEscape(span, error.body.kind, error.body.owner);
         // Name the function-owned storage whose exit drop the returned
         // borrow cannot survive.
         const auto [lowered, source] =
@@ -430,16 +428,41 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
               name = binding.variable    ? &binding.variable->name()
                      : binding.parameter ? &binding.parameter->name
                                          : nullptr;
+        // An exclusive result of a cleanup-bound carrier: the carrier's own
+        // cleanup still uses the referent the result would hand out.
+        const MirLoan *escaping = escapingLoan(error);
+        const bool cleanupBound =
+            escaping != nullptr && escaping->access == AccessMode::Mutable &&
+            dropped != nullptr && dropped->root == MirPlaceRootKind::Binding &&
+            std::any_of(lowered->loans.begin(), lowered->loans.end(),
+                        [&](const MirLoan &loan) {
+                          return loan.lifecycleBound &&
+                                 std::find(loan.carriers.begin(),
+                                           loan.carriers.end(),
+                                           dropped->binding) !=
+                                     loan.carriers.end();
+                        });
+        const std::size_t before = check.diagnostics.size();
+        if (cleanupBound)
+          add(span,
+              "An exclusive borrow retained by a cleanup-bound carrier cannot "
+              "escape through a reference return.");
+        else
+          addEscape(span, error.body.kind, error.body.owner);
         if (check.diagnostics.size() > before && name != nullptr &&
             !name->lexeme.empty()) {
           auto &diagnostic = check.diagnostics.back();
           diagnostic.related.push_back(
               {tokenSpan(*name),
                "'" + name->lexeme +
-                   "' is destroyed when the function returns."});
+                   "' is destroyed when the function returns." +
+                   (cleanupBound ? " Its cleanup still uses the borrow." : "")});
           diagnostic.hints.emplace_back(
-              "Return an owned value, or return a borrow of storage the "
-              "caller provides.");
+              cleanupBound
+                  ? "Keep the borrow within the carrier's lifetime, or return "
+                    "an owned value."
+                  : "Return an owned value, or return a borrow of storage the "
+                    "caller provides.");
         }
       }
     } else if (error.temporaryDestroyed) {
