@@ -165,8 +165,9 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   };
   // Program-level rejections (escapes through a return) anchor at the
   // returned expression of the function body that publishes them.
-  const auto escapeSpan = [&](MirBodyKind kind, std::size_t owner,
-                              MirBlockId blockId) -> std::optional<SourceSpan> {
+  const auto escapeSpan = [&](const auto &self, MirBodyKind kind,
+                              std::size_t owner, MirBlockId blockId,
+                              bool anyReturn) -> std::optional<SourceSpan> {
     if (kind != MirBodyKind::Function)
       return std::nullopt;
     const MirFunctionInstance *function = nullptr;
@@ -203,6 +204,13 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       if (const Token token = expressionAnchorToken(*returned->source);
           !token.lexeme.empty())
         return tokenSpan(token);
+    // A rejection at an exit drop names the function's returned value.
+    if (anyReturn && function != nullptr)
+      for (const MirBlock &candidate : function->body.blocks)
+        if (candidate.terminator.kind == MirTerminatorKind::Return &&
+            candidate.id != blockId)
+          if (auto span = self(self, kind, owner, candidate.id, false))
+            return span;
     return std::nullopt;
   };
   // A result declared `static` names its region: an escape from it is a
@@ -278,14 +286,17 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
   };
   // The escaping loan borrows a projection of a by-value parameter that
   // carries borrowed state: the parameter's shell, not the owner it borrows.
-  const auto byValueCarrierShell = [&](const MirLoweringError &error) {
+  // The declaration of the by-value carrier parameter whose shell a
+  // returned projection borrows, when the escape is one.
+  const auto byValueCarrierShell =
+      [&](const MirLoweringError &error) -> std::optional<SourceSpan> {
     const MirLoan *loan = escapingLoan(error);
     const MirBody *body =
         findMirBody(program, error.body.kind, error.body.owner);
     const MirPlace *source = loan ? body->findPlace(loan->source) : nullptr;
     if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
         source->projections.empty())
-      return false;
+      return std::nullopt;
     for (const auto &function : program.functionInstances())
       if (function.id == error.body.owner)
         for (std::size_t index = 0; index < function.parameterBindings.size();
@@ -294,10 +305,17 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             for (const MirPlace &place : body->places)
               if (place.root == MirPlaceRootKind::Binding &&
                   place.binding == source->binding &&
-                  place.projections.empty())
-                return place.type.kind != SemanticType::Reference &&
-                       place.traits.containsBorrowedState;
-    return false;
+                  place.projections.empty()) {
+                if (place.type.kind == SemanticType::Reference ||
+                    !place.traits.containsBorrowedState)
+                  return std::nullopt;
+                const auto *declared = hir.findFunctionInstance(function.id);
+                if (declared != nullptr && declared->source != nullptr &&
+                    index < declared->source->parameters().size())
+                  return tokenSpan(declared->source->parameters()[index].name);
+                return *error.source;
+              }
+    return std::nullopt;
   };
   const auto exitDropUnderReturnedBorrow = [&](const MirLoweringError &error) {
     if (!error.borrow.write || !error.source ||
@@ -371,7 +389,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
          error.borrow.kind == MirBorrowRejectionKind::Supplier) &&
         !error.source)
       if (const auto span =
-              escapeSpan(error.body.kind, error.body.owner, error.block)) {
+              escapeSpan(escapeSpan, error.body.kind, error.body.owner, error.block, true)) {
         if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
           addSupplier(*span, error.body.kind, error.body.owner);
         else
@@ -386,15 +404,24 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       addEscape(*error.source, error.body.kind, error.body.owner);
     else if (exitDropUnderReturnedBorrow(error)) {
       const SourceSpan span =
-          escapeSpan(error.body.kind, error.body.owner, error.block)
+          escapeSpan(escapeSpan, error.body.kind, error.body.owner, error.block, true)
               .value_or(*error.source);
-      if (!staticResult(error.body.kind, error.body.owner) &&
-          byValueCarrierShell(error))
-        add(span,
+      const auto shell = staticResult(error.body.kind, error.body.owner)
+                             ? std::nullopt
+                             : byValueCarrierShell(error);
+      if (shell) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2085", DiagnosticPhase::Semantics, span,
             "Returned reference is a projection of the by-value carrier "
-            "shell rather than its external owner dependency.",
-            "GTI-S2085");
-      else
+            "shell rather than its external owner dependency.");
+        diagnostic.related.push_back(
+            {*shell, "Stored owner dependency enters here."});
+        diagnostic.hints.emplace_back(
+            "Return the carrier value itself, or return its one exact stored "
+            "referent with the same type; ordinary carrier fields and shell "
+            "projections cannot escape.");
+        check.diagnostics.push_back(std::move(diagnostic));
+      } else
         addEscape(span, error.body.kind, error.body.owner);
     } else if (error.temporaryDestroyed) {
       add(*error.source,
@@ -420,7 +447,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     const auto span =
         error.borrow.kind == MirBorrowRejectionKind::Escape ||
                 error.borrow.kind == MirBorrowRejectionKind::Supplier
-            ? escapeSpan(error.bodyKind, error.owner, error.block)
+            ? escapeSpan(escapeSpan, error.bodyKind, error.owner, error.block, true)
             : std::nullopt;
     if (!span) {
       check.internal = true;

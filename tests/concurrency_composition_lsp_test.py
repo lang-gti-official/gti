@@ -156,10 +156,11 @@ public:
                     assert len(diagnostics) == 1, diagnostics
                     failure = diagnostics[0]
                     assert failure.get("code") == "GTI-S2017", failure
-                    offset = (bad.index("();", bad.index(conflict)) + 1 if second
-                              else bad.index("owner", bad.index(conflict)))
+                    # MIR anchors the conflict at the overlapping read of the
+                    # guarded owner, for a call or a second lock alike.
+                    offset = bad.index("owner", bad.index(conflict))
                     expected = {"start": lsp_position(bad, offset),
-                                "end": lsp_position(bad, offset + (1 if second else 5))}
+                                "end": lsp_position(bad, offset + 5)}
                     assert failure["range"] == expected, failure
                     origin = bad.index("();", bad.index(publication)) + 1
                     related = failure.get("relatedInformation", [])

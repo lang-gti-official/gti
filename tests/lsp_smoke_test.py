@@ -3316,37 +3316,16 @@ def test_copy_constructible_carrier_provenance_tooling(executable, root):
                 },
             }
         )
-        laundered_publication = session.receive_until(
+        # RFC 0004: the referent field is a reference in the carrier's
+        # region, and an identity relay preserves that region, so the
+        # elided result borrows what the carrier borrows (as Rust accepts).
+        session.receive_until(
             lambda message: message.get("method")
             == "textDocument/publishDiagnostics"
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
-            and any(
-                diagnostic.get("code") == "GTI-S2085"
-                for diagnostic in message["params"]["diagnostics"]
-            )
-        )["params"]
-        laundered = next(
-            item
-            for item in laundered_publication["diagnostics"]
-            if item.get("code") == "GTI-S2085"
+            and not has_error_diagnostics(message["params"])
         )
-        call = laundered_source.index(
-            "relay_reference(carrier.referent)"
-        )
-        terminal = laundered_source.index(")", call)
-        assert laundered["range"] == {
-            "start": lsp_position(laundered_source, terminal),
-            "end": lsp_position(laundered_source, terminal + 1),
-        }, laundered
-        assert (
-            "does not relay the exact external owner dependency"
-            in laundered["message"]
-        ), laundered
-        assert any(
-            related["message"] == "Stored owner dependency enters here."
-            for related in laundered["relatedInformation"]
-        ), laundered
 
         session.send(
             {
@@ -7685,13 +7664,17 @@ def test_global_borrow_return_diagnostics(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 2
         )["params"]
+        # RFC 0004: the persistent-storage effect check reports the second
+        # exclusive access to the global through Get().
         conflicts = [
             diagnostic
             for diagnostic in publication["diagnostics"]
-            if diagnostic.get("code") == "GTI-S2017"
-            and "Cannot create a mutable borrow" in diagnostic.get("message", "")
+            if diagnostic.get("code") == "GTI-S2045"
+            and "persistent storage through an overlapping path"
+            in diagnostic.get("message", "")
         ]
         assert len(conflicts) == 1, publication
+        assert len(publication["diagnostics"]) == 1, publication
         conflict = conflicts[0]
         second_call = invalid_source.rindex("Application::Get()") + len(
             "Application::Get("
@@ -7700,11 +7683,10 @@ def test_global_borrow_return_diagnostics(executable, root):
             invalid_source, second_call
         ), conflict
         assert conflict["data"]["phase"] == "semantics", conflict
-        assert conflict["data"]["hints"], conflict
-        assert conflict["relatedInformation"], conflict
-        assert "Retained borrow originates here" in conflict[
-            "relatedInformation"
-        ][0]["message"]
+        messages = [item["message"] for item in conflict["relatedInformation"]]
+        assert "The protected borrow originates here." in messages, conflict
+        assert any("conflicting transitive storage access" in message
+                   for message in messages), conflict
 
         session.send(
             {
@@ -13399,12 +13381,12 @@ def test_owner_dependent_span_tooling(executable, root):
             for item in invalidated["diagnostics"]
             if item.get("code") == "GTI-S2017"
         )
-        mutation = invalidated_source.index(
-            ")", invalidated_source.index("push_back")
-        )
-        assert diagnostic["range"]["start"] == lsp_position(
-            invalidated_source, mutation
-        ), diagnostic
+        # MIR anchors the conflict at the mutated receiver.
+        mutation = invalidated_source.index("values.push_back")
+        assert diagnostic["range"] == {
+            "start": lsp_position(invalidated_source, mutation),
+            "end": lsp_position(invalidated_source, mutation + len("values")),
+        }, diagnostic
         assert diagnostic["data"]["phase"] == "semantics", diagnostic
         assert diagnostic["data"]["hints"] == [
             "Finish using the borrowed value before changing or moving its "
@@ -13439,15 +13421,18 @@ def test_owner_dependent_span_tooling(executable, root):
             and message["params"]["uri"] == uri
             and message["params"].get("version") == 3
             and any(
-                diagnostic.get("code") == "GTI-S2045"
+                diagnostic.get("code") == "GTI-S2127"
                 for diagnostic in message["params"]["diagnostics"]
             )
         )["params"]
+        # RFC 0004: no input supplies the result, so it is implicitly
+        # 'static'; MIR reports the local escape at the returned value.
+        returned = escaped_source.index(")", escaped_source.index("as_span"))
         assert any(
-            "borrowed return requires either one exact global/static storage "
-            "origin" in item["message"]
+            "implicitly 'static'" in item["message"]
+            and item["range"]["start"] == lsp_position(escaped_source, returned)
             for item in escaped["diagnostics"]
-            if item.get("code") == "GTI-S2045"
+            if item.get("code") == "GTI-S2127"
         ), escaped
 
         session.send(
