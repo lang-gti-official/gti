@@ -5535,15 +5535,10 @@ auto SemanticVisitor::Impl::consumingResultCarriesBorrow(
     if (lifetime.classBinder ||
         lifetime.kind == ExplicitLifetimeResult::Kind::Static)
       return false;
-    // RFC 0004: a consumed receiver can only lend what it holds. When it
-    // holds no borrowed state, a borrowing by-value result borrows from the
-    // other inputs (a mapper's result, as Rust's `Result::map(self, f)`).
-    if (signatureContractDefaults() &&
-        function.returnType.kind != SemanticType::Reference &&
-        function.returnBorrowOrigin != BorrowOriginKind::Receiver &&
-        function.dispatchOwner.kind == SemanticType::Class &&
-        !typeTraits(function.dispatchOwner).containsBorrowedState)
-      return false;
+    // A by-value result's regions would have to come from its type
+    // arguments (Rust's `U` in `Result::map(self, f) -> Result<U, E>`);
+    // signatures cannot yet carry a region through a type argument, so a
+    // borrowing result of a consuming method has no supplier contract.
   }
   return function.receiverMutability == ReceiverMutability::Consuming &&
          !receiverTextFieldResult(function.returnType,
