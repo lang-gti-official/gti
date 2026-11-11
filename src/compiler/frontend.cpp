@@ -180,6 +180,14 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         source = &candidate;
     const MirBlock *block =
         function ? function->body.findBlock(blockId) : nullptr;
+    // An exit drop runs in the return's cleanup chain: follow its
+    // normal-successor edges to the return it precedes.
+    for (std::size_t step = 0;
+         block != nullptr && step < function->body.blocks.size() &&
+         (block->terminator.kind == MirTerminatorKind::Goto ||
+          block->terminator.kind == MirTerminatorKind::Invoke);
+         ++step)
+      block = function->body.findBlock(block->terminator.target);
     const HirValue *returned =
         block && source ? source->body.findValue(block->terminator.hirValue)
                         : nullptr;

@@ -6841,7 +6841,24 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
            (isDirectStoredReferenceType(parameter) &&
             borrowAccess(parameter) == AccessMode::Mutable);
   };
+  // RFC 0004: a carrier result's one implicit region is fed by every
+  // borrow-carrying input. A carrier that stores both read-only and mutable
+  // references takes suppliers of either access for its fields.
+  const bool mixedCarrierResult =
+      signatureContractDefaults() &&
+      returnType.kind != SemanticType::Reference && [&] {
+        const auto paths = storedReferencePaths(returnType);
+        const auto stores = [&](AccessMode access) {
+          return std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+            return path.reference.kind == SemanticType::Reference &&
+                   path.reference.referenceAccess == access;
+          });
+        };
+        return stores(AccessMode::ReadOnly) && stores(AccessMode::Mutable);
+      }();
   const auto eligibleDependency = [&](const SemanticType &parameter) {
+    if (mixedCarrierResult)
+      return mutableDependency(parameter) || readOnlyDependency(parameter);
     return summary.access == AccessMode::Mutable
                ? mutableDependency(parameter)
                : readOnlyDependency(parameter);
@@ -6875,6 +6892,22 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     }
   }
 
+  // A mixed carrier's primary supplier is the first whose access matches
+  // the result's; it leads `parameters`, and every other supplier keeps its
+  // own argument access.
+  if (mixedCarrierResult && summary.eligibleParameters > 1) {
+    const auto primary =
+        std::find_if(summary.parameters.begin(), summary.parameters.end(),
+                     [&](std::size_t index) {
+                       return summary.access == AccessMode::Mutable
+                                  ? mutableDependency(parameterTypes[index])
+                                  : readOnlyDependency(parameterTypes[index]);
+                     });
+    if (primary != summary.parameters.end()) {
+      summary.parameter = *primary;
+      std::rotate(summary.parameters.begin(), primary, primary + 1);
+    }
+  }
   if (summary.eligibleParameters == 1) {
     summary.origin = BorrowOriginKind::Argument;
     summary.parameters.clear();

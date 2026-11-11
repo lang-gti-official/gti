@@ -7364,9 +7364,22 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
              (!dynamicTextCarrier &&
               *resultReferent !=
                   storedCarrierReference->reference.arguments.front()))) {
-          return invalidSummary(
+          MirVerificationResult rejected = invalidSummary(
               "stored-carrier return dependency type does not match its "
               "exact external referent type");
+          // A reference result of another type reaches past the carrier's
+          // stored referent: a borrow its formal does not relay.
+          if (!rejected.errors.empty() && !dynamicTextCarrier && resultReferent)
+            for (const MirBlock &block : body.blocks)
+              if (block.terminator.kind == MirTerminatorKind::Return &&
+                  block.terminator.returnLoan) {
+                rejected.errors.back().block = block.id;
+                rejected.errors.back().borrow = {
+                    .kind = MirBorrowRejectionKind::Supplier,
+                    .loan = *block.terminator.returnLoan};
+                break;
+              }
+          return rejected;
         }
 
         const HirBindingId parameterBinding =
@@ -7628,8 +7641,18 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
             const auto formal = mir_detail::returnOriginFormal(
                 instance.parameterTypes, instance.parameterBindings,
                 instance.returnBorrowParameter);
+            // A reference formal, or a by-value carrier formal whose entry
+            // names the external owners its stored references reach.
+            const bool byValueCarrier =
+                dependencySource->type.kind == SemanticType::Class &&
+                dependencySource->projections.empty() &&
+                !dependency->designatedFields.empty() &&
+                std::find(
+                    dependency->carriers.begin(), dependency->carriers.end(),
+                    dependencySource->binding) != dependency->carriers.end();
             return formal && physical.binding == formal->binding &&
-                   dependencySource->type.kind == SemanticType::Reference;
+                   (dependencySource->type.kind == SemanticType::Reference ||
+                    byValueCarrier);
           }() &&
           dependencySource->binding == physical.binding;
       const auto *restoredAuthority =
@@ -7900,10 +7923,24 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
                   transfer->operands.front().loan != storedCarrierEntryLoan->id
               ? relayedCall(transfer->operands.front().loan)
               : nullptr;
+      // A returned borrowed-carrier referent is read through a body-local
+      // loan that keeps the entry as its stored dependency; the Return loan
+      // keeps that same entry dependency.
+      const MirLoan *carrierReferent =
+          transferShape ? body.findLoan(transfer->operands.front().loan)
+                        : nullptr;
+      const bool borrowedCarrierReferent =
+          carrierReferent != nullptr &&
+          carrierReferent->kind == MirLoanKind::Local &&
+          !carrierReferent->entry && !carrierReferent->escapes &&
+          carrierReferent->parent == 0 &&
+          carrierReferent->storedDependency == storedCarrierEntryLoan->id &&
+          loan->storedDependency == storedCarrierEntryLoan->id &&
+          isPotentiallyBorrowedCarrier(program, expectedPayload);
       const bool exactTransfer =
           transferShape &&
           (transfer->operands.front().loan == storedCarrierEntryLoan->id ||
-           relay != nullptr);
+           relay != nullptr || borrowedCarrierReferent);
       if (!exactTransfer) {
         return verificationFailure(
             body, instance.id,
@@ -7957,11 +7994,25 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
             block.terminator.value->kind != MirOperandKind::Loan ||
             block.terminator.value->loan != loan->id ||
             block.terminator.value->place != published.place) {
-          return verificationFailure(
+          MirVerificationResult rejected = verificationFailure(
               body, instance.id,
               "stored-carrier reference return does not preserve "
               "its exact designated stored referent place",
               block.id);
+          // A referent reached through a further stored reference is not
+          // the external owner the carrier formal relays: that is a borrow
+          // the contract does not express, not malformed MIR.
+          if (runtime != nullptr &&
+              runtime->root == MirPlaceRootKind::Binding &&
+              std::count_if(
+                  runtime->projections.begin(), runtime->projections.end(),
+                  [](const MirPlaceProjection &projection) {
+                    return projection.kind == MirProjectionKind::Dereference;
+                  }) > 1 &&
+              !rejected.errors.empty())
+            rejected.errors.back().borrow = {
+                .kind = MirBorrowRejectionKind::Supplier, .loan = loan->id};
+          return rejected;
         }
         verifiedValueSource = runtime;
       } else {

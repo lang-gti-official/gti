@@ -253,10 +253,7 @@ void testReferenceSubstitutionsAndEmptyAlternatives() {
         "int main() { auto value = Event<int&>::item(3); return 0; }",
         "enum Event<T> { idle, item(T value), pair(T first, T second) }; "
         "Event<int&> dangling() { int local = 3; "
-        "return Event<int&>::pair(local, local); } int main() { return 0; }",
-        "enum Event<T> { idle, item(T value), pair(T first, T second) }; "
-        "Event<int&> unknown(); "
-        "int main() { auto value = unknown(); return 0; }"}) {
+        "return Event<int&>::pair(local, local); } int main() { return 0; }"}) {
     const auto result =
         lang::Frontend().analyze("bad-reference-enum.gti", source);
     expect(!result.semanticValid && std::none_of(result.diagnostics.begin(),
@@ -268,6 +265,16 @@ void testReferenceSubstitutionsAndEmptyAlternatives() {
            "known empty alternatives do not excuse missing or expired "
            "reference-bearing payload owners");
   }
+  // RFC 0004: a result no input supplies is implicitly 'static'. Its
+  // signature is a complete contract (its definition must prove 'static
+  // storage), so a caller needs no payload owner of its own.
+  const auto implicitStatic = lang::Frontend().analyze(
+      "static-reference-enum.gti",
+      "enum Event<T> { idle, item(T value), pair(T first, T second) }; "
+      "Event<int&> unknown(); "
+      "int main() { auto value = unknown(); return 0; }");
+  expect(implicitStatic.semanticValid,
+         "an input-free reference-bearing result is implicitly 'static'");
 
   const auto empty = lang::Frontend().analyze(
       "empty-reference-enum-proof.gti",

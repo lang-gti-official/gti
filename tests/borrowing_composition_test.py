@@ -84,11 +84,17 @@ int main() {
   int a = 1; mut int b = 2;
   return PairView(a, b).sum() + change(b);
 }""",
+        # RFC 0004: the signature, not the taken path, is the contract. The
+        # result borrows both inputs, so a caller whose call takes the
+        # `(a, a)` path still cannot write `b` while the view is live.
         "path-dependent-return-dependency": """PairView bad(int& a, int& b, bool choose) {
   if (choose) { return PairView(a, b); }
   return PairView(a, a);
 }
-int main() { int a = 1; int b = 2; auto view = bad(a, b, true); return view.sum(); }
+int main() {
+  mut int a = 1; mut int b = 2;
+  auto view = bad(a, b, false); b = 3; return view.sum();
+}
 """,
         "projected-reference-keeps-group": """int main() {
   mut int a = 1; mut int b = 2;
@@ -109,7 +115,7 @@ int main() { int a = 1; int b = 2; auto view = bad(a, b, true); return view.sum(
         "receiver-secondary-alias": "GTI-S2017",
         "later-method-argument-secondary-mutation": "GTI-S2017",
         "later-method-operand-secondary-mutation": "GTI-S2017",
-        "path-dependent-return-dependency": "GTI-S2045",
+        "path-dependent-return-dependency": "GTI-S2017",
         "projected-reference-keeps-group": "GTI-S2017",
     }
     with tempfile.TemporaryDirectory(prefix="gti-composed-borrow-negative-") as tmp:

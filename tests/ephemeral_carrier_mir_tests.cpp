@@ -954,13 +954,15 @@ int main() {
   expect(checkedAliasPublication,
          "reference-parameter subobject relay preserves explicit runtime "
          "address evidence");
+  // RFC 0004: the operator's signature names the stored field's region; an
+  // unannotated `int&` result would borrow the temporary receiver itself.
   const auto external =
       lang::Frontend().analyze("temporary-external-operator-result.gti", R"gti(
-class Cursor {
-  int& owner;
+class Cursor<lifetime data> {
+  int&<data> owner;
 public:
-  Cursor(int& source) : owner(source) {}
-  int& operator*() { return this.owner; }
+  Cursor(int&<data> source) : owner(source) {}
+  int&<data> operator*() { return this.owner; }
 };
 Cursor cursor(int& source) { return Cursor(source); }
 int& relay(int& owner) { return *cursor(owner); }
