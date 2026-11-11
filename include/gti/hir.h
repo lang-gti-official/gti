@@ -344,7 +344,6 @@ struct HirSwitchArm {
   };
   std::vector<PayloadBinding> payloadBindings;
   std::vector<HirStatementId> statements;
-  std::vector<SemanticLoanId> entryEndedLoans;
 };
 
 enum class HirStructuredBindingProjectionKind {
@@ -417,9 +416,6 @@ struct HirStatement {
   bool exhaustiveSwitch = false;
   std::vector<HirStructuredBindingElement> structuredBindings;
   std::optional<HirRangeIteration> rangeIteration;
-  std::vector<SemanticLoanId> endedLoans;
-  std::vector<SemanticLoanId> thenEntryEndedLoans;
-  std::vector<SemanticLoanId> elseEntryEndedLoans;
 };
 
 // Non-executing source wrappers share their producer's value and lifetime.

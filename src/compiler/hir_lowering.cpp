@@ -3944,31 +3944,6 @@ private:
     }
   }
 
-  [[nodiscard]] static std::vector<SemanticLoanId>
-  orderedLoanEnds(std::vector<SemanticLoanId> loans,
-                  const SemanticModel &model) {
-    const auto depth = [&](SemanticLoanId id) {
-      std::unordered_set<SemanticLoanId> visiting;
-      const auto visit = [&](const auto &self,
-                             SemanticLoanId current) -> std::size_t {
-        const SemanticLoanInfo *loan = model.findLoan(current);
-        if (loan == nullptr || !visiting.insert(current).second) {
-          return 0;
-        }
-        const auto result = 1 + std::max(self(self, loan->parent),
-                                         self(self, loan->storedDependency));
-        visiting.erase(current);
-        return result;
-      };
-      return visit(visit, id);
-    };
-    std::stable_sort(loans.begin(), loans.end(),
-                     [&](SemanticLoanId left, SemanticLoanId right) {
-                       return depth(left) > depth(right);
-                     });
-    return loans;
-  }
-
   [[nodiscard]] HirStatementId appendStatement(HirStatement statement,
                                                HirBody &body) {
     statement.id = nextStatementId++;
@@ -4053,14 +4028,8 @@ private:
         return lowerStatement(statement, model, classArguments,
                               classValueArguments, body);
       });
-    const std::optional<HirStatementId> lowered = lowerStatementImpl(
-        statement, model, classArguments, classValueArguments, body);
-    if (lowered && statement != nullptr && !body.statements.empty() &&
-        body.statements.back().id == *lowered) {
-      body.statements.back().endedLoans =
-          orderedLoanEnds(model.loansEndingAfter(*statement), model);
-    }
-    return lowered;
+    return lowerStatementImpl(statement, model, classArguments,
+                              classValueArguments, body);
   }
 
   [[nodiscard]] std::optional<HirStatementId>
@@ -4289,12 +4258,7 @@ private:
                                   classArguments, classValueArguments, body),
            .elseBranch =
                lowerStatement(ifStatement->elseBranch().get(), model,
-                              classArguments, classValueArguments, body),
-           .thenEntryEndedLoans = orderedLoanEnds(
-               model.loansEndingAtConditionalEntry(*ifStatement, true), model),
-           .elseEntryEndedLoans = orderedLoanEnds(
-               model.loansEndingAtConditionalEntry(*ifStatement, false),
-               model)},
+                              classArguments, classValueArguments, body)},
           body);
     }
     if (const auto *loopControl = stmtAs<LoopControlStmt>(statement)) {
@@ -4429,9 +4393,6 @@ private:
         }
         loweredArm.statements = lowerStatements(
             arm.statements, model, classArguments, classValueArguments, body);
-        loweredArm.entryEndedLoans = orderedLoanEnds(
-            model.loansEndingAtSwitchArmEntry(*switchStatement, armIndex),
-            model);
         arms.push_back(std::move(loweredArm));
       }
       return appendStatement(

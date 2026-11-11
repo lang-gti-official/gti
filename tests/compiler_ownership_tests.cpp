@@ -2195,169 +2195,6 @@ int main() {
          "HIR should preserve semantic loan identity, ancestry, place, and "
          "body-local carriers");
 
-  const lang::Stmt *grandchildUse =
-      mainFunction == nullptr ? nullptr
-                              : mainFunction->body()->statements().at(4).get();
-  const lang::HirStatement *useStatement = nullptr;
-  if (mainInstance != nullptr) {
-    const auto found = std::find_if(mainInstance->body.statements.begin(),
-                                    mainInstance->body.statements.end(),
-                                    [&](const lang::HirStatement &statement) {
-                                      return statement.source == grandchildUse;
-                                    });
-    if (found != mainInstance->body.statements.end()) {
-      useStatement = &*found;
-    }
-  }
-  expect(useStatement != nullptr && useStatement->endedLoans.size() >= 2 &&
-             useStatement->endedLoans[0] == grandchildLoan->id &&
-             useStatement->endedLoans[1] == childLoan->id &&
-             std::find(useStatement->endedLoans.begin(),
-                       useStatement->endedLoans.end(),
-                       parentLoan->id) == useStatement->endedLoans.end(),
-         "descendant uses should extend ancestors without ending a parent "
-         "that is used again later");
-  const lang::Stmt *parentUse =
-      mainFunction == nullptr ? nullptr
-                              : mainFunction->body()->statements().at(7).get();
-  expect(parentLoan != nullptr && parentUse != nullptr &&
-             hasLoanEndpoint(parentLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             parentUse),
-         "a parent's endpoint should follow the last descendant or direct "
-         "parent use");
-
-  const lang::FunctionDecl *endpointFunction =
-      findTopLevelFunction(exclusive.program, "endpoint_chain");
-  const auto *endpointParent =
-      endpointFunction == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                endpointFunction->body()->statements().at(1).get());
-  const auto *endpointChild =
-      endpointFunction == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                endpointFunction->body()->statements().at(2).get());
-  const lang::BindingInfo *endpointParentBinding =
-      endpointParent == nullptr
-          ? nullptr
-          : exclusive.semantics.findBinding(*endpointParent);
-  const lang::BindingInfo *endpointChildBinding =
-      endpointChild == nullptr
-          ? nullptr
-          : exclusive.semantics.findBinding(*endpointChild);
-  const lang::SemanticLoanId endpointParentLoan =
-      endpointParentBinding == nullptr ? 0
-                                       : endpointParentBinding->retainedLoan;
-  const lang::SemanticLoanId endpointChildLoan =
-      endpointChildBinding == nullptr ? 0 : endpointChildBinding->retainedLoan;
-  const lang::HirFunctionInstance *endpointInstance = nullptr;
-  for (const lang::HirFunctionInstance &function :
-       exclusive.hir.functionInstances()) {
-    if (function.source == endpointFunction) {
-      endpointInstance = &function;
-      break;
-    }
-  }
-  const lang::Stmt *endpointUse =
-      endpointFunction == nullptr
-          ? nullptr
-          : endpointFunction->body()->statements().at(3).get();
-  const lang::HirStatement *endpointUseStatement = nullptr;
-  if (endpointInstance != nullptr) {
-    const auto found = std::find_if(endpointInstance->body.statements.begin(),
-                                    endpointInstance->body.statements.end(),
-                                    [&](const lang::HirStatement &statement) {
-                                      return statement.source == endpointUse;
-                                    });
-    if (found != endpointInstance->body.statements.end()) {
-      endpointUseStatement = &*found;
-    }
-  }
-  expect(endpointParentLoan != 0 && endpointChildLoan != 0 &&
-             endpointUseStatement != nullptr &&
-             endpointUseStatement->endedLoans.size() >= 2 &&
-             endpointUseStatement->endedLoans[0] == endpointChildLoan &&
-             endpointUseStatement->endedLoans[1] == endpointParentLoan,
-         "when a chain shares one final use, HIR should end descendants "
-         "before their parents");
-
-  const auto verifySwitchEndpoints = [&](const std::string &name,
-                                         std::size_t armCount,
-                                         bool unmatchedExit) {
-    const lang::FunctionDecl *function =
-        findTopLevelFunction(exclusive.program, name);
-    const auto *child = function == nullptr
-                            ? nullptr
-                            : dynamic_cast<const lang::VariableDecl *>(
-                                  function->body()->statements().at(2).get());
-    const auto *selection =
-        function == nullptr ? nullptr
-                            : dynamic_cast<const lang::SwitchStmt *>(
-                                  function->body()->statements().at(3).get());
-    const lang::BindingInfo *binding =
-        child == nullptr ? nullptr : exclusive.semantics.findBinding(*child);
-    const lang::SemanticLoanId loan =
-        binding == nullptr ? 0 : binding->retainedLoan;
-    const lang::SemanticLoanInfo *semanticLoan =
-        exclusive.semantics.findLoan(loan);
-    const std::size_t semanticArmEnds =
-        semanticLoan == nullptr
-            ? 0
-            : static_cast<std::size_t>(std::count_if(
-                  semanticLoan->endpoints.begin(),
-                  semanticLoan->endpoints.end(),
-                  [&](const lang::SemanticLoanEndpoint &endpoint) {
-                    return endpoint.kind ==
-                               lang::SemanticLoanEndKind::SwitchArmEntry &&
-                           endpoint.statement == selection;
-                  }));
-    const lang::HirFunctionInstance *instance = nullptr;
-    for (const lang::HirFunctionInstance &candidate :
-         exclusive.hir.functionInstances()) {
-      if (candidate.source == function) {
-        instance = &candidate;
-        break;
-      }
-    }
-    const lang::HirStatement *hirSwitch = nullptr;
-    if (instance != nullptr) {
-      const auto found = std::find_if(instance->body.statements.begin(),
-                                      instance->body.statements.end(),
-                                      [&](const lang::HirStatement &statement) {
-                                        return statement.source == selection;
-                                      });
-      if (found != instance->body.statements.end()) {
-        hirSwitch = &*found;
-      }
-    }
-    const bool hirArmEnds =
-        hirSwitch != nullptr && hirSwitch->switchArms.size() == armCount &&
-        std::all_of(hirSwitch->switchArms.begin(), hirSwitch->switchArms.end(),
-                    [&](const lang::HirSwitchArm &arm) {
-                      return std::find(arm.entryEndedLoans.begin(),
-                                       arm.entryEndedLoans.end(),
-                                       loan) != arm.entryEndedLoans.end();
-                    });
-    const bool semanticExitEnd =
-        !unmatchedExit ||
-        hasLoanEndpoint(semanticLoan, lang::SemanticLoanEndKind::AfterStatement,
-                        selection);
-    const bool hirExitEnd =
-        !unmatchedExit ||
-        (hirSwitch != nullptr &&
-         std::find(hirSwitch->endedLoans.begin(), hirSwitch->endedLoans.end(),
-                   loan) != hirSwitch->endedLoans.end());
-    expect(loan != 0 && semanticArmEnds == armCount && semanticExitEnd &&
-               hirArmEnds && hirExitEnd,
-           "a switch-subject final use should reactivate its parent at each "
-           "selected arm and at the unmatched exit in " +
-               name);
-  };
-  verifySwitchEndpoints("switch_reactivation", 2, false);
-  verifySwitchEndpoints("switch_unmatched_reactivation", 1, true);
-
   const lang::FrontendResult transientResults =
       lang::Frontend().analyze("transient-call-results.gti", R"(
 class Box {
@@ -5154,17 +4991,6 @@ int main() {
           ? nullptr
           : releasedStandardStringBorrow.semantics.findBinding(
                 *releasedIterator);
-  const lang::SemanticLoanInfo *releasedLoan =
-      releasedBinding == nullptr
-          ? nullptr
-          : releasedStandardStringBorrow.semantics.findLoan(
-                releasedBinding->retainedLoan);
-  expect(releasedLoan != nullptr && releasedLoan->protectsStorage &&
-             hasLoanEndpoint(releasedLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             releasedLastUse),
-         "semantic loan metadata should identify the owner dependency and its "
-         "proven last-use statement");
 
   const auto releasedHirFunction =
       releasedMain == nullptr
@@ -5188,12 +5014,6 @@ int main() {
       releasedHirLastUse = &*statement;
     }
   }
-  expect(releasedHirLastUse != nullptr && releasedBinding != nullptr &&
-             std::find(releasedHirLastUse->endedLoans.begin(),
-                       releasedHirLastUse->endedLoans.end(),
-                       releasedBinding->retainedLoan) !=
-                 releasedHirLastUse->endedLoans.end(),
-         "HIR should carry the semantic loan endpoint without recomputing it");
 
   const lang::MirFunctionInstance *releasedMirFunction =
       releasedHirFunction ==
@@ -5278,15 +5098,6 @@ int main() {
       controlFlowIterator == nullptr
           ? nullptr
           : controlFlowBorrow.semantics.findBinding(*controlFlowIterator);
-  const lang::SemanticLoanInfo *controlFlowLoan =
-      controlFlowBinding == nullptr ? nullptr
-                                    : controlFlowBorrow.semantics.findLoan(
-                                          controlFlowBinding->retainedLoan);
-  expect(hasLoanEndpoint(controlFlowLoan,
-                         lang::SemanticLoanEndKind::AfterStatement,
-                         controlFlowIf),
-         "semantic loan metadata should project a branch-local final use to "
-         "the enclosing if join");
   const auto controlFlowHirFunction =
       controlFlowMain == nullptr
           ? controlFlowBorrow.hir.functionInstances().end()
@@ -5308,12 +5119,6 @@ int main() {
       controlFlowHirIf = &*statement;
     }
   }
-  expect(controlFlowHirIf != nullptr && controlFlowBinding != nullptr &&
-             std::find(controlFlowHirIf->endedLoans.begin(),
-                       controlFlowHirIf->endedLoans.end(),
-                       controlFlowBinding->retainedLoan) !=
-                 controlFlowHirIf->endedLoans.end(),
-         "HIR should retain the semantic loan endpoint on the if statement");
   const lang::MirFunctionInstance *controlFlowMirFunction =
       controlFlowHirFunction == controlFlowBorrow.hir.functionInstances().end()
           ? nullptr
@@ -5368,27 +5173,6 @@ int main() {
   expect(nestedConditionalBorrow.canGenerateCode(),
          "a nested conditional use should project to the outer join that "
          "dominates the following mutation");
-  const lang::FunctionDecl *nestedConditionalMain =
-      findTopLevelFunction(nestedConditionalBorrow.program, "main");
-  const auto *nestedConditionalIterator =
-      nestedConditionalMain == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                nestedConditionalMain->body()->statements().at(1).get());
-  const lang::BindingInfo *nestedConditionalBinding =
-      nestedConditionalIterator == nullptr
-          ? nullptr
-          : nestedConditionalBorrow.semantics.findBinding(
-                *nestedConditionalIterator);
-  const lang::SemanticLoanInfo *nestedConditionalLoan =
-      nestedConditionalBinding == nullptr
-          ? nullptr
-          : nestedConditionalBorrow.semantics.findLoan(
-                nestedConditionalBinding->retainedLoan);
-  expect(hasLoanEndpoint(
-             nestedConditionalLoan, lang::SemanticLoanEndKind::AfterStatement,
-             nestedConditionalMain->body()->statements().at(2).get()),
-         "nested conditional uses should end at the outermost required join");
 
   const lang::FrontendResult conditionalCarrierMove = lang::Frontend().analyze(
       "conditional-carrier-move.gti",
@@ -5465,19 +5249,6 @@ int main() {
       branchLocalIterator == nullptr
           ? nullptr
           : branchLocalInvalidation.semantics.findBinding(*branchLocalIterator);
-  const lang::SemanticLoanInfo *branchLocalLoan =
-      branchLocalBinding == nullptr
-          ? nullptr
-          : branchLocalInvalidation.semantics.findLoan(
-                branchLocalBinding->retainedLoan);
-  expect(branchLocalLoan != nullptr && branchLocalLoan->endpoints.size() == 2 &&
-             hasLoanEndpoint(branchLocalLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             branchLocalLastUse) &&
-             hasLoanEndpoint(branchLocalLoan,
-                             lang::SemanticLoanEndKind::ElseBranchEntry,
-                             branchLocalIf),
-         "semantic loan metadata should describe both path-specific endings");
 
   const auto branchLocalHirFunction =
       branchLocalMain == nullptr
@@ -5504,16 +5275,6 @@ int main() {
   }
   const lang::SemanticLoanId branchLocalLoanId =
       branchLocalBinding == nullptr ? 0 : branchLocalBinding->retainedLoan;
-  expect(branchLocalHirIf != nullptr && branchLocalHirLastUse != nullptr &&
-             std::find(branchLocalHirLastUse->endedLoans.begin(),
-                       branchLocalHirLastUse->endedLoans.end(),
-                       branchLocalLoanId) !=
-                 branchLocalHirLastUse->endedLoans.end() &&
-             std::find(branchLocalHirIf->elseEntryEndedLoans.begin(),
-                       branchLocalHirIf->elseEntryEndedLoans.end(),
-                       branchLocalLoanId) !=
-                 branchLocalHirIf->elseEntryEndedLoans.end(),
-         "HIR should preserve statement and branch-entry loan endpoints");
 
   const lang::MirFunctionInstance *branchLocalMirFunction =
       branchLocalHirFunction ==
@@ -5590,20 +5351,6 @@ int main() {
       unbracedIterator == nullptr
           ? nullptr
           : unbracedBranchInvalidation.semantics.findBinding(*unbracedIterator);
-  const lang::SemanticLoanInfo *unbracedLoan =
-      unbracedBinding == nullptr
-          ? nullptr
-          : unbracedBranchInvalidation.semantics.findLoan(
-                unbracedBinding->retainedLoan);
-  expect(unbracedLoan != nullptr && unbracedLoan->endpoints.size() == 2 &&
-             hasLoanEndpoint(unbracedLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             unbracedThen) &&
-             hasLoanEndpoint(unbracedLoan,
-                             lang::SemanticLoanEndKind::ElseBranchEntry,
-                             unbracedIf),
-         "unbraced semantic endpoints should identify the direct statement "
-         "and unused branch entry");
 
   const auto unbracedHirFunction =
       unbracedMain == nullptr
@@ -5630,16 +5377,6 @@ int main() {
   }
   const lang::SemanticLoanId unbracedLoanId =
       unbracedBinding == nullptr ? 0 : unbracedBinding->retainedLoan;
-  expect(unbracedHirIf != nullptr && unbracedHirThen != nullptr &&
-             std::find(unbracedHirThen->endedLoans.begin(),
-                       unbracedHirThen->endedLoans.end(),
-                       unbracedLoanId) != unbracedHirThen->endedLoans.end() &&
-             std::find(unbracedHirIf->elseEntryEndedLoans.begin(),
-                       unbracedHirIf->elseEntryEndedLoans.end(),
-                       unbracedLoanId) !=
-                 unbracedHirIf->elseEntryEndedLoans.end(),
-         "HIR should retain loan endpoints on recursively lowered unbraced "
-         "statements");
   const lang::MirFunctionInstance *unbracedMirFunction =
       unbracedHirFunction ==
               unbracedBranchInvalidation.hir.functionInstances().end()
@@ -5691,72 +5428,6 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(elseIfInvalidation.canGenerateCode(),
          "an else-if merge endpoint should survive recursive HIR lowering");
-  const lang::FunctionDecl *elseIfChoose =
-      findTopLevelFunction(elseIfInvalidation.program, "choose");
-  const auto *elseIfIterator =
-      elseIfChoose == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                elseIfChoose->body()->statements().at(1).get());
-  const auto *elseIfOuter =
-      elseIfChoose == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::IfStmt *>(
-                elseIfChoose->body()->statements().at(3).get());
-  const auto *elseIfNested =
-      elseIfOuter == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::IfStmt *>(elseIfOuter->elseBranch().get());
-  const lang::BindingInfo *elseIfBinding =
-      elseIfIterator == nullptr
-          ? nullptr
-          : elseIfInvalidation.semantics.findBinding(*elseIfIterator);
-  const lang::SemanticLoanInfo *elseIfLoan =
-      elseIfBinding == nullptr
-          ? nullptr
-          : elseIfInvalidation.semantics.findLoan(elseIfBinding->retainedLoan);
-  expect(elseIfLoan != nullptr && elseIfLoan->endpoints.size() == 2 &&
-             hasLoanEndpoint(elseIfLoan,
-                             lang::SemanticLoanEndKind::ThenBranchEntry,
-                             elseIfOuter) &&
-             hasLoanEndpoint(elseIfLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             elseIfNested),
-         "else-if semantics should end the unused outer path at entry and "
-         "the used nested paths at their merge");
-  const auto elseIfHirFunction =
-      elseIfChoose == nullptr
-          ? elseIfInvalidation.hir.functionInstances().end()
-          : std::find_if(elseIfInvalidation.hir.functionInstances().begin(),
-                         elseIfInvalidation.hir.functionInstances().end(),
-                         [&](const lang::HirFunctionInstance &candidate) {
-                           return candidate.source == elseIfChoose;
-                         });
-  const lang::HirStatement *elseIfHirNested = nullptr;
-  if (elseIfHirFunction != elseIfInvalidation.hir.functionInstances().end()) {
-    const auto found = std::find_if(elseIfHirFunction->body.statements.begin(),
-                                    elseIfHirFunction->body.statements.end(),
-                                    [&](const lang::HirStatement &statement) {
-                                      return statement.source == elseIfNested;
-                                    });
-    if (found != elseIfHirFunction->body.statements.end()) {
-      elseIfHirNested = &*found;
-    }
-  }
-  const lang::SemanticLoanId elseIfLoanId =
-      elseIfBinding == nullptr ? 0 : elseIfBinding->retainedLoan;
-  const lang::MirFunctionInstance *elseIfMirFunction =
-      elseIfHirFunction == elseIfInvalidation.hir.functionInstances().end()
-          ? nullptr
-          : elseIfInvalidation.mir.findFunctionInstance(elseIfHirFunction->id);
-  expect(elseIfHirNested != nullptr &&
-             std::find(elseIfHirNested->endedLoans.begin(),
-                       elseIfHirNested->endedLoans.end(),
-                       elseIfLoanId) != elseIfHirNested->endedLoans.end() &&
-             elseIfMirFunction != nullptr &&
-             lang::verifyMirBody(elseIfMirFunction->body).valid(),
-         "else-if HIR and MIR should preserve and verify the nested merge "
-         "endpoint");
 
   const lang::FrontendResult nestedBranchInvalidation =
       lang::Frontend().analyze(
@@ -5796,21 +5467,6 @@ int main() {
           ? nullptr
           : nestedBranchInvalidation.semantics.findBinding(
                 *nestedBranchIterator);
-  const lang::SemanticLoanInfo *nestedBranchLoan =
-      nestedBranchBinding == nullptr
-          ? nullptr
-          : nestedBranchInvalidation.semantics.findLoan(
-                nestedBranchBinding->retainedLoan);
-  expect(nestedBranchLoan != nullptr &&
-             nestedBranchLoan->endpoints.size() == 2 &&
-             hasLoanEndpoint(nestedBranchLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             nestedBranchInnerIf) &&
-             hasLoanEndpoint(nestedBranchLoan,
-                             lang::SemanticLoanEndKind::ElseBranchEntry,
-                             nestedBranchOuterIf),
-         "nested loan metadata should end the falling inner path at its merge "
-         "and the unused outer path at entry");
 
   const auto nestedBranchHirFunction =
       nestedBranchMain == nullptr
@@ -5837,17 +5493,6 @@ int main() {
   }
   const lang::SemanticLoanId nestedBranchLoanId =
       nestedBranchBinding == nullptr ? 0 : nestedBranchBinding->retainedLoan;
-  expect(nestedBranchHirOuterIf != nullptr &&
-             nestedBranchHirInnerIf != nullptr &&
-             std::find(nestedBranchHirInnerIf->endedLoans.begin(),
-                       nestedBranchHirInnerIf->endedLoans.end(),
-                       nestedBranchLoanId) !=
-                 nestedBranchHirInnerIf->endedLoans.end() &&
-             std::find(nestedBranchHirOuterIf->elseEntryEndedLoans.begin(),
-                       nestedBranchHirOuterIf->elseEntryEndedLoans.end(),
-                       nestedBranchLoanId) !=
-                 nestedBranchHirOuterIf->elseEntryEndedLoans.end(),
-         "HIR should preserve nested merge and outer edge loan endpoints");
 
   const lang::MirFunctionInstance *nestedBranchMirFunction =
       nestedBranchHirFunction ==
@@ -5958,46 +5603,6 @@ int main() {
   expect(allTerminatingConflicts.canGenerateCode(),
          "an all-terminating if should still end a retained loan separately "
          "on both arms before branch-local mutation");
-  const lang::FunctionDecl *allTerminatingChoose =
-      findTopLevelFunction(allTerminatingConflicts.program, "choose");
-  const auto *allTerminatingIterator =
-      allTerminatingChoose == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                allTerminatingChoose->body()->statements().at(1).get());
-  const auto *allTerminatingIf =
-      allTerminatingChoose == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::IfStmt *>(
-                allTerminatingChoose->body()->statements().at(2).get());
-  const auto *allTerminatingThen =
-      allTerminatingIf == nullptr ? nullptr
-                                  : dynamic_cast<const lang::BlockStmt *>(
-                                        allTerminatingIf->thenBranch().get());
-  const lang::Stmt *allTerminatingLastUse =
-      allTerminatingThen == nullptr
-          ? nullptr
-          : allTerminatingThen->statements().front().get();
-  const lang::BindingInfo *allTerminatingBinding =
-      allTerminatingIterator == nullptr
-          ? nullptr
-          : allTerminatingConflicts.semantics.findBinding(
-                *allTerminatingIterator);
-  const lang::SemanticLoanInfo *allTerminatingLoan =
-      allTerminatingBinding == nullptr
-          ? nullptr
-          : allTerminatingConflicts.semantics.findLoan(
-                allTerminatingBinding->retainedLoan);
-  expect(allTerminatingLoan != nullptr &&
-             allTerminatingLoan->endpoints.size() == 2 &&
-             hasLoanEndpoint(allTerminatingLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             allTerminatingLastUse) &&
-             hasLoanEndpoint(allTerminatingLoan,
-                             lang::SemanticLoanEndKind::ElseBranchEntry,
-                             allTerminatingIf),
-         "all-terminating semantic paths should retain only their two real "
-         "arm endpoints and no synthetic merge endpoint");
 
   const lang::FrontendResult nestedBothReturn = lang::Frontend().analyze(
       "nested-both-return.gti",
@@ -6163,16 +5768,6 @@ int main() {
   const lang::BindingInfo *loopBinding =
       loopIterator == nullptr ? nullptr
                               : loopBorrow.semantics.findBinding(*loopIterator);
-  const lang::SemanticLoanInfo *loopLoan =
-      loopBinding == nullptr
-          ? nullptr
-          : loopBorrow.semantics.findLoan(loopBinding->retainedLoan);
-  expect(loopStatement != nullptr &&
-             hasLoanEndpoint(loopLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             loopStatement),
-         "semantic loan flow should make the loop statement the proven "
-         "endpoint for a loop-carried loan");
 
   const auto loopHirFunction =
       loopMain == nullptr
@@ -6193,13 +5788,6 @@ int main() {
       loopHirStatement = &*found;
     }
   }
-  expect(loopHirStatement != nullptr && loopBinding != nullptr &&
-             std::find(loopHirStatement->endedLoans.begin(),
-                       loopHirStatement->endedLoans.end(),
-                       loopBinding->retainedLoan) !=
-                 loopHirStatement->endedLoans.end(),
-         "HIR should carry the semantic loop-exit endpoint without "
-         "recomputing loan flow");
 
   const lang::MirFunctionInstance *loopMirFunction =
       loopHirFunction == loopBorrow.hir.functionInstances().end()
@@ -6359,31 +5947,6 @@ int main() {
   expect(forInitializerLoan.canGenerateCode(),
          "a loan first created in a for initializer should retain lexical "
          "loop-scope cleanup instead of gaining a duplicate loop endpoint");
-  const lang::FunctionDecl *forInitializerMain =
-      findTopLevelFunction(forInitializerLoan.program, "main");
-  const lang::ForStmt *forInitializerStatement =
-      forInitializerMain == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::ForStmt *>(
-                forInitializerMain->body()->statements().at(1).get());
-  const lang::VariableDecl *forInitializerIterator =
-      forInitializerStatement == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                forInitializerStatement->initializer().get());
-  const lang::BindingInfo *forInitializerBinding =
-      forInitializerIterator == nullptr
-          ? nullptr
-          : forInitializerLoan.semantics.findBinding(*forInitializerIterator);
-  const lang::SemanticLoanInfo *forInitializerSemanticLoan =
-      forInitializerBinding == nullptr
-          ? nullptr
-          : forInitializerLoan.semantics.findLoan(
-                forInitializerBinding->retainedLoan);
-  expect(forInitializerSemanticLoan != nullptr &&
-             forInitializerSemanticLoan->endpoints.empty(),
-         "a for-initializer loan should be excluded from loop projection so "
-         "its lexical cleanup remains the only MIR endpoint");
 
   const lang::FrontendResult transferredForLoan = lang::Frontend().analyze(
       "transferred-for-loan.gti",
@@ -7282,7 +6845,6 @@ int main() {
                  ? nullptr
                  : valid.semantics.findLoan(binding->retainedLoan);
     };
-    const auto *initial = loanFor("initial");
     const auto *active = loanFor("active");
     // RFC 0004: MIR owns loan identity. A consumed carrier's binding keeps no
     // semantic loan; each carrier's MIR Stored loan carries the same facts.
@@ -7389,32 +6951,6 @@ int main() {
                "each consumed carrier ends exactly once on its call-success "
                "continuation before the returned carrier is initialized");
       }
-    }
-    if (initial != nullptr) {
-      auto repeatedEndpoint = valid.hir;
-      bool changed = false;
-      auto &functions = const_cast<std::vector<lang::HirFunctionInstance> &>(
-          repeatedEndpoint.functionInstances());
-      for (auto &function : functions) {
-        if (function.entryKind == lang::ProgramEntryKind::None)
-          continue;
-        bool acknowledged = false;
-        for (auto &statement : function.body.statements) {
-          if (acknowledged) {
-            statement.endedLoans.push_back(initial->id);
-            changed = true;
-            break;
-          }
-          acknowledged = std::find(statement.endedLoans.begin(),
-                                   statement.endedLoans.end(),
-                                   initial->id) != statement.endedLoans.end();
-        }
-      }
-      expect(changed && !lang::MirLowerer()
-                             .lower(repeatedEndpoint, valid.failureMetadata)
-                             .valid(),
-             "a call-transfer endpoint cannot acknowledge the same retired "
-             "loan again at a later statement");
     }
     if (active != nullptr) {
       auto forged = valid.mir;
@@ -10660,25 +10196,10 @@ int main() {
           ? nullptr
           : dynamic_cast<const lang::VariableDecl *>(
                 switchFunction->body()->statements().at(1).get());
-  const auto *switchStatement =
-      switchFunction == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::SwitchStmt *>(
-                switchFunction->body()->statements().at(2).get());
   const lang::BindingInfo *switchBinding =
       switchIterator == nullptr
           ? nullptr
           : frontend.semantics.findBinding(*switchIterator);
-  const lang::SemanticLoanInfo *switchLoan =
-      switchBinding == nullptr
-          ? nullptr
-          : frontend.semantics.findLoan(switchBinding->retainedLoan);
-  expect(switchStatement != nullptr &&
-             hasLoanEndpoint(switchLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             switchStatement),
-         "semantic loan flow should project a pre-existing carrier to the "
-         "switch exit");
 
   const auto switchHirFunction =
       switchFunction == nullptr
@@ -10688,24 +10209,6 @@ int main() {
                          [&](const lang::HirFunctionInstance &candidate) {
                            return candidate.source == switchFunction;
                          });
-  const lang::HirStatement *switchHirStatement = nullptr;
-  if (switchHirFunction != frontend.hir.functionInstances().end()) {
-    const auto found =
-        std::find_if(switchHirFunction->body.statements.begin(),
-                     switchHirFunction->body.statements.end(),
-                     [&](const lang::HirStatement &statement) {
-                       return statement.source == switchStatement;
-                     });
-    if (found != switchHirFunction->body.statements.end()) {
-      switchHirStatement = &*found;
-    }
-  }
-  expect(switchHirStatement != nullptr && switchBinding != nullptr &&
-             std::find(switchHirStatement->endedLoans.begin(),
-                       switchHirStatement->endedLoans.end(),
-                       switchBinding->retainedLoan) !=
-                 switchHirStatement->endedLoans.end(),
-         "HIR should carry the semantic switch-exit proof");
 
   const lang::MirFunctionInstance *switchMirFunction =
       switchHirFunction == frontend.hir.functionInstances().end()
@@ -10738,65 +10241,6 @@ int main() {
              lang::verifyMirBody(switchMirFunction->body).valid(),
          "MIR should normalize the retained loan on both switch exits before "
          "their CFG join");
-
-  const lang::FunctionDecl *armFunction =
-      findTopLevelFunction(frontend.program, "switch_arm_paths");
-  const auto *armSwitch =
-      armFunction == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::SwitchStmt *>(
-                armFunction->body()->statements().at(2).get());
-  const auto *armIterator =
-      armFunction == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                armFunction->body()->statements().at(1).get());
-  const lang::BindingInfo *armBinding =
-      armIterator == nullptr ? nullptr
-                             : frontend.semantics.findBinding(*armIterator);
-  const lang::SemanticLoanInfo *armLoan =
-      armBinding == nullptr
-          ? nullptr
-          : frontend.semantics.findLoan(armBinding->retainedLoan);
-  expect(
-      armSwitch != nullptr && armLoan != nullptr &&
-          std::any_of(armLoan->endpoints.begin(), armLoan->endpoints.end(),
-                      [&](const lang::SemanticLoanEndpoint &endpoint) {
-                        return endpoint.kind ==
-                                   lang::SemanticLoanEndKind::SwitchArmEntry &&
-                               endpoint.statement == armSwitch;
-                      }),
-      "a switch arm that does not use the carrier should end the loan at "
-      "that arm's entry before mutation");
-
-  const auto armHirFunction =
-      armFunction == nullptr
-          ? frontend.hir.functionInstances().end()
-          : std::find_if(frontend.hir.functionInstances().begin(),
-                         frontend.hir.functionInstances().end(),
-                         [&](const lang::HirFunctionInstance &candidate) {
-                           return candidate.source == armFunction;
-                         });
-  const lang::HirStatement *armHirSwitch = nullptr;
-  if (armHirFunction != frontend.hir.functionInstances().end()) {
-    const auto found = std::find_if(armHirFunction->body.statements.begin(),
-                                    armHirFunction->body.statements.end(),
-                                    [&](const lang::HirStatement &statement) {
-                                      return statement.source == armSwitch;
-                                    });
-    if (found != armHirFunction->body.statements.end()) {
-      armHirSwitch = &*found;
-    }
-  }
-  const lang::SemanticLoanId armLoanId =
-      armBinding == nullptr ? 0 : armBinding->retainedLoan;
-  expect(armHirSwitch != nullptr && !armHirSwitch->switchArms.empty() &&
-             std::find(armHirSwitch->switchArms.front().entryEndedLoans.begin(),
-                       armHirSwitch->switchArms.front().entryEndedLoans.end(),
-                       armLoanId) !=
-                 armHirSwitch->switchArms.front().entryEndedLoans.end(),
-         "HIR should preserve the semantic loan ending at an unused switch "
-         "arm's entry");
 
   for (const char *const name :
        {"switch_arm_paths", "switch_without_default", "while_break_path",
@@ -11011,48 +10455,10 @@ int loop_aliases() {
           ? nullptr
           : dynamic_cast<const lang::VariableDecl *>(
                 sequential->body()->statements().at(1).get());
-  const auto *alias =
-      sequential == nullptr || sequential->body()->statements().size() < 7
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                sequential->body()->statements().at(2).get());
-  const auto *secondAlias =
-      sequential == nullptr || sequential->body()->statements().size() < 7
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                sequential->body()->statements().at(3).get());
-  const lang::Stmt *lastSequentialUse =
-      sequential == nullptr || sequential->body()->statements().size() < 7
-          ? nullptr
-          : sequential->body()->statements().at(6).get();
   const lang::BindingInfo *iteratorBinding =
       iterator == nullptr ? nullptr : frontend.semantics.findBinding(*iterator);
-  const lang::BindingInfo *aliasBinding =
-      alias == nullptr ? nullptr : frontend.semantics.findBinding(*alias);
-  const lang::BindingInfo *secondAliasBinding =
-      secondAlias == nullptr ? nullptr
-                             : frontend.semantics.findBinding(*secondAlias);
   const lang::SemanticLoanId sharedLoan =
       iteratorBinding == nullptr ? 0 : iteratorBinding->retainedLoan;
-  const lang::SemanticLoanInfo *semanticLoan =
-      frontend.semantics.findLoan(sharedLoan);
-  const lang::SemanticLoanInfo *shellLoan =
-      aliasBinding == nullptr
-          ? nullptr
-          : frontend.semantics.findLoan(aliasBinding->retainedLoan);
-  expect(sharedLoan != 0 && aliasBinding != nullptr && shellLoan != nullptr &&
-             shellLoan->storedDependency == sharedLoan &&
-             secondAliasBinding != nullptr &&
-             secondAliasBinding->retainedLoan == shellLoan->id &&
-             semanticLoan != nullptr &&
-             semanticLoan->access == lang::AccessMode::ReadOnly &&
-             semanticLoan->carriers.size() == 1 &&
-             shellLoan->carriers.size() == 2 &&
-             hasLoanEndpoint(semanticLoan,
-                             lang::SemanticLoanEndKind::AfterStatement,
-                             lastSequentialUse),
-         "semantic analysis should distinguish the physical aliases from "
-         "their shared external dependency and retain its aggregate final use");
 
   const auto sequentialHir =
       sequential == nullptr
@@ -11062,23 +10468,6 @@ int loop_aliases() {
                          [&](const lang::HirFunctionInstance &candidate) {
                            return candidate.source == sequential;
                          });
-  const lang::HirStatement *hirLastUse = nullptr;
-  if (sequentialHir != frontend.hir.functionInstances().end()) {
-    const auto found =
-        std::find_if(sequentialHir->body.statements.begin(),
-                     sequentialHir->body.statements.end(),
-                     [&](const lang::HirStatement &statement) {
-                       return statement.source == lastSequentialUse;
-                     });
-    if (found != sequentialHir->body.statements.end()) {
-      hirLastUse = &*found;
-    }
-  }
-  expect(hirLastUse != nullptr &&
-             std::find(hirLastUse->endedLoans.begin(),
-                       hirLastUse->endedLoans.end(),
-                       sharedLoan) != hirLastUse->endedLoans.end(),
-         "HIR should preserve the frontend-selected shared-loan endpoint");
 
   const lang::MirFunctionInstance *sequentialMir =
       sequentialHir == frontend.hir.functionInstances().end()

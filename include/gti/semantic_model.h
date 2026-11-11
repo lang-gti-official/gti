@@ -16,13 +16,6 @@ enum class SemanticLoanKind {
   StoredValue,
 };
 
-enum class SemanticLoanEndKind {
-  AfterStatement,
-  ThenBranchEntry,
-  ElseBranchEntry,
-  SwitchArmEntry,
-};
-
 enum class UnsafeOperationKind {
   None,
   RawDereference,
@@ -36,12 +29,6 @@ enum class UnsafeOperationKind {
   ObjectLifetime,
   DeclaredUnsafeConstruction,
   ErasedReferenceRestore,
-};
-
-struct SemanticLoanEndpoint {
-  SemanticLoanEndKind kind = SemanticLoanEndKind::AfterStatement;
-  const Stmt *statement = nullptr;
-  std::size_t switchArm = 0;
 };
 
 using SemanticLoanPlaceProjectionKind = PlaceProjectionKind;
@@ -144,7 +131,6 @@ struct SemanticLoanInfo {
   std::vector<SemanticLoanDependency> additionalDependencies;
   std::optional<SemanticReferenceSelection> referenceSelection;
   std::vector<SymbolId> carriers;
-  std::vector<SemanticLoanEndpoint> endpoints;
 };
 
 enum class RangeIterationStrategy {
@@ -191,11 +177,6 @@ struct ResolvedRangeIterationInfo {
   // fresh hidden mutable cursor while evaluating that exact endpoint.
   bool nonBorrowingEndpoint = false;
   bool materializesElementValue = false;
-};
-
-struct SemanticConditionalLoanEnds {
-  std::vector<SemanticLoanId> thenEntry;
-  std::vector<SemanticLoanId> elseEntry;
 };
 
 enum class StructuredBindingProjectionKind {
@@ -2680,12 +2661,6 @@ public:
 
   [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const;
 
-  [[nodiscard]] std::vector<SemanticLoanId>
-  loansEndingAfter(const Stmt &statement) const;
-
-  [[nodiscard]] std::vector<SemanticLoanId>
-  loansEndingAtConditionalEntry(const IfStmt &statement, bool thenBranch) const;
-
   [[nodiscard]] std::optional<bool>
   findConstexprBranch(const IfStmt &statement) const;
 
@@ -2730,10 +2705,6 @@ public:
 
   [[nodiscard]] std::optional<StaticAssertResult>
   findStaticAssertResult(const StaticAssertDecl &declaration) const;
-
-  [[nodiscard]] std::vector<SemanticLoanId>
-  loansEndingAtSwitchArmEntry(const SwitchStmt &statement,
-                              std::size_t armIndex) const;
 
   [[nodiscard]] const StructuredBindingInfo *
   findStructuredBinding(const StructuredBindingDecl &declaration) const;
@@ -3083,9 +3054,6 @@ private:
   static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
                                SemanticLoanId loan);
 
-  void recordLoanEndpoint(SemanticLoanId id, SemanticLoanEndKind kind,
-                          const Stmt &statement, std::size_t switchArm = 0);
-
   void record(const Expr &expression, ExpressionInfo info);
 
   static bool
@@ -3156,12 +3124,6 @@ private:
 
   void recordBindingLoan(const Parameter &parameter, SemanticLoanId loan);
 
-  void recordLoanEndAfter(SemanticLoanId id, const Stmt &statement);
-
-  void recordLoanEndAtConditionalEntry(SemanticLoanId id,
-                                       const IfStmt &statement,
-                                       bool thenBranch);
-
   void recordConstexprBranch(const IfStmt &statement,
                              std::optional<bool> thenBranch);
 
@@ -3186,10 +3148,6 @@ private:
 
   void recordStaticAssertResult(const StaticAssertDecl &declaration,
                                 StaticAssertResult result);
-
-  void recordLoanEndAtSwitchArmEntry(SemanticLoanId id,
-                                     const SwitchStmt &statement,
-                                     std::size_t armIndex);
 
   void recordLoanCarrier(SemanticLoanId id, SymbolId carrier);
 
@@ -3406,9 +3364,6 @@ private:
       expressionBorrowDependencies;
   std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>
       captureBorrowDependencies;
-  std::unordered_map<const Stmt *, std::vector<SemanticLoanId>> loanEnds;
-  std::unordered_map<const IfStmt *, SemanticConditionalLoanEnds>
-      conditionalLoanEnds;
   // nullopt is an explicitly deferred primary selection, not a false branch.
   std::unordered_map<const IfStmt *, std::optional<bool>> constexprBranches;
   std::unordered_map<const ConstexprForStmt *,
@@ -3432,9 +3387,6 @@ private:
   std::vector<std::shared_ptr<const Expr>> expressionArena;
   std::unordered_map<const StaticAssertDecl *, StaticAssertResult>
       staticAssertResults;
-  std::unordered_map<const SwitchStmt *,
-                     std::vector<std::vector<SemanticLoanId>>>
-      switchArmLoanEnds;
   std::unordered_map<const StructuredBindingDecl *, StructuredBindingInfo>
       structuredBindings;
   std::unordered_map<const RangeForStmt *, ResolvedRangeIterationInfo>

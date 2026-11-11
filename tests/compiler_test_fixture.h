@@ -337,17 +337,6 @@ analyzeTrustedStandalonePreludeFixture(const std::string &name,
       .analyze(entry, source, {entry}, {{entryKey, source}});
 }
 
-[[maybe_unused]] bool hasLoanEndpoint(const lang::SemanticLoanInfo *loan,
-                                      lang::SemanticLoanEndKind kind,
-                                      const lang::Stmt *statement) {
-  return loan != nullptr &&
-         std::any_of(loan->endpoints.begin(), loan->endpoints.end(),
-                     [&](const lang::SemanticLoanEndpoint &endpoint) {
-                       return endpoint.kind == kind &&
-                              endpoint.statement == statement;
-                     });
-}
-
 [[maybe_unused]] const lang::FunctionDecl *
 findTopLevelFunction(const lang::Program &program, const std::string &name) {
   for (const lang::StmtPtr &declaration : program.declarations()) {

@@ -5818,8 +5818,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         }
       if (validHandoff) {
         loanFlow.records.at(subjectDependency).active = false;
-        semanticModel.recordLoanEndAtSwitchArmEntry(subjectDependency, stmt,
-                                                    armIndex);
       }
     }
     // Binding an observed subject's payloads reads its place at this arm's

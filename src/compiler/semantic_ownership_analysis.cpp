@@ -13053,22 +13053,6 @@ auto SemanticVisitor::Impl::reportRawLoanConflict(
       "Raw access may overlap a live incompatible checked borrow.", true);
 }
 
-auto SemanticVisitor::Impl::recordProvenLoanEndpoint(
-    SemanticLoanId id, const LoanFlowArmEndpoint &endpoint) -> void {
-  if (endpoint.proofOnly) {
-    return;
-  }
-  if (endpoint.atEntry && endpoint.entryConditional != nullptr) {
-    semanticModel.recordLoanEndAtConditionalEntry(
-        id, *endpoint.entryConditional, endpoint.thenBranch);
-  } else if (endpoint.atEntry && endpoint.entrySwitch != nullptr) {
-    semanticModel.recordLoanEndAtSwitchArmEntry(id, *endpoint.entrySwitch,
-                                                endpoint.switchArm);
-  } else if (!endpoint.atEntry && endpoint.after != nullptr) {
-    semanticModel.recordLoanEndAfter(id, *endpoint.after);
-  }
-}
-
 auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
   (void)finalizeCapturedText();
   recordProgramScopeBorrowCleanup();
@@ -13126,17 +13110,9 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
       if (const std::optional<LoanFlowConditionalEndPlan> plan =
               conditionalEndPlan(id, loan)) {
         conditionalEndPlans.emplace(id, *plan);
-        for (const LoanFlowArmEndpoint &endpoint : plan->endpoints) {
-          recordProvenLoanEndpoint(id, endpoint);
-        }
       } else if (const std::optional<LoanFlowSwitchEndPlan> plan =
                      switchEndPlan(id, loan)) {
         switchEndPlans.emplace(id, *plan);
-        for (const LoanFlowArmEndpoint &endpoint : plan->endpoints) {
-          recordProvenLoanEndpoint(id, endpoint);
-        }
-      } else {
-        semanticModel.recordLoanEndAfter(id, *loan.lastUse);
       }
 
       std::vector<LoanFlowBreakEndPlan> plans;
@@ -13144,7 +13120,6 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
            conflictIndex < loanFlow.conflicts.size(); ++conflictIndex) {
         if (std::optional<LoanFlowBreakEndPlan> plan =
                 pathLocalBreakEndPlan(id, loan, conflictIndex)) {
-          recordProvenLoanEndpoint(id, plan->endpoint);
           plans.push_back(std::move(*plan));
         }
       }
