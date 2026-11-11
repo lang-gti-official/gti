@@ -3582,9 +3582,6 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       genericParametersFor(stmt);
   beginTypeParameterScope(genericParameters);
   const FunctionInfo *functionInfo = semanticModel.findFunction(stmt);
-  const FunctionInfo *primaryFunctionInfo =
-      instanceBaseModel == nullptr ? functionInfo
-                                   : instanceBaseModel->findFunction(stmt);
   const bool staticMethod =
       functionInfo != nullptr && functionInfo->staticMember;
   const bool requirementsValid = beginRequirementScope(functionInfo);
@@ -3757,42 +3754,6 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
         reportContract(
             attribute,
             "A discardable contract requires a non-void return type.");
-      }
-      continue;
-    }
-    if (attribute.lexeme == "borrowed_from") {
-      if (!functionAttributeNames.insert(attribute.lexeme).second) {
-        reportContract(attribute,
-                       "Duplicate function attribute 'borrowed_from'.");
-      } else if (stmt.hasCLinkage() || stmt.runtimeBinding()) {
-        reportContract(
-            attribute,
-            "A borrowed_from contract requires a GTI function or method.");
-      } else if (primaryFunctionInfo != nullptr &&
-                 containsOpenTypeParameter(primaryFunctionInfo->returnType)) {
-        // A generic result decides per instance: the contract binds the
-        // instances whose result is a checked reference and is inert for
-        // the others. The named parameter may be a final pack whose one
-        // eligible element owns the result in each such instance.
-        if (!contract.argument) {
-          reportContract(attribute, "A borrowed_from contract requires one "
-                                    "reference parameter name or 'this'.");
-        }
-      } else if (functionInfo == nullptr ||
-                 (functionInfo->returnType.kind != SemanticType::Reference &&
-                  !isConditionalBorrowResult(functionInfo->returnType))) {
-        reportContract(attribute, "A borrowed_from contract requires a checked "
-                                  "reference or conditional reference-bearing "
-                                  "return type.");
-      } else if (!contract.argument) {
-        reportContract(attribute, "A borrowed_from contract requires one "
-                                  "reference parameter name or 'this'.");
-      } else if (functionInfo->returnBorrowOrigin == BorrowOriginKind::None) {
-        reportContract(
-            *contract.argument,
-            "The selected borrow origin must name a reference parameter or "
-            "eligible borrowed carrier with sufficient access, or a "
-            "non-static receiver.");
       }
       continue;
     }
@@ -4253,22 +4214,6 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
 
   // A function body owns the parameter scope, so do not add another scope.
-  if (functionInfo && functionInfo->explicitReturnBorrowOrigin &&
-      functionInfo->returnBorrowOrigin == BorrowOriginKind::Argument) {
-    const auto *attribute = stmt.findFunctionAttribute("borrowed_from");
-    const auto index = functionInfo->returnBorrowParameter;
-    if (attribute && attribute->argument && index < stmt.parameters().size()) {
-      const auto *binding = semanticModel.findBinding(stmt.parameters()[index]);
-      if (binding)
-        semanticModel.recordOccurrence({.sourceUnit = currentSourceUnit,
-                                        .span = tokenSpan(*attribute->argument),
-                                        .kind = SemanticOccurrenceKind::Symbol,
-                                        .symbol = binding->symbol,
-                                        .roles = OccurrenceRole::Reference,
-                                        .name = attribute->argument->lexeme,
-                                        .type = binding->type});
-    }
-  }
   analyze(stmt.body()->statements());
   const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
   const bool canFallThrough = functionFlow.canFallThrough;

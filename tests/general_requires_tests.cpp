@@ -1161,9 +1161,6 @@ int main() {
   static_assert(!(requires(Box& box, Box&<other> other) {
     { box.read() } -> int&<other>;
   }));
-  static_assert(!(requires(Box box) {
-    { box.read() } -> int& [[borrowed_from(box)]];
-  }));
   static_assert(!(requires(Box&<box> box) {
     { box.edit() } -> mut int&<box>;
   }));
@@ -1243,9 +1240,7 @@ int main() {
   static_assert(!(requires(int32_t&<x> x, int32_t& y) { { Pair(x, y) } -> Pair<x>; }));
   static_assert(!(requires(Holder&<h> h) { { h.edit_view() } -> MutSlice<h>; }));
   static_assert(!(requires(int32_t&<x> x) { { MutSlice(x) } -> MutSlice<x>; }));
-  static_assert(!(requires(Holder& h) { { h.count() } -> int32_t [[borrowed_from(h)]]; }));
   static_assert(!(requires(Holder& h) { { h.view() } -> Slice; }));
-  static_assert(!(requires(Holder h) { { h.view() } -> Slice [[borrowed_from(h)]]; }));
   mut Holder holder{};
   if (peek(holder) != 3) { return 1; }
   if (peek_inferred(holder) != 0) { return 2; }
@@ -1291,22 +1286,10 @@ int main() { mut int32_t value = 1; return use(value); }
 )GTI"),
       "a carrier borrowed from two inputs",
       "not borrowed solely from the named requirement parameter");
-  rejectedBecause(check(root, directory, "carrier_owned_result",
-                        constrainedCall("(H& h) { { h.count() } -> int32_t "
-                                        "[[borrowed_from(h)]]; }",
-                                        "return use(holder);")),
-                  "an owned result under borrowed_from",
-                  "carries no borrowed state");
-  rejectedBecause(check(root, directory, "carrier_owned_origin",
-                        constrainedCall("(H h) { { h.view() } -> Slice "
-                                        "[[borrowed_from(h)]]; }",
-                                        "return use(holder);")),
-                  "a carrier whose origin is an owned parameter",
-                  "needs a borrowed parameter origin");
   rejectedBecause(check(root, directory, "carrier_without_origin",
                         constrainedCall("(H& h) { { h.view() } -> Slice; }",
                                         "return use(holder);")),
-                  "a borrow-carrying result without borrowed_from",
+                  "a borrow-carrying result without a result region",
                   "'-> int&<parameter>'");
   rejectedBecause(
       check(root, directory, "carrier_mutable_from_read_only",
@@ -1366,7 +1349,7 @@ int main() {
   rejected(check(root, directory, "carrier_inferred_without_origin",
                  "concept c<S> = requires(S& s) { { s.view() } -> auto; };\n"
                  "int main() { return 0; }\n"),
-           "an inferred value result without borrowed_from", "GTI-P0001");
+           "an inferred value result without a result region", "GTI-P0001");
   rejected(check(root, directory, "carrier_mutable_inferred_value",
                  "concept c<S> = requires(mut S&<s> s) {\n"
                  "  { s.view() } -> mut auto<s>;\n};\n"
@@ -1487,7 +1470,7 @@ int main() { require_cursor<Cursor>(); return 0; }
       check(root, directory, "unknown_query_borrow_origin", R"(
 int main() {
   static_assert(requires(int& value) {
-    { value } -> int& [[borrowed_from(other)]];
+    { value } -> int&<other>;
   });
   return 0;
 }

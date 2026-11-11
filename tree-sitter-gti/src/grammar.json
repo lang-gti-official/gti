@@ -4954,10 +4954,6 @@
             {
               "type": "STRING",
               "value": "noinline"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "borrow_origin_attribute"
             }
           ]
         },
@@ -5004,10 +5000,6 @@
                   {
                     "type": "STRING",
                     "value": "noinline"
-                  },
-                  {
-                    "type": "SYMBOL",
-                    "name": "borrow_origin_attribute"
                   }
                 ]
               }
@@ -5017,40 +5009,6 @@
         {
           "type": "STRING",
           "value": "]]"
-        }
-      ]
-    },
-    "borrow_origin_attribute": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "borrowed_from"
-        },
-        {
-          "type": "STRING",
-          "value": "("
-        },
-        {
-          "type": "FIELD",
-          "name": "origin",
-          "content": {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "SYMBOL",
-                "name": "identifier"
-              },
-              {
-                "type": "STRING",
-                "value": "this"
-              }
-            ]
-          }
-        },
-        {
-          "type": "STRING",
-          "value": ")"
         }
       ]
     },
@@ -9866,58 +9824,12 @@
                                 "type": "CHOICE",
                                 "members": [
                                   {
-                                    "type": "SEQ",
-                                    "members": [
-                                      {
-                                        "type": "FIELD",
-                                        "name": "result_type",
-                                        "content": {
-                                          "type": "SYMBOL",
-                                          "name": "type"
-                                        }
-                                      },
-                                      {
-                                        "type": "CHOICE",
-                                        "members": [
-                                          {
-                                            "type": "SEQ",
-                                            "members": [
-                                              {
-                                                "type": "STRING",
-                                                "value": "[["
-                                              },
-                                              {
-                                                "type": "STRING",
-                                                "value": "borrowed_from"
-                                              },
-                                              {
-                                                "type": "STRING",
-                                                "value": "("
-                                              },
-                                              {
-                                                "type": "FIELD",
-                                                "name": "borrow_origin",
-                                                "content": {
-                                                  "type": "SYMBOL",
-                                                  "name": "identifier"
-                                                }
-                                              },
-                                              {
-                                                "type": "STRING",
-                                                "value": ")"
-                                              },
-                                              {
-                                                "type": "STRING",
-                                                "value": "]]"
-                                              }
-                                            ]
-                                          },
-                                          {
-                                            "type": "BLANK"
-                                          }
-                                        ]
-                                      }
-                                    ]
+                                    "type": "FIELD",
+                                    "name": "result_type",
+                                    "content": {
+                                      "type": "SYMBOL",
+                                      "name": "type"
+                                    }
                                   },
                                   {
                                     "type": "SEQ",

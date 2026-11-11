@@ -58,30 +58,36 @@ struct Guard {
               (argument_list))))))))
 
 ==================
-Borrow-origin contracts on functions and receivers
+Result-region contracts on functions and receivers
 ==================
 
-[[borrowed_from(owner), track_caller, discardable]] int& borrow(int& owner) { return owner; }
+[[track_caller, discardable]] int&<a> borrow<lifetime a>(int&<a> owner) { return owner; }
 struct Holder {
-  [[discardable]] [[borrowed_from(this)]] int& get() { return this.value; }
+  [[discardable]] int&<this> get() { return this.value; }
 };
 
 ---
 
 (source_file
   (function_declaration
-    (function_contract_attribute
-      (borrow_origin_attribute
-        (identifier)))
+    (function_contract_attribute)
     (type
       (primitive_type)
-      (reference_declarator))
+      (reference_declarator
+        (lifetime_argument
+          (identifier))))
     (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (lifetime_parameter
+          (identifier))))
     (parameter_clause
       (parameter
         (type
           (primitive_type)
-          (reference_declarator))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
         (identifier)))
     (block
       (return_statement
@@ -93,11 +99,11 @@ struct Holder {
     (class_body
       (method_declaration
         (function_contract_attribute)
-        (function_contract_attribute
-          (borrow_origin_attribute))
         (type
           (primitive_type)
-          (reference_declarator))
+          (reference_declarator
+            (lifetime_argument
+              (lifetime_constant))))
         (identifier)
         (parameter_clause)
         (block
@@ -120,16 +126,29 @@ Function optimization annotations
 (source_file
   (function_declaration
     (function_contract_attribute)
-    (type (primitive_type))
+    (type
+      (primitive_type))
     (identifier)
     (parameter_clause)
-    (block (return_statement (initializer_expression (primary_expression (literal (integer_literal)))))))
+    (block
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal)))))))
   (function_declaration
     (function_contract_attribute)
-    (type (primitive_type))
+    (type
+      (primitive_type))
     (identifier)
     (parameter_clause)
-    (block (return_statement (initializer_expression (call_expression (primary_expression (identifier)) (argument_list)))))))
+    (block
+      (return_statement
+        (initializer_expression
+          (call_expression
+            (primary_expression
+              (identifier))
+            (argument_list)))))))
 
 ==================
 Lifecycle optimization annotations

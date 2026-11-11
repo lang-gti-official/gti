@@ -1272,12 +1272,6 @@ int&<a> select<lifetime a>(int&<a> left, int& right) { return right; }
 int main() { int first = 42; int second = 7; return select(first, second); }
 )",
            "reference");
-  negative("origin name must resolve to a declaration parameter", R"(
-[[borrowed_from(missing)]]
-int& select(int& value) { return value; }
-int main() { int value = 42; return select(value); }
-)",
-           "selected borrow origin");
   bridge();
   assertionReset();
   ownerViewBoundaries();

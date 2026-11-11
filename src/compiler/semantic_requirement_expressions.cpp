@@ -680,7 +680,7 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
   if (query.inferredResult() && actual == SemanticType::Unknown)
     return reject("The expression's operation remains unresolved. An inferred "
                   "result does not prove an unresolved compound operation.");
-  // `-> auto [[borrowed_from(x)]]` infers a borrow-carrying value; `-> auto&`
+  // `-> auto<x>` infers a borrow-carrying value; `-> auto&`
   // infers a checked reference's referent.
   const bool inferredCarrier = query.inferredResult() && query.borrowedFrom() &&
                                !query.result().reference;

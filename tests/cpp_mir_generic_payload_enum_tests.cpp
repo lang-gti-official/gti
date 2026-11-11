@@ -999,7 +999,7 @@ public:
     }
   }
 };
-[[borrowed_from(owner)]] Reading read(int& owner, bool absent) {
+Reading<a> read<lifetime a>(int&<a> owner, bool absent) {
   if (absent) return Reading();
   return Reading(owner);
 }

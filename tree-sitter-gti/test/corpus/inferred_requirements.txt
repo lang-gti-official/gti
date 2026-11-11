@@ -2,8 +2,8 @@
 Inferred expression and reference requirements
 ==================
 concept reads<I> = requires(I& cursor) { { *cursor }; };
-concept edits<I> = requires(mut I& cursor) {
-  { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+concept edits<I> = requires(mut I&<cursor> cursor) {
+  { *cursor } -> mut auto&<cursor>;
 };
 ---
 
@@ -29,11 +29,14 @@ concept edits<I> = requires(mut I& cursor) {
         (type
           (user_type
             (identifier))
-          (reference_declarator))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))
         (identifier)
         (unary_expression
           (primary_expression
             (identifier)))
         (type
-          (reference_declarator))
-        (identifier)))))
+          (reference_declarator
+            (lifetime_argument
+              (identifier))))))))

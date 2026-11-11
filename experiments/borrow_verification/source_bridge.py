@@ -365,7 +365,7 @@ class CoreRenderer(Renderer):
             body+=['}']*len(self.owner_scopes)
             mode=self.return_mode(fn)
             result='void' if mode is None else ('mut ' if mode=='mut' else '')+'int&'
-            annotation=''
+            binder=''
             if mode=='mut':
                 origins={p['name']:p['name'] for p in fn['params']}
                 results=[]
@@ -376,9 +376,12 @@ class CoreRenderer(Renderer):
                         for key in ('body','then','else'):origin_walk(n.get(key,[]))
                 origin_walk(fn['body'])
                 if len(set(results))==1 and results[0] is not None:
-                    annotation='[[borrowed_from('+self.name(results[0])+')]] '
+                    # The result's region names its one traced argument origin.
+                    origin=' '+self.name(results[0])
+                    result+='<o>';binder='<lifetime o>'
+                    params=[q.replace('int& ','int&<o> ',1) if q.endswith(origin) else q for q in params]
                 else:raise Unsupported('core mutable return needs one resolved argument origin')
-            functions += [annotation+result+' '+self.name(name)+'('+', '.join(params)+') {',*body,'}']
+            functions += [result+' '+self.name(name)+binder+'('+', '.join(params)+') {',*body,'}']
         self.owner_scopes=[];self.terminal=False;self.dead=set()
         env={}
         body=self.emit(self.program['body'],env)

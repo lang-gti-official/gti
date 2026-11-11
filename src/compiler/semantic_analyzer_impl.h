@@ -3015,7 +3015,7 @@ private:
       const FunctionInfo &function,
       SemanticType ownerType = SemanticType::Unknown);
 
-  // An explicit borrowed_from contract on a generic-result declaration binds
+  // An explicit result-region contract on a generic-result declaration binds
   // the instances whose substituted result is a checked reference: the named
   // parameter, or the one eligible element of the named final pack, owns it.
   void resolveGenericReturnBorrowContract(const FunctionInfo &declaration,
@@ -3047,7 +3047,7 @@ private:
   explicitLifetimeResult(const FunctionDecl &syntax,
                          std::span<const SemanticType> parameterTypes,
                          ClassId ownerClass) const;
-  // A `[[borrowed_from]]` attribute or a result written with a region.
+  // A result written with a region.
   [[nodiscard]] static bool
   hasExplicitBorrowContract(const FunctionDecl &syntax);
   // Whether a callable pattern method's result, as this instance types it,
@@ -3176,7 +3176,7 @@ private:
   [[nodiscard]] std::vector<std::size_t>
   constructorLifetimeSuppliers(const ClassDecl &owner,
                                const ConstructorDecl &constructor) const;
-  // The contract an explicit borrowed_from selects for one substitution of a
+  // The contract an explicit result region selects for one substitution of a
   // generic-result declaration: None when the substituted result is not a
   // checked reference or conditional reference-bearing result, otherwise the
   // named parameter or the one eligible element of the named final pack, by
@@ -3798,7 +3798,7 @@ private:
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr,
       SemanticConstraintGuidance *guidance = nullptr) const;
-  // `{ e } -> C [[borrowed_from(x)]]` for a non-reference C: compares the
+  // `{ e } -> C<x>` for a non-reference C: compares the
   // dependencies a binding of e's value would retain against the origin x.
   // `worker` is the query's isolated analyzer that has already analyzed e.
   [[nodiscard]] static bool borrowedCarrierResultSatisfied(

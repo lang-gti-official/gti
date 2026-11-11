@@ -261,7 +261,7 @@ for <T> concept selecting<Marker<T>> {
   accepted(conditionalContract + R"gti(
 int main() { return selecting<Marker<int>>::choose(7, 3) - 7; }
 )gti",
-           "dependent owned protocol results need no borrowed_from annotation");
+           "dependent owned protocol results need no result region");
   rejected(conditionalContract + R"gti(
 int main() {
   int first = 7;
@@ -277,7 +277,7 @@ int main() {
   return evaluate(marker);
 }
 )gti",
-           "GTI-S2029", "borrowed_from parameter contract");
+           "GTI-S2029", "result region parameter contract");
   rejected(conditionalContract + R"gti(
 concept inspected<T> { int inspect(T& value); };
 for <T> concept inspected<Marker<T>> requires selecting<Marker<T>> {
@@ -288,7 +288,7 @@ int main() {
   return inspected<Marker<int&>>::inspect(value);
 }
 )gti",
-           "GTI-S2029", "borrowed_from parameter contract");
+           "GTI-S2029", "result region parameter contract");
   std::string substitutedContract = conditionalContract;
   const std::string substitutedChoose = "  T choose(T source, T other)";
   substitutedContract.replace(
@@ -436,13 +436,6 @@ int main() { return 0; }
            "GTI-S2030", "requires a checked reference");
   rejected(R"gti(
 concept observed<T> {
-  [[borrowed_from(missing)]] int& get(T& source);
-};
-int main() { return 0; }
-)gti",
-           "GTI-S2123", "must name one of its parameters");
-  rejected(R"gti(
-concept observed<T> {
   int&<a> get<lifetime a>(T&<a> source, T& other);
 };
 struct Reading { int value; };
@@ -453,7 +446,7 @@ for concept observed<Reading> {
 };
 int main() { return 0; }
 )gti",
-           "GTI-S2123", "must preserve the concept's borrowed_from");
+           "GTI-S2123", "must preserve the concept's result region");
   rejected(R"gti(
 class Reading {
 public:

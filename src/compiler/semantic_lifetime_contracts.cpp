@@ -4,7 +4,7 @@
 // argument out of a type's argument list and `outlives<...>` out of the
 // type-level requirement expression. A declaration's lifetime contract is
 // therefore read from its written signature here, and translated into the
-// same core borrow facts that `[[borrowed_from]]` produces. Body-local
+// core borrow facts semantics publishes. Body-local
 // lifetime validity is not decided here (see docs/architecture/mir.md).
 
 #include "semantic_analyzer_impl.h"
@@ -365,7 +365,6 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   if (signatureContracts && !separateDefinition &&
       (function.ownerClass == 0 || function.staticMember) &&
       (elidedReference || elidedCarrier) &&
-      !syntax.hasFunctionAttribute("borrowed_from") &&
       std::none_of(syntax.parameters().begin(), syntax.parameters().end(),
                    [](const Parameter &parameter) { return parameter.pack; })) {
     std::size_t eligible = 0;
@@ -1428,8 +1427,6 @@ auto SemanticVisitor::Impl::validateCallTypeOutlives(const Call &call,
 
 auto SemanticVisitor::Impl::hasExplicitBorrowContract(
     const FunctionDecl &syntax) -> bool {
-  if (syntax.hasFunctionAttribute("borrowed_from"))
-    return true;
   // `static` keeps the inferred static-storage origin; the declared region is
   // checked against it, not substituted for it.
   // Only `this` and a region the function itself binds state a contract:
@@ -1438,7 +1435,7 @@ auto SemanticVisitor::Impl::hasExplicitBorrowContract(
   const auto region = resultRegion(syntax.returnType());
   if (!region)
     return false;
-  // `this` states the receiver contract `[[borrowed_from(this)]]` does.
+  // `this` states the receiver contract.
   if (region->kind == TokenKind::THIS || region->lexeme == "this")
     return true;
   const auto parameters = syntax.lifetimeParameters();
@@ -1460,21 +1457,13 @@ auto SemanticVisitor::Impl::hasExplicitBorrowContract(
                      });
 }
 
-// The one parameter a declaration's explicit result contract names, however
-// it is spelled: the borrowed_from attribute's argument, or the parameter its
-// result region binds. Empty for an inferred, receiver or multi-supplier one.
+// The one parameter a declaration's explicit result contract names: the
+// parameter its result region binds. Empty for an inferred, receiver or
+// multi-supplier one.
 auto SemanticVisitor::Impl::declaredContractParameter(
     const FunctionDecl &syntax, const SemanticType &returnType,
     std::span<const SemanticType> parameterTypes) const
     -> std::optional<std::size_t> {
-  if (const auto *origin = syntax.findFunctionAttribute("borrowed_from")) {
-    if (!origin->argument)
-      return std::nullopt;
-    for (std::size_t index = 0; index < syntax.parameters().size(); ++index)
-      if (syntax.parameters()[index].name.lexeme == origin->argument->lexeme)
-        return index;
-    return std::nullopt;
-  }
   if (!hasExplicitBorrowContract(syntax))
     return std::nullopt;
   (void)returnType;

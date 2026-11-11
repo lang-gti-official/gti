@@ -630,7 +630,7 @@ invent an empty reference dependency, or form later argument/receiver stages
 after that terminal evaluation.
 
 Program schema 110 also preserves whether a function's resolved
-`borrowed_from` constraint was explicit source intent. Concrete HIR and MIR
+result-region constraint was explicit source intent. Concrete HIR and MIR
 function rows retain that bit alongside the formal/receiver origin; an explicit
 constraint for a reference-bearing result without a resolved origin is invalid.
 A generic constraint can be vacuous for a concrete dependency-free result while

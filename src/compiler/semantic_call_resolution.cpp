@@ -7233,7 +7233,7 @@ auto SemanticVisitor::Impl::resolveOperator(
       recordMutableBindingUse(origin.root);
   }
 
-  // A generic-result operator with an explicit borrowed_from contract
+  // A generic-result operator with an explicit result-region contract
   // resolves its origin per substitution, exactly as its instance records.
   BorrowOriginKind operatorBorrowOrigin = selected.returnBorrowOrigin;
   std::size_t operatorBorrowParameter = selected.returnBorrowParameter;

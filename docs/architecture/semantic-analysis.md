@@ -688,7 +688,7 @@ Unknown mutable receiver/reference effects still preserve possible writes by
 weak union. Scalar pointer results and unresolved effects remain conservative;
 these summaries are not a complete interprocedural alias proof.
 
-Explicit `borrowed_from` attributes resolve to existing declaration-relative
+Explicit result regions resolve to existing declaration-relative
 return-origin/access facts. Inference cannot replace an explicit contract,
 including an invalid one. Normal return checking proves it. A direct raw
 dereference returned in lexical unsafe additionally records
@@ -3320,9 +3320,10 @@ borrowing inputs a reference or borrowing-carrier result is ambiguous
 (GTI-S2017, as Rust's E0106), for functions and lambdas alike; with none it is
 implicitly `static`. Several read-only inputs of a function-pointer signature
 form a union contract. A contract normalizes to return suppliers,
-stored-reference carriers and receiver suppliers. `[[borrowed_from]]` is a
-compatibility spelling of the same contract slated for deprecation; every form
-has a lifetime spelling (`tests/borrowed_from_equivalence_test.py`).
+stored-reference carriers and receiver suppliers. The former
+`[[borrowed_from]]` attribute was removed; a written one is a parse error, and
+`tests/borrowed_from_equivalence_test.py` keeps each of its contracts' lifetime
+spelling working.
 
 Inside a function body, semantics erases lifetimes. It publishes no
 per-expression supplier, origin or region inventory for HIR or MIR to

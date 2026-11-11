@@ -42,8 +42,6 @@
 (constructor_declaration "implicit" @keyword.modifier)
 (operator_declaration "implicit" @keyword.modifier)
 (function_contract_attribute ["test" "inline" "cold" "noinline" "noreturn" "track_caller" "discardable" "thread_confined_callback"] @attribute)
-(borrow_origin_attribute "borrowed_from" @attribute)
-(borrow_origin_attribute origin: (identifier) @variable.parameter)
 (native_c_array_attribute
   attribute: (identifier) @attribute
   count: (identifier) @variable.parameter)

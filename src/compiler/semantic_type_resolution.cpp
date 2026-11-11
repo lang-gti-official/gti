@@ -4972,7 +4972,7 @@ auto SemanticVisitor::Impl::validateReferencePlacement(
   // A checked projected reference result is the resolved referent, not a
   // container for the syntactic projection operands. A callable operand may
   // itself mention reference parameters/results without storing any of them.
-  // The ordinary referent validation above and exact borrowed_from proof
+  // The ordinary referent validation above and exact result-region proof
   // still apply; uncontracted bindings and parameters retain their rules.
   const bool projectedReferenceResult =
       contractedReferenceResult && resolved.kind == SemanticType::Reference &&
@@ -8613,7 +8613,7 @@ auto SemanticVisitor::Impl::validateParameterPacks(
              "GTI-S2023");
     }
     // A result whose signature names its suppliers (a result region or
-    // `borrowed_from`) binds exactly those lanes in each instance; only an
+    // a result region) binds exactly those lanes in each instance; only an
     // elided borrowed result would leave its pack suppliers unstated.
     if (parameter.type.reference && !explicitResultContract) {
       const SemanticType result = returnType ? typeOf(*returnType)

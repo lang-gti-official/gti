@@ -698,10 +698,9 @@ requireCapture(macroValueRow, "track_caller", "attribute");
 requireLocalCapture(macroValueRow, "macro_value_highlight", "local.definition.function");
 
 const borrowOriginRow = fixtureLines.findIndex((line) =>
-  line.includes("int& borrow_highlight"),
+  line.includes("borrow_highlight<lifetime a>"),
 );
-requireCapture(borrowOriginRow, "borrowed_from", "attribute");
-requireCaptureCount(borrowOriginRow, "owner", "variable.parameter", 2);
+requireCaptureCount(borrowOriginRow, "owner", "variable.parameter", 1);
 
 const memberRequirementRow = fixtureLines.findIndex((line) =>
   line.includes("requires(T& item)"),
