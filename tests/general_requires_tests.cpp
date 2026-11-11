@@ -1537,6 +1537,7 @@ int main() { return 0; }
            "a generic borrowed result cannot escape its local owner",
            "GTI-S2017");
 
+  // MIR checks a generic body per concrete instance (RFC 0004).
   rejected(check(root, directory, "borrowed_query_live_alias", R"(
 concept editable<C> = requires(mut C&<owner> owner) {
   { owner.edit() } -> mut int&<owner>;
@@ -1547,7 +1548,8 @@ void alias<C>(mut C& owner) requires editable<C> {
   first = 1;
   second = 2;
 }
-int main() { return 0; }
+struct Cell { int value = 0; Cell() = default; mut int& edit() mut { return this.value; } };
+int main() { mut Cell cell{}; alias(cell); return cell.value; }
 )",
                  false, lang::FrontendPhase::Mir),
            "generic result origins retain exclusive-loan conflicts",

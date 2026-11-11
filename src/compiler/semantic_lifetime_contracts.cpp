@@ -353,9 +353,16 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   // the same programs from their bodies.
   static const bool signatureContracts =
       !legacyBorrowChecker();
+  // A by-value result carrying borrowed state elides its regions the same
+  // way when none is written.
+  const TypeRef &written = syntax.returnType();
+  const bool elidedReference = written.reference && !written.referenceLifetime;
+  const bool elidedCarrier =
+      !written.reference && written.lifetimeArguments.empty() &&
+      typeTraits(function.returnType).containsBorrowedState;
   if (signatureContracts &&
       (function.ownerClass == 0 || function.staticMember) &&
-      syntax.returnType().reference && !syntax.returnType().referenceLifetime &&
+      (elidedReference || elidedCarrier) &&
       !syntax.hasFunctionAttribute("borrowed_from") &&
       std::none_of(syntax.parameters().begin(), syntax.parameters().end(),
                    [](const Parameter &parameter) { return parameter.pack; })) {
@@ -366,7 +373,9 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
         ++eligible;
     if (eligible > 1)
       report(syntax.name(),
-             "The returned reference's elided region is ambiguous among " +
+             std::string(elidedReference ? "The returned reference's"
+                                         : "The returned borrowing value's") +
+                 " elided region is ambiguous among " +
                  std::to_string(eligible) +
                  " borrowed parameters; name the suppliers with a lifetime "
                  "parameter.",
