@@ -1,4 +1,3 @@
-#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
@@ -23,13 +22,6 @@ void expect(bool condition, const std::string &name) {
     ++failures;
     std::cerr << "FAIL: " << name << '\n';
   }
-}
-
-// RFC 0004 retires body-inferred field mappings; these fixtures produce that
-// shape only under GTI_LEGACY_BORROW_CHECKER, and the checks go with it.
-void expectBodySummary(bool condition, const std::string &name) {
-  if (lang::legacyBorrowChecker())
-    expect(condition, name);
 }
 
 const std::string declarations = R"gti(
@@ -1176,107 +1168,6 @@ int main() { Resource owner{}; mut Wrapper wrapper{owner}; return wrapper.inspec
          "nested view fixture exercises exact member-copy publication");
 }
 
-void checkMappedAliasParent() {
-  const auto control = analyze("mapped alias parent", R"gti(
-class Projection {
-  Resource& resource;
-public:
-  Projection(Resource& resource) : resource(resource) {}
-  int& get() { return this.resource.value; }
-};
-int main() {
-  Resource first{}; Resource second{};
-  Projection left{first}; Projection right{second};
-  Projection& left_alias = left;
-  Projection& right_alias = right;
-  int& a = left_alias.get();
-  int& b = right_alias.get();
-  return a + b - 14;
-}
-)gti");
-  if (!control)
-    return;
-  bool checked = false;
-  for (const auto &function : control->functionInstances()) {
-    const BodyKey key{lang::MirBodyKind::Function, function.id};
-    for (const auto &block : function.body.blocks)
-      for (const auto &call : block.instructions) {
-        const auto *child =
-            call.loan ? function.body.findLoan(*call.loan) : nullptr;
-        if (call.kind != lang::MirInstructionKind::Call ||
-            call.borrowFields.size() != 1 || child == nullptr ||
-            child->kind != lang::MirLoanKind::CallResult || child->parent == 0)
-          continue;
-        const auto *parent = function.body.findLoan(child->parent);
-        const auto alias =
-            std::find_if(function.body.loans.begin(), function.body.loans.end(),
-                         [&](const auto &loan) {
-                           return loan.storedDependency == child->parent;
-                         });
-        const auto other =
-            std::find_if(function.body.loans.begin(), function.body.loans.end(),
-                         [&](const auto &loan) {
-                           return parent != nullptr &&
-                                  loan.kind == lang::MirLoanKind::Stored &&
-                                  loan.id != parent->id &&
-                                  loan.source != parent->source &&
-                                  loan.access == parent->access &&
-                                  !loan.entry && !loan.escapes;
-                         });
-        if (parent == nullptr || alias == function.body.loans.end() ||
-            other == function.body.loans.end())
-          continue;
-        checked = true;
-        auto wrongParent = *control;
-        body(wrongParent, key).loans[child->id - 1].parent = other->id;
-        rejected(wrongParent,
-                 "mapped alias cannot substitute another owner's parent");
-
-        auto wrongDependency = *control;
-        body(wrongDependency, key).loans[alias->id - 1].storedDependency =
-            other->id;
-        rejected(wrongDependency,
-                 "mapped alias must retain its exact input dependency");
-
-        auto missingMap = *control;
-        instruction(body(missingMap, key), call.id)->borrowFields.clear();
-        expect(!lang::verifyMirBody(body(missingMap, key)).valid(),
-               "body verifier requires a field map before bypassing alias "
-               "shell parent");
-        rejected(missingMap,
-                 "mapped alias cannot erase its external field contract");
-
-        auto wrongField = *control;
-        instruction(body(wrongField, key), call.id)
-            ->borrowFields.front()
-            .sourceFields.pop_back();
-        rejected(wrongField,
-                 "mapped alias cannot discard its exact projected field");
-
-        auto wrongAccess = *control;
-        instruction(body(wrongAccess, key), call.id)
-            ->borrowFields.front()
-            .access = lang::AccessMode::Mutable;
-        rejected(wrongAccess,
-                 "mapped alias cannot upgrade shared field access");
-
-        if (const auto end = loanEnd(function.body, parent->id)) {
-          auto early = *control;
-          expect(moveBefore(body(early, key), *end, call.id),
-                 "mapped alias early parent retirement mutation applies");
-          rejected(
-              early,
-              "mapped alias requires an active selected stored dependency");
-        }
-        break;
-      }
-    if (checked)
-      break;
-  }
-  expectBodySummary(
-      checked, "mapped alias fixture exercises two distinct same-typed owners");
-}
-
 void checkPassiveCleanupParent() {
   const auto control = analyze("passive cleanup parent", R"gti(
 struct View {
@@ -1455,105 +1346,6 @@ int main() {
   expect(checkedReferenceField, "range cursor stores a checked Cell reference");
   expect(checkedAdapter, "begin publishes an adapter over a nested owner");
   expect(checkedRange, "range element retains physical container storage");
-}
-
-void checkExternalReceiverAdapterReturn() {
-  const auto control = analyze("external receiver adapter return", R"gti(
-class Cursor<T> {
-  T& value;
-public:
-  Cursor(T& value) : value(value) {}
-  T& operator*() { return this.value; }
-};
-class SingleRange<T> {
-  T value;
-public:
-  SingleRange(T value) : value(value) {}
-  Cursor<T> begin() { return Cursor<T>(this.value); }
-};
-class WrappedRange<T> {
-  SingleRange<T>& internal;
-public:
-  WrappedRange(SingleRange<T>& internal) : internal(internal) {}
-  Cursor<T> begin() { return this.internal.begin(); }
-};
-int main() {
-  SingleRange<int> range{7};
-  WrappedRange<int> wrapper{range};
-  auto cursor = wrapper.begin();
-  return *cursor - 7;
-}
-)gti");
-  if (!control)
-    return;
-  bool checked = false;
-  for (const auto &function : control->functionInstances()) {
-    if (function.returnType.kind != lang::SemanticType::Class ||
-        function.returnBorrowFields.size() != 1)
-      continue;
-    const auto &mapping = function.returnBorrowFields.front();
-    if (mapping.origin != lang::BorrowOriginKind::Receiver ||
-        mapping.sourceFields.size() != 1 || mapping.resultFields.size() != 1 ||
-        mapping.sourceFields == mapping.resultFields)
-      continue;
-    const BodyKey key{lang::MirBodyKind::Function, function.id};
-    const auto shell =
-        std::find_if(function.body.places.begin(), function.body.places.end(),
-                     [](const auto &place) {
-                       return place.root == lang::MirPlaceRootKind::This &&
-                              place.projections.empty();
-                     });
-    expect(shell != function.body.places.end(),
-           "external adapter control has a distinct wrapper receiver shell");
-    for (const auto &block : function.body.blocks) {
-      if (block.terminator.kind != lang::MirTerminatorKind::Return ||
-          !block.terminator.returnLoan)
-        continue;
-      const auto returned = *block.terminator.returnLoan;
-      const auto *loan = function.body.findLoan(returned);
-      expect(loan != nullptr && loan->designatedFields == mapping.resultFields,
-             "external adapter publication labels the returned field, not "
-             "source field");
-      if (loan == nullptr)
-        continue;
-      checked = true;
-      auto missing = *control;
-      body(missing, key).loans[returned - 1].designatedFields.clear();
-      rejected(missing,
-               "external adapter return cannot erase result field identity");
-
-      auto wrongField = *control;
-      body(wrongField, key).loans[returned - 1].designatedFields =
-          mapping.sourceFields;
-      rejected(wrongField, "external adapter return cannot replace result "
-                           "field with source field");
-
-      if (shell != function.body.places.end()) {
-        expect(loan->source != shell->id,
-               "external adapter source is not the wrapper shell");
-        auto wrongOwner = *control;
-        body(wrongOwner, key).loans[returned - 1].source = shell->id;
-        rejected(wrongOwner, "external adapter return cannot replace external "
-                             "range with wrapper shell");
-
-        auto forgedMap = wrongOwner;
-        auto &changed = *const_cast<lang::MirFunctionInstance *>(
-            forgedMap.findFunctionInstance(function.id));
-        changed.returnBorrowFields.front().sourceFields.clear();
-        for (const auto &caller : forgedMap.functionInstances())
-          for (auto &callerBlock :
-               const_cast<lang::MirFunctionInstance &>(caller).body.blocks)
-            for (auto &call : callerBlock.instructions)
-              if (call.functionTarget == function.id)
-                call.borrowFields = changed.returnBorrowFields;
-        rejected(forgedMap, "external adapter return source is independently "
-                            "checked against its producer");
-      }
-    }
-  }
-  expectBodySummary(
-      checked,
-      "external receiver adapter publishes its exact resolved field mapping");
 }
 
 void checkFactoryCarrierAndDestructor() {
@@ -1945,10 +1737,8 @@ int main() {
   checkConstructedFieldPublication();
   checkOwnedFieldReference();
   checkNestedViewCopy();
-  checkMappedAliasParent();
   checkPassiveCleanupParent();
   checkRangeOverCleanupOwner();
-  checkExternalReceiverAdapterReturn();
   checkFactoryCarrierAndDestructor();
   checkSharedOriginFieldIdentities();
   checkProjectedEntryConstruction();

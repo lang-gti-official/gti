@@ -685,7 +685,6 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
                            substitution);
   concreteFunction.returnedTextReference =
       textReferenceReturnSummary(concreteFunction, concreteOwner);
-  static const bool signatureContracts = !legacyBorrowChecker();
   // Text-view relays (L-OWN-02) keep their own derivation until text views
   // get a signature rule; stored-field refinement is body inference.
   if (!concreteFunction.explicitReturnBorrowOrigin) {
@@ -708,21 +707,11 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       concreteFunction.returnBorrowParameters = borrow.parameters;
       concreteFunction.returnBorrowPlace = borrow.place;
     }
-    if (const auto fields = signatureContracts ? std::nullopt
-                                               : storedFieldReturnBorrowSummary(
-                                                     concreteFunction)) {
-      concreteFunction.returnBorrowOrigin = fields->origin;
-      concreteFunction.returnBorrowParameter = fields->parameter;
-      concreteFunction.returnBorrowAccess = fields->access;
-      concreteFunction.returnBorrowParameters = fields->parameters;
-      concreteFunction.returnBorrowFields = fields->fields;
-      concreteFunction.returnBorrowPlace = fields->place;
-    }
   }
   // RFC 0004: contracts come only from signatures. The base origin is the
   // signature's elision; an unannotated borrowed result is bounded by every
   // eligible input, and MIR checks the body against that bound.
-  if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin &&
+  if (!concreteFunction.explicitReturnBorrowOrigin &&
       concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
     const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
         concreteFunction.returnType, concreteFunction.parameterTypes,
@@ -734,9 +723,8 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     concreteFunction.returnBorrowParameters = borrow.parameters;
     concreteFunction.returnBorrowPlace = borrow.place;
   }
-  if (signatureContracts)
-    narrowToTypeParameterSuppliers(concreteFunction);
-  if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin &&
+  narrowToTypeParameterSuppliers(concreteFunction);
+  if (!concreteFunction.explicitReturnBorrowOrigin &&
       concreteFunction.returnBorrowOrigin == BorrowOriginKind::None &&
       implicitStaticCarrierResult(
           concreteFunction.returnType, concreteFunction.parameterTypes,
@@ -746,18 +734,17 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
     concreteFunction.returnBorrowAccess = AccessMode::ReadOnly;
     concreteFunction.returnBorrowPlace.reset();
   }
-  if (signatureContracts)
-    if (const FunctionDecl *syntax = concreteFunction.bodyDeclaration())
-      if (auto complete = signatureCompleteReturnBorrow(
-              concreteFunction, syntax->receiverMutability(), concreteOwner)) {
-        // The complete contract also owns the field mapping call lowering
-        // publishes for a carrier (or member reference) result.
-        if (concreteFunction.returnType.kind == SemanticType::Class ||
-            (concreteFunction.returnType.kind == SemanticType::Reference &&
-             concreteFunction.ownerClass))
-          concreteFunction.returnBorrowFields = complete->dependencies;
-        concreteFunction.completeReturnBorrow = std::move(*complete);
-      }
+  if (const FunctionDecl *syntax = concreteFunction.bodyDeclaration())
+    if (auto complete = signatureCompleteReturnBorrow(
+            concreteFunction, syntax->receiverMutability(), concreteOwner)) {
+      // The complete contract also owns the field mapping call lowering
+      // publishes for a carrier (or member reference) result.
+      if (concreteFunction.returnType.kind == SemanticType::Class ||
+          (concreteFunction.returnType.kind == SemanticType::Reference &&
+           concreteFunction.ownerClass))
+        concreteFunction.returnBorrowFields = complete->dependencies;
+      concreteFunction.completeReturnBorrow = std::move(*complete);
+    }
   semanticModel.record(*function->declaration, std::move(concreteFunction));
   function->bodyDeclaration()->accept(*this);
   validateDefaultArgumentCycles();
@@ -3846,9 +3833,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   const bool hasReturnBorrowSummary =
       functionInfo != nullptr &&
       (functionInfo->returnBorrowOrigin != BorrowOriginKind::None ||
-       (signatureContractDefaults() &&
-        signatureCompleteReturnBorrow(*functionInfo, stmt.receiverMutability())
-            .has_value()));
+       signatureCompleteReturnBorrow(*functionInfo, stmt.receiverMutability())
+           .has_value());
   const SemanticType declaredReturnType =
       typeOf(stmt.returnType(), stmt.returnMutability());
   // A source body can establish a complete conditional return contract without
@@ -4245,7 +4231,6 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   finalizeLoanFlow();
   if (functionInfo != nullptr && !functionErrors()) {
     recordRestoredReferenceResult(*functionInfo);
-    recordCompleteFunctionReturnBorrow(*functionInfo);
     if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
         currentReturnType.kind == SemanticType::Reference &&
         !loanFlow.deferredGenericFlow &&
@@ -11096,17 +11081,15 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         openParameters || containsOpenTypeParameter(returnType);
     // RFC 0004 elision, as for a function: several eligible reference
     // parameters leave an elided lambda result ambiguous (Rust E0106).
-    const bool ambiguous =
-        signatureContractDefaults() && summary.parameters.size() > 1;
+    const bool ambiguous = summary.parameters.size() > 1;
     // A result written as the class's callable pattern result, with the
     // pattern's pack as its final parameter, is supplied by that pack's
     // lanes alone, exactly as for a method of the class.
     std::optional<std::size_t> patternLane;
-    if (const auto pack =
-            signatureContractDefaults() && currentClass
-                ? callablePatternResultPack(expr.returnType(),
-                                            expr.parameters(), *currentClass)
-                : std::nullopt) {
+    if (const auto pack = currentClass ? callablePatternResultPack(
+                                             expr.returnType(),
+                                             expr.parameters(), *currentClass)
+                                       : std::nullopt) {
       std::size_t lanes = 0;
       for (std::size_t position = *pack;
            position < lambdaReturn.parameterTypes.size(); ++position) {

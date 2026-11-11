@@ -1,4 +1,3 @@
-#include "gti/borrow_checker_mode.h"
 #include "gti/hir.h"
 #include <cstdlib>
 
@@ -10,16 +9,6 @@
 #include <unordered_set>
 
 namespace lang {
-
-namespace {
-// RFC 0004 shadow switch: with MIR as the borrow authority, MIR derives a
-// consumed borrow carrier's loans from its own places, so HIR no longer needs
-// the semantic complete dependency set to transfer it.
-bool mirOwnsConsumedCarriers() {
-  static const bool enabled = !legacyBorrowChecker();
-  return enabled;
-}
-} // namespace
 
 class HirLowerer::Impl {
 public:
@@ -4937,12 +4926,7 @@ private:
           input->info.category != ValueCategory::Value ||
           !input->info.traits.movable ||
           (input->info.traits.containsBorrowedState &&
-           (input->info.type.kind != SemanticType::Class ||
-            (!input->borrowDependencies && !mirOwnsConsumedCarriers() &&
-             // A dependent text value's class holds no borrowed state of
-             // its own (L-OWN-02); the callee's field contract governs it.
-             instanceProvider->traitsFor(input->info.type)
-                 .containsBorrowedState)))) {
+           input->info.type.kind != SemanticType::Class)) {
         return std::nullopt;
       }
       while (input->kind == HirValueKind::Grouping &&

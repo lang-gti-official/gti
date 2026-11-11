@@ -4299,7 +4299,7 @@ auto SemanticVisitor::Impl::validateProvisionalCallableArguments() -> void {
     // matters only while the call can use it. A result whose signature
     // borrows nothing cannot retain it, and MIR checks that the temporary
     // outlives every other use; no body-classified confinement is needed.
-    if (signatureContractDefaults() && target != nullptr &&
+    if (target != nullptr &&
         target->returnType.kind != SemanticType::Reference &&
         target->returnBorrowOrigin == BorrowOriginKind::None &&
         !typeTraits(target->returnType).containsBorrowedState)
@@ -7295,8 +7295,7 @@ auto SemanticVisitor::Impl::resolveOperator(
   }
   // RFC 0004: an operator on a concrete instance takes the signature
   // contract that instance states, as an ordinary method call does.
-  if (signatureContractDefaults() && operatorBorrowFields.empty() &&
-      selected.declaration != nullptr &&
+  if (operatorBorrowFields.empty() && selected.declaration != nullptr &&
       (selected.returnType.kind == SemanticType::Class ||
        (selected.returnType.kind == SemanticType::Reference &&
         selected.ownerClass != 0))) {
@@ -8133,9 +8132,9 @@ auto SemanticVisitor::Impl::recordResolvedCall(
         syntax != nullptr &&
         patternResultContract(*syntax, concreteDeclaration->returnType))
       concreteDeclaration->explicitReturnBorrowOrigin = true;
-    // RFC 0004 shadow phase: a call sees the same signature contract its
-    // concrete callee instance publishes; nothing is refined per call.
-    if (signatureContractDefaults()) {
+    // A call sees the same signature contract its concrete callee instance
+    // publishes; nothing is refined per call.
+    {
       if (const FunctionDecl *syntax = concreteDeclaration->bodyDeclaration();
           syntax && concreteDeclaration->explicitReturnBorrowOrigin) {
         // An explicit contract resolves per instance, as its instance does.
@@ -8176,22 +8175,9 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       concreteDeclaration->returnBorrowParameters = contract.parameters;
       declarationInfo = &*concreteDeclaration;
     }
-    // Signature contracts skip only stored-field refinement (body
-    // inference); text relays still follow the instance (L-OWN-02).
-    if (const auto fields =
-            signatureContractDefaults()
-                ? std::nullopt
-                : storedFieldReturnBorrowSummary(*concreteDeclaration,
-                                                 function.dispatchOwner)) {
-      concreteDeclaration->returnBorrowOrigin = fields->origin;
-      concreteDeclaration->returnBorrowParameter = fields->parameter;
-      concreteDeclaration->returnBorrowAccess = fields->access;
-      concreteDeclaration->returnBorrowParameters = fields->parameters;
-      concreteDeclaration->returnBorrowFields = fields->fields;
-      concreteDeclaration->returnBorrowPlace = fields->place;
-      declarationInfo = &*concreteDeclaration;
-    } else if (const auto text = dynamicTextReturnBorrowSummary(
-                   *concreteDeclaration, textRelayOwner)) {
+    // Text relays follow the instance (L-OWN-02).
+    if (const auto text = dynamicTextReturnBorrowSummary(*concreteDeclaration,
+                                                         textRelayOwner)) {
       if (!text->fields.empty()) {
         // A generic class method relays a receiver field that this call's
         // types make text (L-OWN-02).

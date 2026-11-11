@@ -259,7 +259,7 @@ auto SemanticVisitor::Impl::analyzeFunctionPointerCall(const Call &expr,
   // read-only reference parameter (a higher-ranked region several parameters
   // share); a target may borrow any subset of them.
   std::vector<std::size_t> resultOrigins;
-  if (signatureContractDefaults() && result.kind == SemanticType::Reference &&
+  if (result.kind == SemanticType::Reference &&
       result.referenceAccess == AccessMode::ReadOnly &&
       !containsOpenTypeParameter(signature)) {
     const auto erased = [&](const SemanticType &parameter) {

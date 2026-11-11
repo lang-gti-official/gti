@@ -350,7 +350,6 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   // (or a method's receiver). With several, the result is ambiguous and needs
   // a declared relationship (Rust E0106). The legacy body inference reports
   // the same programs from their bodies.
-  static const bool signatureContracts = !legacyBorrowChecker();
   // A by-value result carrying borrowed state elides its regions the same
   // way when none is written.
   const TypeRef &written = syntax.returnType();
@@ -362,7 +361,7 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
   // the definition's spelling, states the contract.
   const bool separateDefinition =
       function.declaration != nullptr && function.declaration != &syntax;
-  if (signatureContracts && !separateDefinition &&
+  if (!separateDefinition &&
       (function.ownerClass == 0 || function.staticMember) &&
       (elidedReference || elidedCarrier) &&
       std::none_of(syntax.parameters().begin(), syntax.parameters().end(),
@@ -469,7 +468,7 @@ auto SemanticVisitor::Impl::validateReturnedFieldRegion(
 
 auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
     const FunctionDecl &syntax, ClassId owner, const ExprPtr &value) -> void {
-  if (!value || owner == 0 || !signatureContractDefaults())
+  if (!value || owner == 0)
     return;
   const auto lifetime = explicitLifetimeResult(syntax, {}, owner);
   if (!lifetime.classBinder || !lifetime.classStoresRegion)
@@ -1480,7 +1479,7 @@ auto SemanticVisitor::Impl::declaredContractParameter(
 // the result.
 auto SemanticVisitor::Impl::typeParameterResultSuppliers(
     const FunctionInfo &function) -> std::optional<std::vector<bool>> {
-  if (!signatureContractDefaults() || function.explicitReturnBorrowOrigin ||
+  if (function.explicitReturnBorrowOrigin ||
       (function.ownerClass != 0 && !function.staticMember))
     return std::nullopt;
   const FunctionDecl *syntax = function.bodyDeclaration();
@@ -1551,8 +1550,7 @@ auto SemanticVisitor::Impl::implicitStaticCarrierResult(
     const SemanticType &returnType,
     const std::vector<SemanticType> &parameterTypes, ClassId ownerClass,
     bool staticMember, IntrinsicKind intrinsic) const -> bool {
-  if (!signatureContractDefaults() || intrinsic != IntrinsicKind::None ||
-      (ownerClass != 0 && !staticMember) ||
+  if (intrinsic != IntrinsicKind::None || (ownerClass != 0 && !staticMember) ||
       (returnType.kind != SemanticType::Class &&
        returnType.kind != SemanticType::Enum) ||
       containsOpenTypeParameter(returnType) ||

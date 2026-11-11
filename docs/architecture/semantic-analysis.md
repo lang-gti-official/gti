@@ -3334,11 +3334,11 @@ lifetime validity belongs to MIR ([MIR](mir.md#body-local-lifetime-validity)).
 ## Loan Flow
 
 MIR is the single body-local borrow checker (RFC 0004,
-[MIR](mir.md#body-local-lifetime-validity)). The semantic loan flow below is
-the retired model, kept for comparison only behind
-`GTI_LEGACY_BORROW_CHECKER` (`include/gti/borrow_checker_mode.h`) until it is
-deleted; by default it reports no body-local borrow conflict or escape.
-Semantics still owns signature and persistent-storage effect checks.
+[MIR](mir.md#body-local-lifetime-validity)), and MIR derives every loan's
+end points. The semantic loan flow below reports no body-local borrow conflict
+or escape: it still assigns the loan identities and carriers HIR transports to
+MIR, until MIR derives loans from its own places. Semantics still owns
+signature and persistent-storage effect checks.
 
 Global and local loan-flow places use the same analysis-local domain. HIR
 qualifies those places with its concrete snapshot/body identity; qualifying

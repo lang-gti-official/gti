@@ -3535,8 +3535,7 @@ auto SemanticVisitor::Impl::recordCapturedTextCarriers(
     // MIR proves the loan's liveness from its published carriers: the
     // binding holding captured text carries the view's loan as a copy of
     // the view would.
-    if (mirBorrowAuthority())
-      semanticModel.recordLoanCarrier(loan, carrier);
+    semanticModel.recordLoanCarrier(loan, carrier);
   }
 }
 
@@ -5070,8 +5069,6 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
   // the one its concrete signature elides to.
   const auto signatureContract =
       [&]() -> std::optional<FunctionBorrowDependencySummary> {
-    if (!signatureContractDefaults())
-      return std::nullopt;
     FunctionInfo signature = *declaration;
     signature.returnType = function.returnType;
     signature.parameterTypes = function.parameterTypes;
@@ -5940,131 +5937,6 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
   semanticModel.record(*owner->declaration, std::move(updatedLifecycle));
 }
 
-auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
-    const FunctionInfo &function) -> void {
-  if (!legacyBorrowChecker())
-    return; // RFC 0004: contracts come from signatures, never bodies
-  // Reanalysis must not retain a primary/earlier body's complete fact when
-  // this body now has unknown, recursive or nonreturning result evidence.
-  const FunctionId id = function.id;
-  FunctionInfo cleared = function;
-  cleared.completeReturnBorrow.reset();
-  if (cleared.declaration)
-    semanticModel.record(*cleared.declaration, cleared);
-  const FunctionDecl *syntax = cleared.bodyDeclaration();
-  if (!syntax || !syntax->body() ||
-      (cleared.returnType.kind != SemanticType::Enum &&
-       !(cleared.returnType.kind == SemanticType::Class &&
-         typeTraits(cleared.returnType).containsBorrowedState) &&
-       !conditionalReferenceReturn(cleared.returnType, cleared.parameterTypes,
-                                   cleared.ownerClass
-                                       ? openClassType(cleared.ownerClass)
-                                       : SemanticType::Unknown)) ||
-      containsOpenTypeParameter(cleared.returnType) || cleared.neverReturns ||
-      loanFlow.deferredGenericFlow || loanFlow.unknownImplicitResultReturn)
-    return;
-
-  // Expression facts were recorded at each return's own evaluation point,
-  // before a later move or replacement could change its binding. Reuse the
-  // existing structural flow walk rather than accumulating mutable state
-  // across nested lambdas, demanded bodies or concrete instance analyses.
-  std::vector<const ReturnStmt *> returns;
-  (void)summarizeFlow(syntax->body()->statements(), &returns, true);
-  if (returns.empty() && loanFlow.implicitResultReturns.empty())
-    return;
-  FunctionBorrowDependencySummary summary;
-  const auto merge = [&](const FunctionBorrowDependencySummary &normalized) {
-    for (const auto &dependency : normalized.dependencies)
-      if (std::find(summary.dependencies.begin(), summary.dependencies.end(),
-                    dependency) == summary.dependencies.end())
-        summary.dependencies.push_back(dependency);
-    for (const auto &alternative : normalized.possibleAlternatives) {
-      if (std::find(summary.possibleAlternatives.begin(),
-                    summary.possibleAlternatives.end(),
-                    alternative) == summary.possibleAlternatives.end())
-        summary.possibleAlternatives.push_back(alternative);
-    }
-  };
-  for (const auto *returned : returns) {
-    const auto *info = returned->value()
-                           ? semanticModel.findExpression(*returned->value())
-                           : nullptr;
-    const auto complete = completeBorrowDependencySet(returned->value());
-    const auto *contextual =
-        returned->value()
-            ? semanticModel.findContextualConstruction(*returned->value())
-            : nullptr;
-    // A contextual constructor preserves its source expression as the exact
-    // input. The selected construction, not that input's type, describes the
-    // returned object; its complete facts remain separate from input facts.
-    const bool contextualResult =
-        contextual && contextual->contextualBorrowDependencies &&
-        contextual->constructedType == cleared.returnType;
-    const bool directReference =
-        cleared.returnType.kind == SemanticType::Reference &&
-        cleared.returnType.arguments.size() == 1;
-    if (!info || !complete ||
-        (directReference
-             ? (info->type != cleared.returnType.arguments.front() ||
-                info->category != ValueCategory::Place ||
-                (cleared.returnType.referenceAccess == AccessMode::Mutable &&
-                 info->access != AccessMode::Mutable))
-             : (!contextualResult && info->type != cleared.returnType)))
-      return;
-    const auto normalized = normalizedCompleteReturnBorrow(cleared, *complete);
-    // This source contract is still checked independently against executable
-    // MIR return/call facts. Collecting it does not bypass payload admission,
-    // ordinary escape checking, or the conditional loan proofs.
-    if (!normalized)
-      return;
-    merge(*normalized);
-  }
-  // A synthetic early return (prefix `?`) contributes its residual
-  // construction's set, recorded at its own evaluation point.
-  for (const auto &implicit : loanFlow.implicitResultReturns) {
-    const auto normalized = normalizedCompleteReturnBorrow(cleared, implicit);
-    if (!normalized)
-      return;
-    merge(*normalized);
-  }
-  // Reload after nested body demands and restoration-summary publication.
-  const auto *current = semanticModel.findFunction(id);
-  if (!current || !current->declaration)
-    return;
-  FunctionInfo updated = *current;
-  // The exact complete source contract also owns the field mapping used by
-  // call lowering. Leaving the legacy receiver-only spelling here would
-  // incorrectly describe an external referent as the receiver's own storage.
-  if (updated.returnType.kind == SemanticType::Class ||
-      (updated.returnType.kind == SemanticType::Reference &&
-       updated.ownerClass))
-    updated.returnBorrowFields = summary.dependencies;
-  // A result that depends only on one static place has no caller input to
-  // summarize; its declaration borrows that exact global place.
-  if (updated.returnBorrowOrigin == BorrowOriginKind::None &&
-      !summary.dependencies.empty() &&
-      std::all_of(summary.dependencies.begin(), summary.dependencies.end(),
-                  [&](const BorrowedFieldOrigin &mapping) {
-                    return mapping.origin == BorrowOriginKind::Global &&
-                           mapping.globalRoot ==
-                               summary.dependencies.front().globalRoot &&
-                           mapping.sourceFields ==
-                               summary.dependencies.front().sourceFields;
-                  })) {
-    const auto &global = summary.dependencies.front();
-    BorrowOriginPlace place{.root = global.globalRoot};
-    for (const auto field : global.sourceFields)
-      place.projections.push_back(
-          {.kind = PlaceProjectionKind::Field, .field = field});
-    updated.returnBorrowOrigin = BorrowOriginKind::Global;
-    updated.returnBorrowParameter = 0;
-    updated.returnBorrowAccess = global.access;
-    updated.returnBorrowPlace = std::move(place);
-  }
-  updated.completeReturnBorrow = std::move(summary);
-  semanticModel.record(*updated.declaration, std::move(updated));
-}
-
 auto SemanticVisitor::Impl::payloadBorrowDependencySet(
     const Call &call, const EnumeratorRecord &enumerator)
     -> std::optional<SemanticBorrowDependencySet> {
@@ -6785,8 +6657,7 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     summary.origin = BorrowOriginKind::Receiver;
     // RFC 0004: an elided carrier result borrows the whole receiver, so any
     // mutable stored reference in it borrows the receiver exclusively.
-    if (signatureContractDefaults() &&
-        returnType.kind != SemanticType::Reference) {
+    if (returnType.kind != SemanticType::Reference) {
       const auto paths = storedReferencePaths(returnType);
       if (std::any_of(paths.begin(), paths.end(), [](const auto &path) {
             return path.reference.referenceAccess == AccessMode::Mutable;
@@ -6854,7 +6725,6 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
   // borrow-carrying input. A carrier that stores both read-only and mutable
   // references takes suppliers of either access for its fields.
   const bool mixedCarrierResult =
-      signatureContractDefaults() &&
       returnType.kind != SemanticType::Reference && [&] {
         const auto paths = storedReferencePaths(returnType);
         const auto stores = [&](AccessMode access) {
@@ -6920,11 +6790,7 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
   if (summary.eligibleParameters == 1) {
     summary.origin = BorrowOriginKind::Argument;
     summary.parameters.clear();
-  } else if (summary.eligibleParameters > 1 &&
-             (summary.access == AccessMode::ReadOnly ||
-              signatureContractDefaults()) &&
-             (storedReferencePaths(returnType).size() > 1 ||
-              signatureContractDefaults())) {
+  } else if (summary.eligibleParameters > 1) {
     // RFC 0004 elision: an unannotated result borrows from every eligible
     // input. Callers then keep all of them borrowed while it is live.
     summary.origin = BorrowOriginKind::Argument;
@@ -13140,16 +13006,6 @@ auto SemanticVisitor::Impl::conflictIsInConditionalArm(
           conflictIndex < conditional.elseArm.conflictEnd);
 }
 
-auto SemanticVisitor::Impl::signatureContractDefaults() -> bool {
-  static const bool enabled = !legacyBorrowChecker();
-  return enabled;
-}
-
-auto SemanticVisitor::Impl::mirBorrowAuthority() -> bool {
-  static const bool enabled = !legacyBorrowChecker();
-  return enabled;
-}
-
 auto SemanticVisitor::Impl::reportBorrowConflict(
     const Token &token, const std::vector<SemanticLoanId> &loans,
     std::string message, bool rawAudit) -> void {
@@ -13168,7 +13024,9 @@ auto SemanticVisitor::Impl::reportBorrowConflict(
           : makeDiagnostic("GTI-S2017", DiagnosticPhase::Semantics, token,
                            std::move(message));
   if (loanFlow.currentStatement == nullptr || loanFlow.currentRegion == 0) {
-    if (rawAudit || !mirBorrowAuthority())
+    // MIR reports body-local borrow conflicts; only the raw-access audit's
+    // own findings are reported here.
+    if (rawAudit)
       diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
@@ -13444,11 +13302,11 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
             "Place the borrowed value in a narrower block when an explicit "
             "lexical end is required across control flow.");
       }
-      // Shadow phase: under MIR borrow authority the MIR borrow checker
-      // reports body-local conflicts; semantics only records them. Raw-access
-      // audit observations are not borrow-checker conflicts: MIR assigns raw
-      // addresses no loans, so the audit keeps reporting its own findings.
-      if (!mirBorrowAuthority() || conflictIndex >= mandatoryConflicts)
+      // MIR reports body-local conflicts; semantics only records them.
+      // Raw-access audit observations are not borrow-checker conflicts: MIR
+      // assigns raw addresses no loans, so the audit keeps reporting its own
+      // findings.
+      if (conflictIndex >= mandatoryConflicts)
         diagnostics.emplace_back(std::move(conflict.diagnostic));
     }
   }
