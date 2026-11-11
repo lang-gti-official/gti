@@ -442,7 +442,20 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         returned = escapeSpan(escapeSpan, error.body.kind, error.body.owner,
                               error.block, true);
       const SourceSpan span = returned.value_or(*error.source);
-      const auto shell = staticResult(error.body.kind, error.body.owner)
+      // An exclusive reference result retained by a cleanup-bound carrier
+      // is rejected for the carrier's cleanup, not as a shell projection.
+      const MirLoan *exclusive = escapingLoan(error);
+      const auto [exitBody, exitSource] =
+          bodiesOf(error.body.kind, error.body.owner);
+      (void)exitSource;
+      const bool cleanupBoundResult =
+          exclusive != nullptr && exclusive->access == AccessMode::Mutable &&
+          exitBody != nullptr &&
+          exitBody->returnType.kind == SemanticType::Reference &&
+          std::any_of(exitBody->loans.begin(), exitBody->loans.end(),
+                      [](const MirLoan &loan) { return loan.lifecycleBound; });
+      const auto shell = staticResult(error.body.kind, error.body.owner) ||
+                                 cleanupBoundResult
                              ? std::nullopt
                              : byValueCarrierShell(error);
       if (shell) {
@@ -493,6 +506,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         const MirLoan *escaping = escapingLoan(error);
         const bool cleanupBound =
             escaping != nullptr && escaping->access == AccessMode::Mutable &&
+            lowered->returnType.kind == SemanticType::Reference &&
             dropped != nullptr && dropped->root == MirPlaceRootKind::Binding &&
             std::any_of(lowered->loans.begin(), lowered->loans.end(),
                         [&](const MirLoan &loan) {

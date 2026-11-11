@@ -688,7 +688,7 @@ public:
   Both(Resource& first, Resource& second) : first(first), second(second) {}
   ~Both() { observed = this.first.value; observed = this.second.value; }
 };
-Both acquireBoth(Resource& first, Resource& second) { return Both(first, second); }
+Both<a> acquireBoth<lifetime a>(Resource&<a> first, Resource&<a> second) { return Both(first, second); }
 int main() {
   Resource first{}; Resource second{};
   Both both = acquireBoth(first, second); return 0;

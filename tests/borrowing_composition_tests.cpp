@@ -307,8 +307,8 @@ struct View {
   int sum() { return first + second; }
 };
 View relay(View value) { return value; }
-View factory(int& first, int& second) { return View(first, second); }
-View same_owner(int& first, int& unused) { return View(first, first); }
+View<a> factory<lifetime a>(int&<a> first, int&<a> second) { return View(first, second); }
+View<a> same_owner<lifetime a>(int&<a> first, int& unused) { return View(first, first); }
 int main() {
   int a = 20; int b = 22;
   View view{a, b};
@@ -1041,8 +1041,8 @@ struct Readings {
   Reading second;
   Readings(Reading left, Reading right) : first(left), second(right) {}
 };
-Readings combine(Reading left, Reading right) { return Readings(left, right); }
-Readings reverse(Reading left, Reading right) { return Readings(right, left); }
+Readings<a> combine<lifetime a>(Reading<a> left, Reading<a> right) { return Readings(left, right); }
+Readings<a> reverse<lifetime a>(Reading<a> left, Reading<a> right) { return Readings(right, left); }
 int main() {
   int a = 17; int b = 25;
   Reading left{a}; Reading right{b};

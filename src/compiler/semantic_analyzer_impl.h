@@ -1,3 +1,4 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_procedural.h"
 #pragma once
 

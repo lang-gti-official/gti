@@ -540,10 +540,10 @@ public:
   Update(int& step, mut int& value) : step(step), value(value) {}
   void apply() mut { this.value += this.step; }
 };
-Update relay(int& step, mut int& value) {
+Update<a> relay<lifetime a>(int&<a> step, mut int&<a> value) {
   return Update(Update((view(step, value))));
 }
-Update view(int& step, mut int& value) { return Update(step, value); }
+Update<a> view<lifetime a>(int&<a> step, mut int&<a> value) { return Update(step, value); }
 )";
   const auto positive = lang::Frontend().analyze("fresh-borrow-composition.gti",
                                                  declarations + R"(

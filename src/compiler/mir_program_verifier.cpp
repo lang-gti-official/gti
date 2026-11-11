@@ -8147,9 +8147,10 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
         return invalidSummary(
             "return publication names a path outside its result type");
     }
+    // A signature contract, elided or written, is proved by its complete
+    // dependency set rather than a body-derived positional field map.
     if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
-        !(signatureReturns && instance.completeReturnBorrow &&
-          !instance.explicitReturnBorrowOrigin)) {
+        !(signatureReturns && instance.completeReturnBorrow)) {
       std::vector<MirLoanDependency> actual{
           {.source = loan->source,
            .designatedFields = loan->designatedFields,

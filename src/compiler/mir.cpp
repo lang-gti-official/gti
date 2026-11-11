@@ -1,3 +1,4 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_editor.h"
@@ -3423,8 +3424,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                        block.id, instruction.id);
       }
       // A call whose borrowed-result contract is read-only publishes a
-      // shared result; no producer may widen it to exclusive access.
-      if ((instruction.kind == MirInstructionKind::Call ||
+      // shared result; no producer may widen it to exclusive access. A
+      // carrier result's scalar access is not its paths' permissions, which
+      // its complete contract states one by one.
+      if (!legacyBorrowChecker() &&
+          instruction.info.type.kind == SemanticType::Reference &&
+          (instruction.kind == MirInstructionKind::Call ||
            instruction.kind == MirInstructionKind::Construct) &&
           instruction.borrowOrigin != BorrowOriginKind::None &&
           instruction.borrowAccess == AccessMode::ReadOnly &&
@@ -3803,7 +3808,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                   const auto *entrySource = body.findPlace(entry.source);
                   return entry.entry && entry.kind == MirLoanKind::Stored &&
                          !(entry.lifecycleBound &&
-                           loan.access == AccessMode::Mutable) &&
+                           loan.access == AccessMode::Mutable &&
+                           body.returnType.kind == SemanticType::Reference) &&
                          entry.parent == 0 && entry.storedDependency == 0 &&
                          !entry.designatedFields.empty() &&
                          entrySource != nullptr &&
@@ -4250,9 +4256,23 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
             const char *context, MirInstructionId instruction)
         -> std::optional<MirVerificationResult> {
       const MirPlace *borrowed = body.findPlace(placeId);
+      // A reference binding is itself the borrow, not a carrier whose
+      // methods use stored authority.
       if (borrowed == nullptr || borrowed->root != MirPlaceRootKind::Binding ||
           !borrowed->projections.empty() ||
+          borrowed->type.kind == SemanticType::Reference ||
           !borrowed->traits.containsBorrowedState)
+        return std::nullopt;
+      // Only a call uses the carrier's whole stored authority; a payload
+      // selection borrows one alternative field, as a disjoint child would.
+      const MirInstruction *user = nullptr;
+      for (const MirBlock &candidate : body.blocks)
+        for (const MirInstruction &item : candidate.instructions)
+          if (item.id == instruction)
+            user = &item;
+      if (user == nullptr || (user->kind != MirInstructionKind::Call &&
+                              user->kind != MirInstructionKind::CallInput &&
+                              user->kind != MirInstructionKind::Construct))
         return std::nullopt;
       const auto found = bindingLoans.find(borrowed->binding);
       if (found == bindingLoans.end())

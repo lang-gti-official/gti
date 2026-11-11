@@ -12,7 +12,7 @@ Slot borrow_slot(int& owner, bool present) {
 
 enum Pair { both(int& first, int& second), none };
 
-Pair pair_of(int& first, int& second) { return Pair::both(first, second); }
+Pair<a> pair_of<lifetime a>(int&<a> first, int&<a> second) { return Pair::both(first, second); }
 
 enum Triple { all(int& a, int& b, int& c), none };
 

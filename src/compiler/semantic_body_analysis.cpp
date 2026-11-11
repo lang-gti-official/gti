@@ -1,5 +1,4 @@
 #include "semantic_analyzer_impl.h"
-#include "gti/borrow_checker_mode.h"
 
 #include <cstdlib>
 

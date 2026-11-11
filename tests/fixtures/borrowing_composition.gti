@@ -14,7 +14,7 @@ struct DuplicatedView {
   int sum() { return first + second; }
 };
 
-BorrowedPair make_view(int& first, int& second) {
+BorrowedPair<a> make_view<lifetime a>(int&<a> first, int&<a> second) {
   return BorrowedPair(first, second);
 }
 
@@ -31,7 +31,7 @@ int observe_forwarded_reference(BorrowedPair& view) {
   return forward_view(view).sum();
 }
 
-BorrowedPair reversed_view(int& first, int& second) {
+BorrowedPair<a> reversed_view<lifetime a>(int&<a> first, int&<a> second) {
   return BorrowedPair(second, first);
 }
 
@@ -46,11 +46,11 @@ struct Readings {
   Readings(Reading left, Reading right) : first(left), second(right) {}
 };
 
-Readings combine_readings(Reading left, Reading right) {
+Readings<a> combine_readings<lifetime a>(Reading<a> left, Reading<a> right) {
   return Readings(left, right);
 }
 
-Readings reverse_readings(Reading left, Reading right) {
+Readings<a> reverse_readings<lifetime a>(Reading<a> left, Reading<a> right) {
   return Readings(right, left);
 }
 

@@ -2,7 +2,8 @@ import std.paired_span;
 import std.span;
 import std.vector;
 
-std::paired_span<int, int> make_pairs(std::span<int> left, std::span<int> right) {
+std::paired_span<int, int, a> make_pairs<lifetime a>(std::span<int, a> left,
+                                                   std::span<int, a> right) {
   return std::paired_span<int, int>(std::move(left), std::move(right));
 }
 

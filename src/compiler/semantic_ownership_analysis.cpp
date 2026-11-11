@@ -1,5 +1,4 @@
 #include "semantic_analyzer_impl.h"
-#include "gti/borrow_checker_mode.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -7158,6 +7157,16 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
           contract.missing = true;
           return contract;
         }
+        // As for an elided contract, the primary supplier is the first one
+        // whose access matches the result's; each keeps its own in MIR.
+        if (const auto matching = std::find_if(
+                suppliers.begin(), suppliers.end(),
+                [&](std::size_t position) {
+                  return position < expanded.size() &&
+                         borrowAccess(expanded[position]) == contract.access;
+                });
+            matching != suppliers.end() && matching != suppliers.begin())
+          std::rotate(suppliers.begin(), matching, matching + 1);
         contract.origin = BorrowOriginKind::Argument;
         contract.parameter = suppliers.front();
         if (suppliers.size() > 1)

@@ -19,7 +19,8 @@ struct Services {
   }
 };
 
-Services services_for(mut int& sum, int& delta, int& source, mut int& destination) {
+Services<a> services_for<lifetime a>(mut int&<a> sum, int&<a> delta,
+                                     int&<a> source, mut int&<a> destination) {
   return Services(source, destination, delta, sum);
 }
 

@@ -15,8 +15,8 @@ public:
   Pair(int& left, int& right) : left(left), right(right) {}
   int sum() { return this.left + this.right; }
 };
-Pair pair_view(int& left, int& right) { return Pair(left, right); }
-Pair pair_relay(int& left, int& right) {
+Pair<a> pair_view<lifetime a>(int&<a> left, int&<a> right) { return Pair(left, right); }
+Pair<a> pair_relay<lifetime a>(int&<a> left, int&<a> right) {
   return Pair(Pair(pair_view(left, right)));
 }
 

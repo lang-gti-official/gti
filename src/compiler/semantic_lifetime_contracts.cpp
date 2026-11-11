@@ -8,7 +8,6 @@
 // lifetime validity is not decided here (see docs/architecture/mir.md).
 
 #include "semantic_analyzer_impl.h"
-#include "gti/borrow_checker_mode.h"
 
 #include <algorithm>
 
