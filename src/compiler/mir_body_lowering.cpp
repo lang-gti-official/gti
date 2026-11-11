@@ -5284,6 +5284,46 @@ private:
                                                 : std::vector<SymbolId>{};
   }
 
+  // The Stored group retaining the stored references of the carrier a place
+  // names: its binding's current group, or the group of the loan it is
+  // reached through.
+  [[nodiscard]] MirLoanId referentStoredGroup(MirPlaceId id) const {
+    const MirPlace *place = output.findPlace(id);
+    if (place == nullptr)
+      return 0;
+    MirLoanId group = 0;
+    if (place->root == MirPlaceRootKind::Binding) {
+      if (const auto found = bindingLoans.find(place->binding);
+          found != bindingLoans.end())
+        group = found->second;
+    } else if (place->root == MirPlaceRootKind::Loan) {
+      group = place->loan;
+    }
+    const MirLoan *loan = output.findLoan(group);
+    if (loan == nullptr)
+      return 0;
+    return loan->kind == MirLoanKind::Stored ? loan->id
+                                             : loan->storedDependency;
+  }
+
+  // Names a MIR loan with the semantic loan later HIR facts refer to,
+  // without copying any of that loan's shape.
+  void bindLoanIdentity(MirLoanId id, const HirLoan &identity) {
+    if (const auto found = semanticLoans.find(identity.semanticLoan);
+        found != semanticLoans.end() && found->second != id) {
+      valid = false;
+      return;
+    }
+    MirLoan &lowered = output.loans[id - 1];
+    if (lowered.semanticLoan != 0 &&
+        lowered.semanticLoan != identity.semanticLoan) {
+      valid = false;
+      return;
+    }
+    lowered.semanticLoan = identity.semanticLoan;
+    semanticLoans.insert_or_assign(identity.semanticLoan, id);
+  }
+
   void recordLoanIdentity(MirLoanId id, const HirLoan &loan,
                           HirBindingId binding = 0) {
     if (id == 0 || id > output.loans.size()) {
@@ -10024,7 +10064,16 @@ private:
       const MirLoanId loan = createLoan(kind, origin, value.borrowAccess,
                                         value.id, 0, 0, parent, twoPhase);
       if (shellContract != nullptr) {
-        recordLoanIdentity(loan, *shellContract);
+        // A carrier stored through its shell argument depends on that
+        // argument's own stored group.
+        const MirLoan *argumentLoan =
+            output.findLoan(loanForValue(shellArgument->id));
+        output.loans[loan - 1].storedDependency =
+            argumentLoan == nullptr ? 0
+            : argumentLoan->kind == MirLoanKind::Stored
+                ? argumentLoan->id
+                : argumentLoan->storedDependency;
+        bindLoanIdentity(loan, *shellContract);
       } else if (textShellOwner != 0) {
         output.loans[loan - 1].storedDependency = textShellOwner;
       } else if (kind == MirLoanKind::Stored &&
@@ -14312,7 +14361,20 @@ private:
       const MirLoanId loan =
           createLoan(MirLoanKind::Local, sourcePlace, desired->access, valueId,
                      binding, 0, parent);
-      recordLoanIdentity(loan, *desired, binding);
+      // A reference to a carrier depends on the group retaining that
+      // carrier's stored references.
+      output.loans[loan - 1].storedDependency =
+          referentStoredGroup(sourcePlace);
+      if (desired->referenceSelection) {
+        recordLoanIdentity(loan, *desired, binding);
+      } else {
+        bindLoanIdentity(loan, *desired);
+        if (binding != 0 && !capturedReferenceEntry(output.loans[loan - 1]) &&
+            std::find(output.loans[loan - 1].carriers.begin(),
+                      output.loans[loan - 1].carriers.end(),
+                      binding) == output.loans[loan - 1].carriers.end())
+          output.loans[loan - 1].carriers.push_back(binding);
+      }
       MirOperand sourceOperand;
       if (parent != 0) {
         sourceOperand = {.kind = MirOperandKind::Loan,
