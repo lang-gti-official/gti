@@ -3395,6 +3395,11 @@ argument's group. A reference binding that reuses an existing loan only
 becomes one of its carriers. Semantic loans still name these MIR loans for
 later HIR facts; only reference selections still take their shape from them.
 
+A range loop's loans are the loans its hidden bindings carry: the range loan
+is the one loan the range carrier holds (a consuming range owns its range and
+has none), and the element and element-owner loans are the loans those
+bindings carry.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's

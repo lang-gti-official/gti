@@ -8417,6 +8417,28 @@ private:
                });
   }
 
+  // The one loan a binding carries, if exactly one does.
+  [[nodiscard]] MirLoanId carriedLoan(HirBindingId binding) const {
+    MirLoanId found = 0;
+    if (binding == 0)
+      return 0;
+    for (const auto &loan : output.loans)
+      if (std::find(loan.carriers.begin(), loan.carriers.end(), binding) !=
+          loan.carriers.end()) {
+        if (found != 0)
+          return 0;
+        found = loan.id;
+      }
+    return found;
+  }
+
+  // The loan a range traversal borrows its range through: the one loan its
+  // hidden range carrier holds. A consuming range owns its range and has none.
+  [[nodiscard]] MirLoanId
+  rangeTraversalLoan(const HirRangeIteration &range) const {
+    return carriedLoan(range.rangeCarrier);
+  }
+
   [[nodiscard]] bool exactReadonlyRangeElementAlias(HirBindingId binding,
                                                     const HirValue &initializer,
                                                     const MirLoan &loan) const {
@@ -8431,7 +8453,7 @@ private:
       const auto *staging = findBinding(range.elementOwner);
       const auto stagedLoan = bindingLoans.find(range.elementOwner);
       const auto cursorLoan = bindingLoans.find(range.iterator);
-      const auto parent = semanticLoans.find(range.rangeLoan);
+      const MirLoanId parent = rangeTraversalLoan(range);
       const auto *cursor = cursorLoan == bindingLoans.end()
                                ? nullptr
                                : output.findLoan(cursorLoan->second);
@@ -8441,9 +8463,8 @@ private:
           stagedLoan != bindingLoans.end() && stagedLoan->second == loan.id &&
           loan.producedBy == range.elementAccessValue && cursor &&
           loan.storedDependency == cursor->id &&
-          cursor->kind == MirLoanKind::Stored &&
-          parent != semanticLoans.end() && cursor->parent == parent->second &&
-          loanIsActive(scopes, cursor->id) &&
+          cursor->kind == MirLoanKind::Stored && parent != 0 &&
+          cursor->parent == parent && loanIsActive(scopes, cursor->id) &&
           std::find(loan.carriers.begin(), loan.carriers.end(),
                     range.elementOwner) != loan.carriers.end())
         return true;
@@ -14051,25 +14072,24 @@ private:
         const auto *cursor = iterator == bindingLoans.end()
                                  ? nullptr
                                  : output.findLoan(iterator->second);
-        const auto owner =
+        const MirLoanId owner =
             range == source.statements.end()
-                ? semanticLoans.end()
-                : semanticLoans.find(range->rangeIteration->rangeLoan);
+                ? MirLoanId{0}
+                : rangeTraversalLoan(*range->rangeIteration);
         if (selected != nullptr && cursor != nullptr &&
             selected->kind == MirLoanKind::CallResult &&
             selected->producedBy == valueId && !selected->escapes &&
             selected->carriers.empty() && selected->access == desired->access &&
             selected->storedDependency == cursor->id &&
-            cursor->kind == MirLoanKind::Stored &&
-            owner != semanticLoans.end() && cursor->parent == owner->second &&
-            loanIsActive(scopes, selected->id) &&
+            cursor->kind == MirLoanKind::Stored && owner != 0 &&
+            cursor->parent == owner && loanIsActive(scopes, selected->id) &&
             loanIsActive(scopes, cursor->id)) {
           // The range's semantic loan establishes the traversal boundary.
           // Dereference may instead return an inline cursor projection;
           // its selected call-result loan protects that physical shell and
           // separately retains the cursor's checked owner dependency.
           // Do not replace this producer identity with the range shell.
-          std::erase(output.loans[owner->second - 1].carriers, binding);
+          std::erase(output.loans[owner - 1].carriers, binding);
           return {.kind = MirOperandKind::Loan,
                   .loan = existing,
                   .type = value->info.type};
@@ -16091,15 +16111,14 @@ private:
           *statement.value != range.end || parkedRangeEndpoint)
         continue;
       const auto cursorBinding = bindingLoans.find(range.iterator);
-      const auto parent = semanticLoans.find(range.rangeLoan);
+      const MirLoanId parent = rangeTraversalLoan(range);
       const auto *cursor = cursorBinding == bindingLoans.end()
                                ? nullptr
                                : output.findLoan(cursorBinding->second);
       const auto *endpoint = findValue(range.end);
-      if (!cursor || parent == semanticLoans.end() || cursor->entry ||
-          cursor->escapes || cursor->kind != MirLoanKind::Stored ||
-          cursor->access != AccessMode::Mutable ||
-          cursor->parent != parent->second ||
+      if (!cursor || parent == 0 || cursor->entry || cursor->escapes ||
+          cursor->kind != MirLoanKind::Stored ||
+          cursor->access != AccessMode::Mutable || cursor->parent != parent ||
           cursor->producedBy != range.begin ||
           cursor->carriers != std::vector<HirBindingId>{range.iterator} ||
           !endpoint || endpoint->info.type.kind == SemanticType::Reference ||
@@ -16218,11 +16237,8 @@ private:
             candidateStatement.rangeIteration->iterator != *statement.binding)
           continue;
         const auto &range = *candidateStatement.rangeIteration;
-        const auto selected = semanticLoans.find(range.rangeLoan);
         auto &cursor = output.loans[retainedLoan - 1];
-        const auto *parent = selected == semanticLoans.end()
-                                 ? nullptr
-                                 : output.findLoan(selected->second);
+        const auto *parent = output.findLoan(rangeTraversalLoan(range));
         const auto *origin = output.findPlace(cursor.source);
         const auto *carrier =
             output.findPlace(placeForBinding(range.rangeCarrier));
@@ -17166,22 +17182,6 @@ private:
       valid = false;
       return;
     }
-    const auto loanFor = [&](SemanticLoanId semanticLoan,
-                             bool required) -> MirLoanId {
-      if (semanticLoan == 0) {
-        if (required) {
-          valid = false;
-        }
-        return 0;
-      }
-      const auto found = semanticLoans.find(semanticLoan);
-      if (found == semanticLoans.end() || found->second == 0 ||
-          found->second > output.loans.size()) {
-        valid = false;
-        return 0;
-      }
-      return found->second;
-    };
     MirDropObligationId ownerDrop = 0;
     const HirBinding *ownerBinding = findBinding(sourceRange.owner);
     if (ownerBinding != nullptr && ownerBinding->dropObligation) {
@@ -17212,42 +17212,15 @@ private:
                              : placeForBinding(sourceRange.elementOwner),
          .elementOwnerStatement = sourceRange.elementOwnerStatement,
          .rangeLoan =
-             loanFor(sourceRange.rangeLoan,
-                     sourceRange.strategy != RangeIterationStrategy::Consuming),
-         .elementLoan =
              [&] {
-               if (isPhysicalProxyRangeProtocolBinding(sourceRange.element)) {
-                 MirLoanId selected = 0;
-                 for (const auto &loan : output.loans)
-                   if ((loan.kind == MirLoanKind::CallResult ||
-                        loan.kind == MirLoanKind::Stored) &&
-                       std::find(loan.carriers.begin(), loan.carriers.end(),
-                                 sourceRange.element) != loan.carriers.end()) {
-                     if (selected != 0) {
-                       valid = false;
-                       return MirLoanId{0};
-                     }
-                     selected = loan.id;
-                   }
-                 if (selected != 0)
-                   return selected;
-               }
-               return loanFor(sourceRange.elementLoan,
-                              sourceRange.elementLoan != 0);
+               const MirLoanId loan = rangeTraversalLoan(sourceRange);
+               if (loan == 0 &&
+                   sourceRange.strategy != RangeIterationStrategy::Consuming)
+                 valid = false;
+               return loan;
              }(),
-         .elementOwnerLoan =
-             [&] {
-               if (isPhysicalProxyRangeProtocolBinding(
-                       sourceRange.elementOwner))
-                 for (const auto &loan : output.loans)
-                   if (loan.kind == MirLoanKind::CallResult &&
-                       std::find(loan.carriers.begin(), loan.carriers.end(),
-                                 sourceRange.elementOwner) !=
-                           loan.carriers.end())
-                     return loan.id;
-               return loanFor(sourceRange.elementOwnerLoan,
-                              sourceRange.elementOwnerLoan != 0);
-             }(),
+         .elementLoan = carriedLoan(sourceRange.element),
+         .elementOwnerLoan = carriedLoan(sourceRange.elementOwner),
          .elementAccessValue =
              (sourceRange.materializesElementValue ||
               sourceRange.strategy == RangeIterationStrategy::Consuming)
