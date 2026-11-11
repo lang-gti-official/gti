@@ -5404,6 +5404,18 @@ private:
     semanticLoans.insert_or_assign(identity.semanticLoan, id);
   }
 
+  // A reference binding reusing an existing MIR loan: names that loan and
+  // registers the binding as one of its carriers.
+  void bindCarrierIdentity(MirLoanId id, const HirLoan &identity,
+                           HirBindingId binding) {
+    bindLoanIdentity(id, identity);
+    MirLoan &loan = output.loans[id - 1];
+    if (binding != 0 && !capturedReferenceEntry(loan) &&
+        std::find(loan.carriers.begin(), loan.carriers.end(), binding) ==
+            loan.carriers.end())
+      loan.carriers.push_back(binding);
+  }
+
   void recordLoanIdentity(MirLoanId id, const HirLoan &loan,
                           HirBindingId binding = 0) {
     if (id == 0 || id > output.loans.size()) {
@@ -14142,7 +14154,7 @@ private:
                             "retain the selected owner and access");
           }
         }
-        recordLoanIdentity(found->second, *desired, binding);
+        bindCarrierIdentity(found->second, *desired, binding);
         return {.kind = MirOperandKind::Loan,
                 .loan = found->second,
                 .type = value->info.type};
@@ -14196,7 +14208,7 @@ private:
             published->parent == consumedStored->parent &&
             value->callableInvocation &&
             *value->callableInvocation == CallableInvocationCapability::Once) {
-          recordLoanIdentity(existing, *desired, binding);
+          bindCarrierIdentity(existing, *desired, binding);
           return {.kind = MirOperandKind::Loan,
                   .loan = existing,
                   .type = value->info.type};
@@ -14214,7 +14226,7 @@ private:
           // address, transferred its external ancestry and retired the old
           // group. Keep that executable publication rather than recreating a
           // child of the already-ended semantic input identity.
-          recordLoanIdentity(existing, *desired, binding);
+          bindCarrierIdentity(existing, *desired, binding);
           return {.kind = MirOperandKind::Loan,
                   .loan = existing,
                   .type = value->info.type};
@@ -14252,7 +14264,7 @@ private:
           // child reborrow on every edge, which the full-expression release
           // preserves for a retained chain, and the owning scope ends the
           // whole chain child-first.
-          recordLoanIdentity(existing, *desired, binding);
+          bindCarrierIdentity(existing, *desired, binding);
           return {.kind = MirOperandKind::Loan,
                   .loan = existing,
                   .type = value->info.type};
@@ -14333,7 +14345,7 @@ private:
               output.loans[sourceLoan.parent - 1].producedBy != 0 &&
               !output.loans[sourceLoan.parent - 1].entry;
           if (sourceLoan.parent == 0 || transferredStored) {
-            recordLoanIdentity(existing, *desired, binding);
+            bindCarrierIdentity(existing, *desired, binding);
             return {.kind = MirOperandKind::Loan,
                     .loan = existing,
                     .type = value->info.type};
@@ -14370,7 +14382,7 @@ private:
             // outlive its child reborrow on every edge, which
             // `retainedReborrowAncestors` keeps true when the full
             // expression ends.
-            recordLoanIdentity(existing, *desired, binding);
+            bindCarrierIdentity(existing, *desired, binding);
             return {.kind = MirOperandKind::Loan,
                     .loan = existing,
                     .type = value->info.type};
@@ -14385,7 +14397,7 @@ private:
         } else if (desired->storedDependency == 0 &&
                    (!sourceLoan.entry ||
                     sourceLoan.semanticLoan == desired->semanticLoan)) {
-          recordLoanIdentity(existing, *desired, binding);
+          bindCarrierIdentity(existing, *desired, binding);
           return {.kind = MirOperandKind::Loan,
                   .loan = existing,
                   .type = value->info.type};
@@ -14420,7 +14432,7 @@ private:
               loanIsActive(scopes, selected->id) &&
               (desired->access == AccessMode::ReadOnly ||
                selected->access == AccessMode::Mutable)) {
-            recordLoanIdentity(selected->id, *desired, binding);
+            bindCarrierIdentity(selected->id, *desired, binding);
             return {.kind = MirOperandKind::Loan,
                     .place = projected->id,
                     .loan = selected->id,
@@ -14448,12 +14460,7 @@ private:
       if (desired->referenceSelection) {
         recordLoanIdentity(loan, *desired, binding);
       } else {
-        bindLoanIdentity(loan, *desired);
-        if (binding != 0 && !capturedReferenceEntry(output.loans[loan - 1]) &&
-            std::find(output.loans[loan - 1].carriers.begin(),
-                      output.loans[loan - 1].carriers.end(),
-                      binding) == output.loans[loan - 1].carriers.end())
-          output.loans[loan - 1].carriers.push_back(binding);
+        bindCarrierIdentity(loan, *desired, binding);
       }
       MirOperand sourceOperand;
       if (parent != 0) {

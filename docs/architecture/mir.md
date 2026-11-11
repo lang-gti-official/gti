@@ -3382,6 +3382,19 @@ A loan's carriers are MIR's own: a loan starts with the binding or formal
 that holds it, and lowering each later transfer records its recipient.
 Semantic carrier lists (the completed flow's later locals) are not read.
 
+Binding loans are MIR's own too. A local initialized from a retained Stored
+group is lifecycle-bound when its type is (a payload enum when any payload
+is). The group names the type's single unconditional stored reference path
+(base-free classes only) when its source is that path's referent, or when it
+reborrows a parent from a binding without a Stored dependency of its own.
+Each owner without a parent reborrows the group's Stored parent or its
+reference formal's entry loan, and stores through the group's path when it
+names none. A reference binding to a carrier depends on the Stored group
+retaining that carrier's references, and a shell-stored carrier on its
+argument's group. A reference binding that reuses an existing loan only
+becomes one of its carriers. Semantic loans still name these MIR loans for
+later HIR facts; only reference selections still take their shape from them.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's
