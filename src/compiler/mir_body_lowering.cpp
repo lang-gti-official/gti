@@ -9202,6 +9202,26 @@ private:
              output.loans[dependencyLoan - 1].additionalDependencies)
           if (dependency.source != 0)
             output.loans[loan - 1].additionalDependencies.push_back(dependency);
+        // A carrier relayed whole through a by-value argument of its own
+        // type keeps the field that holds its primary dependency. (The
+        // legacy model takes it from the consumed binding's semantic loan.)
+        const HirValue *relayed =
+            !legacyBorrowChecker() &&
+                    value.borrowOrigin == BorrowOriginKind::Argument &&
+                    value.borrowArgument < arguments.size()
+                ? findValue(arguments[value.borrowArgument])
+                : nullptr;
+        if (kind == MirLoanKind::Stored && value.borrowFields.empty() &&
+            output.loans[loan - 1].designatedFields.empty() &&
+            output.loans[dependencyLoan - 1].kind == MirLoanKind::Stored &&
+            output.loans[dependencyLoan - 1].source ==
+                output.loans[loan - 1].source &&
+            relayed != nullptr && relayed->info.type == value.info.type &&
+            value.borrowArgument < value.parameterTypes.size() &&
+            value.parameterTypes[value.borrowArgument].kind !=
+                SemanticType::Reference)
+          output.loans[loan - 1].designatedFields =
+              output.loans[dependencyLoan - 1].designatedFields;
       }
       for (const std::size_t parameter : value.borrowArguments) {
         if (parameter >= originCall.operands.size()) {

@@ -12183,13 +12183,20 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             // Keep a cleanup-bound declaration's original loan identity in
             // the immutable model: MIR lowers that initialization before the
             // later move, and earlier shell references still depend on it.
-            // This does not restore availability of the moved-from binding.
-            if (!sourceLoan->lifecycleBound &&
+            // So does an earlier reborrow through one of the shell's stored
+            // references, a child of that loan. This does not restore
+            // availability of the moved-from binding.
+            const bool reborrowed = std::any_of(
+                semanticModel.loans().begin(), semanticModel.loans().end(),
+                [&](const SemanticLoanInfo &candidate) {
+                  return candidate.parent == source->loan;
+                });
+            if (!sourceLoan->lifecycleBound && !reborrowed &&
                 sourceCarrier->variableDeclaration != nullptr) {
               semanticModel.recordBindingLoan(
                   *sourceCarrier->variableDeclaration, 0);
             }
-            if (!sourceLoan->lifecycleBound &&
+            if (!sourceLoan->lifecycleBound && !reborrowed &&
                 sourceCarrier->parameterDeclaration != nullptr) {
               semanticModel.recordBindingLoan(
                   *sourceCarrier->parameterDeclaration, 0);

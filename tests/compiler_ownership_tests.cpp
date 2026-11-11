@@ -19,6 +19,14 @@ bool mirBorrowAuthority() {
   return !lang::legacyBorrowChecker();
 }
 
+// RFC 0004 retires the semantic loan model's statement endpoints (HIR
+// endedLoans): MIR derives where each loan ends. A check of that protocol
+// runs only under GTI_LEGACY_BORROW_CHECKER.
+void expectSemanticLoanModel(bool condition, const std::string &message) {
+  if (lang::legacyBorrowChecker())
+    expect(condition, message);
+}
+
 // Under MIR authority a body-local conflict is proved by MIR, which runs only
 // once semantics accepts the program; a multi-error program reports it only
 // when analyzed on its own.
@@ -7320,7 +7328,53 @@ int main() {
     const auto *initial = loanFor("initial");
     const auto *intermediate = loanFor("intermediate");
     const auto *active = loanFor("active");
+    // RFC 0004: MIR owns loan identity. A consumed carrier's binding keeps no
+    // semantic loan; each carrier's MIR Stored loan carries the same facts.
+    const lang::MirFunctionInstance *mainMir = nullptr;
+    for (const auto &function : valid.mir.functionInstances())
+      if (function.entryKind != lang::ProgramEntryKind::None)
+        mainMir = &function;
+    const auto mirCarrierLoan =
+        [&](const std::string &name) -> const lang::MirLoan * {
+      const auto *local = findDirectLocal(main, name);
+      const auto *hir = mainMir == nullptr
+                            ? nullptr
+                            : valid.hir.findFunctionInstance(mainMir->id);
+      if (local == nullptr || hir == nullptr)
+        return nullptr;
+      for (const auto &binding : hir->body.bindings)
+        if (binding.variable == local)
+          for (const auto &loan : mainMir->body.loans)
+            if (loan.kind == lang::MirLoanKind::Stored &&
+                std::find(loan.carriers.begin(), loan.carriers.end(),
+                          binding.id) != loan.carriers.end())
+              return &loan;
+      return nullptr;
+    };
+    if (mirBorrowAuthority()) {
+      const auto *mirInitial = mirCarrierLoan("initial");
+      for (const auto *loan :
+           {mirCarrierLoan("intermediate"), mirCarrierLoan("active")})
+        expect(mirInitial != nullptr && loan != nullptr &&
+                   mirInitial->access == lang::AccessMode::ReadOnly &&
+                   mirInitial->additionalDependencies.size() == 2 &&
+                   std::all_of(mirInitial->additionalDependencies.begin(),
+                               mirInitial->additionalDependencies.end(),
+                               [](const auto &dependency) {
+                                 return dependency.access ==
+                                        lang::AccessMode::Mutable;
+                               }) &&
+                   loan->source == mirInitial->source &&
+                   loan->access == mirInitial->access &&
+                   loan->designatedFields == mirInitial->designatedFields &&
+                   loan->additionalDependencies ==
+                       mirInitial->additionalDependencies,
+               "each forwarding result preserves the exact shared and two "
+               "exclusive dependency places, field identities, and "
+               "permissions");
+    }
     for (const auto *loan : {intermediate, active})
+      if (!mirBorrowAuthority())
       expect(initial != nullptr && loan != nullptr &&
                  initial->access == lang::AccessMode::ReadOnly &&
                  initial->additionalDependencies.size() == 2 &&
@@ -7342,18 +7396,11 @@ int main() {
     for (const auto &function : valid.mir.functionInstances()) {
       if (function.entryKind == lang::ProgramEntryKind::None)
         continue;
-      for (const auto &[consumed, result] : {std::pair{initial, intermediate},
-                                             std::pair{intermediate, active}}) {
-        const auto findLoan =
-            [&](const auto *semantic) -> const lang::MirLoan * {
-          if (semantic != nullptr)
-            for (const auto &loan : function.body.loans)
-              if (loan.semanticLoan == semantic->id)
-                return &loan;
-          return nullptr;
-        };
-        const auto *inputLoan = findLoan(consumed);
-        const auto *resultLoan = findLoan(result);
+      for (const auto &[consumed, result] :
+           {std::pair{"initial", "intermediate"},
+            std::pair{"intermediate", "active"}}) {
+        const auto *inputLoan = mirCarrierLoan(consumed);
+        const auto *resultLoan = mirCarrierLoan(result);
         unsigned endCount = 0;
         lang::MirInstructionId call = 0, end = 0, initialize = 0;
         const lang::MirBlock *callBlock = nullptr, *endBlock = nullptr,
@@ -7486,15 +7533,24 @@ int main() {
         break;
       }
     }
-    expect(changed && !lang::MirLowerer()
-                           .lower(oneSidedEndpoint, branched.failureMetadata)
-                           .valid(),
-           "a one-sided call-transfer acknowledgement cannot hide a forged "
-           "repeated endpoint on the other branch");
+    // HIR statement endpoints belong to the legacy semantic loan model;
+    // under MIR authority MIR derives every loan end itself.
+    expectSemanticLoanModel(
+        changed && !lang::MirLowerer()
+                        .lower(oneSidedEndpoint, branched.failureMetadata)
+                        .valid(),
+        "a one-sided call-transfer acknowledgement cannot hide a forged "
+        "repeated endpoint on the other branch");
     const auto *main = findTopLevelFunction(branched.program, "main");
     const auto *initial = findDirectLocal(main, "initial");
     const auto *binding =
         initial == nullptr ? nullptr : branched.semantics.findBinding(*initial);
+    lang::HirBindingId initialBinding = 0;
+    for (const auto &function : branched.hir.functionInstances())
+      if (function.entryKind != lang::ProgramEntryKind::None)
+        for (const auto &candidate : function.body.bindings)
+          if (initial != nullptr && candidate.variable == initial)
+            initialBinding = candidate.id;
     auto missingEndpoint = branched.mir;
     bool removed = false;
     unsigned successfulEndpoints = 0;
@@ -7503,14 +7559,31 @@ int main() {
       auto *body = lang::findMirBody(missingEndpoint, address);
       if (body == nullptr || binding == nullptr)
         continue;
+      // Each transfer result also names the consumed binding as a carrier;
+      // the carrier's own loan is the first one, its construction's.
+      lang::MirLoanId initialLoan = 0;
+      for (const auto &loan : body->loans)
+        if (initialLoan == 0 && loan.kind == lang::MirLoanKind::Stored &&
+            initialBinding != 0 &&
+            std::find(loan.carriers.begin(), loan.carriers.end(),
+                      initialBinding) != loan.carriers.end())
+          initialLoan = loan.id;
       for (auto &block : body->blocks) {
         if (block.activeFailure != 0)
           continue;
         for (auto instruction = block.instructions.begin();
              instruction != block.instructions.end();) {
           const auto *loan = body->findLoan(instruction->loan.value_or(0));
+          // The consumed carrier's MIR Stored loan: under MIR authority its
+          // binding keeps no semantic loan identity.
+          const bool carrierLoan =
+              loan != nullptr &&
+              (mirBorrowAuthority() ? initialLoan != 0 &&
+                                          loan->id == initialLoan
+                                    : loan->semanticLoan ==
+                                          binding->retainedLoan);
           if (instruction->kind == lang::MirInstructionKind::EndBorrow &&
-              loan != nullptr && loan->semanticLoan == binding->retainedLoan) {
+              carrierLoan) {
             ++successfulEndpoints;
             if (!removed) {
               instruction = block.instructions.erase(instruction);
