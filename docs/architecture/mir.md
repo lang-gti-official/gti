@@ -3348,6 +3348,17 @@ field; copying reborrows those owners below the source's loan, moving
 transfers them. A parallel scope keeps a task argument's loan exactly when
 the task type holds borrowed state.
 
+A payload construction's loan is MIR's as well. Each reference payload field
+names its argument's referent below that place's loan; a by-value field
+holding borrowed state carries every owner of its argument's loan (reborrowed
+when copied, transferred when moved). Each path is prefixed by the payload
+field and guarded by the constructed alternative. An argument proven to hold
+a dependency-free alternative contributes nothing: a payload construction of
+an alternative that stores no borrowed state, a local carrier MIR tracks
+without a loan, a call that borrows from nothing under elision, or a callee
+summary that names owners only under alternatives its by-value arguments do
+not hold.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's

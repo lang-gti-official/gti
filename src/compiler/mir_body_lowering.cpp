@@ -4057,6 +4057,206 @@ private:
     return id;
   }
 
+  // Whether a value is proven to hold a dependency-free alternative of its
+  // type: a payload construction of an alternative storing no borrowed
+  // state, a transparent relay of one, or a call whose callee's complete
+  // result summary names no owner but a typed alternative.
+  [[nodiscard]] bool knownDependencyFreeAlternative(HirValueId id,
+                                                    bool elided = true) const {
+    const HirValue *value = findValue(id);
+    while (value != nullptr &&
+           (value->kind == HirValueKind::Grouping ||
+            value->kind == HirValueKind::Move ||
+            value->kind == HirValueKind::DirectInitializer) &&
+           value->operands.size() == 1)
+      value = findValue(value->operands.front());
+    if (value == nullptr)
+      return false;
+    // A local carrier MIR tracks without any loan holds no owner.
+    if (value->kind == HirValueKind::Variable)
+      if (const auto local = localSymbols.find(value->symbol);
+          local != localSymbols.end())
+        return !bindingLoans.contains(local->second);
+    // A constructor or function result whose complete summary names owners
+    // only under alternatives its arguments are proven not to hold.
+    const FunctionBorrowDependencySummary *summary = nullptr;
+    if (value->kind == HirValueKind::Call && value->constructorTarget) {
+      if (const auto *target =
+              program.findConstructorInstance(*value->constructorTarget);
+          target != nullptr && target->completeBorrow)
+        summary = &*target->completeBorrow;
+    } else if (value->kind == HirValueKind::Call && value->functionTarget) {
+      if (const auto *target =
+              program.findFunctionInstance(*value->functionTarget);
+          target != nullptr && target->completeReturnBorrow)
+        summary = &*target->completeReturnBorrow;
+    }
+    // A call with no borrowing input and no global origin borrows nothing
+    // (RFC 0004 elision): its result holds a dependency-free alternative.
+    if (elided && summary == nullptr && value->kind == HirValueKind::Call &&
+        value->functionTarget &&
+        value->borrowOrigin == BorrowOriginKind::None) {
+      const auto arguments = callArgumentValues(*value);
+      return std::all_of(
+          arguments.begin(), arguments.end(), [&](HirValueId argument) {
+            const HirValue *input = findValue(argument);
+            return input != nullptr &&
+                   ((input->info.type.kind != SemanticType::Reference &&
+                     !resolvedTraits(input->info.type).containsBorrowedState) ||
+                    knownDependencyFreeAlternative(argument));
+          });
+    }
+    if (summary != nullptr) {
+      if (summary->possibleAlternatives.empty())
+        return false;
+      const auto arguments = callArgumentValues(*value);
+      return std::all_of(
+          summary->dependencies.begin(), summary->dependencies.end(),
+          [&](const BorrowedFieldOrigin &dependency) {
+            return dependency.origin == BorrowOriginKind::Argument &&
+                   !dependency.sourceConditions.empty() &&
+                   dependency.parameter < arguments.size() &&
+                   dependency.parameter < value->parameterTypes.size() &&
+                   value->parameterTypes[dependency.parameter].kind !=
+                       SemanticType::Reference &&
+                   knownDependencyFreeAlternative(
+                       arguments[dependency.parameter]);
+          });
+    }
+    if (value->kind == HirValueKind::PayloadConstruction &&
+        value->enumVariant) {
+      for (const auto &owner : program.enumDeclarations())
+        if (owner.type == value->info.type && owner.payload)
+          for (const auto &alternative : owner.enumerators)
+            if (alternative.variantIndex == *value->enumVariant)
+              return std::none_of(
+                  alternative.payloadTypes.begin(),
+                  alternative.payloadTypes.end(),
+                  [&](const SemanticType &field) {
+                    return field.kind == SemanticType::Reference ||
+                           resolvedTraits(field).containsBorrowedState;
+                  });
+      return false;
+    }
+    return false;
+  }
+
+  // The owners a payload construction's stored references borrow, from its
+  // staged arguments: a reference field names its argument's referent below
+  // that place's loan; a by-value field holding borrowed state carries every
+  // owner of its argument's loan. Each path is prefixed by the payload field
+  // and guarded by the constructed alternative.
+  [[nodiscard]] std::optional<std::vector<MirLoanDependency>>
+  payloadConstructionDependencies(const HirValue &value) {
+    std::vector<MirLoanDependency> result;
+    if (!value.enumVariant)
+      return std::nullopt;
+    // A staged construction names each argument's payload field; an
+    // unstaged (contextual) one supplies its fields as operands in order.
+    struct PayloadInput {
+      std::size_t field = 0;
+      HirValueId value = 0;
+      bool moved = false;
+    };
+    std::vector<PayloadInput> inputs;
+    if (value.callPlan) {
+      for (const auto &argument : value.callPlan->arguments)
+        inputs.push_back(
+            {.field = argument.parameterIndex,
+             .value = argument.value,
+             .moved = argument.kind == HirCallInputKind::MoveValue});
+    } else {
+      for (std::size_t index = 0; index < value.operands.size(); ++index) {
+        const HirValue *operand = findValue(value.operands[index]);
+        inputs.push_back({.field = index,
+                          .value = value.operands[index],
+                          .moved = operand != nullptr &&
+                                   operand->kind == HirValueKind::Move});
+      }
+    }
+    const HirEnumerator *alternative = nullptr;
+    for (const auto &owner : program.enumDeclarations())
+      if (owner.type == value.info.type && owner.payload)
+        for (const auto &candidate : owner.enumerators)
+          if (candidate.variantIndex == *value.enumVariant)
+            alternative = &candidate;
+    if (alternative == nullptr ||
+        alternative->payloadTypes.size() != alternative->payloadSymbols.size())
+      return std::nullopt;
+    const BorrowDependencyCondition guard{.enumeration = value.info.type,
+                                          .variant = *value.enumVariant};
+    for (const auto &argument : inputs) {
+      const std::size_t field = argument.field;
+      if (field >= alternative->payloadTypes.size())
+        return std::nullopt;
+      const SemanticType &type = alternative->payloadTypes[field];
+      const SymbolId symbol = alternative->payloadSymbols[field];
+      const MirLoanId argumentLoan = loanForValue(argument.value);
+      if (type.kind == SemanticType::Reference) {
+        const MirLoan *through = output.findLoan(argumentLoan);
+        const MirPlaceId owner = through != nullptr
+                                     ? through->source
+                                     : placeForValue(argument.value);
+        if (owner == 0)
+          return std::nullopt;
+        result.push_back({.source = owner,
+                          .parent = argumentLoan,
+                          .designatedFields = {symbol},
+                          .access = type.referenceAccess,
+                          .conditions = {guard}});
+        continue;
+      }
+      if (!resolvedTraits(type).containsBorrowedState ||
+          knownDependencyFreeAlternative(argument.value))
+        continue;
+      const MirLoan *retained = output.findLoan(argumentLoan);
+      if (retained && retained->kind != MirLoanKind::Stored &&
+          retained->storedDependency != 0)
+        retained = output.findLoan(retained->storedDependency);
+      if (retained == nullptr)
+        return std::nullopt;
+      const MirLoan owner = *retained;
+      // A copied place reborrows its owners below its loan; a moved place
+      // transfers them; a temporary hands over its owners with their own
+      // parents.
+      const HirValue *input = findValue(argument.value);
+      const bool temporary = input != nullptr &&
+                             input->info.category == ValueCategory::Value &&
+                             input->kind != HirValueKind::Move;
+      const MirLoanId parent = argument.moved ? 0 : argumentLoan;
+      const auto add = [&](MirPlaceId source,
+                           const std::vector<SymbolId> &fields,
+                           const std::vector<BorrowDependencyCondition> &nested,
+                           AccessMode access, MirLoanId ownParent) {
+        std::vector<SymbolId> path{symbol};
+        path.insert(path.end(), fields.begin(), fields.end());
+        std::vector<BorrowDependencyCondition> conditions{guard};
+        for (auto condition : nested) {
+          condition.subobject.insert(condition.subobject.begin(), symbol);
+          conditions.push_back(std::move(condition));
+        }
+        result.push_back(
+            {.source = owner.entry
+                           ? projectBorrowFields(owner.source, fields, nested)
+                           : source,
+             .parent = temporary ? ownParent : parent,
+             .designatedFields = std::move(path),
+             .access = access,
+             .conditions = std::move(conditions)});
+      };
+      // A compact single-origin loan names its type's sole reference path.
+      auto primary = owner.designatedFields;
+      if (primary.empty() && owner.additionalDependencies.empty())
+        if (const auto path = soleStoredReferencePath(type))
+          primary = path->first;
+      add(owner.source, primary, owner.conditions, owner.access, owner.parent);
+      for (const auto &nested : owner.additionalDependencies)
+        add(nested.source, nested.designatedFields, nested.conditions,
+            nested.access, nested.parent);
+    }
+    return result;
+  }
+
   [[nodiscard]] bool completeEmptyBorrowValue(HirValueId source,
                                               const MirOperand &operand,
                                               const SemanticType &type) const {
@@ -12829,24 +13029,25 @@ private:
     }
     instruction.result = resultFor(*value);
     if (value->kind == HirValueKind::PayloadConstruction &&
-        instruction.result && value->borrowDependencies) {
-      // appendValue transports the complete semantic fact; independently
-      // checked ordered inputs establish its origins at program verification.
-      const auto &complete =
-          output.values[*instruction.result - 1].borrowDependencies;
-      if (!complete || (!complete->dependencies.empty() && !stagedPayload)) {
+        instruction.result && !value->dependentTextPublication &&
+        value->info.traits.containsBorrowedState) {
+      // The constructed alternative's owners come from its arguments;
+      // program verification independently reconstructs them from the
+      // ordered inputs.
+      const auto complete = payloadConstructionDependencies(*value);
+      if (!complete || (!complete->empty() && !stagedPayload)) {
         valid = false;
         return;
       }
-      if (!complete->dependencies.empty()) {
-        const auto &primary = complete->dependencies.front();
+      if (!complete->empty()) {
+        const auto &primary = complete->front();
         const auto loan =
             createLoan(MirLoanKind::Stored, primary.source, primary.access,
                        value->id, 0, 0, primary.parent);
         output.loans[loan - 1].designatedFields = primary.designatedFields;
         output.loans[loan - 1].conditions = primary.conditions;
         output.loans[loan - 1].additionalDependencies.assign(
-            complete->dependencies.begin() + 1, complete->dependencies.end());
+            complete->begin() + 1, complete->end());
         instruction.loan = loan;
         valueLoans.insert_or_assign(value->id, loan);
         if (!scopes.empty())
@@ -13670,7 +13871,7 @@ private:
         !source->escapes && source->producedBy == valueId &&
         (value->constructorTarget.has_value() ||
          (value->kind == HirValueKind::PayloadConstruction &&
-          value->borrowDependencies.has_value()));
+          !value->dependentTextPublication));
     if (source == nullptr || source->kind != MirLoanKind::Stored ||
         (!constructed &&
          (!source->entry || source->designatedFields.empty())) ||
