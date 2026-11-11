@@ -15461,6 +15461,21 @@ completeBorrowSourcePath(const MirProgram &program,
             claims.front().designatedFields.empty())
           claims.front().designatedFields =
               reconstructed.dependencies.front().designatedFields;
+        // A shared carrier constructed through a reference formal roots
+        // its own loan on the formal's referent rather than reborrowing the
+        // formal's whole-body entry loan; the two denote the same origin.
+        for (std::size_t index = 0; index < claims.size() &&
+                                    index < reconstructed.dependencies.size();
+             ++index) {
+          auto &dependency = reconstructed.dependencies[index];
+          const MirLoan *formal = body.findLoan(dependency.parent);
+          if (claims[index].parent == 0 && formal != nullptr && formal->entry &&
+              formal->kind == MirLoanKind::Parameter &&
+              dependency.access == AccessMode::ReadOnly &&
+              claims[index].access == AccessMode::ReadOnly &&
+              !published->lifecycleBound)
+            dependency.parent = 0;
+        }
         if (claims == reconstructed.dependencies) {
           // Copies of the constructed carrier retain its proven group, not
           // a fresh claim about the original parameter's storage.
