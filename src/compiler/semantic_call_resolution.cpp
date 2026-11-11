@@ -7178,9 +7178,13 @@ auto SemanticVisitor::Impl::resolveOperator(
                               receiverProduction->place)}
                         : loanPlace(receiver);
   }
+  // Consuming a fresh carrier does not upgrade a stored shared dependency
+  // into exclusive access to its owner, exactly as for a member call.
   const AccessMode callReceiverAccess =
-      receiverProduction && receiverProduction->access == AccessMode::Mutable
-          ? AccessMode::Mutable
+      receiverProduction &&
+              (receiverProduction->access == AccessMode::Mutable ||
+               selected.receiverMutability == ReceiverMutability::Consuming)
+          ? receiverProduction->access
           : selectedReceiverAccess;
   const auto receiverOrigins = receiverState ? loanPlaces(receiverState->place)
                                : !temporaryReceiver
