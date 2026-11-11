@@ -10,6 +10,9 @@ syntax match gtiMember "\%(\.\|->\)\s*\zs\h\w*"
 syntax match gtiNamespaceName "\<\h\w*\ze\s*::"
 syntax match gtiClassName "\h\w*" contained
 syntax match gtiGenericType "\%(<\s*\|,\s*\)\zs\h\w*\ze\s*[<,>]"
+syntax match gtiLifetimeKeyword "\%(<\s*\|,\s*\)\@<=lifetime\ze\s\+\h\w*" nextgroup=gtiLifetimeName skipwhite
+syntax match gtiLifetimeName "\h\w*" contained
+syntax match gtiLifetimeArgument "\%(&\s*<\s*\)\@<=\h\w*\ze\s*>"
 syntax match gtiConcept "\<std::\zs\h\w*\ze\s\+\h\w*\%(\.\.\.\)\?\s*[,>]"
 syntax match gtiUserType "\<[A-Z]\w*\>"
 syntax match gtiConstructorField "[,:]\s*\zs\h\w*\ze\s*("
@@ -74,6 +77,9 @@ highlight default link gtiEscape SpecialChar
 highlight default link gtiFloat Float
 highlight default link gtiFunction Function
 highlight default link gtiGenericType Type
+highlight default link gtiLifetimeKeyword Keyword
+highlight default link gtiLifetimeName Type
+highlight default link gtiLifetimeArgument Type
 highlight default link gtiInclude Include
 highlight default link gtiKeyword Keyword
 highlight default link gtiLifecycleSpecifier StorageClass

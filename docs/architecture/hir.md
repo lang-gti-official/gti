@@ -177,7 +177,11 @@ as usual up to its body: its concrete instance analysis still runs, its
 diagnostics are reported and its signature facts are recorded, but no body is
 lowered, so the callee, constructor and class instances only that body would
 request are not discovered, and a non-generic library-only function needs no
-primary body (no late demand). `HirLoweringResult::omittedInstanceBodies`
+primary body (no late demand). The instance is marked `bodyOmitted` and keeps
+only its parameter bindings and signature facts (return borrow summaries,
+ownerless-text facts, a constructor's complete borrow summary); a constructor
+keeps no initializers. MIR lowers it as a signature-only declaration (see
+[mir.md](mir.md)). `HirLoweringResult::omittedInstanceBodies`
 counts the omissions and `FrontendWorkMetrics::hirOmittedInstanceBodies`
 reports them. Class instances are never omitted: lowered bodies of the file's
 own instances reference their layout.
@@ -189,8 +193,10 @@ keeps no instance record, so lowering it would read the primary body's facts
 through the instance delta and admit instances that still name this instance's
 own generic parameters; their analyses would only repeat the failure.
 
-The LSP clears the option because it never reads HIR bodies, only HIR's
-diagnostics. The contract follows from the scope rule above: an instance that
+The LSP clears the option because it never reads HIR bodies, only the
+diagnostics of HIR and MIR. The frontend applies it to analysis through HIR
+and through MIR alike; code generation needs every body and never clears it.
+The contract follows from the scope rule above: an instance that
 only a library-only body would request is, like one that only unreached
 library code requests, the library's own `gti check` concern. `gti check` and
 builds keep every body.

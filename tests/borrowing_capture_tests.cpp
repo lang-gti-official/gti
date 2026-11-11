@@ -1,4 +1,7 @@
 #include "compiler_test_fixture.h"
+#include "gti/borrow_checker_mode.h"
+
+#include <cstdlib>
 
 int main() {
   const auto application = [](const std::string &name,
@@ -45,7 +48,7 @@ int main() {
     expect(!result.canGenerateCode() &&
                hasDiagnosticCode(result.diagnostics, code) &&
                !hasDiagnosticCode(result.diagnostics, "GTI-B0001"),
-           name + " is rejected by semantics, not the backend");
+           name + " is rejected with a user diagnostic, not an ICE");
   };
   const auto sharedCapture = positive("shared-capture", R"(
 int main() {
@@ -459,6 +462,8 @@ void require_layout<T>() requires std::layout_queryable<T> {}
 int main() { require_layout<std::erased_object>(); return 0; }
 )",
            "GTI-S2029");
+  // RFC 0004: no input supplies the borrowed result, so it is implicitly
+  // 'static'; MIR rejects the local callable as a region escape.
   negative("function-ref-cannot-outlive-local-callable", R"(
 import std.functional;
 std::function_ref<int()> bad() {
@@ -467,7 +472,7 @@ std::function_ref<int()> bad() {
 }
 int main() { return 0; }
 )",
-           "GTI-S2045");
+           "GTI-S2127");
   negative("function-ref-retains-shared-capture-origin", R"(
 import std.functional;
 int main() {
@@ -506,8 +511,7 @@ int main() {
 }
 )");
   positive("generic-relay-reference-result", R"(
-[[borrowed_from(value)]]
-int& relay<F>(F& callback, int& value) { return callback(value); }
+int&<a> relay<F, lifetime a>(F& callback, int&<a> value) { return callback(value); }
 int main() {
   int cell = 4;
   auto same = [](int& value) -> int& { return value; };
@@ -544,6 +548,18 @@ int main() {
 }
 )",
            "GTI-S2017");
+  // Under RFC 0004 signature contracts a reference result shared by several
+  // eligible reference parameters borrows all of them (and a lambda body is
+  // checked by MIR); without them two eligible parameters are ambiguous.
+  const bool signatureContracts = !lang::legacyBorrowChecker();
+  const auto unionOrNegative = [&](const std::string &name,
+                                   const std::string &source,
+                                   const std::string &code) {
+    if (signatureContracts)
+      (void)positive(name, source);
+    else
+      negative(name, source, code);
+  };
   negative("lambda-reference-result-ambiguous", R"(
 int main() {
   int left = 1;
@@ -571,21 +587,19 @@ int main() {
   return view - 5;
 }
 )");
-  negative("invocation-pointer-ambiguous-origin", R"(
+  unionOrNegative("invocation-pointer-ambiguous-origin", R"(
 import std.functional;
-[[borrowed_from(a)]]
-int& first(int& a, int& b) { return a; }
+int&<r> first<lifetime r>(int&<r> a, int& b) { return a; }
 int main() {
   std::function_ptr<int&(int&, int&)> pointer{first};
   return 0;
 }
 )",
-           "GTI-S2093");
+                  "GTI-S2093");
   negative("invocation-pointer-origin-mismatch", R"(
 import std.functional;
 import std.memory;
-[[borrowed_from(object)]]
-int& pick(std::erased_object& object, int& value) {
+int&<a> pick<lifetime a>(std::erased_object&<a> object, int& value) {
   unsafe { return std::restore_ref<int>(object); }
 }
 int main() {
@@ -617,6 +631,8 @@ int main() {
 }
 )",
            "GTI-S2017");
+  // RFC 0004: no input supplies the borrowed result, so it is implicitly
+  // 'static'; MIR rejects the local callable as a region escape.
   negative("borrowed-callable-outlives-owner", R"(
 import std.functional;
 std::function_ref<int()> bad() {
@@ -626,7 +642,7 @@ std::function_ref<int()> bad() {
 }
 int main() { auto escaped = bad(); return escaped(); }
 )",
-           "GTI-S2045");
+           "GTI-S2127");
   negative("exclusive-function-ref-conflicting-call", R"(
 import std.functional;
 int invoke(mut std::function_ref<int() mut>& callback, mut int& owner) {

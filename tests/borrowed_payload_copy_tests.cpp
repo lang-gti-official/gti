@@ -26,8 +26,7 @@ int inspect_pair(Pair& held) {
     case Pair::both(first, second): return first + second;
   }
 }
-[[borrowed_from(owner)]]
-Reading clone(int& owner) {
+Reading<a> clone<lifetime a>(int&<a> owner) {
   Reading original = Reading::item(owner);
   Reading copied = original;
   return copied;
@@ -171,27 +170,41 @@ int main() {
 }
 )gti",
          "shadowed copies still protect the original external owner");
+  // RFC 0004: copying a shared carrier copies its external reference, so a
+  // nested payload of that copy transfers the caller's region and does not
+  // retain the local carrier (Rust accepts the same shape). A local owner
+  // remains a body-owned origin that cannot escape.
   for (const bool copy : {false, true}) {
+    const std::string tail =
+        copy ? "Holder copied = held; return copied;" : "return held;";
     const auto nestedReturn =
         analyzeWithStandardLibrary("nested-carrier-return.gti", prefix + R"gti(
-[[borrowed_from(owner)]]
-Holder nested(int& owner) {
+Holder<a> nested<lifetime a>(int&<a> owner) {
   Carrier value = Carrier(owner);
   Holder held = Holder::item(value);
-)gti" + (copy ? "Holder copied = held; return copied;" : "return held;") +
-                                                                    R"gti(
+)gti" + tail + R"gti(
 }
 int main() { return 0; }
 )gti");
-    expect(nestedReturn.syntaxValid && !nestedReturn.semanticValid &&
-               std::any_of(nestedReturn.diagnostics.begin(),
-                           nestedReturn.diagnostics.end(),
-                           [](const auto &d) {
-                             return d.code == "GTI-S2017" &&
-                                    d.message.find("local child reborrow") !=
-                                        std::string::npos;
-                           }),
-           "copying does not erase a nested constructor's child ancestry");
+    expect(nestedReturn.canGenerateCode() &&
+               lang::verifyMirProgram(nestedReturn.mir).valid(),
+           "a nested payload copy transfers the caller's external region");
+    const auto localReturn =
+        analyzeWithStandardLibrary("nested-local-return.gti", prefix + R"gti(
+Holder nested() {
+  int owner = 17;
+  Carrier value = Carrier(owner);
+  Holder held = Holder::item(value);
+)gti" + tail + R"gti(
+}
+int main() { return 0; }
+)gti");
+    expect(
+        localReturn.syntaxValid && !localReturn.canGenerateCode() &&
+            std::none_of(localReturn.diagnostics.begin(),
+                         localReturn.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-B0001"; }),
+        "a nested payload copy cannot escape its local referent");
   }
   return failures ? 1 : 0;
 }

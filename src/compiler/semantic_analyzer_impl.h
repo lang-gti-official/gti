@@ -1,3 +1,4 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_procedural.h"
 #pragma once
 
@@ -3022,10 +3023,159 @@ private:
   struct GenericReturnBorrowContract {
     BorrowOriginKind origin = BorrowOriginKind::None;
     std::size_t parameter = 0;
+    // Every supplying parameter of an explicit multi-supplier lifetime
+    // contract (RFC 0004); empty for a single origin.
+    std::vector<std::size_t> parameters;
     AccessMode access = AccessMode::ReadOnly;
     bool ambiguous = false;
     bool missing = false;
   };
+  // RFC 0004: the result contract a declaration writes in lifetime syntax.
+  struct ExplicitLifetimeResult {
+    enum class Kind { None, This, Static, Region };
+    Kind kind = Kind::None;
+    std::string region;
+    // The region is a binder of the enclosing class: a stored region.
+    bool classBinder = false;
+    // A class binder that some field (or a base) of the class may store.
+    // When none does, only the parameters written in it supply the result.
+    bool classStoresRegion = false;
+    // Expanded parameter positions whose written regions supply the result.
+    std::vector<std::size_t> parameters;
+  };
+  [[nodiscard]] ExplicitLifetimeResult
+  explicitLifetimeResult(const FunctionDecl &syntax,
+                         std::span<const SemanticType> parameterTypes,
+                         ClassId ownerClass) const;
+  // A `[[borrowed_from]]` attribute or a result written with a region.
+  [[nodiscard]] static bool
+  hasExplicitBorrowContract(const FunctionDecl &syntax);
+  // Whether a callable pattern method's result, as this instance types it,
+  // borrows from its invocation lanes (see callablePatternResultPack).
+  [[nodiscard]] bool
+  patternResultContract(const FunctionDecl &syntax,
+                        const SemanticType &returnType) const;
+  // A method of a class matched by a callable pattern `R(Args...)` whose
+  // result is that pattern's result and whose final pack is its `Args`:
+  // the invocation lanes supply the result. Returns the pack's position.
+  [[nodiscard]] std::optional<std::size_t>
+  callablePatternResultPack(const FunctionDecl &syntax) const;
+  [[nodiscard]] std::optional<std::size_t>
+  callablePatternResultPack(const FunctionDecl &syntax,
+                            ClassId ownerClass) const;
+  // The same rule for any callable written in the class: a lambda whose
+  // result and final pack repeat the pattern's (`-> R&<r>`, `Args...`).
+  [[nodiscard]] std::optional<std::size_t>
+  callablePatternResultPack(const TypeRef &result,
+                            std::span<const Parameter> parameters,
+                            ClassId ownerClass) const;
+  // RFC 0004 declaration rules: every region a signature names is bound
+  // (GTI-S2128), and a result region a function binds has a supplying
+  // parameter (GTI-S2127).
+  void validateSignatureRegions(const FunctionDecl &syntax,
+                                const FunctionInfo &function);
+  // A method result in one class region cannot return a receiver field
+  // written in another (GTI-S2127).
+  void validateReturnedFieldRegion(const FunctionDecl &syntax, ClassId owner,
+                                   const ExprPtr &value);
+  // The `outlives` relations a declaration states, directly or through named
+  // concepts (alternatives excluded: none is guaranteed).
+  [[nodiscard]] std::vector<std::pair<std::string, std::string>>
+  declaredOutlives(const FunctionDecl &syntax) const;
+  // The relations named lifetime concepts in a clause state.
+  [[nodiscard]] std::vector<std::pair<std::string, std::string>>
+  namedOutlives(const RequiresClause &clause) const;
+  // A clause's `outlives` relations in disjunctive normal form: one
+  // conjunction per alternative (exactly one when the clause has no `||`).
+  [[nodiscard]] std::vector<std::vector<std::pair<std::string, std::string>>>
+  declaredOutlivesAlternatives(
+      const std::optional<RequiresClause> &clause) const;
+  // RFC 0004: a conformance operation's parameter regions are the concept
+  // operation's after the head substitutes the concept's parameters, and
+  // its lifetime requirements are implied by the concept operation's and
+  // the block's (Rust's impl-versus-trait rule). Returns the failure.
+  [[nodiscard]] std::optional<std::string> conformanceOperationLifetimeFailure(
+      const ConformanceDecl &block, const ConceptDecl &conceptDecl,
+      const FunctionDecl &declared, const FunctionDecl &written) const;
+  // An associated type is well formed under the block head's implied bounds
+  // and declared relations: it cannot require a block type parameter to
+  // outlive a region the head does not establish (GTI-S2127).
+  void validateConformanceAssociatedRegions(const ConformanceTypeCheck &check);
+  // In a class with explicit lifetime binders, a field written in region R
+  // is bound only from a constructor parameter written in R (GTI-S2127).
+  void validateConstructorFieldRegions(const ConstructorDecl &constructor,
+                                       const ClassDecl &owner);
+  // A returned call whose result region several caller regions supply lives
+  // as long as the shortest; each must outlive the declared result region.
+  void validateReturnedCallRegion(const FunctionDecl &syntax,
+                                  const ExprPtr &value);
+  // A result in a region the class stores is supplied by references the
+  // receiver stores, never by storage the receiver owns (GTI-S2127).
+  void validateReturnedReceiverRegion(const FunctionDecl &syntax, ClassId owner,
+                                      const ExprPtr &value);
+  // `requires outlives<T, r>` on a callee: the type bound to T must outlive
+  // r in the caller, by a declared or implied bound (GTI-S2127).
+  void validateCallTypeOutlives(const Call &call, const FunctionDecl &callee);
+  [[nodiscard]] std::string callerRegionOf(const FunctionDecl &caller,
+                                           const ExprPtr &argument);
+  // A call proves each relation its callee requires in the caller's regions
+  // (GTI-S2127).
+  void validateCallLifetimeRequirements(const FunctionDecl &callee,
+                                        std::span<const ExprPtr> arguments,
+                                        const Token &site);
+  void validateCallLifetimeRequirements(
+      std::vector<std::pair<std::string, std::string>> required,
+      std::span<const Parameter> parameters,
+      const std::vector<const ExprPtr *> &arguments, const Token &site,
+      const std::vector<std::pair<std::string, std::string>> *substitution =
+          nullptr);
+  // RFC 0004: a written use of a patterned primary must supply the regions
+  // its pattern fixes, and a written construction substitutes its class
+  // lifetime arguments into the constructor's parameter regions.
+  void validateWrittenPatternRegions(const TypeRef &use, const Token &site);
+  void validateWrittenConstructionRegions(const VariableDecl &declaration);
+  // A receiver written with class lifetime arguments substitutes them into
+  // the selected method's parameter regions.
+  void validateReceiverCallRegions(const Expr &receiver,
+                                   const FunctionDecl &callee,
+                                   std::span<const ExprPtr> arguments,
+                                   const Token &site);
+  // RFC 0004 shadow phase: MIR reports body-local borrow conflicts.
+  [[nodiscard]] static bool mirBorrowAuthority();
+  // The single parameter an explicit result contract names, either spelling.
+  [[nodiscard]] std::optional<std::size_t>
+  declaredContractParameter(const FunctionDecl &syntax,
+                            const SemanticType &returnType,
+                            std::span<const SemanticType> parameterTypes) const;
+  // RFC 0004 shadow phase: contracts come only from signatures.
+  [[nodiscard]] static bool signatureContractDefaults();
+  // RFC 0004 elision of a free function result written as a bare type
+  // parameter: per declared parameter, whether its written type mentions it.
+  [[nodiscard]] static std::optional<std::vector<bool>>
+  typeParameterResultSuppliers(const FunctionInfo &function);
+  // Narrows an unannotated base result origin to those suppliers.
+  static void narrowToTypeParameterSuppliers(FunctionInfo &function);
+  // RFC 0004: whether an unannotated free or static function's carrier result
+  // that no input can supply is implicitly `static`.
+  [[nodiscard]] bool
+  implicitStaticCarrierResult(const SemanticType &returnType,
+                              const std::vector<SemanticType> &parameterTypes,
+                              ClassId ownerClass, bool staticMember,
+                              IntrinsicKind intrinsic) const;
+  // RFC 0004 elision: the complete contract a signature alone implies.
+  [[nodiscard]] std::optional<FunctionBorrowDependencySummary>
+  signatureCompleteReturnBorrow(
+      const FunctionInfo &function, ReceiverMutability receiverMutability,
+      const SemanticType &concreteReceiver = SemanticType::Unknown);
+  // The parser's lifetime name resolution for the units this analysis owns:
+  // unknown region names are reported, and with tooling occurrences each
+  // binder becomes a lifetime symbol its uses reference.
+  void recordLifetimeNames(const Program &program);
+  // Constructor parameters whose written types name a region the class binds.
+  // Empty when the class declares no regions: the inferred model applies.
+  [[nodiscard]] std::vector<std::size_t>
+  constructorLifetimeSuppliers(const ClassDecl &owner,
+                               const ConstructorDecl &constructor) const;
   // The contract an explicit borrowed_from selects for one substitution of a
   // generic-result declaration: None when the substituted result is not a
   // checked reference or conditional reference-bearing result, otherwise the
@@ -3560,6 +3710,13 @@ private:
   [[nodiscard]] bool validateCallableReturn(const Call &call,
                                             const SemanticType &returnType);
 
+  // A selected callable whose result is a checked reference to exactly the
+  // required copyable value type satisfies a by-value invocation context:
+  // the caller reads through the reference immediately (RFC 0004).
+  [[nodiscard]] bool
+  callableReferenceResultReadsValue(const SemanticType &required,
+                                    const SemanticType &selected);
+
   [[nodiscard]] bool
   validateCallableCapability(const Call &call,
                              CallableInvocationCapability provided);
@@ -3572,6 +3729,12 @@ private:
                             const std::vector<SemanticType> &argumentTypes);
   void analyzeFunctionItemCall(const Call &call, const SemanticType &calleeType,
                                const std::vector<SemanticType> &argumentTypes);
+  // A pack expansion forwarded to an overload set with no variadic member.
+  // A symbolic pack has no arity, so concrete reanalysis owns the selection.
+  void
+  analyzeFixedPackForwardingCall(const Call &call, const Symbol &overloadSet,
+                                 const std::vector<SemanticType> &argumentTypes,
+                                 bool explicitArguments);
 
   [[nodiscard]] static const GenericParameterInfo *
   findGenericParameter(const std::vector<GenericParameterInfo> &parameters,
@@ -4113,7 +4276,8 @@ private:
                      std::vector<std::size_t> ephemeralBorrowArguments,
                      std::vector<CallableArgumentBoundary> callableArguments,
                      CallReceiverMode receiverMode,
-                     const ExprPtr *argumentReceiver = nullptr);
+                     const ExprPtr *argumentReceiver = nullptr,
+                     std::optional<std::size_t> suppliedArguments = {});
 
   void requireFunctionDefinition(const CallableCandidate &function,
                                  const Token &location);
@@ -4494,6 +4658,12 @@ private:
   [[nodiscard]] bool isParameterDerivedBorrow(const ExprPtr &expression,
                                               const Parameter &parameter) const;
 
+  // A read of one stored reference field (through ordinary or inherited
+  // fields) of a local borrowed carrier names that field's own dependency in
+  // the carrier's retained group, not the whole group.
+  [[nodiscard]] std::optional<SemanticLoanDependency>
+  storedFieldReadDependency(const Expr *expression) const;
+
   [[nodiscard]] bool
   isParameterDerivedBorrow(const ExprPtr &expression,
                            const Parameter &parameter,
@@ -4698,7 +4868,7 @@ private:
   void validateParameterPacks(
       std::span<const Parameter> parameters,
       const std::vector<GenericParameterInfo> &genericParameters,
-      const TypeRef *returnType = nullptr);
+      const TypeRef *returnType = nullptr, bool explicitResultContract = false);
 
   void validateOperatorDeclaration(const FunctionDecl &function,
                                    bool methodDeclaration);
@@ -4885,7 +5055,8 @@ private:
   void refreshTypeAliasProjections();
 
   bool validateTypeAliasReference(const TypeRef &target,
-                                  const SemanticType &resolved);
+                                  const SemanticType &resolved,
+                                  const TypeAliasDecl *alias = nullptr);
 
   void registerConcepts(const StmtList &statements,
                         std::vector<std::string> scope);
@@ -7344,6 +7515,9 @@ private:
     std::shared_ptr<StagedConstantResults> stagedConstants;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
         deferredFlowOwners;
+    // The declared result every fixed candidate shares, for a call that
+    // forwards a symbolic pack; concrete reanalysis selects its target.
+    std::unordered_map<const Call *, SemanticType> deferredPackCallResults;
     std::unordered_map<std::string, std::vector<GenericDefaultConstant>>
         genericDefaultConstants;
     std::vector<GenericDefaultConstantUse> genericDefaultConstantUses;

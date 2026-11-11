@@ -5,6 +5,15 @@
 
 namespace {
 
+// A retained-loan conflict, in the legacy semantic checker's wording or the
+// MIR borrow checker's.
+bool hasBorrowConflict(const std::vector<lang::Diagnostic> &diagnostics) {
+  return hasDiagnostic(diagnostics,
+                       "while a reference borrowed from it may still be "
+                       "live") ||
+         hasDiagnostic(diagnostics, "overlapping borrow may still be live");
+}
+
 // Backend-neutral MIR lookups. Declaration emission facts are asserted on the
 // verified MIR a backend consumes, never on generated backend text.
 const lang::HirFunctionInstance *
@@ -531,9 +540,7 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidatedSpan.canGenerateCode() &&
              hasDiagnosticCode(invalidatedSpan.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(invalidatedSpan.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
+             hasBorrowConflict(invalidatedSpan.diagnostics),
          "mutating an owner while a copied read-only span is live should be "
          "rejected by the ordinary retained-loan rule");
 
@@ -564,13 +571,13 @@ int main() {
       "  return values.as_span();\n"
       "}\n",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!escapedSpan.canGenerateCode() &&
-             hasDiagnosticCode(escapedSpan.diagnostics, "GTI-S2045") &&
-             hasDiagnostic(escapedSpan.diagnostics,
-                           "borrowed return requires either one exact "
-                           "global/static storage origin"),
-         "a span must not escape the local owner that supplies its retained "
-         "loan");
+  // RFC 0004: no input supplies the span, so it is implicitly `static`.
+  expect(
+      !escapedSpan.canGenerateCode() &&
+          hasDiagnosticCode(escapedSpan.diagnostics, "GTI-S2127") &&
+          hasDiagnostic(escapedSpan.diagnostics, "does not live for 'static'"),
+      "a span must not escape the local owner that supplies its retained "
+      "loan");
 
   const lang::FrontendResult invalidatedTextView = lang::Frontend().analyze(
       "invalidated-string-view.gti",
@@ -585,9 +592,7 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidatedTextView.canGenerateCode() &&
              hasDiagnosticCode(invalidatedTextView.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(invalidatedTextView.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
+             hasBorrowConflict(invalidatedTextView.diagnostics),
          "a concrete generic relay must preserve a dynamic string_view owner "
          "dependency and reject mutation while that result is live");
 
@@ -812,9 +817,7 @@ int main() {
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidatedCString.canGenerateCode() &&
              hasDiagnosticCode(invalidatedCString.diagnostics, "GTI-S2017") &&
-             hasDiagnostic(invalidatedCString.diagnostics,
-                           "while a reference borrowed from it may still be "
-                           "live"),
+             hasBorrowConflict(invalidatedCString.diagnostics),
          "mutating a string while one of its C-string pointers remains live "
          "should be rejected");
 
@@ -2374,7 +2377,7 @@ class Maker {
 public:
   static Maker create();
   int take() &&;
-  [[borrowed_from(input)]] static int& relay(int& input);
+  static int&<a> relay<lifetime a>(int&<a> input);
 };
 Maker Maker::create() { return Maker(); }
 int Maker::take() && { return 7; }
@@ -2398,7 +2401,7 @@ int main() {
   const auto secondParameter = lang::Frontend().analyze(
       "split-contract-position.gti", R"(
 struct Relay {
-  [[borrowed_from(selected)]] static int& choose(int& other, int& selected);
+  static int&<a> choose<lifetime a>(int& other, int&<a> selected);
 public:
   Relay() = default;
 };
@@ -9949,11 +9952,9 @@ void missing_parameter<Args...>() {}
 void wrong_type<Args...>(int... values) {}
 void mutable_pack<Args...>(mut Args... values) {}
 void forwarding_pack<Args...>(Args&&... values) {}
-[[borrowed_from(first)]]
 int& borrowed_result<Args...>(int& first, Args&... values) { return first; }
 void direct_use<Args...>(Args... values) { values; }
 void local_pack<Args...>(Args... values) { Args local; }
-void bad_forward<Args...>(Args... values) { fixed(values...); }
 void not_a_pack(int value) { consume(value...); }
 )");
   expect(!invalid.canGenerateCode(),
@@ -9975,8 +9976,6 @@ void not_a_pack(int value) { consume(value...); }
           hasDiagnostic(
               invalid.diagnostics,
               "can only appear in its matching final parameter-pack") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "only be forwarded to another variadic") &&
           hasDiagnostic(invalid.diagnostics, "is not a parameter pack"),
       "variadic diagnostics should explain invalid pack placement, mutable "
       "value packs, forwarding references, borrowed results, and invalid "

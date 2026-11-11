@@ -998,7 +998,11 @@ private:
             .virtualMethod = info->virtualMethod,
             .pureVirtual = info->pureVirtual,
             .overrideMethod = info->overrideMethod,
-            .hasRequiresClause = declaration->requiresClause().has_value(),
+            // A clause of only lifetime relations (RFC 0004 `outlives`)
+            // has no type-level requirement left to lower.
+            .hasRequiresClause =
+                declaration->requiresClause().has_value() &&
+                !declaration->requiresClause()->expression.applications.empty(),
             .compilerPrivate = info->compilerPrivate,
             .explicitlyExported =
                 inheritedExport || declaration->exportKeyword().has_value()};
@@ -1034,7 +1038,11 @@ private:
                           SpecialMemberSpecifierKind>{declaration->specifier()
                                                           ->kind}
                     : std::nullopt,
-            .hasRequiresClause = declaration->requiresClause().has_value(),
+            // A clause of only lifetime relations (RFC 0004 `outlives`)
+            // has no type-level requirement left to lower.
+            .hasRequiresClause =
+                declaration->requiresClause().has_value() &&
+                !declaration->requiresClause()->expression.applications.empty(),
             .constexprConstructor = info->constexprConstructor,
             .requiresUnsafe = info->requiresUnsafe,
             .compilerPrivate = info->compilerPrivate};

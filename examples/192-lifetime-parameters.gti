@@ -1,0 +1,131 @@
+// Lifetime relationships belong to reusable declarations. Ordinary callers
+// infer their arguments and keep using plain references and local types.
+
+import std.memory;
+import std.functional;
+
+// Type erasure preserves the evaluated pointer and every nested lifetime.
+// Restoration is unsafe even when this helper proves the exact round trip.
+T&<a> round_trip_reference<T, lifetime a>(T&<a> input) requires outlives<T, a> {
+  unsafe { return std::restore_ref<T>(std::erase_ref(input)); }
+}
+
+int& identity(int& value) { return value; }
+
+// A namespace function item keeps its declared reference result. A generic
+// caller can load that result while each identity invocation chooses its region.
+int observe<F>(F& callback, int& value) { return callback(value); }
+int permanent_value = 11;
+int&<static> permanent(int ignored) { return permanent_value; }
+
+void add_one<lifetime a>(mut int&<a> value) { value += 1; }
+
+int&<shared> choose<lifetime shared>(
+    int&<shared> left, int&<shared> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+
+// A stored callable chooses a fresh invocation region without changing its
+// code carrier's lifetime or losing either possible result supplier.
+using Selection = for<lifetime a> int&<a>(int&<a>, int&<a>, bool);
+
+struct Reading<lifetime data> {
+  int&<data> value;
+  Reading(int&<data> input) : value(input) {}
+  // The result keeps both permitted owners even though execution selects one.
+  Reading(int&<data> left, int&<data> right, bool first)
+      : value(choose(left, right, first)) {}
+  int&<data> get() { return this.value; }
+  // Consuming the view destroys its shell, while its external owner survives.
+  int&<data> take() && { return this.value; }
+};
+
+// Copying a shared external reference does not keep its local carrier alive.
+// Cleanup still observes the carrier's original field before it is destroyed.
+mut int cleaned_reading = 0;
+struct ObservedReading<lifetime data> {
+  int&<data> value;
+  ObservedReading(int&<data> input) : value(input) {}
+  ~ObservedReading() { cleaned_reading = cleaned_reading + this.value; }
+};
+int&<data> copy_before_cleanup<lifetime data>(int&<data> input) {
+  ObservedReading reading{input};
+  return reading.value;
+}
+int&<static> copy_global_before_cleanup() {
+  ObservedReading<static> reading{permanent_value};
+  return reading.value;
+}
+
+// The conformance head infers Reading's stored lifetime. A reference to the
+// Reading shell remains a separate, short-lived operation borrow.
+concept ValueReader<T> { int read(T& input); };
+for concept ValueReader<Reading> {
+  int read(Reading& input) { return input.value; }
+};
+
+int read_through_view<lifetime data>(int&<data> input) {
+  Reading<data> reading{input};
+  return reading.get();
+}
+
+// A region can be projected from a reference argument without adding another
+// public type/lifetime argument. This pattern has no generic type binder.
+struct IntBorrow<int&<source>> {
+  int&<source> value;
+  IntBorrow(int&<source> input) : value(input) {}
+  int&<source> get() { return this.value; }
+};
+
+// A signature pattern can carry a separate inferred environment lifetime.
+// Invocation metadata and the storage borrowed by the wrapper stay distinct.
+struct Environment<R(Args...), lifetime data> {
+  int&<data> value;
+  Environment(int&<data> input) : value(input) {}
+  int read() { return this.value; }
+};
+
+// An explicit lambda environment retains facts established by an enclosing
+// reference parameter. They are checked when the lambda is formed.
+int storage_is_live<T, lifetime data>() requires outlives<T, data> { return 1; }
+int read_in_environment<T, lifetime data>(T&<data> owner, int&<data> value) {
+  auto read = [](int&<data> input) -> int {
+    return input + storage_is_live<T, data>() - 1;
+  };
+  return read(value);
+}
+
+int main() {
+  mut int left = 3;
+  int right = 9;
+  add_one(left);
+  int& selected = choose(left, right, false);
+  Reading reading{selected};
+  if (reading.get() != 9) { return 1; }
+  // A typed copy or move infers the destination's omitted stored lifetime.
+  // The original external owner remains unchanged through both transfers.
+  Reading copied{reading};
+  Reading moved{std::move(copied)};
+  auto explicit_region_copy = Reading<_>(reading);
+  if (moved.value != 9 || explicit_region_copy.value != 9) { return 13; }
+  Reading& same = round_trip_reference(reading);
+  if (same.value != 9) { return 12; }
+  Reading constructedChoice{left, right, false};
+  if (constructedChoice.get() != 9) { return 5; }
+  int& released = Reading(right).take();
+  if (released != 9) { return 7; }
+  if (ValueReader<Reading>::read(reading) != 9) { return 4; }
+  if (read_through_view(right) != 9) { return 2; }
+  IntBorrow<int&> projected{right};
+  if (projected.get() != 9) { return 3; }
+  Environment<int(int)> environment{right};
+  if (environment.read() != 9) { return 6; }
+  if (observe(identity, left) != 4 || observe(permanent, left) != 11) { return 8; }
+  if (read_in_environment(right, right) != 9) { return 9; }
+  if (copy_before_cleanup(right) != 9 || cleaned_reading != 9) { return 10; }
+  if (copy_global_before_cleanup() != 11 || cleaned_reading != 20) { return 11; }
+  std::function_ptr<Selection> pointer{choose};
+  if (pointer(left, right, false) != 9) { return 14; }
+  return identity(left) - 4;
+}

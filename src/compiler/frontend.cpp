@@ -1,5 +1,6 @@
 #include "gti/frontend.h"
 #include "diagnostic_registry.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/diagnostic.h"
 #include "gti/hir.h"
 #include "gti/lexer.h"
@@ -10,6 +11,10 @@
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
 #include "gti/support.h"
+#include <cstdint>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 
 #include <algorithm>
 #include <chrono>
@@ -26,6 +31,590 @@
 
 namespace lang {
 namespace {
+
+// The source diagnostics of MIR's borrow rejections. `internal` reports that
+// some error was not a classified borrow rejection.
+struct MirBorrowCheck {
+  std::vector<Diagnostic> diagnostics;
+  bool internal = false;
+};
+
+// Whether the rejected instruction passes move-only storage as a call's
+// mutable receiver: the call may reallocate or replace that storage.
+const MirBody *findMirBody(const MirProgram &program, MirBodyKind kind,
+                           std::size_t owner) {
+  const MirBody *body = nullptr;
+  const auto search = [&](const auto &instances) {
+    for (const auto &candidate : instances)
+      if (candidate.id == owner)
+        body = &candidate.body;
+  };
+  if (kind == MirBodyKind::Function)
+    search(program.functionInstances());
+  else if (kind == MirBodyKind::Constructor)
+    search(program.constructorInstances());
+  else if (kind == MirBodyKind::Destructor)
+    search(program.destructorInstances());
+  else if (kind == MirBodyKind::Lambda)
+    search(program.lambdaInstances());
+  return body;
+}
+
+bool moveOnlyMutableReceiver(const MirProgram &program, MirBodyKind kind,
+                             std::size_t owner, MirBlockId blockId,
+                             MirInstructionId instructionId,
+                             const MirBorrowRejection &borrow) {
+  if (!borrow.write || borrow.instruction != MirInstructionKind::CallInput)
+    return false;
+  const MirBody *body = findMirBody(program, kind, owner);
+  const MirBlock *block = body ? body->findBlock(blockId) : nullptr;
+  if (block == nullptr)
+    return false;
+  for (const MirInstruction &instruction : block->instructions) {
+    if (instruction.id != instructionId ||
+        instruction.callInputRole != MirCallInputRole::Receiver ||
+        instruction.callInputKind != HirCallInputKind::MutableBorrow)
+      continue;
+    MirPlaceId place = 0;
+    if (instruction.loan)
+      if (const MirLoan *loan = body->findLoan(*instruction.loan))
+        place = loan->source;
+    if (place == 0 && !instruction.operands.empty())
+      place = instruction.operands.front().place;
+    const MirPlace *receiver = body->findPlace(place);
+    return receiver != nullptr && receiver->access == AccessMode::Mutable &&
+           !receiver->traits.copyable && receiver->traits.movable;
+  }
+  return false;
+}
+
+std::string conflictMessage(const MirBorrowRejection &borrow,
+                            bool moveOnlyReceiver = false) {
+  if (moveOnlyReceiver)
+    return "Mutable method cannot use move-only storage while a reference "
+           "borrowed from it may still be live.";
+  if (borrow.kind == MirBorrowRejectionKind::ParentUse)
+    return "Cannot use a parent loan while an overlapping child reborrow may "
+           "still be live.";
+  if (borrow.instruction == MirInstructionKind::Borrow)
+    return borrow.write || borrow.loanAccess == AccessMode::ReadOnly
+               ? "Cannot create a mutable borrow while an overlapping borrow "
+                 "may still be live."
+               : "Cannot create a read-only borrow while an overlapping "
+                 "mutable borrow may still be live.";
+  // A mutable call (its receiver or a mutable argument) uses the storage a
+  // live loan still borrows.
+  if (borrow.write && (borrow.instruction == MirInstructionKind::CallInput ||
+                       borrow.instruction == MirInstructionKind::Call))
+    return "A mutable call cannot use storage while a reference borrowed "
+           "from it may still be live.";
+  if (borrow.instruction == MirInstructionKind::Move)
+    return "Cannot move storage while an overlapping borrow may still be "
+           "live.";
+  if (borrow.write)
+    return "Cannot assign to storage while an overlapping borrow may still "
+           "be live.";
+  return "Cannot read storage while an overlapping mutable borrow may still "
+         "be live.";
+}
+
+constexpr const char *escapeMessage =
+    "A returned borrow does not outlive the function: it depends on storage "
+    "the function owns.";
+
+MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
+                                    const MirProgram &program,
+                                    const HirProgram &hir) {
+  MirBorrowCheck check;
+  const auto add = [&](SourceSpan span, std::string message,
+                       const char *code = "GTI-S2017",
+                       const MirLoweringError *explained = nullptr) {
+    Diagnostic diagnostic = makeDiagnostic(code, DiagnosticPhase::Semantics,
+                                           span, std::move(message));
+    if (explained != nullptr) {
+      if (explained->loanOrigin)
+        diagnostic.related.push_back(
+            {*explained->loanOrigin, "Retained borrow originates here."});
+      if (explained->lifecycleBound)
+        diagnostic.hints.emplace_back(
+            "This borrow protects a resource until its carrier is destroyed, "
+            "not merely until its last read. End the carrier's scope before "
+            "accessing the owner again.");
+      else if (explained->laterUse) {
+        diagnostic.related.push_back(
+            {*explained->laterUse, "The borrowed value is used later here."});
+        diagnostic.hints.emplace_back(
+            explained->temporaryDestroyed
+                ? "Store the temporary in a named local that outlives every "
+                  "use of the borrowed value."
+                : "Finish using the borrowed value before changing or moving "
+                  "its owner, or perform the owner operation before creating "
+                  "the borrow. Choose an order that preserves the intended "
+                  "effects.");
+      } else if (explained->loanOrigin && !explained->temporaryDestroyed)
+        diagnostic.hints.emplace_back(
+            "Place the borrowed value in a narrower block when an explicit "
+            "lexical end is required across control flow.");
+    }
+    if (std::none_of(check.diagnostics.begin(), check.diagnostics.end(),
+                     [&](const Diagnostic &existing) {
+                       return existing.primary == diagnostic.primary &&
+                              existing.message == diagnostic.message;
+                     }))
+      check.diagnostics.push_back(std::move(diagnostic));
+  };
+  // Program-level rejections (escapes through a return) anchor at the
+  // returned expression of the function body that publishes them.
+  const auto escapeSpan = [&](const auto &self, MirBodyKind kind,
+                              std::size_t owner, MirBlockId blockId,
+                              bool anyReturn) -> std::optional<SourceSpan> {
+    if (kind != MirBodyKind::Function)
+      return std::nullopt;
+    const MirFunctionInstance *function = nullptr;
+    for (const auto &candidate : program.functionInstances())
+      if (candidate.id == owner)
+        function = &candidate;
+    const HirFunctionInstance *source = nullptr;
+    for (const auto &candidate : hir.functionInstances())
+      if (candidate.id == owner)
+        source = &candidate;
+    const MirBlock *block =
+        function ? function->body.findBlock(blockId) : nullptr;
+    // An exit drop runs in the return's cleanup chain: follow its
+    // normal-successor edges to the return it precedes.
+    for (std::size_t step = 0;
+         block != nullptr && step < function->body.blocks.size() &&
+         (block->terminator.kind == MirTerminatorKind::Goto ||
+          block->terminator.kind == MirTerminatorKind::Invoke);
+         ++step)
+      block = function->body.findBlock(block->terminator.target);
+    const HirValue *returned =
+        block && source ? source->body.findValue(block->terminator.hirValue)
+                        : nullptr;
+    // A reference return names its value through the return statement.
+    if (returned == nullptr && block && source)
+      if (const HirStatement *statement =
+              source->body.findStatement(block->terminator.hirStatement);
+          statement != nullptr && statement->value)
+        returned = source->body.findValue(*statement->value);
+    // A returned carrier names its value through the MIR value it returns.
+    if (returned == nullptr && block && source && block->terminator.value &&
+        block->terminator.value->kind == MirOperandKind::Value)
+      if (const MirValue *value =
+              function->body.findValue(block->terminator.value->value))
+        returned = source->body.findValue(value->sourceValue);
+    // An implicit carrier construction has no expression of its own; it
+    // names the converted value.
+    while (returned != nullptr && returned->source == nullptr &&
+           returned->operands.size() == 1 && source)
+      returned = source->body.findValue(returned->operands.front());
+    if (returned != nullptr && returned->source != nullptr)
+      if (const Token token = expressionAnchorToken(*returned->source);
+          !token.lexeme.empty())
+        return tokenSpan(token);
+    // A rejection at an exit drop names the function's returned value.
+    if (anyReturn && function != nullptr)
+      for (const MirBlock &candidate : function->body.blocks)
+        if (candidate.terminator.kind == MirTerminatorKind::Return &&
+            candidate.id != blockId)
+          if (auto span = self(self, kind, owner, candidate.id, false))
+            return span;
+    return std::nullopt;
+  };
+  // A result declared `static` names its region: an escape from it is a
+  // region relationship failure, not an elision one.
+  const auto staticResult = [&](MirBodyKind kind, std::size_t owner) {
+    if (kind != MirBodyKind::Function)
+      return false;
+    for (const auto &candidate : hir.functionInstances())
+      if (candidate.id == owner && candidate.source != nullptr) {
+        const TypeRef &result = candidate.source->returnType();
+        return result.referenceLifetime &&
+               result.referenceLifetime->name.lexeme == "static";
+      }
+    return false;
+  };
+  // RFC 0004: a carrier result no input supplies is implicitly `static`.
+  const auto implicitStaticResult = [&](MirBodyKind kind, std::size_t owner) {
+    if (kind != MirBodyKind::Function)
+      return false;
+    const auto *function = program.findFunctionInstance(owner);
+    return function != nullptr &&
+           function->returnBorrowOrigin == BorrowOriginKind::Global &&
+           !function->returnBorrowPlace &&
+           function->returnType.kind != SemanticType::Reference;
+  };
+  const auto addEscape = [&](SourceSpan span, MirBodyKind kind,
+                             std::size_t owner) {
+    if (staticResult(kind, owner))
+      add(span,
+          "The result is declared 'static', but a return borrows storage "
+          "that does not live for 'static'.",
+          "GTI-S2127");
+    else if (implicitStaticResult(kind, owner))
+      add(span,
+          "No input supplies this borrowed result, so it is implicitly "
+          "'static', but a return borrows storage that does not live for "
+          "'static'.",
+          "GTI-S2127");
+    else
+      add(span, escapeMessage);
+  };
+  // A return relays a formal the signature does not name as its supplier.
+  const auto addSupplier = [&](SourceSpan span, MirBodyKind kind,
+                               std::size_t owner) {
+    std::string supplier;
+    std::string description = "value";
+    if (kind == MirBodyKind::Function)
+      for (const auto &candidate : hir.functionInstances())
+        if (candidate.id == owner && candidate.source != nullptr) {
+          const auto &parameters = candidate.source->parameters();
+          if (candidate.returnBorrowParameter < parameters.size())
+            supplier = parameters[candidate.returnBorrowParameter].name.lexeme;
+          if (candidate.source->returnType().reference)
+            description = "reference";
+        }
+    add(span,
+        "Returned " + description +
+            " does not relay the exact external owner dependency carried by " +
+            (supplier.empty() ? std::string("its declared supplier")
+                              : "parameter '" + supplier + "'") +
+            ".",
+        "GTI-S2085");
+  };
+  // A write conflict anchored at the declaration rather than in its body is
+  // the function's exit drop of storage it owns. A returned borrow stays live
+  // there: it depends on storage that does not outlive the call, and under a
+  // `static` result that storage does not live for 'static'.
+  const auto escapingLoan = [&](const MirLoweringError &error) {
+    const MirBody *body =
+        findMirBody(program, error.body.kind, error.body.owner);
+    const MirLoan *loan = body ? body->findLoan(error.borrow.loan) : nullptr;
+    return loan != nullptr && loan->escapes ? loan : nullptr;
+  };
+  // The escaping loan borrows a by-value parameter that carries borrowed
+  // state, or a projection of it: the parameter's shell, not the owner it
+  // borrows. A whole-shell borrow counts only when the body returns a
+  // reference; a returned carrier value transfers the shell instead. Yields
+  // the parameter's declaration.
+  const auto byValueCarrierShell =
+      [&](const MirLoweringError &error) -> std::optional<SourceSpan> {
+    const MirLoan *loan = escapingLoan(error);
+    const MirBody *body =
+        findMirBody(program, error.body.kind, error.body.owner);
+    const MirPlace *source = loan ? body->findPlace(loan->source) : nullptr;
+    if (source == nullptr || source->root != MirPlaceRootKind::Binding ||
+        (source->projections.empty() &&
+         body->returnType.kind != SemanticType::Reference))
+      return std::nullopt;
+    for (const auto &function : program.functionInstances())
+      if (function.id == error.body.owner)
+        for (std::size_t index = 0; index < function.parameterBindings.size();
+             ++index)
+          if (function.parameterBindings[index] == source->binding)
+            for (const MirPlace &place : body->places)
+              if (place.root == MirPlaceRootKind::Binding &&
+                  place.binding == source->binding &&
+                  place.projections.empty()) {
+                if (place.type.kind == SemanticType::Reference ||
+                    !place.traits.containsBorrowedState)
+                  return std::nullopt;
+                const auto *declared = hir.findFunctionInstance(function.id);
+                if (declared != nullptr && declared->source != nullptr &&
+                    index < declared->source->parameters().size())
+                  return tokenSpan(declared->source->parameters()[index].name);
+                return *error.source;
+              }
+    return std::nullopt;
+  };
+  const auto exitDropUnderReturnedBorrow = [&](const MirLoweringError &error) {
+    if (!error.borrow.write || !error.source ||
+        error.body.kind != MirBodyKind::Function ||
+        (!staticResult(error.body.kind, error.body.owner) &&
+         !implicitStaticResult(error.body.kind, error.body.owner) &&
+         escapingLoan(error) == nullptr))
+      return false;
+    for (const auto &candidate : hir.functionInstances())
+      if (candidate.id == error.body.owner && candidate.source != nullptr) {
+        const SourceSpan name = tokenSpan(candidate.source->name());
+        return error.source->source == name.source &&
+               error.source->start <= name.start;
+      }
+    return false;
+  };
+  // The MIR and HIR bodies a borrow rejection belongs to.
+  const auto bodiesOf =
+      [&](MirBodyKind kind,
+          std::size_t owner) -> std::pair<const MirBody *, const HirBody *> {
+    const auto find =
+        [&](const auto &mirs,
+            const auto &hirs) -> std::pair<const MirBody *, const HirBody *> {
+      const MirBody *lowered = nullptr;
+      const HirBody *source = nullptr;
+      for (const auto &candidate : mirs)
+        if (candidate.id == owner)
+          lowered = &candidate.body;
+      for (const auto &candidate : hirs)
+        if (candidate.id == owner)
+          source = &candidate.body;
+      return {lowered, source};
+    };
+    switch (kind) {
+    case MirBodyKind::Function:
+      return find(program.functionInstances(), hir.functionInstances());
+    case MirBodyKind::Constructor:
+      return find(program.constructorInstances(), hir.constructorInstances());
+    case MirBodyKind::Destructor:
+      return find(program.destructorInstances(), hir.destructorInstances());
+    case MirBodyKind::Lambda:
+      return find(program.lambdaInstances(), hir.lambdaInstances());
+    default:
+      return {nullptr, nullptr};
+    }
+  };
+  // A conflict names where the live borrow it overlaps originates.
+  const auto relateLoan = [&](const MirBodyAddress &address,
+                              const MirBorrowRejection &borrow) {
+    if (borrow.kind == MirBorrowRejectionKind::None || borrow.loan == 0 ||
+        check.diagnostics.empty())
+      return;
+    const auto [lowered, source] = bodiesOf(address.kind, address.owner);
+    const MirLoan *loan = lowered ? lowered->findLoan(borrow.loan) : nullptr;
+    const HirValue *produced = loan && source && loan->producedBy != 0
+                                   ? source->findValue(loan->producedBy)
+                                   : nullptr;
+    if (produced == nullptr || produced->source == nullptr)
+      return;
+    const Token token = expressionAnchorToken(*produced->source);
+    if (token.lexeme.empty())
+      return;
+    auto &related = check.diagnostics.back().related;
+    if (related.empty())
+      related.push_back(
+          {tokenSpan(token), "The overlapping borrow originates here."});
+  };
+  // A body's user rejection explains why its construction stopped; any
+  // structural failure it caused in the same body is a consequence of that
+  // rejection, not an internal error.
+  std::vector<MirBodyAddress> rejectedBodies;
+  for (const MirLoweringError &error : mir.errors)
+    if (error.borrow.kind != MirBorrowRejectionKind::None && error.source)
+      rejectedBodies.push_back(error.body);
+  for (const MirLoweringError &error : mir.errors) {
+    if (error.borrow.kind == MirBorrowRejectionKind::None &&
+        std::any_of(rejectedBodies.begin(), rejectedBodies.end(),
+                    [&](const MirBodyAddress &body) {
+                      return body.kind == error.body.kind &&
+                             body.owner == error.body.owner;
+                    }))
+      continue;
+    // The provisional program proof reports an escape without a body source.
+    if ((error.borrow.kind == MirBorrowRejectionKind::Escape ||
+         error.borrow.kind == MirBorrowRejectionKind::Supplier) &&
+        !error.source)
+      if (const auto span = escapeSpan(escapeSpan, error.body.kind,
+                                       error.body.owner, error.block, true)) {
+        if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
+          addSupplier(*span, error.body.kind, error.body.owner);
+        else
+          addEscape(*span, error.body.kind, error.body.owner);
+        continue;
+      }
+    if (error.borrow.kind == MirBorrowRejectionKind::None || !error.source) {
+      check.internal = true;
+      continue;
+    }
+    if (error.borrow.kind == MirBorrowRejectionKind::NestedCapture) {
+      const std::size_t before = check.diagnostics.size();
+      add(*error.source,
+          "A lambda cannot borrow an enclosing lambda's by-reference "
+          "capture.",
+          "GTI-S2045");
+      if (check.diagnostics.size() > before)
+        check.diagnostics.back().hints.emplace_back(
+            "Capture the original owner in the enclosing lambda by value, or "
+            "pass the borrowed value to the inner lambda as a parameter.");
+    } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
+      addEscape(*error.source, error.body.kind, error.body.owner);
+    else if (exitDropUnderReturnedBorrow(error)) {
+      // The exit drop sits in a cleanup block; name the return that
+      // publishes the escaping loan instead.
+      std::optional<SourceSpan> returned = escapeSpan(
+          escapeSpan, error.body.kind, error.body.owner, error.block, false);
+      if (!returned)
+        if (const MirBody *body =
+                findMirBody(program, error.body.kind, error.body.owner))
+          for (const MirBlock &block : body->blocks)
+            if (!returned &&
+                block.terminator.kind == MirTerminatorKind::Return &&
+                block.terminator.returnLoan == error.borrow.loan)
+              returned = escapeSpan(escapeSpan, error.body.kind,
+                                    error.body.owner, block.id, false);
+      if (!returned)
+        returned = escapeSpan(escapeSpan, error.body.kind, error.body.owner,
+                              error.block, true);
+      const SourceSpan span = returned.value_or(*error.source);
+      // An exclusive reference result retained by a cleanup-bound carrier
+      // is rejected for the carrier's cleanup, not as a shell projection.
+      const MirLoan *exclusive = escapingLoan(error);
+      const auto [exitBody, exitSource] =
+          bodiesOf(error.body.kind, error.body.owner);
+      (void)exitSource;
+      const bool cleanupBoundResult =
+          exclusive != nullptr && exclusive->access == AccessMode::Mutable &&
+          exitBody != nullptr &&
+          exitBody->returnType.kind == SemanticType::Reference &&
+          std::any_of(exitBody->loans.begin(), exitBody->loans.end(),
+                      [](const MirLoan &loan) { return loan.lifecycleBound; });
+      const auto shell =
+          staticResult(error.body.kind, error.body.owner) || cleanupBoundResult
+              ? std::nullopt
+              : byValueCarrierShell(error);
+      if (shell) {
+        const MirBody *body =
+            findMirBody(program, error.body.kind, error.body.owner);
+        const MirLoan *loan = escapingLoan(error);
+        const MirPlace *source =
+            body && loan ? body->findPlace(loan->source) : nullptr;
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2085", DiagnosticPhase::Semantics, span,
+            source != nullptr && source->projections.empty()
+                ? "Returned reference refers to the by-value carrier shell "
+                  "rather than its external owner dependency."
+                : "Returned reference is a projection of the by-value "
+                  "carrier shell rather than its external owner dependency.");
+        diagnostic.related.push_back(
+            {*shell, "Stored owner dependency enters here."});
+        diagnostic.hints.emplace_back(
+            "Return the carrier value itself, or return its one exact stored "
+            "referent with the same type; ordinary carrier fields and shell "
+            "projections cannot escape.");
+        check.diagnostics.push_back(std::move(diagnostic));
+      } else {
+        // Name the function-owned storage whose exit drop the returned
+        // borrow cannot survive.
+        const auto [lowered, source] =
+            bodiesOf(error.body.kind, error.body.owner);
+        const MirBlock *block =
+            lowered ? lowered->findBlock(error.block) : nullptr;
+        const MirInstruction *drop = nullptr;
+        if (block != nullptr)
+          for (const MirInstruction &instruction : block->instructions)
+            if (instruction.id == error.instruction)
+              drop = &instruction;
+        const MirPlace *dropped = drop && drop->destination
+                                      ? lowered->findPlace(*drop->destination)
+                                      : nullptr;
+        const Token *name = nullptr;
+        if (dropped != nullptr && source != nullptr &&
+            dropped->root == MirPlaceRootKind::Binding)
+          for (const HirBinding &binding : source->bindings)
+            if (binding.id == dropped->binding)
+              name = binding.variable    ? &binding.variable->name()
+                     : binding.parameter ? &binding.parameter->name
+                                         : nullptr;
+        // An exclusive result of a cleanup-bound carrier: the carrier's own
+        // cleanup still uses the referent the result would hand out.
+        const MirLoan *escaping = escapingLoan(error);
+        const bool cleanupBound =
+            escaping != nullptr && escaping->access == AccessMode::Mutable &&
+            lowered->returnType.kind == SemanticType::Reference &&
+            dropped != nullptr && dropped->root == MirPlaceRootKind::Binding &&
+            std::any_of(lowered->loans.begin(), lowered->loans.end(),
+                        [&](const MirLoan &loan) {
+                          return loan.lifecycleBound &&
+                                 std::find(
+                                     loan.carriers.begin(), loan.carriers.end(),
+                                     dropped->binding) != loan.carriers.end();
+                        });
+        const std::size_t before = check.diagnostics.size();
+        if (cleanupBound)
+          add(span,
+              "An exclusive borrow retained by a cleanup-bound carrier cannot "
+              "escape through a reference return.");
+        else
+          addEscape(span, error.body.kind, error.body.owner);
+        if (check.diagnostics.size() > before && name != nullptr &&
+            !name->lexeme.empty()) {
+          auto &diagnostic = check.diagnostics.back();
+          diagnostic.related.push_back(
+              {tokenSpan(*name),
+               "'" + name->lexeme +
+                   "' is destroyed when the function returns." +
+                   (cleanupBound ? " Its cleanup still uses the borrow."
+                                 : "")});
+          diagnostic.hints.emplace_back(
+              cleanupBound
+                  ? "Keep the borrow within the carrier's lifetime, or return "
+                    "an owned value."
+                  : "Return an owned value, or return a borrow of storage the "
+                    "caller provides.");
+        }
+      }
+    } else if (error.temporaryDestroyed) {
+      add(*error.source,
+          "Borrowed value is derived from temporary storage that is destroyed "
+          "while the borrow may still be live.",
+          "GTI-S2045", &error);
+    } else {
+      add(*error.source,
+          conflictMessage(error.borrow,
+                          moveOnlyMutableReceiver(
+                              program, error.body.kind, error.body.owner,
+                              error.block, error.instruction, error.borrow)),
+          "GTI-S2017", &error);
+      if (!error.loanOrigin)
+        relateLoan(error.body, error.borrow);
+    }
+  }
+  if (!mir.errors.empty())
+    return check;
+  for (const MirVerificationError &error : verifyMirProgram(program).errors) {
+    if (error.message == "MIR program is marked invalid")
+      continue;
+    const auto span =
+        error.borrow.kind == MirBorrowRejectionKind::Escape ||
+                error.borrow.kind == MirBorrowRejectionKind::Supplier
+            ? escapeSpan(escapeSpan, error.bodyKind, error.owner, error.block,
+                         true)
+            : std::nullopt;
+    if (!span) {
+      check.internal = true;
+      continue;
+    }
+    if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
+      addSupplier(*span, error.bodyKind, error.owner);
+    else
+      addEscape(*span, error.bodyKind, error.owner);
+  }
+  return check;
+}
+
+bool mirBorrowAuthority() {
+  static const bool enabled = !legacyBorrowChecker();
+  return enabled;
+}
+
+// Adds the MIR stage's elapsed time to the caller's work metrics when the
+// stage returns, whichever of its exits it takes.
+class MirStageTimer {
+public:
+  explicit MirStageTimer(FrontendWorkMetrics *metrics)
+      : metrics(metrics), start(std::chrono::steady_clock::now()) {}
+  MirStageTimer(const MirStageTimer &) = delete;
+  MirStageTimer &operator=(const MirStageTimer &) = delete;
+  ~MirStageTimer() {
+    if (metrics != nullptr)
+      metrics->mirMicroseconds += static_cast<std::size_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - start)
+              .count());
+  }
+
+private:
+  FrontendWorkMetrics *metrics;
+  std::chrono::steady_clock::time_point start;
+};
 
 bool isRawAuditDiagnostic(const Diagnostic &diagnostic) {
   return diagnostic.code == "GTI-S2101" || diagnostic.code == "GTI-S2102" ||
@@ -362,6 +951,27 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                         FrontendResult result) const {
+  // RFC 0004 shadow phase only: record each analyzed entry program so the
+  // borrow-checker agreement recorder can replay the test corpus. Removed
+  // with the semantic loan flow.
+  if (const char *harvest = std::getenv("GTI_SHADOW_HARVEST_DIR")) {
+    const SourceUnit *entry =
+        result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
+    if (const std::string *text =
+            entry == nullptr ? nullptr
+                             : result.sources.find(entry->path.string())) {
+      std::uint64_t hash = 1469598103934665603ull;
+      for (const unsigned char byte : *text)
+        hash = (hash ^ byte) * 1099511628211ull;
+      std::ostringstream name;
+      name << std::hex << hash << ".gti";
+      std::error_code error;
+      std::filesystem::create_directories(harvest, error);
+      std::ofstream out(std::filesystem::path(harvest) / name.str(),
+                        std::ios::binary);
+      out << *text;
+    }
+  }
   if (!result.sourceValid && !options.analyzeRecoveredSourceGraph) {
     return result;
   }
@@ -443,6 +1053,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
           options.cache ? options.cache->lookupParsed(key) : std::nullopt;
       if (cached) {
         unitDeclarations = std::move(cached->declarations);
+        unit->lifetimeNames = cached->lifetimeNames;
         if (cached->completionContext) {
           result.syntaxCompletion = cached->completionContext;
         }
@@ -483,13 +1094,18 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                 result.sourceGraph, unitId);
         syntaxValid = syntaxValid && !parser.hadError();
         unitDeclarations = parsed.takeDeclarations();
+        unit->lifetimeNames =
+            parser.lifetimeNames().empty()
+                ? nullptr
+                : std::make_shared<const LifetimeNames>(parser.lifetimeNames());
         if (options.cache) {
           options.cache->storeParsed(
               key, estimatedInputBytes,
               {.declarations = unitDeclarations,
                .diagnostics = parser.errors(),
                .hadError = parser.hadError(),
-               .completionContext = parser.completionContext()});
+               .completionContext = parser.completionContext(),
+               .lifetimeNames = unit->lifetimeNames});
         }
       }
       unit->declarationCount = unitDeclarations.size();
@@ -813,8 +1429,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       const ProgressScope progress(options.progress,
                                    ProgressPhase::HirLowering);
       HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
-      if (options.lowerReachableOnly && options.lowerLibraryReachableOnly &&
-          !options.lowerEntryUnitOnly) {
+      if (options.lowerReachableOnly && !options.lowerEntryUnitOnly) {
         std::vector<std::pair<std::size_t, std::size_t>> complete;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
           if ((unit.entry || !result.sourceGraph.isCompilerTrusted(unit.id)) &&
@@ -822,7 +1437,13 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             complete.emplace_back(unit.declarationStart, unit.declarationCount);
           }
         }
-        scope.completeDeclarations = std::move(complete);
+        // Every application body must reach the MIR borrow checker. When
+        // library declarations are lowered completely too, the application
+        // units are lowered first so the check need not see the rest.
+        if (options.lowerLibraryReachableOnly)
+          scope.completeDeclarations = std::move(complete);
+        else if (mirBorrowAuthority())
+          scope.borrowCheckedDeclarations = std::move(complete);
       }
       if (options.lowerEntryUnitOnly) {
         if (const SourceUnit *entry =
@@ -834,6 +1455,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
         if (result.sourceGraph.isCompilerTrusted(unit.id))
           scope.trustedSources.push_back(unit.path.string());
+      // MIR lowers an omitted instance as a signature-only declaration, so
+      // omission applies to analysis through HIR and through MIR alike; see
+      // FrontendOptions::lowerLibraryOnlyInstanceBodies.
       if (!options.lowerLibraryOnlyInstanceBodies) {
         scope.omitLibraryOnlyBodies = true;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits())
@@ -931,12 +1555,67 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     applyAuditPolicy();
     return result;
   }
+  // A superseded editor snapshot stops before MIR instead of lowering bodies
+  // whose diagnostics would be discarded. HIR's completed instance analyses
+  // were published above and remain valid for later snapshots.
+  if (options.cancellation != nullptr &&
+      options.cancellation->load(std::memory_order_relaxed)) {
+    result.cancelled = true;
+    return result;
+  }
   // Executable lowering needs only what the program roots reach. Lowering the
   // complete program above has already reported every diagnostic.
+  // Every application body is borrow-checked, reachable or not: MIR checks
+  // the complete HIR before code generation narrows it to what roots reach.
+  if (mirBorrowAuthority() && hir.reachable &&
+      !options.retainApplicationBodies) {
+    const HirProgram &checked =
+        hir.borrowChecked ? *hir.borrowChecked : result.hir;
+    FailureMetadataBuildResult completeMetadata =
+        FailureMetadataBuilder().build(result.sourceGraph, result.sources,
+                                       checked, entryPath);
+    if (completeMetadata.valid()) {
+      MirLoweringResult complete =
+          MirLowerer().lower(checked, completeMetadata.metadata);
+      if (!complete.valid()) {
+        MirBorrowCheck check =
+            mirBorrowDiagnostics(complete, complete.program, checked);
+        const bool borrowRejection = !check.diagnostics.empty();
+        // A body only this check lowers must not hide an internal failure.
+        if (check.internal && check.diagnostics.empty())
+          check.diagnostics.push_back(makeDiagnostic(
+              "GTI-B0001", DiagnosticPhase::Backend,
+              complete.errors.empty() || !complete.errors.front().source
+                  ? SourceSpan{entryPath.string(), 0, 0, 1}
+                  : *complete.errors.front().source,
+              "Internal compiler error: failed to construct valid MIR for "
+              "borrow checking. " +
+                  (complete.errors.empty() ? std::string()
+                                           : complete.errors.front().message) +
+                  "."));
+        if (!check.diagnostics.empty()) {
+          if (borrowRejection) {
+            result.semanticValid = false;
+            result.mirBorrowRejected = true;
+          }
+          for (Diagnostic &diagnostic : check.diagnostics)
+            result.diagnostics.push_back(std::move(diagnostic));
+          // A borrow rejection is a semantic error of the program, as it is
+          // when semantics checks body-local borrows.
+          if (!check.internal)
+            result.semanticValid = false;
+          result.mirValid = false;
+          applyAuditPolicy();
+          return result;
+        }
+      }
+    }
+  }
   if (hir.reachable && !options.retainApplicationBodies) {
     result.hir = std::move(*hir.reachable);
   }
 
+  const MirStageTimer mirStageTimer(options.workMetrics);
   FailureMetadataBuildResult failureMetadata = [&] {
     const PhaseTimeScope timeScope("gti-failure-metadata");
     return FailureMetadataBuilder().build(result.sourceGraph, result.sources,
@@ -968,7 +1647,29 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   mirProgress.finish();
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
+  if (!mir.diagnostics.empty()) {
+    // A borrow-checker rejection explains why the program was refused; any
+    // construction failure it caused is a consequence, not an ICE.
+    for (Diagnostic &diagnostic : mir.diagnostics)
+      result.diagnostics.push_back(std::move(diagnostic));
+    result.mirValid = false;
+    applyAuditPolicy();
+    return result;
+  }
   if (!result.mirValid) {
+    // MIR is the single authority for body-local borrow validity: its borrow
+    // rejections are the program's diagnostics, not internal errors.
+    if (MirBorrowCheck check =
+            mirBorrowDiagnostics(mir, result.mir, result.hir);
+        !check.diagnostics.empty() && !check.internal) {
+      result.semanticValid = false;
+      result.mirBorrowRejected = true;
+      for (Diagnostic &diagnostic : check.diagnostics)
+        result.diagnostics.push_back(std::move(diagnostic));
+      result.semanticValid = false;
+      applyAuditPolicy();
+      return result;
+    }
     const SourceUnit *entry =
         result.sourceGraph.findUnit(result.sourceGraph.entryUnit());
     const MirVerificationResult verification = verifyMirProgram(result.mir);

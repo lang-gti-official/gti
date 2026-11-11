@@ -12,6 +12,11 @@
   },
   "harnesses": [
     {
+      "harness": "borrow_checker_agreement_test.py",
+      "category": "execution-review",
+      "purpose": "RFC 0004 shadow phase: compare semantic and MIR borrow-checker verdicts over a corpus; removed when MIR becomes the only checker."
+    },
+    {
       "harness": "compiler_structural_snapshot_test.py",
       "category": "automation",
       "purpose": "Focused unit tests for the structural evidence format and comparator."

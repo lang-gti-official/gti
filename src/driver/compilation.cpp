@@ -1,5 +1,7 @@
 #include "gti/driver/compilation.h"
 
+#include "gti/driver/borrow_dependencies.h"
+
 #ifndef GTI_HAS_CPP_BACKEND
 #define GTI_HAS_CPP_BACKEND 0
 #endif
@@ -532,6 +534,56 @@ CompilationResult compileToMir(const CompilationRequest &request,
                                ProgressObserver *progress) {
   MirBackend backend;
   return compileWithBackend(request, backend, progress);
+}
+
+CompilationResult compileToMir(const CompilationRequest &request,
+                               MirBackendOptions options,
+                               ProgressObserver *progress) {
+  MirBackend backend(options);
+  return compileWithBackend(request, backend, progress);
+}
+
+CompilationResult compileToLlvmIr(const CompilationRequest &request,
+                                  ProgressObserver *progress) {
+  if (request.debugInfo() ||
+      request.llvmInstrumentation() != LlvmInstrumentationMode::None)
+    throw std::invalid_argument(
+        "textual LLVM IR emission supports neither debug info nor "
+        "instrumentation");
+  const CompilationRequest llvm = request.withBackend(BackendKind::Llvm);
+  LlvmBackendOptions options = llvmBackendOptions(llvm);
+  options.textualIr = true;
+  LlvmBackend backend(options);
+  return compileWithBackend(llvm.withDefinitionClosure(), backend, progress);
+}
+
+CompilationResult compileToBorrowDependencies(const CompilationRequest &request,
+                                              ProgressObserver *progress) {
+  FrontendResult frontend = analyze(
+      request, loadCompilationInputs(request, progress), progress, true);
+  CompilationResult result;
+  result.testCases = frontend.testCases;
+  if (!frontend.canGenerateCode()) {
+    result.status = CompilationStatus::FrontendFailure;
+    result.sources = std::move(frontend.sources);
+    result.diagnostics = std::move(frontend.diagnostics);
+    return result;
+  }
+  try {
+    result.artifact =
+        BackendArtifact{.kind = BackendArtifactKind::Source,
+                        .contents = borrowDependencyReport(frontend),
+                        .extension = ".json"};
+    result.status = CompilationStatus::Success;
+  } catch (const std::exception &error) {
+    result.status = CompilationStatus::BackendFailure;
+    result.backendFailureDetails =
+        std::string("Backend: borrow-dependencies\nDetail: ") + error.what() +
+        "\n";
+  }
+  result.sources = std::move(frontend.sources);
+  result.diagnostics = std::move(frontend.diagnostics);
+  return result;
 }
 
 } // namespace lang::driver

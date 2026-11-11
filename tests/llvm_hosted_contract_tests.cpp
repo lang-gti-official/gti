@@ -995,7 +995,7 @@ void scalarReturnContracts() {
       Positive{"char", "char source(char value) { return value; }",
                Kind::Exact},
       Positive{"reference",
-               "[[borrowed_from(value)]] int32_t& source(int32_t& value) { "
+               "int32_t&<a> source<lifetime a>(int32_t&<a> value) { "
                "return value; }",
                Kind::NotApplicable},
       Positive{"aggregate",

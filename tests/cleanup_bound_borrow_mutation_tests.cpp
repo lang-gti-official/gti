@@ -1,3 +1,4 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
@@ -22,6 +23,13 @@ void expect(bool condition, const std::string &name) {
     ++failures;
     std::cerr << "FAIL: " << name << '\n';
   }
+}
+
+// RFC 0004 retires body-inferred field mappings; these fixtures produce that
+// shape only under GTI_LEGACY_BORROW_CHECKER, and the checks go with it.
+void expectBodySummary(bool condition, const std::string &name) {
+  if (lang::legacyBorrowChecker())
+    expect(condition, name);
 }
 
 const std::string declarations = R"gti(
@@ -688,7 +696,7 @@ public:
   Both(Resource& first, Resource& second) : first(first), second(second) {}
   ~Both() { observed = this.first.value; observed = this.second.value; }
 };
-Both acquireBoth(Resource& first, Resource& second) { return Both(first, second); }
+Both<a> acquireBoth<lifetime a>(Resource&<a> first, Resource&<a> second) { return Both(first, second); }
 int main() {
   Resource first{}; Resource second{};
   Both both = acquireBoth(first, second); return 0;
@@ -708,6 +716,14 @@ int main() {
             "missing-primary-path"}) {
         auto malformed = *control;
         auto &changed = body(malformed, key).loans[loan.id - 1];
+        // A mutation that leaves the dependency set unchanged forges nothing.
+        if (mutation == "wrong-path" &&
+            changed.additionalDependencies.front().designatedFields ==
+                changed.designatedFields) {
+          std::cerr << "note: wrong-path mutation is a no-op for loan "
+                    << loan.id << '\n';
+          continue;
+        }
         if (mutation == "missing")
           changed.additionalDependencies.clear();
         else if (mutation == "wrong-source")
@@ -1082,12 +1098,12 @@ public:
   View(Resource& owner) : owner(owner) {}
   Resource& get() { return this.owner; }
 };
-class Wrapper {
-  View view;
+class Wrapper<lifetime a> {
+  View<a> view;
   mut int count;
 public:
-  Wrapper(Resource& owner) : view(View(owner)), count(0) {}
-  View binding() { return this.view; }
+  Wrapper(Resource&<a> owner) : view(View(owner)), count(0) {}
+  View<a> binding() { return this.view; }
   void touch() mut { this.count++; }
   int inspect() mut { auto copy = this.binding(); this.touch(); return copy.get().value; }
 };
@@ -1257,8 +1273,8 @@ int main() {
     if (checked)
       break;
   }
-  expect(checked,
-         "mapped alias fixture exercises two distinct same-typed owners");
+  expectBodySummary(
+      checked, "mapped alias fixture exercises two distinct same-typed owners");
 }
 
 void checkPassiveCleanupParent() {
@@ -1535,7 +1551,7 @@ int main() {
       }
     }
   }
-  expect(
+  expectBodySummary(
       checked,
       "external receiver adapter publishes its exact resolved field mapping");
 }

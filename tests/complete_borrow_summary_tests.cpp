@@ -1,4 +1,5 @@
 #include "../src/compiler/mir_verification_queries.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_editor.h"
 #include "gti/mir_printer.h"
@@ -30,6 +31,15 @@ int main() {
       std::cerr << message << '\n';
       ++failures;
     }
+  };
+  // RFC 0004 retires body-inferred result summaries (which alternatives a
+  // body can return, forged no-return evidence): contracts come from
+  // signatures. These checks cover that retired model while it remains
+  // behind GTI_LEGACY_BORROW_CHECKER, and are deleted with it.
+  const auto expectBodySummary = [&](bool condition,
+                                     const std::string &message) {
+    if (lang::legacyBorrowChecker())
+      expect(condition, message);
   };
   {
     using Availability = lang::BorrowSupplierAvailability;
@@ -405,7 +415,8 @@ int main() { return choose(true); }
                          std::to_string(mutation));
             }
           }
-    expect(found, "known missing alternative has a call-local terminal proof");
+    expectBodySummary(
+        found, "known missing alternative has a call-local terminal proof");
     const auto unknownId = functionId(result, "inspect_unknown");
     const auto presentId = functionId(result, "inspect_present");
     const auto *unknown = result.mir.findFunctionInstance(unknownId);
@@ -469,7 +480,7 @@ int main() { return choose(true); }
     const auto result = analyze(R"gti(
 import std.panic;
 enum Selected { empty, value(int& owner) };
-[[borrowed_from(input)]] int& selected(mut Selected input, int& other) {
+int&<a> selected<lifetime a>(mut Selected<a> input, int& other) {
   int ignored = other;
   switch (std::move(input)) {
   case Selected::value(owner): return owner;
@@ -589,7 +600,7 @@ int main() { return 0; }
     const std::string declaration =
         "enum Reading { error, value(int& owner) };\n";
     const std::string inspect = R"gti(
-[[borrowed_from(owner)]] Reading inspect(int& owner, bool fail) {
+Reading<a> inspect<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return Reading::error;
   return Reading::value(owner);
 }
@@ -667,9 +678,8 @@ int main() { return 0; }
                   "[[borrowed_from(typo)]] Reading wrong(int& owner) { "
                   "return Reading::value(owner); }\n",
               "GTI-S2099"},
-             {declaration +
-                  "[[borrowed_from(owner)]] Reading wrong(int& owner, "
-                  "int& other) { return Reading::value(other); }\n",
+             {declaration + "Reading<a> wrong<lifetime a>(int&<a> owner, "
+                            "int& other) { return Reading::value(other); }\n",
               "GTI-S2045"},
              {"[[borrowed_from(owner)]] int wrong(int& owner) { "
               "return owner; }\n",
@@ -690,12 +700,12 @@ int main() { return 0; }
     }
   }
   const auto explicitConstraint = analyze(R"gti(
-[[borrowed_from(value)]] int& selected(int& value, int& other) {
+int&<a> selected<lifetime a>(int&<a> value, int& other) {
   return value;
 }
 int& inferred(int& value) { return value; }
-[[borrowed_from(value)]] T& selected_generic<T>(T& value) { return value; }
-[[borrowed_from(value)]] T copied_generic<T>(T value) { return value; }
+T&<a> selected_generic<T, lifetime a>(T&<a> value) { return value; }
+T<a> copied_generic<T, lifetime a>(T<a> value) { return value; }
 int main() {
   int first = 1;
   int second = 2;
@@ -742,11 +752,11 @@ int main() {
   {
     const auto result = analyze(R"gti(
 enum Forwarded { empty, value(int& owner) };
-[[borrowed_from(owner)]] Forwarded make(int& owner, bool empty) {
+Forwarded<a> make<lifetime a>(int&<a> owner, bool empty) {
   if (empty) return Forwarded::empty;
   return Forwarded::value(owner);
 }
-[[borrowed_from(owner)]] Forwarded relay(int& owner) {
+Forwarded<a> relay<lifetime a>(int&<a> owner) {
   return make(owner, false);
 }
 int inspect_forwarded(int& owner) {
@@ -794,7 +804,7 @@ int main() { return 0; }
   {
     const auto result = analyze(R"gti(
 enum Either { left(int& owner), right(int& owner) };
-[[borrowed_from(input)]] int& select_either(mut Either input) {
+int&<a> select_either<lifetime a>(mut Either<a> input) {
   switch (std::move(input)) {
   case Either::left(owner): return owner;
   case Either::right(owner): return owner;
@@ -1247,9 +1257,10 @@ int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
       continue;
     const auto *forward =
         result.mir.findFunctionInstance(functionId(result, "forward"));
-    expect(forward && forward->completeReturnBorrow &&
-               forward->completeReturnBorrow->possibleAlternatives.size() == 1,
-           "forward result evidence must be independent of declaration order");
+    expectBodySummary(
+        forward && forward->completeReturnBorrow &&
+            forward->completeReturnBorrow->possibleAlternatives.size() == 1,
+        "forward result evidence must be independent of declaration order");
     bool provedCall = false;
     if (forward)
       for (const auto &block : forward->body.blocks)
@@ -1258,13 +1269,14 @@ int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }
               instruction.result)
             provedCall |= forward->body.findValue(*instruction.result)
                               ->borrowDependencies.has_value();
-    expect(provedCall,
-           "exact calls transport independently verified complete facts");
+    expectBodySummary(
+        provedCall,
+        "exact calls transport independently verified complete facts");
     auto missing = result.mir;
     auto &functions = lang::MirProgramTestAccess::functions(missing);
     functions[functionId(result, "leaf") - 1].completeReturnBorrow.reset();
-    expect(!lang::verifyMirProgram(missing).valid(),
-           "caller cannot rely on a missing callee result contract");
+    expectBodySummary(!lang::verifyMirProgram(missing).valid(),
+                      "caller cannot rely on a missing callee result contract");
   }
 
   const auto joined = analyze(token + R"gti(
@@ -1281,9 +1293,10 @@ int main() { auto value = choose(true); return 0; }
   if (joined.canGenerateCode()) {
     const auto id = functionId(joined, "choose");
     const auto *function = joined.mir.findFunctionInstance(id);
-    expect(function && function->completeReturnBorrow &&
-               function->completeReturnBorrow->possibleAlternatives.size() == 2,
-           "all reachable return alternatives contribute to the contract");
+    expectBodySummary(
+        function && function->completeReturnBorrow &&
+            function->completeReturnBorrow->possibleAlternatives.size() == 2,
+        "all reachable return alternatives contribute to the contract");
     if (function && function->completeReturnBorrow) {
       for (int mutation = 0; mutation < 6; ++mutation) {
         auto malformed = joined.mir;
@@ -1599,10 +1612,11 @@ int main() { auto value = identity(Token::empty); return 0; }
 )gti");
     const auto id = functionId(result, "identity");
     const auto *function = result.mir.findFunctionInstance(id);
-    expect(function && function->completeReturnBorrow &&
-               function->completeReturnBorrow->dependencies.empty() &&
-               function->completeReturnBorrow->possibleAlternatives.size() == 2,
-           "a dependency-free enum parameter retains every possible tag");
+    expectBodySummary(
+        function && function->completeReturnBorrow &&
+            function->completeReturnBorrow->dependencies.empty() &&
+            function->completeReturnBorrow->possibleAlternatives.size() == 2,
+        "a dependency-free enum parameter retains every possible tag");
     if (function && function->completeReturnBorrow)
       for (int mutation = 0; mutation < 4; ++mutation) {
         auto malformed = result.mir;
@@ -1648,8 +1662,9 @@ int main() { auto value = identity(Token::empty); return 0; }
             .possibleAlternatives = {
                 {.conditions = {
                      {.enumeration = candidate.returnType, .variant = 0}}}}};
-    expect(!lang::verifyMirProgram(malformed).valid(),
-           "forged cycle/no-return/unknown evidence cannot justify itself");
+    expectBodySummary(
+        !lang::verifyMirProgram(malformed).valid(),
+        "forged cycle/no-return/unknown evidence cannot justify itself");
   }
 
   const auto generic = analyze(R"gti(
@@ -1664,9 +1679,9 @@ int main() { auto first = integer(); auto second = boolean(); return 0; }
     const auto boolean = functionId(generic, "boolean");
     const auto *left = generic.mir.findFunctionInstance(integer);
     const auto *right = generic.mir.findFunctionInstance(boolean);
-    expect(left && right && left->completeReturnBorrow &&
-               right->completeReturnBorrow,
-           "concrete generic calls compute exact result summaries");
+    expectBodySummary(left && right && left->completeReturnBorrow &&
+                          right->completeReturnBorrow,
+                      "concrete generic calls compute exact result summaries");
     if (left && right && left->completeReturnBorrow &&
         right->completeReturnBorrow) {
       auto malformed = generic.mir;
@@ -1696,9 +1711,10 @@ Token before() { return factory<0>(); }
         cache.mir.findFunctionInstance(functionId(cache, "before"));
     const auto *after =
         cache.mir.findFunctionInstance(functionId(cache, "after"));
-    expect(before && after && before->completeReturnBorrow &&
-               before->completeReturnBorrow == after->completeReturnBorrow,
-           "eviction and requery preserve exact result contracts");
+    expectBodySummary(before && after && before->completeReturnBorrow &&
+                          before->completeReturnBorrow ==
+                              after->completeReturnBorrow,
+                      "eviction and requery preserve exact result contracts");
   }
   const auto chain = [&](unsigned depth) {
     return token + R"gti(

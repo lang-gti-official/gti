@@ -6,8 +6,7 @@ public:
   Gauge(int reading) : reading(reading) {}
 };
 
-[[borrowed_from(value)]]
-mut T& invoke<F, T>(F& callback, mut T& value) { return callback(value); }
+mut T&<a> invoke<F, T, lifetime a>(F& callback, mut T&<a> value) { return callback(value); }
 
 int main() {
   auto increment = [](mut int& value) -> mut int& {

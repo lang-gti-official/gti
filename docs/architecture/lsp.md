@@ -376,7 +376,8 @@ invalid, misplaced and conflicting policies publish the shared `GTI-S2059`
 diagnostic. Neither CLI nor LSP offers a fix that accepts an unsafe promise.
 
 Function-declaration and selected-call signatures retain `[[noreturn]]`,
-`[[track_caller]]`, `[[discardable]]`, explicit `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`,
+`[[track_caller]]`, `[[discardable]]`, an explicit result region (or its
+compatibility spelling `[[borrowed_from(owner)]]` / `[[borrowed_from(this)]]`),
 and `unsafe` from the resolved `FunctionInfo`. The borrow-origin parameter name
 comes from the resolved formal parameter index, not from reparsing the attribute;
 inferred borrow origins do not invent explicit annotations. Contract
@@ -669,6 +670,21 @@ lock tokens, and operations. It does not derive task transfer, callable entry
 selection, result ownership, atomic order legality, protected-value provenance,
 lock lifetime, or concurrency from public spelling.
 
+Lifetimes are erased before semantic types (RFC 0004), so their names are
+resolved where their scopes live: the parser records, per source unit, each
+binder (`lifetime a` in function, class, alias, concept and conformance lists,
+`for<lifetime a>` quantified signatures, and regions bound by class argument
+patterns or requirement parameters) and the binder each written region name
+denotes (`gti/lifetime_names.h`). A binder is visible throughout its
+declaration, including a result type written before the binder list. Semantics
+reports an unresolved name as `GTI-S2128` and, with tooling occurrences, records
+each binder as a `LifetimeParameter` symbol whose uses are its occurrences, so
+semantic tokens, hover (`lifetime a`), definition, references, rename and
+completion after `&<` follow the parser's resolution rather than spelling.
+Signature hovers print written binders and region arguments from the
+declaration syntax (`identity<lifetime a>(int32_t&<a> value)`); a region
+contract does not also print as `[[borrowed_from]]`.
+
 ## Document State
 
 `LanguageServer` still owns protocol handling, open overlays, client versions,
@@ -807,7 +823,8 @@ monotonic `finishedMicroseconds` time since server start, so concurrent work
 can be ordered, and analysis records carry `retainedFrontends`, the number of
 published snapshots still holding a whole-program result. The same report records the configured cache limits and
 observed estimated occupancy. Analysis records also carry
-`hirFunctionInstances`, the instance-reuse counts (`instanceReuseHits`,
+`hirFunctionInstances`, `mirMicroseconds` (failure metadata, MIR lowering
+and verification, zero when analysis stopped earlier), the instance-reuse counts (`instanceReuseHits`,
 `instanceReuseMisses`, `instanceReuseRejected`, `instanceReuseIneligible`,
 `instanceReuseStores`), `instanceReuseMicroseconds`, and the instance cache's
 occupancy (`instanceCache`).
@@ -837,7 +854,9 @@ newest text never queues behind an obsolete analysis. Semantic analysis checks
 the flag at safe points (after registration, before finalization, at each
 top-level statement and each concrete-effect owner) and stops by unwinding to
 `SemanticVisitor::check`; the frontend then returns a result marked
-`cancelled` before HIR, so the instance cache receives nothing from it. A
+`cancelled` before HIR, so the instance cache receives nothing from it. The
+frontend checks the flag once more between HIR and MIR; a stop there keeps the
+completed HIR instance analyses it already published. A
 preamble built before the stop is complete and stays cached. Cold preamble
 construction uses the same cancellation boundary; an interrupted prefix is
 discarded before publication, and a completed prefix retains no request token.
@@ -894,29 +913,74 @@ The opt-in frontend trace records `completion-started`, `completion`, and
 cancels active compiler work and rejects queued requests before joining workers;
 later requests are rejected until the client's `exit` notification.
 
-Editor analysis requests `FrontendOptions::stopAfter = Hir`. HIR is the
-compiler-owned discovery point for concrete generic instances, so stopping at
-symbolic semantics made valid editor snapshots omit diagnostics that
-`gti check` reports for instantiated generic bodies and dependent
-`static_assert` declarations. It also sets `lowerEntryUnitOnly`: lowering
-seeds the program roots and the open file's own declarations and discovers
-only what they reach, instead of every declaration in every loaded unit.
-Instance diagnostics for the open file's code, including the library
-instances it requests, are therefore identical to `gti check`; an instance
-that only unreached library code requests is not reported in the editor,
-because it is that library's own `gti check` concern and the complete
-lowering cost about a third of every keystroke. The LSP does not query HIR,
-and it does not build failure metadata or MIR, so it also clears
-`lowerLibraryOnlyInstanceBodies`: a library-only instance (a compiler-trusted
-declaration whose arguments name only compiler-trusted types) is analysed and
-its own diagnostics are reported, but its body is not lowered. Instances that
-only such a body would request, such as a library class instantiated inside
-a library-only function, are left to the library's check by the same rule
-(see "Library-only instance bodies" in [hir.md](hir.md)). An instance of the
+Editor analysis requests `FrontendOptions::stopAfter = Mir`, the same final
+analysis phase as `gti check`. HIR is the compiler-owned discovery point for
+concrete generic instances, and MIR is the single owner of body-local borrow
+and lifetime checking (see [mir.md](mir.md)): stopping earlier would make valid
+editor snapshots omit diagnostics that `gti check` reports for instantiated
+generic bodies, dependent `static_assert` declarations, and borrow or
+lifetime rejections in function bodies. It also sets `lowerEntryUnitOnly`:
+lowering seeds the program roots and the open file's own declarations and
+discovers only what they reach, instead of every declaration in every loaded
+unit, and MIR lowers and checks exactly that HIR. Instance and body
+diagnostics for the open file's code, including the library instances it
+requests, are therefore identical to `gti check`; an instance that only
+unreached library code requests is not reported in the editor, because it is
+that library's own `gti check` concern and the complete lowering cost about a
+third of every keystroke.
+
+The LSP also clears `lowerLibraryOnlyInstanceBodies`. A library-only
+instance (a compiler-trusted declaration whose arguments name only
+compiler-trusted types) is analysed and its own diagnostics are reported; its
+callers depend only on its signature contract, so the editor does not need
+its body. HIR omits that body, and instances that only such a body would
+request, such as a library class instantiated inside a library-only function,
+are left to the library's check by the same rule (see "Library-only instance
+bodies" in [hir.md](hir.md)). MIR lowers the instance as a signature-only
+declaration and checks the open file's calls against it (see "Signature-only
+declarations" in [mir.md](mir.md)). Some MIR rules still verify a call or a
+summary only against a lowered body, so a signature-only analysis can be
+rejected where complete lowering is accepted, never the reverse. The LSP
+therefore publishes a signature-only analysis that MIR accepts, and when MIR
+rejects one it analyses the snapshot again with library-only bodies and
+publishes that result: the published diagnostics are always those of complete
+lowering. The trace's `analysis` record reports `hirOmittedInstanceBodies`
+and `mirSignatureOnlyFallback` (see "Current Limits"). An instance of the
 open file's own types is lowered completely and reaches what `gti check`
-reaches. It releases the HIR program as soon as the analysis returns, once
-HIR's diagnostics are in the result, so retained snapshots hold syntax,
-semantics, and source identity only. Code generation remains disabled.
+reaches.
+The LSP releases HIR, failure metadata and MIR as soon as the analysis
+returns, once their diagnostics are in the result, so retained snapshots hold
+syntax, semantics, and source identity only. Code generation remains
+disabled.
+
+MIR diagnostics need no editor-specific path. The contract is:
+
+- Every user-facing rejection a phase reports, including MIR's borrow and
+  lifetime rejections (`GTI-S2017` and the other body-local codes), is an
+  ordinary `Diagnostic` in `FrontendResult::diagnostics` with its source span
+  and related spans. MIR internal failures remain `GTI-B0001`, located at the
+  failing body's source when MIR knows it.
+- The LSP converts every diagnostic in that list through the same path as
+  semantic diagnostics: UTF-16 ranges from the retained source text, related
+  information, profile and package warning suppression, and per-URI grouping
+  for diagnostics located in a dependency. It filters nothing by phase or
+  code, so a new MIR diagnostic is published as soon as the frontend reports
+  it.
+- MIR diagnostics have the same scope as instance diagnostics: the open
+  file's bodies and the instances they reach. A rejection inside a library
+  instance is reported where HIR relocates library-instance diagnostics, at
+  the first request from other code.
+- An edit that supersedes the analysis before MIR starts stops it there:
+  the frontend checks `FrontendOptions::cancellation` once more after HIR, and
+  the stopped result is traced as `cancelled` and not published. MIR itself
+  has no safe points, so an analysis already in MIR completes and its result
+  is discarded by the generation check.
+
+`editor_mir_diagnostics_lsp` checks the contract: the frontend trace records
+MIR time for an editor analysis, a valid program whose standard-library
+instances name a user type publishes no `GTI-B0001`, and a body-local borrow
+rejection is published with the compiler's code, primary position and related
+positions.
 
 Editor analysis and completion also set `trustedBodies = Reachable`:
 standard-library (compiler-trusted) function bodies are analysed only when
@@ -1353,6 +1417,35 @@ function-local names: identities visible outside the entry document's
   a reusable semantic checkpoint, and durable symbol identity is not
   implemented. Trace evidence, not the old complete-HIR baseline, should select
   the next repeated-edit optimization.
+- Editor MIR checks callers of library-only instances against signature-only
+  declarations, but MIR does not yet accept every call to a declaration as it
+  accepts the call to the lowered body (see "Signature-only declarations" in
+  [mir.md](mir.md)). A snapshot MIR rejects is analysed a second time with
+  library-only bodies (`mirSignatureOnlyFallback` in the trace), so such a
+  snapshot costs both analyses. Measured with a message-flow probe
+  (`didOpen`, then `didChange` edits with `GTI_LSP_UPDATE_DEBOUNCE_MS=0`, time
+  to the matching `publishDiagnostics`, phases from `GTI_LSP_FRONTEND_TRACE`)
+  on `examples/089-library-workflow.gti`, a steady edit fell from about
+  750-820 ms to about 370-410 ms (HIR 107 -> 59 ms over 564 -> 138 function
+  instances with 144 omitted bodies, MIR stage 360 -> 52 ms). Of the 197
+  single-file examples, 35 valid ones take the second analysis, such as
+  `examples/058-formatted-output.gti` (a steady edit 234 -> 320 ms): their
+  calls use a temporary argument, owned-pointee projection, stored-carrier
+  return or persistent-storage borrow that MIR verifies only against a
+  lowered callee.
+  Across the test fixtures the share is higher (542 of 1637). Removing that
+  fallback needs the MIR rules listed there to take their facts from the
+  signature contract.
+- Omitting a library-only body also leaves undiscovered the instances only
+  that body requests, and their instance diagnostics with them, even when a
+  library-only argument causes the error: `std::vector<std::string_view>`'s
+  `push_back` requests the storage helper whose analysis reports
+  `GTI-S2045`, so `gti check` rejects
+  `tests/coverage/rejections/own-x12-view-in-vector.gti` and the editor
+  publishes nothing. It was the only such difference across the examples and
+  test fixtures. Reporting them needs the closure of an omitted instance to
+  be discovered, or remembered as diagnostic-free from an earlier complete
+  lowering.
 - Project analysis follows the package containing the opened document and the
   driver's default or explicitly selected profile on the host platform. Unique entry roots and
   single-target packages infer their target defines; shared/ambiguous sources

@@ -57,6 +57,13 @@
   name: (identifier) @type.definition)
 (enumerator
   name: (identifier) @constant)
+(quantified_function_type "for" @keyword.type)
+(lifetime_parameter
+  "lifetime" @keyword.type
+  name: (identifier) @type.lifetime)
+(lifetime_argument (identifier) @type.lifetime)
+(lifetime_constant) @type.lifetime
+
 (generic_parameter
   !value_type
   name: (identifier) @type.parameter)

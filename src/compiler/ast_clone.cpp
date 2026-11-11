@@ -55,6 +55,9 @@ public:
       for (TypeRef &argument : copy.arguments) {
         argument = type(argument);
       }
+      for (TypeRef &argument : copy.lifetimeArguments) {
+        argument = type(argument);
+      }
       if (value.qualifiedOwner)
         copy.qualifiedOwner =
             std::make_shared<TypeRef>(type(*value.qualifiedOwner));
@@ -67,9 +70,25 @@ public:
       copy.genericValueExpression =
           extentExpression(copy.genericValueExpression);
       copy.reference = tok(copy.reference);
+      if (copy.referenceLifetime) {
+        copy.referenceLifetime =
+            LifetimeArgument{.open = tok(copy.referenceLifetime->open),
+                             .name = tok(copy.referenceLifetime->name),
+                             .close = tok(copy.referenceLifetime->close)};
+      }
       copy.referenceMutability = tok(copy.referenceMutability);
       copy.packExpansion = tok(copy.packExpansion);
       copy.functionSignatureQualifier = tok(copy.functionSignatureQualifier);
+      if (copy.lifetimeBinder) {
+        auto &binder = *copy.lifetimeBinder;
+        binder.keyword = tok(binder.keyword);
+        binder.open = tok(binder.open);
+        binder.close = tok(binder.close);
+        for (auto &parameter : binder.parameters) {
+          parameter.keyword = tok(parameter.keyword);
+          parameter.name = tok(parameter.name);
+        }
+      }
     }
     return copy;
   }
@@ -243,6 +262,7 @@ private:
         copy->setArgumentGeometry(*tok(node.leftParen()),
                                   toks(node.argumentCommas()));
       }
+      copy->setLifetimeArguments(types(node.lifetimeArguments()));
       if (node.macroBang())
         copy->setMacroBang(tok(*node.macroBang()));
       copy->setMacroArgumentErrors(node.macroArgumentErrors());

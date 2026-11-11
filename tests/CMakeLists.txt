@@ -188,6 +188,16 @@ if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
       "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
       -l "${PROJECT_SOURCE_DIR}/tests/macro_syntax_test.lua")
   set_tests_properties(macro_neovim_syntax PROPERTIES TIMEOUT 30)
+  add_test(NAME lifetime_neovim_syntax
+    COMMAND "${CMAKE_COMMAND}" -E env
+      "GTI_TEST_REPOSITORY=${PROJECT_SOURCE_DIR}"
+      "XDG_STATE_HOME=${PROJECT_BINARY_DIR}/nvim-test/state"
+      "XDG_CACHE_HOME=${PROJECT_BINARY_DIR}/nvim-test/cache"
+      "XDG_DATA_HOME=${PROJECT_BINARY_DIR}/nvim-test/data"
+      "NVIM_LOG_FILE=${PROJECT_BINARY_DIR}/nvim-lifetime-syntax.log"
+      "${GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE}" --headless -u NONE -i NONE
+      -l "${PROJECT_SOURCE_DIR}/tests/lifetime_syntax_test.lua")
+  set_tests_properties(lifetime_neovim_syntax PROPERTIES TIMEOUT 30)
 endif()
 add_executable(gti_expression_text_tests expression_text_tests.cpp)
 add_executable(gti_macro_value_tests macro_value_tests.cpp)
@@ -418,6 +428,16 @@ add_executable(gti_ephemeral_carrier_mir_tests ephemeral_carrier_mir_tests.cpp)
 add_executable(gti_fresh_callable_borrow_tests fresh_callable_borrow_tests.cpp)
 target_link_libraries(gti_fresh_callable_borrow_tests PRIVATE gti_compiler)
 add_test(NAME fresh_callable_borrow COMMAND gti_fresh_callable_borrow_tests)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME borrow_dependency_monotonicity
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/borrow_dependency_monotonicity.py"
+            --self-test)
+endif()
+add_executable(gti_mir_loan_normalization_tests mir_loan_normalization_tests.cpp)
+target_link_libraries(gti_mir_loan_normalization_tests PRIVATE gti_compiler)
+add_test(NAME mir_loan_normalization COMMAND gti_mir_loan_normalization_tests)
+
 add_executable(gti_borrow_carrier_receiver_tests borrow_carrier_receiver_tests.cpp)
 target_link_libraries(gti_borrow_carrier_receiver_tests PRIVATE gti_compiler)
 add_test(NAME borrow_carrier_receivers COMMAND gti_borrow_carrier_receiver_tests)
@@ -866,6 +886,9 @@ if(TARGET gti_lsp)
   add_test(NAME out_of_class_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   set_tests_properties(out_of_class_lsp PROPERTIES TIMEOUT 120)
+  add_test(NAME lifetime_parameters_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_parameters_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+  set_tests_properties(lifetime_parameters_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME nested_borrow_fields_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME borrowing_composition_lsp
@@ -1572,6 +1595,24 @@ add_test(NAME raw_pointer_conversion_contract COMMAND gti_raw_pointer_conversion
 add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)
+
+add_executable(gti_lifetime_syntax_tests lifetime_syntax_tests.cpp)
+target_link_libraries(gti_lifetime_syntax_tests PRIVATE gti_compiler)
+add_test(NAME lifetime_syntax COMMAND gti_lifetime_syntax_tests)
+# RFC 0004 lifetime tests carried over from the original implementation.
+add_executable(gti_lifetime_semantic_tests lifetime_semantic_tests.cpp)
+target_link_libraries(gti_lifetime_semantic_tests PRIVATE gti_compiler)
+add_test(NAME lifetime_semantics COMMAND gti_lifetime_semantic_tests)
+add_test(NAME lifetime_pipeline COMMAND gti_lifetime_semantic_tests --mir)
+add_test(NAME lifetime_native
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_native_test.py"
+    "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_llvm_native_c_abi_tests>"
+    --output-dir "${CMAKE_BINARY_DIR}/Testing/lifetime-native-evidence")
+set_tests_properties(lifetime_native PROPERTIES TIMEOUT 1200)
+add_test(NAME borrowed_from_equivalence
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowed_from_equivalence_test.py"
+    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/stdlib")
+set_tests_properties(borrowed_from_equivalence PROPERTIES TIMEOUT 300)
 
 add_executable(gti_lambda_reference_tests lambda_reference_tests.cpp)
 target_link_libraries(gti_lambda_reference_tests PRIVATE gti_compiler)
@@ -3501,6 +3542,22 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/reference_parameter_packs_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(reference_parameter_packs PROPERTIES TIMEOUT 300)
+  # RFC 0004 erasure gate: every example the reference compiler (built from
+  # the main commit a lifetime change is based on) compiles must produce
+  # byte-identical MIR here. Opt in by configuring the reference compiler.
+  set(GTI_MIR_REFERENCE_COMPILER "" CACHE FILEPATH
+      "Reference gti for the lifetime-erasure MIR identity gate")
+  set(GTI_MIR_REFERENCE_STDLIB "" CACHE PATH
+      "Standard library of the reference gti")
+  if(GTI_MIR_REFERENCE_COMPILER AND GTI_MIR_REFERENCE_STDLIB)
+    add_test(NAME mir_lifetime_erasure_identity
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/mir_lifetime_erasure_identity_test.py"
+              "${GTI_MIR_REFERENCE_COMPILER}" "${GTI_MIR_REFERENCE_STDLIB}"
+              "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}/stdlib"
+              "${PROJECT_SOURCE_DIR}/examples" --jobs 8)
+    set_tests_properties(mir_lifetime_erasure_identity PROPERTIES TIMEOUT 3600)
+  endif()
   add_test(
     NAME enum_pack_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -6587,6 +6644,13 @@ if(Python3_Interpreter_FOUND AND TARGET gti_lsp)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/scalar_temporary_borrow_lsp_test.py"
             "$<TARGET_FILE:gti_lsp>")
   set_tests_properties(scalar_temporary_borrow_lsp PROPERTIES TIMEOUT 90)
+endif()
+
+if(Python3_Interpreter_FOUND AND TARGET gti_lsp)
+  add_test(NAME editor_mir_diagnostics_lsp
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/editor_mir_diagnostics_lsp_test.py"
+            "$<TARGET_FILE:gti_lsp>" "$<TARGET_FILE:gti>")
+  set_tests_properties(editor_mir_diagnostics_lsp PROPERTIES TIMEOUT 120)
 endif()
 
 add_executable(gti_reference_parameter_pack_mir_tests reference_parameter_pack_mir_tests.cpp)

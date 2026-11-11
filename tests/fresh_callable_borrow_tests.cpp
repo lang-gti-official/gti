@@ -187,7 +187,7 @@ int unproven<F>(F& callback) { return 0; }
 int invoke_owned<F>(F callback, int value) { return callback(value); }
 )gti";
   for (const std::string body :
-       {"return unproven(increment);",
+       {"auto& escaped = escape(increment); return escaped(1);",
         "return mutable_invoke([](int value) -> int { return value; });",
         "auto& escaped = escape([](int value) -> int { return value; }); "
         "return escaped(1);",
@@ -210,6 +210,12 @@ int invoke_owned<F>(F callback, int value) { return callback(value); }
            "temporary callables cannot escape, borrow mutably or alias "
            "captures");
   }
+  // RFC 0004: a stateless function item lent for one call whose result
+  // borrows nothing needs no body-proven confined parameter.
+  const auto lent =
+      analyzeFresh(prefix + "int main() { return unproven(increment); }");
+  expect(lent.canGenerateCode(),
+         "a function item lends to a call whose result borrows nothing");
   // An explicit move transfers a named closure into a full-expression
   // temporary that the confined call borrows; the name is moved afterwards.
   const auto moved = analyzeFresh(

@@ -369,13 +369,13 @@ def main() -> int:
                 ),
             ),
             (
+                # RFC 0004 elision: two borrowing inputs leave the carrier
+                # result's region ambiguous (Rust E0106).
                 "generic_algorithm_ambiguous_return_owner.gti",
-                "GTI-S2045",
+                "GTI-S2017",
                 (
-                    "Borrowed return dependency is ambiguous; exactly one "
-                    "read-only reference or direct borrowed-value parameter may "
-                    "provide its owner.",
-                    "Eligible owner dependency source is here.",
+                    "The returned borrowing value's elided region is "
+                    "ambiguous among 2 borrowed parameters",
                 ),
             ),
         )
@@ -398,11 +398,7 @@ def main() -> int:
             return fail("borrowed observer moved into for_each", accepted)
         for filename, code, fragments in negative_cases:
             source = fixtures / filename
-            expected_summary = (
-                "Diagnostics: 2 errors, 0 warnings\n"
-                if filename == "generic_algorithm_ambiguous_return_owner.gti"
-                else "Diagnostics: 1 error, 0 warnings\n"
-            )
+            expected_summary = "Diagnostics: 1 error, 0 warnings\n"
             rejected = emit_artifact(
                 compiler,
                 source,

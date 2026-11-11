@@ -1,0 +1,15 @@
+# RFC 0004 shadow phase: programs the MIR borrow checker accepts and semantic
+# loan flow rejected, reviewed and accepted by the owner (2026-11-10).
+# A move-only borrow carrier that is moved or maybe-moved and never used
+# again has no live use: its type has no destructor that reads the borrow.
+1719e27a29ec1d21.gti
+238d7d93320b36a1.gti
+4ceb6413fa271bce.gti
+91b322f01f5498db.gti
+9bd05be2dd867e81.gti
+a08e0dffd6c619e2.gti
+af03a9b3e53967a6.gti
+c99ab21bdc1f8ce9.gti
+de897bd72d806e87.gti
+e5024e0f19470c7a.gti
+f9cc5cd7ed6cdde8.gti

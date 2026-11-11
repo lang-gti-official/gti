@@ -148,14 +148,14 @@ export unsafe T take_at<T>(T* source)
 /// Asserts that address denotes a live T whose lifetime is covered by owner.
 /// The caller proves alignment, initialization and aliasing. The returned
 /// reference is checked against owner; the raw pointer itself remains nonowning.
-export [[borrowed_from(owner)]]
-unsafe T& assume_ref<T, Owner>(const T* address, Owner& owner) {
+export unsafe T&<a> assume_ref<T, Owner, lifetime a>(const T* address,
+                                                    Owner&<a> owner) {
   unsafe { return *address; }
 }
 
 /// Asserts exclusive access to a live T for the checked borrow of owner.
-export [[borrowed_from(owner)]]
-unsafe mut T& assume_mut<T, Owner>(T* address, mut Owner& owner) {
+export unsafe mut T&<a> assume_mut<T, Owner, lifetime a>(T* address,
+                                                        mut Owner&<a> owner) {
   unsafe { return *address; }
 }
 

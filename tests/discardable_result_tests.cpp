@@ -55,7 +55,7 @@ int main() { auto fn = value; fn(); return 0; }
 [[discardable]] T identity<T>(T value) { return value; }
 struct Counter {
   mut int value = 0;
-  [[discardable, borrowed_from(this)]] mut int& add(int amount) mut {
+  [[discardable]] mut int&<this> add(int amount) mut {
     this.value += amount; return this.value;
   }
   [[discardable]] static int constant() { return 7; }
@@ -117,7 +117,7 @@ int main() { auto callback = []() -> int { return value(); }; callback(); return
   invalid(R"(
 struct Counter {
   mut int value = 0;
-  [[discardable, borrowed_from(this)]] mut int& add() mut { return this.value; }
+  [[discardable]] mut int&<this> add() mut { return this.value; }
 public:
   Counter() = default;
 };

@@ -130,17 +130,27 @@ std::string callableSource(const CompiledScalarSignature &signature,
     throw std::invalid_argument("invalid compiled inlining policy");
   // Optimization requests are carried by the authenticated binding, not by
   // bodyless source syntax. Ordinary declarations cannot forge source policy.
+  // A borrowed result names its one supplier with a lifetime parameter
+  // (RFC 0004): `T&<a> f<lifetime a>(..., T&<a> argN)`.
+  const bool borrows = signature.borrow.origin != BorrowOriginKind::None;
+  const auto regioned = [](std::string spelling) {
+    if (spelling.empty() || spelling.back() != '&')
+      throw std::invalid_argument("compiled borrow must spell a reference");
+    return spelling + "<a>";
+  };
   std::string out = "export ";
-  if (signature.borrow.origin != BorrowOriginKind::None)
-    out += "[[borrowed_from(arg" + std::to_string(signature.borrow.parameter) +
-           ")]] ";
-  out += compiledInterfaceTypeSpelling(result, registry, aliasPrefix) + " " +
-         std::string(compiledInterfaceBaseName(key.qualifiedName)) + "(";
+  const std::string resultSpelling =
+      compiledInterfaceTypeSpelling(result, registry, aliasPrefix);
+  out += (borrows ? regioned(resultSpelling) : resultSpelling) + " " +
+         std::string(compiledInterfaceBaseName(key.qualifiedName)) +
+         (borrows ? "<lifetime a>(" : "(");
   for (std::size_t i = 0; i < key.parameters.size(); ++i) {
     if (i)
       out += ", ";
-    out += compiledInterfaceTypeSpelling(key.parameters[i], registry,
-                                         aliasPrefix) +
+    const std::string spelling =
+        compiledInterfaceTypeSpelling(key.parameters[i], registry, aliasPrefix);
+    out += (borrows && i == signature.borrow.parameter ? regioned(spelling)
+                                                       : spelling) +
            " arg" + std::to_string(i);
   }
   return compiledInterfaceNamespaceSource(key.qualifiedName, out + ");\n");

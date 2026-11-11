@@ -1,3 +1,4 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_printer.h"
 #include "gti/mir_verifier.h"
@@ -81,16 +82,21 @@ void positive(const std::string &name, const std::string &source) {
     expect(lang::verifyMirProgram(result.mir).valid(), name + " verifies");
 }
 void negative(const std::string &name, const std::string &source,
-              const std::string &expectedCode = "GTI-S2017") {
+              const std::string &expectedCode = "GTI-S2017",
+              const std::string &staticResultCode = "") {
   const auto result = analyze(source);
   if (std::getenv("GTI_TEST_DUMP_DIAGNOSTICS") != nullptr) {
     std::cerr << name << '\n';
     show(result);
   }
+  // Under signature contracts (RFC 0004) a result no input supplies is
+  // implicitly `static`; MIR rejects its escape as that region's failure.
   const bool semanticError = std::any_of(
       result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &d) {
         return d.severity == lang::DiagnosticSeverity::Error &&
-               d.code == expectedCode;
+               (d.code == expectedCode ||
+                (!staticResultCode.empty() && d.code == staticResultCode &&
+                 !lang::legacyBorrowChecker()));
       });
   if (result.canGenerateCode() || !semanticError)
     show(result);
@@ -171,13 +177,15 @@ int main() {
              std::string{std::istreambuf_iterator<char>(input), {}});
   }
   const std::string mixedOwner = R"gti(
-class Mixed {
-  Resource& resource;
+class Mixed<lifetime r> {
+  Resource&<r> resource;
   mut int local;
 public:
-  Mixed(Resource& resource) : resource(resource), local(7) {}
+  Mixed(Resource&<r> resource) : resource(resource), local(7) {}
   int& get() { return this.local; }
-  Resource& external() { return this.resource; }
+  // The external referent's region, not the receiver's: Rust's
+  // `fn external(&self) -> &'r Resource`.
+  Resource&<r> external() { return this.resource; }
   void reset() mut { this.local = 9; }
   ~Mixed() {}
 };
@@ -213,18 +221,19 @@ int main() { Resource resource{}; Mixed first{resource};
 }
 )gti");
   const std::string nestedView = R"gti(
-class View {
-  Resource& owner;
+class View<lifetime r> {
+  Resource&<r> owner;
 public:
-  View(Resource& owner) : owner(owner) {}
-  Resource& get() { return this.owner; }
+  View(Resource&<r> owner) : owner(owner) {}
+  Resource&<r> get() { return this.owner; }
 };
-class Wrapper {
-  View view;
+class Wrapper<lifetime r> {
+  View<r> view;
   mut int scratch;
 public:
-  Wrapper(Resource& owner) : view(View(owner)), scratch(0) {}
-  View binding() { return this.view; }
+  Wrapper(Resource&<r> owner) : view(View(owner)), scratch(0) {}
+  // The copied view carries the stored region, not the wrapper shell.
+  View<r> binding() { return this.view; }
   void touch() mut { this.scratch++; }
   int inspect() mut {
     auto copy = this.binding();
@@ -341,7 +350,7 @@ public:
 Outer bad() { Resource local{}; return Outer(local); }
 int main() { auto escaped = bad(); return 0; }
 )gti",
-           "GTI-S2045");
+           "GTI-S2045", "GTI-S2127");
   negative("nested construction cannot retain a by-value owned parameter",
            R"gti(
 class Outer {
@@ -477,7 +486,7 @@ int main() { mut Resource owner{}; Box<Guard> box{Guard(owner)};
 Guard bad() { Resource owner{}; return Guard(owner); }
 int main() { auto guard = bad(); return 0; }
 )gti",
-           "GTI-S2045");
+           "GTI-S2045", "GTI-S2127");
   negative("cleanup cannot upgrade a shared reference", R"gti(
 class Bad {
   Resource& resource;

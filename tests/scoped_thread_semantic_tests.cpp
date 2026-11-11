@@ -465,12 +465,18 @@ void checkInvocations() {
         "gti_internal::thread_scope(std::move(task));",
         "auto task = Pair(first, second); first = 3; return "
         "gti_internal::thread_scope(std::move(task));",
-        "auto child = Write(second); auto task = Pair(first, second); child(); "
+        "mut auto child = Write(second); auto task = Pair(first, second); "
+        "child(); "
         "return gti_internal::thread_scope(std::move(task));"}) {
-    const auto result = invocation(body);
+    // Body-local loan conflicts are proved by the MIR borrow checker.
+    const auto result = invocation(body, true, lang::FrontendPhase::Mir);
     bool loanError = false;
     for (const auto &diagnostic : result.diagnostics)
       loanError |= diagnostic.code == "GTI-S2017";
+    if (result.semanticValid || !loanError)
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << body << ": " << diagnostic.code << ": "
+                  << diagnostic.message << '\n';
     expect(!result.semanticValid && loanError,
            "composing entry references does not permit parent mutation or "
            "erase live children");

@@ -101,7 +101,7 @@ def main() -> int:
         if not expect_rejected(
             compiler,
             fixtures / "optional_live_borrow_rejected.gti",
-            "while a reference borrowed from it may still be live",
+            "may still be live",
             root / "borrow-rejected",
         ):
             return 1

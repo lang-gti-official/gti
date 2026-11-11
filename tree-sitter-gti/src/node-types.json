@@ -1371,6 +1371,10 @@
         "required": true,
         "types": [
           {
+            "type": "lifetime_constant",
+            "named": true
+          },
+          {
             "type": "type",
             "named": true
           }
@@ -1487,6 +1491,10 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "lifetime_parameter",
             "named": true
           }
         ]
@@ -2035,6 +2043,10 @@
         "required": true,
         "types": [
           {
+            "type": "lifetime_constant",
+            "named": true
+          },
+          {
             "type": "type",
             "named": true
           }
@@ -2300,6 +2312,10 @@
         },
         {
           "type": "member_expression",
+          "named": true
+        },
+        {
+          "type": "pack_expansion",
           "named": true
         },
         {
@@ -3310,6 +3326,16 @@
     "type": "generic_argument_profile_clause",
     "named": true,
     "fields": {
+      "lifetime_parameter": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_parameter",
+            "named": true
+          }
+        ]
+      },
       "pattern": {
         "multiple": true,
         "required": true,
@@ -3321,6 +3347,10 @@
           {
             "type": "mut",
             "named": false
+          },
+          {
+            "type": "primitive_type",
+            "named": true
           },
           {
             "type": "reference_declarator",
@@ -3424,7 +3454,7 @@
       },
       "name": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "identifier",
@@ -3456,6 +3486,16 @@
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "lifetime_parameter",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -3517,6 +3557,16 @@
     "type": "generic_signature_pattern_clause",
     "named": true,
     "fields": {
+      "lifetime_parameter": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_parameter",
+            "named": true
+          }
+        ]
+      },
       "pattern": {
         "multiple": true,
         "required": true,
@@ -3944,6 +3994,61 @@
     }
   },
   {
+    "type": "lifetime_argument",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "lifetime_constant",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "lifetime_constant",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "lifetime_parameter",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "lifetime_parameter_clause",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "lifetime_parameter",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "literal",
     "named": true,
     "fields": {},
@@ -4325,10 +4430,24 @@
           }
         ]
       },
+      "result_region": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_argument",
+            "named": true
+          }
+        ]
+      },
       "result_type": {
         "multiple": true,
         "required": false,
         "types": [
+          {
+            "type": "primitive_type",
+            "named": true
+          },
           {
             "type": "type",
             "named": true
@@ -5144,6 +5263,16 @@
           }
         ]
       },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_parameter_clause",
+            "named": true
+          }
+        ]
+      },
       "virtual": {
         "multiple": false,
         "required": false,
@@ -5480,6 +5609,32 @@
     }
   },
   {
+    "type": "quantified_function_type",
+    "named": true,
+    "fields": {
+      "lifetimes": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "lifetime_parameter_clause",
+            "named": true
+          }
+        ]
+      },
+      "signature": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "function_signature",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "range_for_declaration",
     "named": true,
     "fields": {
@@ -5528,7 +5683,18 @@
   {
     "type": "reference_declarator",
     "named": true,
-    "fields": {}
+    "fields": {
+      "lifetime": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "lifetime_argument",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "requires_clause",
@@ -6047,6 +6213,10 @@
           "named": true
         },
         {
+          "type": "quantified_function_type",
+          "named": true
+        },
+        {
           "type": "user_type",
           "named": true
         }
@@ -6107,6 +6277,10 @@
         },
         {
           "type": "integer_literal",
+          "named": true
+        },
+        {
+          "type": "lifetime_constant",
           "named": true
         },
         {
@@ -6625,6 +6799,10 @@
     "named": false
   },
   {
+    "type": "_",
+    "named": false
+  },
+  {
     "type": "alignof",
     "named": false
   },
@@ -6835,6 +7013,10 @@
   },
   {
     "type": "interface",
+    "named": false
+  },
+  {
+    "type": "lifetime",
     "named": false
   },
   {

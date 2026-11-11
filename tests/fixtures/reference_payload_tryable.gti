@@ -11,7 +11,7 @@ for concept std::tryable<Reading> {
       case Reading::failed: return false;
     }
   }
-  [[borrowed_from(result)]] int& take_value(mut Reading result) {
+  int&<a> take_value<lifetime a>(mut Reading<a> result) {
     switch (std::move(result)) {
       case Reading::ready(value): return value;
       case Reading::failed(error): std::panic("failed result");
@@ -29,7 +29,7 @@ struct Status {
   Status(int value) : code(value) {}
   implicit Status(std::string error) : code(int(error.size())) {}
 };
-[[borrowed_from(owner)]] Reading read(int& owner, bool fail) {
+Reading<a> read<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return Reading::failed(std::string("error"));
   return Reading::ready(owner);
 }

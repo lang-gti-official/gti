@@ -2050,8 +2050,7 @@ int main() {
     return *address;
   }
 }
-[[borrowed_from(owner)]]
-unsafe mut int& borrow(int* address, mut Owner& owner) {
+unsafe mut int&<a> borrow<lifetime a>(int* address, mut Owner&<a> owner) {
   unsafe { { return *((address)); } }
 }
 )");
@@ -2064,8 +2063,7 @@ unsafe mut int& borrow(int* address, mut Owner& owner) {
       auditFrontend().analyze("raw-source-bridge-cleanup.gti", R"(
 struct Owner { mut int value = 1;  public: Owner() = default; };
 struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
-[[borrowed_from(owner)]]
-unsafe mut int& borrow(int* address, mut Owner& owner, Cleanup cleanup) {
+unsafe mut int&<a> borrow<lifetime a>(int* address, mut Owner&<a> owner, Cleanup cleanup) {
   return *address;
 }
 int main() {

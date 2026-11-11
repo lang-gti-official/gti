@@ -1,7 +1,9 @@
 #pragma once
 
+#include "gti/diagnostic.h"
 #include "gti/mir.h"
 #include "gti/mir_effects.h"
+#include "gti/mir_verifier.h"
 
 namespace lang {
 
@@ -12,11 +14,27 @@ struct MirLoweringError {
   MirInstructionId instruction = 0;
   std::optional<SourceSpan> source;
   std::string message;
+  // Set when the verifier rejected the source program's borrows rather than
+  // finding an internal inconsistency.
+  MirBorrowRejection borrow;
+  // Conflict explanation: where the overlapping loan was created and the
+  // first later use that keeps it live past the rejected access.
+  std::optional<SourceSpan> loanOrigin;
+  std::optional<SourceSpan> laterUse;
+  // Conflict: the live loan protects a resource until its carrier's cleanup.
+  bool lifecycleBound = false;
+  // Conflict: the rejected write is the end-of-life drop of a temporary that
+  // the live loan borrows.
+  bool temporaryDestroyed = false;
 };
 
 struct MirLoweringResult {
   MirProgram program;
   std::vector<MirLoweringError> errors;
+  // User-facing borrow and lifetime rejections from the MIR borrow checker,
+  // the single authority for body-local borrow validity. Unlike `errors`,
+  // these are source diagnostics of a well-formed program, not ICEs.
+  std::vector<Diagnostic> diagnostics;
 
   [[nodiscard]] bool valid() const { return program.valid(); }
 };

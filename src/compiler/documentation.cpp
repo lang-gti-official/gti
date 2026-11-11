@@ -90,6 +90,7 @@ documentationKind(const SymbolRecord &symbol,
   case SymbolKind::Parameter:
   case SymbolKind::RequirementParameter:
   case SymbolKind::TypeParameter:
+  case SymbolKind::LifetimeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::LambdaCapture:
     return std::nullopt;
@@ -142,6 +143,7 @@ declarationOccurrence(const SemanticDatabase &database, SymbolId symbol) {
   case SymbolKind::Parameter:
   case SymbolKind::RequirementParameter:
   case SymbolKind::TypeParameter:
+  case SymbolKind::LifetimeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::LambdaCapture:
     return false;
@@ -296,6 +298,7 @@ signature(const SymbolRecord &symbol, const SemanticOccurrence *declaration,
   case SymbolKind::Parameter:
   case SymbolKind::RequirementParameter:
   case SymbolKind::TypeParameter:
+  case SymbolKind::LifetimeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::LambdaCapture:
     return std::nullopt;

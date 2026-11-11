@@ -9,10 +9,8 @@ struct Record {
   Record(int value) : prefix(11), value(value) {}
   ~Record() { retired = retired * 10 + this.value; }
 };
-[[borrowed_from(second)]]
-unsafe Record& selected_record(Record& first, Record& second) { return second; }
-[[borrowed_from(second)]]
-unsafe mut Record& selected_record_write(mut Record& first, mut Record& second) {
+unsafe Record&<a> selected_record<lifetime a>(Record& first, Record&<a> second) { return second; }
+unsafe mut Record&<a> selected_record_write<lifetime a>(mut Record& first, mut Record&<a> second) {
   return second;
 }
 int observe_record(Record& value) { return value.value; }

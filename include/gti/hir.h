@@ -775,6 +775,11 @@ struct HirFunctionInstance {
   std::vector<RestoredBorrowField> restoredBorrowFields;
   std::optional<OwnedPointeeProjection> ownedPointeeProjection;
   HirBody body;
+  // HIR omitted this library-only instance's body (see
+  // `HirLoweringScope::omitLibraryOnlyBodies`): `body` holds only the
+  // parameter bindings, the signature facts above are recorded as usual, and
+  // MIR lowers the instance as a signature-only declaration.
+  bool bodyOmitted = false;
   std::optional<SourceSpan> instantiationSite;
   bool staticMember = false;
   bool internalLinkage = false;
@@ -865,6 +870,9 @@ struct HirConstructorInstance {
   std::vector<HirConstructorInitializer> initializers;
   std::vector<HirValueId> initializerValues;
   HirBody body;
+  // As for `HirFunctionInstance::bodyOmitted`; `initializers` stay empty and
+  // `completeBorrow` is the constructor's signature contract.
+  bool bodyOmitted = false;
   std::optional<SourceSpan> instantiationSite;
 };
 
@@ -875,6 +883,8 @@ struct HirDestructorInstance {
   const DestructorDecl *source = nullptr;
   HirClassInstanceId owner = 0;
   HirBody body;
+  // As for `HirFunctionInstance::bodyOmitted`.
+  bool bodyOmitted = false;
 };
 
 struct HirProgramInitializationStep {
@@ -1137,6 +1147,10 @@ struct HirLoweringResult {
   // is smaller and verifies. Executable lowering uses it; `program` keeps every
   // concrete instance, whose analysis reported the program's diagnostics.
   std::optional<HirProgram> reachable;
+  // The prefix through `HirLoweringScope::borrowCheckedDeclarations` when it
+  // is smaller than `program` and verifies: what the MIR borrow checker must
+  // see when unreferenced library declarations need not reach MIR.
+  std::optional<HirProgram> borrowChecked;
   std::vector<Diagnostic> diagnostics;
 
   // Discovery stopped at these unchecked primary bodies. This is not usable
@@ -1171,12 +1185,20 @@ struct HirLoweringResult {
 // symbolic value). Such an instance is still analysed, so the diagnostics its
 // own analysis reports are kept, but its body is not lowered: instances that
 // only its body would request are not discovered and a primary body only it
-// needs is not demanded. The LSP sets it because it never reads HIR bodies.
+// needs is not demanded. The instance is marked `bodyOmitted` and keeps its
+// parameter bindings, so MIR lowers it as a signature-only declaration. The
+// LSP sets it because it never reads HIR bodies.
 struct HirLoweringScope {
   bool reachablePrefix = false;
   std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
   std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
       completeDeclarations;
+  // With a reachable prefix and every declaration lowered completely, these
+  // declaration ranges are lowered first, so `HirLoweringResult::
+  // borrowChecked` holds the reachable instances and theirs without the
+  // remaining ones.
+  std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
+      borrowCheckedDeclarations;
   bool omitLibraryOnlyBodies = false;
   std::vector<SourceUnitId> trustedUnits;
   // Diagnostic paths of compiler-trusted units. An error inside a generic

@@ -242,7 +242,20 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
     if (type.arguments.size() != count + 1) {
       return "?()";
     }
-    std::string text = typeToString(type.arguments.back()) + "(";
+    std::string text;
+    if (type.lifetimeBinder) {
+      text = "for<";
+      for (std::size_t index = 0;
+           index < type.lifetimeBinder->parameters.size(); ++index) {
+        if (index != 0) {
+          text += ",";
+        }
+        text +=
+            "lifetime " + type.lifetimeBinder->parameters[index].name.lexeme;
+      }
+      text += "> ";
+    }
+    text += typeToString(type.arguments.back()) + "(";
     for (std::size_t index = 0; index < count; ++index) {
       if (index != 0) {
         text += ",";
@@ -288,14 +301,18 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
   if (type.referenceMutability) {
     text = "mut " + text;
   }
-  if (!type.arguments.empty()) {
+  if (!type.arguments.empty() || !type.lifetimeArguments.empty()) {
+    // Type and value arguments, then lifetime arguments (RFC 0004 order).
     text += "<";
-    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
-      if (index > 0) {
-        text += ",";
+    bool first = true;
+    for (const auto *list : {&type.arguments, &type.lifetimeArguments})
+      for (const TypeRef &argument : *list) {
+        if (!first) {
+          text += ",";
+        }
+        first = false;
+        text += typeToString(argument);
       }
-      text += typeToString(type.arguments[index]);
-    }
     text += ">";
   }
   for (std::size_t index = 0; index < type.pointers.size(); ++index) {
@@ -309,7 +326,10 @@ std::string AstPrinter::typeToString(const TypeRef &type) {
         "[" + (extent ? arrayExtentSpelling(*extent) : std::string("?")) + "]";
   }
   if (type.reference) {
-    text += "&";
+    text += type.reference->lexeme;
+    if (type.referenceLifetime) {
+      text += "<" + type.referenceLifetime->name.lexeme + ">";
+    }
   }
   if (type.packExpansion) {
     text += "...";

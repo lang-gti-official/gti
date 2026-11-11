@@ -353,8 +353,12 @@ int main() {
                std::any_of(negative.diagnostics.begin(),
                            negative.diagnostics.end(),
                            [](const auto &diagnostic) {
+                             // RFC 0004: an input-free carrier result is
+                             // implicitly 'static'; a local escaping into it
+                             // is a region failure (GTI-S2127).
                              return diagnostic.code == "GTI-S2018" ||
-                                    diagnostic.code == "GTI-S2045";
+                                    diagnostic.code == "GTI-S2045" ||
+                                    diagnostic.code == "GTI-S2127";
                            }),
            "fresh initialization does not bypass a deleted real move or escape "
            "loan");
@@ -536,10 +540,10 @@ public:
   Update(int& step, mut int& value) : step(step), value(value) {}
   void apply() mut { this.value += this.step; }
 };
-Update relay(int& step, mut int& value) {
+Update<a> relay<lifetime a>(int&<a> step, mut int&<a> value) {
   return Update(Update((view(step, value))));
 }
-Update view(int& step, mut int& value) { return Update(step, value); }
+Update<a> view<lifetime a>(int&<a> step, mut int&<a> value) { return Update(step, value); }
 )";
   const auto positive = lang::Frontend().analyze("fresh-borrow-composition.gti",
                                                  declarations + R"(
@@ -556,21 +560,19 @@ int main() {
          "nested direct initialization preserves mixed owners independent of "
          "factory declaration order");
   if (positive.canGenerateCode()) {
+    // RFC 0004: the contract is the signature's. The mixed carrier's one
+    // implicit region is supplied by both inputs; MIR keeps each argument's
+    // own access (shared `step`, exclusive `value`) at the call.
     std::size_t composed = 0;
     for (const auto &function : positive.hir.functionInstances()) {
-      if (function.returnBorrowFields.size() != 2)
+      if (function.returnBorrowParameters != std::vector<std::size_t>{0, 1})
         continue;
-      expect(function.returnBorrowFields[0].parameter == 0 &&
-                 function.returnBorrowFields[0].access ==
-                     lang::AccessMode::ReadOnly &&
-                 function.returnBorrowFields[1].parameter == 1 &&
-                 function.returnBorrowFields[1].access ==
-                     lang::AccessMode::Mutable,
-             "field-wise return facts preserve both exact owners and access");
+      expect(function.returnBorrowOrigin == lang::BorrowOriginKind::Argument,
+             "a mixed carrier result borrows from both of its inputs");
       ++composed;
     }
     expect(composed == 2,
-           "both factory and relay publish field-wise contracts");
+           "both factory and relay publish both-input signature contracts");
     expect(lang::verifyMirProgram(positive.mir).valid(),
            "mixed result dependencies survive independent MIR verification");
   }
@@ -586,8 +588,10 @@ int main() {
            Negative{R"(int main() { int step = 4; mut int value = 3;
                 mut Update result = Update(relay(step, value));
                 value += 1; result.apply(); return value; })",
+                    // MIR reports the compound assignment's read of the
+                    // exclusively borrowed owner.
                     "GTI-S2017",
-                    "Cannot assign to storage while an overlapping borrow",
+                    "Cannot read storage while an overlapping mutable borrow",
                     "value += 1"},
            Negative{R"(Update bad(int& step) { mut int local = 3;
                 return Update(relay(step, local)); }

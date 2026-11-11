@@ -17,8 +17,7 @@ int& choose(int& preferred, int fallback) { return preferred; }
 
 // A generic relay names the parameter its result borrows; each instance
 // verifies that the selected callback's own origin reaches that parameter.
-[[borrowed_from(value)]]
-int& through<F>(F& callback, int& value) { return callback(value); }
+int&<a> through<F, lifetime a>(F& callback, int&<a> value) { return callback(value); }
 
 int& left_of(Pair& pair) { return pair.left; }
 

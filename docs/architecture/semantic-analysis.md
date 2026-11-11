@@ -3313,12 +3313,16 @@ Semantics owns lifetime syntax and signature contracts (RFC 0004). It resolves
 For each declaration it normalizes one lifetime contract: the named and elided
 regions of its parameters, receiver and result, the well-formedness bounds a
 written type implies (`T&<a>` requires `T: a`), and explicit `outlives`
-requirements. A signature without lifetime syntax keeps the borrow contract
-that semantics already infers for it, so lifetime-free programs analyze
-exactly as before. A contract written in lifetime syntax translates into the
-same core facts as `[[borrowed_from]]`: return suppliers, stored-reference
-carriers and receiver suppliers. Loan flow and its source diagnostics below
-consume those facts unchanged.
+requirements. Contracts come from signatures alone, never from bodies. A
+signature without lifetime syntax uses elision defaults: an elided result
+borrows its sole borrowing input or a method's receiver; with several
+borrowing inputs a reference or borrowing-carrier result is ambiguous
+(GTI-S2017, as Rust's E0106), for functions and lambdas alike; with none it is
+implicitly `static`. Several read-only inputs of a function-pointer signature
+form a union contract. A contract normalizes to return suppliers,
+stored-reference carriers and receiver suppliers. `[[borrowed_from]]` is a
+compatibility spelling of the same contract slated for deprecation; every form
+has a lifetime spelling (`tests/borrowed_from_equivalence_test.py`).
 
 Inside a function body, semantics erases lifetimes. It publishes no
 per-expression supplier, origin or region inventory for HIR or MIR to
@@ -3327,6 +3331,13 @@ relationship as a constraint on the declaration's contract. Body-local
 lifetime validity belongs to MIR ([MIR](mir.md#body-local-lifetime-validity)).
 
 ## Loan Flow
+
+MIR is the single body-local borrow checker (RFC 0004,
+[MIR](mir.md#body-local-lifetime-validity)). The semantic loan flow below is
+the retired model, kept for comparison only behind
+`GTI_LEGACY_BORROW_CHECKER` (`include/gti/borrow_checker_mode.h`) until it is
+deleted; by default it reports no body-local borrow conflict or escape.
+Semantics still owns signature and persistent-storage effect checks.
 
 Global and local loan-flow places use the same analysis-local domain. HIR
 qualifies those places with its concrete snapshot/body identity; qualifying

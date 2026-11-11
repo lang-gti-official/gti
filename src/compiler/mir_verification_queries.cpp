@@ -1,7 +1,10 @@
 #include "mir_verification_queries.h"
+#include "gti/borrow_checker_mode.h"
 #include "gti/mir_dominance.h"
 #include "gti/mir_effects.h"
 #include "mir_verification_support.h"
+#include <cstdio>
+#include <cstdlib>
 
 #include <algorithm>
 #include <climits>
@@ -731,6 +734,15 @@ bool referenceAddressRetainsLoan(const MirBody &body, const MirPlace &address,
           child->source == retained.source &&
           child->storedDependency == retained.storedDependency &&
           child->additionalDependencies == retained.additionalDependencies)
+        return true;
+      // Under signature contracts an accessor of a carrier borrows the
+      // carrier shell: the chain is rooted there, retaining the carrier's
+      // shared owner group as its stored dependency.
+      if (!legacyBorrowChecker() && child->parent == 0 &&
+          child->access == AccessMode::ReadOnly &&
+          retained.access == AccessMode::ReadOnly &&
+          retained.kind == MirLoanKind::Stored &&
+          child->storedDependency == retained.id)
         return true;
     }
     link = child->parent;
@@ -1538,6 +1550,15 @@ std::optional<MirPlaceId> borrowSourceForPlace(const MirBody &body,
     return source ? source : std::optional<MirPlaceId>{placeId};
   }
   if (place->root == MirPlaceRootKind::Binding) {
+    // Each lane of a formal pack is its own source, even when other lanes
+    // of the same grouped binding carry entry loans too.
+    if (place->projections.size() == 1 &&
+        place->projections.front().kind == MirProjectionKind::PackElement &&
+        std::any_of(body.loans.begin(), body.loans.end(),
+                    [&](const MirLoan &loan) {
+                      return loan.entry && loan.source == placeId;
+                    }))
+      return placeId;
     const MirLoan *carrier = nullptr;
     for (const MirLoan &loan : body.loans) {
       if (std::find(loan.carriers.begin(), loan.carriers.end(),
@@ -2020,8 +2041,16 @@ std::optional<MirReturnOriginFormal>
 returnOriginFormal(std::span<const SemanticType> parameterTypes,
                    std::span<const HirBindingId> parameterBindings,
                    std::size_t expandedIndex) {
-  if (expandedIndex >= parameterTypes.size() ||
-      expandedIndex >= parameterBindings.size()) {
+  if (expandedIndex >= parameterTypes.size() || parameterBindings.empty())
+    return std::nullopt;
+  // One binding per declared formal: the final one groups a concrete pack's
+  // lanes, so a later expanded position names its element.
+  if (parameterBindings.size() < parameterTypes.size() &&
+      expandedIndex + 1 >= parameterBindings.size())
+    return MirReturnOriginFormal{
+        .binding = parameterBindings.back(),
+        .elementWithinBinding = expandedIndex - (parameterBindings.size() - 1)};
+  if (expandedIndex >= parameterBindings.size()) {
     return std::nullopt;
   }
   const HirBindingId binding = parameterBindings[expandedIndex];
@@ -2031,6 +2060,47 @@ returnOriginFormal(std::span<const SemanticType> parameterTypes,
   }
   return MirReturnOriginFormal{.binding = binding,
                                .elementWithinBinding = expandedIndex - first};
+}
+
+// RFC 0004: a signature type erases its regions, so under signature
+// contracts a read-only reference result borrows every eligible read-only
+// reference parameter when there are several (a shared higher-ranked region).
+std::vector<std::size_t>
+functionPointerSignatureOrigins(const MirProgram &program,
+                                const SemanticType &signature) {
+  static const bool signatureContracts = !legacyBorrowChecker();
+  if (!signatureContracts ||
+      signature.kind != SemanticType::FunctionSignature ||
+      signature.arguments.empty() ||
+      signature.arguments.front().kind != SemanticType::Reference ||
+      signature.arguments.front().referenceAccess != AccessMode::ReadOnly)
+    return {};
+  std::vector<SemanticType> parameters;
+  for (const auto &parameter : std::span(signature.arguments).subspan(1))
+    SemanticType::appendExpandedArgument(parameters, parameter);
+  const auto erased = [&](const SemanticType &parameter) {
+    return parameter.arguments.size() == 1 &&
+           std::any_of(program.classInstances().begin(),
+                       program.classInstances().end(), [&](const auto &owner) {
+                         return owner.type == parameter.arguments.front() &&
+                                owner.compilerCapability ==
+                                    CompilerCapabilityTypeKind::ErasedObject;
+                       });
+  };
+  const auto readOnly = [](const SemanticType &parameter) {
+    return parameter.kind == SemanticType::Reference &&
+           parameter.referenceAccess == AccessMode::ReadOnly;
+  };
+  const bool typed =
+      std::any_of(parameters.begin(), parameters.end(),
+                  [&](const auto &p) { return readOnly(p) && !erased(p); });
+  std::vector<std::size_t> origins;
+  for (std::size_t index = 0; index < parameters.size(); ++index)
+    if (readOnly(parameters[index]) && !(typed && erased(parameters[index])))
+      origins.push_back(index);
+  if (origins.size() < 2)
+    origins.clear();
+  return origins;
 }
 
 bool functionPointerOperation(const MirProgram &program,
@@ -2045,8 +2115,7 @@ bool functionPointerOperation(const MirProgram &program,
       instruction.receiver || instruction.destination ||
       instruction.unsafeOperation != UnsafeOperationKind::None ||
       instruction.dispatch != CallDispatch::Static ||
-      !instruction.borrowFields.empty() ||
-      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      !instruction.borrowFields.empty() || instruction.borrowPlace ||
       instruction.parameterTypes.size() != instruction.operands.size())
     return false;
   const SemanticType *signature = nullptr;
@@ -2080,9 +2149,18 @@ bool functionPointerOperation(const MirProgram &program,
   for (const auto &parameter : std::span(signature->arguments).subspan(1))
     SemanticType::appendExpandedArgument(parameters, parameter);
   const SemanticType &result = signature->arguments.front();
+  const std::vector<std::size_t> origins =
+      functionPointerSignatureOrigins(program, *signature);
   const std::optional<std::size_t> origin =
-      functionPointerSignatureOrigin(program, *signature);
+      origins.empty() ? functionPointerSignatureOrigin(program, *signature)
+                      : std::optional<std::size_t>(origins.front());
   if (result.kind == SemanticType::Reference && !origin)
+    return false;
+  std::vector<std::size_t> expectedArguments;
+  for (const std::size_t index : origins)
+    expectedArguments.push_back(index + 1);
+  if (instruction.borrowArguments != expectedArguments &&
+      !(forming && instruction.borrowArguments.empty()))
     return false;
   if (!forming) {
     // The invocation result borrows the origin argument (operand 0 is the
@@ -2105,14 +2183,27 @@ bool functionPointerOperation(const MirProgram &program,
   }
   const auto &targetType = instruction.parameterTypes.front();
   // The target's own result-origin contract names the signature's origin.
-  const auto originMatches = [&](BorrowOriginKind targetOrigin,
-                                 std::size_t targetParameter,
-                                 AccessMode targetAccess) {
-    if (!origin)
-      return targetOrigin == BorrowOriginKind::None;
-    return targetOrigin == BorrowOriginKind::Argument &&
-           targetParameter == *origin && targetAccess == AccessMode::ReadOnly;
-  };
+  const auto originMatches =
+      [&](BorrowOriginKind targetOrigin, std::size_t targetParameter,
+          AccessMode targetAccess,
+          std::span<const std::size_t> targetSeveral = {}) {
+        if (!origin)
+          return targetOrigin == BorrowOriginKind::None;
+        if (targetOrigin != BorrowOriginKind::Argument ||
+            targetAccess != AccessMode::ReadOnly)
+          return false;
+        if (origins.empty())
+          return targetParameter == *origin;
+        // Under the union contract the target borrows any subset of them.
+        const auto eligible = [&](std::size_t supplier) {
+          return std::find(origins.begin(), origins.end(), supplier) !=
+                 origins.end();
+        };
+        return targetSeveral.empty()
+                   ? eligible(targetParameter)
+                   : std::all_of(targetSeveral.begin(), targetSeveral.end(),
+                                 eligible);
+      };
   if (instruction.functionPointerFunctionTarget) {
     const auto *target = program.findFunctionInstance(
         *instruction.functionPointerFunctionTarget);
@@ -2120,9 +2211,9 @@ bool functionPointerOperation(const MirProgram &program,
            targetType.functionId == target->declaration && !target->owner &&
            target->linkage == LanguageLinkage::Gti && !target->requiresUnsafe &&
            target->definitionKind == MirDefinitionKind::Source &&
-           originMatches(target->returnBorrowOrigin,
-                         target->returnBorrowParameter,
-                         target->returnBorrowAccess) &&
+           originMatches(
+               target->returnBorrowOrigin, target->returnBorrowParameter,
+               target->returnBorrowAccess, target->returnBorrowParameters) &&
            !target->tracksCaller &&
            target->entryKind == ProgramEntryKind::None &&
            target->returnType == result && target->parameterTypes == parameters;

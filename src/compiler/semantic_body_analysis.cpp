@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <cstdlib>
+
 #include <iterator>
 
 namespace lang {
@@ -294,6 +296,7 @@ auto SemanticVisitor::Impl::check(const Program &program) -> bool {
   }
   const auto bodyStart = std::chrono::steady_clock::now();
   analyzeBodies(program.declarations(), nullptr);
+  recordLifetimeNames(program);
   if (workMetrics != nullptr) {
     workMetrics->semanticBodyMicroseconds += static_cast<std::size_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
@@ -657,8 +660,20 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       argument = substituteType(argument, substitution);
     }
   }
+  // A callable pattern's result this instance makes borrowed states its
+  // invocation lanes as its contract.
+  if (const FunctionDecl *syntax = function->bodyDeclaration();
+      syntax != nullptr &&
+      patternResultContract(*syntax, concreteFunction.returnType))
+    concreteFunction.explicitReturnBorrowOrigin = true;
+  // A contract over a pack names expanded lanes, which exist only here.
   if (concreteFunction.explicitReturnBorrowOrigin &&
-      containsOpenTypeParameter(function->returnType)) {
+      (containsOpenTypeParameter(function->returnType) ||
+       std::any_of(
+           concreteFunction.parameterTypes.begin(),
+           concreteFunction.parameterTypes.end(), [](const SemanticType &type) {
+             return type.kind == SemanticType::TypePack && type.concretePack;
+           }))) {
     resolveGenericReturnBorrowContract(*function, concreteFunction);
   }
   // A generic class method relays its receiver's fields as this instance's
@@ -670,6 +685,9 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
                            substitution);
   concreteFunction.returnedTextReference =
       textReferenceReturnSummary(concreteFunction, concreteOwner);
+  static const bool signatureContracts = !legacyBorrowChecker();
+  // Text-view relays (L-OWN-02) keep their own derivation until text views
+  // get a signature rule; stored-field refinement is body inference.
   if (!concreteFunction.explicitReturnBorrowOrigin) {
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
             dynamicTextReturnBorrowSummary(concreteFunction, concreteOwner)) {
@@ -690,7 +708,9 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       concreteFunction.returnBorrowParameters = borrow.parameters;
       concreteFunction.returnBorrowPlace = borrow.place;
     }
-    if (const auto fields = storedFieldReturnBorrowSummary(concreteFunction)) {
+    if (const auto fields = signatureContracts ? std::nullopt
+                                               : storedFieldReturnBorrowSummary(
+                                                     concreteFunction)) {
       concreteFunction.returnBorrowOrigin = fields->origin;
       concreteFunction.returnBorrowParameter = fields->parameter;
       concreteFunction.returnBorrowAccess = fields->access;
@@ -699,6 +719,45 @@ auto SemanticVisitor::Impl::analyzeFunctionInstance(
       concreteFunction.returnBorrowPlace = fields->place;
     }
   }
+  // RFC 0004: contracts come only from signatures. The base origin is the
+  // signature's elision; an unannotated borrowed result is bounded by every
+  // eligible input, and MIR checks the body against that bound.
+  if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin &&
+      concreteFunction.returnBorrowOrigin == BorrowOriginKind::None) {
+    const FunctionReturnBorrowSummary borrow = functionReturnBorrowSummary(
+        concreteFunction.returnType, concreteFunction.parameterTypes,
+        concreteFunction.ownerClass, concreteFunction.staticMember,
+        concreteFunction.intrinsic, exactMovedReturnParameter(*function));
+    concreteFunction.returnBorrowOrigin = borrow.origin;
+    concreteFunction.returnBorrowParameter = borrow.parameter;
+    concreteFunction.returnBorrowAccess = borrow.access;
+    concreteFunction.returnBorrowParameters = borrow.parameters;
+    concreteFunction.returnBorrowPlace = borrow.place;
+  }
+  if (signatureContracts)
+    narrowToTypeParameterSuppliers(concreteFunction);
+  if (signatureContracts && !concreteFunction.explicitReturnBorrowOrigin &&
+      concreteFunction.returnBorrowOrigin == BorrowOriginKind::None &&
+      implicitStaticCarrierResult(
+          concreteFunction.returnType, concreteFunction.parameterTypes,
+          concreteFunction.ownerClass, concreteFunction.staticMember,
+          concreteFunction.intrinsic)) {
+    concreteFunction.returnBorrowOrigin = BorrowOriginKind::Global;
+    concreteFunction.returnBorrowAccess = AccessMode::ReadOnly;
+    concreteFunction.returnBorrowPlace.reset();
+  }
+  if (signatureContracts)
+    if (const FunctionDecl *syntax = concreteFunction.bodyDeclaration())
+      if (auto complete = signatureCompleteReturnBorrow(
+              concreteFunction, syntax->receiverMutability(), concreteOwner)) {
+        // The complete contract also owns the field mapping call lowering
+        // publishes for a carrier (or member reference) result.
+        if (concreteFunction.returnType.kind == SemanticType::Class ||
+            (concreteFunction.returnType.kind == SemanticType::Reference &&
+             concreteFunction.ownerClass))
+          concreteFunction.returnBorrowFields = complete->dependencies;
+        concreteFunction.completeReturnBorrow = std::move(*complete);
+      }
   semanticModel.record(*function->declaration, std::move(concreteFunction));
   function->bodyDeclaration()->accept(*this);
   validateDefaultArgumentCycles();
@@ -916,7 +975,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
                 semanticModel.findTypeAlias(*alias)) {
           TypeAliasInfo concrete = *primary;
           concrete.type = typeOf(alias->target());
-          validateTypeAliasReference(alias->target(), concrete.type);
+          validateTypeAliasReference(alias->target(), concrete.type, alias);
           semanticModel.record(*alias, std::move(concrete));
         }
       } else if (const auto *function = stmtAs<FunctionDecl>(member.get());
@@ -2259,6 +2318,8 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   }
 
   const ClassInfo &owner = classInfo(*currentClass);
+  if (owner.declaration != nullptr && !instanceAnalysisActive)
+    validateConstructorFieldRegions(stmt, *owner.declaration);
   const ConstructorInfo *constructorInfo = semanticModel.findConstructor(stmt);
   const bool directOwningPayloadTransport =
       stmt.body() != nullptr && constructorInfo != nullptr &&
@@ -3818,9 +3879,15 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
   }
   validateFunctionPacks(stmt, genericParameters);
   validateOperatorDeclaration(stmt, methodDeclaration);
+  if (functionInfo != nullptr && !instanceAnalysisActive)
+    validateSignatureRegions(stmt, *functionInfo);
+  // RFC 0004: a signature whose elision yields a complete contract has one.
   const bool hasReturnBorrowSummary =
       functionInfo != nullptr &&
-      functionInfo->returnBorrowOrigin != BorrowOriginKind::None;
+      (functionInfo->returnBorrowOrigin != BorrowOriginKind::None ||
+       (signatureContractDefaults() &&
+        signatureCompleteReturnBorrow(*functionInfo, stmt.receiverMutability())
+            .has_value()));
   const SemanticType declaredReturnType =
       typeOf(stmt.returnType(), stmt.returnMutability());
   // A source body can establish a complete conditional return contract without
@@ -3849,7 +3916,9 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
           isBorrowReturningType(declaredReturnType),
       methodDeclaration ? "method return type" : "function return type", false,
       false,
-      hasReturnBorrowSummary && stmt.hasFunctionAttribute("borrowed_from"));
+      hasReturnBorrowSummary &&
+          (hasExplicitBorrowContract(stmt) ||
+           patternResultContract(stmt, declaredReturnType)));
   if (nestsBorrowedState(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
     report(stmt.name(),
@@ -3858,8 +3927,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
            "GTI-S2045");
   } else if (isBorrowReturningType(declaredReturnType) &&
              !intrinsicDeclaration && !hasReturnBorrowSummary &&
-             functionInfo != nullptr &&
-             !stmt.hasFunctionAttribute("borrowed_from") &&
+             functionInfo != nullptr && !hasExplicitBorrowContract(stmt) &&
+             !patternResultContract(stmt, declaredReturnType) &&
              // A complete conditional contract comes from the body, but it
              // cannot choose between several eligible owners: that signature
              // is ambiguous for a carrier just as for a plain reference.
@@ -4003,7 +4072,18 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     updated.entryArgumentAppendFunction = appendFunction;
     semanticModel.record(stmt, std::move(updated));
   }
-  if (stmt.receiverMutability() == ReceiverMutability::Consuming) {
+  // A result written with the class's region (or `static`) names the
+  // consumed value's external referent, not the destroyed shell.
+  const auto consumedStoredResult = [&] {
+    if (functionInfo == nullptr)
+      return false;
+    const auto lifetime = explicitLifetimeResult(
+        stmt, functionInfo->parameterTypes, functionInfo->ownerClass);
+    return lifetime.classBinder ||
+           lifetime.kind == ExplicitLifetimeResult::Kind::Static;
+  };
+  if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
+      !consumedStoredResult()) {
     const SemanticType result =
         typeOf(stmt.returnType(), stmt.returnMutability());
     if (!conditionalReferenceReturn(result, {},
@@ -5308,6 +5388,9 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
            "GTI-S2021");
     return;
   }
+  if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr && currentClass)
+    validateReturnedFieldRegion(*currentFunctionDeclaration, *currentClass,
+                                stmt.value());
   if (currentReturnType == SemanticType::Void) {
     if (stmt.value()) {
       const SemanticType valueType = analyze(stmt.value());
@@ -5350,6 +5433,12 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
     }
     forceProgramStorageBoundaryAccess(stmt.value());
     validateReferenceReturn(currentReturnType, valueType, stmt.value());
+    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr)
+      validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
+    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
+        currentClass)
+      validateReturnedReceiverRegion(*currentFunctionDeclaration, *currentClass,
+                                     stmt.value());
     noteReturnedFormalReference(*stmt.value());
     if (expressionNeverReturns(stmt.value().get()))
       return;
@@ -5401,6 +5490,10 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
   recordRawResult(stmt.value());
   if (typeTraits(currentReturnType).containsBorrowedState) {
     validateStoredBorrowReturn(currentReturnType, valueType, stmt.value());
+    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
+        currentClass)
+      validateReturnedReceiverRegion(*currentFunctionDeclaration, *currentClass,
+                                     stmt.value());
   }
   if (currentReturnType.kind == SemanticType::StringView ||
       currentReturnType.kind == SemanticType::CString) {
@@ -6501,6 +6594,12 @@ auto SemanticVisitor::Impl::visitConceptDecl(const ConceptDecl &stmt) -> void {
 auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     -> void {
   const DeclarationOrderScope declarationOrder{*this, stmt};
+  // Runs once the declaration (and its construction) has been analyzed.
+  struct WrittenRegions {
+    Impl &impl;
+    const VariableDecl &stmt;
+    ~WrittenRegions() { impl.validateWrittenConstructionRegions(stmt); }
+  } writtenRegions{*this, stmt};
   const SourceDebugRegionGuard sourceRegion{*this, stmt};
   const std::size_t declarationDiagnosticStart = diagnostics.size();
   if (stmt.isThreadLocal() && !validateThreadLocalDeclaration(stmt))
@@ -8162,6 +8261,9 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         selected && validateCallableReturn(expr, selected->returnType) &&
         validateCallableCapability(
             expr, callableInvocationCapability(selected->receiverMutability));
+    if (valid && selected->declaration != nullptr)
+      validateReceiverCallRegions(*expr.callee(), *selected->declaration,
+                                  expr.arguments(), expr.paren());
     currentType = valid ? callExpressionType(selected->returnType)
                         : SemanticType::Unknown;
     return;
@@ -8496,11 +8598,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                    [](const CallableCandidate &candidate) {
                      return candidate.record().parameterPack;
                    })) {
-    report(expressionToken(expr.arguments().back()),
-           "A parameter pack can only be forwarded to another variadic "
-           "function or method.",
-           "GTI-S2023");
-    currentType = SemanticType::Unknown;
+    analyzeFixedPackForwardingCall(expr, *callee, argumentTypes,
+                                   hasExplicitGenericArguments);
     return;
   }
 
@@ -8651,6 +8750,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       valid = validateSelectedFunction(resolved, expr.callee(), expr.paren(),
                                        expr.arguments(), receiverMode) &&
               valid;
+      if (valid && resolved.declaration != nullptr)
+        validateCallTypeOutlives(expr, *resolved.declaration);
       valid = validateConfinedCallableArguments(
                   candidate, resolved, argumentTypes, expr.arguments()) &&
               valid;
@@ -11048,7 +11149,38 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         });
     lambdaReturn.deferred =
         openParameters || containsOpenTypeParameter(returnType);
-    if (summary.origin == BorrowOriginKind::Argument) {
+    // RFC 0004 elision, as for a function: several eligible reference
+    // parameters leave an elided lambda result ambiguous (Rust E0106).
+    const bool ambiguous =
+        signatureContractDefaults() && summary.parameters.size() > 1;
+    // A result written as the class's callable pattern result, with the
+    // pattern's pack as its final parameter, is supplied by that pack's
+    // lanes alone, exactly as for a method of the class.
+    std::optional<std::size_t> patternLane;
+    if (const auto pack =
+            signatureContractDefaults() && currentClass
+                ? callablePatternResultPack(expr.returnType(),
+                                            expr.parameters(), *currentClass)
+                : std::nullopt) {
+      std::size_t lanes = 0;
+      for (std::size_t position = *pack;
+           position < lambdaReturn.parameterTypes.size(); ++position) {
+        const SemanticType &lane = lambdaReturn.parameterTypes[position];
+        if (lane.kind == SemanticType::Reference &&
+            (returnType.referenceAccess == AccessMode::ReadOnly ||
+             lane.referenceAccess == AccessMode::Mutable)) {
+          patternLane = position;
+          ++lanes;
+        }
+      }
+      if (lanes != 1)
+        patternLane.reset();
+    }
+    if (patternLane) {
+      lambdaReturn.origin = BorrowOriginKind::Argument;
+      lambdaReturn.parameter = *patternLane;
+      lambdaReturn.access = returnType.referenceAccess;
+    } else if (summary.origin == BorrowOriginKind::Argument && !ambiguous) {
       lambdaReturn.origin = summary.origin;
       lambdaReturn.parameter = summary.parameter;
       lambdaReturn.access = summary.access;
@@ -13105,9 +13237,22 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
     if (!reportMissingLambdaCapture(expr.name()) &&
         !reportInvisibleSymbol(expr.name(), expr.name().lexeme,
                                resolveGlobally(expr.name()))) {
-      report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
-             "GTI-S2001");
-      diagnostics.back().missingIncludeName = expr.name().lexeme;
+      // A lifetime binder names a region, never a runtime value.
+      bool lifetimeBinder = false;
+      if (currentFunctionDeclaration != nullptr)
+        for (const auto &parameter :
+             currentFunctionDeclaration->lifetimeParameters())
+          lifetimeBinder |= parameter.name.lexeme == expr.name().lexeme;
+      if (lifetimeBinder) {
+        report(expr.name(),
+               "Lifetime '" + expr.name().lexeme +
+                   "' names a region, not a value.",
+               "GTI-S2128");
+      } else {
+        report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
+               "GTI-S2001");
+        diagnostics.back().missingIncludeName = expr.name().lexeme;
+      }
     }
     requestSession.recoveryCauses.insert_or_assign(
         &expr,

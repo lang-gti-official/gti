@@ -115,7 +115,10 @@ function-contract-name = "test" | "noreturn" | "track_caller" | "discardable" | 
    direct calls. Neither changes the declared result type.
    discardable permits ignoring a non-void function or method result; it
    does not change evaluation, failure, cleanup, borrowing or the result type.
-   borrowed_from selects one checked reference parameter, the single external
+   borrowed_from is the compatibility spelling of a result-region contract and
+   is slated for deprecation: `[[borrowed_from(x)]] T& f(T& x)` means
+   `T&<a> f<lifetime a>(T&<a> x)`. It selects one checked reference parameter,
+   the single external
    dependency of a by-value carrier parameter, or a non-static
    receiver as the returned reference's owner. Safe returns must preserve it.
    On a declaration whose result type is a generic parameter it binds only the
@@ -204,11 +207,14 @@ concept-explanation    = "[[" "unsatisfied" "(" STRING_LITERAL ")" "]]" ;
 concept-body           = "{" { concept-member } "}" ;
 concept-member         = "typename" IDENTIFIER [ generic-parameter-clause ] ";"
                        | function-declaration ;
-(* A concept with a body takes one or more type parameters. A member
-   type family has its own ordinary type parameters and unary constraints.
-   Its implementation matches arity and constraint identities positionally.
-   A member function is a prototype ending in ';' with no generic parameters, requires
-   clause, defaults, modifiers, attributes or receiver qualifier. *)
+(* A concept with a body takes one or more type parameters and may also bind
+   lifetimes. A member type family has type or lifetime parameters and unary
+   type constraints. Its implementation matches argument kinds, arity and
+   constraint identities positionally. A member function is a prototype ending
+   in ';'. It may declare lifetime parameters and lifetime requirements, but
+   takes no additional type/value parameters, defaults, modifiers or receiver
+   qualifier. Its borrowed_from attribute remains a compatibility spelling for
+   the normalized region relationship. *)
 
 conformance-declaration
                        = "for" [ generic-parameter-clause ] "concept"
@@ -223,14 +229,19 @@ conformance-member     = type-alias-declaration
    parameter binds one type. It defines each associated type with a type
    alias and each
    operation with a function body; the block's parameters and concept
-   application apply to every function, which therefore declares no generic
-   parameters, requires clause or default argument of its own. A projection
+   application apply to every function. An operation may additionally bind
+   local lifetime parameters and declare lifetime requirements, but cannot add
+   runtime type/value parameters or default arguments. A projection
    `Concept<Type>::name` is a qualified type, and `Concept<Type>::operation`
    is a call target. *)
 
-concept-parameter-list = IDENTIFIER { "," IDENTIFIER } ;
+concept-parameter-list = concept-parameter { "," concept-parameter } ;
+concept-parameter      = IDENTIFIER | lifetime-parameter ;
 
-concept-application    = qualified-name "<" type { "," type } ">" ;
+concept-application    = qualified-name "<" generic-argument
+                         { "," generic-argument } ">" ;
+(* outlives<a, b> and outlives<T, a> use this same requirement syntax.
+   Semantics distinguishes the core region predicate from named concepts. *)
 
 constraint-expression = constraint-disjunction ;
 constraint-disjunction
@@ -649,8 +660,7 @@ constructor-initializer-list
                          { "," constructor-initializer } ;
 
 constructor-initializer
-                       = base-type "(" [ initializer-expression
-                         { "," initializer-expression } ] ")" ;
+                       = base-type "(" [ argument-list ] ")" ;
 
 destructor-declaration = { function-contract-attribute } "~" IDENTIFIER "(" ")"
                          ( block | default-member-specifier ) ;
@@ -753,7 +763,18 @@ generic-parameter-clause
 generic-parameter      = [ generic-constraint ] IDENTIFIER [ "..." ]
                          [ "=" type ]
                        | ( "uint64_t" | "uint64" ) IDENTIFIER
-                         [ "=" generic-value-expression ] ;
+                         [ "=" generic-value-expression ]
+                       | lifetime-parameter ;
+
+lifetime-parameter     = "lifetime" IDENTIFIER ;
+lifetime-argument      = IDENTIFIER | "_" | "static" | "this" ;
+lifetime-binder        = "for" "<" lifetime-parameter
+                         { "," lifetime-parameter } ">" ;
+(* lifetime is contextual in parameter declarations. It remains an ordinary
+   identifier elsewhere. Lifetime parameters have no default or pack suffix.
+   Bare named generic arguments remain unresolved until parameter kinds are
+   known. The implicit receiver lifetime this is valid only in an appropriate
+   non-static method context; it does not denote an expression value here. *)
 
 generic-value-expression
                        = generic-value-additive ;
@@ -1005,17 +1026,26 @@ designated-initializer = "{" designated-initializer-entry
 designated-initializer-entry
                        = "." IDENTIFIER "=" brace-initializer-element ;
 
-type                   = ( raw-pointer-base | base-type )
-                         { array-extent } [ "&" ]
+type                   = unquantified-type
+                       | lifetime-binder function-signature ;
+
+unquantified-type      = ( raw-pointer-base | base-type )
+                         { array-extent } [ reference-suffix ]
                          [ "(" [ signature-parameter
                          { "," signature-parameter } ] ")"
                          [ signature-receiver ] ] ;
 
+reference-suffix       = "&" [ "<" lifetime-argument ">" ] | "&&" ;
+(* An annotation belongs to this reference, independently of its referent's
+   generic arguments: View<a>&<b>. Omission and explicit _ retain distinct
+   written syntax for contextual lifetime inference/elision. The existing &&
+   move forms do not take lifetime suffixes. *)
+
 signature-parameter    = [ "mut" ] type [ "..." ] ;
 (* A signature parameter's explicit mut prefix requires a reference type. *)
 
-function-signature     = ( raw-pointer-base | base-type )
-                         { array-extent } [ "&" ]
+function-signature     = [ "mut" ] ( raw-pointer-base | base-type )
+                         { array-extent } [ reference-suffix ]
                          "(" [ signature-parameter
                          { "," signature-parameter } ] ")"
                          [ signature-receiver ] ;
@@ -1024,7 +1054,10 @@ signature-receiver     = "mut" | "&&" ;
 
 (* The final parenthesized suffix forms a GTI function-signature type. It is
    type metadata usable in aliases/generic arguments, not an object or a native
-   callback pointer. It has no implicit function/array parameter decay. *)
+   callback pointer. It has no implicit function/array parameter decay.
+   A higher-ranked lifetime binder scopes over the complete signature,
+   including the result written before the parameter types. A mut result
+   component requires an & reference. *)
 
 raw-pointer-base       = [ "const" ] base-type "*" { [ "const" ] "*" } ;
 
@@ -1271,7 +1304,11 @@ generic-argument-clause
                        = "<" [ generic-argument
                          { "," generic-argument } ] ">" ;
 
-generic-argument       = type [ "..." ] | generic-value-expression ;
+generic-argument       = [ "mut" ] type [ "..." ]
+                       | generic-value-expression | lifetime-argument ;
+(* A mut type argument requires an & reference; mutable value arguments are
+   not another generic kind. Parameter kinds resolve the overlap among bare
+   identifiers in these productions. *)
 
 qualified-name         = IDENTIFIER { "::" IDENTIFIER } ;
 

@@ -55,7 +55,7 @@ Holder hold(int& owner, bool present) {
 
 enum Pair { both(int& first, int& second), none };
 
-Pair pair_of(int& first, int& second) { return Pair::both(first, second); }
+Pair<a> pair_of<lifetime a>(int&<a> first, int&<a> second) { return Pair::both(first, second); }
 
 // A loop that cannot write its carrier selects from it on every iteration.
 int sum_selected(int& owner, int count) {

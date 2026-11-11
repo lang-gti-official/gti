@@ -25,9 +25,11 @@ module.exports = grammar({
   supertypes: ($) => [$.declaration, $.statement, $.expression],
 
   conflicts: ($) => [
+    [$.generic_argument_profile_clause, $._base_type],
     [$.function_declaration, $.macro_declaration],
     [$.macro_declaration, $._qualified_identifier],
     [$.generic_argument_profile_clause, $.generic_parameter],
+    [$.lifetime_parameter_clause, $.generic_parameter],
     [$.generic_argument_profile_clause, $._qualified_identifier],
     [$.extern_c_variable_declaration, $.extern_c_function_prototype],
     [$._base_type, $.numeric_conversion],
@@ -312,7 +314,7 @@ module.exports = grammar({
           "concept",
           field("name", $.identifier),
           "<",
-          commaSep1(field("parameter", $.identifier)),
+          commaSep1(field("parameter", choice($.identifier, $.lifetime_parameter))),
           ">",
           ";",
         ),
@@ -321,7 +323,7 @@ module.exports = grammar({
           "concept",
           field("name", $.identifier),
           "<",
-          commaSep1(field("parameter", $.identifier)),
+          commaSep1(field("parameter", choice($.identifier, $.lifetime_parameter))),
           ">",
           "=",
           field("requirements", $.constraint_expression),
@@ -332,7 +334,7 @@ module.exports = grammar({
           "concept",
           field("name", $.identifier),
           "<",
-          commaSep1(field("parameter", $.identifier)),
+          commaSep1(field("parameter", choice($.identifier, $.lifetime_parameter))),
           ">",
           field("body", $.concept_body),
           ";",
@@ -384,7 +386,7 @@ module.exports = grammar({
       seq(
         field("name", $._qualified_identifier),
         "<",
-        commaSep1(field("argument", $.type)),
+        commaSep1(field("argument", choice($.type, $.lifetime_constant))),
         ">",
       ),
 
@@ -415,7 +417,7 @@ module.exports = grammar({
     constraint_predicate: ($) =>
       prec(1, seq(
         field("name", $._qualified_identifier),
-        "<", commaSep1(field("argument", $.type)), ">",
+        "<", commaSep1(field("argument", choice($.type, $.lifetime_constant))), ">",
         "(", optional(commaSep1($._expression_not_comma)), ")",
       )),
 
@@ -594,7 +596,13 @@ module.exports = grammar({
       seq(
         "(",
         optional(
-          commaSep1(choice($._expression_not_comma, $.array_initializer)),
+          choice(
+            $.pack_expansion,
+            seq(
+              commaSep1(choice($._expression_not_comma, $.array_initializer)),
+              optional(seq(",", $.pack_expansion)),
+            ),
+          ),
         ),
         ")",
       ),
@@ -669,6 +677,7 @@ module.exports = grammar({
           field("return_type", $.type),
           "operator",
           field("operator", seq("(", ")")),
+          optional(field("type_parameters", $.lifetime_parameter_clause)),
           field("parameters", $.parameter_clause),
           optional(
             choice(field("mutable", "mut"), field("consuming", "&&")),
@@ -717,6 +726,7 @@ module.exports = grammar({
               ">=",
             ),
           ),
+          optional(field("type_parameters", $.lifetime_parameter_clause)),
           field("parameters", $.parameter_clause),
           optional(choice(field("mutable", "mut"), field("consuming", "&&"))),
           optional(field("constraints", $.requires_clause)),
@@ -792,6 +802,7 @@ module.exports = grammar({
         "<",
         field("pattern", $.function_signature),
         repeat(seq(",", field("pattern", $.type))),
+        repeat(seq(",", field("lifetime_parameter", $.lifetime_parameter))),
         ">",
       ),
 
@@ -801,14 +812,28 @@ module.exports = grammar({
         repeat(seq(field("pattern", $.identifier), ",")),
         field("pattern", choice(
           "void",
-          seq(optional("mut"), $.identifier, $.reference_declarator),
+          seq(optional("mut"), choice($.identifier, $.primitive_type),
+              $.reference_declarator),
         )),
         repeat(seq(",", field("pattern", $.type))),
+        repeat(seq(",", field("lifetime_parameter", $.lifetime_parameter))),
         ">",
       ),
 
+    lifetime_parameter: ($) =>
+      seq("lifetime", field("name", $.identifier)),
+
+    lifetime_constant: () => choice("_", "static", "this"),
+
+    lifetime_parameter_clause: ($) =>
+      seq("<", commaSep1($.lifetime_parameter), ">"),
+
+    lifetime_argument: ($) =>
+      choice($.identifier, $.lifetime_constant),
+
     generic_parameter: ($) =>
       choice(
+        $.lifetime_parameter,
         seq(
           field("constraint", $._qualified_identifier),
           field("name", $.identifier),
@@ -889,7 +914,13 @@ module.exports = grammar({
         ";",
       ),
 
-    type: ($) => prec.right(choice($._non_function_type, $.function_signature)),
+    type: ($) => prec.right(choice(
+      $._non_function_type, $.function_signature, $.quantified_function_type,
+    )),
+
+    quantified_function_type: ($) =>
+      seq("for", field("lifetimes", $.lifetime_parameter_clause),
+          field("signature", $.function_signature)),
 
     function_signature: ($) =>
       prec.right(
@@ -924,7 +955,10 @@ module.exports = grammar({
     pointer_declarator: () =>
       prec.right(seq("*", repeat(seq(optional("const"), "*")))),
 
-    reference_declarator: () => choice("&", "&&"),
+    reference_declarator: ($) =>
+      seq(choice("&", "&&"), optional(seq(
+        "<", field("lifetime", $.lifetime_argument), ">",
+      ))),
 
     _base_type: ($) =>
       choice(
@@ -990,6 +1024,7 @@ module.exports = grammar({
           commaSep1(
             choice(
               seq($.type, optional("...")),
+              $.lifetime_constant,
               $.integer_literal,
               $.array_extent_parenthesized_expression,
               $.array_extent_binary_expression,
@@ -1478,8 +1513,13 @@ module.exports = grammar({
         "{", repeat1(seq(
           optional(field("unsafe", "unsafe")), choice(seq(
             "{", field("expression", $._expression_not_comma), "}",
-            optional(seq("->", optional("mut"), field("result_type", $.type),
-              optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]")))), ";",
+            optional(seq("->", optional("mut"), choice(
+              seq(field("result_type", $.type),
+                optional(seq("[[", "borrowed_from", "(", field("borrow_origin", $.identifier), ")", "]]"))),
+              // `auto<r>`: an inferred carrier result with a named region.
+              seq(field("result_type", alias("auto", $.primitive_type)),
+                "<", field("result_region", $.lifetime_argument), ">"),
+            ))), ";",
           ), $.iteration_requirement),
         )), "}",
       ),

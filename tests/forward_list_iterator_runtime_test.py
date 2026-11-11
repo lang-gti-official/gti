@@ -131,7 +131,7 @@ struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = de
                                    "unsafe { address->field.write(); }",
         }
         expected = {
-            "owner-mutation": "while a reference",
+            "owner-mutation": "may still be live",
             "owner-movement": "overlapping borrow",
             "mutable-owner-read": "borrow",
             "mutable-cursor-copy": "copy",
@@ -159,7 +159,11 @@ int main() { auto cursor = escaped(); return *cursor; }
 """)
         result = run([str(compiler), str(source), "--emit-mir", "-o", str(directory / "escape.mir")])
         assert result.returncode == 65 and "GTI-S" in result.stderr and "GTI-B0001" not in result.stderr, result
-        assert "GTI-S2045" in result.stderr and "borrow" in result.stderr, result.stderr
+        # RFC 0004: `escaped()` has no borrow-carrying input, so its cursor
+        # result is implicitly 'static'; returning a local's cursor is a
+        # region failure (GTI-S2127) at the returned expression.
+        assert "GTI-S2127" in result.stderr and "'static'" in result.stderr, result.stderr
+        assert "return values.begin();" in result.stderr, result.stderr
         assert "GTI-S2024" not in result.stderr, result.stderr
         print("forward-list lifetime local-owner-escape: rejected", flush=True)
 

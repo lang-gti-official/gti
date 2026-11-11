@@ -10,12 +10,46 @@
 
 namespace lang {
 
+// A verifier rejection that is a property of the source program, not an
+// internal inconsistency: MIR is the single authority for body-local borrow
+// validity, so these become user diagnostics.
+enum class MirBorrowRejectionKind {
+  None,
+  // An access overlaps a live loan it is incompatible with.
+  Conflict,
+  // A returned or stored borrow outlives the storage it depends on.
+  Escape,
+  // A parent loan is used while a child reborrow of it is still live.
+  ParentUse,
+  // A returned borrow comes from a formal parameter its signature does not
+  // name as a supplier of the result.
+  Supplier,
+  // A lambda borrows a place MIR cannot key in its body's ownership domain:
+  // an enclosing lambda's by-reference capture.
+  NestedCapture,
+};
+
+struct MirBorrowRejection {
+  MirBorrowRejectionKind kind = MirBorrowRejectionKind::None;
+  // Conflict: whether the rejected access writes.
+  bool write = false;
+  // Conflict: the access of the live loan it overlaps.
+  AccessMode loanAccess = AccessMode::ReadOnly;
+  MirLoanId loan = 0;
+  // Conflict: the rejected instruction's kind (a Borrow creates a loan).
+  MirInstructionKind instruction = MirInstructionKind::Compute;
+
+  friend bool operator==(const MirBorrowRejection &,
+                         const MirBorrowRejection &) = default;
+};
+
 struct MirVerificationError {
   MirBodyKind bodyKind = MirBodyKind::Function;
   std::size_t owner = 0;
   MirBlockId block = 0;
   MirInstructionId instruction = 0;
   std::string message;
+  MirBorrowRejection borrow;
 };
 
 struct MirVerificationResult {

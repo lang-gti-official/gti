@@ -1350,6 +1350,7 @@ SemanticClassification classificationForSymbol(const lang::SymbolRecord &symbol,
     type = Parameter;
     break;
   case lang::SymbolKind::TypeParameter:
+  case lang::SymbolKind::LifetimeParameter:
     type = TypeParameter;
     break;
   }
@@ -1647,6 +1648,7 @@ int completionItemKind(lang::CompletionCandidateKind kind) {
   case lang::CompletionCandidateKind::Struct:
     return 22;
   case lang::CompletionCandidateKind::TypeParameter:
+  case lang::CompletionCandidateKind::LifetimeParameter:
     return 25;
   }
   return 6;
@@ -1876,6 +1878,9 @@ struct DocumentAnalysis {
   lang::FrontendWorkMetrics workMetrics;
   std::optional<lang::FrontendOptions> includeSuggestionOptions;
   std::uint64_t frontendElapsedMicroseconds = 0;
+  // The signature-only analysis was rejected by MIR and the published result
+  // comes from analysing again with library-only bodies.
+  bool mirSignatureOnlyFallback = false;
   std::unordered_map<std::string, lang::lsp::FrontendSourceIdentity>
       sourceIdentities;
 };
@@ -3486,19 +3491,24 @@ private:
     frontendOptions.requireEntryPoint = project.requireEntryPoint;
     frontendOptions.program = project.program;
     frontendOptions.synthesizeTestEntry = false;
-    // HIR performs the compiler's concrete generic-instance reanalysis. The
-    // LSP retains it only so editor diagnostics agree with `gti check` for
-    // the open file's own code; MIR remains code-generation work and is not
-    // built for editor snapshots. Lowering is scoped to the program roots and
-    // the open file's declarations: library instances nothing in the file
-    // reaches are the library's own `gti check` concern.
-    frontendOptions.stopAfter = lang::FrontendPhase::Hir;
+    // Editor snapshots run the compiler through MIR, the single owner of
+    // body-local borrow and lifetime checking, so the editor publishes the
+    // same body diagnostics as `gti check` for the open file's code. HIR
+    // performs concrete generic-instance discovery; lowering is scoped to the
+    // program roots and the open file's declarations, and MIR lowers exactly
+    // that HIR. Library instances nothing in the file reaches are the
+    // library's own `gti check` concern. MIR's diagnostics arrive in
+    // `FrontendResult::diagnostics` like every other phase's.
+    frontendOptions.stopAfter = lang::FrontendPhase::Mir;
     frontendOptions.cancellation = request.cancellation.get();
     frontendOptions.lowerEntryUnitOnly = true;
-    // The LSP never reads HIR bodies: library-only instances (trusted
-    // declarations with only trusted arguments) are analysed for their
-    // diagnostics but not lowered, so the library code only they reach is
-    // not discovered; see HirLoweringScope::omitLibraryOnlyBodies.
+    // The editor does not need the bodies of library-only instances (trusted
+    // declarations with only trusted arguments): their callers depend only
+    // on signature contracts, and their own bodies are the library's
+    // `gti check` concern. HIR omits those bodies and MIR lowers each such
+    // instance as a signature-only declaration. See
+    // FrontendOptions::lowerLibraryOnlyInstanceBodies and the MIR rejection
+    // fallback below.
     frontendOptions.lowerLibraryOnlyInstanceBodies = false;
     // Likewise, standard-library bodies nothing in the open file reaches are
     // not analysed; their diagnostics are that library's `gti check` concern.
@@ -3535,20 +3545,45 @@ private:
       return result;
     }
     const SteadyClock::time_point frontendStart = SteadyClock::now();
-    lang::FrontendResult frontend =
-        lang::Frontend(frontendOptions)
-            .analyze(*filePath, source, {standardLibrary.prelude},
-                     request.sourceOverrides, {standardLibrary.root},
-                     project.packageSourceRoots);
+    const auto analyze = [&] {
+      return lang::Frontend(frontendOptions)
+          .analyze(*filePath, source, {standardLibrary.prelude},
+                   request.sourceOverrides, {standardLibrary.root},
+                   project.packageSourceRoots);
+    };
+    lang::FrontendResult frontend = analyze();
+    // MIR still verifies some calls and its interprocedural summaries
+    // (defined-failure effects, persistent-storage access, text relays) only
+    // against lowered callee bodies, so a signature-only declaration can be
+    // rejected where its body would verify; it is never accepted where its
+    // body would be rejected. A valid program is therefore published from
+    // the signature-only analysis, and a MIR rejection is confirmed by
+    // analysing again with library-only bodies: the published diagnostics
+    // are exactly those of complete lowering. See "Current Limits" in
+    // docs/architecture/lsp.md.
+    if (!frontend.cancelled && frontend.sourceValid && frontend.syntaxValid &&
+        (frontend.semanticValid || frontend.mirBorrowRejected) &&
+        frontend.hirValid && frontend.failureMetadataValid &&
+        !frontend.mirValid &&
+        result.workMetrics.hirOmittedInstanceBodies != 0 &&
+        (request.cancellation == nullptr ||
+         !request.cancellation->load(std::memory_order_relaxed))) {
+      result.mirSignatureOnlyFallback = true;
+      frontendOptions.lowerLibraryOnlyInstanceBodies = true;
+      frontend = analyze();
+    }
     result.frontendElapsedMicroseconds = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
             .count());
-    // HIR runs so that instantiated generic bodies report the same
-    // diagnostics as `gti check`; those diagnostics are already in
-    // `frontend.diagnostics`. No editor query reads HIR, so it is released
-    // here instead of being retained with every open document's snapshot.
+    // HIR and MIR run so that instantiated generic bodies and body-local
+    // borrow checking report the same diagnostics as `gti check`; those
+    // diagnostics are already in `frontend.diagnostics`. No editor query
+    // reads HIR, failure metadata or MIR, so they are released here instead
+    // of being retained with every open document's snapshot.
     frontend.hir = lang::HirProgram{};
+    frontend.failureMetadata = lang::FailureMetadata{};
+    frontend.mir = lang::MirProgram{};
     frontend.includeSuggestionsRequested =
         !request.audit && lang::canSuggestIncludes(frontend);
     if (frontend.includeSuggestionsRequested) {
@@ -4185,7 +4220,8 @@ private:
               guarded.analysis->frontendElapsedMicroseconds,
               guarded.analysis->workMetrics, retained,
               guarded.analysis->frontend != nullptr &&
-                  guarded.analysis->frontend->includeSuggestionsRequested);
+                  guarded.analysis->frontend->includeSuggestionsRequested,
+              {}, guarded.analysis->mirSignatureOnlyFallback);
         }
         try {
           // Retain only the shared immutable frontend and small publication
@@ -4954,8 +4990,8 @@ private:
       std::uint64_t elapsedMicroseconds,
       const lang::FrontendWorkMetrics &metrics,
       std::optional<std::size_t> retainedFrontends = std::nullopt,
-      bool includeSuggestionsRequested = false,
-      std::string_view requestId = {}) const {
+      bool includeSuggestionsRequested = false, std::string_view requestId = {},
+      bool mirSignatureOnlyFallback = false) const {
     if (!frontendTracePath) {
       return;
     }
@@ -5005,11 +5041,13 @@ private:
          static_cast<std::int64_t>(metrics.semanticLateDemandBodies)},
         {"hirOmittedInstanceBodies",
          static_cast<std::int64_t>(metrics.hirOmittedInstanceBodies)},
+        {"mirSignatureOnlyFallback", mirSignatureOnlyFallback},
         {"semanticLateDemandMicroseconds",
          static_cast<std::int64_t>(metrics.semanticLateDemandMicroseconds)},
         {"hirMicroseconds", static_cast<std::int64_t>(metrics.hirMicroseconds)},
         {"hirFunctionInstances",
          static_cast<std::int64_t>(metrics.hirFunctionInstances)},
+        {"mirMicroseconds", static_cast<std::int64_t>(metrics.mirMicroseconds)},
         {"includeSuggestionsRequested", includeSuggestionsRequested},
         {"preambleBuilds",
          static_cast<std::int64_t>(metrics.semanticPreambleBuilds)},

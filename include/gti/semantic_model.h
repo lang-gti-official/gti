@@ -1439,6 +1439,11 @@ struct ResolvedConstructorInitializerInfo {
   AccessMode borrowAccess = AccessMode::ReadOnly;
   bool generatedDefault = false;
   std::optional<std::size_t> ownedParameter;
+  // A base initializer whose base stores references: the selected base
+  // constructor's own dependency summary, as for an ordinary construction.
+  BorrowOriginKind borrowOrigin = BorrowOriginKind::None;
+  std::size_t borrowArgument = 0;
+  std::vector<std::size_t> borrowArguments;
 };
 
 struct ResolvedClassArguments {
@@ -1773,6 +1778,7 @@ enum class SemanticCompletionCandidateKind {
   Parameter,
   TypeParameter,
   ValueParameter,
+  LifetimeParameter,
 };
 
 struct SemanticCompletionCandidateRecord {
@@ -1845,6 +1851,9 @@ enum class SymbolKind {
   // denotes runtime storage and may have a concept-dependent type.
   RequirementParameter,
   Macro,
+  // A `lifetime` binder. Lifetimes are erased before semantic types, so the
+  // symbol is syntax-derived navigation identity only.
+  LifetimeParameter,
 };
 
 enum class OccurrenceRole : std::uint32_t {

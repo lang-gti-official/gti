@@ -12,8 +12,7 @@ public:
 
 int& larger(int& left, int right) { return left; }
 
-[[borrowed_from(value)]]
-int& relay<F>(F& callback, int& value) { return callback(value); }
+int&<a> relay<F, lifetime a>(F& callback, int&<a> value) { return callback(value); }
 
 int& pick_first(Record& record) { return record.first; }
 

@@ -206,8 +206,8 @@ public:
 }
 
 /// A checked read-only view over one source-defined contiguous owner.
-export class span<std::storage_element T> {
-  std::detail::prefix_owner<T>& data;
+export class span<std::storage_element T, lifetime source> {
+  std::detail::prefix_owner<T>&<source> data;
   size_t first_position;
   size_t element_count;
 
@@ -228,7 +228,7 @@ public:
 
   // The source owner, not a raw address, retains the checked dependency.
   // Public containers provide as_span() factories over this same contract.
-  span(std::detail::prefix_owner<T>& source, size_t offset, size_t count)
+  span(std::detail::prefix_owner<T>&<source> source, size_t offset, size_t count)
       : data(source), first_position(offset), element_count(count) {
     if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
     size_t remaining = source.length() - offset;
@@ -274,18 +274,18 @@ public:
     return this.at(index);
   }
 
-  span<T> first(size_t count) {
+  span<T, source> first(size_t count) {
     this.validate_subspan(size_t(0), count);
     return span<T>(this.data, this.first_position, count);
   }
 
-  span<T> last(size_t count) {
+  span<T, source> last(size_t count) {
     this.validate_subspan(size_t(0), count);
     return span<T>(this.data,
                    this.first_position + (this.element_count - count), count);
   }
 
-  span<T> subspan(size_t offset, size_t count) {
+  span<T, source> subspan(size_t offset, size_t count) {
     this.validate_subspan(offset, count);
     return span<T>(this.data, this.first_position + offset, count);
   }

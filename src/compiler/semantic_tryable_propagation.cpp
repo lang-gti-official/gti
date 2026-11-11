@@ -57,7 +57,7 @@ auto SemanticVisitor::Impl::protocolOperationCall(
   auto origin = functionReturnBorrowSummary(
       call.returnType, call.parameterTypes, 0, false, IntrinsicKind::None);
   if (candidate.declaration != nullptr &&
-      candidate.declaration->hasFunctionAttribute("borrowed_from")) {
+      hasExplicitBorrowContract(*candidate.declaration)) {
     const auto contract = genericReturnBorrowContract(
         *candidate.declaration, call.returnType, call.parameterTypes, 0, false);
     origin = {.origin = contract.origin,
@@ -337,7 +337,8 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                       "' needs an owned value or a reference transferred "
                       "from its operand's exact external dependency, and a "
                       "non-void owned residual without stored borrows.",
-                  "Declare a checked borrowed_from contract on take_value "
+                  "Declare take_value's result region from its operand, as in "
+                  "'T&<a> take_value<lifetime a>(... &<a> self)', "
                   "when returning a reference, and keep the residual owned.");
   }
   const SemanticType returnType = currentReturnType;

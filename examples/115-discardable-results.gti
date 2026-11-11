@@ -6,8 +6,8 @@ import std.vector;
 struct Counter {
   mut int value = 0;
 
-  [[discardable, borrowed_from(this)]]
-  mut int& add(int amount) mut {
+  [[discardable]]
+  mut int&<this> add(int amount) mut {
     this.value += amount;
     return this.value;
   }

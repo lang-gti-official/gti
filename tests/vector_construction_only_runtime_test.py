@@ -122,7 +122,7 @@ int main() {
   values.reserve(std::size_t(8));
   return borrowed.payload.has_value() ? 1 : 0;
 }
-""", "while a reference borrowed from it may still be live"),
+""", "may still be live"),
     ]
     modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-vector-construction-only-") as temporary:

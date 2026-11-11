@@ -1,5 +1,5 @@
 enum Pair { both(int& first, int& second) };
-[[borrowed_from(input)]] int& select(mut Pair input, bool choose) {
+int&<a> select<lifetime a>(mut Pair<a> input, bool choose) {
   switch (std::move(input)) {
     case Pair::both(first, second):
       if (choose) return first;

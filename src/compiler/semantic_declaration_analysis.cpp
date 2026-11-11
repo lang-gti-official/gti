@@ -1597,7 +1597,10 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         }
       }
     }
-    if (declaration.requirements().empty()) {
+    // An `outlives` relationship is a capability too; it is erased signature
+    // metadata, so it leaves no type-level application (RFC 0004).
+    if (declaration.requirements().empty() &&
+        declaration.constraintExpression().lifetimeRequirements.empty()) {
       report(declaration.name(),
              "A source-defined concept requires at least one capability.",
              "GTI-S2049");
@@ -1738,9 +1741,21 @@ auto SemanticVisitor::Impl::validateTypeAliasTarget(
 }
 
 auto SemanticVisitor::Impl::validateTypeAliasReference(
-    const TypeRef &target, const SemanticType &resolved) -> bool {
+    const TypeRef &target, const SemanticType &resolved,
+    const TypeAliasDecl *alias) -> bool {
   if (!target.reference && resolved.kind != SemanticType::Reference)
     return true;
+  // A reference alias over one of its own lifetime parameters keeps the
+  // borrow explicit at each use: `borrow<a>` names its region there.
+  if (alias != nullptr && target.reference && target.referenceLifetime) {
+    const auto parameters = alias->lifetimeParameters();
+    if (std::any_of(parameters.begin(), parameters.end(),
+                    [&](const GenericParameter &parameter) {
+                      return parameter.name.lexeme ==
+                             target.referenceLifetime->name.lexeme;
+                    }))
+      return true;
+  }
   report(target.reference ? *target.reference : target.name.last(),
          "Reference aliases are not supported; keep '&' explicit at each "
          "borrow site.",
@@ -1793,7 +1808,8 @@ auto SemanticVisitor::Impl::resolveTypeAlias(TypeAliasId id, const Token *use)
            "GTI-S2030");
     targetFormValid = false;
   }
-  if (!validateTypeAliasReference(target, SemanticType::Unknown)) {
+  if (!validateTypeAliasReference(target, SemanticType::Unknown,
+                                  alias.declaration)) {
     targetFormValid = false;
   }
   if (alias.ownerClass != 0 && target.isNativeFunction()) {
@@ -2814,7 +2830,14 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
     const ClassDecl &declaration, const std::vector<std::string> &scope)
     -> std::vector<GenericParameterInfo> {
   std::vector<GenericParameter> parameters;
+  // A pattern may bind only regions (`IntBorrow<int&<source>>`). Regions are
+  // erased signature metadata, so such a class has no type binder at all.
+  bool bindsRegion = false;
   const auto collect = [&](const auto &self, const TypeRef &type) -> void {
+    if ((type.referenceLifetime &&
+         type.referenceLifetime->name.kind == TokenKind::IDENTIFIER) ||
+        !type.lifetimeArguments.empty())
+      bindsRegion = true;
     if (type.qualifiedOwner) {
       self(self, *type.qualifiedOwner);
     }
@@ -2849,9 +2872,10 @@ auto SemanticVisitor::Impl::makeClassPatternParameters(
   for (const TypeRef &pattern : declaration.genericArgumentPatterns()) {
     collect(collect, pattern);
   }
-  if (parameters.empty()) {
+  if (parameters.empty() && !bindsRegion) {
     report(declaration.name(),
-           "A generic class argument pattern must declare a type parameter.",
+           "A generic class argument pattern must declare a type or lifetime "
+           "parameter.",
            "GTI-S2023");
   }
   // Binding order is independent of public argument order. The ordinary
@@ -2873,6 +2897,15 @@ auto SemanticVisitor::Impl::resolveClassArgumentPatterns(ClassId id) -> void {
     return;
   }
   owner.argumentPatternsResolving = true;
+  // A lifetime binder shares the class's binder namespace with the type
+  // binders its patterns introduce.
+  for (const auto &lifetime : owner.declaration->lifetimeParameters())
+    for (const auto &parameter : owner.genericParameters)
+      if (parameter.name.lexeme == lifetime.name.lexeme)
+        report(lifetime.name,
+               "Lifetime binder '" + lifetime.name.lexeme +
+                   "' collides with the type binder of the same name.",
+               "GTI-S2128");
   const auto savedNamespace = currentNamespace;
   const auto savedClass = currentClass;
   const auto savedSource = currentSourceUnit;
@@ -6385,6 +6418,24 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   }
   analyzingConstructorInitializer = enclosingConstructorInitializer;
 
+  // A forwarded pack supplies one base parameter per lane. A symbolic pack
+  // has no arity: each concrete constructor instance selects its target.
+  std::optional<std::vector<AnalyzedCallArgument>> lanes;
+  if (!argumentTypes.empty() &&
+      argumentTypes.back().kind == SemanticType::TypePack) {
+    lanes = concreteCallArguments(argumentTypes, initializer.arguments);
+    if (!lanes)
+      return;
+  }
+  const std::size_t argumentCount =
+      lanes ? lanes->size() : argumentTypes.size();
+  std::vector<SemanticType> laneTypes = argumentTypes;
+  if (lanes) {
+    laneTypes.clear();
+    for (const auto &lane : *lanes)
+      laneTypes.push_back(lane.type);
+  }
+
   const GenericSubstitution substitution = classSubstitution(baseType);
   struct ViableConstructor {
     const ConstructorInfo *constructor = nullptr;
@@ -6398,8 +6449,8 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
     if (!isCompilerTrustedRequester(location) && constructor.compilerPrivate) {
       continue;
     }
-    if (argumentTypes.size() < constructor.requiredParameterCount ||
-        argumentTypes.size() > constructor.parameterTypes.size()) {
+    if (argumentCount < constructor.requiredParameterCount ||
+        argumentCount > constructor.parameterTypes.size()) {
       continue;
     }
     std::vector<SemanticType> parameterTypes;
@@ -6411,7 +6462,18 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
       const SemanticType parameter =
           substituteType(constructor.parameterTypes[index], substitution);
       parameterTypes.emplace_back(parameter);
-      if (index >= argumentTypes.size()) {
+      if (index >= argumentCount) {
+        continue;
+      }
+      if (lanes) {
+        const auto &lane = (*lanes)[index];
+        if (!(lane.forwardedPackElement
+                  ? forwardedPackArgumentMatches(parameter, lane.type)
+                  : callArgumentMatches(parameter, lane.type,
+                                        *lane.expression))) {
+          exact = false;
+          break;
+        }
         continue;
       }
       if (!callArgumentMatches(parameter, argumentTypes[index],
@@ -6449,7 +6511,7 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
   }
   // A literal fallback position is a viability decision, never a ranking
   // conversion.
-  std::vector<SemanticType> rankingArgumentTypes = argumentTypes;
+  std::vector<SemanticType> rankingArgumentTypes = laneTypes;
   for (const ViableConstructor &candidate : viable) {
     for (const std::size_t index :
          candidate.contextualIntegerLiteralArguments) {
@@ -6531,6 +6593,23 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
          "Constructor declared here."});
     diagnostics.emplace_back(std::move(diagnostic));
   }
+  // A base that stores references is constructed in place: its selected
+  // constructor's suppliers are the base initializer's own dependencies.
+  BorrowOriginKind baseBorrowOrigin = BorrowOriginKind::None;
+  std::vector<std::size_t> baseBorrowArguments;
+  if (const auto paths = storedReferencePaths(baseType);
+      selected.constructor != nullptr && !paths.empty() &&
+      std::none_of(paths.begin(), paths.end(),
+                   [](const auto &path) { return !path.conditions.empty(); })) {
+    baseBorrowArguments = storedCarrierConstructorParameters(
+        baseType, *selected.constructor, selected.parameterTypes);
+    if (!baseBorrowArguments.empty())
+      baseBorrowOrigin = BorrowOriginKind::Argument;
+  }
+  const std::size_t baseBorrowArgument =
+      baseBorrowArguments.empty() ? 0 : baseBorrowArguments.front();
+  if (storedReferencePaths(baseType).size() <= 1)
+    baseBorrowArguments.clear();
   semanticModel.record(
       initializer,
       ResolvedConstructorInitializerInfo{
@@ -6548,13 +6627,19 @@ auto SemanticVisitor::Impl::analyzeBaseConstructorInitializer(
                   ? std::vector<const Expr *>{}
                   : omittedDefaultArguments(
                         selected.constructor->declaration->parameters(),
-                        initializer.arguments.size()),
-          .generatedDefault = selected.generatedDefault});
+                        argumentCount),
+          .borrowAccess = baseBorrowOrigin == BorrowOriginKind::None
+                              ? AccessMode::ReadOnly
+                              : borrowAccess(baseType),
+          .generatedDefault = selected.generatedDefault,
+          .borrowOrigin = baseBorrowOrigin,
+          .borrowArgument = baseBorrowArgument,
+          .borrowArguments = std::move(baseBorrowArguments)});
   recordProgramArgumentBoundaryEffects(selected.parameterTypes,
                                        initializer.arguments);
   const SourceSpan span = tokenSpan(location);
-  recordProgramConstructorDefaultArgumentEffects(
-      selected.constructor, initializer.arguments.size(), span);
+  recordProgramConstructorDefaultArgumentEffects(selected.constructor,
+                                                 argumentCount, span);
   if (selected.generatedDefault) {
     recordProgramDefaultConstructionEffects(baseType, span);
   } else {
@@ -7754,15 +7839,6 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
       }
       continue;
     }
-    for (const ClassBaseTypeInfo &base : owner.bases) {
-      if (!base.interface && typeTraits(base.type).containsBorrowedState) {
-        report(base.syntax == nullptr ? owner.name
-                                      : base.syntax->type.name.last(),
-               "Borrowed state cannot be inherited in the current lifetime "
-               "model; store one direct reference instead.",
-               "GTI-S2045");
-      }
-    }
     for (const FieldInfo &field : owner.fields) {
       if (field.declaration == nullptr || field.declaration->type().reference) {
         continue;
@@ -7829,6 +7905,19 @@ auto SemanticVisitor::Impl::validateStoredReferenceContracts() -> void {
                                        ? AccessMode::Mutable
                                        : stored.access;
         continue;
+      }
+      // A class that binds regions states its constructor's suppliers in the
+      // signature. Whether the body's initializer honors them is body-local
+      // validity, which MIR owns.
+      if (owner.declaration != nullptr) {
+        if (auto suppliers = constructorLifetimeSuppliers(
+                *owner.declaration, *constructor.declaration);
+            suppliers.size() > 1) {
+          constructor.borrowParameter = suppliers.front();
+          constructor.borrowParameters = std::move(suppliers);
+          constructor.borrowAccess = stored.access;
+          continue;
+        }
       }
       const ConstructorInitializer *binding = nullptr;
       for (const ConstructorInitializer &initializer :
@@ -9289,6 +9378,29 @@ auto SemanticVisitor::Impl::receiverAccessorFields(
                              : accessorReceiverFields(*accessor, visiting);
 }
 
+namespace {
+// An expression that names no storage: literals, qualified names that are
+// not storage (the caller checks those first) and calls of such arguments.
+bool dependencyFreeReturn(const Expr &expression) {
+  if (const auto *group = exprAs<Grouping>(&expression))
+    return group->expression() && dependencyFreeReturn(*group->expression());
+  if (exprAs<LiteralExpr>(&expression) != nullptr ||
+      exprAs<QualifiedName>(&expression) != nullptr)
+    return true;
+  if (const auto *call = exprAs<Call>(&expression)) {
+    if (!call->callee() ||
+        (exprAs<Variable>(call->callee().get()) == nullptr &&
+         exprAs<QualifiedName>(call->callee().get()) == nullptr))
+      return false;
+    return std::all_of(call->arguments().begin(), call->arguments().end(),
+                       [](const ExprPtr &argument) {
+                         return argument && dependencyFreeReturn(*argument);
+                       });
+  }
+  return false;
+}
+} // namespace
+
 auto SemanticVisitor::Impl::globalReturnBorrowPlace(
     const FunctionInfo &function) -> std::optional<BorrowOriginPlace> {
   if (function.declaration == nullptr ||
@@ -9376,6 +9488,36 @@ auto SemanticVisitor::Impl::globalReturnBorrowPlace(
     } else if (!candidate) {
       candidate = predeclaredGlobalBorrowPlace(*returned);
     }
+    // RFC 0004: a result with no borrow-carrying input is `static`. A return
+    // built only from literals and names, such as `unexpected(code::missing)`
+    // or `lookup<int&>(false)`, borrows nothing, so it leaves the exact
+    // static place of the other returns as the refinement. MIR still proves
+    // every returned loan against that place.
+    if (!candidate && signatureContractDefaults() &&
+        dependencyFreeReturn(**returned))
+      continue;
+    // A construction such as `slot::item(global)` whose only storage input
+    // is one static place carries that place.
+    if (!candidate && signatureContractDefaults())
+      if (const auto *call = exprAs<Call>(returned->get());
+          call != nullptr && call->callee() &&
+          (exprAs<Variable>(call->callee().get()) != nullptr ||
+           exprAs<QualifiedName>(call->callee().get()) != nullptr)) {
+        std::optional<BorrowOriginPlace> input;
+        bool single = true;
+        for (const ExprPtr &argument : call->arguments()) {
+          if (argument && dependencyFreeReturn(*argument))
+            continue;
+          auto place = predeclaredGlobalBorrowPlace(argument);
+          if (!place || input) {
+            single = false;
+            break;
+          }
+          input = std::move(place);
+        }
+        if (single)
+          candidate = std::move(input);
+      }
     if (!candidate) {
       valid = false;
       break;
@@ -10046,6 +10188,18 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
       updated.returnBorrowOrigin = contract.origin;
       updated.returnBorrowParameter = contract.parameter;
       updated.returnBorrowAccess = contract.access;
+      updated.returnBorrowParameters = contract.parameters;
+      // RFC 0004: an explicit contract states its complete contract too.
+      if (signatureContractDefaults())
+        if (const FunctionDecl *syntax = updated.bodyDeclaration())
+          if (auto complete = signatureCompleteReturnBorrow(
+                  updated, syntax->receiverMutability())) {
+            if (updated.returnType.kind == SemanticType::Class ||
+                (updated.returnType.kind == SemanticType::Reference &&
+                 updated.ownerClass))
+              updated.returnBorrowFields = complete->dependencies;
+            updated.completeReturnBorrow = std::move(*complete);
+          }
       updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
       semanticModel.record(*declaration, updated);
       publishFunctionBorrowSummary(updated, candidateIndex);
@@ -10054,12 +10208,35 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
         updated.returnType, updated.parameterTypes, updated.ownerClass,
         updated.staticMember, updated.intrinsic);
+    // A result written `static` never elides to a parameter: only static
+    // storage, which the body's global-origin inference proves, supplies it.
+    const FunctionDecl *resultSyntax = updated.bodyDeclaration();
+    const bool staticResult =
+        resultSyntax != nullptr &&
+        explicitLifetimeResult(*resultSyntax, updated.parameterTypes,
+                               updated.ownerClass)
+                .kind == ExplicitLifetimeResult::Kind::Static;
+    if (staticResult)
+      summary = FunctionReturnBorrowSummary{.access = summary.access};
+    // RFC 0004: under signature contracts a free or static function's
+    // read-only `T&<static>` result is itself the contract. It names no exact
+    // place; MIR proves that every returned loan is rooted in immutable
+    // static storage. A body returning one exact place still refines it.
+    if (staticResult && signatureContractDefaults() &&
+        (updated.ownerClass == 0 || updated.staticMember) &&
+        updated.returnType.kind == SemanticType::Reference &&
+        updated.returnType.referenceAccess == AccessMode::ReadOnly &&
+        updated.intrinsic == IntrinsicKind::None)
+      summary.origin = BorrowOriginKind::Global;
+    // Text-view relays (L-OWN-02) keep their own derivation until text views
+    // get a signature rule; stored-field refinement is body inference.
     if (const std::optional<FunctionReturnBorrowSummary> dynamicText =
             dynamicTextReturnBorrowSummary(updated)) {
       summary = *dynamicText;
     }
-    if (const auto fields = storedFieldReturnBorrowSummary(updated))
-      summary = *fields;
+    if (!signatureContractDefaults())
+      if (const auto fields = storedFieldReturnBorrowSummary(updated))
+        summary = *fields;
     updated.returnedTextReference = textReferenceReturnSummary(updated);
     if (isBorrowReturningType(updated.returnType) &&
         updated.intrinsic == IntrinsicKind::None) {
@@ -10076,6 +10253,26 @@ auto SemanticVisitor::Impl::resolveFunctionBorrowSummaries() -> void {
     updated.returnBorrowParameters = summary.parameters;
     updated.returnBorrowFields = summary.fields;
     updated.returnBorrowPlace = summary.place;
+    narrowToTypeParameterSuppliers(updated);
+    if (updated.returnBorrowOrigin == BorrowOriginKind::None &&
+        implicitStaticCarrierResult(updated.returnType, updated.parameterTypes,
+                                    updated.ownerClass, updated.staticMember,
+                                    updated.intrinsic)) {
+      updated.returnBorrowOrigin = BorrowOriginKind::Global;
+      updated.returnBorrowAccess = AccessMode::ReadOnly;
+    }
+    // RFC 0004: the signature alone states an unannotated result's complete
+    // contract, published before any body is analyzed so every call sees it.
+    if (signatureContractDefaults() && updated.declaration != nullptr)
+      if (const FunctionDecl *syntax = updated.bodyDeclaration())
+        if (auto complete = signatureCompleteReturnBorrow(
+                updated, syntax->receiverMutability())) {
+          if (updated.returnType.kind == SemanticType::Class ||
+              (updated.returnType.kind == SemanticType::Reference &&
+               updated.ownerClass))
+            updated.returnBorrowFields = complete->dependencies;
+          updated.completeReturnBorrow = std::move(*complete);
+        }
     updated.ownedPointeeProjection = ownedPointeeReturnProjection(updated);
     semanticModel.record(*declaration, updated);
     publishFunctionBorrowSummary(updated, candidateIndex);
@@ -11004,7 +11201,7 @@ auto SemanticVisitor::Impl::projectCallableDeclaration(
       .returnBorrowOrigin = declaration.returnBorrowOrigin,
       .explicitReturnBorrowOrigin =
           declaration.syntax != nullptr &&
-          declaration.syntax->hasFunctionAttribute("borrowed_from"),
+          hasExplicitBorrowContract(*declaration.syntax),
       .returnBorrowParameter = declaration.returnBorrowParameter,
       .returnBorrowAccess = declaration.returnBorrowAccess,
       .returnBorrowParameters = declaration.returnBorrowParameters,
@@ -11032,7 +11229,7 @@ auto SemanticVisitor::Impl::publishCallableDeclaration(
           candidate.staticMember, candidate.record().intrinsic);
   const bool candidateOwnsBorrow =
       candidate.returnBorrowOrigin != BorrowOriginKind::None ||
-      function.hasFunctionAttribute("borrowed_from");
+      hasExplicitBorrowContract(function);
   declaration->qualifiedName =
       qualifiedName(qualifiedScope, function.name().lexeme);
   declaration->namespaceScope = namespaceScope;

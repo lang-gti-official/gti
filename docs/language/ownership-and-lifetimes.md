@@ -413,6 +413,234 @@ generally bind to temporaries or outlive the storage they borrow. The bounded
 call-only read borrow below is not a local or stored reference binding and does
 not extend the temporary's lifetime.
 
+### Lifetime parameters and elision
+
+A lifetime parameter names a relationship that the caller must satisfy. It does
+not choose a duration, allocate storage, or keep an owner alive. Named regions
+use ordinary generic parameter lists; the region of a reference follows its
+`&`:
+
+```gti
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+
+int&<a> choose<lifetime a>(int&<a> left, int&<a> right, bool first) {
+  if (first) { return left; }
+  return right;
+}
+
+struct Reading<lifetime data> {
+  int&<data> value;
+  Reading(int&<data> input) : value(input) {}
+  int&<data> get() { return this.value; }
+};
+```
+
+`choose` permits either input to supply the result. Its callers therefore keep
+both possible owners valid while that result is live, even when a particular
+implementation always returns the first input. The reference still contains
+only its ordinary runtime representation. The compiler checks the relationship
+and preserves the complete supplier set through calls, aliases and MIR; regions
+are erased at the verified representation boundary.
+
+Ordinary callers infer lifetime arguments:
+
+```gti
+int left = 3;
+int right = 9;
+int& selected = choose(left, right, false);
+Reading reading{selected};
+```
+
+Local `T&` and `mut T&` infer their regions from checked places and uses. `_`
+requests an inferred lifetime explicitly, as in `Reading<_>`. In declaration
+signatures, omitted input regions receive separate parameters; an omitted result
+region uses the sole eligible input or the method receiver. Ambiguous published
+results require a declared relationship.
+
+A result region bound by the function itself names its suppliers: exactly the
+parameters whose types mention that region. `int&<a> pick<lifetime a>(int&<a>
+first, int& second)` states the same contract as the older attribute spelling
+`[[borrowed_from(first)]] int& pick(int& first, int& second)`, and both
+declarations produce the same verified MIR. A region shared by several
+parameters, as in `choose` above, names all of them. A body may return a
+borrow of any subset of them; callers keep every named supplier borrowed.
+
+A method result written in a region its class binds names the receiver's
+stored fields in that region. When nothing in the class stores the region,
+as in a callable pattern `class Local<R&<result>(R&<result>)>` with
+`R&<result> invoke(R&<result> value)`, the parameters written in it are its
+suppliers, exactly as for a method's own binder. A class that also stores
+the region does not yet combine its receiver fields with such parameters;
+returning the parameter there remains rejected. Such a result never borrows
+storage the receiver owns (GTI-S2127), so a consuming method may return it,
+by reference or as a carrier like `View<a> take() &&`: it outlives the
+consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
+
+A reference parameter pack follows the same rule lane by lane. In
+`int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
+`values` supplies the result, while in
+`int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... rest)` only
+`first` does: the unnamed lanes are not retained by the caller, and the body
+cannot return a borrow of them. Each named lane keeps its own entry authority
+in MIR, so mutating any named argument while the result is live is rejected,
+and the ordinary call-site rules reject a pack formed from overlapping
+mutable lanes. A borrowed result whose regions are elided still cannot take a
+reference pack, since the elided form would not name its suppliers.
+
+A pack may also be forwarded to a fixed-arity overload set,
+`return choose(values...);`. The symbolic declaration has no arity, so each
+concrete instance selects its exact overload from the expanded lanes
+(defaults fill omitted trailing parameters), and a constructor may forward
+its class's pack to a base constructor the same way. In a class matched by a
+callable pattern `R(Args...)`, a method `R invoke(Args... values)` whose
+instance makes `R` a reference or borrowing carrier states that every
+borrowing lane of `values` may supply its result. Its symbolic body may
+relay a generic callable's reference result there, as in
+`return callable(values...);`; each concrete instance checks that the
+relayed borrow reaches only those lanes. A call through such a method or
+operator binds every lane its instance expands, not only the first.
+
+A type alias may name a reference only when the reference's region is one of
+the alias's own lifetime parameters, as in
+`using borrow<lifetime a> = Slots&<a>;`: each use, such as
+`borrow<a> access<lifetime a>(Slots&<a> input)`, still spells the borrow and
+its region. Every other reference alias remains `GTI-S2030`. `[[borrowed_from]]` still
+works and is slated for deprecation; every contract it states has a lifetime
+spelling. A receiver-owned result, including an overloaded operator's, is
+`int&<this> get()`; a parameter supplier is a region the function binds, also
+for a by-value carrier before a value pack
+(`int&<a> lane<lifetime a, Args...>(View<a> first, Args... rest)`); protocol
+operations and conformances bind regions in their signatures
+(`int&<a> get<lifetime a>(T&<a> source)`); requirement results name the
+parameter's region (`-> T&<owner>`, `-> Window<source>`, `-> auto<input>`). A
+carrier type that declares no lifetime parameter must declare one before its
+region can be named.
+
+Eligible private helpers may infer
+relationships from their bodies, including mutually recursive helpers; exported
+contracts do not depend on inspecting the implementation. Inference does not
+upgrade read-only access or manufacture an owner for a raw pointer.
+
+Built-in text equality reads both operands during the expression and returns
+only a boolean. Two valid text views can therefore have independent storage
+regions; neither region must outlive the other. This comparison rule does not
+permit assigning one view to an incompatible lifetime or extending its storage.
+
+In a payload-enum switch label, omitted lifetime arguments and `_` use the
+switched value's exact regions, including holes nested inside type arguments.
+Explicit named regions, ordinary type and value arguments, and reference access
+must still match. The pattern binds payloads from that checked enum instance;
+it does not create a new borrow or convert the enum to another type.
+
+Payload construction applies the same checked lifetime conversions as ordinary
+initialization. A reference or borrowed value may use a shorter stored region
+when its source covers that region and its type permits the conversion. An
+inferred payload region can cover the common usable part of several inputs;
+all of their storage dependencies remain live. Conversion preserves the exact
+variant, ordinary type and value arguments, reference access, and cleanup.
+The converted value retains the same possible active alternatives and all of
+their owner dependencies. Guard types follow each exact field path, so two
+fields can shorten a shared source lifetime independently without confusing
+their variant evidence. Returned enum contracts are instantiated for the call;
+a prior call's regions do not become part of a cached function-body summary.
+
+When an owning payload retains borrowed state, its dependency remains live
+through that payload's cleanup. MIR checks the exact selected payload recipe,
+complete source dependencies, and transfer from prepared input cleanup into
+the enum's cleanup obligation. Shortening a region changes the checked type
+of the prepared value while preserving its source object and cleanup identity.
+
+A stored reference with omitted region receives an anonymous declaration slot.
+Distinct fields have distinct slots; constructor binding determines their actual
+origins. Recursive declarations whose omitted slots would expand indefinitely
+need explicit parameters. Named and anonymous records still obey the same
+storage, movement, access and cleanup rules.
+
+`T&<this>` names a method receiver's borrow region. A method returning an
+external stored reference can instead name that field's region, as `Reading.get`
+does above; the external referent and the temporary or local carrier's storage
+have distinct lifetimes. `mut T&<a>` describes exclusive access for a region.
+It does not make the referent covariant: nested mutable referent types remain
+invariant. An explicit region suffix is not accepted on the restricted move
+form `T&&`.
+
+`requires outlives<a, b>` states that `a` covers `b`. Type-outlives requirements
+use the same `outlives<T, a>` form. `static` denotes independently proved static
+storage, not a request to extend a local or thread-local value's lifetime. Bounds
+are proof obligations; writing one cannot make an invalid escape safe.
+
+A raw pointer stores an address, so `outlives<T*, a>` does not require or imply
+`outlives<T, a>`, even when `T` contains checked references. The pointee's type
+and lifetime metadata still need valid scope and shape. This storage rule does
+not justify dereferencing the pointer, restoring a checked reference, or
+promoting a pointee reference to `static`; those retain their separate
+[raw-pointer and unsafe obligations](raw-pointers.md). Checked references and
+owned fields continue to carry their stored borrowing relationships.
+
+A checked borrow of a container also establishes the validity of its stored
+fields for that borrow. For example, borrowing `Cell<T>` containing a `T value`
+field for `a` implies `outlives<T, a>`. This applies through nested fields, base
+subobjects and enum payloads. A type parameter that is not stored, or appears
+only behind a raw pointer, supplies no such implication. The derived bound
+cannot extend beyond the container's proven borrow region.
+
+Callable signatures can quantify a fresh region for each invocation:
+
+```gti
+using BorrowIdentity = for<lifetime a> int&<a>(int&<a>);
+```
+
+The invocation's `a` is separate from any fixed region held by a callable's
+captured environment. Nested callable requirements remain in their own scope;
+they cannot justify a surrounding return or stored reference.
+
+A lambda can retain lifetime facts established by its enclosing reference
+parameters. Those fixed facts are checked when the lambda is formed and remain
+separate from the requirements of each invocation. For example, a surrounding
+`T&<a>` establishes `outlives<T, a>` for a lambda that explicitly uses the fixed
+`a`; it does not establish the same promise for an unrelated fresh invocation
+region. A disjunctive requirement remains a disjunction inside the lambda.
+
+A typed local copy or move can infer omitted stored regions from its source:
+`Reading copied{original}` and `Reading moved{std::move(original)}` preserve
+the source's region relationships. Explicit `_` arguments have the same
+inference role. Written named or `static` regions remain fixed, repeated slots
+must agree, and deleted copy/move policies still apply. A generic type argument
+already substituted for `T` is an exact target, not a new omitted-region site.
+
+[Example 192](../../examples/192-lifetime-parameters.gti) demonstrates named
+relationships, elided identity, a borrowed record and a projected reference-region
+pattern with inferred callers, typed copy/move inference, and a lambda with a
+checked fixed environment.
+The complete target is [RFC 0004](https://github.com/lang-gti-official/rfcs/blob/codex/proposal-lifetime-parameters/rfcs/0004-lifetime-parameters-and-elision.md).
+Implementation of all compositions is still in progress: public generic
+callable wrappers whose result region is a callable pattern's region,
+callable-pattern lanes that are references to borrowed carriers, and
+reference packs that construct borrowed carriers need further integration. Named regions alone do not admit dynamically managed
+reference storage; its typed-storage obligations remain the dependent RFC 0003
+work.
+
+MIR checks every body against signature contracts only, so some programs Rust
+accepts are still rejected, never the reverse:
+
+- A region cannot travel through a type argument: `transform` with a mapper
+  returning `int&<static>` is rejected (GTI-S2022), unlike Rust's
+  `Result::map` over a `U` that carries a lifetime.
+- A result region cannot name both the receiver's stored region and a
+  parameter (`int&<a> operator()(int&<a> input) &&` in `C<lifetime a>`).
+- A relay through more than one stored reference of a by-value carrier
+  (`c.referent.next`) is a GTI-S2085 supplier rejection.
+- A carrier from a virtual call cannot serve as a temporary receiver
+  (GTI-S2081), and a binding that borrows a temporary receiver holding no
+  borrowed state is rejected even when unused (GTI-S2045).
+- A record factory with two distinct regions
+  (`Two<f, s> make<lifetime f, lifetime s>(int&<f>, int&<s>)`) is rejected;
+  one shared region over every supplier is accepted.
+- A borrow conflict inside a generic body is reported for each concrete
+  instance, not at the definition.
+
+### Reference places and endpoints
+
 Assignment targets are checked by their resolved place category and access,
 not by whether they are spelled as a variable, subscript, or call. A stable
 mutable-reference result supports `owner.slot() = value` and compound updates
@@ -583,7 +811,8 @@ or receiver storage and independently verifies the result's declared owner,
 projection and access. Local/by-value storage, temporaries and cleanup-bound
 carrier dependencies still cannot escape. Returning a child keeps the borrow
 attached to the caller's owner; it does not reactivate that owner's conflicting
-access while the returned borrow remains live. No lifetime syntax is added.
+access while the returned borrow remains live. Ordinary local reborrows need no
+written lifetime arguments.
 
 Nested patterns may relay the same caller-owned referent: a reference binding
 to an outer payload is an alias of that payload, so an inner payload reference
@@ -833,8 +1062,8 @@ error, as do mutation under an already-live lexical loan, overlapping mutable
 parameters, and a later read under an earlier exclusive loan. This does not
 introduce last-use ending for full-expression temporaries or borrowed results.
 
-Reborrowing adds no syntax or explicit lifetime parameter. It uses the existing
-`T&` and `mut T&` reference declarations:
+Local reborrowing normally infers its relationships. It uses plain `T&` and
+`mut T&` reference declarations:
 
 ```gti
 mut Widget& parent = widget;
@@ -1039,11 +1268,12 @@ source-defined client: it holds two spans, uses the shorter input length, and
 offers indexed `first`, `second`, and `subspan` operations. It has no special
 compiler recognition: its checked iterators and reference proxies use the same
 general stored-dependency and range protocols as application-defined carriers.
-Whole-carrier by-value forwarding is supported. The separately escaping
-reference-return rule for a by-value carrier parameter still requires its one
-exact reference path; selecting an individual path from a multi-path by-value
-parameter is not part of this slice. Receiver-based accessors remain available
-and conservatively retain the receiver's complete owner set.
+Whole-carrier by-value forwarding is supported. A by-value borrowed carrier
+may return one of its externally stored references under its declared lifetime
+contract, including selection between multiple stored fields. It cannot return
+a reference to its own local shell. The result retains every supplier permitted
+by the declaration; receiver-based accessors also preserve their complete
+published owner set.
 
 An ordinary local, parameter, or returned reference may refer to one of these
 borrowed-state objects. It protects two distinct things: the object's physical
@@ -1084,8 +1314,8 @@ returned by value under the existing return-origin rules. Returning a reference
 to a local copy or by-value parameter remains invalid; `GTI-S2017` or the
 existing by-value-carrier `GTI-S2085` diagnoses the escaping storage.
 
-No source lifetime parameters are introduced. Constructor parameter bindings
-and unambiguous direct return expressions establish field-wise origin maps.
+Named lifetime contracts coexist with constructor parameter bindings and
+unambiguous direct return expressions that establish field-wise origin maps.
 A factory may reorder its parameters or bind several shared fields to one
 parameter; unused parameters do not become result dependencies. Ordinary
 local carriers may compose shared and exclusive references from independent
@@ -1124,17 +1354,29 @@ cannot be retained in a local or returned from the function. An exact
 stored-field result instead retains the external referent and does not borrow
 the temporary carrier's inline storage.
 
-Inherited borrowed state, arrays of borrowed carriers,
+A class may inherit a base that stores references. The base subobject's
+stored references are the derived object's own: the base initializer's
+constructor supplies them, each keeps the region its base declares (so
+`Derived<a> : Base<a>` and `Leaf<a, b> : Root<b, a>` keep each field's own
+origin), methods and callers read them as ordinary fields, and the base's
+destructor runs while they are still borrowed. A reference read out of one
+stored field of a composed local carrier depends only on that field's own
+supplier.
+
+Arrays of borrowed carriers,
 global/static or captured borrowed storage, dependency-changing returns, and
 assignment that would replace a carrier's dependency remain rejected. Mutable
 dependencies are limited to an exact
 stable local, parameter, receiver, or existing-loan origin. They do not admit
-raw or opaque origins, dynamic-index identity, arbitrary lifetime parameters,
-or an independently escaping child reference.
+raw or opaque origins or unproved dynamic-index identity. Named lifetime
+parameters describe these checked relationships; they do not supply missing
+storage or access evidence for an escaping child reference.
 
-An ordinary borrowed class may declare a destructor. A borrowed class whose
-source destructor or nested borrowed field/base can use or release a dependency
-retains that dependency until cleanup finishes, not just its last explicit read. Moving
+An ordinary borrowed class may declare a destructor. A source destructor makes
+that class noncopyable; use explicit movement to transfer its cleanup obligation.
+A borrowed class whose source destructor or nested borrowed field/base can use
+or release a dependency retains that dependency until cleanup finishes, not just
+its last explicit read. Moving
 it transfers the cleanup obligation and the same dependency protection. It may
 be passed by value or moved into another direct field under the existing
 constructor origin contract. Failed construction rolls back initialized fields
@@ -1320,8 +1562,15 @@ demonstrates preserving a named root while reusing owned path intermediates.
 The receiver may
 mutate or move from its fields because the whole exact receiver place is being
 consumed, and it may finish with moved fields rather than restoring a value
-that is no longer available. It cannot return a reference or tracked
-borrowed-state carrier. Mutually exclusive control-flow paths may each consume
+that is no longer available. A reference or borrowed class/enum result must
+have a complete checked supplier contract independent of storage owned by the
+consumed receiver. Argument and global suppliers are permitted. A receiver
+supplier must cross an exact stored reference along its typed field/base path;
+neither the receiver shell nor its owned fields or owning pointees survive by
+virtue of the result's lifetime annotation. Every return path is checked, so a
+mixture of external and receiver-owned suppliers is rejected. A proven empty
+carrier alternative may have no suppliers; a reference result may not.
+Mutually exclusive control-flow paths may each consume
 the callable, but any path permitting a second invocation or later use is
 rejected by the same availability analysis as an ordinary explicit move.
 Inside a consuming method, `std::move(this)` explicitly transfers the whole
@@ -1637,8 +1886,14 @@ std::function_ptr<int&(std::vector<int>&)> first{head};
 int& front = first(values);   // borrows `values`, not the pointer
 ```
 
-An ambiguous signature (two eligible parameters), a mutable reference result
-and a borrowed-state class result are rejected before the view exists.
+Under RFC 0004 signature contracts, a signature whose eligible read-only
+reference parameters share the result's region, as in
+`for<lifetime r> int&<r>(int&<r>, int&<r>, bool)`, borrows all of them: each
+invocation keeps every such argument borrowed, and the target the pointer is
+built from may borrow any subset of them. (Signature types erase regions, so
+two eligible parameters always form this union.) Without signature contracts
+two eligible parameters are ambiguous. A mutable reference result and a
+borrowed-state class result are rejected before the view exists.
 
 A signature whose result is `std::string_view` or `c_string` names no origin,
 so an invocation through the pointer or view returns ownerless text and keeps
@@ -1668,7 +1923,11 @@ Exactly one eligible parameter supplies the inferred result origin, and every
 `return` must derive from that parameter. A mutable result requires mutable
 input authority. A read-only result may borrow a read-only parameter or
 reborrow a mutable parameter with reduced access. Two eligible parameters are
-ambiguous; the return body does not silently choose between them.
+ambiguous; the return body does not silently choose between them. Inside a
+class matched by a callable pattern `R&<result>(Args...)`, a lambda written
+`-> R&<result>` whose final parameter is the pattern's `Args...` pack is
+supplied by that pack's reference lanes alone, exactly as a method of the
+class is, so `[](F& target, Args... values) -> R&<result>` names `values`.
 
 This extends the earlier read-only lambda result contract. Local reference
 aliases, nested reborrows and field projections may preserve the selected
@@ -1683,8 +1942,9 @@ Direct invocation and generic `F`/`F&` relays preserve that origin and access:
 auto same = [](int& value) -> int& { return value; };
 int& view = same(cell);              // borrows `cell`
 
-[[borrowed_from(value)]]
-int& relay<F>(F& callback, int& value) { return callback(value); }
+int&<a> relay<F, lifetime a>(F& callback, int&<a> value) {
+  return callback(value);
+}
 
 auto increment = [](mut int& value) -> mut int& {
   value += 1;
@@ -1710,19 +1970,31 @@ existing read-only result contract derived from a read-only signature
 parameter. The new mutable-result and read-only-from-mutable forms apply to
 direct and concrete generic invocation; unsupported erased conversions are
 diagnosed before code generation. Named functions retain their existing
-inference and explicit `borrowed_from` rules.
+inference and explicit result-region rules.
 
-A generic relay names the parameter its result borrows with `borrowed_from`;
-each concrete instance verifies that the selected callable's own origin
-reaches exactly that parameter. On a declaration whose result type is a
-generic parameter, `borrowed_from` binds only the instances whose result is a
+A generic callable invoked where its body requires a copyable value without
+borrowed state, as in `int observe<F>(F& callback) { return callback(0); }`,
+also accepts a callable whose result is a checked reference to exactly that
+type, such as `int&<static> fixed(int)` or
+`int&<a> identity<lifetime a>(int&<a>)`. The selected signature's result
+region (fresh per invocation, an elided input region, or `static`) governs
+the reference, and the caller reads one value through it within the
+invocation's full-expression; no borrow outlives the call. Binding that
+result to a reference inside the generic body still requires a declared
+result relationship.
+
+A generic relay names the parameter its result borrows with a result region
+(or the older `[[borrowed_from(value)]]` spelling); each concrete instance
+verifies that the selected callable's own origin reaches exactly that
+parameter. On a declaration whose result type is a generic parameter,
+the result region binds only the instances whose result is a
 checked reference and may name a final parameter pack, in which case the one
 reference element of the expanded pack in that instance owns the result.
 `std::function_ref` and `std::function_ptr` declare their call operators this
 way.
 
 A return type obtained from an associated type may itself be a reference.
-With an explicit, verified `borrowed_from` contract, that exact reference type
+With an explicit, verified result-region contract, that exact reference type
 does not require appending a second `&` to the projection spelling. The same
 instance checks prove its origin and access; generic locals and parameters
 retain their existing explicit reference-declarator rules.
@@ -1750,10 +2022,20 @@ Two general facilities support this ordinary source wrapper:
   `std::erased_object&` and `mut std::erased_object&` respectively. Erasure
   preserves lifetime/access dependencies. The referent cannot be constructed,
   read as a value, or used to acquire transfer/share capability.
+  Generic erasure protects the object's physical storage even when its type
+  hides nested borrowed fields. Erasing a local carrier does not make its
+  storage live as long as the carrier's external owners. The trusted operation
+  uses the same input/result lifetime application as ordinary checked calls;
+  it does not give ordinary unrelated types an opaque-view conversion.
 - `std::restore_ref<T>(erased)` and `std::restore_mut<T>(erased)` require
   `unsafe`: the caller must supply precisely the original type. Shared erasure
   cannot be restored with mutable access. Restoration retains checked lifetime
   dependencies; `unsafe` does not make them disappear.
+  For an inferred output region `a`, restoration requires `outlives<T, a>`
+  independently of the opaque reference's storage lifetime. A generic helper
+  with only an erased input declares that requirement explicitly; a typed
+  `T&<a>` input already supplies it. An erased reference to static storage
+  cannot turn a shorter reference stored inside `T` into a static reference.
   When the restored object itself contains borrows, those field dependencies
   remain conservatively bounded by the erased reference's checked witness.
   Ordinary helper functions can forward that restoration contract when every
@@ -1794,6 +2076,10 @@ explicit moves still obey the ordinary moved-binding rules. Signature reference
 types describe invocation arguments, not stored borrowed state. The existing
 managed-thread boundary retains its once-task contract. None of this exposes a
 native address or allows an unsafe function to become a safe callable.
+A fresh function item may bind a generic `T&` parameter for one call, as in
+`duplicate(identity)` with `T duplicate<T>(T& value)`, without a body-proven
+confined contract when the call's result borrows nothing; MIR checks that the
+temporary outlives each use. A borrowing result still requires one.
 
 Contextual function names can also fill individual positions in a generic
 parameter pack, including after a fixed parameter or another pack element.
@@ -2190,7 +2476,7 @@ carried across iterations (`GTI-S2067`), so a `mut auto&` selection, which
 needs mutable enum storage like any mutable payload borrow, is made before
 the loop. A free function
 whose carrier result could borrow from more than one eligible parameter is
-ambiguous unless `[[borrowed_from(name)]]` names the owner, as for a plain
+ambiguous unless a result region names the owner, as for a plain
 reference return. Empty-body constructors
 establish the result from their exact field initializers, including a proved
 reference-free alternative. The initializer may construct the enum in place or

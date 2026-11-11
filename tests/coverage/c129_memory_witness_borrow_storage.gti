@@ -1,6 +1,6 @@
 // Valid: raw addresses of typed-storage elements re-enter checked code through
 // owner-witness borrowing (std::assume_ref / assume_mut and a user-defined
-// [[borrowed_from]] helper). The witness is the storage owner; after the
+// lifetime-region helper). The witness is the storage owner; after the
 // borrowed reference's last use the owner can be mutated again. Erased
 // addresses survive a round trip and compare equal to the slot address.
 import std.memory;
@@ -19,8 +19,7 @@ public:
 };
 
 // Caller: address must name a live Account owned by `slots`.
-[[borrowed_from(slots)]]
-unsafe Account& account_at(const Account* address, std::storage<Account>& slots) {
+unsafe Account&<a> account_at<lifetime a>(const Account* address, std::storage<Account>&<a> slots) {
   unsafe { return *address; }
 }
 

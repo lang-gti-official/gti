@@ -1,18 +1,20 @@
 import std.utility;
 
 struct Resource { int value = 7;  public: Resource() = default; };
-class View {
-  Resource& owner;
+// Both carriers name their stored region, so a copied view depends on the
+// external owner rather than on the wrapper that holds it.
+class View<lifetime data> {
+  Resource&<data> owner;
 public:
-  View(Resource& owner) : owner(owner) {}
-  Resource& get() { return this.owner; }
+  View(Resource&<data> owner) : owner(owner) {}
+  Resource&<data> get() { return this.owner; }
 };
-class Wrapper {
-  View view;
+class Wrapper<lifetime data> {
+  View<data> view;
   mut int count;
 public:
-  Wrapper(Resource& owner) : view(View(owner)), count(0) {}
-  View binding() { return this.view; }
+  Wrapper(Resource&<data> owner) : view(View(owner)), count(0) {}
+  View<data> binding() { return this.view; }
   void touch() mut { this.count++; }
   int inspect() mut {
     auto copy = this.binding();

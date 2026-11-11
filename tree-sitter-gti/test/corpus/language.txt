@@ -4100,3 +4100,61 @@ public:
       (generic_parameter
         (identifier)))
     (class_body)))
+
+==================
+Constructor initializer final pack expansion
+==================
+
+struct Relay<Args...> : public Base {
+  Relay(Args... values) : Base(7, values...), member(values...), array({1, 2}) {}
+};
+
+---
+
+(source_file
+  (class_declaration
+    (identifier)
+    (generic_parameter_clause
+      (generic_parameter
+        (identifier)))
+    (base_clause
+      (base_specifier
+        (user_type
+          (identifier))))
+    (class_body
+      (constructor_declaration
+        (identifier)
+        (parameter_clause
+          (parameter
+            (type
+              (user_type
+                (identifier)))
+            (identifier)))
+        (constructor_initializer_list
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (primary_expression
+                (literal
+                  (integer_literal)))
+              (pack_expansion
+                (identifier))))
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (pack_expansion
+                (identifier))))
+          (constructor_initializer
+            (user_type
+              (identifier))
+            (constructor_initializer_argument_list
+              (array_initializer
+                (primary_expression
+                  (literal
+                    (integer_literal)))
+                (primary_expression
+                  (literal
+                    (integer_literal)))))))
+        (block)))))

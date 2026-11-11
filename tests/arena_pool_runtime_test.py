@@ -49,7 +49,7 @@ int main() {
   return borrowed;
 }
 """,
-        ("GTI-S2017", "while a reference borrowed from it may still be live"),
+        ("GTI-S2017", "may still be live"),
     ),
     "nonmovable-element": (
         """\

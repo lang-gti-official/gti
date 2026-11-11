@@ -43,13 +43,15 @@ public:
   Resource() = default;
 };
 
-class Mixed {
-  Resource& resource;
+// The external reference names the stored region, so selecting it does not
+// borrow the owner's inline data.
+class Mixed<lifetime data> {
+  Resource&<data> resource;
   mut int local;
 public:
-  Mixed(Resource& resource, int local) : resource(resource), local(local) {}
+  Mixed(Resource&<data> resource, int local) : resource(resource), local(local) {}
   int& get() { return this.local; }
-  Resource& external() { return this.resource; }
+  Resource&<data> external() { return this.resource; }
   void reset() mut { this.local = 9; }
   ~Mixed() { observed = this.local + this.resource.value; }
 };

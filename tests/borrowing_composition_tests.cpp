@@ -307,8 +307,8 @@ struct View {
   int sum() { return first + second; }
 };
 View relay(View value) { return value; }
-View factory(int& first, int& second) { return View(first, second); }
-View same_owner(int& first, int& unused) { return View(first, first); }
+View<a> factory<lifetime a>(int&<a> first, int&<a> second) { return View(first, second); }
+View<a> same_owner<lifetime a>(int&<a> first, int& unused) { return View(first, first); }
 int main() {
   int a = 20; int b = 22;
   View view{a, b};
@@ -817,6 +817,9 @@ int main() {
 }
 
 void checkMixedReturnOrigins() {
+  // RFC 0004: a free factory over several reference inputs has no elided
+  // result region (Rust rejects the same signature), so the mixed carrier
+  // comes from one supplier: a mutable receiver that owns every referent.
   const auto frontend = lang::Frontend().analyze("mixed-return-origins.gti", R"(
 struct Services {
   int& first;
@@ -826,17 +829,25 @@ struct Services {
   int& read() { return this.first; }
   mut int& write() mut { return this.second; }
 };
-Services factory(mut int& last, int& first, mut int& middle) {
-  return Services(first, middle, last);
-}
+class Owner {
+public:
+  mut int a = 40;
+  mut int b = 0;
+  mut int c = 2;
+  Owner() {}
+  Services factory() mut { return Services(this.a, this.b, this.c); }
+};
 
 int main() {
-  int a = 40; mut int b = 0; mut int c = 2;
-  mut auto services = factory(c, a, b);
-  mut int& target = services.write();
-  target = 40;
-  int first = services.read();
-  return first + b + c - 82;
+  mut Owner owner{};
+  {
+    mut auto services = owner.factory();
+    mut int& target = services.write();
+    target = 40;
+    int first = services.read();
+    if (first != 40) { return 1; }
+  }
+  return owner.a + owner.b + owner.c - 82;
 }
 )");
   expect(frontend.canGenerateCode(), "mixed factories and accessors preserve "
@@ -866,25 +877,33 @@ int main() {
               !lang::verifyMirProgram(malformed).valid(),
               "constructor publication cannot omit its borrowed field mapping");
         }
-      if (function.owner || function.returnBorrowFields.size() != 3)
+      // The factory's signature contract borrows its whole receiver; an
+      // exclusive returned field makes that borrow exclusive for callers.
+      if (!function.owner ||
+          function.returnBorrowOrigin != lang::BorrowOriginKind::Receiver ||
+          function.returnType.kind != lang::SemanticType::Class ||
+          function.returnBorrowAccess != lang::AccessMode::Mutable)
         continue;
       forgedReturn = true;
       auto changed = frontend.mir;
       auto *factory = const_cast<lang::MirFunctionInstance *>(
           changed.findFunctionInstance(function.id));
-      factory->returnBorrowFields[1].parameter =
-          factory->returnBorrowFields[2].parameter;
+      factory->returnBorrowAccess = lang::AccessMode::ReadOnly;
       for (const auto &caller : changed.functionInstances()) {
         auto *instance = const_cast<lang::MirFunctionInstance *>(
             changed.findFunctionInstance(caller.id));
         for (auto &block : instance->body.blocks)
           for (auto &instruction : block.instructions)
-            if (instruction.functionTarget == function.id)
-              instruction.borrowFields = factory->returnBorrowFields;
+            if (instruction.functionTarget == function.id) {
+              instruction.borrowAccess = lang::AccessMode::ReadOnly;
+              if (instruction.loan)
+                instance->body.loans[*instruction.loan - 1].access =
+                    lang::AccessMode::ReadOnly;
+            }
       }
       expect(!lang::verifyMirProgram(changed).valid(),
-             "matching caller/callee metadata cannot forge the callee's "
-             "returned field owner");
+             "matching caller/callee metadata cannot forge a shared borrow "
+             "of a receiver that publishes an exclusive field");
       bool forgedNonCall = false;
       auto malformed = frontend.mir;
       auto *instance = const_cast<lang::MirFunctionInstance *>(
@@ -895,11 +914,12 @@ int main() {
               instruction.kind == lang::MirInstructionKind::Call ||
               instruction.kind == lang::MirInstructionKind::Construct)
             continue;
-          instruction.borrowFields = function.returnBorrowFields;
+          instruction.borrowOrigin = lang::BorrowOriginKind::Receiver;
+          instruction.borrowAccess = lang::AccessMode::Mutable;
           forgedNonCall = true;
         }
       expect(forgedNonCall && !lang::verifyMirProgram(malformed).valid(),
-             "non-call instructions cannot smuggle returned-field contracts");
+             "non-call instructions cannot smuggle returned-borrow contracts");
     }
   expect(forgedReturn, "return-contract forgery exercised a mapped factory");
   expect(erasedConstruction,
@@ -979,8 +999,10 @@ int main() {
 }
 
 void checkCompactInputComposition() {
-  const auto unsupported =
-      lang::Frontend().analyze("single-input-reshape.gti", R"(
+  // RFC 0004: the one carrier input supplies the elided result region, so
+  // duplicating it (as Rust permits for a copyable view) is accepted; the
+  // result stays bounded to that input's external owner for every caller.
+  const std::string reshape = R"(
 struct Reading {
   int& value;
   Reading(int& source) : value(source) {}
@@ -991,12 +1013,20 @@ struct Readings {
   Readings(Reading left, Reading right) : first(left), second(right) {}
 };
 Readings repeat(Reading input) { return Readings(input, input); }
-)");
-  expect(!unsupported.canGenerateCode() &&
-             std::any_of(unsupported.diagnostics.begin(),
-                         unsupported.diagnostics.end(),
+)";
+  const auto repeated = lang::Frontend().analyze(
+      "single-input-reshape.gti",
+      reshape + "int main() { int v = 3; Readings r = repeat(Reading(v)); "
+                "return r.first.value + r.second.value - 6; }");
+  const auto invalidated = lang::Frontend().analyze(
+      "single-input-reshape-conflict.gti",
+      reshape + "int main() { mut int v = 3; Readings r = repeat(Reading(v)); "
+                "v = 4; return r.first.value; }");
+  expect(repeated.canGenerateCode() && !invalidated.canGenerateCode() &&
+             std::any_of(invalidated.diagnostics.begin(),
+                         invalidated.diagnostics.end(),
                          [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2085";
+                           return diagnostic.code == "GTI-S2017";
                          }),
          "single-input by-value return remains bounded to its exact carrier "
          "dependency");
@@ -1011,8 +1041,8 @@ struct Readings {
   Reading second;
   Readings(Reading left, Reading right) : first(left), second(right) {}
 };
-Readings combine(Reading left, Reading right) { return Readings(left, right); }
-Readings reverse(Reading left, Reading right) { return Readings(right, left); }
+Readings<a> combine<lifetime a>(Reading<a> left, Reading<a> right) { return Readings(left, right); }
+Readings<a> reverse<lifetime a>(Reading<a> left, Reading<a> right) { return Readings(right, left); }
 int main() {
   int a = 17; int b = 25;
   Reading left{a}; Reading right{b};

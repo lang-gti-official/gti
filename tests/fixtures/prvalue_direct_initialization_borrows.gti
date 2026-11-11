@@ -15,8 +15,8 @@ public:
   Pair(int& left, int& right) : left(left), right(right) {}
   int sum() { return this.left + this.right; }
 };
-Pair pair_view(int& left, int& right) { return Pair(left, right); }
-Pair pair_relay(int& left, int& right) {
+Pair<a> pair_view<lifetime a>(int&<a> left, int&<a> right) { return Pair(left, right); }
+Pair<a> pair_relay<lifetime a>(int&<a> left, int&<a> right) {
   return Pair(Pair(pair_view(left, right)));
 }
 
@@ -27,8 +27,11 @@ public:
   Update(int& step, mut int& value) : step(step), value(value) {}
   void apply() mut { this.value += this.step; }
 };
-Update update_view(int& step, mut int& value) { return Update(step, value); }
-Update update_relay(int& step, mut int& value) {
+// Two borrowed inputs supply the result: the signature names their region.
+Update<a> update_view<lifetime a>(int&<a> step, mut int&<a> value) {
+  return Update(step, value);
+}
+Update<a> update_relay<lifetime a>(int&<a> step, mut int&<a> value) {
   return Update(update_view(step, value));
 }
 

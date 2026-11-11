@@ -385,7 +385,7 @@ int main() {
                         "local.at(std::size_t(0));}");
   checkNegative(prefix,
                 "std::string_view bad(){return Records().at(std::size_t(0));}");
-  checkNegative(prefix, "[[borrowed_from(first)]] Record& bad(Records& first, "
+  checkNegative(prefix, "Record&<a> bad<lifetime a>(Records&<a> first, "
                         "Records& second){return second[std::size_t(0)];}");
   checkNegative(prefix, "void bad(){mut Records records{}; std::string_view "
                         "held=records.at(std::size_t(0)); records.add(); "

@@ -56,6 +56,24 @@ for (const [text, name] of [
     throw new Error(`Missing module @${name} capture for ${text}`);
   }
 }
+const lifetimeCaptures = queryCaptures("highlights", path.join(__dirname, "lifetimes.gti"));
+for (const [row, text, name] of [
+  [0, "lifetime", "keyword.type"], [0, "a", "type.lifetime"],
+  [1, "a", "type.lifetime"], [2, "a", "type.lifetime"],
+  [3, "_", "type.lifetime"], [4, "static", "type.lifetime"],
+  [5, "a", "type.lifetime"], [6, "lifetime", "variable"],
+  [7, "static", "type.lifetime"], [8, "for", "keyword.type"],
+  [8, "a", "type.lifetime"], [9, "this", "type.lifetime"],
+]) {
+  if (!lifetimeCaptures.some((capture) =>
+    capture.row === row && capture.text === text && capture.name === name)) {
+    throw new Error(`Missing lifetime @${name} capture for ${text} on row ${row + 1}`);
+  }
+}
+if (lifetimeCaptures.some((capture) => capture.row === 6 &&
+    capture.text === "lifetime" && capture.name === "keyword.type")) {
+  throw new Error("Contextual lifetime spelling must remain an ordinary variable");
+}
 const fixtureLines = fs.readFileSync(fixture, "utf8").split("\n");
 
 function requireCapture(row, text, name) {

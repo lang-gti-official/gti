@@ -2,6 +2,7 @@
 
 #include "gti/ast.h"
 #include "gti/diagnostic.h"
+#include "gti/lifetime_names.h"
 #include "gti/token.h"
 
 #include <memory>
@@ -46,6 +47,8 @@ public:
   [[nodiscard]] const std::vector<ParseDiagnostic> &errors() const;
   [[nodiscard]] const std::optional<SyntaxCompletionContext> &
   completionContext() const;
+  // Lexical resolution of the region names the parsed unit writes.
+  [[nodiscard]] const LifetimeNames &lifetimeNames() const;
 
 private:
   class Impl;

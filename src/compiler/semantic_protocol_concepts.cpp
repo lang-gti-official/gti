@@ -228,9 +228,13 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
     if (!operation->genericParameters().empty()) {
       reject(operation->name(), "cannot declare generic parameters");
     }
-    if (operation->requiresClause()) {
+    // Lifetime relations (`outlives`) are part of an operation's signature
+    // contract; type-level requirements belong to the concept.
+    if (operation->requiresClause() &&
+        operation->requiresClause()->expression.root !=
+            ConstraintExpressionNode::invalidIndex) {
       reject(operation->requiresClause()->keyword,
-             "cannot declare a requires clause");
+             "cannot declare a type-level requires clause");
     }
     if (operation->isStatic() || operation->isVirtual() ||
         operation->isConstexpr() || operation->unsafeKeyword() ||
@@ -283,6 +287,22 @@ auto SemanticVisitor::Impl::resolveProtocolConcept(
                "requires a checked reference or dependent result for "
                "borrowed_from");
       }
+    }
+    // RFC 0004: a result region the operation binds names the same parameter
+    // the borrowed_from attribute would.
+    if (!resolved.returnBorrowParameter &&
+        !operation->hasFunctionAttribute("borrowed_from") &&
+        hasExplicitBorrowContract(*operation)) {
+      // Like the attribute, the region names its parameter directly: the
+      // result may be dependent, made a reference only by an instance.
+      const auto lifetime =
+          explicitLifetimeResult(*operation, resolved.parameterTypes, 0);
+      if (lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+          lifetime.parameters.size() == 1)
+        resolved.returnBorrowParameter = lifetime.parameters.front();
+      else
+        reject(operation->name(),
+               "must bind its result region to exactly one parameter");
     }
     conceptInfo.operations.push_back(std::move(resolved));
   }
@@ -777,12 +797,11 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
       // checked against the declaration in the ordinary return-origin checker.
       if (operation.returnBorrowParameter &&
           expectedReturn.kind == SemanticType::Reference) {
-        const auto *origin = function->findFunctionAttribute("borrowed_from");
         const auto parameter = *operation.returnBorrowParameter;
-        if (origin == nullptr || !origin->argument ||
-            parameter >= function->parameters().size() ||
-            origin->argument->lexeme !=
-                function->parameters()[parameter].name.lexeme) {
+        const std::optional<std::size_t> declared = declaredContractParameter(
+            *function, candidate.returnType, candidate.parameterTypes);
+        if (!declared || parameter >= function->parameters().size() ||
+            *declared != parameter) {
           reportConformanceError(
               function->name(),
               "Operation '" + function->name().lexeme +
@@ -799,6 +818,18 @@ auto SemanticVisitor::Impl::bindConformanceOperations() -> void {
                 "' must have the signature '" + expectedSignature +
                 "' that concept '" + conceptInfo.qualifiedName +
                 "' declares for this block.",
+            &operation.declaration->name(), "Operation declared here.");
+        continue;
+      }
+      if (const auto failure = conformanceOperationLifetimeFailure(
+              declaration, *conceptInfo.declaration, *operation.declaration,
+              *function)) {
+        reportConformanceError(
+            function->name(),
+            "Operation '" + function->name().lexeme + "' " + *failure +
+                "; a conformance operation keeps the lifetime contract "
+                "concept '" +
+                conceptInfo.qualifiedName + "' declares for this block.",
             &operation.declaration->name(), "Operation declared here.");
         continue;
       }
@@ -856,6 +887,7 @@ auto SemanticVisitor::Impl::validateConformanceTypes(
                                "cyclic, or exceeds the projection limit.");
       endTypeParameterScope();
     }
+    validateConformanceAssociatedRegions(check);
     registeringConformanceParameters = nullptr;
     requirementScopes.pop_back();
     endTypeParameterScope();
@@ -1416,13 +1448,12 @@ auto SemanticVisitor::Impl::protocolBorrowContractFailure(
         !containsOpenTypeParameter(returnType))
       continue;
     const auto *function = candidate.declaration;
-    const auto *origin =
-        function ? function->findFunctionAttribute("borrowed_from") : nullptr;
     const auto parameter = *operation.returnBorrowParameter;
-    if (!origin || !origin->argument ||
-        parameter >= function->parameters().size() ||
-        origin->argument->lexeme !=
-            function->parameters()[parameter].name.lexeme)
+    const std::optional<std::size_t> declared =
+        function ? declaredContractParameter(*function, candidate.returnType,
+                                             candidate.parameterTypes)
+                 : std::nullopt;
+    if (!declared || *declared != parameter)
       return index;
   }
   return std::nullopt;

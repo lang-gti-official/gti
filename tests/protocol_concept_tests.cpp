@@ -250,7 +250,7 @@ int main() { return 0; }
   const std::string conditionalContract = R"gti(
 concept selecting<T> {
   typename element;
-  [[borrowed_from(source)]] element choose(element source, element other);
+  element<a> choose<lifetime a>(element<a> source, element other);
 };
 struct Marker<T> { int tag; };
 for <T> concept selecting<Marker<T>> {
@@ -290,9 +290,10 @@ int main() {
 )gti",
            "GTI-S2029", "borrowed_from parameter contract");
   std::string substitutedContract = conditionalContract;
-  substitutedContract.replace(substitutedContract.find("  T choose(T source"),
-                              std::string("  T choose").size(),
-                              "  [[borrowed_from(other)]] T choose");
+  const std::string substitutedChoose = "  T choose(T source, T other)";
+  substitutedContract.replace(
+      substitutedContract.find(substitutedChoose), substitutedChoose.size(),
+      "  T<a> choose<lifetime a>(T source, T<a> other)");
   rejected(substitutedContract + R"gti(
 int main() {
   int first = 7;
@@ -305,7 +306,7 @@ int main() {
   const std::string borrowed = R"gti(
 concept observed<T> {
   typename element;
-  [[borrowed_from(source)]] element get(T source);
+  element<a> get<lifetime a>(T<a> source);
 };
 class Reading {
 public:
@@ -314,7 +315,7 @@ public:
 };
 for concept observed<Reading> {
   using element = int&;
-  [[borrowed_from(value)]] int& get(Reading value) {
+  int&<a> get<lifetime a>(Reading<a> value) {
     return value.external;
   }
 };
@@ -329,8 +330,7 @@ int main() {
 )gti",
            "protocol result origins relay a by-value carrier's external owner");
   const std::string borrowedRelay = borrowed + R"gti(
-[[borrowed_from(value)]]
-observed<T>::element relay<T>(T value) requires observed<T> {
+observed<T>::element<a> relay<T, lifetime a>(T<a> value) requires observed<T> {
   return observed<T>::get(value);
 }
 int main() {
@@ -343,7 +343,7 @@ int main() {
   accepted(borrowedRelay,
            "generic protocol calls preserve the declared result origin");
   rejected(borrowed + R"gti(
-[[borrowed_from(owner)]] int& escape(int& owner) {
+int&<a> escape<lifetime a>(int&<a> owner) {
   int local = 3;
   Reading view{local};
   return observed<Reading>::get(view);
@@ -397,7 +397,7 @@ int main() { return 0; }
   accepted(R"gti(
 concept editable<T> {
   typename element;
-  [[borrowed_from(value)]] element get(T value);
+  element<a> get<lifetime a>(T<a> value);
 };
 class Editing {
 public:
@@ -406,11 +406,11 @@ public:
 };
 for concept editable<Editing> {
   using element = mut int&;
-  [[borrowed_from(value)]] mut int& get(mut Editing value) {
+  mut int&<a> get<lifetime a>(mut Editing<a> value) {
     return value.value;
   }
 };
-[[borrowed_from(value)]] editable<T>::element relay<T>(mut T value)
+editable<T>::element<a> relay<T, lifetime a>(mut T<a> value)
     requires editable<T> {
   return editable<T>::get(std::move(value));
 }
@@ -443,11 +443,11 @@ int main() { return 0; }
            "GTI-S2123", "must name one of its parameters");
   rejected(R"gti(
 concept observed<T> {
-  [[borrowed_from(source)]] int& get(T& source, T& other);
+  int&<a> get<lifetime a>(T&<a> source, T& other);
 };
 struct Reading { int value; };
 for concept observed<Reading> {
-  [[borrowed_from(other)]] int& get(Reading& source, Reading& other) {
+  int&<a> get<lifetime a>(Reading& source, Reading&<a> other) {
     return other.value;
   }
 };
@@ -461,7 +461,7 @@ public:
   int owned;
   Reading(int& owner) : external(owner), owned(3) {}
 };
-[[borrowed_from(value)]] int& invalid(Reading value) {
+int&<a> invalid<lifetime a>(Reading<a> value) {
   return value.owned;
 }
 int main() { return 0; }
@@ -473,12 +473,12 @@ public:
   int& external;
   Reading(int& owner) : external(owner) {}
 };
-[[borrowed_from(first)]] int& invalid(Reading first, Reading second) {
+int&<a> invalid<lifetime a>(Reading<a> first, Reading second) {
   return second.external;
 }
 int main() { return 0; }
 )gti",
-           "GTI-S2085", "exact external owner dependency");
+           "GTI-S2127", "the parameter's elided region");
   rejected(borrowed + R"gti(
 int& invalid() {
   int local = 7;
@@ -1755,7 +1755,7 @@ int main() { Holder<int&> value{}; return 0; }
            "GTI-S2030", "Reference aliases are not supported");
   accepted(
       identityFamily + R"gti(
-[[borrowed_from(value)]] identity_family<Policy>::value<int&> view(int& value) {
+identity_family<Policy>::value<int&<a>> view<lifetime a>(int&<a> value) {
   return value;
 }
 int main() { int owner = 7; int& result = view(owner); return result - 7; }
@@ -1868,7 +1868,7 @@ storage<P>::buffer<E> build<P, E>(E& value) requires storage<P> {
       R"gti(
 concept observed_family<P> {
   typename element<E>;
-  [[borrowed_from(source)]] element<int> get(P source);
+  element<int, a> get<lifetime a>(P<a> source);
 };
 class Reading {
 public:
@@ -1877,9 +1877,9 @@ public:
 };
 for concept observed_family<Reading> {
   using element<Value> = Value&;
-  [[borrowed_from(value)]] int& get(Reading value) { return value.external; }
+  int&<a> get<lifetime a>(Reading<a> value) { return value.external; }
 };
-[[borrowed_from(value)]] observed_family<P>::element<int> relay<P>(P value)
+observed_family<P>::element<int, a> relay<P, lifetime a>(P<a> value)
   requires observed_family<P> { return observed_family<P>::get(std::move(value)); }
 int main() { int owner = 7; Reading view{owner}; int& result = relay(view); return result - 7; }
 )gti",

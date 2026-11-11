@@ -648,13 +648,11 @@ public:
       }
     }
   }
-  [[borrowed_from(this)]]
-  T& operator*() {
+  T&<this> operator*() {
     if (this.view == nullptr) { gti_internal::fail_empty_owner(); }
     unsafe { return *this.view; }
   }
-  [[borrowed_from(this)]]
-  T& operator->() {
+  T&<this> operator->() {
     if (this.view == nullptr) { gti_internal::fail_empty_owner(); }
     unsafe { return *this.view; }
   }

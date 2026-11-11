@@ -116,6 +116,7 @@ validGeneratedIdentity(const LoweredGeneratedItemIdentity &identity) {
   case SymbolKind::Method:
   case SymbolKind::Operator:
   case SymbolKind::TypeParameter:
+  case SymbolKind::LifetimeParameter:
   case SymbolKind::ValueParameter:
   case SymbolKind::RequirementParameter:
     return false;
@@ -152,8 +153,9 @@ validClassPatternBindings(const LoweredClassDeclaration &declaration) {
                          return parameter.typeArgumentPath.empty();
                        });
   }
-  if (!resolvedTypes(declaration.genericArgumentPatterns) ||
-      declaration.genericParameters.empty()) {
+  // A pattern whose binders were all regions has no type binder after
+  // erasure; it still accepts exactly its erased argument list.
+  if (!resolvedTypes(declaration.genericArgumentPatterns)) {
     return false;
   }
   for (const auto &parameter : declaration.genericParameters) {
@@ -570,8 +572,7 @@ declarationPayloadError(const LoweredDeclaration &declaration) {
     if ((payload->returnBorrowOrigin == BorrowOriginKind::Argument &&
          payload->returnBorrowParameter >= payload->parameters.size()) ||
         (payload->returnBorrowOrigin == BorrowOriginKind::Global &&
-         (!payload->returnBorrowPlace ||
-          !payload->returnBorrowPlace->valid()))) {
+         payload->returnBorrowPlace && !payload->returnBorrowPlace->valid())) {
       return invalid(
           "function declaration has an invalid return-borrow origin");
     }

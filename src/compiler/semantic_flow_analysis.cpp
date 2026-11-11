@@ -3695,6 +3695,10 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
       } else if (const DeferredCallableCallInfo *deferred =
                      semanticModel.findDeferredCallableCall(call)) {
         callableResult = &deferred->returnType;
+      } else if (const auto forwarded =
+                     requestSession.deferredPackCallResults.find(&call);
+                 forwarded != requestSession.deferredPackCallResults.end()) {
+        callableResult = &forwarded->second;
       }
       if (callableResult != nullptr &&
           callableResult->kind == SemanticType::Reference &&
@@ -9266,6 +9270,8 @@ auto SemanticVisitor::Impl::consumingReceiverValue(
   return info != nullptr && info->category == ValueCategory::Value &&
          info->type.kind == SemanticType::Class && info->traits.movable &&
          (!info->traits.containsBorrowedState || isTextDependentValue(*info) ||
+          // MIR follows a consumed carrier's loans from its own places.
+          mirBorrowAuthority() ||
           completeBorrowDependencySet(receiver).has_value());
 }
 
@@ -9296,12 +9302,22 @@ auto SemanticVisitor::Impl::receiverModeForObject(
   }
   // A text field relay returns what a dependent temporary holds in that
   // field, its owner's text, never a view of the temporary itself.
+  // MIR materializes a fresh borrowed carrier receiver only from a directly
+  // resolved producer; a virtually dispatched one keeps the S2081 rejection.
+  const auto virtualCarrierProducer = [&] {
+    if (info == nullptr || !info->traits.containsBorrowedState)
+      return false;
+    const auto *call = exprAs<Call>(transparentTemporaryProducer(receiver));
+    const ResolvedCallInfo *resolved =
+        call == nullptr ? nullptr : semanticModel.findCall(*call);
+    return resolved != nullptr && resolved->dispatch == CallDispatch::Virtual;
+  };
   if (allowFreshTemporary && freshTemporaryMethodSupported(function) &&
       (info == nullptr || !info->traits.containsBorrowedState ||
        ephemeralBorrowResultSupported(function) ||
        (isTextDependentValue(*info) && receiverTextFieldRelay(function))) &&
       (freshTemporaryReceiverValue(receiver).eligible ||
-       consumingReceiverValue(receiver))) {
+       (consumingReceiverValue(receiver) && !virtualCarrierProducer()))) {
     return function.receiverMutability == ReceiverMutability::Mutable
                ? CallReceiverMode::FreshTemporaryMutable
                : CallReceiverMode::FreshTemporaryRead;
@@ -15096,66 +15112,7 @@ auto SemanticVisitor::Impl::literalType(const Literal &literal)
 }
 
 auto SemanticVisitor::Impl::expressionToken(const Expr &expression) -> Token {
-  switch (expression.exprKind()) {
-  case ExprKind::Assign:
-    return static_cast<const Assign &>(expression).oper();
-  case ExprKind::ArrayInitializer:
-    return static_cast<const ArrayInitializer &>(expression).brace();
-  case ExprKind::Binary:
-    return static_cast<const Binary &>(expression).oper();
-  case ExprKind::Call:
-    return static_cast<const Call &>(expression).paren();
-  case ExprKind::ConditionalExpr:
-    return static_cast<const ConditionalExpr &>(expression).question();
-  case ExprKind::Conversion:
-    return static_cast<const Conversion &>(expression).targetType().name.last();
-  case ExprKind::DirectInitializer:
-    return static_cast<const DirectInitializer &>(expression).brace();
-  case ExprKind::DereferenceSet:
-    return static_cast<const DereferenceSet &>(expression).dereference();
-  case ExprKind::PlaceSet:
-    return static_cast<const PlaceSet &>(expression).oper();
-  case ExprKind::Get:
-    return static_cast<const Get &>(expression).name();
-  case ExprKind::Grouping:
-    return expressionToken(
-        static_cast<const Grouping &>(expression).expression());
-  case ExprKind::Index:
-    return static_cast<const Index &>(expression).bracket();
-  case ExprKind::IndexSet:
-    return static_cast<const IndexSet &>(expression).bracket();
-  case ExprKind::Lambda:
-    return static_cast<const Lambda &>(expression).bracket();
-  case ExprKind::LayoutQuery:
-    return static_cast<const LayoutQuery &>(expression).keyword();
-  case ExprKind::MemberRequirement:
-    return static_cast<const MemberRequirement &>(expression).keyword();
-  case ExprKind::ConceptTest:
-    return static_cast<const ConceptTest &>(expression)
-        .application()
-        .name.last();
-  case ExprKind::LiteralExpr:
-    return static_cast<const LiteralExpr &>(expression).token();
-  case ExprKind::Logical:
-    return static_cast<const Logical &>(expression).oper();
-  case ExprKind::PackFold:
-    return static_cast<const PackFold &>(expression).ellipsis();
-  case ExprKind::PackExpansion:
-    return static_cast<const PackExpansion &>(expression).ellipsis();
-  case ExprKind::Postfix:
-    return static_cast<const Postfix &>(expression).oper();
-  case ExprKind::QualifiedName:
-    return static_cast<const QualifiedName &>(expression).name().last();
-  case ExprKind::This:
-    return static_cast<const This &>(expression).keyword();
-  case ExprKind::Set:
-    return static_cast<const Set &>(expression).name();
-  case ExprKind::Unary:
-    return static_cast<const Unary &>(expression).oper();
-  case ExprKind::Variable:
-    return static_cast<const Variable &>(expression).name();
-  }
-  return Token{};
+  return expressionAnchorToken(expression);
 }
 
 auto SemanticVisitor::Impl::expressionToken(const ExprPtr &expr) -> Token {

@@ -22,6 +22,26 @@
 namespace lang {
 
 namespace {
+// Whether a written type names a region anywhere: lifetimes never reach
+// SemanticType, so only the syntax can present them.
+bool writesRegion(const TypeRef &type) {
+  if (type.referenceLifetime || !type.lifetimeArguments.empty() ||
+      type.lifetimeBinder)
+    return true;
+  return std::any_of(
+      type.arguments.begin(), type.arguments.end(),
+      [](const TypeRef &argument) { return writesRegion(argument); });
+}
+
+bool writesLifetimeBinder(const std::vector<GenericParameter> &parameters) {
+  return std::any_of(parameters.begin(), parameters.end(),
+                     [](const GenericParameter &parameter) {
+                       return parameter.lifetimeKeyword.has_value();
+                     });
+}
+} // namespace
+
+namespace {
 std::string
 codegenAttributePrefix(const FunctionCodegenAttributes &attributes) {
   std::string result;
@@ -95,7 +115,12 @@ SignaturePrinter::function(const FunctionInfo &info,
   if (info.threadConfinedCallback) {
     result += "[[thread_confined_callback]] ";
   }
-  if (info.explicitReturnBorrowOrigin) {
+  // A result region already states the contract the attribute would.
+  const bool regionContract =
+      declaration != nullptr &&
+      !declaration->hasFunctionAttribute("borrowed_from") &&
+      writesRegion(declaration->returnType());
+  if (info.explicitReturnBorrowOrigin && !regionContract) {
     if (info.returnBorrowOrigin == BorrowOriginKind::Receiver) {
       result += "[[borrowed_from(this)]] ";
     } else if (info.returnBorrowOrigin == BorrowOriginKind::Argument &&
@@ -143,7 +168,10 @@ SignaturePrinter::function(const FunctionInfo &info,
       result += types.print(returnType) + " ";
     result += functionName(info);
   } else {
-    result += types.print(returnType) + " " + functionName(info);
+    result += regionType(returnType, declaration == nullptr
+                                         ? nullptr
+                                         : &declaration->returnType()) +
+              " " + functionName(info);
   }
   if (selected != nullptr &&
       (!selected->typeArguments.empty() || !selected->valueArguments.empty())) {
@@ -151,6 +179,12 @@ SignaturePrinter::function(const FunctionInfo &info,
     appendSelectedGenericArguments(result, info.genericParameters,
                                    selected->typeArguments,
                                    selected->valueArguments);
+    result += '>';
+  } else if (selected == nullptr && declaration != nullptr &&
+             writesLifetimeBinder(declaration->sourceGenericParameters())) {
+    result += '<';
+    appendSourceGenericParameters(result, info.genericParameters,
+                                  declaration->sourceGenericParameters());
     result += '>';
   } else if (selected == nullptr && !info.genericParameters.empty()) {
     result += '<';
@@ -192,7 +226,8 @@ std::vector<std::string> SignaturePrinter::parameterLabels(
           parameterTypes[index].referenceAccess == AccessMode::Mutable)) {
       label += "mut ";
     }
-    label += types.print(parameterTypes[index]);
+    label += regionType(parameterTypes[index],
+                        parameter == nullptr ? nullptr : &parameter->type);
     if (preservePackSyntax && parameter != nullptr && parameter->pack &&
         parameterTypes[index].kind != SemanticType::TypePack) {
       label += "...";
@@ -221,12 +256,17 @@ SignaturePrinter::conceptSignature(const SymbolRecord &symbol,
   }
 
   result += '<';
-  for (std::size_t index = 0; index < declaration->typeParameters().size();
-       ++index) {
-    if (index != 0) {
+  bool firstParameter = true;
+  for (const GenericParameter &parameter :
+       declaration->sourceGenericParameters()) {
+    if (!firstParameter) {
       result += ", ";
     }
-    result += declaration->typeParameters()[index].lexeme;
+    firstParameter = false;
+    if (parameter.lifetimeKeyword) {
+      result += "lifetime ";
+    }
+    result += parameter.name.lexeme;
   }
   result += '>';
   if (!declaration->requirements().empty()) {
@@ -453,7 +493,10 @@ SignaturePrinter::enumerator(const EnumTypeInfo &owner,
 
 [[nodiscard]] std::string
 SignaturePrinter::typeAlias(const TypeAliasInfo &info) const {
-  return "using " + info.qualifiedName + " = " + types.print(info.type);
+  return "using " + info.qualifiedName + " = " +
+         regionType(info.type, info.declaration == nullptr
+                                   ? nullptr
+                                   : &info.declaration->target());
 }
 
 [[nodiscard]] std::string
@@ -635,6 +678,118 @@ void SignaturePrinter::appendGenericParameters(
   }
 }
 
+void SignaturePrinter::appendSourceGenericParameters(
+    std::string &result, const std::vector<GenericParameterInfo> &parameters,
+    const std::vector<GenericParameter> &source) const {
+  const auto written = static_cast<std::size_t>(std::count_if(
+      source.begin(), source.end(), [](const GenericParameter &parameter) {
+        return !parameter.lifetimeKeyword;
+      }));
+  // Semantic parameters follow the written order unless analysis added some.
+  const bool interleave = written == parameters.size();
+  std::size_t index = 0;
+  bool first = true;
+  const auto separate = [&] {
+    if (!first) {
+      result += ", ";
+    }
+    first = false;
+  };
+  for (const GenericParameter &parameter : source) {
+    if (parameter.lifetimeKeyword) {
+      separate();
+      result += "lifetime " + parameter.name.lexeme;
+    } else if (interleave) {
+      separate();
+      appendGenericParameters(result, {parameters[index++]});
+    }
+  }
+  for (; index < parameters.size(); ++index) {
+    separate();
+    appendGenericParameters(result, {parameters[index]});
+  }
+}
+
+std::string SignaturePrinter::regionType(const SemanticType &type,
+                                         const TypeRef *syntax) const {
+  if (syntax == nullptr || !writesRegion(*syntax)) {
+    return types.print(type);
+  }
+  if (type.kind == SemanticType::FunctionSignature &&
+      syntax->isFunctionSignature() && !type.arguments.empty() &&
+      syntax->arguments.size() == type.arguments.size()) {
+    std::string result;
+    if (syntax->lifetimeBinder) {
+      result += "for<";
+      for (std::size_t index = 0;
+           index < syntax->lifetimeBinder->parameters.size(); ++index) {
+        result += (index == 0 ? "lifetime " : ", lifetime ") +
+                  syntax->lifetimeBinder->parameters[index].name.lexeme;
+      }
+      result += "> ";
+    }
+    result +=
+        regionType(type.arguments.front(), &syntax->arguments.back()) + "(";
+    for (std::size_t index = 1; index < type.arguments.size(); ++index) {
+      if (index > 1) {
+        result += ", ";
+      }
+      result +=
+          regionType(type.arguments[index], &syntax->arguments[index - 1]);
+    }
+    return result + ")" +
+           (type.signatureReceiver == ReceiverMutability::Mutable     ? " mut"
+            : type.signatureReceiver == ReceiverMutability::Consuming ? " &&"
+                                                                      : "");
+  }
+  if (type.kind == SemanticType::Reference && type.arguments.size() == 1 &&
+      syntax->reference) {
+    TypeRef referent = *syntax;
+    referent.reference.reset();
+    referent.referenceLifetime.reset();
+    std::string result =
+        (type.referenceAccess == AccessMode::Mutable ? "mut " : "") +
+        regionType(type.arguments.front(), &referent) + "&";
+    if (syntax->referenceLifetime) {
+      result += "<" + syntax->referenceLifetime->name.lexeme + ">";
+    }
+    return result;
+  }
+  std::string printed = types.print(type);
+  if (type.kind != SemanticType::Class && type.kind != SemanticType::Enum) {
+    return printed;
+  }
+  std::vector<std::string> lifetimes;
+  for (const TypeRef &argument : syntax->lifetimeArguments) {
+    lifetimes.push_back(argument.name.last().lexeme);
+  }
+  const std::size_t open = printed.find('<');
+  const bool argumentList = open != std::string::npos && printed.back() == '>';
+  if (open != std::string::npos && !argumentList) {
+    return printed;
+  }
+  std::string result = printed.substr(0, open);
+  std::vector<std::string> arguments;
+  if (type.valueArguments.empty() && !type.arguments.empty() &&
+      type.arguments.size() == syntax->arguments.size()) {
+    for (std::size_t index = 0; index < type.arguments.size(); ++index) {
+      arguments.push_back(
+          regionType(type.arguments[index], &syntax->arguments[index]));
+    }
+  } else if (argumentList) {
+    arguments.push_back(printed.substr(open + 1, printed.size() - open - 2));
+  }
+  arguments.insert(arguments.end(), lifetimes.begin(), lifetimes.end());
+  if (arguments.empty()) {
+    return result;
+  }
+  result += '<';
+  for (std::size_t index = 0; index < arguments.size(); ++index) {
+    result += (index == 0 ? "" : ", ") + arguments[index];
+  }
+  return result + '>';
+}
+
 void SignaturePrinter::appendParameters(
     std::string &result, const std::vector<SemanticType> &parameterTypes,
     const std::vector<Parameter> *parameters, bool preservePackSyntax) const {
@@ -651,7 +806,8 @@ void SignaturePrinter::appendParameters(
           parameterTypes[index].referenceAccess == AccessMode::Mutable)) {
       result += "mut ";
     }
-    result += types.print(parameterTypes[index]);
+    result += regionType(parameterTypes[index],
+                         parameter == nullptr ? nullptr : &parameter->type);
     if (preservePackSyntax && parameter != nullptr && parameter->pack &&
         parameterTypes[index].kind != SemanticType::TypePack) {
       result += "...";
@@ -1467,6 +1623,9 @@ public:
       case SymbolKind::TypeParameter:
         result.signature = "type parameter " + symbol->name;
         break;
+      case SymbolKind::LifetimeParameter:
+        result.signature = "lifetime " + symbol->name;
+        break;
       case SymbolKind::TypeAlias:
         result.signature = "using " + symbol->qualifiedName + " = " +
                            types.print(occurrence->type != SemanticType::Unknown
@@ -1680,6 +1839,11 @@ public:
     }
     if (!core.failure.empty()) {
       outcome.failure = core.failure;
+      return outcome;
+    }
+    if (core.symbol->kind == SymbolKind::LifetimeParameter && newName == "_") {
+      outcome.failure = "A lifetime parameter cannot be renamed to the "
+                        "inferred lifetime placeholder '_'.";
       return outcome;
     }
     if (std::string validation = validateNewName(newName);
@@ -2285,6 +2449,7 @@ private:
     case SymbolKind::Parameter:
     case SymbolKind::RequirementParameter:
     case SymbolKind::TypeParameter:
+    case SymbolKind::LifetimeParameter:
     case SymbolKind::ValueParameter:
     case SymbolKind::LambdaCapture:
       return true;
@@ -2732,6 +2897,8 @@ private:
       return CompletionCandidateKind::Parameter;
     case SemanticCompletionCandidateKind::TypeParameter:
       return CompletionCandidateKind::TypeParameter;
+    case SemanticCompletionCandidateKind::LifetimeParameter:
+      return CompletionCandidateKind::LifetimeParameter;
     case SemanticCompletionCandidateKind::GlobalVariable:
     case SemanticCompletionCandidateKind::LocalVariable:
       return CompletionCandidateKind::Variable;
@@ -2754,6 +2921,7 @@ private:
     case CompletionCandidateKind::Enum:
     case CompletionCandidateKind::TypeAlias:
     case CompletionCandidateKind::TypeParameter:
+    case CompletionCandidateKind::LifetimeParameter:
       return 2;
     case CompletionCandidateKind::Enumerator:
       return 3;
@@ -2816,6 +2984,9 @@ private:
     }
     if (record.kind == SemanticCompletionCandidateKind::Namespace) {
       return "namespace " + record.qualifiedName;
+    }
+    if (record.kind == SemanticCompletionCandidateKind::LifetimeParameter) {
+      return "lifetime " + record.name;
     }
     const bool typeCarriesMutability =
         record.type.kind == SemanticType::Reference &&

@@ -383,8 +383,18 @@ public:
           state.append("<");
         } else if (previous != nullptr && previous->kind == Kind::Word &&
                    previous->text == "for") {
-          // `for <Parameters> concept`: a loop is always `for (`.
-          state.space();
+          // Conformance headers retain `for <Parameters> concept`, while
+          // a quantified callable type uses `for<lifetime a> Result(Args)`.
+          const auto close = matchingGenericClose(lexemes, index, true);
+          const Lexeme *after =
+              close ? nextSyntaxLexeme(lexemes, *close) : nullptr;
+          if (next != nullptr && next->kind == Kind::Word &&
+              next->text == "lifetime" &&
+              (after == nullptr || after->text != "concept")) {
+            state.trimSpaces();
+          } else {
+            state.space();
+          }
           state.append("<");
           ++state.templateDepth;
         } else if (state.templateDepth > 0 ||
@@ -1185,7 +1195,8 @@ private:
           }
         }
         if (firstWord != nullptr && parameterName != nullptr &&
-            firstWord->text != "uint64_t" && firstWord->text != "uint64") {
+            firstWord->text != "uint64_t" && firstWord->text != "uint64" &&
+            firstWord->text != "lifetime") {
           result.insert(parameterName->text);
         }
         if (genericEnd) {
@@ -1467,6 +1478,15 @@ private:
     const Lexeme *next = nextSyntaxLexeme(lexemes, index);
     if (previous == nullptr || next == nullptr) {
       return false;
+    }
+
+    // An angle argument after a reference marker cannot be a binary
+    // expression: `<` has no left operand there. This structure identifies
+    // reference types even when their nominal base comes from another file.
+    if (next->kind == Kind::Less &&
+        isReferenceLifetimeAngle(
+            lexemes, static_cast<std::size_t>(next - lexemes.data()))) {
+      return true;
     }
 
     // A lambda result has no declaration name after its reference marker.
@@ -2228,6 +2248,9 @@ private:
             next != nullptr &&
             (next->kind == Kind::Comma || next->kind == Kind::Greater ||
              next->kind == Kind::ShiftRight ||
+             (next->kind == Kind::Less &&
+              isReferenceLifetimeAngle(
+                  lexemes, static_cast<std::size_t>(next - lexemes.data()))) ||
              (parenthesisDepth > 0 && next->kind == Kind::RightParen));
         if (!referenceSuffix &&
             (candidate.text == "&" || candidate.text == "&&" ||
@@ -2333,12 +2356,35 @@ private:
     return false;
   }
 
+  static bool isReferenceLifetimeAngle(const std::vector<Lexeme> &lexemes,
+                                       std::size_t index) {
+    const Lexeme *marker = previousSyntaxLexeme(lexemes, index);
+    const Lexeme *argument = nextSyntaxLexeme(lexemes, index);
+    if (marker == nullptr || marker->kind != Kind::Operator ||
+        (marker->text != "&" && marker->text != "&&") || argument == nullptr ||
+        argument->kind != Kind::Word) {
+      return false;
+    }
+    const Lexeme *close = nextSyntaxLexeme(
+        lexemes, static_cast<std::size_t>(argument - lexemes.data()));
+    return close == nullptr || close->kind == Kind::Greater ||
+           close->kind == Kind::ShiftRight;
+  }
+
   static bool
   isGenericAngleStart(const std::vector<Lexeme> &lexemes, std::size_t index,
                       const std::unordered_set<std::string> &declaredTypes) {
+    if (isReferenceLifetimeAngle(lexemes, index)) {
+      return true;
+    }
     const Lexeme *previous = previousSyntaxLexeme(lexemes, index);
     if (previous == nullptr || previous->kind != Kind::Word) {
       return false;
+    }
+    const Lexeme *argument = nextSyntaxLexeme(lexemes, index);
+    if (previous->text == "for" && argument != nullptr &&
+        argument->kind == Kind::Word && argument->text == "lifetime") {
+      return true;
     }
     if (isConceptGenericAngle(lexemes, index) ||
         isRequiresGenericAngle(lexemes, index)) {

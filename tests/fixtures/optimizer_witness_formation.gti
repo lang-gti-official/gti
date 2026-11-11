@@ -3,18 +3,15 @@ public:
   mut int value = 7;
   int other = 2147483647;
 
-  [[borrowed_from(this)]]
-  int& read() {
+  int&<this> read() {
     unsafe { return *(&this.value); }
   }
 
-  [[borrowed_from(this)]]
-  mut int& write() mut {
+  mut int&<this> write() mut {
     unsafe { return *(&this.value); }
   }
 
-  [[borrowed_from(this)]]
-  int& read_other() {
+  int&<this> read_other() {
     unsafe { return *(&this.other); }
   }
 public:

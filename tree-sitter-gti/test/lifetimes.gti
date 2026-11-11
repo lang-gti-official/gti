@@ -1,0 +1,10 @@
+struct Borrowed<T, lifetime a> { T&<a> value; };
+using Ref<T, lifetime a> = T&<a>;
+int&<a> identity<lifetime a>(int&<a> value) { return value; }
+void inspect<lifetime a>(mut Borrowed<int, a>&<_> value)
+    requires outlives<static, a> {}
+concept Related<T, lifetime a> = outlives<T, a>;
+int lifetime = 0;
+Borrowed<int, static> lasting;
+using Callback = for<lifetime a> int&<a>(int&<a>);
+struct Reader { int&<this> read(); };

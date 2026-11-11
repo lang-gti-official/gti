@@ -286,6 +286,24 @@ and belong to the same logical module. Each has a distinct class identity and
 member scope. Importing the public family makes its selected implementation
 reachable; private components in registered implementation files do not publish
 additional names.
+A reference pattern can name its projected lifetime: `class Borrowed<T&<a>>`
+binds `T` and `a` from its one public type argument. The name `a` is available
+in fields, aliases, methods, and requirements, without adding a separately
+supplied lifetime argument. For example, a stored `T&<a>` and a result `T&<a>`
+refer to that exact borrowed shell. An unrelated omitted `T&` still introduces
+its own anonymous slot; referent spelling does not imply a lifetime relation.
+Repeated lifetime names require the same region. `static` remains a fixed
+region, `_` creates an anonymous projected binder, and names bound inside a
+`for<lifetime ...>` callable stay within that callable's invocation scope.
+A patterned primary can also declare trailing nominal lifetime parameters:
+`class Callback<R(Args...), lifetime environment>`. Its public arguments are
+one signature followed by the environment lifetime, as in
+`Callback<int(int), a>`; `Callback<int(int)>` infers the omitted environment.
+The environment is available to stored fields and method signatures. It stays
+independent of lifetime binders projected from the signature or quantified for
+each invocation. If an explicit nominal lifetime also appears inside a pattern,
+that occurrence refers to the fixed nominal parameter rather than declaring a
+projected binder. Only lifetime parameters may follow the pattern arguments.
 The qualifier selects the definition before exact component matching, including
 after generic substitution. There is no ranking, fallback between qualifiers,
 or overlap with an ordinary `class Name<T>` primary. Exact qualified concrete
@@ -320,12 +338,17 @@ between definitions or erase checked references' origins/access/lifetimes.
 [Source value profiles](../../examples/168-source-value-profiles.gti) demonstrates
 ordinary owned, empty and borrowed classes without a library-specific capability.
 
-A lambda or nominal `operator()` call can expand a concrete parameter pack. Concrete
+A function, lambda or nominal `operator()` call can expand a concrete parameter
+pack. Constructor initializer arguments use the same final `values...` syntax,
+including when forwarding into a fixed-arity base constructor. Concrete
 reanalysis checks the flattened arity and each exact argument type, including
-an empty expansion. It does not pass a pack object as one lambda argument.
+an empty expansion. A fixed-arity function may use its ordinary trailing
+defaults after the expanded arguments. It does not receive a pack object as one argument.
 Declaration-wide symbolic packs defer target publication until that check.
 Nominal operator overloads compare the expanded arguments in exact order;
 this does not expand operands of non-call operators or add implicit conversions.
+[Variadic generics](../../examples/015-variadic-generics.gti) demonstrates
+fixed-arity and base-constructor forwarding.
 
 Concrete fixed-array values also retain their exact element type and every
 extent through by-value parameter-pack forwarding and constructor emplacement.
@@ -358,6 +381,14 @@ follows the owner's current `public:`, `protected:`, or `private:` section and
 the class key's default access, and its name cannot collide with a value, callable, or another
 type alias in that owner. A public alias of a non-generic type may be named with
 `Owner::Name` outside the class.
+
+An alias retains the target's explicit and anonymous lifetime parameters. Naming
+the target is a declaration operation; each instantiated use must satisfy the
+target's lifetime formation contract. For example, a class-scoped alias of
+`View<T>` can infer its borrowed region at a use without proving a particular
+region while the alias is declared. An alias of `View<T, static>` still requires
+`T` to remain valid for static storage at that use. Ordinary type/value and
+concept constraints keep their declaration-order checks.
 
 A generic class alias may name the owner's type or value parameters and is
 substituted for each concrete member-body and backend instance. The alias is
@@ -1003,7 +1034,15 @@ string view. Such a borrow cannot outlive the temporary's full expression.
 A read-only member that returns one text field of a temporary that holds a
 local owner's text is not such a borrow: its result is a view of that owner
 (see [owner-tracked view fields](ownership-and-lifetimes.md#owner-tracked-view-fields)).
-Consuming members cannot return any reference or tracked borrowed state.
+An ordinary consuming member may return a reference or a borrowed class or
+enum when its complete checked result contract names only external suppliers.
+These include argument or global storage and stored references reached through
+the receiver's exact field/base paths. Receiver-owned storage, including a
+checked owning pointee, cannot supply such a result. All return paths must
+preserve the declared regions, access and cleanup rules; a carrier's proven
+empty alternative needs no supplier, while a reference always does. Unknown
+or incomplete supplier contracts remain rejected. This does not extend the
+separate in-place invocation rule for retained owned fields or pointees.
 
 For an ordinary GTI function, method, or member operator call, a supported
 fresh value may initialize an exact read-only `T&` parameter for that invocation
@@ -1227,8 +1266,9 @@ named parameter pack or an explicit type-list expansion in
 a formal parameter's type metadata. A metadata-bound pack does not add runtime
 parameters and may also expand into returned nominal metadata. Bare pack types
 remain invalid as return values or object storage. A named value pack uses the
-same deduced list if both forms are present. Whole-pack forwarding remains available
-only as the final argument of another variadic call. The bounded comma-pack
+same deduced list if both forms are present. Whole-pack forwarding is available
+as the final argument of another call; concrete expansion determines its fixed
+or variadic target's argument count and exact reference bindings. The bounded comma-pack
 fold `(call(fixed, pack), ...)` additionally applies one call pattern to each
 concrete pack element. `Args... args` retains value transport; `Args&... args`
 borrows each argument read-only, and `mut Args&... args` borrows each argument
@@ -1285,10 +1325,14 @@ Reference-pack declarators can also bind a class's prescribed object-type pack.
 They use the same per-element references as explicit function-pack deduction.
 Read-only elements may alias; mutable elements require disjoint places, including
 against fixed reference parameters. Forwarding can reborrow mutable elements
-read-only but cannot strengthen read-only access. Reference packs admit only
-results without borrowed state, including for constructors: pack elements cannot
-escape through a returned reference, borrowed carrier, field, global, escaping
-closure or thread. Plain value packs and owned thread/task entry points retain
+read-only but cannot strengthen read-only access. A function's checked reference
+or borrowed-carrier result follows its normalized lifetime contract and complete
+concrete supplier proof. Pack expansion preserves the exact source element;
+equal element types do not make their owners interchangeable. Unresolved packs
+do not publish a return supplier summary, and every selected instance must
+validate its expanded inputs and every returned origin. Constructor reference
+packs still require a result without borrowed state. Pack access alone never
+permits storage in a global, escaping closure or thread. Plain value packs and owned thread/task entry points retain
 their existing transport rules. Forwarding references and implicit borrowing
 during value-pack deduction remain unsupported.
 
@@ -1447,7 +1491,7 @@ spells, including return and parameter types. Sharing the owner's module
 does not make that declaration's imports transitively visible; an invisible
 signature type reports `GTI-S2024` with its direct-import guidance.
 
-A `borrowed_from` parameter name is resolved on that original declaration and
+A result region's supplier parameter is resolved on that original declaration and
 retained by parameter position. Renaming parameters in the definition does not
 change the origin; declaration indexing order cannot change contract acceptance.
 An invalid declared origin remains an error rather than falling back to inference
@@ -1529,6 +1573,21 @@ copy and move assignment remain independently derived. `= default` preserves
 the structural operation and is ill-formed when a base, field, stored borrow,
 or cleanup policy makes that operation unavailable. `= delete` makes the
 corresponding operation unavailable.
+
+The lifetime contract of `= default` must also preserve that structural
+operation. Its source has one independent, call-only lifetime; the owner's
+stored lifetimes remain fixed. A fixed `static` source lifetime, a source
+lifetime tied to one of the owner's regions, or an additional requirement that
+normalization cannot prove equivalent to the structural contract is rejected
+at the declaration with `GTI-S2020`. Redundant nominal well-formedness facts
+are permitted. These declarations do not introduce constrained copy/move
+overloads or an executable constructor call.
+
+An exact self policy can omit the owner's lifetime arguments, including
+hidden lifetimes on stored-reference fields. `View(View&) = default;` names
+the current owner application; elision does not introduce fresh owner
+regions. Explicit owner lifetime arguments still have to match that
+application, and the outer source reference keeps its independent lifetime.
 
 `T&&` is not a general GTI reference or forwarding-reference type. It is
 permitted only in the exact move constructor policy. A custom copy or move
@@ -1777,7 +1836,7 @@ dependency authority without moving the referent.
 Pattern selection proves the active alternative before exposing its reference
 fields. A direct reference selected from a consumed enum may retain its exact
 external owner after the enum shell ends. A function returning that reference
-must establish its declared `borrowed_from` contract from the checked selection;
+must establish its declared result region from the checked selection;
 a boolean predicate does not establish a tag proof. Nested enum construction
 and complete dependency transport do not yet authorize consuming an outer
 alternative into a new *borrowed-value* pattern binding and then consuming that
@@ -1943,7 +2002,7 @@ temporary
 or `std::move(place)` operand needs a movable `X`. A named place needs a
 copyable `X` and remains available. A borrowed `X` must currently have one
 exact stored-dependency path. A reference `value_type` is permitted when
-`take_value`'s `[[borrowed_from(value)]]` contract relays that path's external
+`take_value`'s declared result region relays that path's external
 owner. The expression is then a place with the declared reference access;
 consuming the operand does not terminate the returned external borrow. Other
 value types and the residual contain no stored borrows; the residual is not a
@@ -2833,10 +2892,17 @@ The query neither invokes the callable nor changes its calling contract.
 Native invocations still need `unsafe`, and projected reference results still
 need the same origin, access and lifetime proof as an explicitly spelled
 reference. It does not provide a reference origin or authorize capture escape.
-A projected reference may be used directly as a contracted function result;
-it cannot be hidden behind an ordinary `using` alias. Alias validation checks
-the resolved target, so reflected results and associated type families obey
-the same reference-alias restriction.
+A projected reference may be used as a contracted function result, directly
+or through a transparent alias of the callable-result recipe. Formation uses
+the resolved declaration's compiler query identity and its exact concrete
+result; an ordinary type parameter, including an alias of that parameter,
+does not gain hidden-reference substitution permission. The function body
+must still prove its complete result suppliers. A fresh readonly callable
+input is accepted only when the exact completed target contract excludes its
+temporary storage from every result alternative, alongside the normal input
+and result lifetime application. A visible body returning a global does not
+strengthen a result lifetime tied to an input. Explicit reference aliases
+retain their target's access and regions under the ordinary alias rules.
 See `examples/167-callable-result-types.gti` for an unrelated source-defined
 container using the projection.
 

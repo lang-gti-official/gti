@@ -1274,8 +1274,7 @@ int main() { return 0; }
 )gti",
          "GTI-S2055");
   reject("unrelated-owner", R"gti(
-[[borrowed_from(retained)]]
-int& wrong(Node& retained, Node& other) { return element(other, 0); }
+int&<a> wrong<lifetime a>(Node&<a> retained, Node& other) { return element(other, 0); }
 int main() { return 0; }
 )gti");
   reject("invalidate-in-callee", R"gti(
@@ -1294,8 +1293,7 @@ struct Cell {
   Cell(int value) : value(value) {}
 };
 
-[[borrowed_from(input)]]
-mut int& invoke<F>(F& callback, mut int& input) {
+mut int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> input) {
   return callback(input);
 }
 

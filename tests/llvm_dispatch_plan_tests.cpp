@@ -587,15 +587,14 @@ void testExistingBaseBoundaries() {
              "source argument");
     }
   }
-  const auto rejected = Frontend().analyze(
+  const auto inherited = Frontend().analyze(
       root / "tests/fixtures/llvm_dispatch_borrowed_base.gti");
-  expect(!rejected.canGenerateCode() &&
-             std::any_of(rejected.diagnostics.begin(),
-                         rejected.diagnostics.end(),
-                         [](const auto &diagnostic) {
-                           return diagnostic.code == "GTI-S2045";
-                         }),
-         "inherited borrowed state keeps its existing source rejection");
+  expect(inherited.canGenerateCode(),
+         "inherited borrowed state retains its checked base publication and "
+         "dispatch");
+  if (!inherited.canGenerateCode())
+    for (const auto &diagnostic : inherited.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 }
 } // namespace
 

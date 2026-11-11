@@ -1,4 +1,6 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/hir.h"
+#include <cstdlib>
 
 #include "diagnostic_registry.h"
 #include "gti/generic_instantiation_limits.h"
@@ -9,6 +11,16 @@
 
 namespace lang {
 
+namespace {
+// RFC 0004 shadow switch: with MIR as the borrow authority, MIR derives a
+// consumed borrow carrier's loans from its own places, so HIR no longer needs
+// the semantic complete dependency set to transfer it.
+bool mirOwnsConsumedCarriers() {
+  static const bool enabled = !legacyBorrowChecker();
+  return enabled;
+}
+} // namespace
+
 class HirLowerer::Impl {
 public:
   explicit Impl(TargetInfo target, HirLoweringScope scope)
@@ -16,6 +28,7 @@ public:
         reachablePrefixRequested(scope.reachablePrefix),
         entryDeclarations(scope.entryDeclarations),
         completeDeclarations(std::move(scope.completeDeclarations)),
+        borrowCheckedDeclarations(std::move(scope.borrowCheckedDeclarations)),
         omitLibraryOnlyBodies(scope.omitLibraryOnlyBodies),
         trustedUnits(scope.trustedUnits.begin(), scope.trustedUnits.end()),
         trustedSources(scope.trustedSources.begin(),
@@ -167,6 +180,17 @@ public:
           }
         }
       } else {
+        if (borrowCheckedDeclarations) {
+          const StmtList &declarations = source.declarations();
+          for (const auto &[first, count] : *borrowCheckedDeclarations) {
+            const std::size_t end =
+                std::min(declarations.size(), first + count);
+            for (std::size_t index = first; index < end; ++index)
+              seedDeclaration(declarations[index], std::nullopt);
+          }
+          processPendingInstances();
+          borrowCheckedCounts = instanceCounts();
+        }
         seedDeclarations(source.declarations(), std::nullopt);
       }
       processPendingInstances();
@@ -185,6 +209,12 @@ public:
       if (verifyHirProgramPlans(*baseModel, prefix).valid()) {
         output.reachable = std::move(prefix);
       }
+    }
+    if (output.program.valid_ && borrowCheckedCounts &&
+        *borrowCheckedCounts != instanceCounts()) {
+      HirProgram prefix = reachablePrefix(*borrowCheckedCounts);
+      if (verifyHirProgramPlans(*baseModel, prefix).valid())
+        output.borrowChecked = std::move(prefix);
     }
     return std::move(output);
   }
@@ -2491,6 +2521,19 @@ private:
 
     if (omitBody) {
       ++output.omittedInstanceBodies;
+      // A signature-only instance: the facts recorded above and the
+      // parameter bindings are what MIR declares and checks callers against.
+      // Binding lowering can enqueue instances, so nothing holds a reference
+      // into the instance vectors across it.
+      HirBody signature;
+      std::vector<HirBindingId> parameterBindings;
+      for (const Parameter &parameter :
+           declaration->bodyDeclaration()->parameters())
+        parameterBindings.push_back(lowerBinding(parameter, *model, signature));
+      output.program.functions[index].bodyOmitted = true;
+      output.program.functions[index].body = std::move(signature);
+      output.program.functions[index].parameterBindings =
+          std::move(parameterBindings);
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;
@@ -2671,6 +2714,20 @@ private:
                          classValueArguments, snapshot.typeArguments,
                          snapshot.valueArguments)) {
       ++output.omittedInstanceBodies;
+      // A signature-only instance, as for functions: its complete borrow
+      // summary and parameter bindings, without initializers or body.
+      HirBody signature;
+      std::vector<HirBindingId> parameterBindings;
+      for (const Parameter &parameter : snapshot.source->parameters())
+        parameterBindings.push_back(
+            lowerBinding(parameter, analysis->model, signature));
+      HirConstructorInstance &omitted = output.program.constructors[index];
+      omitted.bodyOmitted = true;
+      if (const auto *concrete =
+              analysis->model.findConstructor(*snapshot.source))
+        omitted.completeBorrow = concrete->completeBorrow;
+      omitted.body = std::move(signature);
+      omitted.parameterBindings = std::move(parameterBindings);
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;
@@ -2722,6 +2779,10 @@ private:
                     .constructedType = resolved->targetType,
                     .parameterTypes = resolved->parameterTypes,
                     .defaultArguments = resolved->defaultArguments,
+                    .borrowOrigin = resolved->borrowOrigin,
+                    .borrowArgument = resolved->borrowArgument,
+                    .borrowAccess = resolved->borrowAccess,
+                    .borrowArguments = resolved->borrowArguments,
                     .generatedDefault = resolved->generatedDefault});
             if (target != 0) {
               lowered.constructorTarget = target;
@@ -2732,6 +2793,47 @@ private:
           if (const std::optional<HirValueId> value =
                   lowerExpression(argument, analysis->model, classArguments,
                                   classValueArguments, body)) {
+            // A forwarded pack supplies one base parameter per lane: each
+            // lane is an exact element place of the grouped formal.
+            const HirValue *expansion = body.findValue(*value);
+            if (expansion != nullptr &&
+                expansion->kind == HirValueKind::PackExpansion &&
+                resolved != nullptr &&
+                resolved->kind == ConstructorInitializerTargetKind::Base) {
+              const SemanticType packType = expansion->info.type;
+              const SymbolId packSymbol = expansion->symbol;
+              // The lanes project the grouped formal itself, as a fold's
+              // element places do; the expansion is not evaluated.
+              HirValue pack = *expansion;
+              pack.id = nextValueId++;
+              pack.kind = HirValueKind::Variable;
+              pack.source = nullptr;
+              pack.operands.clear();
+              pack.packExpansionElements.clear();
+              pack.info.category = ValueCategory::Place;
+              const HirValueId packValue = pack.id;
+              body.values.push_back(std::move(pack));
+              for (std::size_t index = 0; index < packType.arguments.size();
+                   ++index) {
+                const SemanticType &element = packType.arguments[index];
+                const HirValueId projected = nextValueId++;
+                body.values.push_back(
+                    {.id = projected,
+                     .kind = HirValueKind::PackElement,
+                     .info = {.type = element,
+                              .category = ValueCategory::Place,
+                              .access = AccessMode::ReadOnly,
+                              .traits = instanceProvider->traitsFor(element)},
+                     .symbol = packSymbol,
+                     .operands = {packValue},
+                     .packElement = index});
+                lowered.arguments.push_back(projected);
+                initializerValues.push_back(projected);
+              }
+              lowered.explicitArgumentCount += packType.arguments.size();
+              lowered.explicitArgumentCount -= 1;
+              continue;
+            }
             lowered.arguments.push_back(*value);
             initializerValues.push_back(*value);
           }
@@ -2962,6 +3064,7 @@ private:
         omitInstanceBody(ownerInfo->sourceUnit, owner.typeArguments,
                          owner.valueArguments, {}, {})) {
       ++output.omittedInstanceBodies;
+      output.program.destructors[index].bodyOmitted = true;
       currentReceiverType = enclosingReceiverType;
       currentReceiverAccess = enclosingReceiverAccess;
       currentSourceFunctionName = enclosingSourceFunctionName;
@@ -4835,7 +4938,7 @@ private:
           !input->info.traits.movable ||
           (input->info.traits.containsBorrowedState &&
            (input->info.type.kind != SemanticType::Class ||
-            (!input->borrowDependencies &&
+            (!input->borrowDependencies && !mirOwnsConsumedCarriers() &&
              // A dependent text value's class holds no borrowed state of
              // its own (L-OWN-02); the callee's field contract governs it.
              instanceProvider->traitsFor(input->info.type)
@@ -7784,6 +7887,11 @@ private:
   // `HirLoweringScope`.
   std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
       completeDeclarations;
+  // Declaration ranges lowered before the rest, and the instance counts
+  // they reach; see `HirLoweringScope::borrowCheckedDeclarations`.
+  std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
+      borrowCheckedDeclarations;
+  std::optional<InstanceCounts> borrowCheckedCounts;
   // Library-only instance bodies are analysed but not lowered; see
   // `HirLoweringScope::omitLibraryOnlyBodies`.
   bool omitLibraryOnlyBodies = false;

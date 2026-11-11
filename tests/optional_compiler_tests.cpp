@@ -211,11 +211,18 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !aliased.canGenerateCode() &&
-          hasDiagnostic(aliased.diagnostics,
-                        "while a reference borrowed from it may still be live"),
-      "reset should reject while an element reference remains live");
+  expect(!aliased.canGenerateCode() &&
+             hasDiagnosticCode(aliased.diagnostics, "GTI-S2017") &&
+             std::any_of(aliased.diagnostics.begin(), aliased.diagnostics.end(),
+                         [](const lang::Diagnostic &diagnostic) {
+                           return std::any_of(
+                               diagnostic.related.begin(),
+                               diagnostic.related.end(), [](const auto &note) {
+                                 return note.message ==
+                                        "Retained borrow originates here.";
+                               });
+                         }),
+         "reset should reject while an element reference remains live");
 
   const lang::FrontendResult forgedSpelling =
       lang::Frontend().analyze("ordinary-optional-storage.gti", R"(

@@ -106,6 +106,10 @@ public:
     return syntaxCompletion;
   }
 
+  [[nodiscard]] const LifetimeNames &lifetimeNames() const {
+    return lifetimeScopes.names;
+  }
+
 private:
   // Resolution belongs to SourceLoader. Retain the directive through parsing
   // so only this source-unit boundary can consume it: an import embedded in a
@@ -133,6 +137,7 @@ private:
     currentClassKind.reset();
     consumedCompletion = false;
     syntaxCompletion.reset();
+    lifetimeScopes = {};
     generatedNameCounter = 0;
     missingTokenError = false;
   }
@@ -467,6 +472,7 @@ private:
   }
 
   StmtPtr typeAliasDeclaration(Token keyword) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     Token name =
         consume(TokenKind::IDENTIFIER, "Expect type alias name after 'using'.");
     std::vector<GenericParameter> parameters;
@@ -488,15 +494,16 @@ private:
       Token keyword,
       std::optional<CompilerConstraintBinding> compilerBinding = std::nullopt,
       std::optional<ConceptExplanation> explanation = std::nullopt) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     Token name = consume(TokenKind::IDENTIFIER, "Expect concept name.");
-    consume(TokenKind::LESS, "Expect '<' after concept name.");
-    std::vector<Token> typeParameters;
-    do {
-      typeParameters.emplace_back(
-          consume(TokenKind::IDENTIFIER,
-                  "Expect a type parameter in concept declaration."));
-    } while (match({TokenKind::COMMA}));
-    consumeGenericClose("Expect '>' after concept type parameters.");
+    std::vector<GenericParameter> parameters = genericParameterList();
+    for (const auto &parameter : parameters) {
+      if (parameter.valueType || parameter.pack || parameter.constraint ||
+          parameter.equal) {
+        throw error(parameter.name, "Concept parameters must be plain type or "
+                                    "lifetime parameters.");
+      }
+    }
 
     ConstraintExpression requirements;
     std::optional<ProtocolConceptBody> protocolBody;
@@ -513,7 +520,7 @@ private:
     }
 
     return std::make_shared<ConceptDecl>(
-        std::move(keyword), std::move(name), std::move(typeParameters),
+        std::move(keyword), std::move(name), std::move(parameters),
         std::move(requirements), std::move(compilerBinding),
         std::move(protocolBody), std::move(explanation));
   }
@@ -568,8 +575,29 @@ private:
   }
 
   [[nodiscard]] bool isConformanceStart() const {
-    return check(TokenKind::FOR) && (peekAt(1).kind == TokenKind::LESS ||
-                                     peekAt(1).kind == TokenKind::CONCEPT);
+    if (!check(TokenKind::FOR)) {
+      return false;
+    }
+    if (peekAt(1).kind == TokenKind::CONCEPT) {
+      return true;
+    }
+    if (peekAt(1).kind != TokenKind::LESS) {
+      return false;
+    }
+    std::size_t depth = 1;
+    for (std::size_t offset = 2; peekAt(offset).kind != TokenKind::END_OF_FILE;
+         ++offset) {
+      const TokenKind kind = peekAt(offset).kind;
+      if (kind == TokenKind::LESS) {
+        ++depth;
+      } else if (kind == TokenKind::GREATER && --depth == 0) {
+        return peekAt(offset + 1).kind == TokenKind::CONCEPT;
+      } else if (kind == TokenKind::LEFT_BRACE ||
+                 kind == TokenKind::SEMICOLON) {
+        return false;
+      }
+    }
+    return false;
   }
 
   // `for <Parameters> concept Concept<Pattern> { using ...; functions };`
@@ -581,6 +609,7 @@ private:
   // concept. The name derives from the concept application's tokens, so it
   // is stable across compilations and distinct for each block.
   StmtPtr conformanceDeclaration(Token forKeyword) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -629,11 +658,15 @@ private:
         }
         combined.nodes.push_back(std::move(node));
       }
-      combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
-                                .left = combined.root,
-                                .right = extra.root + nodeOffset,
-                                .operation = requiresClause->keyword});
-      combined.root = combined.nodes.size() - 1;
+      // A clause of only lifetime requirements leaves no type-level root.
+      if (extra.root != ConstraintExpressionNode::invalidIndex) {
+        combined.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
+                                  .left = combined.root,
+                                  .right = extra.root + nodeOffset,
+                                  .operation = requiresClause->keyword});
+        combined.root = combined.nodes.size() - 1;
+      }
+      conjoinLifetimes(combined, extra);
     }
     consume(TokenKind::LEFT_BRACE, "Expect '{' before conformance block body.");
     StmtList members;
@@ -712,23 +745,74 @@ private:
     consume(TokenKind::LESS, "Expect '<' after concept name.");
     std::vector<TypeRef> arguments;
     do {
-      arguments.emplace_back(parseType());
+      arguments.emplace_back(parseGenericArgument());
     } while (match({TokenKind::COMMA}));
     consumeGenericClose("Expect '>' after concept arguments.");
-    return {std::move(name), std::move(arguments)};
+    // `outlives<a, b>` relates lifetimes: its arguments are the requirement.
+    std::vector<TypeRef> lifetimes;
+    if (!(name.segments.size() == 1 && name.last().lexeme == "outlives"))
+      lifetimes = takeLifetimeArguments(arguments);
+    return {.name = std::move(name),
+            .arguments = std::move(arguments),
+            .lifetimeArguments = std::move(lifetimes)};
+  }
+
+  // Lifetime relations of a constraint sub-expression in disjunctive normal
+  // form: alternatives, each a conjunction of `outlives` relations.
+  using LifetimeAlternatives = std::vector<std::vector<ConceptApplication>>;
+
+  // `combined && extra` for their lifetime relations, in the same normal
+  // form constraintExpression() produces.
+  static void conjoinLifetimes(ConstraintExpression &combined,
+                               const ConstraintExpression &extra) {
+    const auto alternatives = [](const ConstraintExpression &expression) {
+      return expression.lifetimeAlternatives.empty()
+                 ? LifetimeAlternatives{expression.lifetimeRequirements}
+                 : expression.lifetimeAlternatives;
+    };
+    LifetimeAlternatives product;
+    for (const auto &first : alternatives(combined))
+      for (const auto &second : alternatives(extra)) {
+        auto both = first;
+        both.insert(both.end(), second.begin(), second.end());
+        product.push_back(std::move(both));
+      }
+    combined.lifetimeRequirements.clear();
+    combined.lifetimeAlternatives.clear();
+    if (product.size() == 1)
+      combined.lifetimeRequirements = std::move(product.front());
+    else
+      combined.lifetimeAlternatives = std::move(product);
   }
 
   ConstraintExpression constraintExpression() {
     ConstraintExpression expression;
-    expression.root = constraintDisjunction(expression);
+    LifetimeAlternatives lifetimes;
+    expression.root = constraintDisjunction(expression, lifetimes);
+    if (lifetimes.size() == 1)
+      expression.lifetimeRequirements = std::move(lifetimes.front());
+    else
+      expression.lifetimeAlternatives = std::move(lifetimes);
     return expression;
   }
 
-  std::size_t constraintDisjunction(ConstraintExpression &expression) {
-    std::size_t left = constraintConjunction(expression);
+  std::size_t constraintDisjunction(ConstraintExpression &expression,
+                                    LifetimeAlternatives &lifetimes) {
+    std::size_t left = constraintConjunction(expression, lifetimes);
     while (match({TokenKind::OR})) {
       Token operation = previous();
-      const std::size_t right = constraintConjunction(expression);
+      LifetimeAlternatives alternative;
+      const std::size_t right = constraintConjunction(expression, alternative);
+      lifetimes.insert(lifetimes.end(),
+                       std::make_move_iterator(alternative.begin()),
+                       std::make_move_iterator(alternative.end()));
+      // An alternative that is purely a lifetime relation leaves no
+      // type-level operand: the type-level disjunction imposes nothing.
+      if (left == ConstraintExpressionNode::invalidIndex ||
+          right == ConstraintExpressionNode::invalidIndex) {
+        left = ConstraintExpressionNode::invalidIndex;
+        continue;
+      }
       expression.nodes.push_back({.kind = ConstraintExpressionKind::Disjunction,
                                   .left = left,
                                   .right = right,
@@ -738,11 +822,29 @@ private:
     return left;
   }
 
-  std::size_t constraintConjunction(ConstraintExpression &expression) {
-    std::size_t left = constraintPrimary(expression);
+  std::size_t constraintConjunction(ConstraintExpression &expression,
+                                    LifetimeAlternatives &lifetimes) {
+    std::size_t left = constraintPrimary(expression, lifetimes);
     while (match({TokenKind::AND})) {
       Token operation = previous();
-      const std::size_t right = constraintPrimary(expression);
+      LifetimeAlternatives operand;
+      const std::size_t right = constraintPrimary(expression, operand);
+      // Conjunction distributes over the alternatives.
+      LifetimeAlternatives product;
+      for (const auto &first : lifetimes)
+        for (const auto &second : operand) {
+          auto combined = first;
+          combined.insert(combined.end(), second.begin(), second.end());
+          product.push_back(std::move(combined));
+        }
+      lifetimes = std::move(product);
+      // A lifted lifetime requirement leaves no type-level operand.
+      if (right == ConstraintExpressionNode::invalidIndex)
+        continue;
+      if (left == ConstraintExpressionNode::invalidIndex) {
+        left = right;
+        continue;
+      }
       expression.nodes.push_back({.kind = ConstraintExpressionKind::Conjunction,
                                   .left = left,
                                   .right = right,
@@ -752,7 +854,9 @@ private:
     return left;
   }
 
-  std::size_t constraintPrimary(ConstraintExpression &expression) {
+  std::size_t constraintPrimary(ConstraintExpression &expression,
+                                LifetimeAlternatives &lifetimes) {
+    lifetimes = {{}};
     if (match({TokenKind::REQUIRES})) {
       const Token keyword = previous();
       auto requirements = expressionRequirements(keyword);
@@ -767,6 +871,7 @@ private:
         } else {
           TypeRef receiver = requirement->receiver();
           receiver.reference.reset();
+          receiver.referenceLifetime.reset();
           receiver.referenceMutability.reset();
           arguments = {std::move(receiver), requirement->result()};
           arguments.insert(arguments.end(), requirement->parameters().begin(),
@@ -794,13 +899,19 @@ private:
     }
     if (match({TokenKind::LEFT_PAREN})) {
       const NestingGuard nesting = enterNesting(previous());
-      const std::size_t nested = constraintDisjunction(expression);
+      const std::size_t nested = constraintDisjunction(expression, lifetimes);
       consume(TokenKind::RIGHT_PAREN,
               "Expect ')' after parenthesized constraint expression.");
       return nested;
     }
     const std::size_t application = expression.applications.size();
     ConceptApplication leaf = conceptApplication();
+    if (leaf.name.segments.size() == 1 &&
+        leaf.name.last().lexeme == "outlives" &&
+        !check(TokenKind::LEFT_PAREN)) {
+      lifetimes = {{std::move(leaf)}};
+      return ConstraintExpressionNode::invalidIndex;
+    }
     if (match({TokenKind::LEFT_PAREN})) {
       auto callee = std::make_unique<QualifiedName>(leaf.name);
       leaf.predicate = finishCall(std::move(callee), leaf.arguments);
@@ -1199,6 +1310,7 @@ private:
   StmtPtr classDeclaration(
       std::vector<ClassAttribute> attributes, Token keyword,
       std::optional<CompilerTypeBinding> compilerTypeBinding = std::nullopt) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     const NestingGuard nesting = enterNesting(keyword);
     const ClassKind kind =
         keyword.kind == TokenKind::STRUCT      ? ClassKind::Struct
@@ -1234,7 +1346,7 @@ private:
       exactSpecialization.emplace(std::move(target), std::move(arguments));
     } else if (check(TokenKind::LESS)) {
       if (classSignaturePatternAhead()) {
-        genericArgumentPatterns = typeArgumentList();
+        classPatternParameterList(genericArgumentPatterns, genericParameters);
       } else {
         genericParameters = genericParameterList();
       }
@@ -1291,6 +1403,7 @@ private:
   }
 
   StmtPtr enumDeclaration(Token keyword) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::optional<Token> classKeyword;
     if (match({TokenKind::CLASS})) {
       classKeyword = previous();
@@ -1341,6 +1454,7 @@ private:
       std::optional<NativeLinkNameAttribute> nativeLinkName = std::nullopt,
       std::optional<Token> unsafeKeyword = std::nullopt,
       std::vector<FunctionAttribute> functionAttributes = {}) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     // Taken at entry, so declarations nested in the body never see them.
     std::optional<std::vector<GenericParameter>> blockParameters =
         std::exchange(conformanceGenericParameters, std::nullopt);
@@ -1433,15 +1547,36 @@ private:
                               std::move(ownerArguments));
     }
     std::vector<GenericParameter> genericParameters;
-    if (!operatorName && check(TokenKind::LESS)) {
+    // An operator may bind lifetimes (erased signature metadata), never types.
+    const bool operatorLifetimes = operatorName && check(TokenKind::LESS) &&
+                                   peekAt(1).kind == TokenKind::IDENTIFIER &&
+                                   peekAt(1).lexeme == "lifetime";
+    if ((!operatorName || operatorLifetimes) && check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
+      reclassifyLateLifetimeArguments(type);
+      if (operatorLifetimes &&
+          std::any_of(genericParameters.begin(), genericParameters.end(),
+                      [](const GenericParameter &parameter) {
+                        return !parameter.lifetimeKeyword;
+                      }))
+        throw error(operatorName->symbol,
+                    "An operator overload can declare only lifetime "
+                    "parameters.");
     }
     if (blockParameters) {
-      if (!genericParameters.empty()) {
+      if (std::any_of(genericParameters.begin(), genericParameters.end(),
+                      [](const GenericParameter &parameter) {
+                        return !parameter.lifetimeKeyword;
+                      })) {
         (void)error(name, "A conformance block operation takes the block's "
-                          "generic parameters and cannot declare its own.");
+                          "generic parameters and cannot declare its own; "
+                          "it may add only lifetime parameters.");
       }
-      genericParameters = std::move(*blockParameters);
+      auto parameters = std::move(*blockParameters);
+      parameters.insert(parameters.end(),
+                        std::make_move_iterator(genericParameters.begin()),
+                        std::make_move_iterator(genericParameters.end()));
+      genericParameters = std::move(parameters);
     }
 
     if (match({TokenKind::LEFT_PAREN})) {
@@ -1527,6 +1662,7 @@ private:
 
   StmtPtr macroDeclaration(Token keyword,
                            std::vector<FunctionAttribute> attributes = {}) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::optional<Token> mode;
     if (match({TokenKind::LEFT_PAREN})) {
       mode = consume(TokenKind::IDENTIFIER, "Expect 'proc' in '#macro(proc)'.");
@@ -1629,15 +1765,49 @@ private:
       Token keyword = previous();
       requiresClause =
           RequiresClause{std::move(keyword), constraintExpression()};
-      if (blockRequirement) {
-        (void)error(requiresClause->keyword,
-                    "A conformance block operation cannot declare a "
-                    "requires clause; the block's concept application "
-                    "applies to it.");
-      }
     }
+    // A conformance block operation takes the block's concept application.
+    // It may add lifetime requirements of its own (`outlives`), never a
+    // type-level requirement.
+    if (blockRequirement && requiresClause &&
+        requiresClause->expression.root !=
+            ConstraintExpressionNode::invalidIndex)
+      (void)error(requiresClause->keyword,
+                  "A conformance block operation cannot declare a "
+                  "requires clause; the block's concept application "
+                  "applies to it.");
     if (blockRequirement) {
-      requiresClause = std::move(blockRequirement);
+      if (!requiresClause) {
+        requiresClause = std::move(blockRequirement);
+      } else {
+        auto combined = std::move(blockRequirement->expression);
+        auto &extra = requiresClause->expression;
+        const std::size_t applicationOffset = combined.applications.size();
+        const std::size_t nodeOffset = combined.nodes.size();
+        combined.applications.insert(combined.applications.end(),
+                                     extra.applications.begin(),
+                                     extra.applications.end());
+        for (auto node : extra.nodes) {
+          if (node.kind == ConstraintExpressionKind::Application)
+            node.application += applicationOffset;
+          else {
+            node.left += nodeOffset;
+            node.right += nodeOffset;
+          }
+          combined.nodes.push_back(std::move(node));
+        }
+        // A clause of only lifetime requirements leaves no type-level root.
+        if (extra.root != ConstraintExpressionNode::invalidIndex) {
+          combined.nodes.push_back(
+              {.kind = ConstraintExpressionKind::Conjunction,
+               .left = combined.root,
+               .right = extra.root + nodeOffset,
+               .operation = requiresClause->keyword});
+          combined.root = combined.nodes.size() - 1;
+        }
+        conjoinLifetimes(combined, extra);
+        requiresClause->expression = std::move(combined);
+      }
     }
 
     std::optional<Token> overrideKeyword;
@@ -1920,10 +2090,136 @@ private:
     }
   }
 
+  // Lexical lifetime binders of the declarations being parsed (RFC 0004).
+  // A binder is visible throughout the declaration that writes it, including
+  // a result type written before its binder list, so each region name is
+  // resolved when its innermost enclosing scope closes and every binder of
+  // that scope is known.
+  struct LifetimeScopes {
+    struct Pending {
+      Token name;
+      std::size_t depth = 0;
+    };
+    std::vector<std::vector<Token>> binders;
+    std::vector<Pending> pending;
+    LifetimeNames names;
+
+    void close() {
+      const std::size_t depth = binders.size();
+      const std::vector<Token> &scope = binders.back();
+      std::vector<Pending> remaining;
+      for (Pending &use : pending) {
+        if (use.depth < depth) {
+          remaining.push_back(std::move(use));
+          continue;
+        }
+        const auto binder = std::find_if(
+            scope.begin(), scope.end(), [&](const Token &candidate) {
+              return candidate.lexeme == use.name.lexeme;
+            });
+        if (binder != scope.end()) {
+          names.uses.push_back(
+              {.name = std::move(use.name), .binder = *binder});
+        } else if (depth == 1) {
+          names.unknown.push_back(std::move(use.name));
+        } else {
+          use.depth = depth - 1;
+          remaining.push_back(std::move(use));
+        }
+      }
+      pending = std::move(remaining);
+      binders.pop_back();
+    }
+  };
+  LifetimeScopes lifetimeScopes;
+  struct LifetimeScopeGuard {
+    LifetimeScopes &scopes;
+    explicit LifetimeScopeGuard(LifetimeScopes &scopes) : scopes(scopes) {
+      scopes.binders.emplace_back();
+    }
+    ~LifetimeScopeGuard() { scopes.close(); }
+    LifetimeScopeGuard(const LifetimeScopeGuard &) = delete;
+    LifetimeScopeGuard &operator=(const LifetimeScopeGuard &) = delete;
+  };
+
+  static bool sameToken(const Token &left, const Token &right) {
+    return left.position == right.position && left.source == right.source &&
+           left.lexeme == right.lexeme;
+  }
+
+  // A written region name other than '_', 'static' and 'this'.
+  void noteLifetimeUse(const Token &name) {
+    if (name.kind != TokenKind::IDENTIFIER || name.lexeme == "_")
+      return;
+    if (name.completion) {
+      LifetimeNameCompletion completion{.token = name};
+      for (auto scope = lifetimeScopes.binders.rbegin();
+           scope != lifetimeScopes.binders.rend(); ++scope)
+        for (const Token &binder : *scope)
+          if (std::none_of(completion.visible.begin(), completion.visible.end(),
+                           [&](const Token &seen) {
+                             return seen.lexeme == binder.lexeme;
+                           }))
+            completion.visible.push_back(binder);
+      lifetimeScopes.names.completion = std::move(completion);
+      return;
+    }
+    // Backtracking may parse one written type twice.
+    if (std::any_of(lifetimeScopes.pending.begin(),
+                    lifetimeScopes.pending.end(),
+                    [&](const auto &use) { return sameToken(use.name, name); }))
+      return;
+    if (lifetimeScopes.binders.empty()) {
+      lifetimeScopes.names.unknown.push_back(name);
+      return;
+    }
+    lifetimeScopes.pending.push_back(
+        {.name = name, .depth = lifetimeScopes.binders.size()});
+  }
+
+  bool lifetimeParameterAhead() const {
+    return check(TokenKind::IDENTIFIER) && peek().lexeme == "lifetime" &&
+           (peekAt(1).kind == TokenKind::IDENTIFIER ||
+            peekAt(1).kind == TokenKind::STATIC);
+  }
+
+  GenericParameter lifetimeParameter() {
+    Token keyword = advance();
+    Token name = consume(TokenKind::IDENTIFIER,
+                         "Expect a lifetime parameter name after 'lifetime'.");
+    if (name.lexeme == "_")
+      throw error(name, "A lifetime parameter requires a name; '_' is an "
+                        "inferred lifetime argument.");
+    declareLifetimeBinder(name);
+    return {.name = std::move(name), .lifetimeKeyword = std::move(keyword)};
+  }
+
+  void classPatternParameterList(std::vector<TypeRef> &patterns,
+                                 std::vector<GenericParameter> &parameters) {
+    consume(TokenKind::LESS, "Expect '<' before class argument patterns.");
+    do {
+      if (lifetimeParameterAhead()) {
+        parameters.push_back(lifetimeParameter());
+      } else {
+        if (!parameters.empty())
+          throw error(peek(),
+                      "Only lifetime parameters may follow the class "
+                      "argument patterns and their lifetime parameters.");
+        patterns.push_back(parseGenericArgument());
+        declarePatternLifetimeBinders(patterns.back());
+      }
+    } while (match({TokenKind::COMMA}));
+    consumeGenericClose("Expect '>' after class argument patterns.");
+  }
+
   std::vector<GenericParameter> genericParameterList() {
     consume(TokenKind::LESS, "Expect '<' before generic parameters.");
     std::vector<GenericParameter> parameters;
     do {
+      if (lifetimeParameterAhead()) {
+        parameters.push_back(lifetimeParameter());
+        continue;
+      }
       if (isValueGenericParameterStart()) {
         Token valueType = advance();
         Token name =
@@ -1972,6 +2268,7 @@ private:
                          std::optional<Token> unsafeKeyword = {},
                          std::optional<Token> implicitKeyword = {},
                          std::vector<FunctionAttribute> attributes = {}) {
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::vector<GenericParameter> genericParameters;
     if (check(TokenKind::LESS)) {
       genericParameters = genericParameterList();
@@ -1996,14 +2293,7 @@ private:
         TypeRef target = parseBaseType();
         consume(TokenKind::LEFT_PAREN,
                 "Expect '(' after constructor initializer target.");
-        ExprList arguments;
-        if (!check(TokenKind::RIGHT_PAREN)) {
-          do {
-            arguments.emplace_back(check(TokenKind::LEFT_BRACE)
-                                       ? arrayInitializer()
-                                       : assignment());
-          } while (match({TokenKind::COMMA}));
-        }
+        ExprList arguments = callArgumentList();
         consume(TokenKind::RIGHT_PAREN,
                 "Expect ')' after constructor initializer arguments.");
         initializers.push_back(ConstructorInitializer{
@@ -2444,8 +2734,46 @@ private:
         std::move(designators));
   }
 
-  TypeRef parseType(bool allowFunctionSignature = true) {
+  TypeRef parseType(bool allowFunctionSignature = true,
+                    bool allowReferenceAccess = false) {
     const NestingGuard nesting = enterNesting(peek());
+    std::optional<LifetimeBinder> binder;
+    // A `for<lifetime ...>` binder scopes the quantified signature it heads.
+    std::optional<LifetimeScopeGuard> binderScope;
+    if (match({TokenKind::FOR})) {
+      binderScope.emplace(lifetimeScopes);
+      Token keyword = previous();
+      Token open = consume(TokenKind::LESS,
+                           "Expect '<' after a lifetime binder's 'for'.");
+      std::vector<LifetimeParameterSyntax> parameters;
+      do {
+        if (!check(TokenKind::IDENTIFIER) || peek().lexeme != "lifetime") {
+          throw error(peek(), "A higher-ranked binder accepts only 'lifetime "
+                              "name' parameters.");
+        }
+        Token parameterKeyword = advance();
+        Token name =
+            consume(TokenKind::IDENTIFIER,
+                    "Expect a lifetime parameter name after 'lifetime'.");
+        if (name.lexeme == "_") {
+          throw error(name, "A lifetime parameter requires a name; '_' is an "
+                            "inferred lifetime argument.");
+        }
+        declareLifetimeBinder(name);
+        parameters.push_back(
+            {.keyword = std::move(parameterKeyword), .name = std::move(name)});
+      } while (match({TokenKind::COMMA}));
+      Token close = consumeGenericClose(
+          "Expect '>' after higher-ranked lifetime parameters.");
+      binder = LifetimeBinder{.keyword = std::move(keyword),
+                              .open = std::move(open),
+                              .parameters = std::move(parameters),
+                              .close = std::move(close)};
+    }
+    std::optional<Token> referenceAccess;
+    if ((allowReferenceAccess || binder) && match({TokenKind::MUT})) {
+      referenceAccess = previous();
+    }
     std::optional<Token> pointeeConst;
     if (match({TokenKind::CONST})) {
       pointeeConst = previous();
@@ -2468,8 +2796,37 @@ private:
     parseArrayTypeSuffix(type);
     if (match({TokenKind::AMPERSAND})) {
       type.reference = previous();
+      if (match({TokenKind::LESS})) {
+        Token open = previous();
+        Token name;
+        if (match(
+                {TokenKind::IDENTIFIER, TokenKind::STATIC, TokenKind::THIS})) {
+          name = previous();
+        } else {
+          throw error(
+              peek(),
+              "Expect a lifetime name, '_', 'static' or 'this' after '&<'.");
+        }
+        Token close = consumeGenericClose(
+            "Expect '>' after the reference lifetime argument.");
+        noteLifetimeUse(name);
+        type.referenceLifetime = LifetimeArgument{.open = std::move(open),
+                                                  .name = std::move(name),
+                                                  .close = std::move(close)};
+      }
     } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
       type.reference = advance();
+      if (check(TokenKind::LESS)) {
+        throw error(peek(), "A lifetime argument annotates '&', not the '&&' "
+                            "move form.");
+      }
+    }
+    if (referenceAccess) {
+      if (!type.reference || type.reference->kind != TokenKind::AMPERSAND) {
+        throw error(*referenceAccess,
+                    "A 'mut' type component must be an '&' reference.");
+      }
+      type.referenceMutability = std::move(referenceAccess);
     }
     if (allowFunctionSignature && match({TokenKind::LEFT_PAREN})) {
       std::vector<TypeRef> parameters;
@@ -2494,6 +2851,14 @@ private:
       } else if (check(TokenKind::AND) && peek().lexeme == "&&") {
         type.functionSignatureQualifier = advance();
       }
+    }
+    if (binder) {
+      if (!type.isFunctionSignature()) {
+        throw error(binder->keyword,
+                    "A higher-ranked lifetime binder requires a function "
+                    "signature type.");
+      }
+      type.lifetimeBinder = std::move(binder);
     }
     return type;
   }
@@ -2533,7 +2898,9 @@ private:
         }
         consumeGenericClose("Expect '>' after generic arguments.");
       }
+      auto lifetimeArguments = takeLifetimeArguments(arguments);
       TypeRef type(std::move(name), std::move(arguments));
+      type.lifetimeArguments = std::move(lifetimeArguments);
       std::size_t qualifierDepth = 0;
       while (match({TokenKind::SCOPE})) {
         Token member = consume(TokenKind::IDENTIFIER,
@@ -2552,6 +2919,7 @@ private:
           }
           consumeGenericClose("Expect '>' after type member arguments.");
         }
+        selected.lifetimeArguments = takeLifetimeArguments(selected.arguments);
         type = std::move(selected);
       }
       return type;
@@ -2608,6 +2976,12 @@ private:
   }
 
   TypeRef parseGenericArgument() {
+    if (check(TokenKind::STATIC) || check(TokenKind::THIS) ||
+        (check(TokenKind::IDENTIFIER) && peek().lexeme == "_")) {
+      TypeRef argument(advance());
+      argument.genericArgumentSyntax = GenericArgumentSyntax::Lifetime;
+      return argument;
+    }
     const std::optional<std::size_t> expressionEnd =
         arrayExtentExpressionEnd(0);
     const bool expressionReachesDelimiter =
@@ -2626,7 +3000,7 @@ private:
       return argument;
     }
 
-    TypeRef argument = parseType();
+    TypeRef argument = parseType(true, true);
     if (match({TokenKind::ELLIPSIS})) {
       argument.packExpansion = previous();
     }
@@ -2635,9 +3009,97 @@ private:
         argument.arguments.empty() && argument.arrayExtents.empty() &&
         argument.pointers.empty() && !argument.reference) {
       argument.genericArgumentSyntax =
-          GenericArgumentSyntax::UnresolvedIdentifier;
+          lifetimeBinderInScope(argument.name.last().lexeme)
+              ? GenericArgumentSyntax::Lifetime
+              : GenericArgumentSyntax::UnresolvedIdentifier;
+      if (argument.genericArgumentSyntax == GenericArgumentSyntax::Lifetime)
+        noteLifetimeUse(argument.name.last());
     }
     return argument;
+  }
+
+  // RFC 0004 parametricity: lifetime arguments are signature metadata, never
+  // part of a type's argument list. Move them aside where a list is formed.
+  static std::vector<TypeRef>
+  takeLifetimeArguments(std::vector<TypeRef> &arguments) {
+    std::vector<TypeRef> lifetimes;
+    std::vector<TypeRef> types;
+    for (auto &argument : arguments)
+      (argument.genericArgumentSyntax == GenericArgumentSyntax::Lifetime
+           ? lifetimes
+           : types)
+          .push_back(std::move(argument));
+    arguments = std::move(types);
+    return lifetimes;
+  }
+
+  // A function's return type precedes its binder list. Once the binders are
+  // declared, an unresolved argument there that names one is a lifetime.
+  void reclassifyLateLifetimeArguments(TypeRef &type) {
+    for (auto &argument : type.arguments) {
+      if (argument.genericArgumentSyntax ==
+              GenericArgumentSyntax::UnresolvedIdentifier &&
+          lifetimeBinderInScope(argument.name.last().lexeme)) {
+        argument.genericArgumentSyntax = GenericArgumentSyntax::Lifetime;
+        noteLifetimeUse(argument.name.last());
+      }
+      reclassifyLateLifetimeArguments(argument);
+    }
+    auto moved = takeLifetimeArguments(type.arguments);
+    type.lifetimeArguments.insert(type.lifetimeArguments.end(),
+                                  std::make_move_iterator(moved.begin()),
+                                  std::make_move_iterator(moved.end()));
+    if (type.qualifiedOwner) {
+      TypeRef owner = *type.qualifiedOwner;
+      reclassifyLateLifetimeArguments(owner);
+      type.qualifiedOwner = std::make_shared<const TypeRef>(std::move(owner));
+    }
+  }
+
+  void declareLifetimeBinder(const Token &name) {
+    if (lifetimeScopes.binders.empty())
+      return;
+    // A pattern region was first parsed as a use of its own name.
+    std::erase_if(lifetimeScopes.pending,
+                  [&](const auto &use) { return sameToken(use.name, name); });
+    auto &scope = lifetimeScopes.binders.back();
+    if (std::any_of(scope.begin(), scope.end(), [&](const Token &binder) {
+          return sameToken(binder, name);
+        }))
+      return;
+    // Semantics merges a binder parsed again after backtracking by its span.
+    lifetimeScopes.names.binders.push_back(name);
+    scope.push_back(name);
+  }
+
+  // A class argument pattern such as `int&<source>` binds `source`.
+  static void collectPatternRegions(const TypeRef &type,
+                                    std::vector<std::string> &names) {
+    if (type.referenceLifetime &&
+        type.referenceLifetime->name.kind == TokenKind::IDENTIFIER)
+      names.push_back(type.referenceLifetime->name.lexeme);
+    for (const auto &argument : type.lifetimeArguments)
+      names.push_back(argument.name.last().lexeme);
+    for (const auto &argument : type.arguments)
+      collectPatternRegions(argument, names);
+  }
+
+  void declarePatternLifetimeBinders(const TypeRef &pattern) {
+    if (pattern.referenceLifetime &&
+        pattern.referenceLifetime->name.kind == TokenKind::IDENTIFIER &&
+        pattern.referenceLifetime->name.lexeme != "_")
+      declareLifetimeBinder(pattern.referenceLifetime->name);
+    for (const auto &argument : pattern.arguments)
+      declarePatternLifetimeBinders(argument);
+  }
+
+  [[nodiscard]] bool lifetimeBinderInScope(const std::string &name) const {
+    for (const auto &scope : lifetimeScopes.binders)
+      if (std::any_of(scope.begin(), scope.end(), [&](const Token &binder) {
+            return binder.lexeme == name;
+          }))
+        return true;
+    return false;
   }
 
   void parseArrayDeclaratorSuffix(TypeRef &type) {
@@ -3729,7 +4191,9 @@ private:
         expr = std::make_unique<QualifiedName>(
             std::move(path), TypeRef(std::move(owner), std::move(arguments)));
       } else if (isExplicitGenericCallStart()) {
-        std::vector<TypeRef> typeArguments = typeArgumentList();
+        std::vector<TypeRef> lifetimeArguments;
+        std::vector<TypeRef> typeArguments =
+            typeArgumentList(&lifetimeArguments);
         const std::optional<Token> bang = match({TokenKind::BANG})
                                               ? std::optional<Token>(previous())
                                               : std::nullopt;
@@ -3738,6 +4202,8 @@ private:
         expr = bang ? finishMacroCall(std::move(expr), std::move(typeArguments),
                                       *bang)
                     : finishCall(std::move(expr), std::move(typeArguments));
+        if (auto *call = exprAs<Call>(expr.get()))
+          call->setLifetimeArguments(std::move(lifetimeArguments));
       } else if (isConceptTestStart() && (exprAs<Variable>(expr.get()) ||
                                           exprAs<QualifiedName>(expr.get()))) {
         NamePath name = exprAs<Variable>(expr.get())
@@ -3860,9 +4326,7 @@ private:
     return parsed;
   }
 
-  ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
-    Token leftParen = previous();
-    std::vector<Token> argumentCommas;
+  ExprList callArgumentList(std::vector<Token> *argumentCommas = nullptr) {
     ExprList arguments;
     if (!check(TokenKind::RIGHT_PAREN)) {
       do {
@@ -3904,12 +4368,19 @@ private:
           break;
         }
         arguments.emplace_back(std::move(argument));
-        if (check(TokenKind::COMMA)) {
-          argumentCommas.push_back(peek());
+        if (argumentCommas && check(TokenKind::COMMA)) {
+          argumentCommas->push_back(peek());
         }
       } while (match({TokenKind::COMMA}));
     }
 
+    return arguments;
+  }
+
+  ExprPtr finishCall(ExprPtr callee, std::vector<TypeRef> typeArguments) {
+    Token leftParen = previous();
+    std::vector<Token> argumentCommas;
+    ExprList arguments = callArgumentList(&argumentCommas);
     Token paren =
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after arguments.");
     auto call =
@@ -3919,7 +4390,8 @@ private:
     return call;
   }
 
-  std::vector<TypeRef> typeArgumentList() {
+  std::vector<TypeRef>
+  typeArgumentList(std::vector<TypeRef> *lifetimes = nullptr) {
     consume(TokenKind::LESS, "Expect '<' before generic arguments.");
     std::vector<TypeRef> arguments;
     if (!check(TokenKind::GREATER)) {
@@ -3928,6 +4400,9 @@ private:
       } while (match({TokenKind::COMMA}));
     }
     consumeGenericClose("Expect '>' after generic arguments.");
+    auto lifetimeArguments = takeLifetimeArguments(arguments);
+    if (lifetimes != nullptr)
+      *lifetimes = std::move(lifetimeArguments);
     return arguments;
   }
 
@@ -3996,6 +4471,10 @@ private:
   std::vector<std::unique_ptr<MemberRequirement>>
   expressionRequirements(Token keyword) {
     const NestingGuard nesting = enterNesting(keyword);
+    // RFC 0004: a region written in a requirement parameter's type is bound
+    // there, as in a class argument pattern; a result naming it borrows from
+    // that parameter, exactly as [[borrowed_from(parameter)]] states.
+    const LifetimeScopeGuard lifetimeScope(lifetimeScopes);
     std::vector<TypeRef> parameters;
     std::vector<Token> bindings;
     if (match({TokenKind::LEFT_PAREN})) {
@@ -4021,6 +4500,7 @@ private:
                             return other.lexeme == binding.lexeme;
                           }))
             throw error(binding, "Duplicate requirement parameter name.");
+          declarePatternLifetimeBinders(parameter);
           parameters.push_back(std::move(parameter));
           bindings.push_back(std::move(binding));
         } while (match({TokenKind::COMMA}));
@@ -4089,6 +4569,20 @@ private:
       if (match({TokenKind::MUT}))
         resultAccess = previous();
       TypeRef requiredResult = parseType();
+      // `auto<r>` infers a borrow-carrying result whose region is `r`.
+      // Only a requirement result names a region on an inferred type.
+      if (requiredResult.name.last().kind == TokenKind::AUTO &&
+          !requiredResult.reference && match({TokenKind::LESS})) {
+        std::vector<TypeRef> arguments;
+        do {
+          arguments.emplace_back(parseGenericArgument());
+        } while (match({TokenKind::COMMA}));
+        consumeGenericClose("Expect '>' after result regions.");
+        requiredResult.lifetimeArguments = takeLifetimeArguments(arguments);
+        if (!arguments.empty())
+          throw error(arguments.front().name.last(),
+                      "An inferred requirement result takes only a region.");
+      }
       if (resultAccess && !requiredResult.reference)
         throw error(
             *resultAccess,
@@ -4115,6 +4609,32 @@ private:
         consume(TokenKind::RIGHT_PAREN, "Expect ')' after borrow origin.");
         consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
         consume(TokenKind::RIGHT_BRACKET, "Expect ']]' after borrow origin.");
+      }
+      if (!borrowedFrom) {
+        std::optional<std::string> region;
+        if (requiredResult.referenceLifetime &&
+            requiredResult.referenceLifetime->name.kind ==
+                TokenKind::IDENTIFIER)
+          region = requiredResult.referenceLifetime->name.lexeme;
+        else if (!requiredResult.lifetimeArguments.empty())
+          region = requiredResult.lifetimeArguments.front().name.last().lexeme;
+        if (region) {
+          for (std::size_t index = 0; index < parameters.size(); ++index) {
+            std::vector<std::string> names;
+            collectPatternRegions(parameters[index], names);
+            if (std::find(names.begin(), names.end(), *region) != names.end()) {
+              if (borrowedFrom)
+                throw error(bindings[index],
+                            "A requirement result region must be bound by "
+                            "exactly one requirement parameter.");
+              borrowedFrom = bindings[index];
+            }
+          }
+          if (!borrowedFrom)
+            throw error(requiredResult.name.last(),
+                        "A requirement result region must be bound by a "
+                        "requirement parameter.");
+        }
       }
       consume(TokenKind::SEMICOLON, "Expect ';' after required result type.");
       const bool inferredResult =
@@ -4370,7 +4890,7 @@ private:
         first != TokenKind::FLOAT && first != TokenKind::DOUBLE &&
         first != TokenKind::BOOL && first != TokenKind::CHAR &&
         first != TokenKind::NULLPTR_TYPE && first != TokenKind::VOID &&
-        first != TokenKind::IDENTIFIER) {
+        first != TokenKind::IDENTIFIER && first != TokenKind::FOR) {
       return false;
     }
     const std::optional<std::size_t> end = typeEnd(offset);
@@ -4511,6 +5031,10 @@ private:
   [[nodiscard]]
   std::optional<std::size_t> genericArgumentEnd(std::size_t offset) const {
     const TokenKind first = peekAt(offset).kind;
+    if (first == TokenKind::STATIC || first == TokenKind::THIS ||
+        (first == TokenKind::IDENTIFIER && peekAt(offset).lexeme == "_")) {
+      return offset + 1;
+    }
     const std::optional<std::size_t> expressionEnd =
         arrayExtentExpressionEnd(offset);
     const bool expressionReachesDelimiter =
@@ -4580,12 +5104,48 @@ private:
   }
 
   [[nodiscard]] std::optional<std::size_t> typeEnd(std::size_t offset) const {
+    if (peekAt(offset).kind == TokenKind::FOR) {
+      if (peekAt(offset + 1).kind != TokenKind::LESS) {
+        return std::nullopt;
+      }
+      std::size_t next = offset + 2;
+      while (true) {
+        if (peekAt(next).kind != TokenKind::IDENTIFIER ||
+            peekAt(next).lexeme != "lifetime" ||
+            peekAt(next + 1).kind != TokenKind::IDENTIFIER) {
+          return std::nullopt;
+        }
+        next += 2;
+        if (peekAt(next).kind != TokenKind::COMMA) {
+          break;
+        }
+        ++next;
+      }
+      if (peekAt(next).kind != TokenKind::GREATER) {
+        return std::nullopt;
+      }
+      offset = next + 1;
+    }
+    if (peekAt(offset).kind == TokenKind::MUT) {
+      ++offset;
+    }
     if (peekAt(offset).kind == TokenKind::CONST) {
+      if (peekAt(offset + 1).kind == TokenKind::CONST ||
+          peekAt(offset + 1).kind == TokenKind::MUT ||
+          peekAt(offset + 1).kind == TokenKind::FOR) {
+        return std::nullopt;
+      }
       const std::optional<std::size_t> qualified = typeEnd(offset + 1);
       if (!qualified) {
         return std::nullopt;
       }
       std::size_t declarator = *qualified;
+      if (declarator >= offset + 5 &&
+          peekAt(declarator - 1).kind == TokenKind::GREATER &&
+          peekAt(declarator - 3).kind == TokenKind::LESS &&
+          peekAt(declarator - 4).kind == TokenKind::AMPERSAND) {
+        declarator -= 3;
+      }
       if (declarator > offset + 1 &&
           (peekAt(declarator - 1).kind == TokenKind::AMPERSAND ||
            peekAt(declarator - 1).kind == TokenKind::AND)) {
@@ -4699,6 +5259,15 @@ private:
     }
     if (peekAt(offset).kind == TokenKind::AMPERSAND) {
       ++offset;
+      if (peekAt(offset).kind == TokenKind::LESS) {
+        const TokenKind lifetime = peekAt(offset + 1).kind;
+        if ((lifetime != TokenKind::IDENTIFIER &&
+             lifetime != TokenKind::STATIC && lifetime != TokenKind::THIS) ||
+            peekAt(offset + 2).kind != TokenKind::GREATER) {
+          return std::nullopt;
+        }
+        offset += 3;
+      }
     }
     return offset;
   }
@@ -5087,6 +5656,10 @@ const std::vector<ParseDiagnostic> &Parser::errors() const {
 const std::optional<SyntaxCompletionContext> &
 Parser::completionContext() const {
   return impl->completionContext();
+}
+
+const LifetimeNames &Parser::lifetimeNames() const {
+  return impl->lifetimeNames();
 }
 
 } // namespace lang

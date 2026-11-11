@@ -1884,14 +1884,19 @@ int main() {
     // The owner operation the borrow conflicts with is the primary span.
     const bool reported =
         at != std::string::npos &&
-        std::any_of(
-            result.diagnostics.begin(), result.diagnostics.end(),
-            [&](const lang::Diagnostic &diagnostic) {
-              return diagnostic.code == "GTI-S2017" &&
-                     diagnostic.primary.start >= at &&
-                     diagnostic.primary.start < at + item.marker.size() &&
-                     diagnostic.message.find(item.reason) != std::string::npos;
-            });
+        std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                    [&](const lang::Diagnostic &diagnostic) {
+                      // The MIR borrow checker states the conflict generically.
+                      return diagnostic.code == "GTI-S2017" &&
+                             diagnostic.primary.start >= at &&
+                             diagnostic.primary.start <
+                                 at + item.marker.size() &&
+                             (diagnostic.message.find(item.reason) !=
+                                  std::string::npos ||
+                              diagnostic.message.find(
+                                  "overlapping borrow may still be live") !=
+                                  std::string::npos);
+                    });
     if (!reported)
       printDiagnostics(result);
     expect(rejectedAtSource(result, "GTI-S2017") && reported,

@@ -600,6 +600,12 @@ compare it with `nullptr`, copy it as the same exact type, initialize it from
 native address stored there, with no GTI owner, so a function may return it as
 ownerless text; its validity remains the unsafe code's obligation.
 
+`c_string<region>` names the borrowed storage region explicitly. A bare
+`c_string` uses ordinary lifetime elision, and `c_string<static>` denotes a
+value whose storage remains valid for the program's lifetime. This region is
+compile-time metadata; the native representation remains one pointer. Naming
+a region does not establish NUL termination or make raw memory access safe.
+
 The only implicit production conversion in the current bounded slice is from
 `std::string_view` to a `c_string` **call parameter**. Only a complete,
 statically known literal-backed view qualifies; ordinary dynamic views and

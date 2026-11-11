@@ -63,10 +63,10 @@ void testRejectedBorrows() {
 
 void testRawAccessAndWitness() {
   const auto result = analyze(declarations + R"(
-[[borrowed_from(owner)]] c_int& restore(c_int& owner) {
+c_int&<a> restore<lifetime a>(c_int&<a> owner) {
   unsafe { return *pointer; }
 }
-[[borrowed_from(owner)]] c_int& claim(c_int* address, c_int& owner) {
+c_int&<a> claim<lifetime a>(c_int* address, c_int&<a> owner) {
   unsafe { return *address; }
 }
 void transport() {

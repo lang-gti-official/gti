@@ -11,7 +11,7 @@ namespace detail {
 constexpr bool readable_dereference_result<I, R>(std::meta::type<I> owner,
                                                  std::meta::type<R> result) {
   if constexpr (std::meta::type<R>().is_reference()) {
-    return requires(I& cursor) { { *cursor } -> R [[borrowed_from(cursor)]]; };
+    return requires(I&<cursor> cursor) { { *cursor } -> R<cursor>; };
   } else {
     // Legacy text handles can retain expression-specific owner dependencies.
     return !std::meta::type<R>().is_void() && std::meta::is_copyable<R>() &&
@@ -194,13 +194,13 @@ export concept forward_iterator<Iterator> =
 export [[unsatisfied("Provide mutable operator*() returning a mutable checked reference borrowed from the cursor, and public void operator++() mut.")]]
 concept output_iterator<Iterator> =
     detail::cursor_increment_declarations<Iterator>() &&
-    requires(mut Iterator& cursor) {
-      { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+    requires(mut Iterator&<cursor> cursor) {
+      { *cursor } -> mut auto&<cursor>;
       { ++cursor } -> void;
     };
 export [[unsatisfied("Provide a mutable dereference returning exactly mut T& borrowed from the cursor.")]]
-concept writes_to<Iterator, T> = requires(mut Iterator& cursor) {
-  { *cursor } -> mut T& [[borrowed_from(cursor)]];
+concept writes_to<Iterator, T> = requires(mut Iterator&<cursor> cursor) {
+  { *cursor } -> mut T&<cursor>;
 };
 
 // Movement categories compose over the input contract the same way the
@@ -230,8 +230,8 @@ export concept random_access_cursor<Iterator> =
 // is how in-place algorithms keep a single mutable borrow of the owner.
 export concept subscripts_to_mut<Iterator, T> =
     detail::cursor_index_declaration<Iterator>() &&
-    requires(mut Iterator& cursor, std::ptrdiff_t offset) {
-      { cursor[offset] } -> mut T& [[borrowed_from(cursor)]];
+    requires(mut Iterator&<cursor> cursor, std::ptrdiff_t offset) {
+      { cursor[offset] } -> mut T&<cursor>;
     };
 
 // A sentinel whose distance is known without walking: the iterator provides

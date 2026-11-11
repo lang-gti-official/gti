@@ -73,6 +73,23 @@ try {
     requireRejected(legacyInclude);
   }
 
+  // Partial lifetime edits must report an error and accept the repaired
+  // source at the same path, without swallowing subsequent declarations.
+  const lifetimeEdit = path.join(temporary, "lifetime-edit.gti");
+  for (const source of [
+    "int&<> broken;\n",
+    "int&<a, b> broken;\n",
+    "int&<a\n",
+    "using Broken = for<lifetime a> int&<a>;\n",
+  ]) {
+    fs.writeFileSync(lifetimeEdit, source, "utf8");
+    requireRejected(lifetimeEdit);
+    fs.writeFileSync(lifetimeEdit,
+      "using Reader = for<lifetime a> int&<a>(int&<a>);\n" +
+      "int&<a> identity<lifetime a>(int&<a> value) { return value; }\n", "utf8");
+    requireAccepted(lifetimeEdit);
+  }
+
   const misplacedBom = path.join(temporary, "misplaced-bom.gti");
   fs.writeFileSync(misplacedBom, "int \ufeffvalue = 0;\n", "utf8");
   requireRejected(misplacedBom);

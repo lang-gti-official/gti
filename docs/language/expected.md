@@ -151,8 +151,11 @@ expected<int&, lookup_errc> result = value;
 int& observed = result.value();
 ```
 
-`value()` produces a read-only loan tied to both the expected carrier and its
-original owner; it does not copy `T`. The owner cannot be mutated, moved, or
+`value()` produces a read-only loan of the original owner; it does not copy
+`T`. The prelude declares it in the carrier's stored region
+(`T&<data> value()` in `class expected<T&<data>, E>`), as Rust's
+`Option<&'a T>` yields `&'a T`, so an extracted reference may be returned or
+kept after the carrier itself ends. The owner cannot be mutated, moved, or
 replaced while either the carrier or an extracted reference remains live. The
 ordinary path-aware last-use rules release that dependency. Retaining a result
 from a temporary owner is rejected.
@@ -245,7 +248,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = Rejected;
   bool has_value(Checked<T>& result) { return result.code == 0; }
-  [[borrowed_from(result)]] T take_value(Checked<T> result) { return result.value; }
+  T<a> take_value<lifetime a>(Checked<T, a> result) { return result.value; }
   Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
 };
 
@@ -263,8 +266,8 @@ is copied whole, and a named move-only operand needs `std::move`. A
 [execution](execution.md#48-recoverable-failure) for the order of
 evaluation and cleanup.
 
-`value_type` may be a checked reference when the operation's declared
-`borrowed_from` contract relays the operand's exact stored external
+`value_type` may be a checked reference when the operation's declared result
+region (`T<a> take_value<lifetime a>(Checked<T, a> result)`) relays the operand's exact stored external
 dependency. For a payload enum, the checked operation body selects its active
 reference field and supplies the complete conditional input-to-result mapping.
 This keeps the success reference tied to its actual owner even

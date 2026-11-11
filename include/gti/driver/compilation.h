@@ -7,6 +7,7 @@
 #include "gti/diagnostic.h"
 #include "gti/llvm_backend.h"
 #include "gti/mir.h"
+#include "gti/mir_backend.h"
 #include "gti/mir_verifier.h"
 #include "gti/optimizer.h"
 #include "gti/program_request.h"
@@ -286,5 +287,25 @@ compileToNativeHeader(const CompilationRequest &request,
 [[nodiscard]] CompilationResult
 compileToMir(const CompilationRequest &request,
              ProgressObserver *progress = nullptr);
+
+// The same serialization under explicit MIR emission options, such as the
+// RFC 0004 loan-bookkeeping normalization.
+[[nodiscard]] CompilationResult
+compileToMir(const CompilationRequest &request, MirBackendOptions options,
+             ProgressObserver *progress = nullptr);
+
+// Textual LLVM IR for the program the LLVM backend would compile: the same
+// definition closure and backend options as an LLVM executable build, stopped
+// after GTI's MIR optimization and the selected LLVM pipeline, before target
+// code generation. Debug info and instrumentation are not supported here.
+[[nodiscard]] CompilationResult
+compileToLlvmIr(const CompilationRequest &request,
+                ProgressObserver *progress = nullptr);
+
+// The RFC 0004 borrow-dependency inventory of the canonical MIR as JSON
+// (`borrowDependencyReport` in gti/driver/borrow_dependencies.h).
+[[nodiscard]] CompilationResult
+compileToBorrowDependencies(const CompilationRequest &request,
+                            ProgressObserver *progress = nullptr);
 
 } // namespace lang::driver

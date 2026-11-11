@@ -13,9 +13,9 @@ namespace std::detail {
 // on that; it would corrupt an overlapping input that starts before output.
 void copy_span_bytes<Source>(mut mutable_span<uint8_t>& output, size_t output_first,
                              Source& input, size_t input_first, size_t count)
-    requires requires(Source& bytes, size_t index) {
+    requires requires(Source&<bytes> bytes, size_t index) {
       { bytes.size() } -> size_t;
-      unsafe { bytes.get_unchecked(index) } -> uint8_t& [[borrowed_from(bytes)]];
+      unsafe { bytes.get_unchecked(index) } -> uint8_t&<bytes>;
     } {
   if (count == size_t(0)) { return; }
   gti_internal::require_container_argument(

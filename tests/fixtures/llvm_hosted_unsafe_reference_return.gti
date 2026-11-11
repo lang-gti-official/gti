@@ -2,8 +2,7 @@ unsafe int& checked_identity(int& value) {
   return value;
 }
 
-[[borrowed_from(value)]]
-unsafe int& forwarded_identity(int& value, int& other) {
+unsafe int&<a> forwarded_identity<lifetime a>(int&<a> value, int& other) {
   unsafe { return checked_identity(value); }
 }
 

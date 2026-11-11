@@ -224,7 +224,7 @@ int main() {
   }
   const std::string multipleOwners = R"gti(
 enum Pair { both(int& first, int& second) };
-[[borrowed_from(input)]] int& select(mut Pair input, bool choose) {
+int&<a> select<lifetime a>(mut Pair<a> input, bool choose) {
   switch (std::move(input)) {
     case Pair::both(first, second):
       if (choose) return first;
@@ -440,7 +440,7 @@ for <std::copyable T> concept std::tryable<Checked<T>> {
   using value_type = T;
   using residual_type = Rejected;
   bool has_value(Checked<T>& result) { return result.code == 0; }
-  [[borrowed_from(result)]] T take_value(Checked<T> result) { return result.value; }
+  T<a> take_value<lifetime a>(Checked<T, a> result) { return result.value; }
   Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
 };
 class Status {
@@ -607,7 +607,7 @@ int main() { change(Token::item(7)); return 0; }
 )gti",
            "GTI-S2017", "mutable reference to a temporary");
   rejected(passiveEnum + R"gti(
-[[borrowed_from(token)]] Token& escape(Token& token) { return token; }
+Token&<a> escape<lifetime a>(Token&<a> token) { return token; }
 int main() { Token& value = escape(Token::item(7)); return inspect(value); }
 )gti",
            "GTI-S2017", "may retain this argument");
@@ -863,7 +863,7 @@ for concept std::tryable<Reading> {
   using value_type = int&;
   using residual_type = Rejected;
   bool has_value(Reading& value) { return value.code == 0; }
-  [[borrowed_from(value)]] int& take_value(Reading value) {
+  int&<a> take_value<lifetime a>(Reading<a> value) {
     return value.external;
   }
   Rejected take_residual(Reading value) { return Rejected(value.code); }
@@ -900,7 +900,7 @@ for concept std::tryable<Editing> {
   using value_type = mut int&;
   using residual_type = Rejected;
   bool has_value(Editing& value) { return value.code == 0; }
-  [[borrowed_from(value)]] mut int& take_value(mut Editing value) {
+  mut int&<a> take_value<lifetime a>(mut Editing<a> value) {
     return value.external;
   }
   Rejected take_residual(Editing value) { return Rejected(value.code); }
@@ -953,15 +953,32 @@ public:
   Envelope(Guard value) : guard(std::move(value)) {}
 };
 )gti";
-  rejected(guarded + R"gti(
-[[borrowed_from(value)]] int& escape(Guard value) { return value.owner; }
-int main() { return 0; }
+  // RFC 0004: a shared reference copied out of a cleanup-bound carrier's
+  // field names the field's external referent, which outlives the carrier
+  // (Rust accepts returning a `&'a T` field of a value with Drop). MIR keeps
+  // the carrier's own loan through its cleanup. An exclusive reference
+  // cannot leave a carrier whose cleanup still uses it.
+  accepted(guarded + R"gti(
+int&<a> escape<lifetime a>(Guard<a> value) { return value.owner; }
+int main() { int owner = 7; return escape(Guard(owner)) - 7; }
 )gti",
-           "GTI-S2017", "cleanup-bound carrier cannot escape");
-  rejected(guarded + R"gti(
-[[borrowed_from(value)]] int& escape(Envelope value) {
+           "a shared field reference outlives its cleanup-bound carrier");
+  accepted(guarded + R"gti(
+int&<a> escape<lifetime a>(Envelope<a> value) {
   return value.guard.owner;
 }
+int main() { int owner = 7; return escape(Envelope(Guard(owner))) - 7; }
+)gti",
+           "a nested shared field reference outlives its cleanup-bound "
+           "carrier");
+  rejected(R"gti(
+class Guard {
+public:
+  mut int& owner;
+  Guard(mut int& value) : owner(value) {}
+  ~Guard() { this.owner = 0; }
+};
+mut int&<a> escape<lifetime a>(mut Guard<a> value) { return value.owner; }
 int main() { return 0; }
 )gti",
            "GTI-S2017", "cleanup-bound carrier cannot escape");

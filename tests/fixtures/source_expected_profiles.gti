@@ -150,8 +150,7 @@ public:
   }
 };
 
-[[borrowed_from(owner)]]
-SourceResult<int&, int> borrow(int& owner, bool fail) {
+SourceResult<int&<a>, int> borrow<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return SourceResult<int&, int>(source_result::Failure<int>(7));
   return SourceResult<int&, int>(owner);
 }

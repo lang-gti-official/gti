@@ -3,13 +3,13 @@ import std.string;
 import std.utility;
 
 // A function returns a by-value borrowed payload enum parameter whole: moved,
-// copied, or under an explicit borrowed_from contract. The result keeps the
+// copied, or under an explicit result region. The result keeps the
 // caller's external owner; the empty alternative publishes none.
 enum Slot { ready(int& value), empty };
 
 Slot relay(Slot slot) { return std::move(slot); }
 Slot copy_relay(Slot slot) { return slot; }
-[[borrowed_from(slot)]] Slot annotated(Slot slot) { return std::move(slot); }
+Slot<a> annotated<lifetime a>(Slot<a> slot) { return std::move(slot); }
 
 int peek(Slot slot) {
   switch (slot) {

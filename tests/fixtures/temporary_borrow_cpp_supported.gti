@@ -19,8 +19,7 @@ public:
 };
 Cursor cursor(int& value) { return Cursor(value); }
 
-[[borrowed_from(source)]]
-int& select(int& source, Tag& ignored) { return source; }
+int&<a> select<lifetime a>(int&<a> source, Tag& ignored) { return source; }
 
 int divide(Tag& temporary, int& divisor) { return temporary.value / divisor; }
 

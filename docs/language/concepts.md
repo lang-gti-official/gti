@@ -323,14 +323,15 @@ The parameter list is optional. Each binding has an exact type; `mut` is
 permitted only on a reference parameter. A block contains one or more checks,
 all of which must hold. An unannotated `-> R` names an exact owned, non-borrowed
 result type, including `void`; it is not a result concept or an implicit
-conversion. A checked reference result instead names its borrowed input:
+conversion. A checked reference result instead names its borrowed input's
+region:
 
 ```gti
-concept readable<C, T> = requires(C& owner) {
-  { *owner } -> T& [[borrowed_from(owner)]];
+concept readable<C, T> = requires(C&<owner> owner) {
+  { *owner } -> T&<owner>;
 };
-concept editable<C, T> = requires(mut C& owner) {
-  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+concept editable<C, T> = requires(mut C&<owner> owner) {
+  { owner.edit() } -> mut T&<owner>;
 };
 ```
 
@@ -338,29 +339,30 @@ The result's referent and access must match exactly, and every possible checked
 origin must belong to the named synthetic parameter. That parameter must itself
 be borrowed; a mutable result additionally needs a mutable input. Merely
 returning the correct reference type from a different input does not satisfy
-the contract. The annotation cannot authorize a temporary to escape, make an
+the contract. The region cannot authorize a temporary to escape, make an
 owned local a borrowed input, or turn read-only access into mutable access.
-Omitting the origin does not admit reference results.
+Omitting the region does not admit reference results.
 
 A value result that carries borrowed state — a view, cursor or other type whose
-storage holds checked references — names its origin the same way:
+storage holds checked references — names its origin the same way, as the
+carrier's lifetime argument:
 
 ```gti
-class Window {
-  int& first;
+class Window<lifetime w> {
+  int&<w> first;
 public:
-  Window(int& first) : first(first) {}
+  Window(int&<w> first) : first(first) {}
 };
-concept windowed<S> = requires(S& source) {
-  { source.window() } -> Window [[borrowed_from(source)]];
+concept windowed<S> = requires(S&<source> source) {
+  { source.window() } -> Window<source>;
 };
-concept buffered_source<S> = requires(S& source) {
-  { source.buffered() } -> std::span<uint8_t> [[borrowed_from(source)]];
+concept buffered_source<S> = requires(S&<source> source) {
+  { source.buffered() } -> std::span<uint8_t, source>;
 };
 ```
 
 The result type must be exact and must carry borrowed state; an owned type is
-named without the annotation, and an unannotated borrow-carrying result is
+named without a region, and a borrow-carrying result without one is
 rejected exactly as an unannotated reference is. Satisfaction compares the
 dependencies that binding the result would retain — the same facts concrete
 initialization uses to protect its sources — with the named origin. Every
@@ -388,11 +390,11 @@ operation has a deferred result, not an invented owned value or reference;
 concrete instantiation must resolve it before executable lowering.
 
 An inferred reference requirement instead spells
-`{ expression } -> auto& [[borrowed_from(input)]];` (or `mut auto&`). It checks
+`{ expression } -> auto&<input>;` (or `mut auto&<input>`). It checks
 the same exact access and input-origin rules as a typed borrowed requirement,
 while leaving the referent inferred. A value result cannot satisfy this check,
 and inference never changes a read-only input into a mutable borrowed origin.
-`{ expression } -> auto [[borrowed_from(input)]];` likewise infers a
+`{ expression } -> auto<input>;` likewise infers a
 borrow-carrying value's type and checks the same origin rules; a reference
 result cannot satisfy it. In an open generic body its result is deferred, like
 the inferred referent of `auto&`, until concrete instantiation supplies the
@@ -1274,14 +1276,23 @@ existing restriction on inline protocol constraints such as `<measurable T>`
 remains; write protocol applications in the trailing clause.
 
 A block function is an ordinary function definition. The block's parameters
-apply to it, and it cannot declare its own generic parameters or a requires
-clause. Like the operation it defines, it declares no default arguments, so
+apply to it. An operation may add lifetime binders and lifetime requirements
+that satisfy its interface; it cannot add ordinary type/value parameters or
+stronger lifetime preconditions. Like the operation it defines, it declares no default arguments, so
 a call accepts the same arguments whether it names a concrete type or goes
 through a requirement. Inside the block:
 - the block's associated types are transparent, whether written as
   `unit_type` or as `measurable<Crate<T>>::unit_type`;
 - each operation requires the block's own application and its trailing requirements;
 - the block's functions can call each other by name.
+
+Omitted lifetimes in a conformance head are implicit block parameters. For
+example, `for concept Inspect<View>` covers the stored regions of `View` without
+naming them. An operation's omitted `View` slots inherit that exact head
+relationship, while a reference to the `View` shell still has its own lifetime.
+Explicit named or `static` arguments retain their meaning and must match the
+interface. An associated alias such as `using Item = int&` follows ordinary
+per-use elision; an ambiguous returned reference still needs a named relation.
 
 ### Selection and coherence
 
@@ -1349,9 +1360,10 @@ belongs to the reference type, not mutable storage for the alias. `mut` on a
 non-reference associated type is rejected; this does not add general reference
 aliases outside conformance blocks.
 
-An operation may declare `[[borrowed_from(parameter)]]`. This names the
-parameter position that supplies a checked reference result; an implementation
-may rename that parameter but must preserve its position and contract. For an
+An operation may name the parameter that supplies a checked reference result
+with a region it binds, as in `int&<a> get<lifetime a>(T&<a> source);`. The
+region names that parameter position; an implementation may rename the
+parameter but must preserve its position and contract. For an
 associated or dependent result type the contract applies only to reference
 instances, and is inert for owned results. A generic implementation need not
 annotate an owned-returning instance merely because its uninstantiated return
@@ -1386,10 +1398,11 @@ native function pointers in these public callable relations remain outside the
 current bounded surface. Eligible namespace-scope GTI function items are
 supported; an unresolved overload set still needs one exact context, and
 unsafe/native/generic declarations do not automatically become stored items.
-A requirement result names exactly one borrowed origin. A borrow-carrying
-result composed from several inputs, such as a paired view
-(`[[borrowed_from(left, right)]]`), has no requirement form yet; it is a
-follow-up to the single-origin carrier contract rather than a separate rule.
+A requirement result names exactly one borrowed origin: its region must be
+bound by exactly one requirement parameter. A borrow-carrying result composed
+from several inputs, such as a paired view over two parameters sharing one
+region, has no requirement form yet; it is a follow-up to the single-origin
+carrier contract rather than a separate rule.
 
 Add a new source concept when existing facts can express the contract. Add a
 new private compiler capability only when semantic analysis must answer a

@@ -829,6 +829,16 @@ Source prefix-capacity checks are ordinary control flow. Their selected calls,
 ordered inputs and object-lifetime operations remain visible to deterministic
 inspection and replay; the retired private construction-preflight identity is
 not serialized.
+A class's stored-reference inventory includes each non-interface base's paths,
+named by the declaring base's field symbols: an inherited field is a `Field`
+projection of the derived place, so no separate base path kind exists. A base
+initializer whose selected constructor stores reference arguments stages like
+any other base and publishes each stored argument as an escaping `Stored` loan
+with no storage field; the constructor summary and field-origin replay follow
+the base constructor's own origins for the same flattened paths. A reference
+read out of a stored field through a reference formal transfers that formal's
+abstract `Stored` entry (after its shell ends), and one read out of a local
+composed carrier publishes only the dependency its field path designates.
 The loan contract separates a physical carrier reference from its inherited
 external-owner authority. Ordinarily `storedDependency` names one exact `Stored`
 loan; unlike `parent`, it does not denote containment or suspend that loan. Dependency
@@ -2991,6 +3001,13 @@ A `MirBody` owns:
   reuses the canonical element place and its loan; copying stages an independent
   carrier while moving consumes only the carrier shell. Whole-program checks
   independently replay field paths and reject missing or substituted origins;
+- a read-only supplying lane `Carrier&` of a concrete formal pack has no
+  semantic entry loan; MIR derives one from the lane's type. Its `Parameter`
+  shell entry retains an abstract `Stored` entry over the same `PackElement`
+  place naming the carrier's sole stored reference path, as a fixed reference
+  formal's semantic entries do. A forwarded lane's call result is a child of
+  that lane's shell and keeps its stored dependency; verification matches
+  shell, dependency and lane by element, never by the whole pack binding;
 - typed lexical/value drop obligations and per-instruction initialize, move,
   reparent, replace, transfer-out, and drop lifecycle events;
 - resolved call targets, static/virtual dispatch, constructor targets,
@@ -3306,12 +3323,17 @@ the outlives relationships between them from its own CFG, places, loans and
 calls. It then checks the body against two kinds of contract only: its own
 signature contract (what results and stored fields may borrow from) and the
 contracts of the callees it invokes. It never reproduces a semantic supplier
-inventory. Semantics and MIR are compared at signature-contract level, and a
+inventory. It is the only body-local borrow checker, and MIR derives each
+loan's end points from its own CFG; generic bodies are checked per concrete
+instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
-same diagnostic codes as the corresponding ownership errors. MIR types and
+same diagnostic codes as the corresponding ownership errors, with the loan's
+origin and its later use as related notes. `mirBorrowDiagnostics` in
+`src/compiler/frontend.cpp` maps MIR rejections to them, and the LSP publishes
+the same diagnostics. MIR types and
 both backends see only erased types; lifetimes never change MIR shape, layout
 or emitted code, so a lifetime-free program produces the same MIR as before
 RFC 0004.
@@ -4322,6 +4344,33 @@ the verified reverse-order recipe before retiring the inert native array
 shell. Arrays embedded in allocated objects use the same recipe. Native array
 destruction is not a substitute for releasing checked ownership resources.
 
+### Signature-only declarations
+
+Editor analysis omits the bodies of library-only instances in HIR (see
+"Library-only instance bodies" in [hir.md](hir.md)); each such function,
+constructor or destructor arrives marked `bodyOmitted` with its parameter
+bindings and signature facts. MIR lowers it as a `Declaration`: the exact
+bodyless skeleton above, with the instance's recorded parameter types, return
+and constructor borrow summaries, owned-pointee projection and ownerless-text
+facts unchanged, and no initializers. Code generation and `gti check` never
+omit bodies, so their MIR is unchanged.
+
+A declaration is not yet a complete signature contract for every MIR rule.
+Program summaries derived from bodies treat it conservatively: it may raise a
+defined failure, and its persistent-storage access is unknown, so a caller
+holding a borrow of a global across the call is rejected. Several verifier
+rules also admit a call shape only for a `Source` callee (a temporary argument
+input, owned hosted-startup arguments, callable argument descriptors, and
+dependent text relays), and the summary proofs of a declaration's own
+owned-pointee projection, stored-carrier and receiver-carrier returns,
+stored field mappings, constructor borrow summary and published text result
+are checked against a body it does not have. Each of these makes verification
+stricter, never weaker, so the editor publishes a signature-only result only
+when MIR accepts it and otherwise analyses again with the bodies (see
+[lsp.md](lsp.md)). Accepting signature-only callees exactly as lowered bodies
+requires a signature-only definition kind whose summaries come from the
+signature contract in those rules.
+
 ## Controlled Optimization Edits
 
 The private `verifyMirBodyWithPlaceQueries` entry observes the same body verifier
@@ -4481,7 +4530,24 @@ A global-origin function summary and every matching call instruction retain
 one `BorrowOriginPlace`. Lowering materializes a symbol-rooted MIR place with
 the summarized projections and creates the call-result loan from it. The
 verifier rejects missing, forged, mismatched, receiver/argument-attached, or
-wrong-return places. Unretained loans must still reach their selected
+wrong-return places. Under signature contracts (RFC 0004) a free or static
+function's read-only `T&<static>` result that does not return one exact place
+is a `Global` summary without a place: the declaration is the contract. Each
+return then proves that its loan, every ancestor, stored dependency and
+additional dependency is rooted in immutable, non-thread-local namespace or
+static-field storage; any other root is an escape. At the call, the result loan
+is a root whose source is the call's own returned reference value, so reads
+load through the returned address and no caller place is conflict-tracked.
+A free or static function's carrier result that no input can supply (no
+reference parameter and no parameter holding a borrow) is implicitly `static`
+in the same way when every stored reference path is read-only: its stored
+call loan is rooted at the returned carrier value, a return that holds no
+reference proves its empty alternative through the reconstructed complete
+flow, and any other root is an escape reported as GTI-S2127. Writing, moving
+or dropping that carrier's own storage (including its materialization as a
+temporary receiver) never conflicts with the self-rooted loan: no caller owner
+protects the static referents it holds.
+Unretained loans must still reach their selected
 full-expression `EndBorrow`; retained mutable loans follow the semantic lexical
 endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
@@ -4697,6 +4763,15 @@ carrier's. Inside the lambda body a by-value capture belongs to the closure
 environment, which owns any release obligation it contains, as a caller owns
 a method's receiver; the capture's stored entry is therefore not
 cleanup-bound there, so the body is not bound by a destructor it never runs.
+
+A payload enum whose alternative holds a cleanup-bound carrier by value is a
+cleanup-bound carrier too. Its payload construction produces the enum's
+lifecycle-bound `Stored` loan, whose complete dependency set the conditional
+origin flow proves from the exact ordered inputs; the loan then follows the
+enum's drop obligation like a class carrier's. Moving a constructed carrier
+into the payload forwards that carrier's external ancestry: the payload's
+dependency is not a child of the consumed carrier's group, while a copied
+carrier's still is.
 
 A body-local reference may share an existing semantic owner identity while
 capturing an accessor's different runtime referent. Lowering accepts that

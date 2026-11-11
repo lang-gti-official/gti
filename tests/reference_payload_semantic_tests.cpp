@@ -26,6 +26,12 @@ int main() {
         .analyze(root / "tests" / "reference-payload-semantic.gti", source,
                  {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
   };
+  // RFC 0004: MIR is the borrow checker, so borrow rejections need MIR.
+  const auto analyzeMir = [&](const std::string &source) {
+    return lang::Frontend().analyze(
+        root / "tests" / "reference-payload-semantic.gti", source,
+        {root / "stdlib" / "prelude.gti"}, {}, {root / "stdlib"});
+  };
   const auto acceptedSemantics = [&](const lang::FrontendResult &result) {
     for (const auto &diagnostic : result.diagnostics) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
@@ -145,7 +151,7 @@ int main() { return 0; }
   expect(owners.size() == 2 && owners[0].root == owners[1].root &&
              owners[0].projections != owners[1].projections,
          "separate reference fields retain distinct exact external places");
-  const auto conflict = analyze(R"gti(
+  const auto conflict = analyzeMir(R"gti(
 enum Reading { empty, item(mut int& value) };
 int inspect(mut Reading input) {
   switch (input) {
@@ -211,7 +217,7 @@ int main() { return 0; }
   }
   expect(transferred.size() == 2,
          "consuming two mutable reference fields publishes two successors");
-  const auto transferredConflict = analyze(R"gti(
+  const auto transferredConflict = analyzeMir(R"gti(
 enum Reading { empty, item(mut int& value) };
 int consume(mut Reading input) {
   switch (std::move(input)) {
@@ -253,14 +259,14 @@ int main() { return 0; }
   for (const auto &source : {
            R"gti(
 enum Reading { empty, value(int& owner) };
-[[borrowed_from(owner)]] Reading read(int& owner) {
+Reading<a> read<lifetime a>(int&<a> owner) {
   return Reading::value(owner);
 }
 int main() { mut int owner = 3; auto result = read(owner); return 0; }
 )gti",
            R"gti(
 enum Reading { empty, value(int& owner) };
-[[borrowed_from(owner)]] Reading read(int& owner, bool fail) {
+Reading<a> read<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return Reading::empty;
   return Reading::value(owner);
 }
@@ -268,7 +274,7 @@ int main() { mut int owner = 3; auto result = read(owner, true); return 0; }
 )gti",
            R"gti(
 enum Reading { empty, value(mut int& owner) };
-[[borrowed_from(owner)]] Reading read(mut int& owner) {
+Reading<a> read<lifetime a>(mut int&<a> owner) {
   return Reading::value(owner);
 }
 int main() { mut int owner = 3; auto result = read(owner); return 0; }
@@ -276,7 +282,7 @@ int main() { mut int owner = 3; auto result = read(owner); return 0; }
            R"gti(
 enum Inner { empty, value(int& owner) };
 enum Outer { empty, some(Inner inner) };
-[[borrowed_from(owner)]] Outer read(int& owner) {
+Outer<a> read<lifetime a>(int&<a> owner) {
   return Outer::some(Inner::value(owner));
 }
 int main() { mut int owner = 3; auto result = read(owner); return 0; }
@@ -383,7 +389,7 @@ int main() { mut int owner = 3; return update(owner); }
   const std::string observedPrefix = R"gti(
 import std.string;
 enum Observed { ready(int& value), failed(std::string error) };
-[[borrowed_from(owner)]] Observed produce(int& owner, bool fail) {
+Observed<a> produce<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return Observed::failed(std::string("bad"));
   return Observed::ready(owner);
 }
@@ -551,7 +557,7 @@ int main() {
   for (const std::string body :
        {"result = produce(owner, true); return int(error.size());",
         "auto moved = std::move(result); return int(error.size());"}) {
-    const auto invalidated = analyze(observedPrefix + R"gti(
+    const auto invalidated = analyzeMir(observedPrefix + R"gti(
 int main() {
   int owner = 3;
   mut auto result = produce(owner, true);
@@ -730,7 +736,7 @@ int main() {
   const auto constructed = lang::Frontend().analyze(
       root / "tests" / "reference-payload-constructor.gti", R"gti(
 enum Reading { empty, value(int& owner, int sequence) };
-[[borrowed_from(owner)]] Reading make(int& owner) {
+Reading<a> make<lifetime a>(int&<a> owner) {
   return Reading::value(owner, 7);
 }
 int main() { return 0; }
@@ -827,9 +833,8 @@ int main() { return 0; }
             R"gti(
 enum Outer { empty, wrapped(Reading reading) };
 )gti" +
-            (exclusive
-                 ? "[[borrowed_from(owner)]] Outer make(mut int& owner) {\n"
-                 : "[[borrowed_from(owner)]] Outer make(int& owner) {\n") +
+            (exclusive ? "Outer<a> make<lifetime a>(mut int&<a> owner) {\n"
+                       : "Outer<a> make<lifetime a>(int&<a> owner) {\n") +
             R"gti(
   return Outer::wrapped(Reading::value(owner));
 }
@@ -948,7 +953,7 @@ int main() { return 0; }
   for (const auto *source : {
            R"gti(
 enum Reading { empty, value(int& owner, int sequence) };
-[[borrowed_from(owner)]] Reading make(int& owner) {
+Reading<a> make<lifetime a>(int&<a> owner) {
   return Reading::value(owner, 7);
 }
 int main() {
@@ -962,7 +967,7 @@ int main() {
 )gti",
            R"gti(
 enum Reading { empty, value(int& owner) };
-[[borrowed_from(owner)]] Reading make(int& owner, bool fail) {
+Reading<a> make<lifetime a>(int&<a> owner, bool fail) {
   if (fail) return Reading::empty;
   return Reading::value(owner);
 }
@@ -1016,7 +1021,7 @@ int main() {
           "std::move(view).take(); } int main() { return 0; }",
           "int main() { mut int owner = 42; auto view = View(owner); owner = "
           "7; return view.read(); }"}) {
-      const auto result = analyze(wrapper + suffix);
+      const auto result = analyzeMir(wrapper + suffix);
       expect(result.syntaxValid && !result.semanticValid,
              "borrowed class cannot escape a local or invalidate a live "
              "external owner");
@@ -1066,7 +1071,7 @@ int main() {
           "int main() { mut int owner = 1; auto view = "
           "GenericView<int>(owner); GenericView<int> copied = view; owner = 2; "
           "return copied.read(); }"}) {
-      const auto result = analyze(generic + suffix);
+      const auto result = analyzeMir(generic + suffix);
       expect(result.syntaxValid && !result.semanticValid,
              "concrete generic borrow proofs reject local escape and live-copy "
              "mutation");

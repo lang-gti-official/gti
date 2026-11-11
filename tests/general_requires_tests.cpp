@@ -63,14 +63,15 @@ void expect(bool condition, const std::string &message) {
   }
 }
 
-lang::FrontendResult check(const std::filesystem::path &root,
-                           const std::filesystem::path &directory,
-                           const std::string &name, const std::string &source,
-                           bool concurrent = false) {
+lang::FrontendResult
+check(const std::filesystem::path &root, const std::filesystem::path &directory,
+      const std::string &name, const std::string &source,
+      bool concurrent = false,
+      lang::FrontendPhase stopAfter = lang::FrontendPhase::Hir) {
   const auto file = directory / (name + ".gti");
   std::ofstream(file) << source;
   lang::FrontendOptions options;
-  options.stopAfter = lang::FrontendPhase::Hir;
+  options.stopAfter = stopAfter;
   options.analyzeRecoveredProgram = true;
   if (concurrent) {
     options.target.executionProfile = lang::ExecutionProfile::Concurrent;
@@ -110,7 +111,11 @@ void rejected(const lang::FrontendResult &result, const std::string &name,
   if (code.starts_with("GTI-P"))
     expect(!result.canGenerateCode(), name + " cannot generate recovered code");
   else
-    expect(!result.hirValid, name + " cannot publish executable HIR");
+    // Body-local loan conflicts are rejected by the MIR borrow checker,
+    // after HIR; they still never publish executable code.
+    expect(!result.hirValid ||
+               (result.mirBorrowRejected && !result.canGenerateCode()),
+           name + " cannot publish executable HIR");
   expect(
       std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
                    [](const auto &item) { return item.code == "GTI-B0001"; }),
@@ -224,7 +229,7 @@ constexpr bool has_reference_result<T>() {
   return found;
 }
 constexpr bool readable_expression<T>() {
-  return requires(T& cell) { { *cell } -> auto& [[borrowed_from(cell)]]; };
+  return requires(T&<cell> cell) { { *cell } -> auto&<cell>; };
 }
 concept readable_cell<T> = has_reference_result<T>() && readable_expression<T>();
 int consume<readable_cell C>(C& cell) { return 1; }
@@ -306,8 +311,8 @@ int main() { return 0; }
   accepted(
       check(root, directory, "inferred_requirement_results", R"GTI(
 concept observes<I> = requires(I& cursor) { { *cursor }; };
-concept edits<I> = requires(mut I& cursor) {
-  { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+concept edits<I> = requires(mut I&<cursor> cursor) {
+  { *cursor } -> mut auto&<cursor>;
 };
 struct Cell {
   mut int value = 1;
@@ -321,21 +326,21 @@ struct Empty { public: Empty() = default; };
 T read<I,T>(I& cursor) requires observes<I> { return *cursor; }
 void write<I,T>(mut I& cursor, T value) requires edits<I> { *cursor = value; }
 bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
-void exact<I>(mut I& cursor) requires edits<I> && requires(mut I& input) {
-  { *input } -> mut int& [[borrowed_from(input)]];
+void exact<I>(mut I& cursor) requires edits<I> && requires(mut I&<input> input) {
+  { *input } -> mut int&<input>;
 } { *cursor = 3; }
 int main() {
   static_assert(requires(Cell& cursor) { { *cursor }; });
   static_assert(requires(Value& cursor) { { *cursor }; });
   static_assert(!(requires(Empty& cursor) { { *cursor }; }));
-  static_assert(!(requires(mut Value& cursor) {
-    { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+  static_assert(!(requires(mut Value&<cursor> cursor) {
+    { *cursor } -> mut auto&<cursor>;
   }));
-  static_assert(!(requires(Cell& cursor) {
-    { *cursor } -> mut auto& [[borrowed_from(cursor)]];
+  static_assert(!(requires(Cell&<cursor> cursor) {
+    { *cursor } -> mut auto&<cursor>;
   }));
-  static_assert(!(requires(Cell& left, Cell& right) {
-    { *right } -> auto& [[borrowed_from(left)]];
+  static_assert(!(requires(Cell&<left> left, Cell& right) {
+    { *right } -> auto&<left>;
   }));
   mut Cell cell{};
   Value value{};
@@ -516,7 +521,7 @@ import std.meta;
 struct Reader { int value = 1; int& operator*() { return this.value; }  public: Reader() = default; };
 constexpr bool result_matches<I, R>(std::meta::type<I> owner, std::meta::type<R> result) {
   if constexpr (std::meta::type<R>().is_reference()) {
-    return requires(I& input) { { *input } -> R [[borrowed_from(input)]]; };
+    return requires(I&<input> input) { { *input } -> R<input>; };
   } else { return requires(I& input) { { *input } -> R; }; }
 }
 constexpr bool inspect<I>() {
@@ -1112,18 +1117,18 @@ struct Box {
 public:
   Box() = default;
 };
-[[borrowed_from(left)]] int& select(int& left, int& right) { return left; }
-concept readable<C, T> = requires(C& owner) {
-  { *owner } -> T& [[borrowed_from(owner)]];
+int&<a> select<lifetime a>(int&<a> left, int& right) { return left; }
+concept readable<C, T> = requires(C&<owner> owner) {
+  { *owner } -> T&<owner>;
 };
-concept editable<C, T> = requires(mut C& owner, int offset) {
-  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
-  { owner[offset] } -> mut T& [[borrowed_from(owner)]];
+concept editable<C, T> = requires(mut C&<owner> owner, int offset) {
+  { owner.edit() } -> mut T&<owner>;
+  { owner[offset] } -> mut T&<owner>;
 };
-[[borrowed_from(owner)]] T& peek<C, T>(C& owner) requires readable<C, T> {
+T&<a> peek<C, T, lifetime a>(C&<a> owner) requires readable<C, T> {
   return *owner;
 }
-[[borrowed_from(owner)]] mut T& edit<C, T>(mut C& owner) requires editable<C, T> {
+mut T&<a> edit<C, T, lifetime a>(mut C&<a> owner) requires editable<C, T> {
   return owner.edit();
 }
 void store<C, T>(mut C& owner, T value) requires editable<C, T> {
@@ -1139,31 +1144,31 @@ int main() {
     value = 11;
   }
   if (peek<Box, int>(box) != 11) { return 2; }
-  static_assert(requires(Box& box) {
-    { box.read() } -> int& [[borrowed_from(box)]];
-    { *box } -> int& [[borrowed_from(box)]];
+  static_assert(requires(Box&<box> box) {
+    { box.read() } -> int&<box>;
+    { *box } -> int&<box>;
   });
-  static_assert(requires(mut Box& box, int index) {
-    { box.edit() } -> mut int& [[borrowed_from(box)]];
-    { box[index] } -> mut int& [[borrowed_from(box)]];
+  static_assert(requires(mut Box&<box> box, int index) {
+    { box.edit() } -> mut int&<box>;
+    { box[index] } -> mut int&<box>;
   });
-  static_assert(requires(int& left, int& right) {
-    { select(left, right) } -> int& [[borrowed_from(left)]];
+  static_assert(requires(int&<left> left, int& right) {
+    { select(left, right) } -> int&<left>;
   });
-  static_assert(!(requires(int& left, int& right) {
-    { select(left, right) } -> int& [[borrowed_from(right)]];
+  static_assert(!(requires(int& left, int&<right> right) {
+    { select(left, right) } -> int&<right>;
   }));
-  static_assert(!(requires(Box& box, Box& other) {
-    { box.read() } -> int& [[borrowed_from(other)]];
+  static_assert(!(requires(Box& box, Box&<other> other) {
+    { box.read() } -> int&<other>;
   }));
   static_assert(!(requires(Box box) {
     { box.read() } -> int& [[borrowed_from(box)]];
   }));
-  static_assert(!(requires(Box& box) {
-    { box.edit() } -> mut int& [[borrowed_from(box)]];
+  static_assert(!(requires(Box&<box> box) {
+    { box.edit() } -> mut int&<box>;
   }));
-  static_assert(!(requires(Box& box) {
-    { box.read() } -> mut int& [[borrowed_from(box)]];
+  static_assert(!(requires(Box&<box> box) {
+    { box.read() } -> mut int&<box>;
   }));
   static_assert(!(requires(Box& box) { { box.read() } -> int&; }));
   return 0;
@@ -1201,16 +1206,16 @@ public:
   int32_t count() { return this.value; }
   void bump() mut { this.value = this.value + 1; }
 };
-concept viewable<H> = requires(H& h) {
-  { h.view() } -> Slice [[borrowed_from(h)]];
+concept viewable<H> = requires(H&<h> h) {
+  { h.view() } -> Slice<h>;
 };
 concept bumpable<H> = requires(mut H& h) { { h.bump() } -> void; };
 )GTI";
 
   accepted(
       check(root, directory, "borrowed_carrier_requirements", carriers + R"GTI(
-concept inferred_view<H> = requires(H& h) {
-  { h.view() } -> auto [[borrowed_from(h)]];
+concept inferred_view<H> = requires(H&<h> h) {
+  { h.view() } -> auto<h>;
 };
 int32_t peek<H>(H& h) requires viewable<H> {
   Slice view = h.view();
@@ -1227,17 +1232,17 @@ int32_t bump_after<H>(mut H& h) requires viewable<H> && bumpable<H> {
   return second.get();
 }
 int main() {
-  static_assert(requires(Holder& h) { { h.view() } -> Slice [[borrowed_from(h)]]; });
-  static_assert(requires(Holder& h) { { h.view() } -> auto [[borrowed_from(h)]]; });
-  static_assert(requires(int32_t& x) { { Slice(x) } -> Slice [[borrowed_from(x)]]; });
-  static_assert(requires(int32_t& x) { { Pair(x, x) } -> Pair [[borrowed_from(x)]]; });
-  static_assert(requires(mut Holder& h) { { h.edit_view() } -> MutSlice [[borrowed_from(h)]]; });
-  static_assert(!(requires(Holder& a, Holder& b) { { a.view() } -> Slice [[borrowed_from(b)]]; }));
-  static_assert(!(requires(Holder& h) { { Slice(global_value) } -> Slice [[borrowed_from(h)]]; }));
-  static_assert(!(requires(Holder& h) { { Holder().view() } -> Slice [[borrowed_from(h)]]; }));
-  static_assert(!(requires(int32_t& x, int32_t& y) { { Pair(x, y) } -> Pair [[borrowed_from(x)]]; }));
-  static_assert(!(requires(Holder& h) { { h.edit_view() } -> MutSlice [[borrowed_from(h)]]; }));
-  static_assert(!(requires(int32_t& x) { { MutSlice(x) } -> MutSlice [[borrowed_from(x)]]; }));
+  static_assert(requires(Holder&<h> h) { { h.view() } -> Slice<h>; });
+  static_assert(requires(Holder&<h> h) { { h.view() } -> auto<h>; });
+  static_assert(requires(int32_t&<x> x) { { Slice(x) } -> Slice<x>; });
+  static_assert(requires(int32_t&<x> x) { { Pair(x, x) } -> Pair<x>; });
+  static_assert(requires(mut Holder&<h> h) { { h.edit_view() } -> MutSlice<h>; });
+  static_assert(!(requires(Holder& a, Holder&<b> b) { { a.view() } -> Slice<b>; }));
+  static_assert(!(requires(Holder&<h> h) { { Slice(global_value) } -> Slice<h>; }));
+  static_assert(!(requires(Holder&<h> h) { { Holder().view() } -> Slice<h>; }));
+  static_assert(!(requires(int32_t&<x> x, int32_t& y) { { Pair(x, y) } -> Pair<x>; }));
+  static_assert(!(requires(Holder&<h> h) { { h.edit_view() } -> MutSlice<h>; }));
+  static_assert(!(requires(int32_t&<x> x) { { MutSlice(x) } -> MutSlice<x>; }));
   static_assert(!(requires(Holder& h) { { h.count() } -> int32_t [[borrowed_from(h)]]; }));
   static_assert(!(requires(Holder& h) { { h.view() } -> Slice; }));
   static_assert(!(requires(Holder h) { { h.view() } -> Slice [[borrowed_from(h)]]; }));
@@ -1258,28 +1263,28 @@ int main() {
   };
   rejectedBecause(
       check(root, directory, "carrier_wrong_origin",
-            constrainedCall("(H& h, H& other) { { h.view() } -> Slice "
-                            "[[borrowed_from(other)]]; }",
+            constrainedCall("(H& h, H&<other> other) { { h.view() } -> "
+                            "Slice<other>; }",
                             "return use(holder);")),
       "a carrier borrowed from another input",
       "not borrowed solely from the named requirement parameter");
   rejectedBecause(
       check(root, directory, "carrier_global_origin",
-            constrainedCall("(H& h) { { Slice(global_value) } -> Slice "
-                            "[[borrowed_from(h)]]; }",
+            constrainedCall("(H&<h> h) { { Slice(global_value) } -> "
+                            "Slice<h>; }",
                             "return use(holder);")),
       "a carrier borrowed from a global",
       "not borrowed solely from the named requirement parameter");
-  rejectedBecause(check(root, directory, "carrier_temporary_origin",
-                        constrainedCall("(H& h) { { H().view() } -> Slice "
-                                        "[[borrowed_from(h)]]; }",
-                                        "return use(holder);")),
-                  "a carrier borrowed from a temporary",
-                  "not borrowed solely from the named requirement parameter");
+  rejectedBecause(
+      check(root, directory, "carrier_temporary_origin",
+            constrainedCall("(H&<h> h) { { H().view() } -> Slice<h>; }",
+                            "return use(holder);")),
+      "a carrier borrowed from a temporary",
+      "not borrowed solely from the named requirement parameter");
   rejectedBecause(
       check(root, directory, "carrier_two_origins", carriers + R"GTI(
-concept paired<T> = requires(T& x, T& y) {
-  { Pair(x, y) } -> Pair [[borrowed_from(x)]];
+concept paired<T> = requires(T&<x> x, T& y) {
+  { Pair(x, y) } -> Pair<x>;
 };
 int32_t use<T>(T& x) requires paired<T> { return 0; }
 int main() { mut int32_t value = 1; return use(value); }
@@ -1302,19 +1307,18 @@ int main() { mut int32_t value = 1; return use(value); }
                         constrainedCall("(H& h) { { h.view() } -> Slice; }",
                                         "return use(holder);")),
                   "a borrow-carrying result without borrowed_from",
-                  "[[borrowed_from(parameter)]]");
+                  "'-> int&<parameter>'");
   rejectedBecause(
       check(root, directory, "carrier_mutable_from_read_only",
-            constrainedCall("(H& h) { { h.edit_view() } -> MutSlice "
-                            "[[borrowed_from(h)]]; }",
+            constrainedCall("(H&<h> h) { { h.edit_view() } -> MutSlice<h>; }",
                             "return use(holder);")),
       "a mutable carrier from a read-only input",
       "Mutable method requires a mutable receiver");
   rejectedBecause(
       check(root, directory, "carrier_open_body_mutable_from_read_only",
             carriers + R"GTI(
-concept edits<H> = requires(H& h) {
-  { h.edit_view() } -> MutSlice [[borrowed_from(h)]];
+concept edits<H> = requires(H&<h> h) {
+  { h.edit_view() } -> MutSlice<h>;
 };
 int32_t use<H>(H& h) requires edits<H> {
   MutSlice view = h.edit_view();
@@ -1332,7 +1336,8 @@ int32_t bad<H>(mut H& h) requires viewable<H> && bumpable<H> {
   return view.get();
 }
 int main() { mut Holder holder{}; return bad(holder); }
-)GTI"),
+)GTI",
+                        false, lang::FrontendPhase::Mir),
                   "mutating the origin while the carrier is live",
                   "child reborrow may still be live", "GTI-S2017");
   // A reference to a carrier is not a carrier value: its exposed expression
@@ -1350,10 +1355,10 @@ public:
   Slice& slice_ref() { return this.kept; }
 };
 int main() {
-  static_assert(!(requires(Keeper& k) { { k.slice_ref() } -> auto [[borrowed_from(k)]]; }));
-  static_assert(!(requires(Keeper& k) { { k.slice_ref() } -> Slice [[borrowed_from(k)]]; }));
-  static_assert(requires(Keeper& k) { { k.slice_ref() } -> Slice& [[borrowed_from(k)]]; });
-  static_assert(!(requires(Slice& s) { { s } -> Slice [[borrowed_from(s)]]; }));
+  static_assert(!(requires(Keeper&<k> k) { { k.slice_ref() } -> auto<k>; }));
+  static_assert(!(requires(Keeper&<k> k) { { k.slice_ref() } -> Slice<k>; }));
+  static_assert(requires(Keeper&<k> k) { { k.slice_ref() } -> Slice&<k>; });
+  static_assert(!(requires(Slice&<s> s) { { s } -> Slice<s>; }));
   return 0;
 }
 )GTI"),
@@ -1363,8 +1368,8 @@ int main() {
                  "int main() { return 0; }\n"),
            "an inferred value result without borrowed_from", "GTI-P0001");
   rejected(check(root, directory, "carrier_mutable_inferred_value",
-                 "concept c<S> = requires(mut S& s) {\n"
-                 "  { s.view() } -> mut auto [[borrowed_from(s)]];\n};\n"
+                 "concept c<S> = requires(mut S&<s> s) {\n"
+                 "  { s.view() } -> mut auto<s>;\n};\n"
                  "int main() { return 0; }\n"),
            "mut on an inferred value result", "GTI-P0001");
 
@@ -1497,8 +1502,8 @@ int main() {
          "executable)");
 
   rejected(check(root, directory, "borrow_contract_is_not_shared_mutation", R"(
-concept editable<C, T> = requires(mut C& owner) {
-  { owner.edit() } -> mut T& [[borrowed_from(owner)]];
+concept editable<C, T> = requires(mut C&<owner> owner) {
+  { owner.edit() } -> mut T&<owner>;
 };
 void broken<C, T>(C& owner, T value) requires editable<C, T> {
   mut T& slot = owner.edit();
@@ -1519,10 +1524,10 @@ int main() { return 0; }
            "GTI-S2029");
 
   rejected(check(root, directory, "borrowed_query_local_escape", R"(
-concept readable<C> = requires(C& owner) {
-  { owner.read() } -> int& [[borrowed_from(owner)]];
+concept readable<C> = requires(C&<owner> owner) {
+  { owner.read() } -> int&<owner>;
 };
-[[borrowed_from(input)]] int& escape<C>(C& input)
+int&<a> escape<C, lifetime a>(C&<a> input)
     requires readable<C> && std::default_initializable<C> {
   C local = C();
   return local.read();
@@ -1532,9 +1537,10 @@ int main() { return 0; }
            "a generic borrowed result cannot escape its local owner",
            "GTI-S2017");
 
+  // MIR checks a generic body per concrete instance (RFC 0004).
   rejected(check(root, directory, "borrowed_query_live_alias", R"(
-concept editable<C> = requires(mut C& owner) {
-  { owner.edit() } -> mut int& [[borrowed_from(owner)]];
+concept editable<C> = requires(mut C&<owner> owner) {
+  { owner.edit() } -> mut int&<owner>;
 };
 void alias<C>(mut C& owner) requires editable<C> {
   mut int& first = owner.edit();
@@ -1542,19 +1548,21 @@ void alias<C>(mut C& owner) requires editable<C> {
   first = 1;
   second = 2;
 }
-int main() { return 0; }
-)"),
+struct Cell { int value = 0; Cell() = default; mut int& edit() mut { return this.value; } };
+int main() { mut Cell cell{}; alias(cell); return cell.value; }
+)",
+                 false, lang::FrontendPhase::Mir),
            "generic result origins retain exclusive-loan conflicts",
            "GTI-S2017");
 
   rejected(check(root, directory, "borrowed_query_disjoint_origins", R"(
-concept from_receiver<C> = requires(C& owner, int& input) {
-  { owner.select(input) } -> int& [[borrowed_from(owner)]];
+concept from_receiver<C> = requires(C&<owner> owner, int& input) {
+  { owner.select(input) } -> int&<owner>;
 };
-concept from_argument<C> = requires(C& owner, int& input) {
-  { owner.select(input) } -> int& [[borrowed_from(input)]];
+concept from_argument<C> = requires(C& owner, int&<input> input) {
+  { owner.select(input) } -> int&<input>;
 };
-[[borrowed_from(owner)]] int& select<C>(C& owner, int& input)
+int&<a> select<C, lifetime a>(C&<a> owner, int& input)
     requires from_receiver<C> || from_argument<C> {
   return owner.select(input);
 }
@@ -1564,11 +1572,11 @@ int main() { return 0; }
            "GTI-S2000");
 
   accepted(check(root, directory, "borrowed_call_is_not_owned_result", R"(
-[[borrowed_from(value)]] int& reference(int& value) { return value; }
+int&<a> reference<lifetime a>(int&<a> value) { return value; }
 class Borrower {
   int value = 1;
 public:
-  [[borrowed_from(input)]] int& operator()(int& input) { return input; }
+  int&<a> operator()<lifetime a>(int&<a> input) { return input; }
   int& operator*() { return this.value; }
   int& operator[](int index) { return this.value; }
 public:
@@ -1580,10 +1588,10 @@ int main() {
   static_assert(!(requires(Borrower& f, int& input) { { (f(input)) } -> int; }));
   static_assert(!(requires(Borrower& f) { { *f } -> int; }));
   static_assert(!(requires(Borrower& f, int index) { { f[index] } -> int; }));
-  static_assert(requires(Borrower& f, int& input) {
-    { f(input) } -> int& [[borrowed_from(input)]];
+  static_assert(requires(Borrower& f, int&<input> input) {
+    { f(input) } -> int&<input>;
   });
-  static_assert(requires(Borrower& f) { { *f } -> int& [[borrowed_from(f)]]; });
+  static_assert(requires(Borrower&<f> f) { { *f } -> int&<f>; });
   return 0;
 }
 )"),
@@ -2051,7 +2059,7 @@ int read<T>(T& value) requires raw_read<T> { return value.raw(); }
   const std::string formatting =
       R"(concept sum<T>=requires(T& a,T& b){{a+b}->T;{a==b}->bool;};
 concept ints<T>=std::meta::is_integral<T>();
-concept editable<T>=requires(mut T& owner){{owner.edit()}->mut int& [[borrowed_from(owner)]];};
+concept editable<T>=requires(mut T&<owner> owner){{owner.edit()}->mut int&<owner>;};
 concept iterable<R>=requires(R& range){for(auto& element:range){}};
 )";
   const auto formatted = lang::Formatter().format(formatting);

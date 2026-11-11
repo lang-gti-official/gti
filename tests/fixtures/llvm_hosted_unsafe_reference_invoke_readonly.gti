@@ -6,13 +6,11 @@ struct Cell {
   Cell(int tag, int value) : tag(tag), value(value) {}
   ~Cell() { released += this.tag; }
 };
-[[borrowed_from(second)]]
-unsafe Cell& select_cell(Cell& first, Cell& second, bool fail) {
+unsafe Cell&<a> select_cell<lifetime a>(Cell& first, Cell&<a> second, bool fail) {
   if (fail) { std::panic("reference selection failure"); }
   return second;
 }
-[[borrowed_from(second)]]
-Cell& relay_cell(Cell& first, Cell& second, bool fail) {
+Cell&<a> relay_cell<lifetime a>(Cell& first, Cell&<a> second, bool fail) {
   unsafe { return select_cell(first, second, fail); }
 }
 int main() {

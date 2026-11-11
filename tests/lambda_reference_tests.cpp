@@ -1,7 +1,9 @@
+#include "gti/borrow_checker_mode.h"
 #include "gti/frontend.h"
 #include "gti/mir_verifier.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -158,10 +160,8 @@ int main() {
                 lang::AccessMode::Mutable);
 
   checkAccepted("lambda-shared-local-reborrow.gti", R"gti(
-[[borrowed_from(value)]]
-int& invoke<F>(F& callback, mut int& value) { return callback(value); }
-[[borrowed_from(value)]]
-int& invoke_owned<F>(F callback, mut int& value) { return callback(value); }
+int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> value) { return callback(value); }
+int&<a> invoke_owned<F, lifetime a>(F callback, mut int&<a> value) { return callback(value); }
 void observe_generic<T>(mut T& value) {
   auto observe = [](mut T& source) -> T& { return source; };
   T& result = observe(value);
@@ -184,8 +184,7 @@ int main() {
                 lang::AccessMode::ReadOnly);
 
   checkAccepted("lambda-generic-mutable-result.gti", R"gti(
-[[borrowed_from(value)]]
-mut int& invoke<F>(F& callback, mut int& value) { return callback(value); }
+mut int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> value) { return callback(value); }
 int main() {
   auto relay = [](mut int& value) -> mut int& { return value; };
   mut int number = 9;
@@ -290,6 +289,8 @@ int main() {
         return d.message.find("borrowed return dependency is ambiguous") !=
                std::string::npos;
       });
+  // Two eligible inputs leave an elided result ambiguous (RFC 0004
+  // elision, as for a function).
   expect(!result.semanticValid && found != result.diagnostics.end(),
          "both shared and exclusive inputs compete for a shared result");
   if (found != result.diagnostics.end()) {

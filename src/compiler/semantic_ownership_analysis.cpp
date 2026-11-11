@@ -1,5 +1,8 @@
 #include "semantic_analyzer_impl.h"
 
+#include <cstdlib>
+#include <iostream>
+
 #include <stdexcept>
 
 namespace lang {
@@ -3529,6 +3532,11 @@ auto SemanticVisitor::Impl::recordCapturedTextCarriers(
     auto &loans = loanFlow.capturedTextCarriers[carrier];
     if (std::find(loans.begin(), loans.end(), loan) == loans.end())
       loans.push_back(loan);
+    // MIR proves the loan's liveness from its published carriers: the
+    // binding holding captured text carries the view's loan as a copy of
+    // the view would.
+    if (mirBorrowAuthority())
+      semanticModel.recordLoanCarrier(loan, carrier);
   }
 }
 
@@ -4724,10 +4732,27 @@ auto SemanticVisitor::Impl::collectStoredReferencePaths(
     const GenericSubstitution substitution = classSubstitution(current);
     std::vector<StoredReferencePath> paths;
     bool invalid = false;
+    // A base subobject's stored references are the derived object's own:
+    // its field declarations name the declaring base, and every inherited
+    // field is a member of the derived class under that declaration's
+    // symbol. Base paths precede the derived class's own fields, matching
+    // construction order.
     for (const ClassBaseTypeInfo &base : owner->bases) {
-      invalid = invalid || (!base.interface &&
-                            typeTraits(substituteType(base.type, substitution))
-                                .containsBorrowedState);
+      if (base.interface)
+        continue;
+      const SemanticType baseType = substituteType(
+          substituteType(base.type, substitution),
+          GenericSubstitution{.types = instanceTypeSubstitution,
+                              .values = instanceValueSubstitution});
+      if (!typeTraits(baseType).containsBorrowedState)
+        continue;
+      auto inventory = self(self, baseType);
+      if (!inventory) {
+        invalid = true;
+        continue;
+      }
+      for (auto &path : *inventory)
+        paths.push_back(std::move(path));
     }
     for (const FieldInfo &field : owner->fields) {
       if (field.declaration == nullptr) {
@@ -4855,6 +4880,17 @@ auto SemanticVisitor::Impl::storedBorrowAlternativeInventory(
           }
       } else if (const auto *owner = classInfo(current)) {
         const auto substitution = classSubstitution(current);
+        // Base subobject alternatives are the derived object's own.
+        for (const ClassBaseTypeInfo &base : owner->bases) {
+          const SemanticType baseType = substituteType(base.type, substitution);
+          if (base.interface || !typeTraits(baseType).containsBorrowedState)
+            continue;
+          auto inherited = self(self, baseType);
+          complete &= inherited.has_value();
+          if (inherited)
+            for (auto &path : *inherited)
+              result.push_back(std::move(path));
+        }
         for (const auto &field : owner->fields) {
           if (field.declaration == nullptr)
             continue;
@@ -5029,11 +5065,26 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
   const bool concrete = !typeArguments.empty() || !valueArguments.empty() ||
                         !function.dispatchOwner.arguments.empty() ||
                         !function.dispatchOwner.valueArguments.empty();
+  // RFC 0004: the signature states the complete contract. A declaration
+  // whose registered record carries none (a conformance operation) still has
+  // the one its concrete signature elides to.
+  const auto signatureContract =
+      [&]() -> std::optional<FunctionBorrowDependencySummary> {
+    if (!signatureContractDefaults())
+      return std::nullopt;
+    FunctionInfo signature = *declaration;
+    signature.returnType = function.returnType;
+    signature.parameterTypes = function.parameterTypes;
+    return signatureCompleteReturnBorrow(
+        signature, declaration->bodyDeclaration()->receiverMutability(),
+        function.dispatchOwner);
+  };
   if (!concrete && declaration &&
       declaration->returnType == function.returnType &&
       declaration->parameterTypes == function.parameterTypes &&
       (!instanceAnalysisActive || declaration->completeReturnBorrow))
-    return declaration->completeReturnBorrow;
+    return declaration->completeReturnBorrow ? declaration->completeReturnBorrow
+                                             : signatureContract();
 
   const InstanceAnalysisKey key{.kind = InstanceAnalysisKind::Function,
                                 .declaration = function.id,
@@ -5042,8 +5093,10 @@ auto SemanticVisitor::Impl::completeFunctionReturnBorrow(
                                     function.dispatchOwner.valueArguments,
                                 .types = typeArguments,
                                 .values = valueArguments};
-  return completeBorrowQuery(key, function.returnType, function.parameterTypes,
-                             function.declaration->name(), site);
+  auto complete =
+      completeBorrowQuery(key, function.returnType, function.parameterTypes,
+                          function.declaration->name(), site);
+  return complete ? complete : signatureContract();
 }
 
 auto SemanticVisitor::Impl::completeConstructorBorrow(
@@ -5835,11 +5888,19 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
                  initializer.target.name.last().lexeme ==
                      field.declaration->name().lexeme;
         });
-    if (!fieldSymbol || initialized == constructor.initializers().end() ||
-        initialized->arguments.size() != 1)
+    // A field the constructor leaves to its declaration default takes that
+    // default's dependencies (an ownerless alternative has none).
+    const ExprPtr *source = nullptr;
+    if (initialized != constructor.initializers().end()) {
+      if (initialized->arguments.size() != 1)
+        return;
+      source = &initialized->arguments.front();
+    } else if (field.declaration->initializer()) {
+      source = &field.declaration->initializer();
+    }
+    if (!fieldSymbol || source == nullptr)
       return;
-    const auto input =
-        completeBorrowDependencySet(initialized->arguments.front());
+    const auto input = completeBorrowDependencySet(*source);
     if (!input)
       return;
     for (auto dependency : input->dependencies) {
@@ -5881,6 +5942,8 @@ auto SemanticVisitor::Impl::recordCompleteConstructorBorrow(
 
 auto SemanticVisitor::Impl::recordCompleteFunctionReturnBorrow(
     const FunctionInfo &function) -> void {
+  if (!legacyBorrowChecker())
+    return; // RFC 0004: contracts come from signatures, never bodies
   // Reanalysis must not retain a primary/earlier body's complete fact when
   // this body now has unknown, recursive or nonreturning result evidence.
   const FunctionId id = function.id;
@@ -6244,6 +6307,14 @@ auto SemanticVisitor::Impl::storedCarrierConstructorParameters(
     const SemanticType &type, const ConstructorInfo &constructor,
     std::span<const SemanticType> parameterTypes) const
     -> std::vector<std::size_t> {
+  // A region-binding class states its suppliers in the constructor signature.
+  if (const ClassInfo *owner = classInfo(type);
+      owner != nullptr && owner->declaration != nullptr &&
+      constructor.declaration != nullptr)
+    if (auto suppliers = constructorLifetimeSuppliers(*owner->declaration,
+                                                      *constructor.declaration);
+        suppliers.size() > 1)
+      return suppliers;
   const auto bindings = storedCarrierConstructorBindings(
       type, constructor.declaration, parameterTypes);
   std::vector<std::size_t> result;
@@ -6380,6 +6451,62 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       bool valid = false;
       std::vector<StoredReferenceBinding> bindings;
     };
+    const auto constructionBindings =
+        [&](const auto &argumentSelf, const ClassInfo &nested,
+            const SemanticType &expected,
+            std::span<const ExprPtr> callArguments,
+            std::size_t depth) -> ArgumentBindings {
+      ArgumentBindings result;
+      bool matched = false;
+      for (const auto &candidate : nested.constructors) {
+        // Omitted trailing parameters take their defaults, which supply no
+        // dependency of the enclosing constructor.
+        if (candidate.declaration == nullptr || candidate.parameterPack ||
+            !candidate.genericParameters.empty() ||
+            callArguments.size() < candidate.requiredParameterCount ||
+            callArguments.size() > candidate.parameterTypes.size())
+          continue;
+        auto nestedTypes = candidate.parameterTypes;
+        for (auto &parameter : nestedTypes)
+          parameter = substituteType(parameter, classSubstitution(expected));
+        std::vector<ArgumentBindings> arguments;
+        for (std::size_t index = 0; index < callArguments.size(); ++index) {
+          auto argument = argumentSelf(argumentSelf, callArguments[index],
+                                       nestedTypes[index], depth + 1);
+          if (!argument.valid)
+            break;
+          arguments.push_back(std::move(argument));
+        }
+        if (arguments.size() != callArguments.size())
+          continue;
+        if (matched)
+          return {}; // Do not select an ambiguous dependency producer.
+        matched = true;
+        const auto childBindings =
+            self(self, expected, candidate.declaration, nestedTypes);
+        if (childBindings.empty())
+          return {};
+        for (const auto &child : childBindings) {
+          if (child.parameter >= arguments.size())
+            return {};
+          const auto &argument = arguments[child.parameter];
+          const auto origin = std::find_if(
+              argument.bindings.begin(), argument.bindings.end(),
+              [&](const auto &binding) {
+                return binding.destination.fields == child.sourceFields &&
+                       binding.destination.reference ==
+                           child.destination.reference;
+              });
+          if (origin == argument.bindings.end())
+            return {};
+          result.bindings.push_back({.destination = child.destination,
+                                     .parameter = origin->parameter,
+                                     .sourceFields = origin->sourceFields});
+        }
+        result.valid = true;
+      }
+      return result;
+    };
     const auto argumentBindings = [&](const auto &argumentSelf,
                                       const ExprPtr &expression,
                                       const SemanticType &expected,
@@ -6426,53 +6553,8 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       // when queried from a caller in a different source unit.
       if (!target || *target != nested->id)
         return {};
-      ArgumentBindings result;
-      bool matched = false;
-      for (const auto &candidate : nested->constructors) {
-        if (candidate.declaration == nullptr || candidate.parameterPack ||
-            !candidate.genericParameters.empty() ||
-            candidate.parameterTypes.size() != call->arguments().size())
-          continue;
-        auto nestedTypes = candidate.parameterTypes;
-        std::vector<ArgumentBindings> arguments;
-        for (auto &parameter : nestedTypes) {
-          parameter = substituteType(parameter, classSubstitution(expected));
-          auto argument =
-              argumentSelf(argumentSelf, call->arguments()[arguments.size()],
-                           parameter, depth + 1);
-          if (!argument.valid)
-            break;
-          arguments.push_back(std::move(argument));
-        }
-        if (arguments.size() != nestedTypes.size())
-          continue;
-        if (matched)
-          return {}; // Do not select an ambiguous dependency producer.
-        matched = true;
-        const auto childBindings =
-            self(self, expected, candidate.declaration, nestedTypes);
-        if (childBindings.empty())
-          return {};
-        for (const auto &child : childBindings) {
-          if (child.parameter >= arguments.size())
-            return {};
-          const auto &argument = arguments[child.parameter];
-          const auto origin = std::find_if(
-              argument.bindings.begin(), argument.bindings.end(),
-              [&](const auto &binding) {
-                return binding.destination.fields == child.sourceFields &&
-                       binding.destination.reference ==
-                           child.destination.reference;
-              });
-          if (origin == argument.bindings.end())
-            return {};
-          result.bindings.push_back({.destination = child.destination,
-                                     .parameter = origin->parameter,
-                                     .sourceFields = origin->sourceFields});
-        }
-        result.valid = true;
-      }
-      return result;
+      return constructionBindings(argumentSelf, *nested, expected,
+                                  call->arguments(), depth);
     };
     std::vector<StoredReferenceBinding> result;
     for (const StoredReferencePath &path : paths) {
@@ -6482,6 +6564,53 @@ auto SemanticVisitor::Impl::storedCarrierConstructorBindings(
       const VariableDecl *field = path.fields.front().declaration;
       if (field == nullptr)
         return {};
+      if (std::none_of(
+              owner->fields.begin(), owner->fields.end(),
+              [&](const FieldInfo &own) { return own.declaration == field; })) {
+        // An inherited path is stored by the base initializer: the base
+        // constructor's own summary binds the same flattened path.
+        std::optional<std::size_t> selected;
+        for (const ClassBaseTypeInfo &base : owner->bases) {
+          const SemanticType baseType =
+              substituteType(base.type, classSubstitution(type));
+          const ClassInfo *baseClass = classInfo(baseType);
+          if (base.interface || baseClass == nullptr)
+            continue;
+          const auto basePaths = storedReferencePaths(baseType);
+          if (std::none_of(basePaths.begin(), basePaths.end(),
+                           [&](const auto &candidate) {
+                             return candidate.fields == path.fields;
+                           }))
+            continue;
+          for (const ConstructorInitializer &initializer :
+               constructor->initializers()) {
+            if (owner->members.contains(
+                    initializer.target.name.last().lexeme) ||
+                baseClass->name.lexeme != initializer.target.name.last().lexeme)
+              continue;
+            const auto bindings =
+                constructionBindings(argumentBindings, *baseClass, baseType,
+                                     initializer.arguments, 0);
+            if (!bindings.valid)
+              return {};
+            const auto origin = std::find_if(
+                bindings.bindings.begin(), bindings.bindings.end(),
+                [&](const auto &binding) {
+                  return binding.destination.fields == path.fields &&
+                         binding.destination.reference == path.reference;
+                });
+            if (origin == bindings.bindings.end())
+              return {};
+            selected = origin->parameter;
+            result.push_back({.destination = path,
+                              .parameter = origin->parameter,
+                              .sourceFields = origin->sourceFields});
+          }
+        }
+        if (!selected)
+          return {};
+        continue;
+      }
       const auto member = owner->members.find(field->name().lexeme);
       if (member == owner->members.end()) {
         return {};
@@ -6654,6 +6783,16 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
   summary.access = borrowAccess(returnType);
   if (ownerClass != 0 && !staticMember) {
     summary.origin = BorrowOriginKind::Receiver;
+    // RFC 0004: an elided carrier result borrows the whole receiver, so any
+    // mutable stored reference in it borrows the receiver exclusively.
+    if (signatureContractDefaults() &&
+        returnType.kind != SemanticType::Reference) {
+      const auto paths = storedReferencePaths(returnType);
+      if (std::any_of(paths.begin(), paths.end(), [](const auto &path) {
+            return path.reference.referenceAccess == AccessMode::Mutable;
+          }))
+        summary.access = AccessMode::Mutable;
+    }
     return summary;
   }
 
@@ -6711,7 +6850,24 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
            (isDirectStoredReferenceType(parameter) &&
             borrowAccess(parameter) == AccessMode::Mutable);
   };
+  // RFC 0004: a carrier result's one implicit region is fed by every
+  // borrow-carrying input. A carrier that stores both read-only and mutable
+  // references takes suppliers of either access for its fields.
+  const bool mixedCarrierResult =
+      signatureContractDefaults() &&
+      returnType.kind != SemanticType::Reference && [&] {
+        const auto paths = storedReferencePaths(returnType);
+        const auto stores = [&](AccessMode access) {
+          return std::any_of(paths.begin(), paths.end(), [&](const auto &path) {
+            return path.reference.kind == SemanticType::Reference &&
+                   path.reference.referenceAccess == access;
+          });
+        };
+        return stores(AccessMode::ReadOnly) && stores(AccessMode::Mutable);
+      }();
   const auto eligibleDependency = [&](const SemanticType &parameter) {
+    if (mixedCarrierResult)
+      return mutableDependency(parameter) || readOnlyDependency(parameter);
     return summary.access == AccessMode::Mutable
                ? mutableDependency(parameter)
                : readOnlyDependency(parameter);
@@ -6745,12 +6901,32 @@ auto SemanticVisitor::Impl::functionReturnBorrowSummary(
     }
   }
 
+  // A mixed carrier's primary supplier is the first whose access matches
+  // the result's; it leads `parameters`, and every other supplier keeps its
+  // own argument access.
+  if (mixedCarrierResult && summary.eligibleParameters > 1) {
+    const auto primary =
+        std::find_if(summary.parameters.begin(), summary.parameters.end(),
+                     [&](std::size_t index) {
+                       return summary.access == AccessMode::Mutable
+                                  ? mutableDependency(parameterTypes[index])
+                                  : readOnlyDependency(parameterTypes[index]);
+                     });
+    if (primary != summary.parameters.end()) {
+      summary.parameter = *primary;
+      std::rotate(summary.parameters.begin(), primary, primary + 1);
+    }
+  }
   if (summary.eligibleParameters == 1) {
     summary.origin = BorrowOriginKind::Argument;
     summary.parameters.clear();
   } else if (summary.eligibleParameters > 1 &&
-             summary.access == AccessMode::ReadOnly &&
-             storedReferencePaths(returnType).size() > 1) {
+             (summary.access == AccessMode::ReadOnly ||
+              signatureContractDefaults()) &&
+             (storedReferencePaths(returnType).size() > 1 ||
+              signatureContractDefaults())) {
+    // RFC 0004 elision: an unannotated result borrows from every eligible
+    // input. Callers then keep all of them borrowed while it is live.
     summary.origin = BorrowOriginKind::Argument;
   } else {
     summary.parameters.clear();
@@ -6763,20 +6939,23 @@ auto SemanticVisitor::Impl::applyFunctionReturnBorrowSummary(
   FunctionReturnBorrowSummary summary = functionReturnBorrowSummary(
       function.returnType, function.parameterTypes, function.ownerClass,
       function.staticMember, function.record().intrinsic);
-  if (function.declaration != nullptr) {
-    if (const auto *attribute =
-            function.declaration->findFunctionAttribute("borrowed_from")) {
-      // Resolve source spelling to the existing declaration-relative origin.
-      // Malformed contracts are diagnosed at the declaration, never inferred
-      // afresh by HIR/MIR or the backend.
-      (void)attribute;
-      const auto contract = genericReturnBorrowContract(
-          *function.declaration, function.returnType, function.parameterTypes,
-          function.ownerClass, function.staticMember);
+  const bool patternContract =
+      function.declaration != nullptr &&
+      patternResultContract(*function.declaration, function.returnType);
+  if (function.declaration != nullptr &&
+      (hasExplicitBorrowContract(*function.declaration) || patternContract)) {
+    // Resolve source spelling to the existing declaration-relative origin.
+    // Malformed contracts are diagnosed at the declaration, never inferred
+    // afresh by HIR/MIR or the backend.
+    const auto contract = genericReturnBorrowContract(
+        *function.declaration, function.returnType, function.parameterTypes,
+        function.ownerClass, function.staticMember);
+    if (contract.origin != BorrowOriginKind::None ||
+        hasExplicitBorrowContract(*function.declaration) || patternContract)
       summary = {.origin = contract.origin,
                  .parameter = contract.parameter,
-                 .access = contract.access};
-    }
+                 .access = contract.access,
+                 .parameters = contract.parameters};
   }
   function.returnBorrowOrigin = summary.origin;
   function.returnBorrowParameter = summary.parameter;
@@ -6793,13 +6972,216 @@ auto SemanticVisitor::Impl::isConditionalBorrowResult(
                      [](const auto &path) { return !path.conditions.empty(); });
 }
 
+auto SemanticVisitor::Impl::patternResultContract(
+    const FunctionDecl &syntax, const SemanticType &returnType) const -> bool {
+  return (returnType.kind == SemanticType::Reference ||
+          isBorrowReturningType(returnType)) &&
+         !syntax.hasFunctionAttribute("borrowed_from") &&
+         callablePatternResultPack(syntax).has_value();
+}
+
+auto SemanticVisitor::Impl::callablePatternResultPack(
+    const FunctionDecl &syntax) const -> std::optional<std::size_t> {
+  if (syntax.parameters().empty() || !syntax.parameters().back().pack)
+    return std::nullopt;
+  const FunctionInfo *info = semanticModel.findFunction(syntax);
+  if (info == nullptr && instanceBaseModel != nullptr)
+    info = instanceBaseModel->findFunction(syntax);
+  if (info == nullptr || info->staticMember)
+    return std::nullopt;
+  return callablePatternResultPack(syntax, info->ownerClass);
+}
+
+auto SemanticVisitor::Impl::callablePatternResultPack(
+    const FunctionDecl &syntax, ClassId ownerClass) const
+    -> std::optional<std::size_t> {
+  for (const auto &generic : syntax.genericParameters())
+    if (generic.name.lexeme == syntax.returnType().name.last().lexeme)
+      return std::nullopt;
+  return callablePatternResultPack(syntax.returnType(), syntax.parameters(),
+                                   ownerClass);
+}
+
+auto SemanticVisitor::Impl::callablePatternResultPack(
+    const TypeRef &result, std::span<const Parameter> parameters,
+    ClassId ownerClass) const -> std::optional<std::size_t> {
+  if (parameters.empty() || !parameters.back().pack ||
+      parameters.back().type.reference || ownerClass == 0 ||
+      ownerClass > classes.size())
+    return std::nullopt;
+  const ClassDecl *owner = classInfo(ownerClass).declaration;
+  if (owner == nullptr)
+    return std::nullopt;
+  if (!result.arguments.empty() || result.name.segments.size() != 1)
+    return std::nullopt;
+  for (const TypeRef &pattern : owner->genericArgumentPatterns()) {
+    if (!pattern.isFunctionSignature() ||
+        *pattern.functionSignatureParameterCount == 0 ||
+        pattern.arguments.size() !=
+            *pattern.functionSignatureParameterCount + 1)
+      continue;
+    const TypeRef &patternResult = pattern.arguments.back();
+    const TypeRef &patternPack =
+        pattern.arguments[*pattern.functionSignatureParameterCount - 1];
+    const bool sameRegion = patternResult.referenceLifetime.has_value() ==
+                                result.referenceLifetime.has_value() &&
+                            (!result.referenceLifetime ||
+                             patternResult.referenceLifetime->name.lexeme ==
+                                 result.referenceLifetime->name.lexeme);
+    if (patternPack.packExpansion &&
+        patternResult.name.last().lexeme == result.name.last().lexeme &&
+        patternResult.reference.has_value() == result.reference.has_value() &&
+        sameRegion &&
+        patternPack.name.last().lexeme ==
+            parameters.back().type.name.last().lexeme)
+      return parameters.size() - 1;
+  }
+  return std::nullopt;
+}
+
 auto SemanticVisitor::Impl::genericReturnBorrowContract(
     const FunctionDecl &syntax, const SemanticType &returnType,
     std::span<const SemanticType> parameterTypes, ClassId ownerClass,
     bool staticMember) const -> GenericReturnBorrowContract {
   GenericReturnBorrowContract contract;
   const auto *attribute = syntax.findFunctionAttribute("borrowed_from");
-  if (attribute == nullptr || !attribute->argument)
+  // A callable pattern's result is supplied by its invocation lanes: every
+  // lane this instance makes a reference or borrowing carrier with
+  // sufficient access. A result this instance makes owned is inert.
+  if (const auto pack = attribute == nullptr ? callablePatternResultPack(syntax)
+                                             : std::nullopt) {
+    const bool reference = returnType.kind == SemanticType::Reference &&
+                           returnType.arguments.size() == 1;
+    contract.access =
+        reference ? returnType.referenceAccess : AccessMode::ReadOnly;
+    if (!reference && !isBorrowReturningType(returnType))
+      return contract;
+    std::vector<SemanticType> expanded;
+    for (const SemanticType &type : parameterTypes)
+      SemanticType::appendExpandedArgument(expanded, type);
+    std::vector<std::size_t> suppliers;
+    for (std::size_t position = *pack; position < expanded.size(); ++position) {
+      const SemanticType &type = expanded[position];
+      const auto inventory = storedReferenceInventory(type);
+      const bool mutableExternal =
+          inventory &&
+          std::any_of(
+              inventory->begin(), inventory->end(), [](const auto &path) {
+                return path.reference.kind == SemanticType::Reference &&
+                       path.reference.referenceAccess == AccessMode::Mutable;
+              });
+      const bool borrows = type.kind == SemanticType::Reference ||
+                           (inventory && !inventory->empty());
+      if (borrows &&
+          (contract.access == AccessMode::ReadOnly || mutableExternal ||
+           borrowAccess(type) == AccessMode::Mutable))
+        suppliers.push_back(position);
+    }
+    if (suppliers.empty()) {
+      contract.missing = true;
+      return contract;
+    }
+    contract.origin = BorrowOriginKind::Argument;
+    contract.parameter = suppliers.front();
+    if (suppliers.size() > 1)
+      contract.parameters = std::move(suppliers);
+    return contract;
+  }
+  if (attribute == nullptr) {
+    // RFC 0004: a result written with a region states its suppliers in the
+    // signature. It translates into the same core contract.
+    const auto lifetime =
+        explicitLifetimeResult(syntax, parameterTypes, ownerClass);
+    const bool reference = returnType.kind == SemanticType::Reference &&
+                           returnType.arguments.size() == 1;
+    contract.access =
+        reference ? returnType.referenceAccess : AccessMode::ReadOnly;
+    switch (lifetime.kind) {
+    case ExplicitLifetimeResult::Kind::None:
+    case ExplicitLifetimeResult::Kind::Static:
+      return contract;
+    case ExplicitLifetimeResult::Kind::This:
+      if (ownerClass != 0 && !staticMember)
+        contract.origin = BorrowOriginKind::Receiver;
+      else
+        contract.missing = true;
+      return contract;
+    case ExplicitLifetimeResult::Kind::Region:
+      // A class region nothing in the class stores is supplied only by the
+      // parameters written in it, exactly as a method's own binder is.
+      if (lifetime.classBinder &&
+          (lifetime.classStoresRegion || lifetime.parameters.empty())) {
+        if (ownerClass != 0 && !staticMember)
+          contract.origin = BorrowOriginKind::Receiver;
+        return contract;
+      }
+      if (lifetime.parameters.empty()) {
+        contract.missing = true;
+        return contract;
+      }
+      // Like the attribute, a region on a result this instance makes owned
+      // (neither a reference nor a conditional borrow carrier) is inert.
+      if (!reference && !isBorrowReturningType(returnType))
+        return contract;
+      {
+        // A region written on a supplier this instance makes owned supplies
+        // nothing, and a mutable result needs a supplier that can grant
+        // mutable access. Over a pack this selects its borrowing elements.
+        std::vector<SemanticType> expanded;
+        for (const SemanticType &type : parameterTypes)
+          SemanticType::appendExpandedArgument(expanded, type);
+        std::vector<std::size_t> suppliers;
+        for (const std::size_t position : lifetime.parameters) {
+          if (position >= expanded.size()) {
+            suppliers.push_back(position);
+            continue;
+          }
+          const SemanticType &type = expanded[position];
+          const auto inventory = storedReferenceInventory(type);
+          const bool mutableExternal =
+              inventory &&
+              std::any_of(
+                  inventory->begin(), inventory->end(), [](const auto &path) {
+                    return path.reference.kind == SemanticType::Reference &&
+                           path.reference.referenceAccess ==
+                               AccessMode::Mutable;
+                  });
+          const bool borrows = type.kind == SemanticType::Reference ||
+                               (inventory && !inventory->empty());
+          // A carrier result keeps every borrowing supplier, each at its own
+          // access; only a mutable reference result needs a mutable one.
+          if (borrows &&
+              (!reference || contract.access == AccessMode::ReadOnly ||
+               mutableExternal || borrowAccess(type) == AccessMode::Mutable))
+            suppliers.push_back(position);
+        }
+        if (suppliers.empty()) {
+          contract.missing = true;
+          return contract;
+        }
+        // As for an elided contract, the primary supplier is the first one
+        // whose access matches a reference result's, or the first shared one
+        // of a carrier; each keeps its own access in MIR.
+        const AccessMode primaryAccess =
+            reference ? contract.access : AccessMode::ReadOnly;
+        if (const auto matching = std::find_if(
+                suppliers.begin(), suppliers.end(),
+                [&](std::size_t position) {
+                  return position < expanded.size() &&
+                         borrowAccess(expanded[position]) == primaryAccess;
+                });
+            matching != suppliers.end() && matching != suppliers.begin())
+          std::rotate(suppliers.begin(), matching, matching + 1);
+        contract.origin = BorrowOriginKind::Argument;
+        contract.parameter = suppliers.front();
+        if (suppliers.size() > 1)
+          contract.parameters = std::move(suppliers);
+      }
+      return contract;
+    }
+    return contract;
+  }
+  if (!attribute->argument)
     return contract;
   const bool reference = returnType.kind == SemanticType::Reference &&
                          returnType.arguments.size() == 1;
@@ -6827,9 +7209,10 @@ auto SemanticVisitor::Impl::genericReturnBorrowContract(
   std::size_t position = 0;
   for (std::size_t index = 0;
        index < parameters.size() && index < parameterTypes.size(); ++index) {
+    // A pack's lanes are what the fixed formals leave, whether the types
+    // arrive grouped or already expanded.
     const std::size_t width =
-        parameters[index].pack ? expanded.size() - (parameterTypes.size() - 1)
-                               : 1;
+        parameters[index].pack ? expanded.size() - (parameters.size() - 1) : 1;
     if (parameters[index].name.lexeme == attribute->argument->lexeme) {
       std::optional<std::size_t> selected;
       for (std::size_t element = position;
@@ -6895,6 +7278,7 @@ auto SemanticVisitor::Impl::resolveGenericReturnBorrowContract(
   instance.returnBorrowAccess = contract.access;
   instance.returnBorrowOrigin = contract.origin;
   instance.returnBorrowParameter = contract.parameter;
+  instance.returnBorrowParameters = contract.parameters;
   if (contract.ambiguous || contract.missing) {
     const auto *attribute = syntax->findFunctionAttribute("borrowed_from");
     report(attribute && attribute->argument ? *attribute->argument
@@ -6976,6 +7360,20 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
   const std::string code = info.returnType.kind == SemanticType::Reference
                                ? "GTI-S2017"
                                : "GTI-S2045";
+  // A result declared `static` names its region: what fails is that region
+  // relationship, not an ambiguous elision.
+  if (explicitLifetimeResult(function, info.parameterTypes, info.ownerClass)
+          .kind == ExplicitLifetimeResult::Kind::Static) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2127", DiagnosticPhase::Semantics, function.name(),
+        "The result is declared 'static', but a return does not borrow one "
+        "exact static storage place.");
+    diagnostic.hints.emplace_back(
+        "Return a global or static place, or declare the result with a "
+        "region a parameter supplies.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
+  }
   Diagnostic diagnostic;
   if (summary.eligibleParameters > 1) {
     const std::string dependencyDescription =
@@ -7011,10 +7409,12 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
     }
     diagnostic.hints.emplace_back(
         summary.access == AccessMode::Mutable
-            ? "Name the owning parameter with [[borrowed_from(name)]], return "
+            ? "Name the owning parameter with a lifetime, as in "
+              "'T&<a> f<lifetime a>(T&<a> owner)', return "
               "the borrowed value from a mutable instance method, or reduce "
               "the function to one mutable dependency source."
-            : "Name the owning parameter with [[borrowed_from(name)]], return "
+            : "Name the owning parameter with a lifetime, as in "
+              "'T&<a> f<lifetime a>(T&<a> owner)', return "
               "the borrowed value from an instance method, or reduce the "
               "function to one read-only dependency source.");
   } else if (summary.hasMutableCandidate) {
@@ -11783,13 +12183,20 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             // Keep a cleanup-bound declaration's original loan identity in
             // the immutable model: MIR lowers that initialization before the
             // later move, and earlier shell references still depend on it.
-            // This does not restore availability of the moved-from binding.
-            if (!sourceLoan->lifecycleBound &&
+            // So does an earlier reborrow through one of the shell's stored
+            // references, a child of that loan. This does not restore
+            // availability of the moved-from binding.
+            const bool reborrowed = std::any_of(
+                semanticModel.loans().begin(), semanticModel.loans().end(),
+                [&](const SemanticLoanInfo &candidate) {
+                  return candidate.parent == source->loan;
+                });
+            if (!sourceLoan->lifecycleBound && !reborrowed &&
                 sourceCarrier->variableDeclaration != nullptr) {
               semanticModel.recordBindingLoan(
                   *sourceCarrier->variableDeclaration, 0);
             }
-            if (!sourceLoan->lifecycleBound &&
+            if (!sourceLoan->lifecycleBound && !reborrowed &&
                 sourceCarrier->parameterDeclaration != nullptr) {
               semanticModel.recordBindingLoan(
                   *sourceCarrier->parameterDeclaration, 0);
@@ -12815,6 +13222,16 @@ auto SemanticVisitor::Impl::conflictIsInConditionalArm(
           conflictIndex < conditional.elseArm.conflictEnd);
 }
 
+auto SemanticVisitor::Impl::signatureContractDefaults() -> bool {
+  static const bool enabled = !legacyBorrowChecker();
+  return enabled;
+}
+
+auto SemanticVisitor::Impl::mirBorrowAuthority() -> bool {
+  static const bool enabled = !legacyBorrowChecker();
+  return enabled;
+}
+
 auto SemanticVisitor::Impl::reportBorrowConflict(
     const Token &token, const std::vector<SemanticLoanId> &loans,
     std::string message, bool rawAudit) -> void {
@@ -12833,7 +13250,8 @@ auto SemanticVisitor::Impl::reportBorrowConflict(
           : makeDiagnostic("GTI-S2017", DiagnosticPhase::Semantics, token,
                            std::move(message));
   if (loanFlow.currentStatement == nullptr || loanFlow.currentRegion == 0) {
-    diagnostics.emplace_back(std::move(diagnostic));
+    if (rawAudit || !mirBorrowAuthority())
+      diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
   auto &pending = rawAudit ? loanFlow.rawAuditConflicts : loanFlow.conflicts;
@@ -13108,7 +13526,12 @@ auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
             "Place the borrowed value in a narrower block when an explicit "
             "lexical end is required across control flow.");
       }
-      diagnostics.emplace_back(std::move(conflict.diagnostic));
+      // Shadow phase: under MIR borrow authority the MIR borrow checker
+      // reports body-local conflicts; semantics only records them. Raw-access
+      // audit observations are not borrow-checker conflicts: MIR assigns raw
+      // addresses no loans, so the audit keeps reporting its own findings.
+      if (!mirBorrowAuthority() || conflictIndex >= mandatoryConflicts)
+        diagnostics.emplace_back(std::move(conflict.diagnostic));
     }
   }
   loanFlow.conflicts.resize(mandatoryConflicts);

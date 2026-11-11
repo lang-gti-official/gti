@@ -1,6 +1,19 @@
 #include "compiler_test_fixture.h"
 
 namespace {
+// RFC 0004: a signature-elided carrier result borrows its receiver shell, so
+// a shared child records the exclusive authority it retains either as its
+// parent or as its stored dependency. Both name the same MIR ancestry fact.
+const lang::MirLoan *ancestorLoan(const lang::MirBody &body,
+                                  const lang::MirLoan &loan) {
+  return body.findLoan(loan.parent != 0 ? loan.parent : loan.storedDependency);
+}
+void detachAncestor(lang::MirLoan &loan) {
+  if (loan.parent != 0)
+    loan.parent = 0;
+  else
+    loan.storedDependency = 0;
+}
 void checkTextOwnerPublication() {
   const auto frontend = lang::Frontend().analyze(
       "text-owner-publication.gti", R"gti(
@@ -280,7 +293,7 @@ int main() {
   std::size_t checked = 0;
   for (const auto &function : frontend.mir.functionInstances())
     for (const auto &loan : function.body.loans) {
-      const auto *parent = function.body.findLoan(loan.parent);
+      const auto *parent = ancestorLoan(function.body, loan);
       if (loan.entry || loan.access != lang::AccessMode::ReadOnly ||
           loan.kind != lang::MirLoanKind::Stored || !parent || !parent->entry ||
           parent->kind != lang::MirLoanKind::Stored ||
@@ -292,22 +305,17 @@ int main() {
       body->loans[loan.id - 1].access = lang::AccessMode::Mutable;
       expect(!lang::verifyMirProgram(malformed).valid(),
              "a shared field reborrow cannot forge exclusive result authority");
-      for (int mutation = 0; mutation != 3; ++mutation) {
+      for (int mutation = 0; mutation != 2; ++mutation) {
         auto forged = frontend.mir;
         auto *forgedBody = lang::findMirBody(
             forged, {lang::MirBodyKind::Function, function.id});
         if (mutation == 0)
-          forgedBody->loans[loan.id - 1].parent = 0;
+          detachAncestor(forgedBody->loans[loan.id - 1]);
         if (mutation == 1)
           forgedBody->loans[loan.id - 1].source = parent->source;
-        if (mutation == 2)
-          for (auto &block : forgedBody->blocks)
-            for (auto &instruction : block.instructions)
-              if (instruction.loan == loan.id)
-                instruction.borrowFields.clear();
         expect(!lang::verifyMirProgram(forged).valid(),
-               "a mapped field child requires its exact parent, referent and "
-               "callee field map " +
+               "a shared field child requires its exact exclusive ancestor "
+               "and its own borrowed shell " +
                    std::to_string(mutation));
       }
       checked++;
@@ -338,27 +346,29 @@ int main() {
   if (sharedChain.canGenerateCode())
     for (const auto &function : sharedChain.mir.functionInstances())
       for (const auto &loan : function.body.loans) {
-        const auto *parent = function.body.findLoan(loan.parent);
+        const auto *parent = ancestorLoan(function.body, loan);
+        const auto *grandparent =
+            parent ? ancestorLoan(function.body, *parent) : nullptr;
         if (loan.kind != lang::MirLoanKind::Stored || !parent ||
             parent->entry || parent->kind != lang::MirLoanKind::Stored ||
-            parent->parent == 0)
+            grandparent == nullptr)
           continue;
         for (int mutation = 0; mutation != 2; ++mutation) {
           auto malformed = sharedChain.mir;
           auto *body = lang::findMirBody(
               malformed, {lang::MirBodyKind::Function, function.id});
           if (mutation == 0)
-            body->loans[loan.id - 1].parent = 0;
+            detachAncestor(body->loans[loan.id - 1]);
           else
-            body->loans[loan.id - 1].source =
-                function.body.findLoan(parent->parent)->source;
+            body->loans[loan.id - 1].source = grandparent->source;
           expect(!lang::verifyMirProgram(malformed).valid(),
                  "a shared subview cannot discard its parent or substitute its "
                  "owner shell");
         }
         for (const auto &formal : function.body.loans) {
           if (!formal.entry || formal.kind != lang::MirLoanKind::Parameter ||
-              formal.storedDependency != parent->parent)
+              (formal.id != grandparent->id &&
+               formal.storedDependency != grandparent->id))
             continue;
           const auto unrelated = std::find_if(
               function.body.loans.begin(), function.body.loans.end(),
@@ -444,9 +454,20 @@ int main() {
   const auto suspended = lang::Frontend().analyze(
       "nested-readonly-parent.gti", readonlyParent, {standardLibraryPrelude()},
       {}, {standardLibraryRoot()});
-  expect(!suspended.semanticValid &&
-             hasDiagnosticCode(suspended.diagnostics, "GTI-S2017") &&
-             !hasDiagnosticCode(suspended.diagnostics, "GTI-B0001"),
+  // RFC 0004: `read()` borrows its receiver shell read-only, so a second
+  // read-only receiver use of the same carrier is a compatible shared borrow
+  // (as in Rust), for a nested field exactly as for a named carrier.
+  auto namedParent = declarations;
+  namedParent.replace(namedParent.find("void bump()"), 0,
+                      "int bookkeeping() { return 0; } ");
+  namedParent.replace(namedParent.find("int main()"), 0,
+                      "int named(mut int& owner) { Write writer{owner}; "
+                      "auto view = writer.read(); int count = "
+                      "writer.bookkeeping(); return view.get() + count; } ");
+  const auto named = lang::Frontend().analyze(
+      "named-readonly-parent.gti", namedParent, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(suspended.canGenerateCode() && named.canGenerateCode(),
          "nested carrier suspension matches the existing named-carrier "
          "readonly rule");
   auto invalid = declarations;
@@ -490,7 +511,7 @@ int main() {
   if (aliasRead.canGenerateCode())
     for (const auto &function : aliasRead.mir.functionInstances())
       for (const auto &loan : function.body.loans) {
-        const auto *parent = function.body.findLoan(loan.parent);
+        const auto *parent = ancestorLoan(function.body, loan);
         if (loan.entry || loan.kind != lang::MirLoanKind::Stored ||
             loan.access != lang::AccessMode::ReadOnly || !parent ||
             !parent->entry || parent->kind != lang::MirLoanKind::Stored ||
@@ -515,7 +536,7 @@ int main() {
           if (mutation == 0)
             body->loans[loan.id - 1].access = lang::AccessMode::Mutable;
           else
-            body->loans[loan.id - 1].parent = 0;
+            detachAncestor(body->loans[loan.id - 1]);
           expect(!lang::verifyMirProgram(forged).valid(),
                  "a shared formal alias cannot forge exclusive or parentless "
                  "referent authority " +
@@ -577,7 +598,7 @@ int main() {
         if (call.kind != lang::MirInstructionKind::Call || !call.receiver ||
             call.receiver->kind != lang::MirOperandKind::Value ||
             call.borrowOrigin != lang::BorrowOriginKind::Receiver ||
-            call.borrowFields.size() != 2)
+            call.borrowAccess != lang::AccessMode::Mutable)
           continue;
         auto malformed = frontend.mir;
         auto *body = lang::findMirBody(
@@ -602,7 +623,7 @@ int main() {
     }
   }
   expect(checked == 1,
-         "one field-mapped receiver call checks input permission");
+         "one mutable receiver-result call checks input permission");
   std::string readonly = declarations;
   readonly.replace(readonly.find("entry() mut"),
                    std::string("entry() mut").size(), "entry()");

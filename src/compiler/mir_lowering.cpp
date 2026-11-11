@@ -219,7 +219,8 @@ MirLowerer::lowerVerified(const HirProgram &source,
       provisional.errors.push_back({.body = {error.bodyKind, error.owner},
                                     .block = error.block,
                                     .instruction = error.instruction,
-                                    .message = error.message});
+                                    .message = error.message,
+                                    .borrow = error.borrow});
     provisional.program.valid_ = false;
     return provisional;
   }
@@ -412,6 +413,19 @@ MirLowerer::lowerProgram(const HirProgram &source,
 
   result.program.functions.reserve(source.functionInstances().size());
   for (const HirFunctionInstance &instance : source.functionInstances()) {
+    // An instance whose body HIR omitted (see `HirFunctionInstance::
+    // bodyOmitted`) lowers as a signature-only declaration: its MIR body is
+    // the canonical bodyless skeleton over its parameter bindings, and its
+    // callers are checked against the signature contract recorded on the
+    // instance. The body lowerer recognises a bodyless definition by its
+    // missing source, so it lowers a copy without one. Body-derived program
+    // summaries (defined-failure effects, persistent-storage access) treat
+    // such a declaration conservatively, as every declaration.
+    std::optional<HirFunctionInstance> signatureOnly;
+    if (instance.bodyOmitted) {
+      signatureOnly = instance;
+      signatureOnly->source = nullptr;
+    }
     const bool implicitZeroReturn = !instance.owner &&
                                     instance.source != nullptr &&
                                     instance.source->name().lexeme == "main";
@@ -494,7 +508,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .virtualRoots = instance.virtualRoots,
          .callableParameters = std::move(callableParameters),
          .definitionKind =
-             instance.source == nullptr
+             instance.source == nullptr || instance.bodyOmitted
                  ? MirFunctionInstance::DefinitionKind::Declaration
              : instance.source->runtimeBinding()
                  ? MirFunctionInstance::DefinitionKind::RuntimeBinding
@@ -508,8 +522,9 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Function,
              instance.returnType, {}, definedFailureEffects, valid,
-             result.errors, instance.id, implicitZeroReturn, nullptr, &instance,
-             nullptr, nullptr, nullptr, nullptr,
+             result.errors, instance.id, implicitZeroReturn, nullptr,
+             signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
+             nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit))});
   }
 
@@ -565,6 +580,12 @@ MirLowerer::lowerProgram(const HirProgram &source,
   for (const HirConstructorInstance &instance : source.constructorInstances()) {
     const MirClassInstance *constructorOwner =
         result.program.findClassInstance(instance.owner);
+    // An omitted constructor body lowers as a declaration, as above.
+    std::optional<HirConstructorInstance> signatureOnly;
+    if (instance.bodyOmitted) {
+      signatureOnly = instance;
+      signatureOnly->source = nullptr;
+    }
     std::vector<MirConstructorInitializer> initializers;
     initializers.reserve(instance.initializers.size());
     for (const HirConstructorInitializer &initializer : instance.initializers) {
@@ -598,8 +619,9 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .borrowParameters = instance.borrowParameters,
          .completeBorrow = instance.completeBorrow,
          .definitionKind =
-             instance.generatedDefault || (instance.source != nullptr &&
-                                           instance.source->body() != nullptr)
+             !instance.bodyOmitted && (instance.generatedDefault ||
+                                       (instance.source != nullptr &&
+                                        instance.source->body() != nullptr))
                  ? MirDefinitionKind::Source
                  : MirDefinitionKind::Declaration,
          .mayRaiseDefinedFailure =
@@ -611,7 +633,8 @@ MirLowerer::lowerProgram(const HirProgram &source,
              source, failureMetadata, instance.body, MirBodyKind::Constructor,
              SemanticType::Void, instance.initializerValues,
              definedFailureEffects, valid, result.errors, instance.id, false,
-             &instance.initializers, nullptr, &instance, nullptr, nullptr,
+             &instance.initializers, nullptr,
+             signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
              constructorOwner)});
     auto &lowered = result.program.constructors.back();
@@ -645,14 +668,17 @@ MirLowerer::lowerProgram(const HirProgram &source,
 
   result.program.destructors.reserve(source.destructorInstances().size());
   for (const HirDestructorInstance &instance : source.destructorInstances()) {
+    // An omitted destructor body is empty, which already lowers to the
+    // bodyless skeleton; only its definition kind changes.
     result.program.destructors.push_back(
         {.codegenAttributes = instance.codegenAttributes,
          .id = instance.id,
          .owner = instance.owner,
-         .definitionKind =
-             instance.source != nullptr && instance.source->body() != nullptr
-                 ? MirDefinitionKind::Source
-                 : MirDefinitionKind::Declaration,
+         .definitionKind = !instance.bodyOmitted &&
+                                   instance.source != nullptr &&
+                                   instance.source->body() != nullptr
+                               ? MirDefinitionKind::Source
+                               : MirDefinitionKind::Declaration,
          .mayRaiseDefinedFailure =
              definedFailureEffects.destructors.empty() || instance.id == 0 ||
              instance.id > definedFailureEffects.destructors.size() ||

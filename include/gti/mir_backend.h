@@ -12,11 +12,27 @@ namespace lang {
 // inspection surface for the backend-authority migration, not an executable
 // representation; its shape is the canonical serialization contract in
 // `docs/architecture/mir.md`.
+struct MirBackendOptions {
+  // Serialize the RFC 0004 erasure-gate view instead: semantic loan numbers
+  // zeroed, EndBorrow removed and instruction IDs renumbered
+  // (`mir_loan_normalization.h`). An inspection view only; the verified
+  // program itself is unchanged.
+  bool normalizeLoanBookkeeping = false;
+  // Additionally erase borrow-dependency metadata, after loan bookkeeping
+  // (normalizeBorrowDependencies in `mir_loan_normalization.h`).
+  bool normalizeBorrowDependencies = false;
+};
+
 class MirBackend final : public Backend {
 public:
+  explicit MirBackend(MirBackendOptions options = {}) : options(options) {}
+
   [[nodiscard]] std::string_view name() const override { return "mir"; }
 
   [[nodiscard]] BackendArtifact generate(LoweredProgram program) override;
+
+private:
+  MirBackendOptions options;
 };
 
 } // namespace lang

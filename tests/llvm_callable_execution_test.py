@@ -252,7 +252,7 @@ def main() -> None:
         )
         if (
             result.returncode != 65
-            or "GTI-S2045" not in result.stderr
+            or "GTI-S2127" not in result.stderr
             or preserved.read_bytes() != b"preserve"
         ):
             raise AssertionError(f"borrow rejection drift: {result}")
