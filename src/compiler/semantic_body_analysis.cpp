@@ -11143,7 +11143,11 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         });
     lambdaReturn.deferred =
         openParameters || containsOpenTypeParameter(returnType);
-    if (summary.origin == BorrowOriginKind::Argument) {
+    // RFC 0004 elision, as for a function: several eligible reference
+    // parameters leave an elided lambda result ambiguous (Rust E0106).
+    const bool ambiguous =
+        signatureContractDefaults() && summary.parameters.size() > 1;
+    if (summary.origin == BorrowOriginKind::Argument && !ambiguous) {
       lambdaReturn.origin = summary.origin;
       lambdaReturn.parameter = summary.parameter;
       lambdaReturn.access = summary.access;

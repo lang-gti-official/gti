@@ -1052,6 +1052,59 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
       }
     return;
   }
+  // A reference field read from a by-value carrier parameter lives in the
+  // region the parameter's type supplies for that field: a written lifetime
+  // argument, or a fresh elided region no declaration relates to the result.
+  if (const auto *get = exprAs<Get>(returned)) {
+    const auto *object = exprAs<Variable>(get->object().get());
+    for (const auto &parameter : syntax.parameters()) {
+      if (object == nullptr || parameter.type.reference || parameter.pack ||
+          parameter.name.lexeme != object->name().lexeme)
+        continue;
+      const SemanticType type = typeOf(parameter);
+      if (type.kind != SemanticType::Class || type.classId == 0 ||
+          type.classId > classes.size())
+        return;
+      const auto *declaration = classInfo(type.classId).declaration;
+      if (declaration == nullptr)
+        return;
+      const auto binders = declaration->lifetimeParameters();
+      for (const auto &member : declaration->members()) {
+        const auto *field = stmtAs<VariableDecl>(member.get());
+        if (field == nullptr || field->name().lexeme != get->name().lexeme ||
+            !field->type().reference)
+          continue;
+        std::optional<std::size_t> index;
+        if (field->type().referenceLifetime) {
+          for (std::size_t at = 0; at < binders.size(); ++at)
+            if (binders[at].name.lexeme ==
+                field->type().referenceLifetime->name.lexeme)
+              index = at;
+        } else if (binders.size() <= 1) {
+          index = 0; // the class's one (possibly implicit) region
+        }
+        if (!index)
+          return;
+        const auto &written = parameter.type.lifetimeArguments;
+        const auto supplier = *index < written.size()
+                                  ? writtenRegion(written[*index])
+                                  : std::nullopt;
+        if (supplier && (*supplier == "_" || outlivesTarget(*supplier)))
+          return;
+        report(get->name(),
+               "Field '" + get->name().lexeme + "' of parameter '" +
+                   parameter.name.lexeme + "' borrows " +
+                   (supplier ? "region '" + *supplier + "'"
+                             : std::string("the parameter's elided region")) +
+                   ", which is not declared to outlive the result's region '" +
+                   target + "'.",
+               "GTI-S2127");
+        return;
+      }
+      return;
+    }
+    return;
+  }
   const auto *call = exprAs<Call>(returned);
   const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
   if (resolved == nullptr || resolved->declaration == nullptr)

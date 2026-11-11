@@ -559,7 +559,7 @@ int main() {
     else
       negative(name, source, code);
   };
-  unionOrNegative("lambda-reference-result-ambiguous", R"(
+  negative("lambda-reference-result-ambiguous", R"(
 int main() {
   int left = 1;
   int right = 2;

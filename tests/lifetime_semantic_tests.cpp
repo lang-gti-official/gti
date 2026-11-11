@@ -15,9 +15,13 @@ int main(int argc, char **argv) {
   const auto check = [&](std::string_view name, std::string_view source,
                          bool accepted, std::string_view code = {},
                          bool withTextPrelude = false) {
+    // RFC 0004: MIR is the borrow checker, so a body-local borrow rejection
+    // is invisible at the semantic stop. Without --mir, accepted programs
+    // must pass semantics and rejected ones are checked through MIR.
+    const bool throughMir = mir || !accepted;
     const auto frontend =
-        lang::Frontend({.stopAfter = mir ? lang::FrontendPhase::Mir
-                                         : lang::FrontendPhase::Semantics});
+        lang::Frontend({.stopAfter = throughMir ? lang::FrontendPhase::Mir
+                                                : lang::FrontendPhase::Semantics});
     const auto root =
         std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
     const auto prelude =
@@ -38,7 +42,8 @@ namespace std {
                                {prelude}, {{prelude.string(), textPrelude}},
                                {root})
             : frontend.analyze(std::string(name) + ".gti", std::string(source));
-    const bool passed = mir ? result.canGenerateCode() : result.semanticValid;
+    const bool passed =
+        throughMir ? result.canGenerateCode() : result.semanticValid;
     if (mir && accepted && passed &&
         (name.starts_with("conformance-") ||
          name.starts_with("patterned-primary-"))) {

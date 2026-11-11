@@ -478,7 +478,7 @@ int&<a> invalid<lifetime a>(Reading<a> first, Reading second) {
 }
 int main() { return 0; }
 )gti",
-           "GTI-S2085", "exact external owner dependency");
+           "GTI-S2127", "the parameter's elided region");
   rejected(borrowed + R"gti(
 int& invalid() {
   int local = 7;
