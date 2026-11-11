@@ -1090,12 +1090,12 @@ public:
   View(Resource& owner) : owner(owner) {}
   Resource& get() { return this.owner; }
 };
-class Wrapper {
-  View view;
+class Wrapper<lifetime a> {
+  View<a> view;
   mut int count;
 public:
-  Wrapper(Resource& owner) : view(View(owner)), count(0) {}
-  View binding() { return this.view; }
+  Wrapper(Resource&<a> owner) : view(View(owner)), count(0) {}
+  View<a> binding() { return this.view; }
   void touch() mut { this.count++; }
   int inspect() mut { auto copy = this.binding(); this.touch(); return copy.get().value; }
 };

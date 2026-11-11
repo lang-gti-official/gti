@@ -8016,6 +8016,36 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
     // this positional exact-field check, verifies each return.
     static const bool signatureReturns =
         !legacyBorrowChecker();
+    // The coverage proof still requires each published path to name a
+    // field chain of the result type itself.
+    if (signatureReturns && instance.returnType.kind == SemanticType::Class &&
+        !instance.returnBorrowFields.empty()) {
+      const auto names = [&](const std::vector<SymbolId> &fields) {
+        SemanticType current = instance.returnType;
+        for (const SymbolId field : fields) {
+          if (current.kind != SemanticType::Class &&
+              current.kind != SemanticType::Lambda)
+            return true;
+          auto next = mirFieldProjectionType(program, current, field);
+          if (!next)
+            return false;
+          if (next->kind == SemanticType::Reference &&
+              next->arguments.size() == 1)
+            current = next->arguments.front();
+          else
+            current = std::move(*next);
+        }
+        return true;
+      };
+      if (!names(loan->designatedFields) ||
+          std::any_of(loan->additionalDependencies.begin(),
+                      loan->additionalDependencies.end(),
+                      [&](const auto &dependency) {
+                        return !names(dependency.designatedFields);
+                      }))
+        return invalidSummary(
+            "return publication names a path outside its result type");
+    }
     if (!instance.returnBorrowFields.empty() && !completeReferenceResult &&
         !(signatureReturns && instance.completeReturnBorrow &&
           !instance.explicitReturnBorrowOrigin)) {
