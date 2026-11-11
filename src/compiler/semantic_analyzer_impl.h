@@ -3533,9 +3533,6 @@ private:
                             const std::vector<SemanticLoanId> &loans,
                             std::string message, bool rawAudit = false);
 
-  void recordProvenLoanEndpoint(SemanticLoanId id,
-                                const LoanFlowArmEndpoint &endpoint);
-
   void finalizeLoanFlow();
 
   void removeLoanCarrier(Symbol &carrier);

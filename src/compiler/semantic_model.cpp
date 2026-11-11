@@ -1194,23 +1194,6 @@ SemanticModel::loans() const {
   return retainedLoans;
 }
 
-[[nodiscard]] std::vector<SemanticLoanId>
-SemanticModel::loansEndingAfter(const Stmt &statement) const {
-  const auto found = loanEnds.find(&statement);
-  return found == loanEnds.end() ? std::vector<SemanticLoanId>{}
-                                 : found->second;
-}
-
-[[nodiscard]] std::vector<SemanticLoanId>
-SemanticModel::loansEndingAtConditionalEntry(const IfStmt &statement,
-                                             bool thenBranch) const {
-  const auto found = conditionalLoanEnds.find(&statement);
-  if (found == conditionalLoanEnds.end()) {
-    return {};
-  }
-  return thenBranch ? found->second.thenEntry : found->second.elseEntry;
-}
-
 [[nodiscard]] std::optional<bool>
 SemanticModel::findConstexprBranch(const IfStmt &statement) const {
   const auto found = constexprBranches.find(&statement);
@@ -1380,16 +1363,6 @@ SemanticModel::findStaticAssertResult(
   }
   return base == nullptr ? std::nullopt
                          : base->findStaticAssertResult(declaration);
-}
-
-[[nodiscard]] std::vector<SemanticLoanId>
-SemanticModel::loansEndingAtSwitchArmEntry(const SwitchStmt &statement,
-                                           std::size_t armIndex) const {
-  const auto found = switchArmLoanEnds.find(&statement);
-  if (found == switchArmLoanEnds.end() || armIndex >= found->second.size()) {
-    return {};
-  }
-  return found->second[armIndex];
 }
 
 [[nodiscard]] const StructuredBindingInfo *SemanticModel::findStructuredBinding(
@@ -2174,8 +2147,6 @@ void SemanticModel::clear() {
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
   captureBorrowDependencies.clear();
-  loanEnds.clear();
-  conditionalLoanEnds.clear();
   constexprBranches.clear();
   constexprForExpansions.clear();
   macroExpansions.clear();
@@ -2187,7 +2158,6 @@ void SemanticModel::clear() {
   declarationAttributes.clear();
   expressionAliases.clear();
   staticAssertResults.clear();
-  switchArmLoanEnds.clear();
   structuredBindings.clear();
   rangeIterations.clear();
   functions.clear();
@@ -2723,26 +2693,6 @@ void SemanticModel::appendUniqueLoan(std::vector<SemanticLoanId> &loans,
   }
 }
 
-void SemanticModel::recordLoanEndpoint(SemanticLoanId id,
-                                       SemanticLoanEndKind kind,
-                                       const Stmt &statement,
-                                       std::size_t switchArm) {
-  std::vector<SemanticLoanEndpoint> &endpoints =
-      retainedLoans[id - 1].endpoints;
-  const auto duplicate =
-      std::find_if(endpoints.begin(), endpoints.end(),
-                   [&](const SemanticLoanEndpoint &endpoint) {
-                     return endpoint.kind == kind &&
-                            endpoint.statement == &statement &&
-                            (kind != SemanticLoanEndKind::SwitchArmEntry ||
-                             endpoint.switchArm == switchArm);
-                   });
-  if (duplicate == endpoints.end()) {
-    endpoints.push_back(
-        {.kind = kind, .statement = &statement, .switchArm = switchArm});
-  }
-}
-
 void SemanticModel::record(const Expr &expression, ExpressionInfo info) {
   expressions.insert_or_assign(&expression, std::move(info));
 }
@@ -2953,29 +2903,6 @@ void SemanticModel::recordBindingLoan(const Parameter &parameter,
   }
 }
 
-void SemanticModel::recordLoanEndAfter(SemanticLoanId id,
-                                       const Stmt &statement) {
-  if (!validLoan(id)) {
-    return;
-  }
-  recordLoanEndpoint(id, SemanticLoanEndKind::AfterStatement, statement);
-  appendUniqueLoan(loanEnds[&statement], id);
-}
-
-void SemanticModel::recordLoanEndAtConditionalEntry(SemanticLoanId id,
-                                                    const IfStmt &statement,
-                                                    bool thenBranch) {
-  if (!validLoan(id)) {
-    return;
-  }
-  const SemanticLoanEndKind kind = thenBranch
-                                       ? SemanticLoanEndKind::ThenBranchEntry
-                                       : SemanticLoanEndKind::ElseBranchEntry;
-  recordLoanEndpoint(id, kind, statement);
-  SemanticConditionalLoanEnds &ends = conditionalLoanEnds[&statement];
-  appendUniqueLoan(thenBranch ? ends.thenEntry : ends.elseEntry, id);
-}
-
 void SemanticModel::recordConstexprBranch(const IfStmt &statement,
                                           std::optional<bool> thenBranch) {
   constexprBranches.insert_or_assign(&statement, thenBranch);
@@ -3035,22 +2962,6 @@ void SemanticModel::recordStaticAssertResult(
   staticAssertResults.insert_or_assign(&declaration, result);
 }
 
-void SemanticModel::recordLoanEndAtSwitchArmEntry(SemanticLoanId id,
-                                                  const SwitchStmt &statement,
-                                                  std::size_t armIndex) {
-  if (!validLoan(id)) {
-    return;
-  }
-  recordLoanEndpoint(id, SemanticLoanEndKind::SwitchArmEntry, statement,
-                     armIndex);
-  std::vector<std::vector<SemanticLoanId>> &ends =
-      switchArmLoanEnds[&statement];
-  if (ends.size() <= armIndex) {
-    ends.resize(armIndex + 1);
-  }
-  appendUniqueLoan(ends[armIndex], id);
-}
-
 void SemanticModel::recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
   if (id == 0 || carrier == 0 || id > retainedLoans.size() ||
       retainedLoans[id - 1].id != id) {
@@ -3074,9 +2985,6 @@ void SemanticModel::clearLoans() {
   retainedLoans.clear();
   expressionBorrowDependencies.clear();
   captureBorrowDependencies.clear();
-  loanEnds.clear();
-  conditionalLoanEnds.clear();
-  switchArmLoanEnds.clear();
   for (auto &[_, binding] : variableBindings) {
     binding.retainedLoan = 0;
   }

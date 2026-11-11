@@ -3328,6 +3328,37 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+MIR derives a body's entry loans (what the caller lends it) from the
+declared types of its receiver, captures and parameters: which carriers
+receive one, its kind and access, the stored reference paths a by-value
+carrier or referent holds (with the enum alternatives guarding each), the
+stored dependency linking a reference formal to its referent, and whether
+the loan is lifecycle-bound. The stored-reference inventory walks HIR class,
+enum and closure instances. A semantic entry loan now only names the MIR loan
+for later HIR facts and adds the later locals its carrier flows into; MIR
+rejects a body whose semantic entries it did not derive itself.
+
+A closure's capture dependencies are MIR's too. A borrowing capture lends its
+input place, keyed by what it names (through a reference binding, the
+referent that binding's loan protects; an enclosing closure's by-value
+capture, that capture). A copied reference keeps the loan it was copied
+from. A by-value capture that holds borrowed state carries every owner of
+the captured value's loan, its fields prefixed by the capture's environment
+field; copying reborrows those owners below the source's loan, moving
+transfers them. A parallel scope keeps a task argument's loan exactly when
+the task type holds borrowed state.
+
+A payload construction's loan is MIR's as well. Each reference payload field
+names its argument's referent below that place's loan; a by-value field
+holding borrowed state carries every owner of its argument's loan (reborrowed
+when copied, transferred when moved). Each path is prefixed by the payload
+field and guarded by the constructed alternative. An argument proven to hold
+a dependency-free alternative contributes nothing: a payload construction of
+an alternative that stores no borrowed state, a local carrier MIR tracks
+without a loan, a call that borrows from nothing under elision, or a callee
+summary that names owners only under alternatives its by-value arguments do
+not hold.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's
