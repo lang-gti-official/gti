@@ -1,29 +1,35 @@
-// TCP socket surface: construction, error enum coverage and closed-state paths.
+// TCP surface: error enum coverage, endpoint values and closed-state paths.
 import std.tcp;
-class Anchor { public: int32_t id() { return 0; }  public: Anchor() = default; };
+import std.chrono;
 
 int32_t code_for(std::tcp::errc e) {
   switch (e) {
-  case std::tcp::errc::open_failed:
-    return 1;
-  case std::tcp::errc::close_failed:
-    return 2;
   case std::tcp::errc::not_open:
+    return 1;
+  case std::tcp::errc::connection_refused:
+    return 2;
+  case std::tcp::errc::timed_out:
     return 3;
+  default:
+    return 4;
   }
-  return 0;
 }
 
 int main() {
-  mut auto opened = std::tcp::socket::open();
+  auto endpoint = std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
+  mut auto opened = std::tcp::listener::bind(endpoint);
   if (!opened) {
     std::println(code_for(opened.error()));
     return 0;
   }
-  mut std::tcp::socket sock = std::move(opened).value();
-  std::print(sock.is_open() ? 1 : 0); std::print(" ");
-  mut auto closed = sock.close();
+  mut std::tcp::listener server = std::move(opened).value();
+  std::print(server.is_open() ? 1 : 0); std::print(" ");
+  auto idle = server.wait_acceptable(std::chrono::nanoseconds(int64_t(1000000)));
+  std::print(idle ? 0 : code_for(idle.error())); std::print(" ");
+  mut auto closed = server.close();
   std::print(closed.has_value() ? 1 : 0); std::print(" ");
-  std::println(sock.is_open() ? 1 : 0);
+  auto again = server.close();
+  std::print(again ? 0 : code_for(again.error())); std::print(" ");
+  std::println(server.is_open() ? 1 : 0);
   return 0;
 }

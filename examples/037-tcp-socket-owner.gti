@@ -1,29 +1,60 @@
-// std::tcp::socket keeps the native POSIX descriptor private and closes it
-// automatically. The first networking slice opens an unconnected IPv4 stream
-// socket; address, connection, send, and receive operations are not exposed.
+// std::tcp owns sockets as move-only values: a listener and the streams it
+// accepts or connects close their descriptors exactly once, explicitly with
+// close() or at the end of their scope. Every operation reports a typed
+// std::tcp::errc through expected, so `?` propagates failures.
+//
+// The program talks to itself over the loopback interface on an ephemeral
+// port, so it needs no network access.
 import std.tcp;
+import std.span;
+import std.vector;
+import std.string;
+import std.format;
+
+expected<void, std::tcp::errc> exchange() {
+  // Port 0 asks the host for a free port; local_address() reports it.
+  auto wildcard = std::tcp::socket_address(std::tcp::ipv4_address::loopback(), uint16_t(0));
+  mut auto server = ?std::tcp::listener::bind(wildcard);
+  auto endpoint = ?server.local_address();
+
+  mut auto client = ?std::tcp::stream::connect(endpoint);
+  mut auto accepted = ?server.accept();
+  auto peer = ?accepted.peer_address();
+  std::println(std::format("accepted a connection from {}", peer.ipv4().value()));
+
+  // send_all retries partial sends; shutdown(write) tells the peer we are done.
+  mut std::vector<uint8_t> greeting{std::size_t(2)};
+  greeting[std::size_t(0)] = uint8_t(72);
+  greeting[std::size_t(1)] = uint8_t(105);
+  auto outgoing = greeting.as_span();
+  ?client.send_all(outgoing);
+  ?client.shutdown(std::tcp::shutdown_mode::write);
+
+  // receive() returns zero at the peer's end of stream.
+  mut std::vector<uint8_t> inbox{std::size_t(16)};
+  mut std::size_t total = 0;
+  while (true) {
+    mut auto storage = inbox.as_mutable_span();
+    mut auto rest = storage.subspan(total, storage.size() - total);
+    std::size_t count = ?accepted.receive(rest);
+    if (count == std::size_t(0)) {
+      break;
+    }
+    total += count;
+  }
+  std::println(std::format("server received {} bytes", total));
+
+  // Explicit close reports its own failure once; a second close is not_open.
+  ?client.close();
+  auto again = client.close();
+  if (!again && again.error() == std::tcp::errc::not_open) {
+    std::println("a closed stream stays closed");
+  }
+  // `accepted` and `server` close automatically here.
+  return;
+}
+
 int main() {
-  mut auto opened = std::tcp::open();
-  if (!opened) {
-    return 1;
-  }
-  if (!opened.value().is_open()) {
-    return 2;
-  }
-
-  auto closed = opened.value().close();
-  if (!closed) {
-    return 3;
-  }
-  if (opened.value().is_open()) {
-    return 4;
-  }
-
-  auto closed_again = opened.value().close();
-  if (closed_again or closed_again.error() != std::tcp::errc::not_open) {
-    return 5;
-  }
-
-  std::println("opened and safely closed a std::tcp::socket");
-  return 0;
+  auto outcome = exchange();
+  return outcome ? 0 : 1;
 }

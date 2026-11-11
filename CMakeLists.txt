@@ -835,6 +835,7 @@ add_library(
   "runtime/src/c_string.cpp"
   "runtime/src/process.cpp"
   "runtime/src/random.cpp"
+  "runtime/src/tcp.cpp"
   "runtime/src/thread.cpp"
 )
 if((APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$") OR

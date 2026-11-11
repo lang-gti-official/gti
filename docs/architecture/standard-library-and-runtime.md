@@ -1395,6 +1395,19 @@ views. No libcurl type, option, callback, or pointer crosses into public GTI.
 The response handle owns bytes that have already been received; it is not a
 public streaming or socket abstraction.
 
+`std.tcp` applies the same split to stream sockets. Address values, strict
+IPv4/IPv6 parsing, RFC 5952 formatting, error categories, timeouts expressed
+as durations, `send_all` retry, `std::io` reader/writer conformance and
+owner lifecycle are GTI source. The versioned `gti_rt_tcp_*_v1` C ABI
+(`runtime/include/gti/tcp.h`) owns only what differs per host: `sockaddr`
+layout, socket constants, `errno` classification into stable statuses,
+`EINTR` retry, close-on-exec, `SIGPIPE` suppression and `getaddrinfo`.
+Addresses cross as a 24-byte encoded record rather than a native `sockaddr`,
+buffers as call-bounded pointer/length pairs, and descriptors as caller-owned
+integers that `gti_rt_tcp_close_v1` consumes exactly once. The descriptor owner
+is `[[unsafe_transfer, no_share]]`: moving a descriptor between threads is
+sound, while concurrent shared use is not offered.
+
 `std.json` needs no runtime or compiler-private capability. Its strict
 scanner, reflection-driven encoding and decoding, exact number handling,
 deterministic serializer, limits, structured errors and explicit `codec<T>`

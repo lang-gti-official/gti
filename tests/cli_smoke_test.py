@@ -12,7 +12,6 @@ import sys
 import tempfile
 
 from backend_modes import cpp_modes
-from native_symbol_spelling import native_spelling
 
 # The C++ backend's own CLI options (--std, --keep-cpp, --emit-cpp) run only
 # when GTI_TEST_BACKENDS selects the C++ backend. Contracts that do not depend
@@ -632,84 +631,37 @@ def main():
             run([str(raw_pointer_executable)])
 
         if sys.platform != "win32":
-            extern_c_source = root / "extern-c-sockets.gti"
-            extern_c_executable = root / "extern-c-sockets"
-            extern_c_source.write_text(
+            tcp_source = root / "tcp-loopback.gti"
+            tcp_executable = root / "tcp-loopback"
+            tcp_source.write_text(
                 "import std.tcp;\n"
+                "expected<int32_t, std::tcp::errc> run() {\n"
+                "  auto local = std::tcp::socket_address(\n"
+                "      std::tcp::ipv4_address::loopback(), uint16_t(0));\n"
+                "  mut auto server = ?std::tcp::listener::bind(local);\n"
+                "  auto bound = ?server.local_address();\n"
+                "  mut auto client = ?std::tcp::stream::connect(bound);\n"
+                "  mut auto accepted = ?server.accept();\n"
+                "  ?client.close();\n"
+                "  auto again = client.close();\n"
+                "  if (again or again.error() != std::tcp::errc::not_open) "
+                "{ return 1; }\n"
+                "  return accepted.is_open() ? 0 : 2;\n"
+                "}\n"
                 "int main() {\n"
-                "  mut auto opened = std::tcp::open();\n"
-                "  if (!opened or !opened.value().is_open()) { return 1; }\n"
-                "  auto closed = opened.value().close();\n"
-                "  if (!closed or opened.value().is_open()) { return 2; }\n"
-                "  auto closed_again = opened.value().close();\n"
-                "  if (closed_again or closed_again.error() != "
-                "std::tcp::errc::not_open) { return 3; }\n"
-                "  {\n"
-                "    auto automatic = std::tcp::open();\n"
-                "    if (!automatic or !automatic.value().is_open()) "
-                "{ return 4; }\n"
-                "  }\n"
-                "  return 0;\n"
+                "  auto result = run();\n"
+                "  return result ? result.value() : 3;\n"
                 "}\n",
                 encoding="utf-8",
             )
-            run(
-                [
-                    gti,
-                    str(extern_c_source),
-                    "-o",
-                    str(extern_c_executable),
-                ]
-            )
-            run([str(extern_c_executable)])
+            run([gti, str(tcp_source), "-o", str(tcp_executable)])
+            run([str(tcp_executable)])
 
-            # The emitted extern "C" declarations are a C++-backend text probe.
-            if CPP:
-                extern_c_cpp = root / "extern-c-sockets.cpp"
-                run(
-                    [
-                        gti,
-                        str(extern_c_source),
-                        "--emit-cpp",
-                        "-o",
-                        str(extern_c_cpp),
-                    ]
-                )
-                emitted_extern_c = extern_c_cpp.read_text(encoding="utf-8")
-                assert 'extern "C" {' in emitted_extern_c
-                socket_call = native_spelling(emitted_extern_c, "socket")
-                assert f"std::int32_t {socket_call}(" in emitted_extern_c
-                assert re.search(
-                    r"gti_internal::runtime::" + re.escape(socket_call) + r"\("
-                    r"__gti_mir_v_\d+, __gti_mir_v_\d+, __gti_mir_v_\d+\)",
-                    emitted_extern_c,
-                )
-                assert "class socket" in emitted_extern_c
-                # open() returns the prelude's expected<socket, errc> instance.
-                expected_socket = re.search(
-                    r"static ::__gti_program::(__gti_type_[0-9a-f]+_expected) "
-                    r"__gti_fn_\d+_open\(\);",
-                    emitted_extern_c,
-                )
-                assert expected_socket
-                assert re.search(
-                    r"explicit " + expected_socket.group(1) +
-                    r"\(::__gti_program::__gti_std::tcp::socket __gti_mir_arg_0\);",
-                    emitted_extern_c,
-                )
-                close_call = native_spelling(emitted_extern_c, "close")
-                assert re.search(
-                    r"gti_internal::runtime::" + re.escape(close_call) +
-                    r"\(__gti_mir_v_\d+\)",
-                    emitted_extern_c,
-                )
-                assert "socket(socket &&other)" in emitted_extern_c
-
-            copied_socket_source = root / "copied-tcp-socket.gti"
+            copied_socket_source = root / "copied-tcp-stream.gti"
             copied_socket_source.write_text(
                 "import std.tcp;\n"
-                "void copy_socket(std::tcp::socket& original) {\n"
-                "  std::tcp::socket copied = original;\n"
+                "void copy_stream(std::tcp::stream& original) {\n"
+                "  std::tcp::stream copied = original;\n"
                 "}\n"
                 "int main() {\n"
                 "  return 0;\n"
@@ -721,18 +673,18 @@ def main():
                     gti,
                     str(copied_socket_source),
                     "-o",
-                    str(root / "copied-tcp-socket"),
+                    str(root / "copied-tcp-stream"),
                 ],
                 65,
             )
             assert "Cannot initialize 'copied'" in copied_socket.stderr
             assert "Move-only owners cannot be copied" in copied_socket.stderr
 
-            forged_socket_source = root / "forged-tcp-socket.gti"
+            forged_socket_source = root / "forged-tcp-stream.gti"
             forged_socket_source.write_text(
                 "import std.tcp;\n"
                 "int main() {\n"
-                "  std::tcp::socket forged = std::tcp::socket(\n"
+                "  std::tcp::stream forged = std::tcp::stream(\n"
                 "      gti_internal::tcp_socket_handle(1));\n"
                 "  return 0;\n"
                 "}\n",
@@ -743,108 +695,12 @@ def main():
                     gti,
                     str(forged_socket_source),
                     "-o",
-                    str(root / "forged-tcp-socket"),
+                    str(root / "forged-tcp-stream"),
                 ],
                 65,
             )
             assert "[GTI-S2058]" in forged_socket.stderr
             assert "Compiler-private name 'gti_internal::tcp_socket_handle'" in forged_socket.stderr
-            assert "Constructor of 'socket' is private" not in forged_socket.stderr
-
-            tcp_stub = root / "tcp-stub.cpp"
-            tcp_stub.write_text(
-                "#include <cstdint>\n"
-                "namespace {\n"
-                "std::int32_t socket_result = 17;\n"
-                "std::int32_t close_calls = 0;\n"
-                "}\n"
-                'extern "C" void gti_test_set_socket_result('
-                "std::int32_t value) { socket_result = value; }\n"
-                'extern "C" std::int32_t gti_test_close_calls() {\n'
-                "  return close_calls;\n"
-                "}\n"
-                'extern "C" std::int32_t socket('
-                "std::int32_t, std::int32_t, std::int32_t) {\n"
-                "  return socket_result;\n"
-                "}\n"
-                'extern "C" std::int32_t close(std::int32_t) {\n'
-                "  ++close_calls;\n"
-                "  return -1;\n"
-                "}\n",
-                encoding="utf-8",
-            )
-            tcp_failure_source = root / "tcp-failures.gti"
-            tcp_failure_executable = root / "tcp-failures"
-            tcp_failure_source.write_text(
-                "import std.tcp;\n"
-                'extern "C" {\n'
-                "  void gti_test_set_socket_result(int32_t value);\n"
-                "  int32_t gti_test_close_calls();\n"
-                "}\n"
-                "int32_t automatic_close_count() {\n"
-                "  {\n"
-                "    auto opened = std::tcp::open();\n"
-                "    if (!opened) { return -1; }\n"
-                "  }\n"
-                "  return gti_test_close_calls();\n"
-                "}\n"
-                "int32_t moved_close_count() {\n"
-                "  {\n"
-                "    mut auto opened = std::tcp::socket::open();\n"
-                "    if (!opened) { return -1; }\n"
-                "    auto moved = std::move(opened);\n"
-                "    if (!moved or !moved.value().is_open()) { return -1; }\n"
-                "  }\n"
-                "  return gti_test_close_calls();\n"
-                "}\n"
-                "int32_t failed_close_count() {\n"
-                "  {\n"
-                "    mut auto opened = std::tcp::open();\n"
-                "    if (!opened) { return -1; }\n"
-                "    auto closed = opened.value().close();\n"
-                "    if (closed or closed.error() != "
-                "std::tcp::errc::close_failed) { return -1; }\n"
-                "  }\n"
-                "  return gti_test_close_calls();\n"
-                "}\n"
-                "int main() {\n"
-                "  gti_test_set_socket_result(-1);\n"
-                "  auto failed = std::tcp::open();\n"
-                "  if (failed or failed.error() != "
-                "std::tcp::errc::open_failed) { return 1; }\n"
-                "  gti_test_set_socket_result(17);\n"
-                "  if (automatic_close_count() != 1) { return 2; }\n"
-                "  if (moved_close_count() != 2) { return 3; }\n"
-                "  if (failed_close_count() != 3) { return 4; }\n"
-                "  return 0;\n"
-                "}\n",
-                encoding="utf-8",
-            )
-            run(
-                [
-                    gti,
-                    str(tcp_failure_source),
-                    "-o",
-                    str(tcp_failure_executable),
-                    "--",
-                    str(tcp_stub),
-                ]
-            )
-            run([str(tcp_failure_executable)])
-
-            tcp_failure_cpp20_executable = root / "tcp-failures-cpp20"
-            run(
-                [
-                    gti,
-                    str(tcp_failure_source),
-                    "-o",
-                    str(tcp_failure_cpp20_executable),
-                    *cpp_std(),
-                    "--",
-                    str(tcp_stub),
-                ]
-            )
-            run([str(tcp_failure_cpp20_executable)])
 
         cstdio_source = root / "cstdio.gti"
         cstdio_executable = root / "cstdio"

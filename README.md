@@ -144,8 +144,8 @@ for the compiler API boundary and why the former in-tree website was removed.
 - A hosted `main(int, std::vector<std::string>)` form that copies native
   command-line arguments into GTI-owned strings instead of exposing `char**`.
 - Structured, target-selected native inputs—including automatically compiled C
-  and C++ sources—in project manifests and a small move-only POSIX
-  `std::tcp::socket` ownership wrapper.
+  and C++ sources—in project manifests, and POSIX `std::tcp` streams,
+  listeners and addresses as move-only owners.
 - A source-defined standard-library foundation with checked array, string, and
   move-only vector owners, plus project manifests, an LSP, formatter,
   Tree-sitter parser, and self-installing Neovim/Lazy plugin.
@@ -773,8 +773,8 @@ semantic, formatting, snapshot, and protocol boundaries.
   features.
 - [`examples/gti-vs-cpp/`](examples/gti-vs-cpp/README.md) contains paired,
   machine-verifiable comparisons with C++.
-- [`docs/language/tcp.md`](docs/language/tcp.md) specifies the first move-only TCP socket owner
-  and its deliberately unconnected POSIX boundary.
+- [`docs/language/tcp.md`](docs/language/tcp.md) specifies TCP addresses,
+  streams, listeners and their versioned runtime boundary.
 - [`docs/index.md`](docs/index.md) maps current compiler architecture, language
   semantics, design decisions, and clearly separated future plans.
 - [`docs/language/`](docs/language/index.md) is the backend-independent working
