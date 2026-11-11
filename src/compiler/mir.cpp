@@ -3422,6 +3422,18 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                        "borrow-returning call",
                        block.id, instruction.id);
       }
+      // A call whose borrowed-result contract is read-only publishes a
+      // shared result; no producer may widen it to exclusive access.
+      if ((instruction.kind == MirInstructionKind::Call ||
+           instruction.kind == MirInstructionKind::Construct) &&
+          instruction.borrowOrigin != BorrowOriginKind::None &&
+          instruction.borrowAccess == AccessMode::ReadOnly &&
+          body.loans[*instruction.loan - 1].access == AccessMode::Mutable) {
+        return failure(body, owner,
+                       "a read-only borrow-returning call cannot produce a "
+                       "mutable loan",
+                       block.id, instruction.id);
+      }
       ++producerCounts[*instruction.loan - 1];
     }
   }
@@ -4209,6 +4221,38 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       const MirInstruction *definition = callInputDefinition(operand);
       return definition == nullptr ? &operand : &definition->operands.front();
     };
+    // Borrowing a whole carrier lends the stored authority its methods use.
+    // A mutable borrow cannot use authority a live child suspended; a shared
+    // borrow cannot while a mutable child of that authority is live.
+    const auto checkCarrierAuthority =
+        [&](MirPlaceId placeId, bool write, MirLoanId inputLoan,
+            const char *context, MirInstructionId instruction)
+        -> std::optional<MirVerificationResult> {
+      const MirPlace *borrowed = body.findPlace(placeId);
+      if (borrowed == nullptr || borrowed->root != MirPlaceRootKind::Binding ||
+          !borrowed->projections.empty() ||
+          !borrowed->traits.containsBorrowedState)
+        return std::nullopt;
+      const auto found = bindingLoans.find(borrowed->binding);
+      if (found == bindingLoans.end())
+        return std::nullopt;
+      for (const MirLoanId loan : found->second) {
+        if (loan == inputLoan ||
+            body.loans[loan - 1].kind != MirLoanKind::Stored ||
+            active[loan - 1] != MirLoanFlowState::Suspended)
+          continue;
+        const bool exclusiveChild = std::any_of(
+            body.loans.begin(), body.loans.end(), [&](const MirLoan &child) {
+              return child.parent == loan &&
+                     child.access == AccessMode::Mutable &&
+                     active[child.id - 1] != MirLoanFlowState::Inactive;
+            });
+        if (write || exclusiveChild)
+          if (auto invalid = requireActive(loan, context, instruction))
+            return invalid;
+      }
+      return std::nullopt;
+    };
     const auto checkOperand =
         [&](const MirOperand &operand, const char *context,
             MirInstructionId instruction =
@@ -4237,9 +4281,14 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         }
         return std::nullopt;
       }
+      case MirOperandKind::BorrowRead:
+        if (auto invalid = checkCarrierAuthority(
+                resolved.place, false, inputLoan, context, instruction))
+          return invalid;
+        return checkPlace(resolved.place, false, context, instruction,
+                          inputLoan);
       case MirOperandKind::Copy:
       case MirOperandKind::Address:
-      case MirOperandKind::BorrowRead:
         return checkPlace(resolved.place, false, context, instruction,
                           inputLoan);
       case MirOperandKind::Move: {
@@ -4294,6 +4343,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         return checkPlace(resolved.place, true, context, instruction);
       }
       case MirOperandKind::BorrowWrite:
+        if (auto invalid = checkCarrierAuthority(
+                resolved.place, true, inputLoan, context, instruction))
+          return invalid;
         return checkPlace(resolved.place, true, context, instruction,
                           inputLoan);
       case MirOperandKind::Value:
