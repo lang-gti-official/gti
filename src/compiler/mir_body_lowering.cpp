@@ -14998,6 +14998,28 @@ private:
               retainableCallResultChain(retained.parent, accessorAncestor,
                                         arguments[initializer->borrowArgument],
                                         desired->access);
+          // Under signature contracts an accessor of a by-value carrier
+          // parameter borrows the parameter's shell; the accessor chain is
+          // rooted there, while the formal's entry group the semantic record
+          // names as parent remains the carrier's stored dependency.
+          const MirLoan *entryParent = output.findLoan(expectedParent);
+          const bool exactShellAccessorParent =
+              entryParent != nullptr && entryParent->entry &&
+              entryParent->kind == MirLoanKind::Stored &&
+              retained.kind == MirLoanKind::Stored &&
+              retained.storedDependency == expectedParent &&
+              initializer != nullptr &&
+              (initializer->constructorTarget ||
+               storesCarrierReference(*initializer)) &&
+              initializer->borrowOrigin == BorrowOriginKind::Argument &&
+              initializer->borrowArgument < arguments.size() &&
+              retained.parent ==
+                  loanForValue(arguments[initializer->borrowArgument]) &&
+              retainableCallResultChain(retained.parent, 0,
+                                        arguments[initializer->borrowArgument],
+                                        desired->access) &&
+              output.loans[retained.parent - 1].storedDependency ==
+                  expectedParent;
           // A carrier returned by a method of an accessor's referent, such
           // as `owner->lock()`, borrows that referent through the accessor
           // result, exactly as a constructor argument does.
@@ -15041,7 +15063,8 @@ private:
           // carrier retains it.
           if (retained.parent != expectedParent &&
               !exactRuntimeTransferParent && !exactAccessorParent &&
-              !exactAccessorReceiverParent && !selectedArgumentParent) {
+              !exactShellAccessorParent && !exactAccessorReceiverParent &&
+              !selectedArgumentParent) {
             valid = false;
           }
           recordLoanIdentity(retainedLoan, *desired, *statement.binding);
