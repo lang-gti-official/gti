@@ -7649,7 +7649,6 @@
       "case_ids": [
         "tcp",
         "tcp_serve",
-        "tcp_serve_requires_handler",
         "tcp_threads"
       ],
       "required_instantiations": [],
@@ -7658,8 +7657,25 @@
         "examples/193-tcp-line-server.gti",
         "tests/fixtures/stdlib_surface_tcp.gti",
         "tests/fixtures/stdlib_surface_tcp_serve.gti",
-        "tests/fixtures/stdlib_surface_tcp_serve_requires_handler.gti",
         "tests/fixtures/stdlib_surface_tcp_threads.gti"
+      ]
+    },
+    {
+      "id": "tcp.serve-rejected-handlers",
+      "source": "stdlib/std/tcp.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::tcp::serve<non-handler>"
+      ],
+      "case_ids": [
+        "tcp_serve_requires_handler"
+      ],
+      "reason": "serve requires a connection_handler conformance block for the handler type.",
+      "required_instantiations": [
+        "handler without a conformance block"
+      ],
+      "evidence": [
+        "tests/fixtures/stdlib_surface_tcp_serve_requires_handler.gti"
       ]
     },
     {
