@@ -9121,9 +9121,29 @@ private:
         // A text reference may select a literal-backed local. The program
         // verifier independently proves that case from its initialization;
         // every dynamic text source still requires its exact owner witness.
+        // Under a signature contract a receiver-tied reference borrows the
+        // receiver shell. A local carrier that retains no external loan at
+        // all (a dependency-free alternative) has no owner to protect beyond
+        // its own storage, which this loan's source already names.
+        const MirPlace *shell = output.findPlace(origin);
+        const HirBinding *local =
+            shell != nullptr && shell->root == MirPlaceRootKind::Binding
+                ? findBinding(shell->binding)
+                : nullptr;
+        const bool ownerlessLocalShell =
+            !legacyBorrowChecker() && local != nullptr &&
+            local->variable != nullptr && local->parameter == nullptr &&
+            std::none_of(output.loans.begin(), output.loans.end(),
+                         [&](const MirLoan &candidate) {
+                           return std::find(candidate.carriers.begin(),
+                                            candidate.carriers.end(),
+                                            local->id) !=
+                                  candidate.carriers.end();
+                         });
         if (output.loans[loan - 1].storedDependency == 0 &&
             value.info.type.kind != SemanticType::StringView &&
-            value.info.type.kind != SemanticType::CString)
+            value.info.type.kind != SemanticType::CString &&
+            !ownerlessLocalShell)
           valid = false;
       } else if (parent != 0) {
         // A referent returned through an existing carrier reference remains

@@ -15558,6 +15558,21 @@ completeBorrowSourcePath(const MirProgram &program,
         }
       }
     }
+    // A copied reference-free scalar (or other layout without reference
+    // paths or alternatives) retains none of its source place's origins.
+    if (result && instruction.kind == MirInstructionKind::Load &&
+        instruction.result &&
+        instruction.info.category == ValueCategory::Value &&
+        instruction.info.type.kind != SemanticType::Reference &&
+        !instruction.info.traits.containsBorrowedState) {
+      const auto inventory =
+          findStoredCarrierReferenceInventory(program, instruction.info.type);
+      const auto alternatives =
+          findStoredCarrierAlternativeInventory(program, instruction.info.type);
+      if (inventory && inventory->empty() && alternatives &&
+          alternatives->empty())
+        result = MirBorrowDependencySet{};
+    }
     if (!result && instruction.result &&
         instruction.info.category == ValueCategory::Value) {
       // A concrete value with no reference paths and no conditional
