@@ -17744,13 +17744,13 @@ MirBody MirLowerer::lowerBody(
         if (const Token token = expressionAnchorToken(*rejected->source);
             !token.lexeme.empty())
           anchor = tokenSpan(token);
-      errors.push_back({.body = {kind, owner},
-                        .source = anchor ? anchor : sourceFor(rejection->first),
-                        .message = rejection->second ==
-                                           MirBorrowRejectionKind::NestedCapture
-                                       ? "lambda borrows an enclosing capture"
-                                       : "returned borrow outlives local storage",
-                        .borrow = {.kind = rejection->second}});
+      errors.push_back(
+          {.body = {kind, owner},
+           .source = anchor ? anchor : sourceFor(rejection->first),
+           .message = rejection->second == MirBorrowRejectionKind::NestedCapture
+                          ? "lambda borrows an enclosing capture"
+                          : "returned borrow outlives local storage",
+           .borrow = {.kind = rejection->second}});
     } else if (const auto &rejection = lowerer->rejection(); rejection)
       errors.push_back({.body = {kind, owner},
                         .source = sourceFor(rejection->first),

@@ -7383,22 +7383,22 @@ int main() {
     }
     for (const auto *loan : {intermediate, active})
       if (!mirBorrowAuthority())
-      expect(initial != nullptr && loan != nullptr &&
-                 initial->access == lang::AccessMode::ReadOnly &&
-                 initial->additionalDependencies.size() == 2 &&
-                 std::all_of(initial->additionalDependencies.begin(),
-                             initial->additionalDependencies.end(),
-                             [](const auto &dependency) {
-                               return dependency.access ==
-                                      lang::AccessMode::Mutable;
-                             }) &&
-                 loan->place == initial->place &&
-                 loan->access == initial->access &&
-                 loan->designatedFields == initial->designatedFields &&
-                 loan->additionalDependencies ==
-                     initial->additionalDependencies,
-             "each forwarding result preserves the exact shared and two "
-             "exclusive dependency places, field identities, and permissions");
+        expect(
+            initial != nullptr && loan != nullptr &&
+                initial->access == lang::AccessMode::ReadOnly &&
+                initial->additionalDependencies.size() == 2 &&
+                std::all_of(initial->additionalDependencies.begin(),
+                            initial->additionalDependencies.end(),
+                            [](const auto &dependency) {
+                              return dependency.access ==
+                                     lang::AccessMode::Mutable;
+                            }) &&
+                loan->place == initial->place &&
+                loan->access == initial->access &&
+                loan->designatedFields == initial->designatedFields &&
+                loan->additionalDependencies == initial->additionalDependencies,
+            "each forwarding result preserves the exact shared and two "
+            "exclusive dependency places, field identities, and permissions");
     expect(nativeBackendEmits(valid),
            "mixed carrier transfer remains admitted by the verified backend");
     for (const auto &function : valid.mir.functionInstances()) {
@@ -7586,10 +7586,9 @@ int main() {
           // binding keeps no semantic loan identity.
           const bool carrierLoan =
               loan != nullptr &&
-              (mirBorrowAuthority() ? initialLoan != 0 &&
-                                          loan->id == initialLoan
-                                    : loan->semanticLoan ==
-                                          binding->retainedLoan);
+              (mirBorrowAuthority()
+                   ? initialLoan != 0 && loan->id == initialLoan
+                   : loan->semanticLoan == binding->retainedLoan);
           if (instruction->kind == lang::MirInstructionKind::EndBorrow &&
               carrierLoan) {
             ++successfulEndpoints;
@@ -20366,18 +20365,18 @@ int main() { return 0; }
 )");
   // Under RFC 0004 signature contracts the elided result region is
   // ambiguous between the two reference parameters (Rust E0106).
-  expect(!ambiguousOwner.canGenerateCode() &&
-             (!lang::legacyBorrowChecker()
-                  ? hasDiagnostic(ambiguousOwner.diagnostics,
-                                  "elided region is ambiguous among 2 "
-                                  "borrowed parameters")
-                  : hasDiagnostic(ambiguousOwner.diagnostics,
-                                  "Borrowed return dependency is ambiguous") &&
-                        hasRelatedDiagnostic(
-                            ambiguousOwner.diagnostics,
-                            "Eligible owner dependency source")),
-         "a free fallible borrow should require one unambiguous owner "
-         "parameter");
+  expect(
+      !ambiguousOwner.canGenerateCode() &&
+          (!lang::legacyBorrowChecker()
+               ? hasDiagnostic(ambiguousOwner.diagnostics,
+                               "elided region is ambiguous among 2 "
+                               "borrowed parameters")
+               : hasDiagnostic(ambiguousOwner.diagnostics,
+                               "Borrowed return dependency is ambiguous") &&
+                     hasRelatedDiagnostic(ambiguousOwner.diagnostics,
+                                          "Eligible owner dependency source")),
+      "a free fallible borrow should require one unambiguous owner "
+      "parameter");
 
   const std::string forbiddenStorageSource = R"(
 enum class lookup_errc { missing };

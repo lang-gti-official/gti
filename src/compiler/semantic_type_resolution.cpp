@@ -5231,7 +5231,8 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const ResolvedCallInfo *resolved =
         call == nullptr ? nullptr : semanticModel.findCall(*call);
     const ExpressionInfo *receiver =
-        member == nullptr ? nullptr : semanticModel.findExpression(*member->object());
+        member == nullptr ? nullptr
+                          : semanticModel.findExpression(*member->object());
     return resolved != nullptr && receiver != nullptr &&
            resolved->borrowOrigin == BorrowOriginKind::Receiver &&
            receiver->category == ValueCategory::Value &&
