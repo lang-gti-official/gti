@@ -523,30 +523,6 @@ int main() {
   return left + right - 9;
 }
 """,
-    "consuming_static_mapper_results": """
-int stored = 41;
-mut int calls = 0;
-int&<static> map(int input) { calls++; return stored; }
-expected<int, int> read(bool fail) {
-  if (fail) { return unexpected(9); }
-  return 7;
-}
-int main() {
-  auto value = read(false).transform(map);
-  if (!value.has_value() || value.value() != 41 || calls != 1) { return 1; }
-  auto error = read(true).transform_error(map);
-  if (error.has_value() || error.error() != 41 || calls != 2) { return 2; }
-  auto skipped_value = read(true).transform(map);
-  if (skipped_value.has_value() || skipped_value.error() != 9 || calls != 2) {
-    return 3;
-  }
-  auto skipped_error = read(false).transform_error(map);
-  if (!skipped_error.has_value() || skipped_error.value() != 7 || calls != 2) {
-    return 4;
-  }
-  return 0;
-}
-""",
     "consuming_external_results": """
 mut int drops = 0;
 struct View<lifetime a> {
@@ -559,7 +535,7 @@ public:
   Consumer(int&<a> input) : external(View<a>(input)) {}
   ~Consumer() { drops++; }
   int&<a> take() && { return this.external.value; }
-  int&<a> operator()(int&<a> input) && { return input; }
+  int&<a> operator()(int&<a> input) && { return this.external.value; }
   View<a> carrier() && { return this.external; }
 };
 int main() {
@@ -1411,22 +1387,6 @@ int main() {
   return callback.invoke(value) - 7;
 }
 """,
-    "complete_callable_projection": """
-class Captured<R(A)> {
-public:
-  Captured() = default;
-  A invoke(A value) {
-    auto relay = [](A input) -> A { return input; };
-    return relay(value);
-  }
-};
-using Selection = for<lifetime a> int&<a>(int&<a>);
-int main() {
-  Captured<Selection> callback{};
-  int value = 7;
-  return callback.invoke(value) - 7;
-}
-""",
     "higher_ranked_pointer": """
 import std.functional;
 using Selection = for<lifetime region> int&<region>(int&<region>, int&<region>, bool);
@@ -1621,6 +1581,82 @@ int main() { int x = 1; auto s = relay(x); return int(s.size()) - 1; }
 }
 
 REJECTIONS = {
+    # A consuming method's by-value result would borrow only through a type
+    # argument's region (Rust's `U` in `Result::map(self, f)`); signatures
+    # cannot yet carry a region through a type argument, so a borrowing
+    # mapper result is rejected at the call (GTI-S2022).
+    "consuming_static_mapper_results": """
+int stored = 41;
+mut int calls = 0;
+int&<static> map(int input) { calls++; return stored; }
+expected<int, int> read(bool fail) {
+  if (fail) { return unexpected(9); }
+  return 7;
+}
+int main() {
+  auto value = read(false).transform(map);
+  if (!value.has_value() || value.value() != 41 || calls != 1) { return 1; }
+  auto error = read(true).transform_error(map);
+  if (error.has_value() || error.error() != 41 || calls != 2) { return 2; }
+  auto skipped_value = read(true).transform(map);
+  if (skipped_value.has_value() || skipped_value.error() != 9 || calls != 2) {
+    return 3;
+  }
+  auto skipped_error = read(false).transform_error(map);
+  if (!skipped_error.has_value() || skipped_error.value() != 7 || calls != 2) {
+    return 4;
+  }
+  return 0;
+}
+""",
+    # A class region the class stores is supplied by the receiver's stored
+    # references; a parameter written in it would also need a mixed
+    # receiver-and-argument contract, which MIR does not represent yet.
+    "consuming_parameter_region_result": """
+class Consumer<lifetime a> {
+  int&<a> external;
+public:
+  Consumer(int&<a> input) : external(input) {}
+  int&<a> operator()(int&<a> input) && { return input; }
+};
+int main() { int value = 7; int& second = Consumer(value)(value); return second - 7; }
+""",
+    # A result in a stored class region cannot borrow storage the consumed
+    # receiver owns.
+    "consuming_owned_field_carrier": """
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+class Consumer<lifetime a> {
+  View<a> external;
+  int owned;
+public:
+  Consumer(int&<a> input) : external(View<a>(input)), owned(3) {}
+  View<a> carrier() && { return View<a>(this.owned); }
+};
+int main() { int value = 7; View copy = Consumer(value).carrier(); return copy.value - 3; }
+""",
+    # A reference type argument substituted into a plain `A` position needs
+    # an explicit reference declarator, and a method's elided reference
+    # result is its receiver's, so `A invoke(A value)` with `A = int&` is
+    # rejected; write `A&<r>` positions in the pattern's region instead.
+    "complete_callable_projection": """
+class Captured<R(A)> {
+public:
+  Captured() = default;
+  A invoke(A value) {
+    auto relay = [](A input) -> A { return input; };
+    return relay(value);
+  }
+};
+using Selection = for<lifetime a> int&<a>(int&<a>);
+int main() {
+  Captured<Selection> callback{};
+  int value = 7;
+  return callback.invoke(value) - 7;
+}
+""",
     # An elided lambda result with two eligible reference inputs is ambiguous,
     # as for a function; name the suppliers with a lifetime parameter.
     "ambiguous_lambda_suppliers": """
@@ -1862,6 +1898,10 @@ def main():
 
     rejection_codes = {
         "ambiguous_lambda_suppliers": {"GTI-S2017"},
+        "consuming_static_mapper_results": {"GTI-S2022"},
+        "consuming_parameter_region_result": {"GTI-S2017"},
+        "consuming_owned_field_carrier": {"GTI-S2127"},
+        "complete_callable_projection": {"GTI-S2017"},
         "unnamed_pack_lane_return": {"GTI-S2017", "GTI-S2127"},
         "retained_pack_lane_supplier": {"GTI-S2017"},
         "aliased_mutable_pack_lanes": {"GTI-S2017"},
