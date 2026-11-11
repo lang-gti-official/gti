@@ -385,17 +385,63 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addEscape(*error.source, error.body.kind, error.body.owner);
     else if (exitDropUnderReturnedBorrow(error)) {
-      const SourceSpan span =
-          escapeSpan(error.body.kind, error.body.owner, error.block)
-              .value_or(*error.source);
+      // The exit drop sits in a cleanup block; name the return that
+      // publishes the escaping loan instead.
+      std::optional<SourceSpan> returned =
+          escapeSpan(error.body.kind, error.body.owner, error.block);
+      if (!returned)
+        if (const MirBody *body =
+                findMirBody(program, error.body.kind, error.body.owner))
+          for (const MirBlock &block : body->blocks)
+            if (!returned &&
+                block.terminator.kind == MirTerminatorKind::Return &&
+                block.terminator.returnLoan == error.borrow.loan)
+              returned =
+                  escapeSpan(error.body.kind, error.body.owner, block.id);
+      const SourceSpan span = returned.value_or(*error.source);
       if (!staticResult(error.body.kind, error.body.owner) &&
           byValueCarrierShell(error))
         add(span,
             "Returned reference is a projection of the by-value carrier "
             "shell rather than its external owner dependency.",
             "GTI-S2085");
-      else
+      else {
+        const std::size_t before = check.diagnostics.size();
         addEscape(span, error.body.kind, error.body.owner);
+        // Name the function-owned storage whose exit drop the returned
+        // borrow cannot survive.
+        const auto [lowered, source] =
+            bodiesOf(error.body.kind, error.body.owner);
+        const MirBlock *block =
+            lowered ? lowered->findBlock(error.block) : nullptr;
+        const MirInstruction *drop = nullptr;
+        if (block != nullptr)
+          for (const MirInstruction &instruction : block->instructions)
+            if (instruction.id == error.instruction)
+              drop = &instruction;
+        const MirPlace *dropped =
+            drop && drop->destination ? lowered->findPlace(*drop->destination)
+                                      : nullptr;
+        const Token *name = nullptr;
+        if (dropped != nullptr && source != nullptr &&
+            dropped->root == MirPlaceRootKind::Binding)
+          for (const HirBinding &binding : source->bindings)
+            if (binding.id == dropped->binding)
+              name = binding.variable    ? &binding.variable->name()
+                     : binding.parameter ? &binding.parameter->name
+                                         : nullptr;
+        if (check.diagnostics.size() > before && name != nullptr &&
+            !name->lexeme.empty()) {
+          auto &diagnostic = check.diagnostics.back();
+          diagnostic.related.push_back(
+              {tokenSpan(*name),
+               "'" + name->lexeme +
+                   "' is destroyed when the function returns."});
+          diagnostic.hints.emplace_back(
+              "Return an owned value, or return a borrow of storage the "
+              "caller provides.");
+        }
+      }
     } else if (error.temporaryDestroyed) {
       add(*error.source,
           "Borrowed value is derived from temporary storage that is destroyed "
