@@ -3389,15 +3389,21 @@ is). The group names the type's single unconditional stored reference path
 reborrows a parent from a binding without a Stored dependency of its own.
 Each owner without a parent reborrows the group's Stored parent or its
 reference formal's entry loan, and stores through the group's path when it
-names none. A reference binding to a carrier depends on the Stored group
-retaining that carrier's references, and a shell-stored carrier on its
-argument's group. A reference binding that reuses an existing loan only
-becomes one of its carriers. Semantic loans still name these MIR loans for
-later HIR facts.
+names none. A group initialized by a call that passes a borrowed carrier by
+value still takes its owners from semantics: those owners are named through
+the argument's group, which MIR's call-result sets do not yet restate. A
+reference binding to a carrier depends on the Stored group retaining that
+carrier's references; a reference to a plain field reached through a carrier
+keeps its parent's stored dependency. A shell-stored carrier depends on its
+argument's group, or on the group retaining a loan-free argument's place (a
+receiver). A reference binding that reuses an existing loan only becomes one
+of its carriers. Semantic loans still name these MIR loans for later HIR
+facts.
 
 A reference bound to an enum payload borrows the extracted field. Through a
 reference carrier it reborrows the carrier's loan and keeps that loan's stored
-dependency; from a local enum it has no parent. A stored-reference extraction
+dependency; from a local enum it has no parent, and through a reference
+result it keeps that result's stored dependency. A stored-reference extraction
 instead records a reference selection from its MIR instruction: the payload's
 path and type in the carrier's instantiated enum, guarded by the extracted
 alternative, transferring the carrier value's group when the extraction

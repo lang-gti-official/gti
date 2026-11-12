@@ -5392,6 +5392,33 @@ private:
     return loan->storedDependency;
   }
 
+  // Whether a call or construction passes a borrowed-state carrier by value.
+  [[nodiscard]] bool passesBorrowedCarrierByValue(
+      const std::optional<HirValueId> &initializer) const {
+    const HirValue *value = initializer ? findValue(*initializer) : nullptr;
+    while (value != nullptr &&
+           (value->kind == HirValueKind::Grouping ||
+            value->kind == HirValueKind::Move) &&
+           value->operands.size() == 1)
+      value = findValue(value->operands.front());
+    if (value == nullptr ||
+        (!value->functionTarget && !value->constructorTarget))
+      return false;
+    for (const HirValueId id : value->operands) {
+      const HirValue *operand = findValue(id);
+      while (operand != nullptr &&
+             (operand->kind == HirValueKind::Grouping ||
+              operand->kind == HirValueKind::Move) &&
+             operand->operands.size() == 1)
+        operand = findValue(operand->operands.front());
+      if (operand != nullptr && operand->kind == HirValueKind::Variable &&
+          operand->info.type.kind != SemanticType::Reference &&
+          operand->info.traits.containsBorrowedState)
+        return true;
+    }
+    return false;
+  }
+
   // The shape of the retained Stored group a binding is initialized from,
   // from MIR facts alone. The group is lifecycle-bound when its carrier type
   // is. It names the carrier type's single unconditional stored reference
@@ -10258,11 +10285,13 @@ private:
                                         value.id, 0, 0, parent, twoPhase);
       if (shellContract != nullptr) {
         // A carrier stored through its shell argument depends on that
-        // argument's own stored group.
+        // argument's own stored group, or on the group retaining the
+        // argument's place when the argument holds no loan (a receiver).
         const MirLoan *argumentLoan =
             output.findLoan(loanForValue(shellArgument->id));
         output.loans[loan - 1].storedDependency =
-            argumentLoan == nullptr ? 0
+            argumentLoan == nullptr
+                ? storedDependencyForPlace(placeForValue(shellArgument->id))
             : argumentLoan->kind == MirLoanKind::Stored
                 ? argumentLoan->id
                 : argumentLoan->storedDependency;
@@ -14095,7 +14124,7 @@ private:
         recordLoanIdentity(loan, *desired, binding);
       } else {
         // A payload field reached through a reference carrier reborrows the
-        // carrier's loan and keeps its stored dependency; a payload of a
+        // carrier's loan and depends on its Stored group; a payload of a
         // local enum borrows the field directly.
         const HirValueId carrierValue =
             value->operands.empty() ? 0 : value->operands.front();
@@ -14117,7 +14146,15 @@ private:
         // createLoan may reallocate the loan table; read the parent anew.
         if (parent != 0)
           output.loans[loan - 1].storedDependency =
-              output.loans[parent - 1].storedDependency;
+              output.loans[parent - 1].kind == MirLoanKind::Stored
+                  ? parent
+                  : output.loans[parent - 1].storedDependency;
+        else if (carrierPlace != nullptr &&
+                 carrierPlace->root == MirPlaceRootKind::Loan)
+          // A subject reached through a reference result keeps that
+          // result's Stored dependency.
+          output.loans[loan - 1].storedDependency =
+              storedDependencyForPlace(carrierPlace->id);
         bindCarrierIdentity(loan, *desired, binding);
       }
       (void)appendInstruction(
@@ -14575,9 +14612,15 @@ private:
           createLoan(MirLoanKind::Local, sourcePlace, desired->access, valueId,
                      binding, 0, parent);
       // A reference to a carrier depends on the group retaining that
-      // carrier's stored references.
-      output.loans[loan - 1].storedDependency =
-          referentStoredGroup(sourcePlace);
+      // carrier's stored references; a reference to a plain field or value
+      // reached through a carrier keeps its parent's stored dependency.
+      if (const MirPlace *referent = output.findPlace(sourcePlace);
+          referent != nullptr && referent->traits.containsBorrowedState)
+        output.loans[loan - 1].storedDependency =
+            referentStoredGroup(sourcePlace);
+      else if (parent != 0)
+        output.loans[loan - 1].storedDependency =
+            output.loans[parent - 1].storedDependency;
       if (desired->referenceSelection) {
         recordLoanIdentity(loan, *desired, binding);
       } else {
@@ -16660,8 +16703,15 @@ private:
               !selectedArgumentParent) {
             valid = false;
           }
-          deriveRetainedShape(retainedLoan, *statement.binding);
-          bindLoanIdentity(retainedLoan, *desired);
+          // MIR does not yet restate the owners a call result receives
+          // through a by-value borrowed-carrier argument relative to that
+          // argument's group; such a group keeps semantics' owner records.
+          if (passesBorrowedCarrierByValue(statement.value)) {
+            recordLoanIdentity(retainedLoan, *desired, *statement.binding);
+          } else {
+            deriveRetainedShape(retainedLoan, *statement.binding);
+            bindLoanIdentity(retainedLoan, *desired);
+          }
         } else {
           MirLoan &retained = output.loans[retainedLoan - 1];
           if (retained.semanticLoan != 0 &&
