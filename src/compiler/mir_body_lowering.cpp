@@ -687,13 +687,24 @@ public:
       return loan;
     }
     case MirPlaceRootKind::This:
-    case MirPlaceRootKind::Symbol:
+    case MirPlaceRootKind::Symbol: {
+      // A Stored entry group retains what the references stored inside the
+      // root point at: it parents a place reached through such a reference,
+      // not one of the root's own fields.
+      const bool throughStoredReference = std::any_of(
+          place->projections.begin(), place->projections.end(),
+          [](const MirPlaceProjection &projection) {
+            return projection.kind == MirProjectionKind::Dereference;
+          });
       for (const MirLoan &loan : output.loans)
         if (const MirPlace *source = output.findPlace(loan.source);
-            loan.entry && source != nullptr && source->root == place->root &&
+            loan.entry &&
+            (throughStoredReference || loan.kind != MirLoanKind::Stored) &&
+            source != nullptr && source->root == place->root &&
             source->symbol == place->symbol && source->projections.empty())
           return loan.id;
       return 0;
+    }
     case MirPlaceRootKind::Binding: {
       const bool throughReference = std::any_of(
           place->projections.begin(), place->projections.end(),

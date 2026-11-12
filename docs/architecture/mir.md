@@ -3412,7 +3412,9 @@ argument's group, or on the group retaining a loan-free argument's place (a
 receiver). A reference binding that reuses an existing loan only becomes one
 of its carriers. A reference binding's access is its reference type's, and
 its parent is the loan its referent's place is reached through: a reference
-binding's current loan, a receiver's or global's entry loan, or for a call
+binding's current loan, a receiver's or global's entry loan (its Stored entry
+group only for a place reached through one of the root's stored references,
+never for the root's own fields), or for a call
 result's referent the call's parent (climbing past intermediate call results
 that themselves reborrow an ancestor). Semantic loans still name these MIR loans for later HIR
 facts.
