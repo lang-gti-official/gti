@@ -394,6 +394,46 @@
       "suite": "ownership"
     },
     {
+      "name": "testStoredReferenceStandardStringRanges",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceBranchInvalidation",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceBranchInvalidation2",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceBranchInvalidation3",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceBranchInvalidation4",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceLoopInvalidation",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceLoopInvalidation2",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceLoopInvalidation3",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceLoopInvalidation4",
+      "suite": "ownership"
+    },
+    {
+      "name": "testStoredReferenceScopedStorage",
+      "suite": "ownership"
+    },
+    {
       "name": "testMutableStoredDependencies",
       "suite": "ownership"
     },
