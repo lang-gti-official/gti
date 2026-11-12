@@ -1,0 +1,14 @@
+// Ranges over a container reached through a reference formal: the cursor and
+// the staged element borrow below the formal's entry loan, never that loan.
+import std.resource_vector;
+import std.resource;
+import "../../examples/allocator-support/arena.gti";
+int sum(std::resource_vector<int, engine::Arena>& values) {
+  mut int total = 0;
+  for (auto& value : values) { total += value; }
+  return total;
+}
+void scale(mut std::resource_vector<int, engine::Arena>& values) {
+  for (mut int& value : values) { value *= 2; }
+}
+int main() { return 0; }

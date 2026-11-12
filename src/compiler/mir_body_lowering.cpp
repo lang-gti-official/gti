@@ -5975,7 +5975,14 @@ private:
   // registers the binding as one of its carriers.
   void bindCarrierIdentity(MirLoanId id, const HirLoan &identity,
                            HirBindingId binding) {
-    bindLoanIdentity(id, identity);
+    // A range over a formal names its element with the formal's entry
+    // identity, but the staged element carries the access call's own loan
+    // below that entry; the entry keeps the identity.
+    const auto named = semanticLoans.find(identity.semanticLoan);
+    if (!(named != semanticLoans.end() && named->second != id &&
+          output.loans[named->second - 1].entry &&
+          isStagedRangeElementBinding(binding)))
+      bindLoanIdentity(id, identity);
     MirLoan &loan = output.loans[id - 1];
     if (binding != 0 && !capturedReferenceEntry(loan) &&
         std::find(loan.carriers.begin(), loan.carriers.end(), binding) ==
@@ -8934,6 +8941,32 @@ private:
                          range->element == binding ||
                          range->elementOwner == binding);
                });
+  }
+
+  // A non-materializing range's staged element owner or element alias. Its
+  // physical loan is the element access call's, below the range's loan.
+  [[nodiscard]] bool isStagedRangeElementBinding(HirBindingId binding) const {
+    return binding != 0 &&
+           std::any_of(source.statements.begin(), source.statements.end(),
+                       [&](const HirStatement &statement) {
+                         const auto &range = statement.rangeIteration;
+                         return range && !range->materializesElementValue &&
+                                range->elementOwner != 0 &&
+                                (range->elementOwner == binding ||
+                                 range->element == binding);
+                       });
+  }
+
+  // The cursor of a non-materializing range with a staged element.
+  [[nodiscard]] bool isStagedRangeIterator(HirBindingId binding) const {
+    return binding != 0 &&
+           std::any_of(source.statements.begin(), source.statements.end(),
+                       [&](const HirStatement &statement) {
+                         const auto &range = statement.rangeIteration;
+                         return range && !range->materializesElementValue &&
+                                range->elementOwner != 0 &&
+                                range->iterator == binding;
+                       });
   }
 
   // The one loan a binding carries, if exactly one does.
@@ -14656,8 +14689,18 @@ private:
                   .type = value->info.type};
         }
       }
+      // A range's staged element borrows below a parameter's entry loan;
+      // it never carries the caller's loan itself.
+      const bool stagedElementOfEntry = [&] {
+        const auto found = semanticLoans.find(desired->semanticLoan);
+        const MirLoan *entry = found == semanticLoans.end()
+                                   ? nullptr
+                                   : output.findLoan(found->second);
+        return entry != nullptr && entry->entry &&
+               isStagedRangeElementBinding(binding);
+      }();
       if (const auto found = semanticLoans.find(desired->semanticLoan);
-          found != semanticLoans.end()) {
+          found != semanticLoans.end() && !stagedElementOfEntry) {
         // A by-reference capture's entry loan is held by the closure
         // environment, not by a binding, so a local alias never joins it as
         // a carrier; it carries a physical loan below that entry instead.
@@ -16890,14 +16933,49 @@ private:
                 consumesExistingCarrier = true;
             }
           }
-          if (existing != nullptr && candidate != nullptr &&
-              existing->access == candidate->access && initializer != nullptr &&
-              (candidate->producedBy == initializer->id ||
-               exactReadonlyRangeElementAlias(*statement.binding, *initializer,
-                                              *candidate)) &&
-              (candidate->kind == MirLoanKind::Stored ||
-               candidate->kind == MirLoanKind::CallResult) &&
-              isPhysicalProxyRangeProtocolBinding(*statement.binding)) {
+          if (existing != nullptr && candidate != nullptr && existing->entry &&
+              isStagedRangeElementBinding(*statement.binding) &&
+              candidate->kind == MirLoanKind::CallResult && !candidate->entry &&
+              (candidate->parent == existing->id ||
+               (candidate->parent == 0 &&
+                output.findLoan(candidate->storedDependency) != nullptr &&
+                output.findLoan(candidate->storedDependency)->parent ==
+                    existing->id)) &&
+              (std::find(candidate->carriers.begin(), candidate->carriers.end(),
+                         *statement.binding) != candidate->carriers.end() ||
+               (initializer != nullptr &&
+                exactReadonlyRangeElementAlias(*statement.binding, *initializer,
+                                               *candidate)))) {
+            // A range over a formal borrows through the formal's entry loan,
+            // which no local binding may carry. The staged element owner and
+            // its element alias carry the element access call's loan below it.
+            physicalRangeLoan = true;
+            std::erase(output.loans[existing->id - 1].carriers,
+                       *statement.binding);
+          } else if (existing != nullptr && candidate != nullptr &&
+                     existing->entry &&
+                     isRangeIteratorBinding(*statement.binding) &&
+                     isStagedRangeIterator(*statement.binding) &&
+                     candidate->kind == MirLoanKind::Stored &&
+                     !candidate->entry && initializer != nullptr &&
+                     candidate->producedBy == initializer->id &&
+                     (candidate->parent == 0 ||
+                      candidate->parent == existing->id)) {
+            // Its cursor likewise keeps the begin() call's own stored loan,
+            // directly below the formal's entry.
+            physicalRangeLoan = true;
+            std::erase(output.loans[existing->id - 1].carriers,
+                       *statement.binding);
+            candidate->parent = existing->id;
+          } else if (existing != nullptr && candidate != nullptr &&
+                     existing->access == candidate->access &&
+                     initializer != nullptr &&
+                     (candidate->producedBy == initializer->id ||
+                      exactReadonlyRangeElementAlias(
+                          *statement.binding, *initializer, *candidate)) &&
+                     (candidate->kind == MirLoanKind::Stored ||
+                      candidate->kind == MirLoanKind::CallResult) &&
+                     isPhysicalProxyRangeProtocolBinding(*statement.binding)) {
             // The semantic range loan is the traversal's owner/escape
             // boundary. It is not the storage of a concrete cursor or an
             // inline proxy returned by dereference. Keep the selected call's
