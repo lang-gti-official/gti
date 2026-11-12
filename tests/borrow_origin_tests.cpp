@@ -737,6 +737,45 @@ int main() {
   }
 }
 
+// A range over a reference formal's container keeps its cursor and staged
+// element loans below the formal's entry loan, and still rejects growing the
+// container while an element is borrowed.
+void checkFormalRange() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/formal_range.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << "formal range: " << diagnostic.code << ": "
+              << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a range over a reference formal borrows below its entry loan");
+
+  const auto growth = analyzeWithStandardLibrary(
+      (path.parent_path() / "formal_range_growth.gti").string(), R"gti(
+import std.resource_vector;
+import std.resource;
+import "../../examples/allocator-support/arena.gti";
+int grow(mut std::resource_vector<int, engine::Arena>& values) {
+  mut int total = 0;
+  for (auto& value : values) { values.push_back(value); total += value; }
+  return total;
+}
+int main() { return 0; }
+)gti");
+  expect(std::any_of(growth.diagnostics.begin(), growth.diagnostics.end(),
+                     [](const auto &diagnostic) {
+                       return diagnostic.code == "GTI-S2017";
+                     }) &&
+             std::none_of(growth.diagnostics.begin(), growth.diagnostics.end(),
+                          [](const auto &diagnostic) {
+                            return diagnostic.code == "GTI-B0001";
+                          }),
+         "growing a formal's container during its range is rejected");
+}
+
 void checkNestedReadonlyReferences() {
   const auto root = std::filesystem::path(__FILE__).parent_path();
   std::size_t publications = 0;
@@ -1507,6 +1546,7 @@ int main() {
   checkOwnedFieldPlaces();
   checkLoweringFailureContext();
   checkNestedReadonlyReferences();
+  checkFormalRange();
   checkLocalCarrierSelections();
   checkSelectionOwners();
   checkReferenceCallSwitchSubjects();

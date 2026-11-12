@@ -2085,7 +2085,12 @@ Read-only structural range elements retain the exact iterator dereference
 a range reached through a borrowed-success carrier and reference accessor.
 Source-defined iterators can carry that exact owner through a separate
 `storedDependency` rather than a parent reborrow; both relations retain their
-independent identity and child-first endpoint checks. The program verifier
+independent identity and child-first endpoint checks. When the range is a
+reference formal's referent, the range loan is the formal's entry loan, which
+no local binding carries: the cursor keeps its `begin()` `Stored` loan directly
+below the entry, and the staged element owner and element alias carry the
+element access `CallResult` whose `storedDependency` is that cursor. The
+semantic identity stays on the entry loan. The program verifier
 requires a borrowing call or constructor's result loan to remain `CallResult`
 or `Stored`, matching the producer, rather than accepting a forged `Local` loan
 with otherwise unchanged source metadata.
