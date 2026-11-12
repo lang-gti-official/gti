@@ -23,7 +23,9 @@ expected<void, std::tcp::errc> exchange() {
 ```
 
 [`examples/037-tcp-socket-owner.gti`](../../examples/037-tcp-socket-owner.gti)
-is a complete loopback exchange.
+is a complete low-level loopback exchange, and
+[`examples/193-tcp-line-server.gti`](../../examples/193-tcp-line-server.gti) a
+line service built on `listen`, `serve` and `buffered_stream`.
 
 ## Addresses
 
@@ -108,6 +110,84 @@ default. Port 0 selects an ephemeral port, which `local_address()` reports.
 `timed_out`. `close()` and `is_open()` behave as for streams. A listener has the
 same move-only, transferable, non-shareable ownership as a stream.
 
+## Host And Port Helpers
+
+`std::tcp::connect(host, port)` resolves `host` and connects to the first
+endpoint that accepts, returning the last attempt's error when none does;
+`connect(host, port, timeout)` bounds each attempt. `std::tcp::listen(host,
+port, backlog = 0)` binds the first resolved address that binds. Use
+`"0.0.0.0"` or `"::"` for every interface and port 0 for an ephemeral port.
+
+## Buffered Streams
+
+`std::tcp::buffered_stream` owns a `stream` plus input and output buffers
+(`capacity` bytes each, default 8192). It is move-only and transferable like a
+stream.
+
+Reading uses a fill/view/consume protocol, so framing never copies:
+
+```gti
+std::size_t length = ?client.fill_until(uint8_t(10));  // through '\n'
+{
+  auto frame = client.peek(length);   // span<uint8_t, this>: borrows client
+  // ... parse frame in place ...
+}
+client.consume(length);                // the borrow must have ended
+```
+
+- `fill()` returns the available count, receiving once only when nothing is
+  available; zero is end of stream.
+- `fill_until(delimiter)` receives until the available bytes contain the
+  delimiter and returns the frame length through it. At end of stream it
+  returns the unterminated remainder (zero when nothing is left). A frame that
+  does not fit the buffer fails with `resource_exhausted`.
+- `buffered()` and `peek(count)` return `span<uint8_t, this>`, a view that
+  borrows the object's buffer. The borrow checker rejects any mutating call
+  (including `consume`, `fill` or a move) while the view is live.
+- `consume(count)`, `available()`, `read_exact(mut mutable_span<uint8_t>&)`
+  and `read_line(mut string&)` (strips `\n` and a preceding `\r`; returns
+  bytes consumed, zero at end of stream) complete the read side.
+
+Writing queues bytes: `write(span<uint8_t>&)` and `write_text(string_view)`
+send only when the output buffer fills; `flush_output()` sends the rest (the
+unsent suffix stays queued on failure); `finish_output()` flushes and shuts
+down the write direction; `unflushed()` counts queued bytes. Destruction
+discards unflushed output, as `std::io::buffered_writer` does: flush and check
+the result first. `get()` returns `mut stream&<this>` for addresses and
+options; reading or writing through it bypasses the buffers.
+
+A `buffered_stream` satisfies `std::io::reader`, `std::io::writer` and
+`std::io::buffered_source`, so `std::io::getline`, `read_exact`, `write_all`
+and `copy` use its buffers directly.
+
+## Serving Connections
+
+`serve` runs a sequential accept loop over any type that implements the
+`connection_handler` protocol concept with a conformance block:
+
+```gti
+class Echo { /* application state */ };
+
+for concept std::tcp::connection_handler<Echo> {
+  expected<std::tcp::serve_control, std::tcp::errc> handle(
+      mut Echo& self, std::tcp::stream connection, std::tcp::socket_address peer) {
+    // own, wrap or move `connection`; it closes when dropped
+    return std::tcp::serve_control::proceed;   // or stop
+  }
+};
+
+auto summary = ?std::tcp::serve(server, echo);  // serve_summary{accepted, failed}
+```
+
+The handler owns each connection. A handler error drops only that connection
+and counts in `failed`; `serve_control::stop` ends the loop. Accept failures
+caused by one aborted client (`connection_aborted`, `connection_reset`) are
+skipped; any other accept failure ends `serve` with that error. A type without
+a conformance block is rejected at the call. `serve` handles one connection at
+a time; a program built with `--execution-profile concurrent` can instead move
+each accepted `stream` into a `std::thread` task, because streams are
+transfer-capable.
+
 ## Errors
 
 `std::tcp::errc` has stable categories, mapped from host error numbers by the
@@ -146,5 +226,6 @@ the runtime's Windows entries return `unsupported` only so the archive links.
 
 ## Not Yet Provided
 
-UDP, Unix-domain sockets, TLS, a readiness multiplexer over many sockets,
-socket options beyond those listed, scatter/gather I/O and Windows support.
+UDP, Unix-domain sockets, TLS, a readiness multiplexer over many sockets, a
+concurrent or asynchronous `serve`, socket options beyond those listed,
+scatter/gather I/O and Windows support.

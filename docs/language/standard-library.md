@@ -781,7 +781,9 @@ The current implemented foundation includes:
   ABI compatibility; and
 - `std.tcp` IPv4/IPv6 addresses, name resolution, and move-only
   `std::tcp::stream` and `std::tcp::listener` owners with typed errors,
-  timeouts, nonblocking mode and `std::io` reader/writer conformance; and
+  timeouts, nonblocking mode and `std::io` reader/writer conformance, plus
+  host/port `connect` and `listen`, a zero-copy `buffered_stream`, and a
+  `serve` loop over the `connection_handler` protocol concept; and
 - `std.filesystem` a move-only `std::filesystem::path` giving C++'s
   decomposition (`root_name`, `root_directory`, `root_path`, `relative_path`,
   `parent_path`, `filename`, `stem`, `extension`), the matching `has_*`

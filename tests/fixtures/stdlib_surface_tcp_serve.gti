@@ -1,0 +1,207 @@
+import std.tcp;
+import std.io;
+import std.cstdio;
+import std.span;
+import std.string;
+import std.vector;
+import std.chrono;
+
+// The ergonomic std::tcp layer over loopback: host/port helpers,
+// buffered_stream's fill/view/consume protocol, and serve with a protocol
+// concept implemented by unrelated application types.
+
+std::chrono::nanoseconds milliseconds(int64_t count) {
+  return std::chrono::nanoseconds(count * int64_t(1000000));
+}
+
+std::byte_buffer bytes_of(std::string_view text) {
+  mut std::byte_buffer bytes{text.size()};
+  mut std::size_t index = 0;
+  while (index < text.size()) {
+    bytes[index] = uint8_t(text[index]);
+    index++;
+  }
+  return std::move(bytes);
+}
+
+// An application type with no relation to std::tcp beyond its conformance:
+// it upper-cases each line and stops serving after `limit` connections.
+class Shouter {
+  int32_t limit;
+public:
+  mut int32_t handled = 0;
+  mut int32_t lines = 0;
+  Shouter(int32_t count) : limit(count) {}
+  bool done() { return this.handled >= this.limit; }
+};
+
+for concept std::tcp::connection_handler<Shouter> {
+  expected<std::tcp::serve_control, std::tcp::errc> handle(mut Shouter& handler, std::tcp::stream connection,
+                                                           std::tcp::socket_address peer) {
+    handler.handled++;
+    mut std::tcp::buffered_stream buffered{std::move(connection), std::size_t(64)};
+    mut std::string line = std::string();
+    while (true) {
+      std::size_t consumed = ?buffered.read_line(line);
+      if (consumed == std::size_t(0)) { break; }
+      handler.lines++;
+      mut std::string loud = std::string();
+      for (char c : line) {
+        uint8_t code = uint8_t(c);
+        if (code >= uint8_t(97) && code <= uint8_t(122)) {
+          loud.push_back(char(uint8_t(code - uint8_t(32))));
+        } else {
+          loud.push_back(c);
+        }
+      }
+      loud.push_back('\n');
+      ?buffered.write_text(loud.view());
+    }
+    ?buffered.finish_output();
+    if (handler.done()) { return std::tcp::serve_control::stop; }
+    return std::tcp::serve_control::proceed;
+  }
+};
+
+// A second unrelated handler whose failures must not stop the server.
+class Refuser {
+public:
+  mut int32_t calls = 0;
+  Refuser() = default;
+};
+
+for concept std::tcp::connection_handler<Refuser> {
+  expected<std::tcp::serve_control, std::tcp::errc> handle(mut Refuser& handler, std::tcp::stream connection,
+                                                           std::tcp::socket_address peer) {
+    handler.calls++;
+    if (handler.calls < 2) { return unexpected(std::tcp::errc::permission_denied); }
+    return std::tcp::serve_control::stop;
+  }
+};
+
+expected<std::string, std::tcp::errc> drain(std::tcp::stream connection) {
+  mut std::tcp::buffered_stream reader{std::move(connection)};
+  mut std::string all = std::string();
+  mut std::string line = std::string();
+  while (true) {
+    std::size_t consumed = ?reader.read_line(line);
+    if (consumed == std::size_t(0)) { return std::move(all); }
+    all.append(line.view());
+    all.push_back('|');
+  }
+}
+
+expected<int32_t, std::tcp::errc> serving() {
+  mut auto server = ?std::tcp::listen("127.0.0.1", uint16_t(0));
+  auto endpoint = ?server.local_address();
+  // Clients connect and send before serve runs: the host completes each
+  // handshake in the backlog, so one thread can drive both sides.
+  mut auto first = ?std::tcp::connect("127.0.0.1", endpoint.port());
+  auto first_text = bytes_of("hello\r\nworld\n");
+  auto first_view = first_text.as_span();
+  ?first.send_all(first_view);
+  ?first.shutdown(std::tcp::shutdown_mode::write);
+  mut auto second = ?std::tcp::connect("127.0.0.1", endpoint.port(), milliseconds(int64_t(2000)));
+  auto second_text = bytes_of("tail without newline");
+  auto second_view = second_text.as_span();
+  ?second.send_all(second_view);
+  ?second.shutdown(std::tcp::shutdown_mode::write);
+
+  // Every client is already queued, so a nonblocking listener lets a test
+  // failure surface as would_block instead of waiting forever.
+  ?server.set_nonblocking(true);
+  mut Shouter shouter{int32_t(2)};
+  auto summary = ?std::tcp::serve(server, shouter);
+  if (summary.accepted != std::size_t(2) || summary.failed != std::size_t(0) ||
+      shouter.lines != 3) {
+    return 1;
+  }
+  std::string first_reply = ?drain(std::move(first));
+  std::string second_reply = ?drain(std::move(second));
+  if (first_reply != "HELLO|WORLD|" || second_reply != "TAIL WITHOUT NEWLINE|") { return 2; }
+
+  // A failing handler drops only its connection.
+  mut auto third = ?std::tcp::connect("127.0.0.1", endpoint.port());
+  mut auto fourth = ?std::tcp::connect("127.0.0.1", endpoint.port());
+  mut Refuser refuser{};
+  auto refused = ?std::tcp::serve(server, refuser);
+  if (refused.accepted != std::size_t(2) || refused.failed != std::size_t(1)) { return 3; }
+
+  // With nothing queued, a nonblocking listener ends serve with would_block.
+  mut Refuser idle{};
+  auto drained = std::tcp::serve(server, idle);
+  if (drained || drained.error() != std::tcp::errc::would_block || idle.calls != 0) { return 4; }
+  return 0;
+}
+
+expected<int32_t, std::tcp::errc> buffering() {
+  mut auto server = ?std::tcp::listen("127.0.0.1", uint16_t(0));
+  auto endpoint = ?server.local_address();
+  mut auto client = ?std::tcp::connect("127.0.0.1", endpoint.port());
+  mut std::tcp::buffered_stream peer{?server.accept(), std::size_t(8)};
+  mut std::tcp::buffered_stream writer{std::move(client), std::size_t(4)};
+
+  // Writes queue until the buffer fills; flush_output sends the rest.
+  auto payload = bytes_of("key=v;12345678");
+  auto payload_view = payload.as_span();
+  ?writer.write(payload_view);
+  if (writer.unflushed() == std::size_t(0)) { return 10; }
+  ?writer.flush_output();
+  if (writer.unflushed() != std::size_t(0)) { return 11; }
+
+  // fill_until frames by a delimiter; peek borrows the frame in place.
+  std::size_t frame = ?peer.fill_until(uint8_t(59));
+  if (frame != std::size_t(6)) { return 12; }
+  {
+    auto view = peer.peek(frame);
+    if (view[std::size_t(0)] != uint8_t(107) || view[frame - std::size_t(1)] != uint8_t(59)) { return 13; }
+  }
+  peer.consume(frame);
+
+  // read_exact pulls through the buffer.
+  mut std::byte_buffer digits{std::size_t(8)};
+  mut auto digits_view = digits.as_mutable_span();
+  ?peer.read_exact(digits_view);
+  if (digits[std::size_t(0)] != uint8_t(49) || digits[std::size_t(7)] != uint8_t(56)) { return 14; }
+
+  // A frame longer than the buffer is resource_exhausted.
+  auto long_line = bytes_of("012345678\n");
+  auto long_view = long_line.as_span();
+  ?writer.write(long_view);
+  ?writer.flush_output();
+  auto too_long = peer.fill_until(uint8_t(10));
+  if (too_long || too_long.error() != std::tcp::errc::resource_exhausted) { return 15; }
+  // The buffer stays usable: drop the full window, then read the tail.
+  peer.consume(peer.available());
+  mut std::string tail = std::string();
+  std::size_t tail_length = ?peer.read_line(tail);
+  if (tail_length != std::size_t(2) || tail != "8") { return 20; }
+
+  // std::io::getline works through the buffered_source conformance, and the
+  // wrapped stream stays reachable for options.
+  auto line = bytes_of("io line\n");
+  auto line_view = line.as_span();
+  auto written = std::io::write_all(writer, line_view);
+  if (!written || !writer.flush()) { return 16; }
+  ?peer.get().set_read_timeout(milliseconds(int64_t(2000)));
+  mut std::string text = std::string();
+  auto got = std::io::getline(peer, text);
+  if (!got || text != "io line") { return 17; }
+
+  ?writer.finish_output();
+  std::size_t rest = ?peer.fill();
+  if (rest != std::size_t(0)) { return 18; }
+  mut std::string after = std::string();
+  std::size_t none = ?peer.read_line(after);
+  if (none != std::size_t(0) || !after.empty()) { return 19; }
+  return 0;
+}
+
+int main() {
+  auto served = serving();
+  if (!served) { return 50; }
+  if (served.value() != 0) { return served.value(); }
+  auto buffered = buffering();
+  if (!buffered) { return 51; }
+  return buffered.value();
+}
