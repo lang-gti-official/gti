@@ -1,0 +1,1 @@
+MIR lowering derives enum payload selection origins, their alternative owners, and the owners a call receives through a borrowed carrier passed by value, instead of copying them from semantic analysis.

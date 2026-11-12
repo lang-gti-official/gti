@@ -3389,9 +3389,11 @@ is). The group names the type's single unconditional stored reference path
 reborrows a parent from a binding without a Stored dependency of its own.
 Each owner without a parent reborrows the group's Stored parent or its
 reference formal's entry loan, and stores through the group's path when it
-names none. A group initialized by a call that passes a borrowed carrier by
-value still takes its owners from semantics: those owners are named through
-the argument's group, which MIR's call-result sets do not yet restate. A
+names none. An owner a call receives through a borrowed carrier passed
+by value is named through that argument's Stored group: a copied argument's
+owners become the group's source reborrowing the group, and a moved
+argument hands over the group's own owner records (following the groups its
+owners reborrow). A
 reference binding to a carrier depends on the Stored group retaining that
 carrier's references; a reference to a plain field reached through a carrier
 keeps its parent's stored dependency. A shell-stored carrier depends on its
@@ -3410,8 +3412,13 @@ alternative, transferring the carrier value's group when the extraction
 transfers. Its parent is the receiver's entry Stored group for a `this`
 carrier, a Stored carrier's own group (none when a local carrier's reference
 is copied), or the Stored dependency of the loan the carrier is reached
-through; a transferring extraction has none. Its origin place still comes
-from semantics.
+through; a transferring extraction has none. Its origin is the external
+owner the selection protects: for an entry group, the group's source
+projected along the carrier's field prefix and the payload path; for a local
+group, the group's reborrowed referent (with a parent) or its source, or the
+additional owner the path names. Each other owner the group designates along
+the same path is a possible referent and becomes a dependency of the
+selection. Semantic loans now only name MIR loans for later HIR facts.
 
 A range loop's loans are the loans its hidden bindings carry: the range loan
 is the one loan the range carrier holds (a consuming range owns its range and
