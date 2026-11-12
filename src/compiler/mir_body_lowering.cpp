@@ -9365,24 +9365,17 @@ private:
     return id;
   }
 
+  // A read-only carrier initialized from a read-only origin loan reborrows
+  // that origin when the origin protects the carrier's referent place.
   [[nodiscard]] bool exactReadonlyRetainedParent(const HirValue &value,
-                                                 MirLoanId origin) const {
-    const auto contract = retainedInitializerLoans.find(value.id);
-    const auto *retained =
-        contract == retainedInitializerLoans.end() || contract->second == 0
-            ? nullptr
-            : source.findLoan(contract->second);
-    const auto *selected = output.findLoan(origin);
-    // HIR gives every retained carrier its exact readonly parent, including
-    // a plain carrier constructed from a local reference. Cleanup-bearing
-    // carriers use this same relationship; cleanup is not its source.
-    if (!retained || retained->kind != SemanticLoanKind::StoredValue ||
-        retained->parent == 0 || retained->access != AccessMode::ReadOnly ||
-        value.borrowAccess != AccessMode::ReadOnly || !selected ||
-        selected->access != AccessMode::ReadOnly)
-      return false;
-    const auto parent = semanticLoans.find(retained->parent);
-    return parent != semanticLoans.end() && parent->second == origin;
+                                                 MirLoanId origin,
+                                                 MirPlaceId referent) const {
+    const MirLoan *selected = output.findLoan(origin);
+    return retainedInitializerLoans.contains(value.id) &&
+           value.borrowAccess == AccessMode::ReadOnly && selected != nullptr &&
+           selected->access == AccessMode::ReadOnly && referent != 0 &&
+           mir_detail::loanProtectsPlace(output, origin, referent,
+                                         bindingLoans);
   }
 
   [[nodiscard]] static DefinedFailureOperation
@@ -10485,7 +10478,7 @@ private:
         const bool derivedOriginCarrier =
             kind == MirLoanKind::Stored &&
             (parentAccess == AccessMode::Mutable ||
-             exactReadonlyRetainedParent(value, originLoan) ||
+             exactReadonlyRetainedParent(value, originLoan, origin) ||
              // A shared view derived from an existing child retains that
              // checked ancestry during its own value publication, including
              // a transient result that will be folded into a retained alias.
@@ -11736,7 +11729,7 @@ private:
       // from an overlapping source place (or from the constructor spelling).
       if (originLoan != 0 && originLoan <= output.loans.size() &&
           (output.loans[originLoan - 1].access == AccessMode::Mutable ||
-           exactReadonlyRetainedParent(value, originLoan) ||
+           exactReadonlyRetainedParent(value, originLoan, origin) ||
            (output.loans[originLoan - 1].kind == MirLoanKind::Stored &&
             output.loans[originLoan - 1].entry &&
             isLifecycleBoundBorrowCarrier(value.info.type)))) {

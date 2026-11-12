@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <unordered_map>
 
 namespace lang::mir_detail {
 
@@ -291,5 +292,12 @@ borrowSourceForOperand(const MirBody &body, const MirOperand &operand,
                        std::size_t depth = 0);
 [[nodiscard]] std::optional<MirPlaceId>
 borrowSourceForValue(const MirBody &body, MirValueId value, std::size_t depth);
+// Whether `loan` protects `place`: its source or an additional source contains
+// the place, each binding resolved through the one loan it currently carries.
+// A Stored group protects only places reached through a dereference past its
+// source, since it retains what the source's stored references point at.
+[[nodiscard]] bool
+loanProtectsPlace(const MirBody &body, MirLoanId loan, MirPlaceId place,
+                  const std::unordered_map<HirBindingId, MirLoanId> &carried);
 
 } // namespace lang::mir_detail
