@@ -1,0 +1,1 @@
+Single-body compile time grows linearly again for long bodies: loan liveness indexes a body's values and statements, lowering indexes its MIR values by source when finding temporary materializations, and the discarded first lowering pass no longer verifies.

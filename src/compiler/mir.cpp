@@ -633,29 +633,18 @@ MirInstruction makeMirInstructionTombstone(const MirInstruction &instruction) {
   return result;
 }
 
+namespace {
+// Whether exactly one of `candidates` is a materialization of `sourceValue`
+// into `place`; candidates may be any superset of that source's values.
+template <typename Candidates>
 MirTemporaryMaterialization
-findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
-                                HirValueId sourceValue) {
-  if (sourceValue == 0 || place.sourceValue != sourceValue ||
-      !place.projections.empty() ||
-      (place.root != MirPlaceRootKind::Value &&
-       place.root != MirPlaceRootKind::Temporary)) {
-    return {};
-  }
-  if (place.root == MirPlaceRootKind::Value &&
-      (place.value == 0 || place.temporary != 0)) {
-    return {};
-  }
-  if (place.root == MirPlaceRootKind::Temporary &&
-      (place.temporary == 0 || place.value != 0)) {
-    return {};
-  }
-
+materializationAmong(const MirBody &body, const MirPlace &place,
+                     HirValueId sourceValue, const Candidates &candidates) {
   MirTemporaryMaterialization result;
-  const auto indexed = mir_detail::indexedSourceValues(body, sourceValue);
-  const auto count = indexed ? indexed->size() : body.values.size();
-  for (std::size_t i = 0; i < count; ++i) {
-    const MirValue &candidate = indexed ? *(*indexed)[i] : body.values[i];
+  for (const MirValue *candidatePointer : candidates) {
+    if (candidatePointer == nullptr)
+      continue;
+    const MirValue &candidate = *candidatePointer;
     if (candidate.sourceValue != sourceValue ||
         (place.root == MirPlaceRootKind::Value &&
          candidate.id != place.value)) {
@@ -713,6 +702,54 @@ findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
     result = {.value = &candidate, .producer = &*definition};
   }
   return result;
+}
+
+bool materializationPlace(const MirPlace &place, HirValueId sourceValue) {
+  if (sourceValue == 0 || place.sourceValue != sourceValue ||
+      !place.projections.empty() ||
+      (place.root != MirPlaceRootKind::Value &&
+       place.root != MirPlaceRootKind::Temporary)) {
+    return false;
+  }
+  if (place.root == MirPlaceRootKind::Value &&
+      (place.value == 0 || place.temporary != 0)) {
+    return false;
+  }
+  if (place.root == MirPlaceRootKind::Temporary &&
+      (place.temporary == 0 || place.value != 0)) {
+    return false;
+  }
+
+  return true;
+}
+} // namespace
+
+MirTemporaryMaterialization
+findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                HirValueId sourceValue) {
+  if (!materializationPlace(place, sourceValue))
+    return {};
+  if (const auto indexed = mir_detail::indexedSourceValues(body, sourceValue))
+    return materializationAmong(body, place, sourceValue, *indexed);
+  std::vector<const MirValue *> all;
+  all.reserve(body.values.size());
+  for (const MirValue &value : body.values)
+    all.push_back(&value);
+  return materializationAmong(body, place, sourceValue, all);
+}
+
+MirTemporaryMaterialization
+findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                HirValueId sourceValue,
+                                std::span<const MirValueId> candidates) {
+  if (!materializationPlace(place, sourceValue))
+    return {};
+  std::vector<const MirValue *> values;
+  values.reserve(candidates.size());
+  for (const MirValueId id : candidates)
+    if (id != 0 && id <= body.values.size())
+      values.push_back(&body.values[id - 1]);
+  return materializationAmong(body, place, sourceValue, values);
 }
 
 MirTemporaryMaterialization

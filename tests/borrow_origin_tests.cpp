@@ -697,6 +697,23 @@ void checkOwnedFieldPlaces() {
   }
 }
 
+// A range over a stored-reference carrier field in a read-only method borrows
+// a carrier shell rooted at the receiver; its loan depends on the receiver's
+// entry group.
+void checkReceiverFieldRange() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/receiver_field_range.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  for (const auto &diagnostic : frontend.diagnostics)
+    std::cerr << "receiver field range: " << diagnostic.code << ": "
+              << diagnostic.message << '\n';
+  expect(frontend.canGenerateCode() && frontend.mirValid &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "a receiver field range keeps its carrier shell's entry group");
+}
+
 void checkLoweringFailureContext() {
   const auto frontend = analyze("lowering-context.gti", R"gti(
 struct Item { mut int value = 0;  public: Item() = default; };
@@ -1545,6 +1562,7 @@ int main() {
   checkDirectProjectedReturnOrigins();
   checkOwnedFieldPlaces();
   checkLoweringFailureContext();
+  checkReceiverFieldRange();
   checkNestedReadonlyReferences();
   checkFormalRange();
   checkLocalCarrierSelections();

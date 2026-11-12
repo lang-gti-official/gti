@@ -1248,6 +1248,11 @@ struct MirTemporaryMaterialization {
 [[nodiscard]] MirTemporaryMaterialization
 findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
                                 HirValueId sourceValue);
+// The same, among a caller's known values of `sourceValue` (a superset).
+[[nodiscard]] MirTemporaryMaterialization
+findMirTemporaryMaterialization(const MirBody &body, const MirPlace &place,
+                                HirValueId sourceValue,
+                                std::span<const MirValueId> candidates);
 
 // An explicit move of a whole binding publishes its value into one exact
 // value-rooted temporary, whose obligation the enclosing full expression owns.
