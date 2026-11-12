@@ -14132,6 +14132,16 @@ private:
             output.findPlace(placeForValue(carrierValue));
         const MirLoan *carrierLoan =
             output.findLoan(loanForValue(carrierValue));
+        // A carrier read through a field of a reference holds no loan of its
+        // own; it reborrows the loan rooting its place.
+        if (carrierLoan == nullptr && carrierPlace != nullptr) {
+          if (carrierPlace->root == MirPlaceRootKind::Loan)
+            carrierLoan = output.findLoan(carrierPlace->loan);
+          else if (carrierPlace->root == MirPlaceRootKind::Binding)
+            if (const auto found = bindingLoans.find(carrierPlace->binding);
+                found != bindingLoans.end())
+              carrierLoan = output.findLoan(found->second);
+        }
         if (carrierPlace != nullptr && !carrierPlace->projections.empty() &&
             carrierLoan != nullptr)
           parent = carrierLoan->id;
