@@ -2410,11 +2410,11 @@ the payload symbol, with no variant condition.
   requirement. A `PayloadExtract` of a text payload is ownerless unless
   `dependentDesignation` finds the subject's loan designating that payload
   (`directTextPayload`).
-- A non-consuming switch's by-value binding of that payload names the
-  subject's loan as its retained loan. Lowering maps it to the active MIR
-  `Stored` loan after the binding's `Initialize` and records the binding as a
-  carrier, so a local copied from the binding retains the owner as a copy of a
-  published field read does.
+- A non-consuming switch's by-value binding of that payload carries the
+  subject's own MIR loan when that is an active `Stored` group: after the
+  binding's `Initialize` lowering records the binding as its carrier, so a
+  local copied from the binding retains the owner as a copy of a published
+  field read does.
 
 Phase 2b extends designations to paths (`TextFieldPath`): a constructor may
 publish at `[field, payload]`, a text payload of one of its payload-enum
@@ -2470,8 +2470,8 @@ Phase 2c adds re-rooting constructions and dependent returns:
   verification.
 - HIR gives a publishing contextual construction dependent traits, and its
   verifier requires the construction and its value node to agree. A by-value
-  payload binding that semantics gives a retained loan carries that loan in
-  MIR (`bindingLoans`).
+  payload binding with borrowed state carries the subject's active `Stored`
+  loan in MIR (`bindingLoans`).
 
 Phase 3 verifies nested paths:
 - `directTextPath` walks class fields and payload-enum payloads to text at

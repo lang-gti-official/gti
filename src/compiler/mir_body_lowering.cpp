@@ -8194,17 +8194,9 @@ private:
                  !place->projections.empty() &&
                  place->projections.front().kind ==
                      MirProjectionKind::Dereference) {
-        const HirBinding *binding = findBinding(place->binding);
-        const auto semantic =
-            binding == nullptr || binding->info.retainedLoan == 0
-                ? semanticLoans.end()
-                : semanticLoans.find(binding->info.retainedLoan);
         const auto found = bindingLoans.find(place->binding);
-        loan = semantic != semanticLoans.end()
-                   ? output.findLoan(semantic->second)
-                   : (found == bindingLoans.end()
-                          ? nullptr
-                          : output.findLoan(found->second));
+        loan = found == bindingLoans.end() ? nullptr
+                                           : output.findLoan(found->second);
         projectionOffset = loan == nullptr ? 0 : 1;
         if (referenceAccessorBindings.contains(place->binding)) {
           // The binding captured an exact returned/projected address while
@@ -17719,7 +17711,8 @@ private:
     MirPlaceId place = 0;
     MirDropObligationId obligation = 0;
     SemanticType type = SemanticType::Unknown;
-    SemanticLoanId dependency = 0;
+    // The Stored group the subject carries, if any.
+    MirLoanId dependency = 0;
   };
 
   [[nodiscard]] std::optional<ConsumedSwitchSubject>
@@ -17764,16 +17757,13 @@ private:
       valid = false;
     }
     (void)appendInstruction(std::move(initialize));
-    if (binding->info.retainedLoan != 0) {
-      const auto mapped = semanticLoans.find(binding->info.retainedLoan);
-      const auto retained = loanForValue(*statement.value);
-      const auto *group = output.findLoan(retained);
-      if (mapped == semanticLoans.end() || mapped->second != retained ||
-          !group || group->kind != MirLoanKind::Stored ||
-          !loanIsActive(scopes, retained)) {
-        valid = false;
-        return std::nullopt;
-      }
+    // A carrier subject initialized from an active Stored group adopts it.
+    const MirLoanId retained = loanForValue(*statement.value);
+    const MirLoan *group = output.findLoan(retained);
+    const bool adoptsGroup =
+        binding->info.traits.containsBorrowedState && group != nullptr &&
+        group->kind == MirLoanKind::Stored && loanIsActive(scopes, retained);
+    if (adoptsGroup) {
       // This real value initialization acquires the existing dependency
       // group, exactly as a named carrier initialized by a move would. It
       // does not alter the formal's immutable external provenance or make
@@ -17789,7 +17779,7 @@ private:
                                  .place = destination,
                                  .obligation = target,
                                  .type = binding->info.type,
-                                 .dependency = binding->info.retainedLoan};
+                                 .dependency = adoptsGroup ? retained : 0};
   }
 
   // Every path leaving the subject's evaluation retires the hidden owner
@@ -17812,10 +17802,7 @@ private:
     const auto retireDependency = [&] {
       if (consumed.dependency == 0)
         return;
-      const auto found = semanticLoans.find(consumed.dependency);
-      const auto *group = found == semanticLoans.end()
-                              ? nullptr
-                              : output.findLoan(found->second);
+      const auto *group = output.findLoan(consumed.dependency);
       if (!group || group->kind != MirLoanKind::Stored || group->escapes ||
           group->lifecycleBound ||
           std::find(group->carriers.begin(), group->carriers.end(),
@@ -17911,13 +17898,9 @@ private:
         valid = false;
         continue;
       }
-      if (referenceTransfer) {
-        const auto *loan = source.findLoan(binding->info.retainedLoan);
-        if (consumed.dependency == 0 || !loan || !loan->referenceSelection ||
-            loan->referenceSelection->transferredFrom != consumed.dependency) {
-          valid = false;
-          continue;
-        }
+      if (referenceTransfer && consumed.dependency == 0) {
+        valid = false;
+        continue;
       }
       MirInstruction extract{.kind = MirInstructionKind::Compute,
                              .hirValue = extraction->id,
@@ -18246,9 +18229,7 @@ private:
       auto entryEnded = armEntryEnded(statement, armIndex);
       if (consumed && consumed->dependency != 0) {
         // Loan ends name MIR loans: the consumed group's own.
-        const auto group = semanticLoans.find(consumed->dependency);
-        const MirLoanId dependencyLoan =
-            group == semanticLoans.end() ? 0 : group->second;
+        const MirLoanId dependencyLoan = consumed->dependency;
         if (std::find(entryEnded.begin(), entryEnded.end(), dependencyLoan) ==
             entryEnded.end())
           valid = false;
@@ -18317,36 +18298,22 @@ private:
         // the subject's owner text: it carries the subject's active Stored
         // loan, as a local initialized from a published field read does, so
         // a copy of the binding retains that owner too.
-        if (binding->info.type.kind != SemanticType::Reference &&
-            binding->info.retainedLoan != 0) {
-          const auto mapped = semanticLoans.find(binding->info.retainedLoan);
-          const MirLoan *retained = mapped == semanticLoans.end()
-                                        ? nullptr
-                                        : output.findLoan(mapped->second);
-          if (!retained || retained->kind != MirLoanKind::Stored ||
-              !loanIsActive(scopes, retained->id)) {
-            valid = false;
-          } else {
-            bindingLoans.insert_or_assign(payload.binding, retained->id);
-            auto &carriers = output.loans[retained->id - 1].carriers;
-            if (std::find(carriers.begin(), carriers.end(), payload.binding) ==
-                carriers.end())
-              carriers.push_back(payload.binding);
-          }
+        if (const MirLoan *retained =
+                statement.value
+                    ? output.findLoan(loanForValue(*statement.value))
+                    : nullptr;
+            binding->info.type.kind != SemanticType::Reference &&
+            binding->info.traits.containsBorrowedState && retained != nullptr &&
+            retained->kind == MirLoanKind::Stored &&
+            loanIsActive(scopes, retained->id)) {
+          const MirLoanId retainedId = retained->id;
+          bindingLoans.insert_or_assign(payload.binding, retainedId);
+          auto &carriers = output.loans[retainedId - 1].carriers;
+          if (std::find(carriers.begin(), carriers.end(), payload.binding) ==
+              carriers.end())
+            carriers.push_back(payload.binding);
         }
         registerDrop(payload.binding, destination);
-        // A by-value binding of a dependent text payload carries the
-        // subject's owner loan (L-OWN-02), so a view copied from it does too.
-        if (binding->info.type.kind != SemanticType::Reference &&
-            binding->info.retainedLoan != 0)
-          if (const auto found = semanticLoans.find(binding->info.retainedLoan);
-              found != semanticLoans.end()) {
-            bindingLoans.insert_or_assign(payload.binding, found->second);
-            auto &carriers = output.loans[found->second - 1].carriers;
-            if (std::find(carriers.begin(), carriers.end(), payload.binding) ==
-                carriers.end())
-              carriers.push_back(payload.binding);
-          }
       }
       if (!payloadBindings.empty()) {
         const auto retained = retainedSwitchSubjectLoans(subjectLoans);
