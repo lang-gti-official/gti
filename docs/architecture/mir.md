@@ -3378,6 +3378,46 @@ dependency sets. A local's set after an `if` joins both branches' owners and
 alternatives; a loop forgets every local set, a `switch` keeps only sets no arm
 changed, and lending a local mutably forgets its set.
 
+A loan's carriers are MIR's own: a loan starts with the binding or formal
+that holds it, and lowering each later transfer records its recipient.
+Semantic carrier lists (the completed flow's later locals) are not read.
+
+Binding loans are MIR's own too. A local initialized from a retained Stored
+group is lifecycle-bound when its type is (a payload enum when any payload
+is). The group names the type's single unconditional stored reference path
+(base-free classes only) when its source is that path's referent, or when it
+reborrows a parent from a binding without a Stored dependency of its own.
+Each owner without a parent reborrows the group's Stored parent or its
+reference formal's entry loan, and stores through the group's path when it
+names none. A group initialized by a call that passes a borrowed carrier by
+value still takes its owners from semantics: those owners are named through
+the argument's group, which MIR's call-result sets do not yet restate. A
+reference binding to a carrier depends on the Stored group retaining that
+carrier's references; a reference to a plain field reached through a carrier
+keeps its parent's stored dependency. A shell-stored carrier depends on its
+argument's group, or on the group retaining a loan-free argument's place (a
+receiver). A reference binding that reuses an existing loan only becomes one
+of its carriers. Semantic loans still name these MIR loans for later HIR
+facts.
+
+A reference bound to an enum payload borrows the extracted field. Through a
+reference carrier it reborrows the carrier's loan and keeps that loan's stored
+dependency; from a local enum it has no parent, and through a reference
+result it keeps that result's stored dependency. A stored-reference extraction
+instead records a reference selection from its MIR instruction: the payload's
+path and type in the carrier's instantiated enum, guarded by the extracted
+alternative, transferring the carrier value's group when the extraction
+transfers. Its parent is the receiver's entry Stored group for a `this`
+carrier, a Stored carrier's own group (none when a local carrier's reference
+is copied), or the Stored dependency of the loan the carrier is reached
+through; a transferring extraction has none. Its origin place still comes
+from semantics.
+
+A range loop's loans are the loans its hidden bindings carry: the range loan
+is the one loan the range carrier holds (a consuming range owns its range and
+has none), and the element and element-owner loans are the loans those
+bindings carry.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's
