@@ -5370,6 +5370,17 @@ private:
         group = found->second;
     } else if (place->root == MirPlaceRootKind::Loan) {
       group = place->loan;
+    } else if (place->root == MirPlaceRootKind::This ||
+               place->root == MirPlaceRootKind::Symbol) {
+      // A receiver's or global's field is retained by that root's entry
+      // group.
+      for (const MirLoan &loan : output.loans)
+        if (const MirPlace *source = output.findPlace(loan.source);
+            loan.entry && source != nullptr && source->root == place->root &&
+            source->symbol == place->symbol && source->projections.empty()) {
+          group = loan.id;
+          break;
+        }
     }
     const MirLoan *loan = output.findLoan(group);
     if (loan == nullptr)
