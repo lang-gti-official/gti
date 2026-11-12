@@ -14049,18 +14049,46 @@ private:
       if (!desired->referenceSelection)
         output.places[field - 1].key = desired->place;
       MirLoanId parent = 0;
-      if (desired->parent != 0) {
-        const auto found = semanticLoans.find(desired->parent);
-        if (found == semanticLoans.end()) {
-          valid = false;
-          return {};
+      MirLoanId loan = 0;
+      if (desired->referenceSelection) {
+        if (desired->parent != 0) {
+          const auto found = semanticLoans.find(desired->parent);
+          if (found == semanticLoans.end()) {
+            valid = false;
+            return {};
+          }
+          parent = found->second;
         }
-        parent = found->second;
+        loan = createLoan(MirLoanKind::Local, origin, desired->access, valueId,
+                          binding, 0, parent);
+        recordLoanIdentity(loan, *desired, binding);
+      } else {
+        // A payload field reached through a reference carrier reborrows the
+        // carrier's loan and keeps its stored dependency; a payload of a
+        // local enum borrows the field directly.
+        const HirValueId carrierValue =
+            value->operands.empty() ? 0 : value->operands.front();
+        const MirPlace *carrierPlace =
+            output.findPlace(placeForValue(carrierValue));
+        const MirLoan *carrierLoan =
+            output.findLoan(loanForValue(carrierValue));
+        if (carrierPlace != nullptr && !carrierPlace->projections.empty() &&
+            carrierLoan != nullptr)
+          parent = carrierLoan->id;
+        const HirBinding *carrier = findBinding(binding);
+        const AccessMode access =
+            carrier != nullptr &&
+                    carrier->info.type.kind == SemanticType::Reference
+                ? carrier->info.type.referenceAccess
+                : desired->access;
+        loan = createLoan(MirLoanKind::Local, origin, access, valueId, binding,
+                          0, parent);
+        // createLoan may reallocate the loan table; read the parent anew.
+        if (parent != 0)
+          output.loans[loan - 1].storedDependency =
+              output.loans[parent - 1].storedDependency;
+        bindCarrierIdentity(loan, *desired, binding);
       }
-      const MirLoanId loan =
-          createLoan(MirLoanKind::Local, origin, desired->access, valueId,
-                     binding, 0, parent);
-      recordLoanIdentity(loan, *desired, binding);
       (void)appendInstruction(
           {.kind = MirInstructionKind::Borrow,
            .hirValue = valueId,
