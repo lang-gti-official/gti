@@ -3359,6 +3359,25 @@ without a loan, a call that borrows from nothing under elision, or a callee
 summary that names owners only under alternatives its by-value arguments do
 not hold.
 
+MIR also states each value's complete dependency set itself (`completeSet`):
+a payload construction's owners in its constructed alternative, a local's
+current set (from its initializer or last whole-value store), a by-value
+formal's guarded entry owners, a field of a complete owner, and a call or
+construction whose callee summary it instantiates over its inputs' sets
+(`instantiateCallSet`, the lowering-time counterpart of the program
+verifier's call reconstruction): each supplier is available, impossible
+under the input's alternatives, or unknown, and the restricted result domain
+gives the owners and alternatives. A place passed to a reference formal stays
+below the borrow its call-input stage took; a reference result read from a
+carrier binding reborrows the binding's Stored group; a constructed carrier's
+owners hang below its published group. These sets publish call-result loans,
+decide known dependency-free alternatives, and annotate payload constructions,
+call results and local reads and moves as evidence the program verifier checks
+against its own reconstruction; MIR no longer reads semantic per-value
+dependency sets. A local's set after an `if` joins both branches' owners and
+alternatives; a loop forgets every local set, a `switch` keeps only sets no arm
+changed, and lending a local mutably forgets its set.
+
 A lifetime error that MIR finds in source code is a user diagnostic. It
 carries the source span of the HIR value or statement involved and uses the
 same diagnostic codes as the corresponding ownership errors, with the loan's
