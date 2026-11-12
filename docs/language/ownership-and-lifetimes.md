@@ -474,6 +474,29 @@ storage the receiver owns (GTI-S2127), so a consuming method may return it,
 by reference or as a carrier like `View<a> take() &&`: it outlives the
 consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
 
+A method result written in one of its class's regions is what the receiver
+stores in that region, not storage of the receiver. In
+`struct Window<lifetime a> { int&<a> value; int&<a> get() { ... } }`, the call
+`c.get()` therefore relays exactly what `c.value` does. That holds wherever
+`c` lives:
+- a by-value carrier parameter (`int&<h> pick<lifetime h>(Window<h> c) { return c.get(); }`);
+- a carrier reference (`Window<h>& c`);
+- a local carrier initialized from a reference parameter;
+- a fresh temporary, as in `int& r = holder.window().get();` or
+  `bytes.as_span().first(n)`.
+
+A carrier result in the class region (`Window<a> again()`) relays the same
+way. The result keeps that region's external owner borrowed, so mutating the
+owner while it is live is rejected. The temporary or carrier itself may end;
+of a two-region temporary, only the selected region's owner stays borrowed.
+
+A result written in `this`, or read from a carrier's value field, borrows the
+carrier's own storage instead. Through a carrier reference that storage lives
+in the reference's region, so returning it under a stored region is rejected
+(GTI-S2127). From a by-value parameter or a temporary it does not outlive the
+call (GTI-S2017, GTI-S2081). Returning a stored region that is not declared to
+outlive the result's region is GTI-S2127, for a method result as for a field.
+
 A reference parameter pack follows the same rule lane by lane. In
 `int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
 `values` supplies the result, while in
@@ -628,7 +651,12 @@ accepts are still rejected, never the reverse:
   (`c.referent.next`) is a GTI-S2085 supplier rejection.
 - A carrier from a virtual call cannot serve as a temporary receiver
   (GTI-S2081), and a binding that borrows a temporary receiver holding no
-  borrowed state is rejected even when unused (GTI-S2045).
+  borrowed state is rejected even when unused (GTI-S2045). A temporary
+  receiver relays a class-region result only from a read-only method.
+- Passing a whole multi-region carrier to a function keeps every one of its
+  owners borrowed for the result, even when the result names only one region
+  (`int&<b> f(Pair<a, b> p)`); a temporary receiver keeps only the selected
+  region's owner.
 - A record factory with two distinct regions
   (`Two<f, s> make<lifetime f, lifetime s>(int&<f>, int&<s>)`) is rejected;
   one shared region over every supplier is accepted.

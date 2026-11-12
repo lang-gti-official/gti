@@ -6599,6 +6599,8 @@ private:
   // (L-OWN-02).
   [[nodiscard]] bool
   receiverTextFieldRelay(const CallableCandidate &function) const;
+  [[nodiscard]] bool
+  receiverClassRegionRelay(const CallableCandidate &function) const;
 
   [[nodiscard]] CallReceiverMode receiverModeForObject(
       const ExprPtr &receiver, const CallableCandidate &function,
