@@ -1,0 +1,1 @@
+MIR lowering takes a reference binding's access and parent loan from MIR (its reference type and its referent's place) and no longer cross-checks retained carrier loans against the semantic loan records.

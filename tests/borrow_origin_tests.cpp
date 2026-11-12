@@ -717,8 +717,11 @@ int main() {
     owner = function.id;
     auto *changed = const_cast<lang::HirFunctionInstance *>(
         malformed.findFunctionInstance(function.id));
-    for (auto &loan : changed->body.loans)
-      loan.parent = loan.semanticLoan;
+    // A reference binding whose recorded type is not a reference: lowering
+    // its borrowed initializer must reject the body.
+    for (auto &binding : changed->body.bindings)
+      if (binding.info.type.kind == lang::SemanticType::Reference)
+        binding.info.type = lang::SemanticType::Int32;
   }
   const auto rejected =
       lang::MirLowerer().lower(malformed, frontend.failureMetadata);

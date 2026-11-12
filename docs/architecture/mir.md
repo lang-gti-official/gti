@@ -3410,7 +3410,11 @@ carrier's references; a reference to a plain field reached through a carrier
 keeps its parent's stored dependency. A shell-stored carrier depends on its
 argument's group, or on the group retaining a loan-free argument's place (a
 receiver). A reference binding that reuses an existing loan only becomes one
-of its carriers. Semantic loans still name these MIR loans for later HIR
+of its carriers. A reference binding's access is its reference type's, and
+its parent is the loan its referent's place is reached through: a reference
+binding's current loan, a receiver's or global's entry loan, or for a call
+result's referent the call's parent (climbing past intermediate call results
+that themselves reborrow an ancestor). Semantic loans still name these MIR loans for later HIR
 facts.
 
 A reference bound to an enum payload borrows the extracted field. Through a
