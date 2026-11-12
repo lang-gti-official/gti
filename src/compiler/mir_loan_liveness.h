@@ -3,6 +3,7 @@
 #include "gti/hir.h"
 
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <unordered_map>
 #include <utility>
@@ -28,6 +29,24 @@ struct MirDerivedLoanEnds {
   std::unordered_map<SemanticLoanId, HirStatementId> regionExit;
 };
 
-[[nodiscard]] MirDerivedLoanEnds deriveLoanEnds(const HirBody &body);
+// The loan facts liveness reads, independent of which layer recorded them.
+struct LoanFacts {
+  std::size_t id = 0;
+  // A reference loan (as opposed to a stored carrier group).
+  bool reference = false;
+  std::vector<HirBindingId> carriers;
+  std::size_t parent = 0;
+  std::size_t storedDependency = 0;
+  std::vector<std::size_t> dependencyParents;
+  bool entry = false;
+  bool lifecycleBound = false;
+  AccessMode access = AccessMode::ReadOnly;
+  // Root symbol of the borrowed place, for conflicting-write detection.
+  SymbolId placeRoot = 0;
+};
+
+[[nodiscard]] MirDerivedLoanEnds
+deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
+               const std::function<std::size_t(HirBindingId)> &retainedLoanOf);
 
 } // namespace lang

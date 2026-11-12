@@ -220,15 +220,24 @@ bool conflictsWithLoan(const HirBody &body, const StatementTree &tree,
 
 } // namespace
 
-MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
+MirDerivedLoanEnds
+deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
+               const std::function<std::size_t(HirBindingId)> &retainedLoanOf) {
   MirDerivedLoanEnds result;
-  std::function<bool(const HirStatement &, const HirLoan &,
+  std::unordered_map<std::size_t, const LoanFacts *> factsById;
+  for (const LoanFacts &loan : loans)
+    factsById.emplace(loan.id, &loan);
+  const auto findFacts = [&](std::size_t id) -> const LoanFacts * {
+    const auto found = factsById.find(id);
+    return found == factsById.end() ? nullptr : found->second;
+  };
+  std::function<bool(const HirStatement &, const LoanFacts &,
                      const std::vector<HirStatementId> &, MirDerivedLoanEnds &)>
       conditionalPlan;
-  std::function<bool(const HirStatement &, const HirLoan &,
+  std::function<bool(const HirStatement &, const LoanFacts &,
                      const std::vector<HirStatementId> &, MirDerivedLoanEnds &)>
       switchPlan;
-  std::function<void(const HirStatement &, const HirLoan &,
+  std::function<void(const HirStatement &, const LoanFacts &,
                      const std::vector<HirStatementId> &, MirDerivedLoanEnds &)>
       breakPlans;
   const StatementTree tree(body);
@@ -264,8 +273,8 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
   std::unordered_map<SemanticLoanId, std::vector<HirStatementId>> uses;
   std::unordered_map<SemanticLoanId, std::optional<HirStatementId>> created;
   std::unordered_set<SemanticLoanId> unconfined;
-  for (const HirLoan &loan : body.loans) {
-    auto &own = uses[loan.semanticLoan];
+  for (const LoanFacts &loan : loans) {
+    auto &own = uses[loan.id];
     std::optional<HirStatementId> creation;
     for (const HirBindingId carrier : loan.carriers) {
       if (const auto found = readers.find(carrier); found != readers.end())
@@ -278,7 +287,7 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
           creation = declared->second;
       }
     }
-    created[loan.semanticLoan] = loan.entry ? std::nullopt : creation;
+    created[loan.id] = loan.entry ? std::nullopt : creation;
     // A mutable borrow of global storage and a switch payload binding's
     // retained selection keep a lexical extent: they end at the region exit.
     for (const HirBindingId carrier : loan.carriers) {
@@ -288,10 +297,10 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
           binding = &candidate;
       if (binding != nullptr && binding->payloadPattern != nullptr &&
           loan.carriers.size() == 1)
-        unconfined.insert(loan.semanticLoan);
+        unconfined.insert(loan.id);
       // A carrier with no source symbol is invisible to last-use tracking.
       if (binding != nullptr && binding->info.symbol == 0)
-        unconfined.insert(loan.semanticLoan);
+        unconfined.insert(loan.id);
       const auto declared = declaringStatement.find(carrier);
       if (loan.access == AccessMode::Mutable &&
           declared != declaringStatement.end())
@@ -301,7 +310,7 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
           if (const HirValue *initializer = body.findValue(*statement->value);
               initializer != nullptr &&
               initializer->borrowOrigin == BorrowOriginKind::Global)
-            unconfined.insert(loan.semanticLoan);
+            unconfined.insert(loan.id);
     }
     // A carrier attached from another region (or with no declaration of its
     // own) makes the loan's extent region-wide: it ends at the region exit.
@@ -328,17 +337,17 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
               continue;
         if (declared == declaringStatement.end() ||
             !(tree.regionOf(declared->second) == tree.regionOf(*creation)))
-          unconfined.insert(loan.semanticLoan);
+          unconfined.insert(loan.id);
       }
   }
   // Cleanup is a use of every dependency a cleanup-bound carrier retains:
   // its ancestors cannot end at an ordinary last read beneath it.
-  for (const HirLoan &loan : body.loans) {
+  for (const LoanFacts &loan : loans) {
     if (!loan.lifecycleBound)
       continue;
     std::vector<SemanticLoanId> pending{loan.parent, loan.storedDependency};
-    for (const auto &dependency : loan.additionalDependencies)
-      pending.push_back(dependency.parent);
+    for (const auto dependencyParent : loan.dependencyParents)
+      pending.push_back(dependencyParent);
     std::unordered_set<SemanticLoanId> visited;
     while (!pending.empty()) {
       const SemanticLoanId ancestor = pending.back();
@@ -346,27 +355,26 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
       if (ancestor == 0 || !visited.insert(ancestor).second)
         continue;
       unconfined.insert(ancestor);
-      if (const HirLoan *record = body.findLoan(ancestor)) {
+      if (const LoanFacts *record = findFacts(ancestor)) {
         pending.push_back(record->parent);
         pending.push_back(record->storedDependency);
-        for (const auto &dependency : record->additionalDependencies)
-          pending.push_back(dependency.parent);
+        for (const auto dependencyParent : record->dependencyParents)
+          pending.push_back(dependencyParent);
       }
     }
   }
   bool changed = true;
   while (changed) {
     changed = false;
-    for (const HirLoan &loan : body.loans) {
+    for (const LoanFacts &loan : loans) {
       std::vector<SemanticLoanId> parents{loan.parent, loan.storedDependency};
-      for (const auto &dependency : loan.additionalDependencies)
-        parents.push_back(dependency.parent);
+      for (const auto dependencyParent : loan.dependencyParents)
+        parents.push_back(dependencyParent);
       for (const SemanticLoanId parent : parents) {
-        if (parent == 0 || parent == loan.semanticLoan ||
-            !uses.contains(parent))
+        if (parent == 0 || parent == loan.id || !uses.contains(parent))
           continue;
         auto &target = uses[parent];
-        for (const HirStatementId use : uses[loan.semanticLoan])
+        for (const HirStatementId use : uses[loan.id])
           if (std::find(target.begin(), target.end(), use) == target.end()) {
             target.push_back(use);
             changed = true;
@@ -424,13 +432,12 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
           for (const HirStatementId nested : arm.statements)
             subtree(nested, out);
       };
-  const auto conflictsIn = [&](HirStatementId root, const HirLoan &loan) {
+  const auto conflictsIn = [&](HirStatementId root, const LoanFacts &loan) {
     std::vector<HirStatementId> statements;
     subtree(root, statements);
     std::vector<HirStatementId> conflicts;
     for (const HirStatementId statement : statements)
-      if (conflictsWithLoan(body, tree, statement, loan.place.root,
-                            loan.access))
+      if (conflictsWithLoan(body, tree, statement, loan.placeRoot, loan.access))
         conflicts.push_back(statement);
     return conflicts;
   };
@@ -486,13 +493,13 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     }
     return false;
   };
-  std::function<bool(const HirStatement &, bool, const HirLoan &,
+  std::function<bool(const HirStatement &, bool, const LoanFacts &,
                      const std::vector<HirStatementId> &, std::vector<Point> &)>
       armEndpoints;
-  std::function<bool(const HirStatement &, bool, const HirLoan &,
+  std::function<bool(const HirStatement &, bool, const LoanFacts &,
                      const std::vector<HirStatementId> &, std::vector<Point> &)>
       terminatingEndpoints = [&](const HirStatement &conditional,
-                                 bool thenBranch, const HirLoan &loan,
+                                 bool thenBranch, const LoanFacts &loan,
                                  const std::vector<HirStatementId> &own,
                                  std::vector<Point> &points) -> bool {
     const std::optional<HirStatementId> arm =
@@ -516,7 +523,7 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     return true;
   };
   armEndpoints = [&](const HirStatement &conditional, bool thenBranch,
-                     const HirLoan &loan,
+                     const LoanFacts &loan,
                      const std::vector<HirStatementId> &own,
                      std::vector<Point> &points) -> bool {
     const std::optional<HirStatementId> arm =
@@ -585,7 +592,7 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
   };
   // The plan applies when one of its end points precedes a conflict on the
   // same path, or when the if cannot fall through.
-  conditionalPlan = [&](const HirStatement &conditional, const HirLoan &loan,
+  conditionalPlan = [&](const HirStatement &conditional, const LoanFacts &loan,
                         const std::vector<HirStatementId> &own,
                         MirDerivedLoanEnds &ends) -> bool {
     std::vector<Point> points;
@@ -621,13 +628,13 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
       auto &target = point.kind == 0   ? ends.after[point.statement]
                      : point.kind == 1 ? ends.thenEntry[point.statement]
                                        : ends.elseEntry[point.statement];
-      target.push_back(loan.semanticLoan);
+      target.push_back(loan.id);
     }
     return true;
   };
   // A loan whose only use in a switch is its subject ends at every arm's
   // entry, and after the switch when no default arm exists.
-  switchPlan = [&](const HirStatement &selection, const HirLoan &loan,
+  switchPlan = [&](const HirStatement &selection, const LoanFacts &loan,
                    const std::vector<HirStatementId> &own,
                    MirDerivedLoanEnds &ends) -> bool {
     for (const HirStatementId use : own)
@@ -643,9 +650,9 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
         if (label.isDefault)
           hasDefault = true;
     for (std::size_t arm = 0; arm < selection.switchArms.size(); ++arm)
-      ends.switchArmEntry[{selection.id, arm}].push_back(loan.semanticLoan);
+      ends.switchArmEntry[{selection.id, arm}].push_back(loan.id);
     if (!hasDefault)
-      ends.after[selection.id].push_back(loan.semanticLoan);
+      ends.after[selection.id].push_back(loan.id);
     return true;
   };
 
@@ -717,15 +724,14 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
         }
     return 0;
   };
-  breakPlans = [&](const HirStatement &target, const HirLoan &loan,
+  breakPlans = [&](const HirStatement &target, const LoanFacts &loan,
                    const std::vector<HirStatementId> &own,
                    MirDerivedLoanEnds &ends) {
     std::vector<HirStatementId> statements;
     subtree(target.id, statements);
     for (const HirStatementId conflict : statements) {
       if (conflict == target.id ||
-          !conflictsWithLoan(body, tree, conflict, loan.place.root,
-                             loan.access))
+          !conflictsWithLoan(body, tree, conflict, loan.placeRoot, loan.access))
         continue;
       const auto list = siblingsOf(conflict);
       const auto at = std::find(list.begin(), list.end(), conflict);
@@ -764,7 +770,7 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
             (last->kind != HirStatementKind::Variable &&
              last->kind != HirStatementKind::Expression))
           continue;
-        ends.after[*lastUse].push_back(loan.semanticLoan);
+        ends.after[*lastUse].push_back(loan.id);
         continue;
       }
       if (conflictPath.empty())
@@ -785,33 +791,31 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
         continue;
       if (owner->kind == HirStatementKind::If)
         (entry->arm == 0 ? ends.thenEntry : ends.elseEntry)[owner->id]
-            .push_back(loan.semanticLoan);
+            .push_back(loan.id);
       else
-        ends.switchArmEntry[{owner->id, entry->arm}].push_back(
-            loan.semanticLoan);
+        ends.switchArmEntry[{owner->id, entry->arm}].push_back(loan.id);
     }
   };
 
-  for (const HirLoan &loan : body.loans) {
+  for (const LoanFacts &loan : loans) {
     // An entry loan is the caller's: it outlives the whole body.
     if (loan.entry)
       continue;
     // A cleanup-bound carrier keeps its loan until the carrier's cleanup;
     // several exclusive aliases share state transitions a single last-use
     // end point cannot express. Both end at their region's exit.
-    if (loan.lifecycleBound || unconfined.contains(loan.semanticLoan) ||
+    if (loan.lifecycleBound || unconfined.contains(loan.id) ||
         (loan.carriers.size() > 1 && loan.access != AccessMode::ReadOnly))
       continue;
-    const auto &own = uses[loan.semanticLoan];
+    const auto &own = uses[loan.id];
     if (own.empty())
       continue;
     const HirStatementId last = *std::max_element(
         own.begin(), own.end(), [&](HirStatementId left, HirStatementId right) {
           return tree.orderOf(left) < tree.orderOf(right);
         });
-    const RegionKey region = created[loan.semanticLoan]
-                                 ? tree.regionOf(*created[loan.semanticLoan])
-                                 : RegionKey{0, 0};
+    const RegionKey region =
+        created[loan.id] ? tree.regionOf(*created[loan.id]) : RegionKey{0, 0};
     HirStatementId end = last;
     while (end != 0 && !(tree.regionOf(end) == region))
       end = tree.parentOf(end);
@@ -832,10 +836,10 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
         ending->kind == HirStatementKind::Return ||
         ending->kind == HirStatementKind::Break ||
         ending->kind == HirStatementKind::Continue) {
-      result.regionExit[loan.semanticLoan] = end;
+      result.regionExit[loan.id] = end;
       continue;
     }
-    result.after[end].push_back(loan.semanticLoan);
+    result.after[end].push_back(loan.id);
 
     // A path that reaches `conflict; break;` out of this loop or switch never
     // returns to a later use, so the loan also ends on that path: after its
@@ -860,11 +864,11 @@ MirDerivedLoanEnds deriveLoanEnds(const HirBody &body) {
     for (const HirBinding &binding : body.bindings)
       if (root != 0 && binding.info.symbol == root)
         owner = &binding;
-    if (owner == nullptr || owner->info.retainedLoan == 0)
+    if (owner == nullptr || retainedLoanOf(owner->id) == 0)
       continue;
-    SemanticLoanId dependency = owner->info.retainedLoan;
-    if (const HirLoan *loan = body.findLoan(dependency);
-        loan != nullptr && loan->kind == SemanticLoanKind::Reference)
+    std::size_t dependency = retainedLoanOf(owner->id);
+    if (const LoanFacts *loan = findFacts(dependency);
+        loan != nullptr && loan->reference)
       dependency = loan->storedDependency;
     if (dependency == 0)
       continue;

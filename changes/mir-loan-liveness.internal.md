@@ -1,0 +1,1 @@
+MIR lowering derives loan ends from its own loans: a first lowering pass decides none, and the body is lowered again with the ends a Polonius-guided liveness analysis derives from that pass's MIR loans, keyed by MIR loan id.
