@@ -5354,6 +5354,89 @@ private:
     return selected;
   }
 
+  // The external owner place a stored-reference payload selection protects.
+  // Its authority group is the selection's parent, or the carrier value's
+  // own group. The selected path is the carrier's field prefix within that
+  // group's source followed by the payload path. An entry group's owner is
+  // projected from its source along that path; a local group's owner is the
+  // group itself as a reborrowed referent (when it has a parent) or its
+  // source, or else the additional owner the path designates.
+  [[nodiscard]] MirPlaceId selectionOrigin(const HirValue &value,
+                                           const HirLoan &desired,
+                                           MirLoanId parent) {
+    if (value.operands.empty() || !desired.referenceSelection)
+      return 0;
+    const HirValueId carrier = value.operands.front();
+    const MirLoanId group = parent != 0 ? parent : loanForValue(carrier);
+    const MirLoan *authority = output.findLoan(group);
+    if (authority == nullptr)
+      return 0;
+    const MirPlaceId groupSource = authority->source;
+    const MirPlace *source = output.findPlace(groupSource);
+    const MirPlace *carrierPlace = output.findPlace(placeForValue(carrier));
+    if (source == nullptr)
+      return 0;
+    std::vector<SymbolId> path;
+    if (carrierPlace != nullptr && carrierPlace->root == source->root &&
+        carrierPlace->projections.size() >= source->projections.size())
+      for (std::size_t index = source->projections.size();
+           index < carrierPlace->projections.size(); ++index)
+        if (carrierPlace->projections[index].kind == MirProjectionKind::Field)
+          path.push_back(carrierPlace->projections[index].field);
+    for (const SymbolId field : desired.referenceSelection->fields)
+      path.push_back(field);
+    if (authority->entry) {
+      // Project along the alternative guarding the designated path.
+      if (authority->designatedFields == path)
+        if (const MirPlaceId place =
+                projectBorrowFields(groupSource, path, authority->conditions))
+          return place;
+      for (const auto &dependency : authority->additionalDependencies)
+        if (dependency.designatedFields == path)
+          if (const MirPlaceId place =
+                  projectBorrowFields(groupSource, path, dependency.conditions))
+            return place;
+      return projectBorrowFields(groupSource, path);
+    }
+    const bool primary = authority->designatedFields == path;
+    MirPlaceId owner = primary ? groupSource : 0;
+    if (owner == 0)
+      for (const auto &dependency : authority->additionalDependencies)
+        if (dependency.designatedFields == path) {
+          owner = dependency.source;
+          break;
+        }
+    const MirPlace *ownerPlace = output.findPlace(owner);
+    const bool ownerIsSource =
+        ownerPlace != nullptr &&
+        (owner == groupSource || (ownerPlace->root == source->root &&
+                                  ownerPlace->binding == source->binding &&
+                                  ownerPlace->projections.empty()));
+    if (primary || (parent != 0 && ownerIsSource)) {
+      if (parent == 0)
+        return groupSource;
+      for (const auto &place : output.places)
+        if (place.root == MirPlaceRootKind::Loan && place.loan == group &&
+            place.projections.empty() && place.type == value.info.type &&
+            place.access == desired.access)
+          return place.id;
+      MirPlace referent;
+      referent.root = MirPlaceRootKind::Loan;
+      referent.loan = group;
+      referent.type = value.info.type;
+      referent.traits = value.info.traits;
+      referent.access = desired.access;
+      referent.sourceValue = value.id;
+      referent.key = desired.place;
+      return appendPlace(std::move(referent));
+    }
+    if (ownerPlace == nullptr)
+      return 0;
+    if (ownerPlace->type == value.info.type)
+      return owner;
+    return projectBorrowFields(owner, {});
+  }
+
   // The loan a stored-reference payload selection reborrows: the receiver's
   // entry Stored group for a `this` carrier, a Stored carrier's own group, or
   // the Stored dependency of the loan a carrier is reached through. Only a
@@ -5417,6 +5500,110 @@ private:
         return true;
     }
     return false;
+  }
+
+  // Owners a call result receives through a by-value borrowed-carrier
+  // argument are named through that argument's Stored group. A copied
+  // argument's owners become the group's source reborrowing the group; a
+  // moved argument hands over the group's own owner records.
+  void restateCarrierArgumentOwners(MirLoanId id,
+                                    const std::optional<HirValueId> &init) {
+    const HirValue *value = init ? findValue(*init) : nullptr;
+    while (value != nullptr &&
+           (value->kind == HirValueKind::Grouping ||
+            value->kind == HirValueKind::Move) &&
+           value->operands.size() == 1)
+      value = findValue(value->operands.front());
+    if (value == nullptr)
+      return;
+    struct Argument {
+      MirLoanId group = 0;
+      bool moved = false;
+    };
+    std::vector<Argument> arguments;
+    for (const HirValueId operandId : value->operands) {
+      const HirValue *operand = findValue(operandId);
+      bool moved = false;
+      while (operand != nullptr &&
+             (operand->kind == HirValueKind::Grouping ||
+              operand->kind == HirValueKind::Move) &&
+             operand->operands.size() == 1) {
+        moved = moved || operand->kind == HirValueKind::Move;
+        operand = findValue(operand->operands.front());
+      }
+      if (operand == nullptr || operand->kind != HirValueKind::Variable ||
+          operand->info.type.kind == SemanticType::Reference ||
+          !operand->info.traits.containsBorrowedState)
+        continue;
+      const MirPlace *place = output.findPlace(placeForValue(operand->id));
+      if (place == nullptr || place->root != MirPlaceRootKind::Binding)
+        continue;
+      MirLoanId group = 0;
+      for (const auto &loan : output.loans)
+        if (loan.id != id && loan.kind == MirLoanKind::Stored &&
+            std::find(loan.carriers.begin(), loan.carriers.end(),
+                      place->binding) != loan.carriers.end())
+          group = loan.id;
+      // A moved carrier's group has already transferred away from its
+      // binding; the moved operand still names it.
+      if (group == 0)
+        for (const HirValueId named : {operandId, operand->id})
+          if (const MirLoan *carried = output.findLoan(loanForValue(named));
+              carried != nullptr && carried->id != id &&
+              carried->kind == MirLoanKind::Stored) {
+            group = carried->id;
+            break;
+          }
+      if (group == 0)
+        if (const auto found = bindingLoans.find(place->binding);
+            found != bindingLoans.end() && found->second != id &&
+            output.findLoan(found->second) != nullptr &&
+            output.findLoan(found->second)->kind == MirLoanKind::Stored)
+          group = found->second;
+      if (group != 0)
+        arguments.push_back({group, moved});
+    }
+    MirLoan &loan = output.loans[id - 1];
+    for (auto &owner : loan.additionalDependencies) {
+      if (owner.parent != 0)
+        continue;
+      for (const Argument &argument : arguments) {
+        const MirLoan &group = output.loans[argument.group - 1];
+        // The group holds an owner directly or through the groups its own
+        // owners reborrow.
+        const auto holds = [&](const auto &self, MirLoanId holder,
+                               int depth) -> bool {
+          const MirLoan *candidate = output.findLoan(holder);
+          if (candidate == nullptr || depth > 8)
+            return false;
+          if (candidate->source == owner.source)
+            return true;
+          for (const auto &dependency : candidate->additionalDependencies)
+            if (dependency.source == owner.source ||
+                (dependency.parent != 0 &&
+                 self(self, dependency.parent, depth + 1)))
+              return true;
+          return false;
+        };
+        const bool held = holds(holds, group.id, 0);
+        if (!held)
+          continue;
+        if (!argument.moved) {
+          owner.source = group.source;
+          owner.parent = group.id;
+        } else if (owner.source == group.source) {
+          owner.parent = group.parent;
+        } else {
+          for (const auto &dependency : group.additionalDependencies)
+            if (dependency.designatedFields == owner.designatedFields) {
+              owner.source = dependency.source;
+              owner.parent = dependency.parent;
+              break;
+            }
+        }
+        break;
+      }
+    }
   }
 
   // The shape of the retained Stored group a binding is initialized from,
@@ -5517,6 +5704,102 @@ private:
     semanticLoans.insert_or_assign(identity.semanticLoan, id);
   }
 
+  // Records the reference a stored-reference payload extraction selects on
+  // the loan that binds it, from the extraction's MIR instruction.
+  bool recordSelection(MirLoanId id, HirValueId extraction) {
+    MirLoan &lowered = output.loans[id - 1];
+    const auto *value = findValue(extraction);
+    const auto found = loweredValues.find(extraction);
+    const auto *resolved = found == loweredValues.end()
+                               ? nullptr
+                               : output.findValue(found->second);
+    const auto *block = resolved == nullptr
+                            ? nullptr
+                            : output.findBlock(resolved->definitionBlock);
+    const MirInstruction *producer = nullptr;
+    if (block != nullptr)
+      for (const auto &instruction : block->instructions)
+        if (instruction.id == resolved->definition)
+          producer = &instruction;
+    if (value == nullptr || resolved == nullptr || producer == nullptr ||
+        value->kind != HirValueKind::PayloadExtraction ||
+        value->operands.size() != 1 ||
+        producer->kind != MirInstructionKind::Compute ||
+        producer->operation != MirOperation::PayloadExtract ||
+        producer->hirValue != extraction || producer->result != resolved->id ||
+        producer->operands.size() != 1 ||
+        output.findPlace(producer->operands.front().place) == nullptr ||
+        !producer->payloadExtractionKind ||
+        !isStoredReferenceExtraction(*producer->payloadExtractionKind)) {
+      valid = false;
+      return false;
+    }
+    auto derived = selectedPayloadReference(*producer, value->operands.front());
+    if (!derived) {
+      valid = false;
+      return false;
+    }
+    MirReferenceSelection selected = std::move(*derived);
+    selected.value = resolved->id;
+    if (selected.transferredFrom == id ||
+        (lowered.referenceSelection &&
+         *lowered.referenceSelection != selected)) {
+      valid = false;
+      return false;
+    }
+    lowered.referenceSelection = std::move(selected);
+    return true;
+  }
+
+  // A selection loan reborrowing a group whose referent it names: each other
+  // owner the group designates along the same path is a possible referent.
+  void addSelectionAlternatives(MirLoanId id, HirValueId carrier) {
+    MirLoan &loan = output.loans[id - 1];
+    const MirPlace *origin = output.findPlace(loan.source);
+    if (origin == nullptr || !loan.referenceSelection)
+      return;
+    // With a parent, the group is that parent and the origin its reborrowed
+    // referent; without one (a copy out of a local carrier), the group is the
+    // carrier's own and the origin that group's source.
+    const MirLoan *group = output.findLoan(loan.parent);
+    if (group != nullptr) {
+      if (origin->root != MirPlaceRootKind::Loan || origin->loan != group->id)
+        return;
+    } else {
+      group = output.findLoan(loanForValue(carrier));
+      if (group == nullptr || group->kind != MirLoanKind::Stored ||
+          group->source != loan.source)
+        return;
+    }
+    std::vector<MirLoanDependency> alternatives;
+    for (const auto &owner : group->additionalDependencies) {
+      const MirPlace *place = output.findPlace(owner.source);
+      if (owner.source == group->source || place == nullptr ||
+          place->type != origin->type ||
+          owner.designatedFields != loan.referenceSelection->fields)
+        continue;
+      if (std::none_of(
+              alternatives.begin(), alternatives.end(),
+              [&](const auto &other) { return other.source == owner.source; }))
+        alternatives.push_back({.source = owner.source,
+                                .parent = loan.parent,
+                                .access = owner.access});
+    }
+    loan.additionalDependencies = std::move(alternatives);
+  }
+
+  void bindSelectionLoan(MirLoanId id, const HirLoan &identity,
+                         HirBindingId binding, HirValueId extraction) {
+    if (!recordSelection(id, extraction))
+      return;
+    const HirValue *extracted = findValue(extraction);
+    addSelectionAlternatives(id, extracted != nullptr &&
+                                         !extracted->operands.empty()
+                                     ? extracted->operands.front()
+                                     : HirValueId{0});
+    bindCarrierIdentity(id, identity, binding);
+  }
+
   // A reference binding reusing an existing MIR loan: names that loan and
   // registers the binding as one of its carriers.
   void bindCarrierIdentity(MirLoanId id, const HirLoan &identity,
@@ -5548,51 +5831,8 @@ private:
     }
     lowered.semanticLoan = loan.semanticLoan;
     if (loan.referenceSelection) {
-      const auto &selection = *loan.referenceSelection;
-      const auto *value = findValue(selection.value);
-      const auto found = loweredValues.find(selection.value);
-      const auto *resolved = found == loweredValues.end()
-                                 ? nullptr
-                                 : output.findValue(found->second);
-      const auto *block = resolved == nullptr
-                              ? nullptr
-                              : output.findBlock(resolved->definitionBlock);
-      const MirInstruction *producer = nullptr;
-      if (block != nullptr)
-        for (const auto &instruction : block->instructions)
-          if (instruction.id == resolved->definition)
-            producer = &instruction;
-      if (value == nullptr || resolved == nullptr || producer == nullptr ||
-          value->kind != HirValueKind::PayloadExtraction ||
-          value->operands.size() != 1 ||
-          value->operands.front() != selection.carrier ||
-          producer->kind != MirInstructionKind::Compute ||
-          producer->operation != MirOperation::PayloadExtract ||
-          producer->hirValue != selection.value ||
-          producer->result != resolved->id || producer->operands.size() != 1 ||
-          output.findPlace(producer->operands.front().place) == nullptr ||
-          !producer->payloadExtractionKind ||
-          !isStoredReferenceExtraction(*producer->payloadExtractionKind)) {
-        valid = false;
+      if (!recordSelection(id, loan.referenceSelection->value))
         return;
-      }
-      auto derived = selectedPayloadReference(*producer, selection.carrier);
-      if (!derived) {
-        valid = false;
-        return;
-      }
-      MirReferenceSelection selected = std::move(*derived);
-      selected.value = resolved->id;
-      if (selected.transferredFrom == id) {
-        valid = false;
-        return;
-      }
-      if (lowered.referenceSelection &&
-          *lowered.referenceSelection != selected) {
-        valid = false;
-        return;
-      }
-      lowered.referenceSelection = std::move(selected);
     } else if (lowered.referenceSelection) {
       valid = false;
       return;
@@ -14107,21 +14347,22 @@ private:
       // Ordinary payload borrowing protects the enum's field storage. A
       // stored-reference extraction instead protects external owners and
       // retains its evaluated address separately in referenceSelection.
-      const MirPlaceId origin =
-          desired->referenceSelection ? placeForLoan(*desired, value) : field;
+      MirLoanId parent =
+          desired->referenceSelection ? selectionAuthorityParent(*value) : 0;
+      const MirPlaceId origin = desired->referenceSelection
+                                    ? selectionOrigin(*value, *desired, parent)
+                                    : field;
       if (origin == 0) {
         valid = false;
         return {};
       }
       if (!desired->referenceSelection)
         output.places[field - 1].key = desired->place;
-      MirLoanId parent = 0;
       MirLoanId loan = 0;
       if (desired->referenceSelection) {
-        parent = selectionAuthorityParent(*value);
         loan = createLoan(MirLoanKind::Local, origin, desired->access, valueId,
                           binding, 0, parent);
-        recordLoanIdentity(loan, *desired, binding);
+        bindSelectionLoan(loan, *desired, binding, valueId);
       } else {
         // A payload field reached through a reference carrier reborrows the
         // carrier's loan and depends on its Stored group; a payload of a
@@ -14632,7 +14873,19 @@ private:
         output.loans[loan - 1].storedDependency =
             output.loans[parent - 1].storedDependency;
       if (desired->referenceSelection) {
-        recordLoanIdentity(loan, *desired, binding);
+        HirValueId extraction = valueId;
+        for (const HirValue *wrapped = findValue(extraction);
+             wrapped != nullptr &&
+             (wrapped->kind == HirValueKind::Grouping ||
+              wrapped->kind == HirValueKind::Move) &&
+             wrapped->operands.size() == 1;
+             wrapped = findValue(extraction))
+          extraction = wrapped->operands.front();
+        if (const HirValue *extracted = findValue(extraction);
+            extracted == nullptr ||
+            extracted->kind != HirValueKind::PayloadExtraction)
+          extraction = desired->referenceSelection->value;
+        bindSelectionLoan(loan, *desired, binding, extraction);
       } else {
         bindCarrierIdentity(loan, *desired, binding);
       }
@@ -16713,15 +16966,10 @@ private:
               !selectedArgumentParent) {
             valid = false;
           }
-          // MIR does not yet restate the owners a call result receives
-          // through a by-value borrowed-carrier argument relative to that
-          // argument's group; such a group keeps semantics' owner records.
-          if (passesBorrowedCarrierByValue(statement.value)) {
-            recordLoanIdentity(retainedLoan, *desired, *statement.binding);
-          } else {
-            deriveRetainedShape(retainedLoan, *statement.binding);
-            bindLoanIdentity(retainedLoan, *desired);
-          }
+          deriveRetainedShape(retainedLoan, *statement.binding);
+          if (passesBorrowedCarrierByValue(statement.value))
+            restateCarrierArgumentOwners(retainedLoan, statement.value);
+          bindLoanIdentity(retainedLoan, *desired);
         } else {
           MirLoan &retained = output.loans[retainedLoan - 1];
           if (retained.semanticLoan != 0 &&
