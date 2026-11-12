@@ -239,15 +239,12 @@ public:
         }
       }
     }
-    derivedLoanEnds = deriveLoanEnds(source);
+    // Loan ends come from this body's own MIR loans: the first lowering
+    // pass decides none, and lowerBody lowers again with the ends that
+    // pass's loans derive (see loanEndsFromMir).
+    applyLoanEnds({});
     for (const HirStatement &statement : source.statements) {
       statements.emplace(statement.id, &statement);
-      for (const SemanticLoanId loan : endedAfter(statement)) {
-        const auto [entry, inserted] =
-            uniqueSemanticLoanEndpoints.emplace(loan, statement.id);
-        if (!inserted && entry->second != statement.id)
-          entry->second = 0;
-      }
       if (statement.kind == HirStatementKind::Return &&
           statement.resultRegion == 0) {
         ++exitCount;
@@ -649,8 +646,83 @@ public:
         }
       }
     }
+    if (deriveEndsFromMir)
+      mirEnds = loanEndsFromMir();
+
     finishFailureCleanupAndVerify();
     return std::move(output);
+  }
+
+public:
+  // Set on a first lowering pass: derive loan ends from its MIR loans.
+  bool deriveEndsFromMir = false;
+  std::optional<MirDerivedLoanEnds> mirEnds;
+
+  void applyLoanEnds(MirDerivedLoanEnds ends) {
+    derivedLoanEnds = std::move(ends);
+    uniqueSemanticLoanEndpoints.clear();
+    for (const HirStatement &statement : source.statements)
+      for (const SemanticLoanId loan : endedAfter(statement)) {
+        const auto [entry, inserted] =
+            uniqueSemanticLoanEndpoints.emplace(loan, statement.id);
+        if (!inserted && entry->second != statement.id)
+          entry->second = 0;
+      }
+  }
+
+  [[nodiscard]] std::vector<LoanFacts> mirLoanFacts() const {
+    std::vector<LoanFacts> facts;
+    for (const MirLoan &loan : output.loans) {
+      LoanFacts fact{.id = loan.id,
+                     .reference = loan.kind != MirLoanKind::Stored,
+                     .carriers = loan.carriers,
+                     .parent = loan.parent,
+                     .storedDependency = loan.storedDependency,
+                     .entry = loan.entry,
+                     .lifecycleBound = loan.lifecycleBound,
+                     .access = loan.access};
+      for (const auto &dependency : loan.additionalDependencies)
+        fact.dependencyParents.push_back(dependency.parent);
+      if (const MirPlace *place = output.findPlace(loan.source);
+          place != nullptr && place->root == MirPlaceRootKind::Binding)
+        if (const HirBinding *binding = findBinding(place->binding))
+          fact.placeRoot = binding->info.symbol;
+      facts.push_back(std::move(fact));
+    }
+    return facts;
+  }
+
+  // Loan ends derived from this body's MIR loans, by MirLoanId: a body's
+  // loans are the same in both lowering passes, so the ids carry over.
+  [[nodiscard]] MirDerivedLoanEnds loanEndsFromMir() const {
+    MirDerivedLoanEnds ends = deriveLoanEnds(
+        source, mirLoanFacts(), [&](HirBindingId binding) -> std::size_t {
+          const MirLoanId carried = carriedLoan(binding);
+          const MirLoan *loan = output.findLoan(carried);
+          return loan != nullptr && loan->kind == MirLoanKind::Stored ? carried
+                                                                      : 0;
+        });
+    // Statement liveness ends the loans a binding carries (and the entry
+    // groups a consumed switch subject hands on); a carrier-less temporary
+    // ends with its full expression, inside lowering.
+    const auto scoped = [&](std::size_t id) {
+      const MirLoan *loan = output.findLoan(id);
+      return loan != nullptr && !loan->escapes &&
+             (loan->entry || !loan->carriers.empty());
+    };
+    const auto keepScoped = [&](auto &lists) {
+      for (auto &[point, loans] : lists)
+        std::erase_if(loans, [&](std::size_t id) { return !scoped(id); });
+      std::erase_if(lists,
+                    [](const auto &entry) { return entry.second.empty(); });
+    };
+    keepScoped(ends.after);
+    keepScoped(ends.thenEntry);
+    keepScoped(ends.elseEntry);
+    keepScoped(ends.switchArmEntry);
+    std::erase_if(ends.regionExit,
+                  [&](const auto &entry) { return !scoped(entry.first); });
+    return ends;
   }
 
   [[nodiscard]] bool isValid() const { return valid; }
@@ -11229,17 +11301,13 @@ private:
         const HirStatement *owner = findStatement(endpoint);
         const bool endsHere =
             owner != nullptr &&
-            std::any_of(endedAfter(*owner).begin(), endedAfter(*owner).end(),
-                        [&](SemanticLoanId semantic) {
-                          const auto found = semanticLoans.find(semantic);
-                          return found != semanticLoans.end() &&
-                                 found->second == loan;
-                        });
+            std::find(endedAfter(*owner).begin(), endedAfter(*owner).end(),
+                      loan) != endedAfter(*owner).end();
         if (!endsHere) {
           const auto exact =
               previous == nullptr
                   ? uniqueSemanticLoanEndpoints.end()
-                  : uniqueSemanticLoanEndpoints.find(previous->semanticLoan);
+                  : uniqueSemanticLoanEndpoints.find(previous->id);
           if (exact != uniqueSemanticLoanEndpoints.end() && exact->second != 0)
             endpoint = exact->second;
           else {
@@ -12128,9 +12196,8 @@ private:
                   const std::vector<Scope> *scopeState = nullptr) {
     std::vector<MirLoanId> result;
     result.reserve(loans.size());
-    for (const SemanticLoanId semanticLoan : loans) {
-      const MirLoanId loan = mirLoanForSemanticLoan(semanticLoan);
-      if (loan != 0 &&
+    for (const MirLoanId loan : loans) {
+      if (output.findLoan(loan) != nullptr &&
           std::find(result.begin(), result.end(), loan) == result.end()) {
         result.push_back(loan);
       }
@@ -18198,10 +18265,14 @@ private:
         endSwitchSubjectLoans(subjectLoans, statement.id);
       auto entryEnded = armEntryEnded(statement, armIndex);
       if (consumed && consumed->dependency != 0) {
-        if (std::find(entryEnded.begin(), entryEnded.end(),
-                      consumed->dependency) == entryEnded.end())
+        // Loan ends name MIR loans: the consumed group's own.
+        const auto group = semanticLoans.find(consumed->dependency);
+        const MirLoanId dependencyLoan =
+            group == semanticLoans.end() ? 0 : group->second;
+        if (std::find(entryEnded.begin(), entryEnded.end(), dependencyLoan) ==
+            entryEnded.end())
           valid = false;
-        std::erase(entryEnded, consumed->dependency);
+        std::erase(entryEnded, dependencyLoan);
       }
       endSemanticLoans(entryEnded, statement.id);
       if (consumed) {
@@ -19452,6 +19523,23 @@ MirBody MirLowerer::lowerBody(
         destructor);
     lowerer->shareFailureCleanupEnabled = shareFailureCleanup_;
     lowerer->shareExitCleanupEnabled = shareExitCleanup;
+    // Loan liveness is a MIR analysis: lower once without deciding loan
+    // ends, derive them from that pass's loans and CFG uses, then lower with
+    // those ends materialized as EndBorrow.
+    {
+      lowerer->deriveEndsFromMir = true;
+      (void)lowerer->lower(prologueValues, initializers);
+      std::optional<MirDerivedLoanEnds> ends = std::move(lowerer->mirEnds);
+      lowerer = std::make_unique<MirBodyLowerer>(
+          program, failureMetadata, body, kind, returnType,
+          definedFailureEffects, implicitZeroReturn, function, constructor,
+          lambda, programInitialization, loweredProgramInitialization,
+          constructorOwner, destructor);
+      lowerer->shareFailureCleanupEnabled = shareFailureCleanup_;
+      lowerer->shareExitCleanupEnabled = shareExitCleanup;
+      if (ends)
+        lowerer->applyLoanEnds(std::move(*ends));
+    }
     MirBody lowered = lowerer->lower(prologueValues, initializers);
     return std::pair{std::move(lowerer), std::move(lowered)};
   };

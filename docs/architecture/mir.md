@@ -3328,6 +3328,17 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
+facts, and a loan stays live while any binding or value carrying it (directly
+or through a child loan) is still used. Lowering a body takes two passes. The
+first decides no loan ends; `deriveLoanEnds` (`mir_loan_liveness.cpp`) then
+reads that pass's loans as `LoanFacts` (carriers, parent, stored and owner
+dependencies, entry, lifecycle binding, access, borrowed root) and plans each
+end over the body's statement tree; the second pass lowers again with those
+ends materialized as `EndBorrow`. A loan whose carrier was moved away ends at
+the move, since its authority went with it. `EndBorrow` has no runtime effect:
+it records the analysis for the verifier and the optimizer.
+
 MIR derives a body's entry loans (what the caller lends it) from the
 declared types of its receiver, captures and parameters: which carriers
 receive one, its kind and access, the stored reference paths a by-value
