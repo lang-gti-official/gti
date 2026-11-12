@@ -3393,7 +3393,19 @@ names none. A reference binding to a carrier depends on the Stored group
 retaining that carrier's references, and a shell-stored carrier on its
 argument's group. A reference binding that reuses an existing loan only
 becomes one of its carriers. Semantic loans still name these MIR loans for
-later HIR facts; only reference selections still take their shape from them.
+later HIR facts.
+
+A reference bound to an enum payload borrows the extracted field. Through a
+reference carrier it reborrows the carrier's loan and keeps that loan's stored
+dependency; from a local enum it has no parent. A stored-reference extraction
+instead records a reference selection from its MIR instruction: the payload's
+path and type in the carrier's instantiated enum, guarded by the extracted
+alternative, transferring the carrier value's group when the extraction
+transfers. Its parent is the receiver's entry Stored group for a `this`
+carrier, a Stored carrier's own group (none when a local carrier's reference
+is copied), or the Stored dependency of the loan the carrier is reached
+through; a transferring extraction has none. Its origin place still comes
+from semantics.
 
 A range loop's loans are the loans its hidden bindings carry: the range loan
 is the one loan the range carrier holds (a consuming range owns its range and
