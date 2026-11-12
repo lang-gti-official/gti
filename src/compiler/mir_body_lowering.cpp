@@ -5354,6 +5354,44 @@ private:
     return selected;
   }
 
+  // The loan a stored-reference payload selection reborrows: the receiver's
+  // entry Stored group for a `this` carrier, a Stored carrier's own group, or
+  // the Stored dependency of the loan a carrier is reached through. Only a
+  // reborrowing extraction has a parent: a copied or transferred reference,
+  // or one from a carrier without a place, carries its own authority.
+  [[nodiscard]] MirLoanId selectionAuthorityParent(const HirValue &value) {
+    if (value.operands.empty() ||
+        (value.payloadExtractionKind &&
+         *value.payloadExtractionKind ==
+             PayloadExtractionKind::TransferReference))
+      return 0;
+    const HirValueId carrier = value.operands.front();
+    const MirPlace *place = output.findPlace(placeForValue(carrier));
+    if (place == nullptr)
+      return 0;
+    if (place->root == MirPlaceRootKind::This) {
+      for (const auto &loan : output.loans) {
+        const MirPlace *source = output.findPlace(loan.source);
+        if (loan.entry && loan.kind == MirLoanKind::Stored &&
+            source != nullptr && source->root == MirPlaceRootKind::This &&
+            source->projections.empty())
+          return loan.id;
+      }
+      return 0;
+    }
+    const MirLoan *loan = output.findLoan(loanForValue(carrier));
+    if (loan == nullptr)
+      return 0;
+    // A reference copied out of a local carrier owns its authority; one
+    // copied through a borrowed carrier still reborrows its Stored group.
+    if (loan->kind == MirLoanKind::Stored)
+      return *value.payloadExtractionKind ==
+                     PayloadExtractionKind::CopyReference
+                 ? MirLoanId{0}
+                 : loan->id;
+    return loan->storedDependency;
+  }
+
   // The shape of the retained Stored group a binding is initialized from,
   // from MIR facts alone. The group is lifecycle-bound when its carrier type
   // is. It names the carrier type's single unconditional stored reference
@@ -14051,14 +14089,7 @@ private:
       MirLoanId parent = 0;
       MirLoanId loan = 0;
       if (desired->referenceSelection) {
-        if (desired->parent != 0) {
-          const auto found = semanticLoans.find(desired->parent);
-          if (found == semanticLoans.end()) {
-            valid = false;
-            return {};
-          }
-          parent = found->second;
-        }
+        parent = selectionAuthorityParent(*value);
         loan = createLoan(MirLoanKind::Local, origin, desired->access, valueId,
                           binding, 0, parent);
         recordLoanIdentity(loan, *desired, binding);
