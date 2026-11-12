@@ -12,6 +12,50 @@
 namespace lang {
 namespace {
 
+// HirBody's lookups scan linearly; liveness looks up every value and
+// statement of a body, so index the body once instead (keyed by its storage,
+// which is fixed while one body is analysed).
+struct BodyIndex {
+  const HirValue *valuesData = nullptr;
+  std::size_t valueCount = 0;
+  const HirStatement *statementsData = nullptr;
+  std::size_t statementCount = 0;
+  std::unordered_map<HirValueId, const HirValue *> values;
+  std::unordered_map<HirStatementId, const HirStatement *> statements;
+};
+
+const BodyIndex &indexOf(const HirBody &body) {
+  thread_local BodyIndex index;
+  if (index.valuesData != body.values.data() ||
+      index.valueCount != body.values.size() ||
+      index.statementsData != body.statements.data() ||
+      index.statementCount != body.statements.size()) {
+    index = BodyIndex{.valuesData = body.values.data(),
+                      .valueCount = body.values.size(),
+                      .statementsData = body.statements.data(),
+                      .statementCount = body.statements.size()};
+    index.values.reserve(body.values.size());
+    for (const HirValue &value : body.values)
+      index.values.emplace(value.id, &value);
+    index.statements.reserve(body.statements.size());
+    for (const HirStatement &statement : body.statements)
+      index.statements.emplace(statement.id, &statement);
+  }
+  return index;
+}
+
+const HirValue *indexedValue(const HirBody &body, HirValueId id) {
+  const auto &values = indexOf(body).values;
+  const auto found = values.find(id);
+  return found == values.end() ? nullptr : found->second;
+}
+
+const HirStatement *indexedStatement(const HirBody &body, HirStatementId id) {
+  const auto &statements = indexOf(body).statements;
+  const auto found = statements.find(id);
+  return found == statements.end() ? nullptr : found->second;
+}
+
 // A statement list: the region in which a loan created by one of its
 // statements stays confined unless a use escapes it.
 struct RegionKey {
@@ -68,7 +112,7 @@ public:
 private:
   void visit(HirStatementId id, HirStatementId owner, RegionKey key,
              std::size_t &next) {
-    const HirStatement *statement = body.findStatement(id);
+    const HirStatement *statement = indexedStatement(body, id);
     if (statement == nullptr || order.contains(id))
       return;
     parent[id] = owner;
@@ -108,7 +152,7 @@ private:
   void attachValue(HirValueId id, HirStatementId statement, std::size_t &next) {
     if (id == 0 || valueStatement.contains(id))
       return;
-    const HirValue *value = body.findValue(id);
+    const HirValue *value = indexedValue(body, id);
     if (value == nullptr)
       return;
     valueStatement.emplace(id, statement);
@@ -157,7 +201,7 @@ public:
 // index projections.
 SymbolId placeRoot(const HirBody &body, HirValueId id) {
   for (std::size_t depth = 0; depth < 64 && id != 0; ++depth) {
-    const HirValue *value = body.findValue(id);
+    const HirValue *value = indexedValue(body, id);
     if (value == nullptr)
       return 0;
     if (value->symbol != 0 && (value->kind == HirValueKind::Variable))
@@ -178,7 +222,7 @@ bool conflictsWithLoan(const HirBody &body, const StatementTree &tree,
   if (root == 0)
     return false;
   for (const HirValueId id : tree.valuesOf(statement)) {
-    const HirValue *value = body.findValue(id);
+    const HirValue *value = indexedValue(body, id);
     if (value == nullptr)
       continue;
     // An assignment names its target variable by symbol.
@@ -305,9 +349,10 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       if (loan.access == AccessMode::Mutable &&
           declared != declaringStatement.end())
         if (const HirStatement *statement =
-                body.findStatement(declared->second);
+                indexedStatement(body, declared->second);
             statement != nullptr && statement->value)
-          if (const HirValue *initializer = body.findValue(*statement->value);
+          if (const HirValue *initializer =
+                  indexedValue(body, *statement->value);
               initializer != nullptr &&
               initializer->borrowOrigin == BorrowOriginKind::Global)
             unconfined.insert(loan.id);
@@ -329,9 +374,10 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
         // a transfer does not widen the loan's extent.
         if (declared != declaringStatement.end())
           if (const HirStatement *statement =
-                  body.findStatement(declared->second);
+                  indexedStatement(body, declared->second);
               statement != nullptr && statement->value)
-            if (const HirValue *initializer = body.findValue(*statement->value);
+            if (const HirValue *initializer =
+                    indexedValue(body, *statement->value);
                 initializer != nullptr &&
                 initializer->kind == HirValueKind::Move)
               continue;
@@ -392,7 +438,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   };
   std::function<bool(HirStatementId)> cannotFallThrough =
       [&](HirStatementId id) -> bool {
-    const HirStatement *statement = body.findStatement(id);
+    const HirStatement *statement = indexedStatement(body, id);
     if (statement == nullptr)
       return false;
     switch (statement->kind) {
@@ -418,7 +464,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   // Every statement in a subtree, the root included.
   std::function<void(HirStatementId, std::vector<HirStatementId> &)> subtree =
       [&](HirStatementId id, std::vector<HirStatementId> &out) {
-        const HirStatement *statement = body.findStatement(id);
+        const HirStatement *statement = indexedStatement(body, id);
         if (statement == nullptr)
           return;
         out.push_back(id);
@@ -447,7 +493,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     subtree(arm, statements);
     std::vector<HirStatementId> nested;
     for (const HirStatementId statement : statements) {
-      const HirStatement *candidate = body.findStatement(statement);
+      const HirStatement *candidate = indexedStatement(body, statement);
       // An `else if` arm is itself the nested conditional.
       if (statement == arm) {
         if (candidate != nullptr && candidate->kind == HirStatementKind::If)
@@ -459,7 +505,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       bool direct = true;
       for (HirStatementId cursor = tree.parentOf(statement);
            cursor != 0 && cursor != arm; cursor = tree.parentOf(cursor)) {
-        const HirStatement *ancestor = body.findStatement(cursor);
+        const HirStatement *ancestor = indexedStatement(body, cursor);
         if (ancestor != nullptr && ancestor->kind == HirStatementKind::If)
           direct = false;
       }
@@ -477,7 +523,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     std::vector<HirStatementId> statements;
     subtree(arm, statements);
     for (const HirStatementId statement : statements) {
-      const HirStatement *candidate = body.findStatement(statement);
+      const HirStatement *candidate = indexedStatement(body, statement);
       if (candidate == nullptr)
         continue;
       switch (candidate->kind) {
@@ -514,7 +560,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       return armEndpoints(conditional, thenBranch, loan, own, points);
     }
     for (const HirStatementId nested : nestedConditionals(*arm)) {
-      const HirStatement *inner = body.findStatement(nested);
+      const HirStatement *inner = indexedStatement(body, nested);
       if (inner == nullptr ||
           !terminatingEndpoints(*inner, true, loan, own, points) ||
           !terminatingEndpoints(*inner, false, loan, own, points))
@@ -554,14 +600,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
               ? candidate == *lastUseConditional
               : tree.orderOf(candidate) >= tree.orderOf(*lastUse))
         break;
-      const HirStatement *inner = body.findStatement(candidate);
+      const HirStatement *inner = indexedStatement(body, candidate);
       if (inner == nullptr ||
           !terminatingEndpoints(*inner, true, loan, own, points) ||
           !terminatingEndpoints(*inner, false, loan, own, points))
         return false;
     }
     if (!lastUseConditional) {
-      const HirStatement *last = body.findStatement(*lastUse);
+      const HirStatement *last = indexedStatement(body, *lastUse);
       if (last == nullptr || (last->kind != HirStatementKind::Variable &&
                               last->kind != HirStatementKind::Expression))
         return false;
@@ -572,7 +618,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       points.push_back({0, *lastUseConditional});
       return true;
     }
-    const HirStatement *inner = body.findStatement(*lastUseConditional);
+    const HirStatement *inner = indexedStatement(body, *lastUseConditional);
     return inner != nullptr && armEndpoints(*inner, true, loan, own, points) &&
            armEndpoints(*inner, false, loan, own, points);
   };
@@ -581,7 +627,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   const auto innermostArm = [&](HirStatementId statement) -> HirStatementId {
     for (HirStatementId cursor = statement; cursor != 0;) {
       const HirStatementId parent = tree.parentOf(cursor);
-      const HirStatement *owner = body.findStatement(parent);
+      const HirStatement *owner = indexedStatement(body, parent);
       if (owner != nullptr && owner->kind == HirStatementKind::If &&
           ((owner->body && *owner->body == cursor) ||
            (owner->elseBranch && *owner->elseBranch == cursor)))
@@ -605,7 +651,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
         if (point.kind != 0) {
           const auto arm =
               point.kind == 1 ? conditional.body : conditional.elseBranch;
-          const HirStatement *owner = body.findStatement(point.statement);
+          const HirStatement *owner = indexedStatement(body, point.statement);
           const auto entryArm =
               owner == nullptr
                   ? std::nullopt
@@ -669,7 +715,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     std::vector<ArmStep> path;
     for (HirStatementId cursor = statement; cursor != 0 && cursor != top;) {
       const HirStatementId parent = tree.parentOf(cursor);
-      if (const HirStatement *owner = body.findStatement(parent)) {
+      if (const HirStatement *owner = indexedStatement(body, parent)) {
         if (owner->kind == HirStatementKind::If) {
           if (owner->body && *owner->body == cursor)
             path.push_back({parent, 0});
@@ -698,7 +744,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     const HirStatementId parent = tree.parentOf(statement);
     if (parent == 0)
       return body.roots;
-    const HirStatement *owner = body.findStatement(parent);
+    const HirStatement *owner = indexedStatement(body, parent);
     if (owner == nullptr)
       return std::vector<HirStatementId>{};
     for (const HirSwitchArm &arm : owner->switchArms)
@@ -711,7 +757,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   const auto breakTarget = [&](HirStatementId statement) -> HirStatementId {
     for (HirStatementId cursor = tree.parentOf(statement); cursor != 0;
          cursor = tree.parentOf(cursor))
-      if (const HirStatement *owner = body.findStatement(cursor))
+      if (const HirStatement *owner = indexedStatement(body, cursor))
         switch (owner->kind) {
         case HirStatementKind::While:
         case HirStatementKind::For:
@@ -737,7 +783,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       const auto at = std::find(list.begin(), list.end(), conflict);
       if (at == list.end() || std::next(at) == list.end())
         continue;
-      const HirStatement *next = body.findStatement(*std::next(at));
+      const HirStatement *next = indexedStatement(body, *std::next(at));
       if (next == nullptr || next->kind != HirStatementKind::Break ||
           breakTarget(next->id) != target.id)
         continue;
@@ -764,7 +810,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       if (!valid)
         continue;
       if (lastUse) {
-        const HirStatement *last = body.findStatement(*lastUse);
+        const HirStatement *last = indexedStatement(body, *lastUse);
         if (last == nullptr ||
             std::find(list.begin(), list.end(), *lastUse) == list.end() ||
             (last->kind != HirStatementKind::Variable &&
@@ -779,14 +825,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       std::optional<ArmStep> entry;
       for (auto step = conflictPath.rbegin(); step != conflictPath.rend();
            ++step)
-        if (const HirStatement *owner = body.findStatement(step->statement);
+        if (const HirStatement *owner = indexedStatement(body, step->statement);
             owner != nullptr && owner->kind == HirStatementKind::If) {
           entry = *step;
           break;
         }
       if (!entry)
         entry = conflictPath.back();
-      const HirStatement *owner = body.findStatement(entry->statement);
+      const HirStatement *owner = indexedStatement(body, entry->statement);
       if (owner == nullptr)
         continue;
       if (owner->kind == HirStatementKind::If)
@@ -821,7 +867,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       end = tree.parentOf(end);
     if (end == 0)
       continue;
-    const HirStatement *ending = body.findStatement(end);
+    const HirStatement *ending = indexedStatement(body, end);
     if (ending != nullptr && ending->kind == HirStatementKind::If &&
         conditionalPlan(*ending, loan, own, result))
       continue;
@@ -856,7 +902,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   for (const HirStatement &statement : body.statements) {
     if (statement.kind != HirStatementKind::Switch || !statement.value)
       continue;
-    const HirValue *subject = body.findValue(*statement.value);
+    const HirValue *subject = indexedValue(body, *statement.value);
     if (subject == nullptr || subject->kind != HirValueKind::Move)
       continue;
     const SymbolId root = placeRoot(body, *statement.value);
@@ -876,7 +922,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       bool transfers = false;
       bool valid = true;
       for (const auto &payload : statement.switchArms[arm].payloadBindings) {
-        const HirValue *extraction = body.findValue(payload.value);
+        const HirValue *extraction = indexedValue(body, payload.value);
         const HirBinding *binding = nullptr;
         for (const HirBinding &candidate : body.bindings)
           if (candidate.id == payload.binding)

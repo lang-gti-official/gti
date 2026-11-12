@@ -646,9 +646,12 @@ public:
         }
       }
     }
-    if (deriveEndsFromMir)
+    // A first pass exists only to derive loan ends: its body is discarded,
+    // so it neither emits failure cleanup nor verifies.
+    if (deriveEndsFromMir) {
       mirEnds = loanEndsFromMir();
-
+      return std::move(output);
+    }
     finishFailureCleanupAndVerify();
     return std::move(output);
   }
@@ -3985,10 +3988,22 @@ private:
     }
   }
 
+  // The MIR values lowering has produced for each HIR value.
+  std::unordered_map<HirValueId, std::vector<MirValueId>> mirValuesBySource;
+  [[nodiscard]] std::span<const MirValueId>
+  mirValuesOf(HirValueId sourceValue) const {
+    const auto found = mirValuesBySource.find(sourceValue);
+    return found == mirValuesBySource.end()
+               ? std::span<const MirValueId>{}
+               : std::span<const MirValueId>(found->second);
+  }
+
   MirValueId appendValue(HirValueId sourceValue, ExpressionInfo info) {
     const MirValueId id = output.values.size() + 1;
     output.values.push_back(
         {.id = id, .sourceValue = sourceValue, .info = std::move(info)});
+    if (sourceValue != 0)
+      mirValuesBySource[sourceValue].push_back(id);
     // A read or move of a local carries the local's complete set as
     // optional evidence the program verifier checks against the flow. A
     // load of a borrowed scalar place retains nothing of its address.
@@ -5370,6 +5385,17 @@ private:
         group = found->second;
     } else if (place->root == MirPlaceRootKind::Loan) {
       group = place->loan;
+    } else if (place->root == MirPlaceRootKind::This ||
+               place->root == MirPlaceRootKind::Symbol) {
+      // A receiver's or global's field is retained by that root's entry
+      // group.
+      for (const MirLoan &loan : output.loans)
+        if (const MirPlace *source = output.findPlace(loan.source);
+            loan.entry && source != nullptr && source->root == place->root &&
+            source->symbol == place->symbol && source->projections.empty()) {
+          group = loan.id;
+          break;
+        }
     }
     const MirLoan *loan = output.findLoan(group);
     if (loan == nullptr)
@@ -7679,7 +7705,8 @@ private:
         slot == nullptr ||
         (slot->root != MirPlaceRootKind::Value &&
          !(slot->root == MirPlaceRootKind::Temporary &&
-           findMirTemporaryMaterialization(output, *slot, id))) ||
+           findMirTemporaryMaterialization(output, *slot, id,
+                                           mirValuesOf(id)))) ||
         !slot->projections.empty()) {
       return 0;
     }
@@ -9359,7 +9386,8 @@ private:
         inputKind == HirCallInputKind::ReadTemporaryBorrow) {
       const MirPlace *source = output.findPlace(input.operands.front().place);
       auto materialization =
-          source ? findMirTemporaryMaterialization(output, *source, sourceValue)
+          source ? findMirTemporaryMaterialization(output, *source, sourceValue,
+                                                   mirValuesOf(sourceValue))
                  : MirTemporaryMaterialization{};
       if (!materialization && source)
         materialization =

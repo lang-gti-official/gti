@@ -1,0 +1,18 @@
+// A read-only method ranging over a stored-reference carrier field: the
+// range loan borrows a carrier shell rooted at the receiver, so it depends
+// on the receiver's entry group.
+import std.resource_vector;
+import std.resource;
+import "../../examples/allocator-support/arena.gti";
+class World {
+  mut std::resource_vector<int, engine::Arena> entities;
+public:
+  World(std::resource_ref<engine::Arena> resource)
+      : entities(std::resource_vector<int, engine::Arena>(resource)) {}
+  int sum() {
+    mut int total = 0;
+    for (auto& e : this.entities) { total += e; }
+    return total;
+  }
+};
+int main() { return 0; }
