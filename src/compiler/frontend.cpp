@@ -1523,7 +1523,11 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // HIR instance reanalysis is the last reader of the semantic visitor;
   // move the model into the result instead of deep-copying it.
   result.semantics = semantic.takeModel();
-  if (!result.semanticValid || !result.hirValid ||
+  // A program the parser recovered (analyzeRecoveredProgram) stops here.
+  // Semantics stays quiet about recovered nodes to avoid cascades, so their
+  // bodies can be incomplete; MIR checks only programs that parsed, and the
+  // parse error is the program's diagnostic.
+  if (!result.syntaxValid || !result.semanticValid || !result.hirValid ||
       options.stopAfter == FrontendPhase::Hir) {
     applyAuditPolicy();
     return result;

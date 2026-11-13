@@ -926,6 +926,13 @@ unreached library code requests is not reported in the editor, because it is
 that library's own `gti check` concern and the complete lowering cost about a
 third of every keystroke.
 
+A snapshot with a syntax error is analysed only through HIR. The editor
+analyses the parser's recovered program (`analyzeRecoveredProgram`), and
+semantics deliberately reports nothing about recovered nodes, so a recovered
+body can be incomplete without any semantic error. MIR checks only programs
+that parsed: borrow and lifetime diagnostics return once the parse error is
+fixed, and the parse error is never joined by an internal MIR error.
+
 The LSP also clears `lowerLibraryOnlyInstanceBodies`. A library-only
 instance (a compiler-trusted declaration whose arguments name only
 compiler-trusted types) is analysed and its own diagnostics are reported; its
