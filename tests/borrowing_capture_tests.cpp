@@ -910,6 +910,46 @@ int main() {
   // `left`, `right`, `alias` and `seen` each hold their own.
   expect(carrierFreeEntries && capturedAliasLoans == 6,
          "each capture alias carries a physical loan below the capture entry");
+  // A captured-reference entry is admitted by its MIR shape, not by a
+  // semantic loan number; a malformed shape is still rejected.
+  bool forgedCaptureEntry = false;
+  for (const auto &lambda : captureAliases.mir.lambdaInstances()) {
+    for (const auto &loan : lambda.body.loans) {
+      const auto *slot = lambda.body.findPlace(loan.source);
+      if (!loan.entry || loan.kind != lang::MirLoanKind::Parameter ||
+          slot == nullptr || slot->root != lang::MirPlaceRootKind::Symbol ||
+          slot->capture == 0)
+        continue;
+      const auto forge = [&](auto &&mutate) {
+        auto forged = captureAliases.mir;
+        auto *body =
+            lang::findMirBody(forged, {lang::MirBodyKind::Lambda, lambda.id});
+        mutate(body->loans[loan.id - 1]);
+        return lang::verifyMirProgram(forged).valid();
+      };
+      expect(forge([](lang::MirLoan &entry) { entry.semanticLoan = 0; }),
+             "a captured-reference entry needs no semantic loan identity");
+      expect(!forge([](lang::MirLoan &entry) { entry.escapes = true; }),
+             "a captured-reference entry cannot escape");
+      expect(!forge([&](lang::MirLoan &entry) {
+        entry.carriers.push_back(lambda.parameterBindings.empty()
+                                     ? 1000000
+                                     : lambda.parameterBindings.front());
+      }),
+             "a captured-reference entry has no carrier binding");
+      expect(!forge([](lang::MirLoan &entry) {
+        entry.access = entry.access == lang::AccessMode::Mutable
+                           ? lang::AccessMode::ReadOnly
+                           : lang::AccessMode::Mutable;
+      }),
+             "a captured-reference entry keeps the capture's exact access");
+      forgedCaptureEntry = true;
+      break;
+    }
+    if (forgedCaptureEntry)
+      break;
+  }
+  expect(forgedCaptureEntry, "capture aliases contain a captured entry loan");
   negative("exclusive-capture-alias", R"(
 int main() {
   mut int value = 0;
