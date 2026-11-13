@@ -1,16 +1,12 @@
-// MIR re-hosts of the raw-pointer live-borrow audit and the cross-function
-// persistent-storage borrow check (RFC 0004 phase 2), and their parity
-// measurement against the semantic checks.
+// MIR's raw-pointer live-borrow audit and cross-function persistent-storage
+// borrow check (RFC 0004 phase 2); MIR is the authority for both.
 #include "../src/compiler/mir_borrow_audits.h"
 #include "gti/frontend.h"
 
-#include <cstdlib>
+#include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <sstream>
 #include <string>
-#include <unistd.h>
 
 namespace {
 int failures = 0;
@@ -169,13 +165,8 @@ int main() {
          "finding");
 }
 
-void persistentStorageParity() {
-  const auto log =
-      std::filesystem::temp_directory_path() /
-      ("gti-mir-borrow-audit-" + std::to_string(::getpid()) + ".log");
-  std::filesystem::remove(log);
-  ::setenv("GTI_PARITY_RAW_AUDIT", log.c_str(), 1);
-  const auto rejected = analyze(R"(
+void persistentStorageAuthority() {
+  const std::string rejectedSource = R"(
 mut int global = 1;
 void bump() { global = global + 1; }
 int main() {
@@ -183,17 +174,34 @@ int main() {
   bump();
   return borrowed;
 }
-)",
-                                false);
-  ::unsetenv("GTI_PARITY_RAW_AUDIT");
-  std::ifstream input(log);
-  std::stringstream text;
-  text << input.rdbuf();
-  std::filesystem::remove(log);
-  expect(text.str().find("PARITY storage match") != std::string::npos,
-         "MIR rejects the invocation semantics rejects:\n" + text.str());
-  expect(!rejected.semanticValid && rejected.mir.functionInstances().empty(),
-         "measurement restores the semantic rejection");
+)";
+  const auto rejected = analyze(rejectedSource, false);
+  const auto storage = std::find_if(
+      rejected.diagnostics.begin(), rejected.diagnostics.end(),
+      [](const auto &diagnostic) { return diagnostic.code == "GTI-S2045"; });
+  const auto call = rejectedSource.find("bump();");
+  expect(
+      !rejected.semanticValid && storage != rejected.diagnostics.end() &&
+          storage->primary.start >= call && storage->primary.end <= call + 6 &&
+          std::none_of(rejected.diagnostics.begin(), rejected.diagnostics.end(),
+                       [](const auto &diagnostic) {
+                         return diagnostic.code == "GTI-B0001";
+                       }),
+      "MIR rejects the invocation at its call, not as an internal error");
+  expect(storage != rejected.diagnostics.end() &&
+             std::any_of(storage->related.begin(), storage->related.end(),
+                         [](const auto &related) {
+                           return related.message.find(
+                                      "conflicting transitive storage "
+                                      "access") != std::string::npos;
+                         }) &&
+             std::any_of(storage->related.begin(), storage->related.end(),
+                         [](const auto &related) {
+                           return related.message.find(
+                                      "protected borrow originates") !=
+                                  std::string::npos;
+                         }),
+         "the rejection names the transitive access and the protected borrow");
   const auto accepted = analyze(R"(
 mut int global = 1;
 void bump() { global = global + 1; }
@@ -213,6 +221,6 @@ int main() {
 
 int main() {
   rawAccesses();
-  persistentStorageParity();
+  persistentStorageAuthority();
   return failures == 0 ? 0 : 1;
 }

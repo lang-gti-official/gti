@@ -1,6 +1,9 @@
-MIR now computes the raw-pointer audit's live-borrow finding and the
-cross-function persistent-storage GTI-S2045 itself, from verified MIR and its
-own loan ends. Both run beside the semantic checks, which still emit the
-diagnostics. `GTI_PARITY_RAW_AUDIT` prints a per-line comparison of the two
-results so the switch to MIR can be measured; without it compilation is
-unchanged.
+MIR now decides the raw-pointer audit's live-borrow finding (GTI-S2102) and
+the cross-function persistent-storage borrow rejection (GTI-S2045) from its
+own loan ends and effect closure; the semantic loan-flow versions are deleted.
+A persistent-storage conflict is reported at the rejected call instead of as an
+internal compiler error. Two cases change to the RFC 0004 results: a borrow
+whose last use precedes a scope's cleanup no longer conflicts with that
+cleanup, and a call through a signature-erased function item is checked against
+its exact target. Moved-out by-value parameters and returned locals no longer
+count as running their destructors in the persistent-storage check.

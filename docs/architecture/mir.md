@@ -3474,15 +3474,15 @@ both backends see only erased types; lifetimes never change MIR shape, layout
 or emitted code, so a lifetime-free program produces the same MIR as before
 RFC 0004.
 
-### Borrow audits re-hosted from semantic loan flow
+### Borrow audits hosted on MIR
 
-Two findings are still decided by the semantic loan flow that RFC 0004
-phase 2 retires: the raw-pointer audit's "Raw access may overlap a live
-incompatible checked borrow" (GTI-S2102) and the cross-function
-persistent-storage GTI-S2045. Their MIR counterparts
-(`src/compiler/mir_borrow_audits.h`) read only verified MIR and MIR's own
-loan ends, and currently run alongside the semantic checks for measurement;
-the semantic checks still emit the diagnostics.
+MIR is the authority for two borrow findings that semantic loan flow used to
+decide (RFC 0004 phase 2): the raw-pointer audit's "Raw access may overlap a
+live incompatible checked borrow" (GTI-S2102, an audit warning that strict mode
+promotes) and the cross-function persistent-storage GTI-S2045. Both
+(`src/compiler/mir_borrow_audits.h`) read only MIR and MIR's own loan ends; the
+frontend reports them from the program that covers every application body
+(`mir_borrow_audit_diagnostics.cpp`).
 
 `auditMirRawAccesses` (`mir_raw_audit.cpp`) runs per body containing a
 `RawDereference` or `RawIndex` place. A forward fixed point over the body's
@@ -3522,12 +3522,14 @@ or never initialized, per the body's lifecycle events) runs no cleanup and is
 not an invocation: a by-value parameter moved into a field, or a local moved
 into the result, does not reach its destructor's storage effects.
 
-With `GTI_PARITY_RAW_AUDIT` set (`1` for standard error, otherwise a file to
-append to), the frontend (`mir_borrow_audit_parity.cpp`) compares the
-semantic findings with the MIR findings by source line and prints each match
-and mismatch. A program that semantics rejects only for persistent-storage
-findings continues to MIR with those findings set aside while measuring, and
-the rejection is restored afterwards. Without the variable nothing runs.
+A finding is anchored at its instruction's HIR expression, its call site, the
+local a scope-exit drop destroys, its statement, or, for an expanded pack
+element with no expression of its own, the expansion's next source-bearing
+instruction. A persistent-storage finding names the first transitive access to
+the protected storage and the protected borrow's origin. Because a
+persistent-storage conflict fails MIR verification, the frontend reports these
+findings instead of an internal error when that verification rejects the
+program.
 
 ### Shared failure cleanup
 

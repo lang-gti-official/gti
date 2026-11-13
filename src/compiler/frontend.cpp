@@ -10,7 +10,7 @@
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
 #include "gti/support.h"
-#include "mir_borrow_audit_parity.h"
+#include "mir_borrow_audit_diagnostics.h"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -917,11 +917,7 @@ FrontendResult Frontend::analyze(
   result.sources = sourceLoader.sources();
   append(result.diagnostics, sourceLoader.errors());
   result.sourceValid = !sourceLoader.hadError();
-  {
-    MirBorrowAuditParityScope parity(options);
-    result = finishAnalysis(entryPath, std::move(result));
-    parity.finish(result);
-  }
+  result = finishAnalysis(entryPath, std::move(result));
   if (options.suggestIncludes && !options.completionOffset &&
       options.stopAfter != FrontendPhase::Parsing) {
     addIncludeSuggestions(result, options, entryPath, preludePaths,
@@ -945,10 +941,7 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
   result.sources = std::move(sources);
   result.diagnostics = std::move(sourceDiagnostics);
   result.sourceValid = sourceValid;
-  MirBorrowAuditParityScope parity(options);
-  result = finishAnalysis(entryPath, std::move(result));
-  parity.finish(result);
-  return result;
+  return finishAnalysis(entryPath, std::move(result));
 }
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
@@ -1368,17 +1361,6 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     }
     append(result.diagnostics, semantic.errors());
     const std::size_t semanticDiagnosticCount = semantic.errors().size();
-    // Development parity measurement only (GTI_PARITY_RAW_AUDIT).
-    if (auto *parity = MirBorrowAuditParityScope::active();
-        parity != nullptr &&
-        parity->semanticFindings(result.diagnostics, preSemanticDiagnostics) &&
-        !result.semanticValid && !semantic.cancelled()) {
-      // The set-aside findings stay recorded in the analyzer; only a new
-      // request diagnostic keeps the program rejected.
-      (void)semantic.applyProgramRequest(result.program, options.program);
-      result.semanticValid =
-          semantic.errors().size() == semanticDiagnosticCount;
-    }
     // Complete the requested inference phases before applying CI policy, so
     // Strict and Warn discover the same concrete bodies and audit findings.
     const bool discoveredTestEntry = options.program.testSuite &&
@@ -1559,6 +1541,25 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // complete program above has already reported every diagnostic.
   // Every application body is borrow-checked, reachable or not: MIR checks
   // the complete HIR before code generation narrows it to what roots reach.
+  // MIR is also the authority for the raw-pointer audit's live-borrow finding
+  // and for cross-function persistent-storage borrows (GTI-S2045); both are
+  // reported from the program that covers every application body.
+  const bool rawAudit = options.rawPointerAudit != RawPointerAuditMode::Off;
+  bool rawAudited = false;
+  // A persistent-storage rejection fails MIR verification. It is the
+  // program's borrow error, anchored at the rejected invocation, not an ICE.
+  const auto persistentStorageRejection = [&](MirBorrowCheck &check,
+                                              const MirProgram &program,
+                                              const HirProgram &source) {
+    if (!check.diagnostics.empty())
+      return;
+    auto storage =
+        mirPersistentStorageDiagnostics(program, source, entryPath.string());
+    if (storage.empty())
+      return;
+    check.internal = false;
+    check.diagnostics = std::move(storage);
+  };
   if (hir.reachable && !options.retainApplicationBodies) {
     const HirProgram &checked =
         hir.borrowChecked ? *hir.borrowChecked : result.hir;
@@ -1568,11 +1569,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     if (completeMetadata.valid()) {
       MirLoweringResult complete =
           MirLowerer().lower(checked, completeMetadata.metadata);
-      if (auto *parity = MirBorrowAuditParityScope::active())
-        parity->observe(complete.program, checked);
+      if (rawAudit) {
+        for (Diagnostic &diagnostic : mirRawAuditDiagnostics(
+                 complete.program, checked, entryPath.string()))
+          result.diagnostics.push_back(std::move(diagnostic));
+        rawAudited = true;
+      }
       if (!complete.valid()) {
         MirBorrowCheck check =
             mirBorrowDiagnostics(complete, complete.program, checked);
+        persistentStorageRejection(check, complete.program, checked);
         const bool borrowRejection = !check.diagnostics.empty();
         // A body only this check lowers must not hide an internal failure.
         if (check.internal && check.diagnostics.empty())
@@ -1638,8 +1644,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   MirLoweringResult mir =
       MirLowerer().lower(result.hir, result.failureMetadata);
   mirProgress.finish();
-  if (auto *parity = MirBorrowAuditParityScope::active())
-    parity->observe(mir.program, result.hir);
+  if (rawAudit && !rawAudited)
+    for (Diagnostic &diagnostic :
+         mirRawAuditDiagnostics(mir.program, result.hir, entryPath.string()))
+      result.diagnostics.push_back(std::move(diagnostic));
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
   if (!mir.diagnostics.empty()) {
@@ -1654,9 +1662,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   if (!result.mirValid) {
     // MIR is the single authority for body-local borrow validity: its borrow
     // rejections are the program's diagnostics, not internal errors.
-    if (MirBorrowCheck check =
-            mirBorrowDiagnostics(mir, result.mir, result.hir);
-        !check.diagnostics.empty() && !check.internal) {
+    MirBorrowCheck check = mirBorrowDiagnostics(mir, result.mir, result.hir);
+    persistentStorageRejection(check, result.mir, result.hir);
+    if (!check.diagnostics.empty() && !check.internal) {
       result.semanticValid = false;
       result.mirBorrowRejected = true;
       for (Diagnostic &diagnostic : check.diagnostics)

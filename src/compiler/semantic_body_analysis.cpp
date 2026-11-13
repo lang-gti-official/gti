@@ -236,8 +236,6 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   programEffects.clear();
   requestSession.programExpressionCache = {};
   requestSession.fullExpressionStates.clear();
-  requestSession.programStorageBorrowChecks.clear();
-  requestSession.programFailingEffects.clear();
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>();
   requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
@@ -5422,7 +5420,6 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       semanticModel.recordBorrowDependencySet(
           *stmt.value(), {.dependencies = std::move(dependencies)});
     }
-    recordReturnedStorageBorrowCleanup(stmt);
     recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -5475,7 +5472,6 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       }
     }
   }
-  recordReturnedStorageBorrowCleanup(stmt);
   requireInitializedReceiver(stmt.keyword());
 }
 
@@ -12137,10 +12133,6 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
     const bool concreteEmpty =
         resolvedPack && resolvedPack->type.kind == SemanticType::TypePack &&
         resolvedPack->type.concretePack && resolvedPack->type.arguments.empty();
-    const bool dependentPrimary =
-        resolvedPack && isUnselectedProgramPack(*resolvedPack);
-    const std::size_t firstDependentCheck =
-        requestSession.programStorageBorrowChecks.size();
     struct RestoreEffectOwner {
       ProgramEffectOwner &slot;
       ProgramEffectOwner previous;
@@ -12171,11 +12163,6 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
         argumentTypes.emplace_back(analyze(argument));
       }
     }
-    if (dependentPrimary)
-      for (std::size_t index = firstDependentCheck;
-           index < requestSession.programStorageBorrowChecks.size(); ++index)
-        requestSession.programStorageBorrowChecks[index].dependentPrimary =
-            true;
   }
 
   if (calleeType != SemanticType::Function || !callee ||

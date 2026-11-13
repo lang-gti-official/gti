@@ -456,9 +456,10 @@ Warn and Strict perform identical inference. Semantic/query workers emit
 typed warnings, split into observed violations, potential violations and
 incomplete analysis. The frontend promotes these warnings only after the
 requested frontend phases for Strict; promotion cannot poison query summaries.
-Audit-only conflicts are excluded from mandatory loan endpoint planning and
-inspect its completed liveness facts only for diagnostics. No checked loan,
-cleanup schedule or native output may depend on audit mode.
+A raw access that may overlap a live, incompatible checked loan is MIR's
+finding ([MIR](mir.md#borrow-audits-hosted-on-mir)), reported from MIR's own
+loan ends; semantics keeps the lifetime, witness and conversion audits. No
+checked loan, cleanup schedule or native output may depend on audit mode.
 Audit-only field-type queries look up existing declaration identities; they do
 not register unrelated methods or change mandatory MIR symbol/place identities.
 
@@ -1605,8 +1606,7 @@ HIR. This proof does not infer safety from a backend or from `findConstant()`.
 Closed generic calls use request-local concrete effect queries keyed by the
 declaration, concrete owner, and type/value substitutions. A reused isolated
 semantic instance worker closes queries selected by actual source-owner effect
-edges and pending persistent-storage obligations, including obligations inside
-a selected generic body whose caller has no live persistent loan. Merely
+edges. Merely
 registering a query in a speculative cache is not a root; discarded
 `if constexpr` arms do not contribute effects. Nongeneric bridge
 calls retain their graph edges, and source constructor/destructor/field effects
@@ -1675,14 +1675,15 @@ and cannot publish speculative storage writes or cleanup into caller flow.
 The closed source effect graph also computes a monotone may-propagate-failure
 bit from typed local defined-failure outcomes, unknown GTI boundaries and exact
 selected callees. It executes no GTI and adds no alternate failure semantics.
-Deferred lifecycle edges remain conservative for process-initializer ordering;
-hidden persistent-storage checks traverse them when a body can fail, alongside
-the unconditional cleanup effects recorded at actual scope/full-expression and
-replacement endpoints. Thus a no-fail constructor that moves a parameter into a
-field does not appear to destroy that moved parameter, but a potentially failing
-constructor retains field/input rollback. Concrete effect import preserves
-deferred versus executed paths rather than flattening a conditional destructor
-into an unconditional ambient write.
+Deferred lifecycle edges remain conservative for process-initializer ordering,
+alongside the unconditional cleanup effects recorded at actual
+scope/full-expression and replacement endpoints. Concrete effect import
+preserves deferred versus executed paths rather than flattening a conditional
+destructor into an unconditional ambient write. A live borrow of persistent
+storage across a call, cleanup or ordered input whose effects reach that
+storage is MIR's check
+([MIR](mir.md#borrow-audits-hosted-on-mir)), over MIR's own executable
+effect closure.
 
 Full-expression root indices and typed expression/failure slices are owned by
 the semantic-model snapshot. Concrete-instance delta brackets reset those caches
@@ -3338,7 +3339,8 @@ MIR is the single body-local borrow checker (RFC 0004,
 end points. The semantic loan flow below reports no body-local borrow conflict
 or escape: it still assigns the loan identities and carriers HIR transports to
 MIR, until MIR derives loans from its own places. Semantics still owns
-signature and persistent-storage effect checks.
+signature checks; persistent-storage borrows across calls and the raw audit's
+live-borrow finding are MIR's.
 
 Facts that outlive the loan flow are kept apart from it. `BodyFlowState`
 (beside `LoanFlowState`, saved, reset and restored at the same points) holds

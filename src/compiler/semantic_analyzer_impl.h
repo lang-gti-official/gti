@@ -98,52 +98,6 @@ public:
     bool cleanup = false;
   };
 
-  struct ProgramBorrowStorageUse {
-    BorrowOriginPlace place;
-    AccessMode access = AccessMode::ReadOnly;
-    SourceSpan span;
-    bool cleanup = false;
-  };
-
-  struct ProgramStorageBorrowProtection {
-    SemanticLoanPlace place;
-    AccessMode access = AccessMode::ReadOnly;
-    SourceSpan origin;
-    // Zero denotes an invocation/result-scoped dependency. Named loans reuse
-    // the ordinary structured last-use proof before effect checks are closed.
-    SemanticLoanId loan = 0;
-    bool scopeExit = false;
-  };
-
-  enum class ProgramStorageBorrowSite {
-    Invocation,
-    OrderedInput,
-    ScopeCleanup,
-    FullExpressionCleanup,
-    FailureCleanup,
-    ReplacementCleanup,
-  };
-
-  struct ProgramFailureCondition {
-    bool direct = false;
-    bool unknown = false;
-    std::vector<ProgramEffectOwner> targets;
-  };
-
-  struct ProgramStorageBorrowCheck {
-    ProgramEffectOwner owner;
-    SourceSpan site;
-    ProgramStorageBorrowSite siteKind = ProgramStorageBorrowSite::Invocation;
-    std::vector<ProgramStorageBorrowProtection> protections;
-    std::vector<ProgramBorrowStorageUse> uses;
-    std::vector<ProgramEffectOwner> targets;
-    std::vector<ProgramUnknownEffect> unknown;
-    std::shared_ptr<const ProgramFailureCondition> failureCondition;
-    // A symbolic fold is not an executable invocation. Keep its obligation
-    // until selected concrete bodies replay it with an exact element count.
-    bool dependentPrimary = false;
-  };
-
   struct ProgramExpressionEffects {
     ProgramEffectOwner owner;
     std::size_t order = 0;
@@ -151,11 +105,7 @@ public:
     std::size_t edgeEnd = 0;
     std::size_t unknownStart = 0;
     std::size_t unknownEnd = 0;
-    std::size_t useStart = 0;
-    std::size_t useEnd = 0;
     std::size_t storageUseStart = 0;
-    std::size_t borrowCheckStart = 0;
-    bool directFailureBefore = false;
   };
 
   struct ProgramTemporaryCleanup {
@@ -180,19 +130,14 @@ public:
         fullExpressionRoots;
     std::unordered_map<const Expr *, ProgramExpressionEffects>
         programExpressionEffects;
-    std::unordered_map<const Expr *,
-                       std::shared_ptr<const ProgramFailureCondition>>
-        programOperationFailures;
   };
 
   struct ProgramEffectSummary {
-    bool directFailure = false;
     // An effect query cannot certify an invalid body. Its ordinary instance
     // analysis owns diagnostics, including discovery of independent type
     // assertions; retained errors gate that path if its result later changes.
     bool invalidBody = false;
     std::vector<ProgramStorageEffectUse> uses;
-    std::vector<ProgramBorrowStorageUse> borrowUses;
     std::vector<ProgramEffectEdge> edges;
     std::vector<ProgramUnknownEffect> unknown;
   };
@@ -1182,7 +1127,6 @@ private:
     std::vector<ActiveLoanFlowConditionalArm> path;
     std::vector<ActiveLoanFlowSwitchArm> switchPath;
     std::vector<std::size_t> loops;
-    std::optional<std::size_t> programStorageCheck;
     Diagnostic diagnostic;
   };
 
@@ -1265,36 +1209,6 @@ private:
     std::vector<ActiveLoanFlowSwitchArm> switchPath;
   };
 
-  struct LoanFlowArmEndpoint {
-    bool atEntry = true;
-    bool proofOnly = false;
-    const Stmt *after = nullptr;
-    std::size_t sequence = 0;
-    const IfStmt *entryConditional = nullptr;
-    bool thenBranch = false;
-    const SwitchStmt *entrySwitch = nullptr;
-    std::size_t switchArm = 0;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
-  };
-
-  struct LoanFlowConditionalEndPlan {
-    std::size_t conditional = 0;
-    const IfStmt *statement = nullptr;
-    std::vector<LoanFlowArmEndpoint> endpoints;
-  };
-
-  struct LoanFlowSwitchEndPlan {
-    std::size_t switchIndex = 0;
-    const SwitchStmt *statement = nullptr;
-    std::vector<LoanFlowArmEndpoint> endpoints;
-  };
-
-  struct LoanFlowBreakEndPlan {
-    std::size_t conflict = 0;
-    LoanFlowArmEndpoint endpoint;
-  };
-
   // Text a lambda capture provided has an owner the compiler cannot name: it
   // may be used locally, but no return or store may let it escape. A local
   // view that is ever given such text holds it for its whole scope, as MIR,
@@ -1342,10 +1256,6 @@ private:
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
     std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
-    std::vector<std::size_t> programScopeExitChecks;
-    // Audit uses may inspect checked liveness, but cannot request an endpoint
-    // or otherwise change the mandatory loan schedule.
-    std::vector<PendingBorrowConflict> rawAuditConflicts;
     std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowStatementBoundary> statementBoundaries;
     std::vector<LoanFlowSwitchBoundary> switchBoundaries;
@@ -1630,7 +1540,6 @@ private:
       // A type-only use is inert: check contradictions, not pointee lifetime.
       SemanticType expectedPointee = SemanticType::Unknown;
       std::optional<AccessMode> memoryAccess;
-      std::shared_ptr<LoanFlowState> loanContext;
     };
     std::size_t identity = 0;
     std::vector<Access> accesses;
@@ -3342,9 +3251,6 @@ private:
                                AccessMode requested, std::string message,
                                SemanticLoanId throughLoan = 0);
 
-  void reportRawLoanConflict(const Token &token, const SemanticLoanPlace &place,
-                             AccessMode access, SemanticLoanId throughLoan);
-
   void validateLoanPlaceAccess(const Expr &expression, OccurrenceRole roles);
 
   void
@@ -3475,87 +3381,19 @@ private:
 
   [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const;
 
-  [[nodiscard]] bool canEndLoanEarly(const LoanFlowRecord &loan) const;
-
-  [[nodiscard]] static bool
-  supportsConditionalArmLoanEnd(const Stmt *statement);
-
-  [[nodiscard]] static bool
-  pathStartsWith(const std::vector<ActiveLoanFlowConditionalArm> &path,
-                 const std::vector<ActiveLoanFlowConditionalArm> &prefix);
-
-  [[nodiscard]] static bool
-  pathStartsWith(const std::vector<ActiveLoanFlowSwitchArm> &path,
-                 const std::vector<ActiveLoanFlowSwitchArm> &prefix);
-
-  [[nodiscard]] static bool
-  sameStructuredPath(const std::vector<ActiveLoanFlowConditionalArm> &left,
-                     const std::vector<ActiveLoanFlowSwitchArm> &leftSwitch,
-                     const std::vector<ActiveLoanFlowConditionalArm> &right,
-                     const std::vector<ActiveLoanFlowSwitchArm> &rightSwitch);
-
-  [[nodiscard]] static bool structuredPathsMayOverlap(
-      const std::vector<ActiveLoanFlowConditionalArm> &left,
-      const std::vector<ActiveLoanFlowSwitchArm> &leftSwitch,
-      const std::vector<ActiveLoanFlowConditionalArm> &right,
-      const std::vector<ActiveLoanFlowSwitchArm> &rightSwitch);
-
-  [[nodiscard]] bool pathContainsUnsupportedControlFlow(
-      const std::vector<ActiveLoanFlowConditionalArm> &path,
-      const std::vector<ActiveLoanFlowSwitchArm> &switchPath) const;
-
-  [[nodiscard]] std::optional<LoanFlowBreakEndPlan>
-  pathLocalBreakEndPlan(SemanticLoanId id, const LoanFlowRecord &loan,
-                        std::size_t conflictIndex) const;
-
-  [[nodiscard]] bool conditionalHasConflict(std::size_t conditionalIndex,
-                                            SemanticLoanId loan) const;
-
-  [[nodiscard]] bool armHasConflict(const LoanFlowConditionalArm &arm,
-                                    SemanticLoanId loan) const;
-
   // When a later use keeps the fallthrough path live, an earlier nested
   // conditional may still end the loan on a sibling path that terminates.
   // Collect only those terminating-path endpoints; reachable fallthrough paths
   // deliberately retain the loan for their continuation.
-  [[nodiscard]] std::optional<std::vector<LoanFlowArmEndpoint>>
-  provenTerminatingPathEndpoints(std::size_t conditionalIndex, bool thenBranch,
-                                 SemanticLoanId loan) const;
 
   // An arm endpoint must run on every fallthrough path that reaches the
   // enclosing join. A nested if can therefore either end the loan at its own
   // merge, or recursively end it on both of its arms when a conflict occurs
   // before that merge. Loops and switch edges remain conservative.
-  [[nodiscard]] std::optional<std::vector<LoanFlowArmEndpoint>>
-  provenConditionalArmEndpoints(std::size_t conditionalIndex, bool thenBranch,
-                                SemanticLoanId loan) const;
-
-  [[nodiscard]] static bool
-  endpointPrecedesConflict(const LoanFlowArmEndpoint &endpoint,
-                           const PendingBorrowConflict &conflict);
-
-  [[nodiscard]] bool
-  planHasResolvedConflict(const LoanFlowConditionalEndPlan &plan,
-                          SemanticLoanId loan) const;
-
-  [[nodiscard]] std::optional<LoanFlowConditionalEndPlan>
-  conditionalEndPlan(SemanticLoanId id, const LoanFlowRecord &loan) const;
-
-  [[nodiscard]] std::optional<LoanFlowSwitchEndPlan>
-  switchEndPlan(SemanticLoanId id, const LoanFlowRecord &loan) const;
-
-  [[nodiscard]] bool
-  conflictFollowsConditionalEndpoint(const LoanFlowConditionalEndPlan &plan,
-                                     std::size_t conflictIndex,
-                                     SemanticLoanId loan) const;
-
-  [[nodiscard]] bool
-  conflictIsInConditionalArm(const LoanFlowConditionalEndPlan &plan,
-                             std::size_t conflictIndex) const;
 
   void reportBorrowConflict(const Token &token,
                             const std::vector<SemanticLoanId> &loans,
-                            std::string message, bool rawAudit = false);
+                            std::string message);
 
   void finalizeLoanFlow();
 
@@ -5656,23 +5494,6 @@ private:
   void recordProgramStorageEffect(const Expr &expression,
                                   SemanticBindingKind bindingKind,
                                   SymbolId symbol, OccurrenceRole roles);
-  void recordProgramBorrowStorageEffect(const Expr &expression,
-                                        OccurrenceRole roles);
-  void appendProgramStorageBorrowProtection(ProgramStorageBorrowCheck &check,
-                                            const SemanticLoanPlace &place,
-                                            AccessMode access,
-                                            const SourceSpan &origin,
-                                            SemanticLoanId loan = 0);
-  [[nodiscard]] ProgramStorageBorrowCheck
-  captureProgramStorageBorrows(const SourceSpan &site);
-  void appendProgramStorageBorrowInput(
-      ProgramStorageBorrowCheck &check, const ExprPtr &input,
-      std::optional<AccessMode> directAccess = std::nullopt);
-  void publishProgramStorageBorrowCheck(ProgramStorageBorrowCheck check,
-                                        ProgramEffectOwner owner,
-                                        std::size_t edgeStart,
-                                        std::size_t unknownStart);
-  void recordReturnedStorageBorrowCleanup(const ReturnStmt &statement);
   void recordStorageBorrowCleanup(const Symbol &symbol);
   void recordProgramScopeBorrowCleanup();
   [[nodiscard]] std::optional<std::size_t>
@@ -5682,27 +5503,15 @@ private:
   void finishProgramFullExpression(std::size_t frame);
   void recordProgramTemporary(const Expr &producer, const ExpressionInfo &info);
   void consumeProgramTemporary(const ExprPtr &value);
-  void recordProgramTemporaryFailureCleanup(
-      const Expr &operation,
-      const std::vector<ProgramTemporaryCleanup> &temporaries);
   void recordProgramExecutedCleanupEffects(const SemanticType &type,
                                            const SourceSpan &span,
                                            bool includeDirect = true);
-  [[nodiscard]] bool
-  programFailureMayHappen(const ProgramFailureCondition &condition) const;
-  void closeProgramFailureEffects();
   void recordProgramReplacementCleanup(const Expr &operation,
                                        const SemanticType &type);
-  void
-  recordProgramOrderedInputEffects(const ProgramStorageBorrowCheck &earlier,
-                                   const ExprPtr &input);
-  [[nodiscard]] bool isUnselectedProgramPack(const Symbol &symbol) const;
-  [[nodiscard]] bool isDependentProgramPackFold(const Expr &expression) const;
   void recordProgramCallEffectTargets(const Expr &expression);
   [[nodiscard]] bool
   hasExactWholeObjectVirtualTarget(const ResolvedCallInfo &resolved,
                                    const SemanticPlace &receiver);
-  void validateProgramStorageBorrowEffects();
   [[nodiscard]] bool isPersistentStorageSymbol(SymbolId symbol) const;
 
   void addProgramEffectEdge(ProgramEffectOwner target, const Expr &expression);
@@ -7677,11 +7486,8 @@ private:
         programEffects;
     std::vector<ProgramInitializationStep> threadLocalSteps;
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
-    std::vector<ProgramStorageBorrowCheck> programStorageBorrowChecks;
     ProgramExpressionCache programExpressionCache;
     std::vector<ProgramFullExpressionState> fullExpressionStates;
-    std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
-        programFailingEffects;
     std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
     std::size_t programStoragePlaceUseDepth = 0;
     std::vector<const Expr *> foreignAddressPlaces;

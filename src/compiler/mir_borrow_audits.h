@@ -2,6 +2,7 @@
 
 #include "gti/mir.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,16 @@ struct MirBorrowAuditFinding {
   std::vector<HirValueId> following;
   std::vector<HirStatementId> followingStatements;
   std::vector<MirLoanId> loans;
+  // Persistent storage: the rejected invocation reaches a GTI target whose
+  // effects are unknown, and the first transitive access to the protected
+  // storage it reaches, when one is known.
+  bool unknownEffects = false;
+  // Why the rejected instruction runs code: the source-level context the
+  // diagnostic names (empty for an ordinary invocation).
+  std::string context;
+  std::optional<MirBodyAddress> accessBody;
+  MirBlockId accessBlock = 0;
+  MirInstructionId accessInstruction = 0;
   std::string detail;
 };
 

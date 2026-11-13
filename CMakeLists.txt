@@ -641,7 +641,7 @@ add_library(
   "src/compiler/mir_thread_local.cpp"
   "src/compiler/mir_storage_effects.cpp"
   "src/compiler/mir_raw_audit.cpp"
-  "src/compiler/mir_borrow_audit_parity.cpp"
+  "src/compiler/mir_borrow_audit_diagnostics.cpp"
   "src/compiler/mir_text_contracts.cpp"
   "src/compiler/mir_verification_queries.cpp"
   "src/compiler/mir_backend.cpp"

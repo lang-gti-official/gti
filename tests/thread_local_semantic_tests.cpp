@@ -856,21 +856,27 @@ int main() {
 }
 )",
                                        concurrent, true);
-    const bool realScopeCleanup = std::any_of(
-        scopeConflict.diagnostics.begin(), scopeConflict.diagnostics.end(),
-        [](const auto &diagnostic) {
-          return diagnostic.code == "GTI-S2045" &&
-                 std::any_of(diagnostic.related.begin(),
-                             diagnostic.related.end(), [](const auto &related) {
-                               return related.message.find(
-                                          "cleanup runs at scope exit") !=
-                                      std::string::npos;
-                             });
-        });
-    expect(!scopeConflict.semanticValid && realScopeCleanup &&
+    // RFC 0004: `held`'s loan ends at its last use, the read of the returned
+    // value, before scope cleanup destroys `owned`, so its destructor's write
+    // to the global no longer overlaps a live loan.
+    expect(scopeConflict.canGenerateCode() &&
+               !code(scopeConflict, "GTI-S2045") &&
                !code(scopeConflict, "GTI-B0001"),
-           "a later owning local retains its real destructor conflict when "
-           "scope cleanup precedes the earlier reference binding's endpoint");
+           "scope cleanup after the reference's last use does not conflict "
+           "with its ended loan");
+    const auto innerScopeConflict = analyze(prefix + R"(
+int main() {
+  int32_t& held = guarded;
+  { Payload owned = Payload::owned(Cleanup()); }
+  return held;
+}
+)",
+                                            concurrent, true);
+    expect(!innerScopeConflict.semanticValid &&
+               code(innerScopeConflict, "GTI-S2045") &&
+               !code(innerScopeConflict, "GTI-B0001"),
+           "an owning local's scope cleanup conflicts with a reference that "
+           "is used after that scope ends");
     const std::string temporary = R"(
 void inspect(Payload& value) {}
 int main() {
@@ -1330,10 +1336,13 @@ void modify() { guarded = 2; }
 int main() { int& held = guarded; modify(); return held; }
 )",
                                    true, true);
-  expect(!independent.canGenerateCode() && code(independent, "GTI-S2045") &&
-             code(independent, "GTI-S2057") && !code(independent, "GTI-B0001"),
-         "discarding a failed constant's nonexecuting effect root preserves "
-         "independent executable storage obligations");
+  // The persistent-storage borrow is MIR's check (RFC 0004), and the failed
+  // constant stops compilation before MIR, so only the constant's own error
+  // is reported until it is fixed.
+  expect(!independent.canGenerateCode() && code(independent, "GTI-S2057") &&
+             !code(independent, "GTI-B0001"),
+         "discarding a failed constant's nonexecuting effect root reports "
+         "only the constant's error, not an internal one");
 
   for (const auto bodies : {lang::TrustedBodyAnalysis::Complete,
                             lang::TrustedBodyAnalysis::Reachable}) {
@@ -1536,12 +1545,14 @@ int main() {
       expect(later.canGenerateCode(),
              "an invalid query or failed pending batch does not poison a "
              "later independent request using the same caches");
+      // RFC 0004: MIR checks the invocation against its exact call targets.
+      // The erased function item's only possible target is `finish`, whose
+      // body touches no persistent storage, so the live TLS loan is safe.
       const auto open = load(unresolved, cached);
-      expect(!open.canGenerateCode() && code(open, "GTI-S2045") &&
+      expect(open.canGenerateCode() && !code(open, "GTI-S2045") &&
                  !code(open, "GTI-S2046") && !code(open, "GTI-B0001"),
-             "a signature-erased function item remains an unknown ambient "
-             "target under a live TLS loan after its callable contract is "
-             "correctly finalized");
+             "a signature-erased function item with an exact effect-free "
+             "target is not an unknown ambient effect under a live TLS loan");
     }
   }
 }
@@ -1944,7 +1955,10 @@ int& current(Cleanup& input) { return value; }
   for (const std::string constructor :
        {"struct Wrapper { Cleanup item; Wrapper(Cleanup source, int divisor) "
         ": item(std::move(source)) { int result = 1 / divisor; } }; ",
-        "struct Wrapper<T> { Cleanup item; Wrapper(Cleanup source, T divisor) "
+        // The divisor is not `T`: an unconstrained `T` has no division, and a
+        // second semantic error would stop compilation before MIR's check.
+        "struct Wrapper<T> { Cleanup item; Wrapper(Cleanup source, int "
+        "divisor) "
         ": item(std::move(source)) { int result = 1 / divisor; } }; "}) {
     const bool generic = constructor.find("<T>") != std::string::npos;
     const auto result =
