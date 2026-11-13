@@ -1102,95 +1102,10 @@ private:
     ExternalReferentProjection,
   };
 
-  struct ActiveLoanFlowConditionalArm {
-    std::size_t conditional = 0;
-    bool thenBranch = false;
-
-    friend bool operator==(const ActiveLoanFlowConditionalArm &,
-                           const ActiveLoanFlowConditionalArm &) = default;
-  };
-
-  struct ActiveLoanFlowSwitchArm {
-    std::size_t switchIndex = 0;
-    std::size_t armIndex = 0;
-
-    friend bool operator==(const ActiveLoanFlowSwitchArm &,
-                           const ActiveLoanFlowSwitchArm &) = default;
-  };
-
-  struct LoanFlowUse {
-    SemanticLoanId loan = 0;
-    std::size_t sequence = 0;
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const Stmt *statement = nullptr;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
-  };
-
-  struct LoanFlowStatementBoundary {
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const Stmt *statement = nullptr;
-  };
-
-  struct LoanFlowSwitchBoundary {
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const SwitchStmt *statement = nullptr;
-  };
-
   struct LoanFlowLoop {
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const Stmt *statement = nullptr;
-    // IDs below this boundary existed before loop entry and may be projected
-    // to its unified exit. Newer loans belong to initializer/body cleanup.
-    SemanticLoanId firstNestedLoan = 0;
     // Writable bindings whose complete borrow dependency set this loop's entry
     // dropped. Diagnostic provenance only; never an ownership fact.
     std::vector<SymbolId> droppedBorrowSets;
-  };
-
-  struct LoanFlowConditionalArm {
-    std::size_t useBegin = 0;
-    std::size_t useEnd = 0;
-    std::vector<std::size_t> nestedConditionals;
-    bool containsUnsupportedControlFlow = false;
-  };
-
-  struct LoanFlowConditional {
-    const IfStmt *statement = nullptr;
-    std::size_t useBegin = 0;
-    std::size_t useEnd = 0;
-    std::size_t endSequence = 0;
-    std::vector<ActiveLoanFlowConditionalArm> parentPath;
-    std::vector<ActiveLoanFlowSwitchArm> parentSwitchPath;
-    LoanFlowConditionalArm thenArm;
-    LoanFlowConditionalArm elseArm;
-  };
-
-  struct LoanFlowSwitchArm {
-    bool containsUnsupportedControlFlow = false;
-  };
-
-  struct LoanFlowSwitch {
-    const SwitchStmt *statement = nullptr;
-    std::size_t endSequence = 0;
-    std::vector<ActiveLoanFlowConditionalArm> parentPath;
-    std::vector<ActiveLoanFlowSwitchArm> parentSwitchPath;
-    std::vector<LoanFlowSwitchArm> arms;
-    bool hasDefault = false;
-  };
-
-  struct LoanFlowBreak {
-    const LoopControlStmt *statement = nullptr;
-    const Stmt *target = nullptr;
-    std::size_t region = 0;
-    std::size_t order = 0;
-    std::size_t sequence = 0;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
   };
 
   // Text a lambda capture provided has an owner the compiler cannot name: it
@@ -1234,20 +1149,13 @@ private:
     // (L-OWN-02).
     std::unordered_map<SymbolId, std::vector<SymbolId>> capturedTextCarriers;
     std::size_t rawConditionalExpressionDepth = 0;
+    // Conditional and switch arms the analysis is currently inside.
+    std::size_t conditionalArmDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
-    std::vector<LoanFlowUse> uses;
-    std::vector<LoanFlowStatementBoundary> statementBoundaries;
-    std::vector<LoanFlowSwitchBoundary> switchBoundaries;
     std::vector<LoanFlowLoop> loops;
     std::vector<std::size_t> activeLoops;
-    std::vector<LoanFlowConditional> conditionals;
-    std::vector<ActiveLoanFlowConditionalArm> activeConditionalArms;
-    std::vector<LoanFlowSwitch> switches;
-    std::vector<ActiveLoanFlowSwitchArm> activeSwitchArms;
-    std::vector<LoanFlowBreak> breaks;
     std::size_t nextRegion = 1;
-    std::size_t nextSequence = 1;
     std::size_t currentRegion = 0;
     std::size_t currentOrder = 0;
     const Stmt *currentStatement = nullptr;
@@ -3280,10 +3188,6 @@ private:
       bool transientReceiver = false,
       std::span<const SemanticLoanPlace> receiverOrigins = {});
 
-  void noteUnsupportedNestedLoanControlFlow();
-
-  void recordLoanFlowBreak(const LoopControlStmt &statement);
-
   void beginLoanFlowLoop(const Stmt &statement);
 
   void endLoanFlowLoop();
@@ -3322,16 +3226,6 @@ private:
                             const ExprPtr &expression);
   void recordRetainedBorrow(const VariableDecl &binding,
                             const Expr *expression);
-
-  void recordSemanticLoanUseForLoan(SemanticLoanId loan);
-
-  // A use of `loan` and of every authority it depends on: parents, stored
-  // dependencies and additional-dependency parents.
-  void recordSemanticLoanAuthorityUse(SemanticLoanId loan);
-
-  void recordSemanticLoanUse(SymbolId carrier);
-
-  [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const;
 
   // When a later use keeps the fallthrough path live, an earlier nested
   // conditional may still end the loan on a sibling path that terminates.

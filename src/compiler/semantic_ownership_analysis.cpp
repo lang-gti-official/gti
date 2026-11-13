@@ -10279,46 +10279,7 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivity(
                                    transientReceiver, receiverOrigins);
 }
 
-auto SemanticVisitor::Impl::noteUnsupportedNestedLoanControlFlow() -> void {
-  if (!loanFlow.activeConditionalArms.empty()) {
-    const ActiveLoanFlowConditionalArm active =
-        loanFlow.activeConditionalArms.back();
-    if (active.conditional < loanFlow.conditionals.size()) {
-      LoanFlowConditional &conditional =
-          loanFlow.conditionals[active.conditional];
-      LoanFlowConditionalArm &arm =
-          active.thenBranch ? conditional.thenArm : conditional.elseArm;
-      arm.containsUnsupportedControlFlow = true;
-    }
-  }
-  if (!loanFlow.activeSwitchArms.empty()) {
-    const ActiveLoanFlowSwitchArm active = loanFlow.activeSwitchArms.back();
-    if (active.switchIndex < loanFlow.switches.size() &&
-        active.armIndex < loanFlow.switches[active.switchIndex].arms.size()) {
-      loanFlow.switches[active.switchIndex]
-          .arms[active.armIndex]
-          .containsUnsupportedControlFlow = true;
-    }
-  }
-}
-
-auto SemanticVisitor::Impl::recordLoanFlowBreak(
-    const LoopControlStmt &statement) -> void {
-  if (valueControlFlow.empty() ||
-      valueControlFlow.back().statement == nullptr ||
-      loanFlow.currentRegion == 0 || loanFlow.currentStatement == nullptr) {
-    return;
-  }
-  loanFlow.breaks.push_back({.statement = &statement,
-                             .target = valueControlFlow.back().statement,
-                             .region = loanFlow.currentRegion,
-                             .order = loanFlow.currentOrder,
-                             .sequence = loanFlow.nextSequence++,
-                             .path = loanFlow.activeConditionalArms,
-                             .switchPath = loanFlow.activeSwitchArms});
-}
-
-auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &statement) -> void {
+auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &) -> void {
   // The semantic loop body is visited once. An incoming exact alternative is
   // not a proof for every backedge iteration of a binding the body can write.
   // Until conditional sets join the existing loop fixed-point contract, keep
@@ -10328,10 +10289,7 @@ auto SemanticVisitor::Impl::beginLoanFlowLoop(const Stmt &statement) -> void {
   // through the backedge, while loan flow keeps a read-only reference's
   // referent unwritable for as long as a later iteration reads it. This never
   // changes the actual loans or their availability/endpoint analysis.
-  LoanFlowLoop loop{.region = loanFlow.currentRegion,
-                    .order = loanFlow.currentOrder,
-                    .statement = &statement,
-                    .firstNestedLoan = nextSemanticLoanId};
+  LoanFlowLoop loop;
   for (auto &scope : scopes)
     for (auto &[_, symbol] : scope)
       if (symbol.assignable && symbol.completeBorrowSet) {
@@ -10952,7 +10910,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       semanticModel.recordLoan(std::move(loan));
       for (const auto &dependency : dependencies) {
         if (dependency.parent != 0)
-          recordSemanticLoanUseForLoan(dependency.parent);
+          ;
       }
       semanticModel.recordBindingLoan(binding, id);
       return;
@@ -11005,7 +10963,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       semanticModel.recordLoan(std::move(loan));
       for (const auto &dependency : dependencies) {
         if (dependency.parent != 0)
-          recordSemanticLoanUseForLoan(dependency.parent);
+          ;
       }
       semanticModel.recordBindingLoan(binding, id);
       return;
@@ -11095,7 +11053,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           loan.storedDependency = dependency;
           semanticModel.recordLoan(std::move(loan));
           semanticModel.recordBindingLoan(binding, id);
-          recordSemanticLoanUseForLoan(dependency);
           return;
         }
       }
@@ -11288,7 +11245,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       loan.storedDependency = dependency;
       semanticModel.recordLoan(std::move(loan));
       semanticModel.recordBindingLoan(binding, id);
-      recordSemanticLoanUseForLoan(dependency);
       return;
     }
     if (sourceLoan != nullptr && retainedStoredBorrow &&
@@ -11360,7 +11316,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       loan.storedDependency = dependency;
       semanticModel.recordLoan(std::move(loan));
       semanticModel.recordBindingLoan(binding, child);
-      recordSemanticLoanUseForLoan(dependency);
       return;
     }
     if (source->dependency && carrier->type.kind == SemanticType::Reference) {
@@ -11449,13 +11404,11 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       loan.storedDependency = dependency;
       semanticModel.recordLoan(std::move(loan));
       semanticModel.recordBindingLoan(binding, reference);
-      recordSemanticLoanUseForLoan(dependency);
       return;
     }
     if (source->transfer) {
       const bool pathConditionalTransfer =
-          !loanFlow.activeConditionalArms.empty() ||
-          !loanFlow.activeSwitchArms.empty() ||
+          loanFlow.conditionalArmDepth != 0 ||
           std::any_of(valueControlFlow.begin(), valueControlFlow.end(),
                       [](const ValueControlFlowContext &context) {
                         return context.kind == ValueControlFlowKind::Loop;
@@ -11595,7 +11548,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             place, place.root, place.receiver, AccessMode::Mutable, false,
             parent);
         semanticModel.recordBindingLoan(binding, child);
-        recordSemanticLoanUseForLoan(parent);
       }
       // Ordinary reference upgrades remain owned by validateReferenceBinding.
       // The checked stored result above has distinct callee-granted exclusion;
@@ -11820,137 +11772,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     loanFlow.records.at(id).confinedToRegion = false;
   }
   semanticModel.recordBindingLoan(binding, id);
-}
-
-auto SemanticVisitor::Impl::recordSemanticLoanUseForLoan(SemanticLoanId loan)
-    -> void {
-  const auto found = loanFlow.records.find(loan);
-  if (found == loanFlow.records.end()) {
-    return;
-  }
-  LoanFlowRecord &flow = found->second;
-  if (loanFlow.currentRegion == 0 || loanFlow.currentStatement == nullptr) {
-    flow.confinedToRegion = false;
-    return;
-  }
-  loanFlow.uses.push_back({.loan = loan,
-                           .sequence = loanFlow.nextSequence++,
-                           .region = loanFlow.currentRegion,
-                           .order = loanFlow.currentOrder,
-                           .statement = loanFlow.currentStatement,
-                           .path = loanFlow.activeConditionalArms,
-                           .switchPath = loanFlow.activeSwitchArms});
-  if (loanFlow.currentRegion == flow.region &&
-      loanFlow.currentOrder >= flow.lastUseOrder) {
-    flow.lastUseOrder = loanFlow.currentOrder;
-    flow.lastUse = loanFlow.currentStatement;
-    return;
-  }
-
-  // Choose the outermost matching loop before a nested switch or
-  // conditional. A pre-existing owner dependency must survive the loop
-  // backedge, and a switch-local `break` must not be mistaken for that loop
-  // exit. Loans created inside the loop fail the firstNestedLoan test and
-  // may instead project to a nested structured control statement.
-  const auto loopBoundary =
-      std::find_if(loanFlow.activeLoops.begin(), loanFlow.activeLoops.end(),
-                   [&](std::size_t index) {
-                     if (index >= loanFlow.loops.size()) {
-                       return false;
-                     }
-                     const LoanFlowLoop &candidate = loanFlow.loops[index];
-                     return candidate.region == flow.region &&
-                            candidate.statement != nullptr &&
-                            loan < candidate.firstNestedLoan;
-                   });
-  if (loopBoundary != loanFlow.activeLoops.end()) {
-    const LoanFlowLoop &loop = loanFlow.loops[*loopBoundary];
-    if (loop.order >= flow.lastUseOrder) {
-      flow.lastUseOrder = loop.order;
-      flow.lastUse = loop.statement;
-    }
-    return;
-  }
-
-  const auto statementBoundary = std::find_if(
-      loanFlow.statementBoundaries.begin(), loanFlow.statementBoundaries.end(),
-      [&](const LoanFlowStatementBoundary &candidate) {
-        return candidate.region == flow.region;
-      });
-  if (statementBoundary != loanFlow.statementBoundaries.end() &&
-      statementBoundary->statement != nullptr) {
-    if (statementBoundary->order >= flow.lastUseOrder) {
-      flow.lastUseOrder = statementBoundary->order;
-      flow.lastUse = statementBoundary->statement;
-    }
-    return;
-  }
-
-  const auto switchBoundary = std::find_if(
-      loanFlow.switchBoundaries.begin(), loanFlow.switchBoundaries.end(),
-      [&](const LoanFlowSwitchBoundary &candidate) {
-        return candidate.region == flow.region;
-      });
-  if (switchBoundary != loanFlow.switchBoundaries.end() &&
-      switchBoundary->statement != nullptr) {
-    if (switchBoundary->order >= flow.lastUseOrder) {
-      flow.lastUseOrder = switchBoundary->order;
-      flow.lastUse = switchBoundary->statement;
-    }
-    return;
-  }
-
-  flow.confinedToRegion = false;
-}
-
-auto SemanticVisitor::Impl::recordSemanticLoanUse(SymbolId carrier) -> void {
-  if (const auto captured = loanFlow.capturedTextCarriers.find(carrier);
-      captured != loanFlow.capturedTextCarriers.end())
-    for (const auto loan : captured->second)
-      recordSemanticLoanAuthorityUse(loan);
-  const auto retained = loanFlow.carrierLoans.find(carrier);
-  if (retained == loanFlow.carrierLoans.end()) {
-    return;
-  }
-  recordSemanticLoanAuthorityUse(retained->second);
-}
-
-auto SemanticVisitor::Impl::recordSemanticLoanAuthorityUse(SemanticLoanId root)
-    -> void {
-  std::vector<SemanticLoanId> pending{root};
-  std::unordered_set<SemanticLoanId> visited;
-  while (!pending.empty()) {
-    const SemanticLoanId loan = pending.back();
-    pending.pop_back();
-    if (loan == 0 || !visited.insert(loan).second) {
-      continue;
-    }
-    recordSemanticLoanUseForLoan(loan);
-    const SemanticLoanInfo *info = semanticModel.findLoan(loan);
-    if (info != nullptr) {
-      pending.push_back(info->parent);
-      pending.push_back(info->storedDependency);
-      for (const auto &dependency : info->additionalDependencies)
-        pending.push_back(dependency.parent);
-    }
-  }
-}
-
-auto SemanticVisitor::Impl::supportsProvenLoanEnd(
-    const LoanFlowRecord &loan) const -> bool {
-  if (stmtAs<VariableDecl>(loan.lastUse) != nullptr ||
-      stmtAs<ExpressionStmt>(loan.lastUse) != nullptr ||
-      stmtAs<BlockStmt>(loan.lastUse) != nullptr ||
-      stmtAs<IfStmt>(loan.lastUse) != nullptr ||
-      stmtAs<SwitchStmt>(loan.lastUse) != nullptr) {
-    return true;
-  }
-  const auto loop = std::find_if(loanFlow.loops.begin(), loanFlow.loops.end(),
-                                 [&](const LoanFlowLoop &candidate) {
-                                   return candidate.statement == loan.lastUse &&
-                                          loan.id < candidate.firstNestedLoan;
-                                 });
-  return loop != loanFlow.loops.end();
 }
 
 auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {

@@ -1112,9 +1112,6 @@ auto SemanticVisitor::Impl::leaveUnsafeRegion() -> void {
 }
 
 auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
-  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
-                                          .order = loanFlow.currentOrder,
-                                          .statement = &stmt});
   if (stmt.isUnsafe())
     enterUnsafeRegion(*stmt.unsafeKeyword(), false);
   beginScope();
@@ -1122,7 +1119,6 @@ auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
   endScope();
   if (stmt.isUnsafe())
     leaveUnsafeRegion();
-  loanFlow.statementBoundaries.pop_back();
 }
 
 // The work visitClassDecl does before its members (tooling symbol, base and
@@ -2933,7 +2929,6 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
 }
 
 auto SemanticVisitor::Impl::visitDoWhileStmt(const DoWhileStmt &stmt) -> void {
-  noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
   beginRawPointerLoop();
   const ScopeStack beforeLoop = scopes;
@@ -3060,7 +3055,6 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
 }
 
 auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
-  noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
   beginScope();
   analyze(stmt.initializer());
@@ -3142,9 +3136,6 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
   const auto *syntax = stmtAs<BlockStmt>(stmt.lowered().get());
   if (syntax == nullptr || syntax->statements().empty())
     return;
-  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
-                                          .order = loanFlow.currentOrder,
-                                          .statement = syntax});
   beginScope();
   // Protocol selection needs the checked owner type. Keep both parts in the
   // same statement region so ordinary range loans retain their original
@@ -3285,14 +3276,12 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
          .dereferenceFunction = takeNext == nullptr ? 0 : takeNext->function,
          .ownsRangeTemporary = true});
     endScope();
-    loanFlow.statementBoundaries.pop_back();
     return;
   }
   analyzeStatementsInRegion(
       StmtList(syntax->statements().begin() + 1, syntax->statements().end()),
       region, 1);
   endScope();
-  loanFlow.statementBoundaries.pop_back();
 
   const bool mutableElementRequested =
       stmt.bindingMutability() == Mutability::Mutable &&
@@ -5152,27 +5141,6 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
     return;
   }
 
-  const std::size_t conditionalIndex = loanFlow.conditionals.size();
-  if (!loanFlow.activeConditionalArms.empty()) {
-    const ActiveLoanFlowConditionalArm parent =
-        loanFlow.activeConditionalArms.back();
-    if (parent.conditional < loanFlow.conditionals.size()) {
-      LoanFlowConditional &parentConditional =
-          loanFlow.conditionals[parent.conditional];
-      LoanFlowConditionalArm &parentArm = parent.thenBranch
-                                              ? parentConditional.thenArm
-                                              : parentConditional.elseArm;
-      parentArm.nestedConditionals.push_back(conditionalIndex);
-    }
-  }
-  loanFlow.conditionals.push_back(
-      {.statement = &stmt,
-       .useBegin = loanFlow.uses.size(),
-       .parentPath = loanFlow.activeConditionalArms,
-       .parentSwitchPath = loanFlow.activeSwitchArms});
-  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
-                                          .order = loanFlow.currentOrder,
-                                          .statement = &stmt});
   const SemanticType conditionType =
       analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
   requireBool(stmt.condition(), conditionType,
@@ -5181,13 +5149,9 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   const std::vector<ValueControlFlowContext> beforeValueControlFlow =
       valueControlFlow;
 
-  loanFlow.conditionals[conditionalIndex].thenArm.useBegin =
-      loanFlow.uses.size();
-  loanFlow.activeConditionalArms.push_back(
-      {.conditional = conditionalIndex, .thenBranch = true});
+  ++loanFlow.conditionalArmDepth;
   analyzeConditionalArm(stmt.thenBranch());
-  loanFlow.activeConditionalArms.pop_back();
-  loanFlow.conditionals[conditionalIndex].thenArm.useEnd = loanFlow.uses.size();
+  --loanFlow.conditionalArmDepth;
   const ScopeStack thenScopes = scopes;
   const FlowSummary thenFlow = summarizeFlow(stmt.thenBranch().get());
   const std::vector<ValueControlFlowContext> thenValueControlFlow =
@@ -5195,17 +5159,11 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
 
   scopes = beforeBranches;
   valueControlFlow = beforeValueControlFlow;
-  loanFlow.conditionals[conditionalIndex].elseArm.useBegin =
-      loanFlow.uses.size();
   if (stmt.elseBranch()) {
-    loanFlow.activeConditionalArms.push_back(
-        {.conditional = conditionalIndex, .thenBranch = false});
+    ++loanFlow.conditionalArmDepth;
     analyzeConditionalArm(stmt.elseBranch());
-    loanFlow.activeConditionalArms.pop_back();
+    --loanFlow.conditionalArmDepth;
   }
-  loanFlow.conditionals[conditionalIndex].elseArm.useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].endSequence = loanFlow.nextSequence++;
   const ScopeStack elseScopes = scopes;
   const FlowSummary elseFlow = summarizeFlow(stmt.elseBranch().get());
   const std::vector<ValueControlFlowContext> elseValueControlFlow =
@@ -5239,7 +5197,6 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   }
   scopes = loanScopes;
   applyMoveStates(moveScopes);
-  loanFlow.statementBoundaries.pop_back();
 }
 
 auto SemanticVisitor::Impl::visitLoopControlStmt(const LoopControlStmt &stmt)
@@ -5255,7 +5212,6 @@ auto SemanticVisitor::Impl::visitLoopControlStmt(const LoopControlStmt &stmt)
     return;
   }
   if (isBreak) {
-    recordLoanFlowBreak(stmt);
   }
   recordValueControlFlowExit(isBreak);
 }
@@ -5497,16 +5453,6 @@ auto SemanticVisitor::Impl::reportMoveOnlyReturnCopy(
 
 auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.expression());
-  noteUnsupportedNestedLoanControlFlow();
-  const std::size_t loanSwitchIndex = loanFlow.switches.size();
-  loanFlow.switches.push_back(
-      {.statement = &stmt,
-       .parentPath = loanFlow.activeConditionalArms,
-       .parentSwitchPath = loanFlow.activeSwitchArms,
-       .arms = std::vector<LoanFlowSwitchArm>(stmt.arms().size())});
-  loanFlow.switchBoundaries.push_back({.region = loanFlow.currentRegion,
-                                       .order = loanFlow.currentOrder,
-                                       .statement = &stmt});
   // A payload-enum field subject is observed in place, not copied out.
   const Expr *subject = stmt.expression().get();
   while (const auto *group = exprAs<Grouping>(subject))
@@ -5530,8 +5476,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       // exact receiver inventory, while the rest of the body is still checked.
       bodyFlow.deferredGenericFlow = true;
       requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
-      loanFlow.switchBoundaries.pop_back();
-      loanFlow.switches.resize(loanSwitchIndex);
       return;
     }
   }
@@ -5779,8 +5723,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
 
     scopes = beforeSwitch;
     beginScope();
-    loanFlow.activeSwitchArms.push_back(
-        {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
+    ++loanFlow.conditionalArmDepth;
     std::unordered_map<const Expr *, SemanticBorrowDependencySet>
         transferredPayloadDependencies;
     bool validHandoff = consumesDependency;
@@ -5835,7 +5778,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       if (const auto *loan = semanticModel.findLoan(subjectSource->loan);
           loan && (loan->kind == SemanticLoanKind::Reference ||
                    semanticModel.findPlace(*stmt.expression()) == nullptr))
-        recordSemanticLoanAuthorityUse(subjectSource->loan);
+        ;
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -6041,7 +5984,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                                       extractedDependencies);
               // Forming the selection uses its parent authority in the arm,
               // even when the binding is never read afterwards.
-              recordSemanticLoanUse(symbol);
             }
           }
         } else if (payload.binding.type.kind == SemanticType::Reference) {
@@ -6119,7 +6061,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       semanticModel.recordPayloadPattern(*source, std::move(pattern));
     }
     analyze(arm.statements);
-    loanFlow.activeSwitchArms.pop_back();
+    --loanFlow.conditionalArmDepth;
     endScope();
     const FlowSummary flow = summarizeFlow(arm.statements);
     armResults.emplace_back(scopes, flow);
@@ -6223,10 +6165,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                          : mergedValueStates(beforeSwitch, exitStates);
   scopes = loanScopes;
   applyMoveStates(moveScopes);
-  loanFlow.switches[loanSwitchIndex].hasDefault =
-      hasDefault || exhaustivePayload;
-  loanFlow.switches[loanSwitchIndex].endSequence = loanFlow.nextSequence++;
-  loanFlow.switchBoundaries.pop_back();
 }
 
 auto SemanticVisitor::Impl::visitStructuredBindingDecl(
@@ -7007,7 +6945,6 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
 }
 auto SemanticVisitor::Impl::visitWhileStmt(const WhileStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.condition());
-  noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
   beginRawPointerLoop();
   const ScopeStack beforeCondition = scopes;

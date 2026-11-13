@@ -4259,7 +4259,6 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     else
       recordProgramTemporary(expr, info);
   }
-  recordSemanticLoanUse(symbolId);
   if (!token.generated) {
     semanticModel.recordOccurrence(
         {.sourceUnit = currentSourceUnit,
@@ -9889,7 +9888,7 @@ auto SemanticVisitor::Impl::endScope() -> void {
     if (symbol.valueState == ValueState::Available) {
       const auto *loan = semanticModel.findLoan(symbol.retainedLoan);
       if (loan != nullptr && loan->lifecycleBound)
-        recordSemanticLoanUse(toolingSymbolFor(symbol));
+        ;
     }
     if (symbol.valueState == ValueState::Available)
       applyRawCleanupWrites(symbol.type, tokenSpan(symbol.declaration),
@@ -11983,8 +11982,7 @@ auto SemanticVisitor::Impl::applyRawPointerFields(
     // writes retain earlier paths, including a loop that never executes.
     const bool destinationWeak =
         weak ||
-        (programStorage && (!loanFlow.activeConditionalArms.empty() ||
-                            !loanFlow.activeSwitchArms.empty() ||
+        (programStorage && (loanFlow.conditionalArmDepth != 0 ||
                             loanFlow.rawConditionalExpressionDepth != 0 ||
                             !valueFlow.rawPointerLoops.empty()));
     recordRawWrite(destination, incoming, !destinationWeak);
