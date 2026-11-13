@@ -125,6 +125,20 @@ errc from_status(uint32_t status) {
   }
 }
 
+// The std::io category for a socket outcome. Transport conditions keep their
+// meaning through the io concepts; anything else becomes `fallback`.
+std::io_errc io_error(errc reason, std::io_errc fallback) {
+  switch (reason) {
+  case errc::would_block: return std::io_errc::would_block;
+  case errc::timed_out: return std::io_errc::timed_out;
+  case errc::connection_reset: return std::io_errc::connection_reset;
+  case errc::connection_aborted: return std::io_errc::connection_reset;
+  case errc::broken_pipe: return std::io_errc::broken_pipe;
+  case errc::not_open: return std::io_errc::invalid_stream;
+  default: return fallback;
+  }
+}
+
 expected<void, errc> check(uint32_t status) {
   if (status != uint32_t(0)) {
     return unexpected(from_status(status));
@@ -813,22 +827,23 @@ public:
     return;
   }
 
-  /// std::io::reader conformance; detailed failures collapse to `read_failed`.
+  /// std::io::reader conformance. `would_block`, `timed_out`, a reset or
+  /// aborted connection and `not_open` keep their io category; other
+  /// failures are `read_failed`.
   expected<size_t, std::io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
     auto received = this.receive(output);
     if (!received) {
-      if (received.error() == errc::not_open) { return unexpected(std::io_errc::invalid_stream); }
-      return unexpected(std::io_errc::read_failed);
+      return unexpected(detail::io_error(received.error(), std::io_errc::read_failed));
     }
     return received.value();
   }
 
-  /// std::io::writer conformance; detailed failures collapse to `write_failed`.
+  /// std::io::writer conformance, mapped like `read_some`; `broken_pipe`
+  /// also keeps its category and other failures are `write_failed`.
   expected<size_t, std::io_errc> write_some(span<uint8_t>& input) mut {
     auto sent = this.send(input);
     if (!sent) {
-      if (sent.error() == errc::not_open) { return unexpected(std::io_errc::invalid_stream); }
-      return unexpected(std::io_errc::write_failed);
+      return unexpected(detail::io_error(sent.error(), std::io_errc::write_failed));
     }
     return sent.value();
   }
@@ -904,6 +919,16 @@ public:
 
 };
 
+/// One accepted connection and the peer address the host reported for it.
+struct incoming {
+  // Mutable so a receiver can move the connection out and keep the peer.
+  mut stream connection;
+  socket_address peer;
+  incoming(stream accepted, socket_address from) : connection(std::move(accepted)), peer(from) {}
+  incoming(incoming& other) = delete;
+  incoming(incoming&& other) = default;
+};
+
 /// A listening TCP socket that accepts `stream`s.
 [[unsafe_transfer, no_share]] class listener {
   mut gti_internal::tcp_socket_handle handle;
@@ -915,6 +940,17 @@ public:
       return unexpected(errc::not_open);
     }
     return;
+  }
+
+  expected<stream, errc> accept_into(mut uint8_t[24]& peer) mut {
+    ?this.require_open();
+    mut int32_t descriptor = -1;
+    mut uint32_t status = 0;
+    unsafe {
+      status = gti_internal::runtime::gti_rt_tcp_accept_v1(this.handle.get(), &peer[0], &descriptor);
+    }
+    ?detail::check(status);
+    return stream(gti_internal::tcp_socket_handle(descriptor));
   }
 
 public:
@@ -948,15 +984,18 @@ public:
   /// this listener's mode; a nonblocking listener with nothing pending
   /// reports `would_block`.
   expected<stream, errc> accept() mut {
-    ?this.require_open();
     mut uint8_t peer[24] = {};
-    mut int32_t descriptor = -1;
-    mut uint32_t status = 0;
-    unsafe {
-      status = gti_internal::runtime::gti_rt_tcp_accept_v1(this.handle.get(), &peer[0], &descriptor);
-    }
-    ?detail::check(status);
-    return stream(gti_internal::tcp_socket_handle(descriptor));
+    return this.accept_into(peer);
+  }
+
+  /// As `accept`, also returning the peer address the host recorded when it
+  /// accepted. Unlike a later `peer_address()`, this cannot fail because the
+  /// client has already reset the connection.
+  expected<incoming, errc> accept_from() mut {
+    mut uint8_t peer[24] = {};
+    stream connection = ?this.accept_into(peer);
+    socket_address from = ?socket_address::decode(peer);
+    return incoming(std::move(connection), from);
   }
 
   expected<socket_address, errc> local_address() {
@@ -997,9 +1036,8 @@ public:
   }
 };
 
-/// Resolves `host` (a name or numeric address) to stream endpoints carrying
-/// `port`, in resolver preference order. At most 16 endpoints are returned.
-expected<vector<socket_address>, errc> resolve(string_view host, uint16_t port) {
+namespace detail {
+expected<vector<socket_address>, errc> resolve_family(string_view host, uint16_t port, uint32_t family) {
   if (host.empty()) {
     return unexpected(errc::invalid_address);
   }
@@ -1008,7 +1046,7 @@ expected<vector<socket_address>, errc> resolve(string_view host, uint16_t port) 
   mut uint32_t status = 0;
   unsafe {
     status = gti_internal::runtime::gti_rt_tcp_resolve_v1(
-        host, uint32_t(port), uint32_t(0), &records[0], uint64_t(16), &count);
+        host, uint32_t(port), family, &records[0], uint64_t(16), &count);
   }
   ?detail::check(status);
   mut vector<socket_address> endpoints = vector<socket_address>();
@@ -1030,6 +1068,19 @@ expected<vector<socket_address>, errc> resolve(string_view host, uint16_t port) 
     return unexpected(errc::name_not_found);
   }
   return std::move(endpoints);
+}
+}
+
+/// Resolves `host` (a name or numeric address) to stream endpoints carrying
+/// `port`, in resolver preference order. At most 16 endpoints are returned.
+expected<vector<socket_address>, errc> resolve(string_view host, uint16_t port) {
+  return detail::resolve_family(host, port, uint32_t(0));
+}
+
+/// As `resolve(host, port)`, keeping only endpoints of `family`. A host with
+/// no address of that family reports `name_not_found`.
+expected<vector<socket_address>, errc> resolve(string_view host, uint16_t port, address_family family) {
+  return detail::resolve_family(host, port, family == address_family::ipv4 ? uint32_t(4) : uint32_t(6));
 }
 
 /// Connects to the first reachable endpoint of `host:port`, trying resolved
@@ -1323,14 +1374,14 @@ public:
     return this.inner.shutdown(shutdown_mode::write);
   }
 
-  // std::io conformance: detailed errors collapse to std::io_errc values.
+  // std::io conformance: errors map as for `stream::read_some`.
   expected<size_t, std::io_errc> read_some(mut mutable_span<uint8_t>& destination) mut {
     if (destination.empty()) {
       return size_t(0);
     }
     auto ready = this.fill();
     if (!ready) {
-      return unexpected(std::io_errc::read_failed);
+      return unexpected(detail::io_error(ready.error(), std::io_errc::read_failed));
     }
     mut size_t count = ready.value();
     if (count > destination.size()) {
@@ -1348,7 +1399,7 @@ public:
   expected<size_t, std::io_errc> fill_buffer() mut {
     auto ready = this.fill();
     if (!ready) {
-      return unexpected(std::io_errc::read_failed);
+      return unexpected(detail::io_error(ready.error(), std::io_errc::read_failed));
     }
     return ready.value();
   }
@@ -1356,7 +1407,7 @@ public:
   expected<size_t, std::io_errc> write_some(span<uint8_t>& bytes) mut {
     auto queued = this.write(bytes);
     if (!queued) {
-      return unexpected(std::io_errc::write_failed);
+      return unexpected(detail::io_error(queued.error(), std::io_errc::write_failed));
     }
     return bytes.size();
   }
@@ -1364,7 +1415,7 @@ public:
   expected<void, std::io_errc> flush() mut {
     auto sent = this.flush_output();
     if (!sent) {
-      return unexpected(std::io_errc::flush_failed);
+      return unexpected(detail::io_error(sent.error(), std::io_errc::flush_failed));
     }
     return;
   }
@@ -1408,7 +1459,7 @@ expected<serve_summary, errc> serve<H>(mut listener& server, mut H& handler)
   mut size_t accepted = 0;
   mut size_t failed = 0;
   while (true) {
-    auto next = server.accept();
+    auto next = server.accept_from();
     if (!next) {
       errc reason = next.error();
       if (reason == errc::connection_aborted || reason == errc::connection_reset) {
@@ -1416,14 +1467,9 @@ expected<serve_summary, errc> serve<H>(mut listener& server, mut H& handler)
       }
       return unexpected(reason);
     }
-    stream connection = std::move(next).value();
+    mut incoming arrival = std::move(next).value();
     accepted++;
-    auto peer = connection.peer_address();
-    if (!peer) {
-      failed++;
-      continue;
-    }
-    auto outcome = connection_handler<H>::handle(handler, std::move(connection), peer.value());
+    auto outcome = connection_handler<H>::handle(handler, std::move(arrival.connection), arrival.peer);
     if (!outcome) {
       failed++;
       continue;

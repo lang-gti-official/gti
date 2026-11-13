@@ -86,12 +86,17 @@ expected<int32_t, std::tcp::errc> traffic() {
   mut auto scratch_view = scratch.as_mutable_span();
   auto timed = client.receive(scratch_view);
   if (timed || timed.error() != std::tcp::errc::timed_out) { return 10; }
+  // Through the std::io concepts a timeout keeps its category.
+  auto io_timed = client.read_some(scratch_view);
+  if (io_timed || io_timed.error() != std::io_errc::timed_out) { return 19; }
   auto quiet = client.wait_readable(milliseconds(int64_t(5)));
   if (quiet || quiet.error() != std::tcp::errc::timed_out) { return 11; }
   ?client.wait_writable(milliseconds(int64_t(1000)));
   ?client.set_nonblocking(true);
   auto empty = client.receive(scratch_view);
   if (empty || empty.error() != std::tcp::errc::would_block) { return 12; }
+  auto io_empty = client.read_some(scratch_view);
+  if (io_empty || io_empty.error() != std::io_errc::would_block) { return 26; }
 
   // Explicit close is reported once; later operations report not_open.
   ?client.close();
@@ -142,6 +147,17 @@ expected<int32_t, std::tcp::errc> ownership() {
   if (clash || clash.error() != std::tcp::errc::address_in_use) { return 24; }
   auto negative = std::tcp::stream::connect(held, std::chrono::nanoseconds(int64_t(-1)));
   if (negative || negative.error() != std::tcp::errc::invalid_argument) { return 25; }
+
+  // accept_from returns the stream with the peer address the host recorded,
+  // which is the client's local endpoint.
+  mut auto gate = ?std::tcp::listener::bind(any);
+  auto gate_address = ?gate.local_address();
+  mut auto caller = ?std::tcp::stream::connect(gate_address);
+  auto arrival = ?gate.accept_from();
+  auto caller_local = ?caller.local_address();
+  if (!arrival.connection.is_open() || arrival.peer != caller_local) { return 27; }
+  auto arrival_peer = ?arrival.connection.peer_address();
+  if (arrival_peer != arrival.peer) { return 28; }
   return 0;
 }
 
@@ -201,6 +217,13 @@ int32_t addresses() {
   }
   auto blank = std::tcp::resolve("", uint16_t(9));
   if (blank || blank.error() != std::tcp::errc::invalid_address) { return 44; }
+
+  // A family filter keeps only that family's endpoints.
+  auto only_four = std::tcp::resolve("127.0.0.1", uint16_t(9), std::tcp::address_family::ipv4);
+  if (!only_four || only_four.value().size() != std::size_t(1) || !only_four.value()[std::size_t(0)].is_ipv4()) {
+    return 45;
+  }
+  if (std::tcp::resolve("::1", uint16_t(9), std::tcp::address_family::ipv4)) { return 46; }
   return 0;
 }
 
