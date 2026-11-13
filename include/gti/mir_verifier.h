@@ -27,6 +27,9 @@ enum class MirBorrowRejectionKind {
   // A lambda borrows a place MIR cannot key in its body's ownership domain:
   // an enclosing lambda's by-reference capture.
   NestedCapture,
+  // A consuming switch moves a borrowed carrier whose dependency group
+  // another live binding still carries.
+  SharedConsumedGroup,
 };
 
 struct MirBorrowRejection {

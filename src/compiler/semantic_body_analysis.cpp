@@ -5611,16 +5611,11 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   bool consumesDependency = false;
   if (consumedSubject && subjectDependencies &&
       !subjectDependencies->dependencies.empty()) {
+    // MIR rejects consuming a group another live carrier still holds.
     const auto *group = semanticModel.findLoan(subjectDependency);
-    const auto flow = loanFlow.records.find(subjectDependency);
-    const auto *carrier = subjectSource && subjectSource->carrier
-                              ? resolve(subjectSource->carrier->name())
-                              : nullptr;
-    consumesDependency =
-        group && group->kind == SemanticLoanKind::StoredValue &&
-        !group->lifecycleBound && flow != loanFlow.records.end() &&
-        flow->second.active && flow->second.carriers.size() == 1 && carrier &&
-        flow->second.carriers.contains(toolingSymbolFor(*carrier));
+    consumesDependency = group &&
+                         group->kind == SemanticLoanKind::StoredValue &&
+                         !group->lifecycleBound;
     if (!consumesDependency)
       report(stmt.keyword(),
              "A consuming borrowed payload requires one exact active carrier "
@@ -5793,7 +5788,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       // Analyze mutually exclusive arms from the same incoming authority.
       // Capture every selected external path before retiring that authority;
       // later bindings must not rediscover it through an already moved shell.
-      loanFlow.records.at(subjectDependency).active = true;
       for (const auto &[_, pattern] : payloadPatterns)
         for (const auto &payload : pattern.bindings) {
           if (payload.extractionKind !=
@@ -5823,9 +5817,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           transferredPayloadDependencies.emplace(payload.source,
                                                  std::move(*projected));
         }
-      if (validHandoff) {
-        loanFlow.records.at(subjectDependency).active = false;
-      }
     }
     // Binding an observed subject's payloads reads its place at this arm's
     // entry, as forming a selection uses its parent authority. A subject
@@ -6144,8 +6135,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
-  if (consumesDependency)
-    loanFlow.records.at(subjectDependency).active = false;
   const bool exhaustivePayload =
       payloadEnum != nullptr && !invalidPayloadPattern &&
       coveredPayloadVariants.size() == payloadEnum->enumerators.size();

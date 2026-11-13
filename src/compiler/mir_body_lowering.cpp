@@ -836,6 +836,8 @@ private:
     std::vector<MirPlaceId> drops;
     std::vector<MirLoanId> loans;
     std::size_t sourceLocals = 0;
+    // The local bindings declared in this scope.
+    std::vector<HirBindingId> bindings;
   };
   struct SourceScopeLocal {
     SourceLocalId local = 0;
@@ -15236,6 +15238,8 @@ private:
   }
 
   void registerDrop(HirBindingId bindingId, MirPlaceId place) {
+    if (!scopes.empty())
+      scopes.back().bindings.push_back(bindingId);
     if (scopes.empty() || nonLexicalBindings.contains(bindingId)) {
       return;
     }
@@ -17627,6 +17631,30 @@ private:
     const bool adoptsGroup =
         binding->info.traits.containsBorrowedState && group != nullptr &&
         group->kind == MirLoanKind::Stored && loanIsActive(scopes, retained);
+    // The consumed subject transfers its group to the selected payloads, so
+    // no other live binding may still carry it.
+    if (adoptsGroup) {
+      const HirBindingId moved = movedBorrowCarrierBinding(*statement.value);
+      const auto inScope = [&](HirBindingId carrier) {
+        const HirBinding *declared = findBinding(carrier);
+        return (declared != nullptr && declared->parameter != nullptr) ||
+               std::any_of(scopes.begin(), scopes.end(),
+                           [&](const Scope &scope) {
+                             return std::find(scope.bindings.begin(),
+                                              scope.bindings.end(),
+                                              carrier) != scope.bindings.end();
+                           });
+      };
+      for (const HirBindingId carrier : group->carriers)
+        if (carrier != moved && carrier != *statement.binding &&
+            inScope(carrier))
+          if (const auto held = bindingLoans.find(carrier);
+              held != bindingLoans.end() && held->second == retained) {
+            rejectSource(*statement.value,
+                         MirBorrowRejectionKind::SharedConsumedGroup);
+            break;
+          }
+    }
     if (adoptsGroup) {
       // This real value initialization acquires the existing dependency
       // group, exactly as a named carrier initialized by a move would. It
@@ -19438,6 +19466,9 @@ MirBody MirLowerer::lowerBody(
            .source = anchor ? anchor : sourceFor(rejection->first),
            .message = rejection->second == MirBorrowRejectionKind::NestedCapture
                           ? "lambda borrows an enclosing capture"
+                      : rejection->second ==
+                              MirBorrowRejectionKind::SharedConsumedGroup
+                          ? "consuming switch moves a shared dependency group"
                           : "returned borrow outlives local storage",
            .borrow = {.kind = rejection->second}});
     } else if (const auto &rejection = lowerer->rejection(); rejection)

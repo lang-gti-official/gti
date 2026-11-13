@@ -203,6 +203,58 @@ int main() {
   }
 }
 )gti");
+  // A consuming switch transfers its subject's dependency group: a copy of
+  // the carrier still in scope shares that group and is rejected, while a
+  // copy whose scope ended is not.
+  const auto consumedShared = analyzeMir(R"gti(
+enum Selected { empty, value(int& owner) };
+int main() {
+  int x = 5;
+  Selected a = Selected::value(x);
+  Selected b = a;
+  mut int got = 0;
+  switch (std::move(a)) {
+  case Selected::value(owner): got = owner; break;
+  case Selected::empty: return 1;
+  }
+  switch (b) {
+  case Selected::value(owner): return got + owner - 10;
+  case Selected::empty: return 2;
+  }
+}
+)gti");
+  expect(std::any_of(consumedShared.diagnostics.begin(),
+                     consumedShared.diagnostics.end(),
+                     [](const lang::Diagnostic &diagnostic) {
+                       return diagnostic.code == "GTI-S2067";
+                     }) &&
+             std::none_of(consumedShared.diagnostics.begin(),
+                          consumedShared.diagnostics.end(),
+                          [](const lang::Diagnostic &diagnostic) {
+                            return diagnostic.code == "GTI-B0001";
+                          }),
+         "a consuming switch rejects a group a live copy still carries");
+  const auto consumedAfterCopy = analyzeMir(R"gti(
+enum Selected { empty, value(int& owner) };
+int main() {
+  int x = 5;
+  Selected a = Selected::value(x);
+  {
+    Selected b = a;
+    switch (b) {
+    case Selected::value(owner): if (owner != 5) return 3; break;
+    case Selected::empty: return 2;
+    }
+  }
+  switch (std::move(a)) {
+  case Selected::value(owner): return owner - 5;
+  case Selected::empty: return 1;
+  }
+}
+)gti");
+  acceptedSemantics(consumedAfterCopy);
+  expect(consumedAfterCopy.canGenerateCode() && consumedAfterCopy.mirValid,
+         "a consuming switch adopts a group no live copy carries");
   expect(std::any_of(projectedConflict.diagnostics.begin(),
                      projectedConflict.diagnostics.end(),
                      [](const lang::Diagnostic &diagnostic) {

@@ -3945,7 +3945,11 @@ A consuming switch first initializes its hidden subject binding from the
 subject value, reparenting the subject's temporary obligation into the
 binding's obligation, and registers that binding with the enclosing scope's
 failure cleanup, so a failure while the subject's other temporaries end drops
-it once. The `Switch` terminator then read-borrows the binding. Every arm retires it at entry, after its
+it once. A borrowed-carrier subject adopts its active Stored dependency
+group, which the switch transfers to the selected payloads; when another
+binding still in scope carries that group, lowering rejects the switch
+(GTI-S2067) instead of retiring the group under it. The `Switch` terminator
+then read-borrows the binding. Every arm retires it at entry, after its
 entry-ended loans and before its first statement, and no scope drops it
 again. A binding arm emits one `PayloadExtract` per field whose operand is a
 `Move` of the subject binding place, each followed by its binding's

@@ -434,6 +434,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         check.diagnostics.back().hints.emplace_back(
             "Capture the original owner in the enclosing lambda by value, or "
             "pass the borrowed value to the inner lambda as a parameter.");
+    } else if (error.borrow.kind ==
+               MirBorrowRejectionKind::SharedConsumedGroup) {
+      add(*error.source,
+          "A consuming borrowed payload requires one exact active carrier "
+          "with independently transferable dependencies.",
+          "GTI-S2067");
     } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addEscape(*error.source, error.body.kind, error.body.owner);
     else if (exitDropUnderReturnedBorrow(error)) {
