@@ -3461,6 +3461,54 @@ both backends see only erased types; lifetimes never change MIR shape, layout
 or emitted code, so a lifetime-free program produces the same MIR as before
 RFC 0004.
 
+### Borrow audits re-hosted from semantic loan flow
+
+Two findings are still decided by the semantic loan flow that RFC 0004
+phase 2 retires: the raw-pointer audit's "Raw access may overlap a live
+incompatible checked borrow" (GTI-S2102) and the cross-function
+persistent-storage GTI-S2045. Their MIR counterparts
+(`src/compiler/mir_borrow_audits.h`) read only verified MIR and MIR's own
+loan ends, and currently run alongside the semantic checks for measurement;
+the semantic checks still emit the diagnostics.
+
+`auditMirRawAccesses` (`mir_raw_audit.cpp`) runs per body containing a
+`RawDereference` or `RawIndex` place. A forward fixed point over the body's
+CFG tracks raw-address provenance: `AddressOf` names its operand place,
+`Convert`/`Identity` copy it, `PointerAdd`/`PointerSubtract` widen a final
+element index to any element, loads and stores move the provenance of every
+pointer slot at or below the stored place (an exact single destination is a
+strong update; a raw destination with several possible targets is weak), and
+an aggregate, payload or constructed value keeps its operands' provenance
+under an unnamed field. A reference binding's dereference resolves through
+the loan it carries, and the pointer remembers that loan. The same pass keeps
+the live loans: entry loans at entry, a loan from the instruction that starts
+it until its `EndBorrow`, joined over predecessors. Each raw access (a
+destination, operand or receiver place below a raw step, but not address
+formation) is a finding when one of its possible targets overlaps the source
+or an additional dependency of a live non-Stored loan that is not the
+pointer's own loan or one of its ancestors, and either side is a write.
+A function's raw-pointer formals start with their own pointee as provenance;
+an access through it becomes the function's summary instead of a finding, as
+do the globals and formal pointees its result can carry. A call to a
+summarized function performs those accesses on its arguments' targets and
+returns those targets, so the summaries are a fixed point over the call graph.
+A closure's captured raw pointer is not yet summarized.
+
+`auditMirPersistentStorageBorrows` (`mir_storage_effects.cpp`) shares the
+persistent-storage effect closure of `verifyMirPersistentStorageEffects`: each
+invocation's transitive same-thread global and thread-local accesses (an
+unknown GTI target accesses every persistent symbol mutably) are checked at
+the invocation's loan state by the body loan-flow engine. The verifier stops
+at the first rejection; the audit retires each rejected invocation and checks
+the body again, so every rejected invocation is reported.
+
+With `GTI_PARITY_RAW_AUDIT` set (`1` for standard error, otherwise a file to
+append to), the frontend (`mir_borrow_audit_parity.cpp`) compares the
+semantic findings with the MIR findings by source line and prints each match
+and mismatch. A program that semantics rejects only for persistent-storage
+findings continues to MIR with those findings set aside while measuring, and
+the rejection is restored afterwards. Without the variable nothing runs.
+
 ### Shared failure cleanup
 
 Function and lambda bodies share failure cleanup across failure edges. An

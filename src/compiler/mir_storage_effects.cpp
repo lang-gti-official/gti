@@ -1,6 +1,7 @@
 #include "mir_storage_effects.h"
 
 #include "gti/mir_effects.h"
+#include "mir_borrow_audits.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
@@ -120,10 +121,38 @@ bool unknownSourceInvocation(const MirProgram &program, const MirBody &body,
          instruction.synchronization.kind == SynchronizationOperationKind::None;
 }
 
-} // namespace
+void record(std::vector<MirBorrowAuditFinding> &findings, const MirBody &body,
+            MirBodyAddress address, const MirVerificationResult &proof,
+            const char *kind) {
+  const auto &error = proof.errors.front();
+  MirBorrowAuditFinding finding{.body = address,
+                                .block = error.block,
+                                .instruction = error.instruction,
+                                .detail =
+                                    std::string(kind) + ": " + error.message};
+  if (const MirBlock *block = body.findBlock(error.block))
+    for (const auto &instruction : block->instructions)
+      if (instruction.id == error.instruction) {
+        finding.hirValue = instruction.hirValue;
+        finding.hirStatement = instruction.hirStatement;
+        finding.callSite = instruction.callSite;
+        if (const MirPlace *place =
+                instruction.destination
+                    ? body.findPlace(*instruction.destination)
+                    : nullptr;
+            place != nullptr && place->root == MirPlaceRootKind::Binding)
+          finding.binding = place->binding;
+      }
+  if (error.borrow.loan != 0)
+    finding.loans.push_back(error.borrow.loan);
+  findings.push_back(std::move(finding));
+}
 
+// With `findings`, every rejected invocation is collected (the audit form);
+// without, the first rejection is the verification result.
 MirVerificationResult
-verifyMirPersistentStorageEffects(const MirProgram &program) {
+analyzePersistentStorageEffects(const MirProgram &program,
+                                std::vector<MirBorrowAuditFinding> *findings) {
   std::vector<SymbolId> persistent;
   for (const auto &step : program.programInitializationPlan().steps)
     persistent.push_back(step.symbol);
@@ -159,8 +188,11 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
       std::vector<MirPersistentStorageAccess> direct;
       auto proof = verifyMirPersistentStorageLoanFlow(
           *node.body, node.address.owner, {}, &direct);
-      if (!proof.valid())
-        return proof;
+      if (!proof.valid()) {
+        if (findings == nullptr)
+          return proof;
+        record(*findings, *node.body, node.address, proof, "direct");
+      }
       for (const auto &access : direct)
         if (isPersistent(access.symbol)) {
           if (access.destructiveTransfer)
@@ -353,12 +385,50 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
           cache.emplace(std::move(queryKey), accesses);
           return accesses;
         };
-    auto proof = verifyMirPersistentStorageLoanFlow(
-        *node.body, node.address.owner, hidden, nullptr, &query, persistent);
-    if (!proof.valid())
-      return proof;
+    if (findings == nullptr) {
+      auto proof = verifyMirPersistentStorageLoanFlow(
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+      if (!proof.valid())
+        return proof;
+      continue;
+    }
+    // The loan-flow engine stops at its first rejection. Retire each rejected
+    // invocation and re-run until the body is accepted or the rejection is not
+    // an invocation's.
+    for (std::size_t attempt = 0; attempt <= hidden.size() + 1; ++attempt) {
+      auto proof = verifyMirPersistentStorageLoanFlow(
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+      if (proof.valid())
+        break;
+      const auto &error = proof.errors.front();
+      const auto rejected =
+          std::find_if(hidden.begin(), hidden.end(), [&](const auto &access) {
+            return access.block == error.block &&
+                   access.instruction == error.instruction;
+          });
+      record(*findings, *node.body, node.address, proof,
+             rejected == hidden.end() ? "direct" : "invocation");
+      if (rejected == hidden.end())
+        break;
+      roots.erase(rejected->instruction);
+      hidden.erase(rejected);
+    }
   }
   return {};
+}
+
+} // namespace
+
+MirVerificationResult
+verifyMirPersistentStorageEffects(const MirProgram &program) {
+  return analyzePersistentStorageEffects(program, nullptr);
+}
+
+std::vector<MirBorrowAuditFinding>
+auditMirPersistentStorageBorrows(const MirProgram &program) {
+  std::vector<MirBorrowAuditFinding> findings;
+  (void)analyzePersistentStorageEffects(program, &findings);
+  return findings;
 }
 
 } // namespace lang
