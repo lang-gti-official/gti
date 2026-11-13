@@ -5978,8 +5978,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                   .variant = pattern.variantIndex}},
                   .reference = variant->payloadTypes[payload.payloadIndex]};
               semanticModel.recordLoan(std::move(loan));
-              loanFlow.records.at(payload.binding.retainedLoan)
-                  .confinedToRegion = false;
               semanticModel.recordBorrowDependencySet(*payload.source,
                                                       extractedDependencies);
               // Forming the selection uses its parent authority in the arm,
@@ -6049,11 +6047,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               loan.storedDependency = inheritedDependency;
               semanticModel.recordLoan(std::move(loan));
             }
-            // The binding is born at this arm's entry, not at the switch
-            // subject's full expression. Keep its endpoint lexical until
-            // arm-local NLL creation/endpoint plans are represented.
-            loanFlow.records.at(payload.binding.retainedLoan).confinedToRegion =
-                false;
           }
         }
         semanticModel.recordPayloadBinding(*payload.name, payload.binding);
@@ -10916,7 +10909,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         auto loan = *semanticModel.findLoan(id);
         loan.lifecycleBound = false;
         semanticModel.recordLoan(std::move(loan));
-        loanFlow.records.at(id).lifecycleBound = false;
       }
       continue;
     }

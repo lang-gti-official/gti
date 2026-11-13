@@ -1075,18 +1075,6 @@ private:
     bool arrowCallee = false;
   };
 
-  struct LoanFlowRecord {
-    SemanticLoanId id = 0;
-    std::size_t region = 0;
-    std::size_t lastUseOrder = 0;
-    const Stmt *lastUse = nullptr;
-    std::unordered_set<SymbolId> carriers;
-    bool confinedToRegion = true;
-    bool hasAliases = false;
-    bool lifecycleBound = false;
-    bool active = true;
-  };
-
   struct RetainedLoanSource {
     SemanticLoanId loan = 0;
     const Variable *carrier = nullptr;
@@ -1151,8 +1139,8 @@ private:
     std::size_t rawConditionalExpressionDepth = 0;
     // Conditional and switch arms the analysis is currently inside.
     std::size_t conditionalArmDepth = 0;
-    std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
-    std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
+    // The semantic loans this body created.
+    std::unordered_set<SemanticLoanId> bodyLoans;
     std::vector<LoanFlowLoop> loops;
     std::vector<std::size_t> activeLoops;
     std::size_t nextRegion = 1;

@@ -10310,24 +10310,10 @@ auto SemanticVisitor::Impl::endLoanFlowLoop() -> void {
 
 auto SemanticVisitor::Impl::attachLoanCarrier(SemanticLoanId loan,
                                               Symbol &carrier,
-                                              SymbolId carrierSymbol,
-                                              bool transfer) -> void {
-  const auto found = loanFlow.records.find(loan);
-  if (found == loanFlow.records.end()) {
+                                              SymbolId carrierSymbol, bool)
+    -> void {
+  if (!loanFlow.bodyLoans.contains(loan))
     return;
-  }
-  LoanFlowRecord &flow = found->second;
-  if (carrierSymbol == 0) {
-    flow.confinedToRegion = false;
-  }
-  if (loanFlow.currentRegion != 0 && loanFlow.currentRegion != flow.region) {
-    flow.confinedToRegion = false;
-  }
-  if (!transfer && !flow.carriers.empty()) {
-    flow.hasAliases = true;
-  }
-  flow.carriers.insert(carrierSymbol);
-  loanFlow.carrierLoans.insert_or_assign(carrierSymbol, loan);
   carrier.retainedLoan = loan;
   carrier.retainsDependency = true;
   semanticModel.recordLoanCarrier(loan, carrierSymbol);
@@ -10399,15 +10385,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
                             .designatedFields = std::move(designatedFields),
                             .conditions = std::move(conditions),
                             .carriers = {carrierSymbol}});
-  loanFlow.records.emplace(
-      id, LoanFlowRecord{.id = id,
-                         .region = loanFlow.currentRegion,
-                         .lastUseOrder = loanFlow.currentOrder,
-                         .lastUse = loanFlow.currentStatement,
-                         .carriers = {carrierSymbol},
-                         .confinedToRegion = carrierSymbol != 0,
-                         .lifecycleBound = lifecycleBound});
-  loanFlow.carrierLoans.insert_or_assign(carrierSymbol, id);
+  loanFlow.bodyLoans.insert(id);
   carrier.retainedLoan = id;
   carrier.retainsDependency = true;
   return id;
@@ -10460,7 +10438,7 @@ auto SemanticVisitor::Impl::recordStoredEntryDependency(
     // acquires that obligation nor inherits a capability-produced loan's
     // stronger access (such as the loan of a live lock guard).
     loan.lifecycleBound = false;
-    loanFlow.records.at(id).lifecycleBound = false;
+
     // Only receiver entries lack an ordinary binding to select their body.
     // A reference formal is selected through its physical Parameter loan,
     // including inside lambdas where the enclosing function is not its owner.
@@ -10811,7 +10789,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
   const bool namedCarrierTransfer =
       !republished && movedCarrier && movedCarrier->transfer &&
       movedCarrier->carrier != nullptr && movedCarrier->loan != 0 &&
-      loanFlow.records.contains(movedCarrier->loan);
+      loanFlow.bodyLoans.contains(movedCarrier->loan);
   if (expression && carrier->type.kind != SemanticType::Reference &&
       !namedCarrierTransfer) {
     const auto *contextual =
@@ -10863,7 +10841,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           copied->type == carrier->type &&
           retained->kind == SemanticLoanKind::StoredValue && !retained->entry &&
           !retained->lifecycleBound &&
-          loanFlow.records.contains(retained->id)) {
+          loanFlow.bodyLoans.contains(retained->id)) {
         attachLoanCarrier(retained->id, *carrier, carrierSymbol, false);
         semanticModel.recordBindingLoan(binding, retained->id);
         return;
@@ -10873,7 +10851,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
           copied->valueState == ValueState::Available &&
           copied->type == carrier->type && info && info->traits.copyable &&
           retained->kind == SemanticLoanKind::StoredValue && !retained->entry &&
-          loanFlow.records.contains(retained->id) &&
+          loanFlow.bodyLoans.contains(retained->id) &&
           !retained->lifecycleBound &&
           !lifecycleBoundBorrowCarrierFor(carrier->type) &&
           *complete == *copied->completeBorrowSet &&
@@ -10975,9 +10953,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       symbolicRangeIterator;
   const std::optional<TransientBorrowProduction> retainedProduction =
       transientBorrowProduction(expression);
-  const bool lexicalGlobalMutableBorrow =
-      carrierAccess == AccessMode::Mutable && retainedProduction &&
-      retainedProduction->globalStorage;
   const auto *construction =
       expression ? semanticModel.findConstruction(*expression) : nullptr;
   const auto *call = exprAs<Call>(expression);
@@ -11416,11 +11391,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       if (!pathConditionalTransfer && source->carrier != nullptr) {
         if (Symbol *sourceCarrier = resolveMutable(source->carrier->name())) {
           const SymbolId sourceSymbol = toolingSymbolFor(*sourceCarrier);
-          loanFlow.carrierLoans.erase(sourceSymbol);
-          if (auto flow = loanFlow.records.find(source->loan);
-              flow != loanFlow.records.end()) {
-            flow->second.carriers.erase(sourceSymbol);
-          }
           if (sourceLoan->lifecycleBound ||
               sourceLoan->access == AccessMode::Mutable ||
               std::any_of(sourceLoan->additionalDependencies.begin(),
@@ -11768,9 +11738,6 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
                                               : SemanticLoanKind::Reference,
                          expression, std::move(place), ownerId, receiverOrigin,
                          carrierAccess, protectsStorage);
-  if (lexicalGlobalMutableBorrow) {
-    loanFlow.records.at(id).confinedToRegion = false;
-  }
   semanticModel.recordBindingLoan(binding, id);
 }
 
@@ -11786,19 +11753,8 @@ auto SemanticVisitor::Impl::removeLoanCarrier(Symbol &carrier) -> void {
   if (loan == 0) {
     return;
   }
-  const SymbolId carrierId = toolingSymbolFor(carrier);
-  loanFlow.carrierLoans.erase(carrierId);
   carrier.retainedLoan = 0;
   carrier.retainsDependency = false;
-  const auto found = loanFlow.records.find(loan);
-  if (found == loanFlow.records.end()) {
-    return;
-  }
-  found->second.carriers.erase(carrierId);
-  if (!found->second.carriers.empty()) {
-    return;
-  }
-  found->second.active = false;
 }
 
 auto SemanticVisitor::Impl::isThreadHandleType(const SemanticType &type) const
