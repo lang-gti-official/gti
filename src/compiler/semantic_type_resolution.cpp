@@ -5316,7 +5316,7 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
   if (sources.captured)
     currentLambdaReturn->capturedText = true;
   for (const auto local : sources.locals)
-    loanFlow.localTextEscapes.push_back(
+    bodyFlow.localTextEscapes.push_back(
         {.local = local,
          .value = value.get(),
          .kind = currentLambdaReturn ? LocalTextEscapeKind::LambdaReturn
@@ -7883,6 +7883,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   currentStaticMemberFunction = false;
   allowPackTypeReference = false;
   loanFlow = {};
+  bodyFlow = {};
   valueControlFlow.clear();
   semanticModel.clearLoans();
   nextSemanticLoanId = 1;

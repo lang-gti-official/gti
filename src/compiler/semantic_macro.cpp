@@ -1054,7 +1054,7 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
     recordSelectedCallOccurrence(*call, *selection);
     currentType = callExpressionType(selection->returnType);
     semanticModel.record(*call, expressionInfo(currentType));
-    loanFlow.deferredGenericFlow = true;
+    bodyFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
     return true;
   }
