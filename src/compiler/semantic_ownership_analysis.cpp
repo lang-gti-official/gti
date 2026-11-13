@@ -10437,13 +10437,22 @@ auto SemanticVisitor::Impl::validateCallPlaceExclusivityImpl(
     std::optional<TransientBorrowProduction> production =
         transientBorrowProduction(*arguments[index]);
     if (!production && borrowedCarrierParameter) {
-      if (const std::optional<RetainedLoanSource> retained =
-              retainedLoanSource(*arguments[index])) {
-        if (const SemanticLoanInfo *loan =
-                semanticModel.findLoan(retained->loan)) {
-          production = TransientBorrowProduction{.place = loan->place,
-                                                 .access = loan->access};
+      // A borrowed carrier argument's owners are its complete dependency set.
+      if (const auto complete =
+              completeBorrowDependencySet(arguments[index]->get());
+          complete && !complete->dependencies.empty()) {
+        std::vector<SemanticLoanPlace> origins;
+        AccessMode access = referenceParameter ? parameter.referenceAccess
+                                               : AccessMode::ReadOnly;
+        for (const auto &dependency : complete->dependencies) {
+          origins.push_back(dependency.place);
+          if (dependency.access == AccessMode::Mutable)
+            access = AccessMode::Mutable;
         }
+        places.push_back({.origins = std::move(origins),
+                          .access = access,
+                          .argument = index});
+        continue;
       }
     }
     if (!production && borrowedCarrierParameter) {
