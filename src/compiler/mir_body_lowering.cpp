@@ -5364,10 +5364,10 @@ private:
   // projected from its source along that path; a local group's owner is the
   // group itself as a reborrowed referent (when it has a parent) or its
   // source, or else the additional owner the path designates.
-  [[nodiscard]] MirPlaceId selectionOrigin(const HirValue &value,
-                                           const HirLoan &desired,
-                                           MirLoanId parent) {
-    if (value.operands.empty() || !desired.referenceSelection)
+  [[nodiscard]] MirPlaceId
+  selectionOrigin(const HirValue &value, AccessMode access, MirLoanId parent) {
+    const auto selected = extractionSelection(value.id);
+    if (value.operands.empty() || !selected)
       return 0;
     const HirValueId carrier = value.operands.front();
     const MirLoanId group = parent != 0 ? parent : loanForValue(carrier);
@@ -5386,7 +5386,7 @@ private:
            index < carrierPlace->projections.size(); ++index)
         if (carrierPlace->projections[index].kind == MirProjectionKind::Field)
           path.push_back(carrierPlace->projections[index].field);
-    for (const SymbolId field : desired.referenceSelection->fields)
+    for (const SymbolId field : selected->fields)
       path.push_back(field);
     if (authority->entry) {
       // Project along the alternative guarding the designated path.
@@ -5421,16 +5421,16 @@ private:
       for (const auto &place : output.places)
         if (place.root == MirPlaceRootKind::Loan && place.loan == group &&
             place.projections.empty() && place.type == value.info.type &&
-            place.access == desired.access)
+            place.access == access)
           return place.id;
       MirPlace referent;
       referent.root = MirPlaceRootKind::Loan;
       referent.loan = group;
       referent.type = value.info.type;
       referent.traits = value.info.traits;
-      referent.access = desired.access;
+      referent.access = access;
       referent.sourceValue = value.id;
-      referent.key = desired.place;
+      referent.key = loanOriginKey(group);
       return appendPlace(std::move(referent));
     }
     if (ownerPlace == nullptr)
@@ -5705,6 +5705,41 @@ private:
     }
     lowered.semanticLoan = identity.semanticLoan;
     semanticLoans.insert_or_assign(identity.semanticLoan, id);
+  }
+
+  // The reference a lowered stored-reference payload extraction selects,
+  // from its MIR instruction.
+  [[nodiscard]] std::optional<MirReferenceSelection>
+  extractionSelection(HirValueId extraction) const {
+    const auto *value = findValue(extraction);
+    const auto found = loweredValues.find(extraction);
+    const auto *resolved = found == loweredValues.end()
+                               ? nullptr
+                               : output.findValue(found->second);
+    const auto *block = resolved == nullptr
+                            ? nullptr
+                            : output.findBlock(resolved->definitionBlock);
+    const MirInstruction *producer = nullptr;
+    if (block != nullptr)
+      for (const auto &instruction : block->instructions)
+        if (instruction.id == resolved->definition)
+          producer = &instruction;
+    if (value == nullptr || resolved == nullptr || producer == nullptr ||
+        value->kind != HirValueKind::PayloadExtraction ||
+        value->operands.size() != 1 ||
+        producer->kind != MirInstructionKind::Compute ||
+        producer->operation != MirOperation::PayloadExtract ||
+        producer->hirValue != extraction || producer->result != resolved->id ||
+        producer->operands.size() != 1 ||
+        output.findPlace(producer->operands.front().place) == nullptr ||
+        !producer->payloadExtractionKind ||
+        !isStoredReferenceExtraction(*producer->payloadExtractionKind))
+      return std::nullopt;
+    auto selected =
+        selectedPayloadReference(*producer, value->operands.front());
+    if (selected)
+      selected->value = resolved->id;
+    return selected;
   }
 
   // Records the reference a stored-reference payload extraction selects on
@@ -14264,19 +14299,49 @@ private:
       // Ordinary payload borrowing protects the enum's field storage. A
       // stored-reference extraction instead protects external owners and
       // retains its evaluated address separately in referenceSelection.
-      MirLoanId parent =
-          desired->referenceSelection ? selectionAuthorityParent(*value) : 0;
-      const MirPlaceId origin = desired->referenceSelection
-                                    ? selectionOrigin(*value, *desired, parent)
-                                    : field;
+      // A stored-reference extraction selects the reference a payload
+      // stores; the MIR producer's extraction kind says so.
+      const bool storedSelection =
+          value->payloadExtractionKind &&
+          isStoredReferenceExtraction(*value->payloadExtractionKind);
+      MirLoanId parent = storedSelection ? selectionAuthorityParent(*value) : 0;
+      const MirPlaceId origin =
+          storedSelection
+              ? selectionOrigin(
+                    *value, bindingReferenceAccess(binding, *desired), parent)
+              : field;
       if (origin == 0) {
         valid = false;
         return {};
       }
-      if (!desired->referenceSelection)
-        output.places[field - 1].key = desired->place;
+      // A payload overlaps its enum's storage: it takes the subject's key,
+      // or, for a subject reached through a reference binding, its
+      // referent's.
+      if (!storedSelection && !value->operands.empty())
+        if (const MirPlace *subject =
+                output.findPlace(placeForValue(value->operands.front()));
+            subject != nullptr && subject->key) {
+          std::optional<PlaceKey> key = subject->key;
+          const HirBinding *reference =
+              subject->root == MirPlaceRootKind::Binding
+                  ? findBinding(subject->binding)
+                  : nullptr;
+          if (reference != nullptr &&
+              reference->info.type.kind == SemanticType::Reference &&
+              (subject->projections.empty() ||
+               (subject->projections.size() == 1 &&
+                subject->projections.front().kind ==
+                    MirProjectionKind::Dereference)))
+            if (const auto carried = bindingLoans.find(subject->binding);
+                carried != bindingLoans.end())
+              if (const MirLoan *loan = output.findLoan(carried->second);
+                  loan != nullptr && !loan->entry)
+                if (auto origin = loanOriginKey(loan->id))
+                  key = std::move(origin);
+          output.places[field - 1].key = std::move(key);
+        }
       MirLoanId loan = 0;
-      if (desired->referenceSelection) {
+      if (storedSelection) {
         loan = createLoan(MirLoanKind::Local, origin,
                           bindingReferenceAccess(binding, *desired), valueId,
                           binding, 0, parent);
@@ -14528,13 +14593,23 @@ private:
              (place != nullptr && storedReferenceAccessFor(*place))) &&
             parent != nullptr && parent->kind == MirLoanKind::Stored &&
             !parent->designatedFields.empty();
-        if (place != nullptr &&
-            ((place->key && *place->key == desired->place) ||
-             exactRangeElement || projectedStoredReference)) {
-          if (projectedStoredReference)
-            output.places[concrete - 1].key = desired->place;
+        // A reference binding read through a loan it carries names that
+        // loan's referent, unless the loan is a parameter's entry: the
+        // caller's referent is reachable only through the parameter itself.
+        const MirLoan *carried = nullptr;
+        if (place != nullptr && parent != nullptr &&
+            place->root == MirPlaceRootKind::Binding &&
+            (place->projections.empty() ||
+             place->projections.front().kind == MirProjectionKind::Dereference))
+          if (const auto found = bindingLoans.find(place->binding);
+              found != bindingLoans.end() && found->second == referentParent)
+            carried = parent;
+        const bool throughCarriedLoan =
+            carried != nullptr &&
+            !(carried->kind == MirLoanKind::Parameter && carried->entry);
+        if (place != nullptr && ((place->key && !throughCarriedLoan) ||
+                                 exactRangeElement || projectedStoredReference))
           return concrete;
-        }
         // A capture or global root names its own storage; it takes its
         // symbol's key.
         if (place != nullptr && !place->key &&
@@ -14544,16 +14619,8 @@ private:
               PlaceKey{.domain = output.placeDomain, .root = place->symbol};
           return concrete;
         }
-        // A reference binding read through the parent loan it carries names
-        // that loan's referent.
-        if (place != nullptr && referentParent != 0 &&
-            place->root == MirPlaceRootKind::Binding &&
-            (place->projections.empty() ||
-             place->projections.front().kind == MirProjectionKind::Dereference))
-          if (const auto carried = bindingLoans.find(place->binding);
-              carried != bindingLoans.end() &&
-              carried->second == referentParent)
-            return loanReferentPlace(*place, referentParent);
+        if (throughCarriedLoan)
+          return loanReferentPlace(*place, referentParent);
         valid = false;
         return MirPlaceId{0};
       };
@@ -14757,13 +14824,6 @@ private:
               removeLoanFromState(ended, scopes, bindingLoans);
             }
           }
-        } else if (desired->storedDependency == 0 &&
-                   (!sourceLoan.entry ||
-                    sourceLoan.semanticLoan == desired->semanticLoan)) {
-          bindCarrierIdentity(existing, *desired, binding);
-          return {.kind = MirOperandKind::Loan,
-                  .loan = existing,
-                  .type = value->info.type};
         }
       }
 
@@ -14828,19 +14888,32 @@ private:
       else if (parent != 0)
         output.loans[loan - 1].storedDependency =
             output.loans[parent - 1].storedDependency;
-      if (desired->referenceSelection) {
-        HirValueId extraction = valueId;
-        for (const HirValue *wrapped = findValue(extraction);
-             wrapped != nullptr &&
-             (wrapped->kind == HirValueKind::Grouping ||
-              wrapped->kind == HirValueKind::Move) &&
-             wrapped->operands.size() == 1;
-             wrapped = findValue(extraction))
-          extraction = wrapped->operands.front();
-        if (const HirValue *extracted = findValue(extraction);
-            extracted == nullptr ||
-            extracted->kind != HirValueKind::PayloadExtraction)
-          extraction = desired->referenceSelection->value;
+      HirValueId extraction = valueId;
+      for (const HirValue *wrapped = findValue(extraction);
+           wrapped != nullptr &&
+           (wrapped->kind == HirValueKind::Grouping ||
+            wrapped->kind == HirValueKind::Move) &&
+           wrapped->operands.size() == 1;
+           wrapped = findValue(extraction))
+        extraction = wrapped->operands.front();
+      // An alias of a selected reference reborrows the selection's own
+      // referent: it selects the same stored reference, from the same
+      // extraction.
+      if (const HirValue *extracted = findValue(extraction);
+          (extracted == nullptr ||
+           extracted->kind != HirValueKind::PayloadExtraction) &&
+          parent != 0 && output.loans[parent - 1].referenceSelection)
+        if (const MirPlace *referent = output.findPlace(sourcePlace);
+            referent != nullptr && referent->root == MirPlaceRootKind::Loan &&
+            referent->loan == parent && referent->projections.empty())
+          if (const MirValue *selected = output.findValue(
+                  output.loans[parent - 1].referenceSelection->value))
+            extraction = selected->sourceValue;
+      if (const HirValue *extracted = findValue(extraction);
+          extracted != nullptr &&
+          extracted->kind == HirValueKind::PayloadExtraction &&
+          extracted->payloadExtractionKind &&
+          isStoredReferenceExtraction(*extracted->payloadExtractionKind)) {
         bindSelectionLoan(loan, *desired, binding, extraction);
       } else {
         bindCarrierIdentity(loan, *desired, binding);

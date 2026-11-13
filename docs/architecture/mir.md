@@ -3441,7 +3441,15 @@ designates field paths (a compact group is its single owner's loan and is
 joined), a restored carrier reference, and an accessor chain with no held
 loan beneath it, which the reference retains itself. A reference binding's
 loan is not reconciled with a semantic identity; the semantic loan only names
-it for later HIR facts. A reference binding's access is its reference type's, and
+it for later HIR facts. A reference binding's source place is MIR's as
+well: the place its initializer names, unless that place is reached through a
+loan a reference binding carries, which names that loan's referent instead (a
+parameter's entry loan excepted: the caller's referent is reachable only
+through the parameter). A payload's place overlaps its enum subject's storage
+and takes the subject's key, or, for a subject read through a reference
+binding carrying a local loan, the key of what that loan borrows. A stored
+reference payload selection is recognized from the extraction's own kind, and
+an alias reborrowing a selection loan's referent selects the same reference. A reference binding's access is its reference type's, and
 its parent is the loan its referent's place is reached through: a reference
 binding's current loan, a receiver's or global's entry loan (its Stored entry
 group only for a place reached through one of the root's stored references,
