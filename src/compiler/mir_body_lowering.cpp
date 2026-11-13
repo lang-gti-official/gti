@@ -16862,11 +16862,23 @@ private:
             }
             return false;
           };
-          if (retained.lifecycleBound ||
-              (retained.kind == MirLoanKind::Stored &&
-               (retained.access == AccessMode::Mutable ||
-                !retained.designatedFields.empty() ||
-                retained.storedDependency != 0 || reborrowsHeldLoan()))) {
+          // An exclusive result a callee publishes from a shared stored
+          // input (a guard locked through a read-only reference to a mutex)
+          // holds the callee-granted exclusion below that shared entry group
+          // as one compact owner; it takes no derived field map.
+          const MirLoan *sharedParent = output.findLoan(retained.parent);
+          const bool exclusiveFromShared =
+              retained.kind == MirLoanKind::Stored && retained.lifecycleBound &&
+              retained.access == AccessMode::Mutable && sharedParent &&
+              sharedParent->entry &&
+              sharedParent->kind == MirLoanKind::Stored &&
+              sharedParent->access == AccessMode::ReadOnly;
+          if (!exclusiveFromShared &&
+              (retained.lifecycleBound ||
+               (retained.kind == MirLoanKind::Stored &&
+                (retained.access == AccessMode::Mutable ||
+                 !retained.designatedFields.empty() ||
+                 retained.storedDependency != 0 || reborrowsHeldLoan())))) {
             deriveRetainedShape(retainedLoan, *statement.binding);
             if (passesBorrowedCarrierByValue(statement.value))
               restateCarrierArgumentOwners(retainedLoan, statement.value);
