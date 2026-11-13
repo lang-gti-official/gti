@@ -496,7 +496,11 @@ and place identity. Loan selection records distinguish an evaluated stored
 reference address (exact extraction value and carrier) from the external places
 that may own its referent. Consuming selections also identify the exact old
 dependency group in `transferredFrom`; this is a handoff claim, not a live
-reborrow parent. Body verification requires an existing, distinct group only
+reborrow parent. An access through a selection loan is the selected
+address itself or a field or element suffix of it: every possible owner has
+the selected reference's referent type, so the verifier applies the same
+suffix to each owner, while a dereference below the selection would leave
+that owner set and is rejected. Body verification requires an existing, distinct group only
 for a transfer-mode producer. Program verification must separately prove the
 closed field-transfer prefix and preserve external ancestry after the old
 carrier retires. The records alone grant no borrowing authority: independent
@@ -2302,7 +2306,9 @@ field and element selection after it, is an exact producer for the same
 reason: unsafe code took on its validity and lifetime obligations, and raw
 writes are not checked text stores, so it is an inert native value with no
 GTI owner to reconstruct. A checked dereference below the raw step reads a
-referent elsewhere and keeps the ordinary rules.
+referent elsewhere and keeps the ordinary rules. Likewise a borrowed-carrier shell reached
+through a raw dereference has no checked owner: its shell loan carries no
+stored dependency, and the raw-pointer audit owns that access.
 
 A call's result holds what its callee's returns hold, mapped through the
 call's arguments and receiver. `TextContracts` summarizes each source

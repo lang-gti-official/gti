@@ -174,6 +174,41 @@ int main() { mut int x = 7; return inspect(Reading::item(x)) - 7; }
     }
   expect(foundAlias,
          "selected reference aliases require a distinct checked child");
+  // A field of a selected reference is one projection applied to every
+  // possible owner; reading or writing it verifies, and an owner write while
+  // it is still read conflicts.
+  const auto projected = analyzeMir(R"gti(
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(mut Point& value) };
+int inspect(mut Reading input) {
+  switch (input) {
+  case Reading::item(mut auto& value): { value.y = value.y + 5; return value.y; }
+  case Reading::empty: return 0;
+  }
+}
+int main() { mut Point p = Point(1, 2); return inspect(Reading::item(p)) - 7; }
+)gti");
+  acceptedSemantics(projected);
+  expect(projected.canGenerateCode() && projected.mirValid,
+         "a selected reference's field projection verifies");
+  const auto projectedConflict = analyzeMir(R"gti(
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(Point& value) };
+int main() {
+  mut Point p = Point(1, 2);
+  Reading r = Reading::item(p);
+  switch (r) {
+  case Reading::item(value): { p.y = 9; return value.y; }
+  case Reading::empty: return 0;
+  }
+}
+)gti");
+  expect(std::any_of(projectedConflict.diagnostics.begin(),
+                     projectedConflict.diagnostics.end(),
+                     [](const lang::Diagnostic &diagnostic) {
+                       return diagnostic.code == "GTI-S2017";
+                     }),
+         "an owner write conflicts with a later selected field read");
   const auto independent = analyzeMir(R"gti(
 enum Pair { empty, both(mut int& first, mut int& second) };
 int inspect(mut Pair input) {

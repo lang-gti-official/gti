@@ -4197,15 +4197,34 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                    exemptLoan);
       const auto primary =
           canonicalPlace(body, selected->source, bindingLoans, active);
-      // A scalar selected reference has one evaluated address and several
-      // possible owners. Projecting that address needs an independently typed
-      // suffix applied to every owner; the root selection alone cannot prove
-      // it. Same-referent aliases retain the exact selection and are supported.
-      if (!sameCanonicalPlace(place, primary))
-        return failure(body, owner,
-                       "selected reference access lacks an exact all-origin "
-                       "projection",
-                       block.id, instruction);
+      // A selected reference has one evaluated address and several possible
+      // owners, all of the selected reference's referent type. An access is
+      // the selection itself or a field/element suffix of it, which applies
+      // to every owner alike; a dereference would leave that owner set.
+      std::vector<MirPlaceProjection> suffix;
+      if (!sameCanonicalPlace(place, primary)) {
+        const bool prefixed =
+            !place.ambiguous && !primary.ambiguous &&
+            sameCanonicalRoot(place, primary) &&
+            place.payloadSelections == primary.payloadSelections &&
+            place.projections.size() > primary.projections.size() &&
+            std::equal(primary.projections.begin(), primary.projections.end(),
+                       place.projections.begin());
+        if (prefixed)
+          suffix.assign(
+              place.projections.begin() +
+                  static_cast<std::ptrdiff_t>(primary.projections.size()),
+              place.projections.end());
+        if (!prefixed ||
+            std::any_of(suffix.begin(), suffix.end(), [](const auto &step) {
+              return step.kind != MirProjectionKind::Field &&
+                     step.kind != MirProjectionKind::Index;
+            }))
+          return failure(body, owner,
+                         "selected reference access lacks an exact all-origin "
+                         "projection",
+                         block.id, instruction);
+      }
       const auto checkOrigin =
           [&](MirPlaceId source,
               AccessMode permission) -> std::optional<MirVerificationResult> {
@@ -4215,6 +4234,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                          "origin's access",
                          block.id, instruction);
         auto origin = canonicalPlace(body, source, bindingLoans, active);
+        origin.projections.insert(origin.projections.end(), suffix.begin(),
+                                  suffix.end());
         // This is one access through the selected loan, not separate accesses
         // to its possible alternatives. In particular it must not conflict
         // with its own other possible origins or bypass its parent state.

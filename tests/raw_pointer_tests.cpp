@@ -333,6 +333,31 @@ int main() {
   expect(frontend.mirValid && frontend.mir.valid(),
          "raw pointer operations should produce verified MIR");
 
+  // A borrowed carrier reached through a raw dereference has no checked
+  // owner; its shell loan carries no stored dependency.
+  const lang::FrontendResult rawCarrier =
+      lang::Frontend().analyze("raw-pointer-carrier.gti", R"(
+class View {
+  int& value;
+public:
+  View(int& s) : value(s) {}
+  int get() { return this.value; }
+};
+int main() {
+  int x = 1;
+  View v = View(x);
+  const View* p = &v;
+  unsafe {
+    View& r = *p;
+    return r.get() - 1;
+  }
+}
+)");
+  for (const lang::Diagnostic &diagnostic : rawCarrier.diagnostics)
+    std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(rawCarrier.canGenerateCode() && rawCarrier.mirValid,
+         "a carrier reference through a raw dereference verifies");
+
   const lang::HirFunctionInstance *main = findHirFunction(frontend, "main");
   expect(main != nullptr, "raw pointer HIR should retain main");
   if (main != nullptr) {

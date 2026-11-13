@@ -6551,9 +6551,16 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
         dependencySource != source &&
         (source->type.kind == SemanticType::StringView ||
          source->type.kind == SemanticType::CString);
+    // A shell reached through a raw dereference has no checked owner: unsafe
+    // code erased its provenance, and the raw-pointer audit owns that access.
+    const bool throughRawDereference = std::any_of(
+        source->projections.begin(), source->projections.end(),
+        [](const MirPlaceProjection &projection) {
+          return projection.kind == MirProjectionKind::RawDereference;
+        });
     if (expected == 0 && loan.storedDependency == 0 &&
         (independentlyStaticTextBinding(program, body, *source) ||
-         ownerlessTextPayload || exactParent))
+         ownerlessTextPayload || exactParent || throughRawDereference))
       continue;
     if (expected == 0 || loan.storedDependency != expected)
       return verificationFailure(
