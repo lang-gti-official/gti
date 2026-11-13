@@ -2660,6 +2660,9 @@ public:
   findCaptureBorrowDependencies(const Expr &expression) const;
 
   [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const;
+  // A formal pack element whose class stores references: its entry is a
+  // carrier of the caller's stored dependencies, not an owned value.
+  [[nodiscard]] bool isPackStoredEntry(SymbolId pack, std::size_t index) const;
 
   [[nodiscard]] std::optional<bool>
   findConstexprBranch(const IfStmt &statement) const;
@@ -3109,6 +3112,7 @@ private:
   void recordPayloadBinding(const Token &name, BindingInfo info);
 
   void recordLoan(SemanticLoanInfo info);
+  void recordPackStoredEntry(SymbolId pack, std::size_t index);
   void
   recordBorrowDependencies(const Expr &expression,
                            std::vector<SemanticLoanDependency> dependencies);
@@ -3360,6 +3364,7 @@ private:
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const Token *, BindingInfo> payloadBindings;
   std::vector<SemanticLoanInfo> retainedLoans;
+  std::vector<std::pair<SymbolId, std::size_t>> packStoredEntries;
   std::unordered_map<const Expr *, std::optional<SemanticBorrowDependencySet>>
       expressionBorrowDependencies;
   std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>

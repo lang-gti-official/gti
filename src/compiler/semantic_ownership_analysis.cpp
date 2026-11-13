@@ -11024,6 +11024,9 @@ auto SemanticVisitor::Impl::recordParameterEntryLoan(const Parameter &parameter)
         // Pack elements are individually identified, but cannot be named or
         // reassigned independently by source. Do not overwrite the whole
         // pack binding's single-carrier flow entry with its last element.
+        if (element.kind == SemanticType::Class &&
+            !loan.designatedFields.empty())
+          semanticModel.recordPackStoredEntry(symbol, index);
         semanticModel.recordLoan(std::move(loan));
         continue;
       }

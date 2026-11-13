@@ -6662,21 +6662,8 @@ private:
           const SemanticType &element = value.info.type.arguments[index];
           const SemanticTypeTraits traits =
               instanceProvider->traitsFor(element);
-          const bool storedEntry =
-              element.kind == SemanticType::Class &&
-              std::any_of(model.loans().begin(), model.loans().end(),
-                          [&](const SemanticLoanInfo &loan) {
-                            return loan.entry &&
-                                   loan.kind == SemanticLoanKind::StoredValue &&
-                                   loan.place.root == value.symbol &&
-                                   !loan.place.receiver &&
-                                   loan.place.projections.size() == 1 &&
-                                   loan.place.projections.front().kind ==
-                                       PlaceProjectionKind::ConstantIndex &&
-                                   loan.place.projections.front().index ==
-                                       index &&
-                                   !loan.designatedFields.empty();
-                          });
+          const bool storedEntry = element.kind == SemanticType::Class &&
+                                   model.isPackStoredEntry(value.symbol, index);
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (element.kind == SemanticType::Reference) {
             inputKind = element.referenceAccess == AccessMode::Mutable

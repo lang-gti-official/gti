@@ -1194,6 +1194,17 @@ SemanticModel::loans() const {
   return retainedLoans;
 }
 
+[[nodiscard]] bool SemanticModel::isPackStoredEntry(SymbolId pack,
+                                                    std::size_t index) const {
+  return std::find(packStoredEntries.begin(), packStoredEntries.end(),
+                   std::pair{pack, index}) != packStoredEntries.end();
+}
+
+void SemanticModel::recordPackStoredEntry(SymbolId pack, std::size_t index) {
+  if (!isPackStoredEntry(pack, index))
+    packStoredEntries.emplace_back(pack, index);
+}
+
 [[nodiscard]] std::optional<bool>
 SemanticModel::findConstexprBranch(const IfStmt &statement) const {
   const auto found = constexprBranches.find(&statement);
@@ -2145,6 +2156,7 @@ void SemanticModel::clear() {
   parameterBindings.clear();
   payloadBindings.clear();
   retainedLoans.clear();
+  packStoredEntries.clear();
   expressionBorrowDependencies.clear();
   captureBorrowDependencies.clear();
   constexprBranches.clear();
@@ -2463,6 +2475,7 @@ void SemanticModel::beginSpeculativeDelta(const SemanticModel &baseModel) {
   if (sourceDebug_.tables && baseModel.sourceDebug_.tables)
     sourceDebug_.tables->instance = baseModel.sourceDebug_.tables->instance;
   retainedLoans = baseModel.retainedLoans;
+  packStoredEntries = baseModel.packStoredEntries;
   setToolingOccurrencesEnabled(baseModel.semanticDatabase.toolingOccurrences);
 }
 
@@ -2983,6 +2996,7 @@ void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
 
 void SemanticModel::clearLoans() {
   retainedLoans.clear();
+  packStoredEntries.clear();
   expressionBorrowDependencies.clear();
   captureBorrowDependencies.clear();
   for (auto &[_, binding] : variableBindings) {
