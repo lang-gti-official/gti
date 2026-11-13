@@ -3432,7 +3432,13 @@ rooted where the alias's chain begins, with the stored dependency protecting
 what the shell references (a shared alias of an exclusive formal never stands
 in for the formal); a call-result or by-value shell is borrowed in place.
 Entry loans name their receiver, capture, parameter or pack-element place
-directly from the entry site. Semantic loans still name these MIR loans for
+directly from the entry site. A reference binding's source place is its
+initializer's own place: a capture or global root takes its symbol's key, and a
+reference binding read through the parent loan it carries names that loan's
+Loan-rooted referent, keyed by the place the loan borrows (dereferenced when
+that place is a reference slot) and the remaining projections; a call result's
+referent has no derivable key. Lowering no longer rebuilds places from
+semantic loan places. Semantic loans still name these MIR loans for
 later HIR facts.
 
 A reference bound to an enum payload borrows the extracted field. Through a

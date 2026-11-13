@@ -5075,231 +5075,63 @@ private:
     return place;
   }
 
-  [[nodiscard]] MirPlaceId placeForLoan(const HirLoan &loan,
-                                        const HirValue *resultValue = nullptr) {
-    if (const auto found = semanticLoanPlaces.find(loan.semanticLoan);
-        found != semanticLoanPlaces.end()) {
-      return found->second;
-    }
-
-    if (loan.referenceSelection) {
-      const auto authority = loan.parent != 0
-                                 ? loan.parent
-                                 : loan.referenceSelection->transferredFrom;
-      const auto *entry = source.findLoan(authority);
-      const auto mapped = semanticLoans.find(authority);
-      if (entry && entry->entry &&
-          entry->kind == SemanticLoanKind::StoredValue) {
-        if (mapped == semanticLoans.end()) {
-          valid = false;
-          return 0;
-        }
-        const auto *lowered = output.findLoan(mapped->second);
-        if (!lowered) {
-          valid = false;
-          return 0;
-        }
-        const auto base = lowered->source;
-        const auto project = [&](const auto &fields, const auto &conditions) {
-          auto external = entry->place;
-          for (const auto field : fields)
-            external.projections.push_back(
-                {.kind = PlaceProjectionKind::Field, .field = field});
-          if (external != loan.place)
-            return MirPlaceId{0};
-          return projectBorrowFields(base, fields, conditions);
-        };
-        auto exact = project(entry->designatedFields, entry->conditions);
-        for (const auto &dependency : entry->additionalDependencies)
-          if (auto projected =
-                  project(dependency.designatedFields, dependency.conditions)) {
-            if (exact != 0 && exact != projected) {
-              valid = false;
-              return 0;
-            }
-            exact = projected;
-          }
-        const auto *place = output.findPlace(exact);
-        if (!place || place->key != loan.place ||
-            (resultValue && place->type != resultValue->info.type) ||
-            (loan.access == AccessMode::Mutable &&
-             place->access != AccessMode::Mutable)) {
-          valid = false;
-          return 0;
-        }
-        semanticLoanPlaces.emplace(loan.semanticLoan, exact);
-        return exact;
-      }
-    }
-
-    MirPlace lowered;
-    std::size_t firstProjection = 0;
-    if (loan.parent != 0) {
-      const HirLoan *parentLoan = source.findLoan(loan.parent);
-      const auto parent = semanticLoans.find(loan.parent);
-      const bool sameRoot = parentLoan != nullptr &&
-                            parent != semanticLoans.end() &&
-                            parentLoan->place.domain == loan.place.domain &&
-                            parentLoan->place.root == loan.place.root &&
-                            parentLoan->place.receiver == loan.place.receiver &&
-                            parentLoan->place.projections.size() <=
-                                loan.place.projections.size() &&
-                            std::equal(parentLoan->place.projections.begin(),
-                                       parentLoan->place.projections.end(),
-                                       loan.place.projections.begin());
-      // A place rooted at the parent loan names its primary referent. A
-      // reference selected under one of the parent's additional owners uses
-      // the owner place the carrier already materialized for that dependency
-      // (the referent of a reference-typed owner); the selection loan keeps
-      // the exact parent link.
-      if (!sameRoot && loan.referenceSelection && parent != semanticLoans.end())
-        if (const MirLoan *carrier = output.findLoan(parent->second))
-          for (const auto &dependency : carrier->additionalDependencies) {
-            const MirPlace *owner = output.findPlace(dependency.source);
-            if (owner == nullptr || owner->key != loan.place)
-              continue;
-            if (resultValue == nullptr ||
-                owner->type == resultValue->info.type) {
-              semanticLoanPlaces.emplace(loan.semanticLoan, dependency.source);
-              return dependency.source;
-            }
-            if (owner->root == MirPlaceRootKind::Binding &&
-                owner->projections.empty() &&
-                owner->type.kind == SemanticType::Reference &&
-                owner->type.arguments.size() == 1 &&
-                owner->type.arguments.front() == resultValue->info.type) {
-              MirPlace referent = *owner;
-              referent.projections.push_back(
-                  {.kind = MirProjectionKind::Dereference});
-              referent.type = resultValue->info.type;
-              referent.traits = resultValue->info.traits;
-              referent.access = loan.access;
-              referent.sourceValue = resultValue->id;
-              const MirPlaceId id = appendPlace(std::move(referent));
-              semanticLoanPlaces.emplace(loan.semanticLoan, id);
-              return id;
-            }
-          }
-      if (!sameRoot) {
-        valid = false;
-        return 0;
-      }
-      lowered.root = MirPlaceRootKind::Loan;
-      lowered.loan = parent->second;
-      lowered.access = loan.access;
-      firstProjection = parentLoan->place.projections.size();
-    } else if (loan.place.receiver) {
-      lowered.root = MirPlaceRootKind::This;
-      lowered.access = loan.access;
-      if (function != nullptr && function->owner && *function->owner != 0 &&
-          *function->owner <= program.classInstances().size()) {
-        const auto &owner = program.classInstances()[*function->owner - 1];
-        lowered.type = owner.type;
-        lowered.traits = owner.traits;
-        lowered.access = function->source != nullptr &&
-                                 receiverAllowsMutation(
-                                     function->source->receiverMutability())
-                             ? AccessMode::Mutable
-                             : AccessMode::ReadOnly;
-      } else if (destructor != nullptr) {
-        const auto *owner =
-            destructor->owner != 0 &&
-                    destructor->owner <= program.classInstances().size()
-                ? &program.classInstances()[destructor->owner - 1]
-                : nullptr;
-        if (owner == nullptr) {
-          valid = false;
-          return 0;
-        }
-        lowered.type = owner->type;
-        lowered.traits = owner->traits;
-        lowered.access = AccessMode::Mutable;
-      }
-    } else if (const auto local = localSymbols.find(loan.place.root);
-               local != localSymbols.end()) {
-      const MirPlaceId base = placeForBinding(local->second);
-      const MirPlace *place = output.findPlace(base);
-      if (place == nullptr) {
-        valid = false;
-        return 0;
-      }
-      if (loan.place.projections.empty()) {
-        semanticLoanPlaces.emplace(loan.semanticLoan, base);
-        return base;
-      }
-      lowered = *place;
-      lowered.id = 0;
-      lowered.access = loan.access;
-    } else if (loan.place.root != 0) {
-      lowered.root = MirPlaceRootKind::Symbol;
-      lowered.symbol = loan.place.root;
-      lowered.access = loan.access;
-      const auto capture = lambdaCaptures.find(loan.place.root);
-      if (lambda != nullptr && capture != lambdaCaptures.end()) {
-        const auto &field = lambda->captures[capture->second - 1];
-        lowered.capture = capture->second;
-        lowered.type = field.type;
-        lowered.traits = field.traits;
-        lowered.initiallyAvailable = true;
-      }
-    } else {
-      valid = false;
-      return 0;
-    }
-    lowered.key = loan.place;
-    if (resultValue != nullptr) {
-      lowered.type = resultValue->info.type;
-      lowered.access = resultValue->info.access;
-      lowered.traits = resultValue->info.traits;
-      lowered.sourceValue = resultValue->id;
-    }
-
-    for (std::size_t index = firstProjection;
-         index < loan.place.projections.size(); ++index) {
-      const SemanticLoanPlaceProjection &projection =
-          loan.place.projections[index];
-      switch (projection.kind) {
-      case SemanticLoanPlaceProjectionKind::Field:
-        if (projection.field == 0) {
-          valid = false;
-          return 0;
-        }
-        lowered.projections.push_back(
-            {.kind = MirProjectionKind::Field, .field = projection.field});
-        break;
-      case SemanticLoanPlaceProjectionKind::Dereference:
-        lowered.projections.push_back({.kind = MirProjectionKind::Dereference});
-        break;
-      case SemanticLoanPlaceProjectionKind::ConstantIndex:
-        if (lowered.type.kind == SemanticType::TypePack &&
-            lowered.type.concretePack &&
-            projection.index < lowered.type.arguments.size()) {
-          const SemanticType element = lowered.type.arguments[projection.index];
-          lowered.type = element;
-          lowered.traits = resolvedTraits(element);
-          lowered.access = AccessMode::ReadOnly;
-          lowered.projections.push_back({.kind = MirProjectionKind::PackElement,
-                                         .constantIndex = projection.index});
+  // The referent of `parent` reached through `through`, a reference
+  // binding's place (or its dereference) that carries that loan: the loan's
+  // own Loan-rooted place, keyed by the place the loan borrows (dereferenced
+  // when it borrows a reference slot) and this place's remaining
+  // projections. A call result's loan source is what the call borrowed, not
+  // its referent, so that referent has no derivable key.
+  [[nodiscard]] MirPlaceId loanReferentPlace(const MirPlace &through,
+                                             MirLoanId parent) {
+    MirPlace referent = through;
+    referent.id = 0;
+    referent.root = MirPlaceRootKind::Loan;
+    referent.loan = parent;
+    referent.binding = 0;
+    referent.symbol = 0;
+    if (!referent.projections.empty())
+      referent.projections.erase(referent.projections.begin());
+    referent.key.reset();
+    const MirLoan &loan = output.loans[parent - 1];
+    if (const MirPlace *borrowed = output.findPlace(loan.source);
+        loan.kind != MirLoanKind::CallResult && borrowed != nullptr &&
+        borrowed->key) {
+      PlaceKey key = *borrowed->key;
+      if (borrowed->type.kind == SemanticType::Reference)
+        key.projections.push_back({.kind = PlaceProjectionKind::Dereference});
+      bool derivable = true;
+      for (const MirPlaceProjection &projection : referent.projections)
+        switch (projection.kind) {
+        case MirProjectionKind::Field:
+          key.projections.push_back(
+              {.kind = PlaceProjectionKind::Field, .field = projection.field});
+          break;
+        case MirProjectionKind::Dereference:
+          key.projections.push_back({.kind = PlaceProjectionKind::Dereference});
+          break;
+        case MirProjectionKind::Index:
+          if (projection.constantIndex)
+            key.projections.push_back(
+                {.kind = PlaceProjectionKind::ConstantIndex,
+                 .index = *projection.constantIndex});
+          else
+            key.projections.push_back(
+                {.kind = PlaceProjectionKind::DynamicIndex,
+                 .selection = projection.selection});
+          break;
+        default:
+          derivable = false;
           break;
         }
-        lowered.projections.push_back({.kind = MirProjectionKind::Index,
-                                       .constantIndex = projection.index});
-        break;
-      case SemanticLoanPlaceProjectionKind::DynamicIndex:
-        lowered.projections.push_back({.kind = MirProjectionKind::Index,
-                                       .selection = projection.selection});
-        break;
-      }
+      if (derivable)
+        referent.key = std::move(key);
     }
-
-    const bool packElement =
-        lowered.projections.size() == 1 &&
-        lowered.projections.front().kind == MirProjectionKind::PackElement;
-    const MirPlaceId place = packElement
-                                 ? appendPackElementPlace(std::move(lowered))
-                                 : appendPlace(std::move(lowered));
-    semanticLoanPlaces.emplace(loan.semanticLoan, place);
-    return place;
+    for (const MirPlace &existing : output.places)
+      if (existing.root == MirPlaceRootKind::Loan && existing.loan == parent &&
+          existing.projections == referent.projections &&
+          existing.type == referent.type && existing.key == referent.key)
+        return existing.id;
+    return appendPlace(std::move(referent));
   }
 
   // The exact storage place of a global or static symbol along a field path,
@@ -14838,10 +14670,29 @@ private:
              exactRangeElement || projectedStoredReference)) {
           if (projectedStoredReference)
             output.places[concrete - 1].key = desired->place;
-          semanticLoanPlaces.insert_or_assign(desired->semanticLoan, concrete);
           return concrete;
         }
-        return placeForLoan(*desired, value);
+        // A capture or global root names its own storage; it takes its
+        // symbol's key.
+        if (place != nullptr && !place->key &&
+            place->root == MirPlaceRootKind::Symbol &&
+            place->projections.empty()) {
+          output.places[concrete - 1].key =
+              PlaceKey{.domain = output.placeDomain, .root = place->symbol};
+          return concrete;
+        }
+        // A reference binding read through the parent loan it carries names
+        // that loan's referent.
+        if (place != nullptr && referentParent != 0 &&
+            place->root == MirPlaceRootKind::Binding &&
+            (place->projections.empty() ||
+             place->projections.front().kind == MirProjectionKind::Dereference))
+          if (const auto carried = bindingLoans.find(place->binding);
+              carried != bindingLoans.end() &&
+              carried->second == referentParent)
+            return loanReferentPlace(*place, referentParent);
+        valid = false;
+        return MirPlaceId{0};
       };
       MirLoanId parent = 0;
       if (referentParent != 0) {
@@ -17434,12 +17285,10 @@ private:
     // HIR, not branch lowering, chooses the semantic endpoint. Register its
     // exact identity while lowering nested branches; this grants no endpoint
     // acknowledgement until a call actually emits EndBorrow on that path.
-    for (const SemanticLoanId semantic : endedAfter(statement)) {
-      const auto found = semanticLoans.find(semantic);
-      if (found != semanticLoans.end() && loanIsActive(scopes, found->second))
-        enclosingTransferredLoanEndpoints.insert_or_assign(found->second,
-                                                           statement.id);
-    }
+    // Planned ends already name MIR loans.
+    for (const MirLoanId loan : endedAfter(statement))
+      if (loanIsActive(scopes, loan))
+        enclosingTransferredLoanEndpoints.insert_or_assign(loan, statement.id);
     const std::vector<Scope> conditionScopes = scopes;
     const std::vector<TemporaryDrop> conditionTemporaryDrops = temporaryDrops;
     const MirOperand condition = statement.condition
@@ -19616,7 +19465,6 @@ private:
   std::unordered_map<MirLoanId, HirStatementId> callTransferredLoanEndpoints;
   std::unordered_map<MirLoanId, HirStatementId>
       enclosingTransferredLoanEndpoints;
-  std::unordered_map<SemanticLoanId, MirPlaceId> semanticLoanPlaces;
   std::unordered_set<HirValueId> emittedValues;
   std::unordered_set<HirValueId> checkedPlacePrefixes;
   std::vector<Scope> scopes;
