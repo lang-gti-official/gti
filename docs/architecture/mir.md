@@ -3513,7 +3513,11 @@ invocation's transitive same-thread global and thread-local accesses (an
 unknown GTI target accesses every persistent symbol mutably) are checked at
 the invocation's loan state by the body loan-flow engine. The verifier stops
 at the first rejection; the audit retires each rejected invocation and checks
-the body again, so every rejected invocation is reported.
+the body again, so every rejected invocation is reported. A `Drop` whose
+obligations are not available on any path reaching it (moved out, transferred
+or never initialized, per the body's lifecycle events) runs no cleanup and is
+not an invocation: a by-value parameter moved into a field, or a local moved
+into the result, does not reach its destructor's storage effects.
 
 With `GTI_PARITY_RAW_AUDIT` set (`1` for standard error, otherwise a file to
 append to), the frontend (`mir_borrow_audit_parity.cpp`) compares the

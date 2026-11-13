@@ -51,7 +51,10 @@ bool code(const lang::FrontendResult &result, std::string_view expected) {
 void positive(std::string source, std::string_view message,
               bool concurrent = true) {
   const auto result = analyze(std::move(source), concurrent);
-  if (!result.semanticValid)
+  // Accepted programs must also pass MIR verification, which independently
+  // re-checks persistent-storage effects; semantic acceptance alone hides an
+  // internal MIR rejection.
+  if (!result.canGenerateCode())
     for (const auto &diagnostic : result.diagnostics) {
       std::cerr << diagnostic.code << " at " << diagnostic.primary.start << ": "
                 << diagnostic.message << '\n';
@@ -59,7 +62,7 @@ void positive(std::string source, std::string_view message,
         std::cerr << "  at " << related.span.start << ": " << related.message
                   << '\n';
     }
-  expect(result.semanticValid, message);
+  expect(result.canGenerateCode() && !code(result, "GTI-B0001"), message);
 }
 
 void storageAndMetadata() {

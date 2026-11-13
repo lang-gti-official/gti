@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <deque>
 #include <map>
+#include <optional>
+#include <set>
 #include <utility>
 
 namespace lang {
@@ -77,6 +79,111 @@ bool mergeAccess(std::vector<MirPersistentStorageAccess> &into,
     return true;
   }
   return false;
+}
+
+// Drops whose every obligation is certainly not available where they run:
+// moved out, transferred or never initialized on every path. Such a Drop
+// runs no cleanup (a moved-from owner's destructor is not executed), so it
+// cannot reach a destructor's storage effects. A forward may-analysis over
+// the body's lifecycle events, following the verifier's lifecycle states.
+std::set<MirInstructionId> inertDrops(const MirBody &body) {
+  std::set<MirInstructionId> result;
+  const std::size_t count = body.dropObligations.size();
+  if (count == 0 || body.findBlock(body.entry) == nullptr)
+    return result;
+  using Available = std::vector<char>;
+  const auto advance = [](Available &state, const MirLifecycleEvent &event) {
+    const auto set = [&](MirDropObligationId id, bool available) {
+      if (id != 0 && id <= state.size())
+        state[id - 1] = available ? 1 : 0;
+    };
+    switch (event.kind) {
+    case MirLifecycleEventKind::Initialize:
+      set(event.target, true);
+      break;
+    case MirLifecycleEventKind::Move:
+    case MirLifecycleEventKind::Reparent:
+    case MirLifecycleEventKind::Replace:
+      set(event.source, false);
+      set(event.target, true);
+      break;
+    case MirLifecycleEventKind::TransferOut:
+    case MirLifecycleEventKind::Drop:
+      set(event.source, false);
+      break;
+    }
+  };
+  std::vector<std::optional<Available>> entries(body.blocks.size());
+  Available initial(count, 0);
+  for (const auto &obligation : body.dropObligations)
+    if (obligation.initiallyActive && obligation.id != 0 &&
+        obligation.id <= count)
+      initial[obligation.id - 1] = 1;
+  entries[body.entry - 1] = initial;
+  std::set<MirInstructionId> live;
+  std::set<MirInstructionId> seen;
+  std::vector<MirBlockId> pending{body.entry};
+  const auto join = [&](MirBlockId target, const Available &state) {
+    const MirBlock *successor = body.findBlock(target);
+    if (successor == nullptr)
+      return;
+    auto &entry = entries[target - 1];
+    bool changed = !entry.has_value();
+    if (!entry)
+      entry = state;
+    else
+      for (std::size_t index = 0; index < count; ++index)
+        if (state[index] && !(*entry)[index]) {
+          (*entry)[index] = 1;
+          changed = true;
+        }
+    if (changed)
+      pending.push_back(target);
+  };
+  while (!pending.empty()) {
+    const MirBlockId id = pending.back();
+    pending.pop_back();
+    const MirBlock &block = body.blocks[id - 1];
+    Available state = *entries[id - 1];
+    Available beforeInvoke = state;
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      if (instruction.id == block.terminator.invokeInstruction)
+        beforeInvoke = state;
+      if (instruction.kind == MirInstructionKind::Drop) {
+        seen.insert(instruction.id);
+        for (const auto &event : instruction.lifecycle)
+          if (event.kind == MirLifecycleEventKind::Drop &&
+              (event.source == 0 || event.source > count ||
+               state[event.source - 1]))
+            live.insert(instruction.id);
+      }
+      for (const auto &event : instruction.lifecycle)
+        advance(state, event);
+    }
+    const auto &terminator = block.terminator;
+    if (terminator.kind == MirTerminatorKind::Invoke) {
+      Available success = state;
+      for (const auto &event : terminator.successLifecycle)
+        advance(success, event);
+      join(terminator.target, success);
+      // A failure edge leaves before the invocation's own transitions may
+      // have happened; keep both states.
+      for (std::size_t index = 0; index < count; ++index)
+        beforeInvoke[index] |= state[index];
+      join(terminator.elseTarget, beforeInvoke);
+    } else {
+      join(terminator.target, state);
+      join(terminator.elseTarget, state);
+    }
+    for (const auto &target : terminator.switchTargets)
+      join(target.target, state);
+  }
+  for (const auto id : seen)
+    if (!live.contains(id))
+      result.insert(id);
+  return result;
 }
 
 bool unknownSourceInvocation(const MirProgram &program, const MirBody &body,
@@ -205,11 +312,12 @@ analyzePersistentStorageEffects(const MirProgram &program,
         }
       node.direct = node.summary;
     }
+    const auto inert = inertDrops(*node.body);
     for (const auto &block : node.body->blocks) {
       if (!block.reachable)
         continue;
       for (const auto &instruction : block.instructions) {
-        if (instruction.tombstone)
+        if (instruction.tombstone || inert.contains(instruction.id))
           continue;
         const auto targets =
             mirInvocationTargets(program, *node.body, instruction);
