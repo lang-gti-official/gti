@@ -1052,7 +1052,7 @@ unknown; a callable with no normal return does not obtain a vacuous empty
 contract. The synthetic residual return of a prefix `?` contributes its
 selected conversion's complete set, with no dependency and the constructor's
 alternatives as guards; only a conversion without a complete construction
-contract leaves `loanFlow.unknownImplicitResultReturn` set. Explicit
+contract leaves `bodyFlow.unknownImplicitResultReturn` set. Explicit
 unknown entries shadow base-model facts during concrete reanalysis. These
 contracts carry typed alternative inventories and declaration-relative mappings,
 never callee-local loan/place IDs. Guarded nonempty mappings remain a separate
@@ -1502,7 +1502,7 @@ One call to either public `SemanticVisitor::check` overload owns one complete
 semantic request session. `SemanticVisitor::Impl::RequestSessionState` owns one
 private `SemanticCatalog`, one published `SemanticModel`, diagnostics,
 substitutions, contextual state, program effects, and the body-scoped
-`ConstexprInterpreter`, `LoanFlowState`, and `ValueFlowState`. Both program and
+`ConstexprInterpreter`, `LoanFlowState`, `BodyFlowState`, and `ValueFlowState`. Both program and
 standalone-expression analysis enter through the same `resetRequestState`
 operation before publishing any result.
 
@@ -3340,6 +3340,17 @@ or escape: it still assigns the loan identities and carriers HIR transports to
 MIR, until MIR derives loans from its own places. Semantics still owns
 signature and persistent-storage effect checks.
 
+Facts that outlive the loan flow are kept apart from it. `BodyFlowState`
+(beside `LoanFlowState`, saved, reset and restored at the same points) holds
+`deferredGenericFlow`, which gates the `GTI-S2031` missing-return, the
+`[[noreturn]]` and the consuming-reference-result checks, the synthetic early
+return sets of prefix `?`, and the captured-text locals, flows and escapes that
+`finalizeCapturedText` decides; each body finalizes captured text before its
+loan flow. `Symbol::retainsDependency` records that a binding holds a borrowed
+dependency, so `classifyExpression` chooses owner-dependent text information
+without reading a loan identity. `validateRetainedBorrowOwner` rejects a
+retained borrow of foreign storage (`GTI-S2054`) without a loan record.
+
 Global and local loan-flow places use the same analysis-local domain. HIR
 qualifies those places with its concrete snapshot/body identity; qualifying
 only global dependencies during semantic conflict checks would incorrectly
@@ -3661,7 +3672,7 @@ expression traits stay those of a local value, which is what MIR sees too.
 comma operator, conditional arms, `std::move` and argument or receiver relays
 to capture symbols, to calls of a lambda whose `LambdaInfo::capturedTextResult`
 is set, and to the local views it reads: by-value text locals and parameters,
-never thread-local storage. Each body's `LoanFlowState` records flows between
+never thread-local storage. Each body's `BodyFlowState` records flows between
 local views and every escape of checked text: a return, a store into a field,
 array element, payload, optional, global or referenced place, a constructor
 field initializer, and an argument its callee publishes in a field or requires

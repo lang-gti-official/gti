@@ -197,6 +197,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   lexicalFrames.clear();
   lexicalFrameVersion = 0;
   lexicalLoanFlow = {};
+  lexicalBodyFlow = {};
   heldDiagnostics.clear();
   lexicallyReachableFunctions.clear();
   semanticModel.clear();
@@ -225,6 +226,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   allowPackTypeReference = false;
   deferringTypeAliasConstraints = false;
   loanFlow = {};
+  bodyFlow = {};
   instanceClassContextActive = false;
   instanceAnalysisActive = false;
   instanceBaseModel = nullptr;
@@ -1264,7 +1266,7 @@ auto SemanticVisitor::Impl::visitConstexprForStmt(const ConstexprForStmt &stmt)
   if ((!elements || symbolicElementStorage) &&
       containsOpenTypeParameter(sequenceType)) {
     semanticModel.recordConstexprForExpansion(stmt, std::nullopt);
-    loanFlow.deferredGenericFlow = true;
+    bodyFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
     return;
   }
@@ -2422,12 +2424,14 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       currentReceiverMutability;
   const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
   LoanFlowState enclosingLoanFlow = std::move(loanFlow);
+  BodyFlowState enclosingBodyFlow = std::move(bodyFlow);
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
   auto enclosingRawPointerLoops = std::move(valueFlow.rawPointerLoops);
   currentReturnType = SemanticType::Void;
   currentReceiverMutability = ReceiverMutability::Mutable;
   loanFlow = {};
+  bodyFlow = {};
   valueControlFlow.clear();
   ++functionDepth;
   ++constructorDepth;
@@ -2824,6 +2828,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   if (!hasErrorDiagnostics(
           std::span(diagnostics).subspan(constructorDiagnosticStart)))
     recordCompleteConstructorBorrow(stmt);
+  (void)finalizeCapturedText();
   finalizeLoanFlow();
   endScope();
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
@@ -2836,6 +2841,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
   --functionDepth;
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
+  bodyFlow = std::move(enclosingBodyFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
   valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentReturnType = enclosingReturnType;
@@ -2886,12 +2892,14 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
       currentReceiverMutability;
   const ProgramEffectOwner enclosingEffectOwner = currentProgramEffectOwner;
   LoanFlowState enclosingLoanFlow = std::move(loanFlow);
+  BodyFlowState enclosingBodyFlow = std::move(bodyFlow);
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
   currentReturnType = SemanticType::Void;
   auto enclosingRawPointerLoops = std::move(valueFlow.rawPointerLoops);
   currentReceiverMutability = ReceiverMutability::Mutable;
   loanFlow = {};
+  bodyFlow = {};
   valueControlFlow.clear();
   ++functionDepth;
   ++destructorDepth;
@@ -2908,6 +2916,7 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
     recordStoredEntryDependency(*receiver, 0, receiver->type, true, &stmt);
 
   analyze(stmt.body()->statements());
+  (void)finalizeCapturedText();
   finalizeLoanFlow();
   recordProgramExecutedCleanupEffects(SemanticType::classType(owner.id),
                                       tokenSpan(stmt.tilde()), false);
@@ -2918,6 +2927,7 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
   restoreRawProgramStorage(std::move(enclosingRawProgramStorage));
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
+  bodyFlow = std::move(enclosingBodyFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
   valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentReturnType = enclosingReturnType;
@@ -4153,6 +4163,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   const ReceiverMutability enclosingReceiverMutability =
       currentReceiverMutability;
   LoanFlowState enclosingLoanFlow = std::move(loanFlow);
+  BodyFlowState enclosingBodyFlow = std::move(bodyFlow);
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
   const bool enclosingStaticMemberFunction = currentStaticMemberFunction;
@@ -4165,6 +4176,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     currentStaticMemberFunction = staticMethod;
   }
   loanFlow = {};
+  bodyFlow = {};
   valueControlFlow.clear();
   currentReturnType = typeOf(stmt.returnType(), stmt.returnMutability());
   currentFunctionDeclaration = &stmt;
@@ -4204,7 +4216,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
   const bool canFallThrough = functionFlow.canFallThrough;
   if (functionInfo != nullptr && functionInfo->neverReturns &&
-      !loanFlow.deferredGenericFlow && !functionErrors() &&
+      !bodyFlow.deferredGenericFlow && !functionErrors() &&
       (canFallThrough || functionFlow.normalReturn != nullptr)) {
     reportContract(
         functionFlow.normalReturn != nullptr
@@ -4215,7 +4227,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   }
   if (currentReturnType != SemanticType::Void &&
       currentReturnType != SemanticType::Unknown && !isEntryPoint &&
-      canFallThrough && !loanFlow.deferredGenericFlow &&
+      canFallThrough && !bodyFlow.deferredGenericFlow &&
       (functionInfo == nullptr || !functionInfo->neverReturns)) {
     const Token &location =
         stmt.operatorName() ? stmt.operatorName()->keyword : stmt.name();
@@ -4228,12 +4240,13 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   if (methodDeclaration && !staticMethod && canFallThrough) {
     requireInitializedReceiver(functionToken);
   }
+  (void)finalizeCapturedText();
   finalizeLoanFlow();
   if (functionInfo != nullptr && !functionErrors()) {
     recordRestoredReferenceResult(*functionInfo);
     if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
         currentReturnType.kind == SemanticType::Reference &&
-        !loanFlow.deferredGenericFlow &&
+        !bodyFlow.deferredGenericFlow &&
         !containsOpenTypeParameter(currentReturnType)) {
       const auto *checked = semanticModel.findFunction(stmt);
       if (!checked || !checked->completeReturnBorrow)
@@ -4252,6 +4265,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
   --functionDepth;
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
+  bodyFlow = std::move(enclosingBodyFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
   valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentStaticMemberFunction = enclosingStaticMemberFunction;
@@ -4372,6 +4386,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
       .currentStaticMemberFunction = currentStaticMemberFunction,
       .allowPackTypeReference = allowPackTypeReference,
       .loanFlow = std::move(loanFlow),
+      .bodyFlow = std::move(bodyFlow),
       .fullExpressionStates = std::move(requestSession.fullExpressionStates),
       .valueControlFlow = std::move(valueControlFlow),
       .contextualInitializerType = contextualInitializerType,
@@ -4425,6 +4440,7 @@ auto SemanticVisitor::Impl::captureBodyLocalState() -> BodyLocalState {
   currentStaticMemberFunction = false;
   allowPackTypeReference = false;
   loanFlow = {};
+  bodyFlow = {};
   requestSession.fullExpressionStates.clear();
   valueControlFlow.clear();
   contextualInitializerType.reset();
@@ -4478,6 +4494,7 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
   currentStaticMemberFunction = state.currentStaticMemberFunction;
   allowPackTypeReference = state.allowPackTypeReference;
   loanFlow = std::move(state.loanFlow);
+  bodyFlow = std::move(state.bodyFlow);
   requestSession.fullExpressionStates = std::move(state.fullExpressionStates);
   valueControlFlow = std::move(state.valueControlFlow);
   contextualInitializerType = state.contextualInitializerType;
@@ -4633,8 +4650,10 @@ auto SemanticVisitor::Impl::runLexicalPass(const StmtList &declarations)
                            .sourceUnit = currentSourceUnit});
   ++lexicalFrameVersion;
   lexicalLoanFlow = loanFlow;
+  lexicalBodyFlow = bodyFlow;
   advanceLexicalPass(nullptr);
   loanFlow = lexicalLoanFlow;
+  bodyFlow = lexicalBodyFlow;
 }
 
 auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
@@ -4647,6 +4666,7 @@ auto SemanticVisitor::Impl::rebuildLexicalEnvironment() -> void {
   currentClass.reset();
   currentSourceUnit = 0;
   loanFlow = lexicalLoanFlow;
+  bodyFlow = lexicalBodyFlow;
   beginScope();
   ClassId innermostClass = 0;
   for (const auto &frame : lexicalFrames) {
@@ -4726,6 +4746,7 @@ auto SemanticVisitor::Impl::exitLexicalFrame() -> void {
   lexicalFrames.pop_back();
   ++lexicalFrameVersion;
   lexicalLoanFlow = loanFlow;
+  lexicalBodyFlow = bodyFlow;
   rebuildLexicalEnvironment();
 }
 
@@ -4772,6 +4793,7 @@ auto SemanticVisitor::Impl::processLexicalLeaf(const StmtPtr &statement,
     return;
   }
   lexicalLoanFlow = loanFlow;
+  lexicalBodyFlow = bodyFlow;
   lexicalFrames.back().reachable =
       summarizeFlow(statement.get()).canFallThrough;
 }
@@ -5102,7 +5124,7 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
 
     if (dependent && !instanceAnalysisActive) {
       semanticModel.recordConstexprBranch(stmt, std::nullopt);
-      loanFlow.deferredGenericFlow = true;
+      bodyFlow.deferredGenericFlow = true;
       requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
       return;
     }
@@ -5521,7 +5543,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       // symbolic inventory is not a complete origin proof. Defer only this
       // dependent selection; every concrete instance must revisit it with its
       // exact receiver inventory, while the rest of the body is still checked.
-      loanFlow.deferredGenericFlow = true;
+      bodyFlow.deferredGenericFlow = true;
       requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
       loanFlow.switchBoundaries.pop_back();
       loanFlow.switches.resize(loanSwitchIndex);
@@ -10950,6 +10972,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   const ReceiverMutability enclosingReceiverMutability =
       currentReceiverMutability;
   LoanFlowState enclosingLoanFlow = std::move(loanFlow);
+  BodyFlowState enclosingBodyFlow = std::move(bodyFlow);
   std::vector<ValueControlFlowContext> enclosingValueControlFlow =
       std::move(valueControlFlow);
   const std::size_t enclosingLoopDepth = loopDepth;
@@ -10983,6 +11006,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   currentReceiverMutability = mutableCaptures ? ReceiverMutability::Mutable
                                               : ReceiverMutability::ReadOnly;
   loanFlow = {};
+  bodyFlow = {};
   valueControlFlow.clear();
   analyzingCallCallee = false;
   contextualInitializerType.reset();
@@ -11126,18 +11150,19 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   currentLambdaReturn = enclosingLambdaReturn;
   if (returnType != SemanticType::Void && returnType != SemanticType::Unknown &&
       summarizeFlow(expr.body()).canFallThrough &&
-      !loanFlow.deferredGenericFlow) {
+      !bodyFlow.deferredGenericFlow) {
     report(expr.arrow(),
            "Non-void lambda can reach the end without returning a value "
            "of type '" +
                typeSpelling(returnType) + "'.",
            "GTI-S2031");
   }
+  (void)finalizeCapturedText();
   finalizeLoanFlow();
 
   lambdaUncapturedLocals.pop_back();
   const bool rawAccessFree =
-      requestSession.rawAccessObservation == 0 && !loanFlow.deferredGenericFlow;
+      requestSession.rawAccessObservation == 0 && !bodyFlow.deferredGenericFlow;
   requestSession.rawAccessObservation = enclosingRawAccessObservation;
   --lambdaDepth;
   --functionDepth;
@@ -11153,6 +11178,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
   contextualResultUse = std::move(enclosingResultUse);
   analyzingCallCallee = enclosingAnalyzingCallCallee;
   loanFlow = std::move(enclosingLoanFlow);
+  bodyFlow = std::move(enclosingBodyFlow);
   valueControlFlow = std::move(enclosingValueControlFlow);
   valueFlow.rawPointerLoops = std::move(enclosingRawPointerLoops);
   currentReceiverMutability = enclosingReceiverMutability;
@@ -12022,6 +12048,7 @@ auto SemanticVisitor::Impl::visitLogicalExpr(const Logical &expr) -> void {
               "Logical operands must be bool.");
   const ScopeStack afterLeft = scopes;
   const LoanFlowState loanFlowAfterLeft = loanFlow;
+  const BodyFlowState bodyFlowAfterLeft = bodyFlow;
   const std::size_t rightOwnershipStart = semanticModel.ownershipEventCount();
   ++loanFlow.rawConditionalExpressionDepth;
   const SemanticType rightType =
@@ -12046,6 +12073,7 @@ auto SemanticVisitor::Impl::visitLogicalExpr(const Logical &expr) -> void {
     semanticModel.markOwnershipEventsUnreachableFrom(rightOwnershipStart);
     moveScopes = afterLeft;
     loanFlow = loanFlowAfterLeft;
+    bodyFlow = bodyFlowAfterLeft;
   } else if (requiresRight) {
     moveScopes = afterRight;
   } else {
