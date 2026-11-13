@@ -103,7 +103,7 @@ void observe<Args...>(Args&... args) {}
 int main() { Ticket value{}; observe(std::move(value)); observe(value); return 0; }
 """, "GTI-S2018"),
         "fold_persistent_conflict": ("""
-mut int counter = 3;
+thread_local mut int counter = 3;
 void touch<T>(T& value) { counter++; }
 int total<Args...>(Args&... args) { (touch(args), ...); return 0; }
 int main() { return total(counter); }
