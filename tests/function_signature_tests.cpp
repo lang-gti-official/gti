@@ -1471,9 +1471,10 @@ void mutableSignatureArguments() {
             place->projections.front().kind !=
                 lang::MirProjectionKind::PackElement)
           continue;
-        expect(
-            loan.access == lang::AccessMode::Mutable && loan.semanticLoan != 0,
-            "pack reference entries retain semantic identity and exact access");
+        expect(loan.access == lang::AccessMode::Mutable &&
+                   !loan.carriers.empty(),
+               "pack reference entries retain their element carrier and "
+               "exact access");
         auto forged = result.mir;
         auto *body = lang::findMirBody(
             forged, {lang::MirBodyKind::Function, function.id});
@@ -1491,7 +1492,6 @@ void mutableSignatureArguments() {
                                  {lang::MirBodyKind::Function, function.id});
         auto duplicate = loan;
         duplicate.id = body->loans.size() + 1;
-        duplicate.semanticLoan = 1000000;
         body->loans.push_back(duplicate);
         expect(
             !lang::verifyMirProgram(forged).valid(),

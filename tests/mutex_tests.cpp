@@ -1106,32 +1106,40 @@ int main() {
            "parent/input/target/access/endpoint/capability " +
                std::to_string(mutation));
   }
-  const auto semanticChildCount = [](const lang::FrontendResult &checked) {
+  const auto retainedChildCount = [](const lang::FrontendResult &checked) {
     unsigned count = 0;
-    for (const auto &loan : checked.semantics.loans()) {
-      const bool namedGuard = std::any_of(
-          loan.carriers.begin(), loan.carriers.end(), [&](auto carrier) {
-            const auto *symbol =
-                checked.semantics.database().findSymbol(carrier);
-            return symbol && symbol->name == "guard";
-          });
-      if (!namedGuard)
+    for (const auto &hir : checked.hir.functionInstances()) {
+      const auto *mir = checked.mir.findFunctionInstance(hir.id);
+      if (mir == nullptr)
         continue;
-      const auto *parent = checked.semantics.findLoan(loan.parent);
-      if (loan.kind == lang::SemanticLoanKind::StoredValue &&
-          loan.access == lang::AccessMode::Mutable && loan.lifecycleBound &&
-          !loan.entry && !loan.protectsStorage && loan.place.receiver &&
-          !loan.place.projections.empty() && parent && parent->entry &&
-          parent->kind == lang::SemanticLoanKind::StoredValue &&
-          parent->access == lang::AccessMode::ReadOnly &&
-          !parent->protectsStorage)
-        ++count;
+      std::vector<lang::HirBindingId> guards;
+      for (const auto &binding : hir.body.bindings)
+        if (binding.variable && binding.variable->name().lexeme == "guard")
+          guards.push_back(binding.id);
+      for (const auto &loan : mir->body.loans) {
+        const bool namedGuard = std::any_of(
+            loan.carriers.begin(), loan.carriers.end(), [&](auto carrier) {
+              return std::find(guards.begin(), guards.end(), carrier) !=
+                     guards.end();
+            });
+        if (!namedGuard)
+          continue;
+        const auto *parent = mir->body.findLoan(loan.parent);
+        const auto *place = mir->body.findPlace(loan.source);
+        if (loan.kind == lang::MirLoanKind::Stored &&
+            loan.access == lang::AccessMode::Mutable && loan.lifecycleBound &&
+            !loan.entry && place &&
+            place->root == lang::MirPlaceRootKind::This &&
+            !place->projections.empty() && parent && parent->entry &&
+            parent->access == lang::AccessMode::ReadOnly)
+          ++count;
+      }
     }
     return count;
   };
-  expect(semanticChildCount(frontend) == 1,
-         "semantics retains the exclusive result separately from its shared "
-         "abstract lifetime parent");
+  expect(retainedChildCount(frontend) == 1,
+         "MIR retains the exclusive result under the guard carrier separately "
+         "from its shared abstract lifetime parent");
   for (bool secondPublication : {false, true}) {
     const std::string suffix = secondPublication
                                    ? "auto second = this.owner.lock();"
@@ -1308,8 +1316,8 @@ int main() {
     printDiagnostics(nested);
   expect(nested.canGenerateCode() && lang::verifyMirProgram(nested.mir).valid(),
          "nested stored receiver paths preserve exact lifetime ancestry");
-  expect(semanticChildCount(nested) == 1,
-         "nested stored receiver retains its exact semantic exclusive child");
+  expect(retainedChildCount(nested) == 1,
+         "nested stored receiver retains its exact MIR exclusive child");
   auto mutableCarrier = analyze("ordinary-exclusive-carrier.gti", R"gti(
 class Lease {
   mut int& value;

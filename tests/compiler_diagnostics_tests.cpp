@@ -298,8 +298,6 @@ int first(mut int& value) {
                                : nullptr;
   expect(firstInfo != nullptr && firstInfo->id == 1,
          "the first request should allocate its first function identity");
-  expect(!semantic.model().loans().empty(),
-         "the first request should publish its reference loan");
   expect(firstReturnExpression != nullptr &&
              semantic.model().findExpression(*firstReturnExpression) != nullptr,
          "the first request should publish AST-backed expression facts");
@@ -330,8 +328,6 @@ int second() { return 2; }
   expect(secondReturn != nullptr && secondReturn->value() != nullptr &&
              semantic.model().findExpression(*secondReturn->value()) != nullptr,
          "the second request should publish only its own expression facts");
-  expect(semantic.model().loans().empty(),
-         "loan-flow state from the first request must not survive");
 
   lang::Program invalid = parseProgram(R"(
 int broken() { return missing; }
@@ -352,10 +348,10 @@ int broken() { return missing; }
 
   lang::ExprPtr boolean = parseExpression("true");
   expect(boolean != nullptr && semantic.check(*boolean) &&
-             semantic.errors().empty() && semantic.model().loans().empty() &&
+             semantic.errors().empty() &&
              semantic.expressionType() == lang::SemanticType::Bool,
-         "a later expression request should clear diagnostics and flow state "
-         "while publishing its own exact type");
+         "a later expression request should clear diagnostics while "
+         "publishing its own exact type");
 }
 
 void testSemanticDiagnostics() {

@@ -24,6 +24,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -185,20 +186,21 @@ std::string localDeclarationKey(const lang::SymbolRecord &symbol) {
   return key.str();
 }
 
-// Semantic loan identities are request-local allocation identities: a
-// deferred body's loans take whatever counter value the demand that reached
-// it left, so a reused instance may have been first analysed at another
-// point. MIR uses them only to pair lowering with semantic loans; compare
-// each body's loans by order of appearance instead of by raw identity.
-void canonicalizeSemanticLoans(lang::MirBody &body) {
-  std::unordered_map<lang::SemanticLoanId, lang::SemanticLoanId> ordinals;
-  for (auto &loan : body.loans) {
-    if (loan.semanticLoan == 0)
-      continue;
-    const auto [found, inserted] =
-        ordinals.emplace(loan.semanticLoan, ordinals.size() + 1);
-    loan.semanticLoan = found->second;
+// The MIR printer may still print a request-local semantic loan number on
+// each loan row while semantic loan identity is being retired. A deferred
+// body's number depends on the demand that reached it, so a reused instance
+// may differ there alone; erase that column from the printed text. MIR-local
+// loan identity, ancestry, carriers and liveness stay compared exactly.
+std::string withoutSemanticLoanColumn(std::string text) {
+  static constexpr std::string_view column = " semantic=";
+  for (std::size_t at = text.find(column); at != std::string::npos;
+       at = text.find(column, at)) {
+    std::size_t end = at + column.size();
+    while (end < text.size() && text[end] >= '0' && text[end] <= '9')
+      ++end;
+    text.erase(at, end - at);
   }
+  return text;
 }
 
 void canonicalizeLocalSymbols(lang::MirBody &body,
@@ -261,9 +263,10 @@ std::string outcome(const lang::FrontendResult &result) {
     auto canonical = result.mir;
     for (const auto address : lang::enumerateMirBodyAddresses(canonical)) {
       canonicalizeLocalSymbols(*lang::findMirBody(canonical, address), names);
-      canonicalizeSemanticLoans(*lang::findMirBody(canonical, address));
     }
-    lang::MirPrinter().print(canonical, text);
+    std::ostringstream mir;
+    lang::MirPrinter().print(canonical, mir);
+    text << withoutSemanticLoanColumn(mir.str());
   }
   return text.str();
 }
