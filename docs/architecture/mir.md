@@ -3414,8 +3414,24 @@ reference binding to a carrier depends on the Stored group retaining that
 carrier's references; a reference to a plain field reached through a carrier
 keeps its parent's stored dependency. A shell-stored carrier depends on its
 argument's group, or on the group retaining a loan-free argument's place (a
-receiver). A reference binding that reuses an existing loan only becomes one
-of its carriers. A reference binding's access is its reference type's, and
+receiver). Which loan a reference binding carries is MIR's decision. A
+read-only reference joins the held loan its referent is reached through as one
+more carrier, taking no loan of its own, when that is a shared reborrow of
+shared authority: the loan is read-only, or every reference holding it is
+read-only (a read-only reference retaining a mutable call result). Such a
+reborrow restricts nothing the loan does not already restrict, and the loan
+stays live while any carrier is used; after Polonius, the new reference's
+origin contains that loan and the reborrow adds none. The held loan is a
+binding's current loan or an entry loan; a call result's referent reaches it
+below its transient accessor chain, stopping at the nearest loan a binding
+carries. Every other reference binding takes its own loan below the loan its
+referent is reached through: a mutable reference, a reference through
+exclusive authority, a reference through an entry Stored group or one that
+designates field paths (a compact group is its single owner's loan and is
+joined), a restored carrier reference, and an accessor chain with no held
+loan beneath it, which the reference retains itself. A reference binding's
+loan is not reconciled with a semantic identity; the semantic loan only names
+it for later HIR facts. A reference binding's access is its reference type's, and
 its parent is the loan its referent's place is reached through: a reference
 binding's current loan, a receiver's or global's entry loan (its Stored entry
 group only for a place reached through one of the root's stored references,

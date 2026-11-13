@@ -5803,18 +5803,16 @@ private:
     bindCarrierIdentity(id, identity, binding);
   }
 
-  // A reference binding reusing an existing MIR loan: names that loan and
-  // registers the binding as one of its carriers.
+  // A reference binding carrying a MIR loan: registers the binding as one of
+  // the loan's carriers.
   void bindCarrierIdentity(MirLoanId id, const HirLoan &identity,
                            HirBindingId binding) {
-    // A range over a formal names its element with the formal's entry
-    // identity, but the staged element carries the access call's own loan
-    // below that entry; the entry keeps the identity.
-    const auto named = semanticLoans.find(identity.semanticLoan);
-    if (!(named != semanticLoans.end() && named->second != id &&
-          output.loans[named->second - 1].entry &&
-          isStagedRangeElementBinding(binding)))
-      bindLoanIdentity(id, identity);
+    // MIR chose the loan. The semantic identity only names it for later HIR
+    // facts: semantics may name one MIR loan twice or split it, so the first
+    // name of a loan and the first loan of a name stay.
+    if (semanticLoans.emplace(identity.semanticLoan, id).second &&
+        output.loans[id - 1].semanticLoan == 0)
+      output.loans[id - 1].semanticLoan = identity.semanticLoan;
     MirLoan &loan = output.loans[id - 1];
     if (binding != 0 && !capturedReferenceEntry(loan) &&
         std::find(loan.carriers.begin(), loan.carriers.end(), binding) ==
@@ -14378,6 +14376,83 @@ private:
     emittedValues.insert(id);
   }
 
+  // The held loan a place is reached through: its referent parent, except
+  // that a call result's referent stops at the nearest loan a binding carries
+  // below its accessor chain. A retained accessor result is a reference of
+  // its own, not a transient link of this expression.
+  [[nodiscard]] MirLoanId throughLoan(MirPlaceId id) const {
+    const MirPlace *place = output.findPlace(id);
+    if (place == nullptr || place->root != MirPlaceRootKind::Loan)
+      return referentParentLoan(id);
+    const MirLoan *root = output.findLoan(place->loan);
+    if (root == nullptr || root->kind != MirLoanKind::CallResult)
+      return referentParentLoan(id);
+    MirLoanId loan = root->parent;
+    for (int guard = 0; loan != 0 && guard < 64; ++guard) {
+      const MirLoan *record = output.findLoan(loan);
+      if (record == nullptr || record->kind != MirLoanKind::CallResult ||
+          record->parent == 0 || !record->carriers.empty())
+        break;
+      loan = record->parent;
+    }
+    return loan;
+  }
+
+  // The loan a read-only reference binding joins as one more carrier instead
+  // of taking a loan of its own, or 0. A shared reborrow of shared authority
+  // restricts nothing its loan does not already restrict, and the loan stays
+  // live while any carrier is used, so the reference carries the loan its
+  // referent is reached through (after Polonius: the new reference's origin
+  // contains that loan, and the reborrow adds none). Every other reference
+  // binding borrows below that loan.
+  [[nodiscard]] MirLoanId sharedReborrowLoan(HirValueId valueId,
+                                             HirBindingId binding) {
+    const HirBinding *carrier = findBinding(binding);
+    const HirValue *value = findValue(valueId);
+    if (carrier == nullptr || value == nullptr ||
+        carrier->info.type.kind != SemanticType::Reference ||
+        carrier->info.type.referenceAccess != AccessMode::ReadOnly)
+      return 0;
+    const MirPlaceId referent = placeForValue(valueId);
+    // A restored carrier reference publishes its erased referent's
+    // dependencies anew; it keeps the restoring call's own loan.
+    if (const MirPlace *place = output.findPlace(referent);
+        value->restoresReferenceResult && place != nullptr &&
+        place->traits.containsBorrowedState)
+      return 0;
+    const MirLoan *through = output.findLoan(throughLoan(referent));
+    // Only a loan something holds can be joined: a binding's, or an entry
+    // loan the caller lends. A transient accessor result of this same
+    // expression is retained as the reference's own loan instead.
+    if (through == nullptr || (through->carriers.empty() && !through->entry))
+      return 0;
+    // A Stored group that designates field paths, or an entry group, retains
+    // owners abstractly: a reference through it names its exact place in a
+    // loan of its own. A group in compact form is its single owner's loan.
+    if (through->kind == MirLoanKind::Stored &&
+        (through->entry || !through->designatedFields.empty() ||
+         !through->additionalDependencies.empty()))
+      return 0;
+    // A loan held only through read-only references grants its reborrowers
+    // shared authority whatever the loan itself protects.
+    const auto heldReadOnly = [&] {
+      bool held = false;
+      for (const HirBindingId holder : through->carriers) {
+        const HirBinding *reference = findBinding(holder);
+        if (reference == nullptr ||
+            reference->info.type.kind != SemanticType::Reference)
+          continue;
+        if (reference->info.type.referenceAccess != AccessMode::ReadOnly)
+          return false;
+        held = true;
+      }
+      return held;
+    };
+    return through->access == AccessMode::ReadOnly || heldReadOnly()
+               ? through->id
+               : MirLoanId{0};
+  }
+
   [[nodiscard]] MirOperand
   referenceOperand(HirValueId valueId, HirBindingId binding = 0,
                    std::optional<AccessMode> requestedAccess = {}) {
@@ -14546,20 +14621,18 @@ private:
       }
       // A range's staged element borrows below a parameter's entry loan;
       // it never carries the caller's loan itself.
-      const bool stagedElementOfEntry = [&] {
-        const auto found = semanticLoans.find(desired->semanticLoan);
-        const MirLoan *entry = found == semanticLoans.end()
-                                   ? nullptr
-                                   : output.findLoan(found->second);
-        return entry != nullptr && entry->entry &&
-               isStagedRangeElementBinding(binding);
-      }();
-      if (const auto found = semanticLoans.find(desired->semanticLoan);
-          found != semanticLoans.end() && !stagedElementOfEntry) {
+      // Which loan this reference carries is MIR's decision: it joins the
+      // held loan its referent is reached through when that is a shared
+      // reborrow of shared authority, and takes its own loan otherwise.
+      const MirLoanId reuseLoan = sharedReborrowLoan(valueId, binding);
+      const bool stagedElementOfEntry = reuseLoan != 0 &&
+                                        output.loans[reuseLoan - 1].entry &&
+                                        isStagedRangeElementBinding(binding);
+      if (reuseLoan != 0 && !stagedElementOfEntry) {
         // A by-reference capture's entry loan is held by the closure
         // environment, not by a binding, so a local alias never joins it as
         // a carrier; it carries a physical loan below that entry instead.
-        if (const MirLoan *entry = output.findLoan(found->second);
+        if (const MirLoan *entry = output.findLoan(reuseLoan);
             binding != 0 && entry != nullptr &&
             capturedReferenceEntry(*entry)) {
           const MirLoanId entryId = entry->id;
@@ -14619,9 +14692,10 @@ private:
                     .type = value->info.type};
           }
         }
-        if (existing != 0 && existing != found->second) {
+        bool joins = true;
+        if (existing != 0 && existing != reuseLoan) {
           const MirLoan *transient = output.findLoan(existing);
-          const MirLoan *retained = output.findLoan(found->second);
+          const MirLoan *retained = output.findLoan(reuseLoan);
           // Several shared aliases can retain one semantic owner identity
           // even when an accessor selects a different runtime referent. Keep
           // the owner loan here; reference initialization separately captures
@@ -14631,19 +14705,22 @@ private:
                   AccessMode::ReadOnly ||
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(
-                   existing, found->second, valueId,
+                   existing, reuseLoan, valueId,
                    bindingReferenceAccess(binding, *desired)) &&
                !shellRootedCallResultChain(
-                   existing, found->second, valueId,
+                   existing, reuseLoan, valueId,
                    bindingReferenceAccess(binding, *desired)))) {
-            reject(valueId, "reference initializer's accessor result does not "
-                            "retain the selected owner and access");
+            // The accessor's result is no retainable link below that loan:
+            // the reference keeps its own loan instead.
+            joins = false;
           }
         }
-        bindCarrierIdentity(found->second, *desired, binding);
-        return {.kind = MirOperandKind::Loan,
-                .loan = found->second,
-                .type = value->info.type};
+        if (joins) {
+          bindCarrierIdentity(reuseLoan, *desired, binding);
+          return {.kind = MirOperandKind::Loan,
+                  .loan = reuseLoan,
+                  .type = value->info.type};
+        }
       }
 
       // The loan this reference reborrows, from its referent's own place.
@@ -16842,7 +16919,11 @@ private:
       }
     }
     if (retainedLoan != 0) {
-      if (binding != nullptr && binding->info.retainedLoan != 0) {
+      // A reference binding's loan is the one MIR selected for it above;
+      // only a by-value carrier's retained group is still reconciled with
+      // the semantic identity naming it.
+      if (binding != nullptr && binding->info.retainedLoan != 0 &&
+          binding->info.type.kind != SemanticType::Reference) {
         const SemanticLoanId semanticLoan = binding->info.retainedLoan;
         if (const auto found = semanticLoans.find(semanticLoan);
             found != semanticLoans.end() && found->second != retainedLoan) {
