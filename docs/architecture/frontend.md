@@ -476,6 +476,9 @@ in dependency order, appends declarations to the transitional `Program`, and
 records each unit's declaration range. Syntax errors normally stop later
 phases; `FrontendOptions::analyzeRecoveredProgram` lets the LSP semantically
 analyze the safe recovered subset while keeping code generation disabled.
+A recovered program stops after HIR: semantics reports nothing about recovered
+nodes, so their bodies can be incomplete, and MIR runs only on a program that
+parsed.
 Recovery nested inside a compile-time branch propagates an unconsumed
 `#elif`, `#else`, or `#endif` boundary to the nearest conditional parser. A
 continuation directive with no open conditional is instead advanced as invalid
