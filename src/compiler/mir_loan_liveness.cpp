@@ -312,6 +312,87 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       readers[binding->second].push_back(*statement);
   }
 
+  // Type-based region flow: a binding that carries no loan of its own, whose
+  // type can hold a borrow and whose initializer reads another binding, may
+  // hold what that binding borrows, so its reads are uses of that binding's
+  // loans too (a closure capturing a view, a copy of that closure, the view
+  // its call returns).
+  const auto canHoldBorrow = [](const HirBinding &binding) {
+    const SemanticType &type = binding.info.type;
+    return type.kind == SemanticType::Reference ||
+           type.kind == SemanticType::StringView ||
+           type.kind == SemanticType::CString ||
+           type.kind == SemanticType::Lambda ||
+           binding.info.traits.containsBorrowedState;
+  };
+  // A binding that carries a loan of its own already has MIR's exact
+  // dependencies; type-based flow only covers bindings MIR left unloaned.
+  std::unordered_set<HirBindingId> loaned;
+  for (const LoanFacts &loan : loans)
+    loaned.insert(loan.carriers.begin(), loan.carriers.end());
+  std::unordered_map<HirBindingId, std::vector<HirBindingId>> derivedFrom;
+  for (const HirStatement &statement : body.statements) {
+    if (!statement.binding || !statement.value)
+      continue;
+    const HirBinding *derived = nullptr;
+    for (const HirBinding &candidate : body.bindings)
+      if (candidate.id == *statement.binding)
+        derived = &candidate;
+    if (derived == nullptr || !canHoldBorrow(*derived) ||
+        loaned.contains(derived->id))
+      continue;
+    std::vector<HirValueId> pending{*statement.value};
+    std::unordered_set<HirValueId> visited;
+    while (!pending.empty()) {
+      const HirValueId id = pending.back();
+      pending.pop_back();
+      if (!visited.insert(id).second)
+        continue;
+      const HirValue *value = indexedValue(body, id);
+      if (value == nullptr)
+        continue;
+      if (value->symbol != 0)
+        if (const auto source = bindingOfSymbol.find(value->symbol);
+            source != bindingOfSymbol.end() && source->second != derived->id)
+          derivedFrom[source->second].push_back(derived->id);
+      pending.insert(pending.end(), value->operands.begin(),
+                     value->operands.end());
+      if (value->receiver)
+        pending.push_back(*value->receiver);
+    }
+  }
+  // A loan on a binding's own storage (a reference to it, a callable
+  // wrapper borrowing it) makes its carriers read that binding when used.
+  for (const LoanFacts &loan : loans) {
+    if (loan.placeRoot == 0)
+      continue;
+    const auto borrowed = bindingOfSymbol.find(loan.placeRoot);
+    if (borrowed == bindingOfSymbol.end())
+      continue;
+    for (const HirBindingId carrier : loan.carriers)
+      if (carrier != borrowed->second)
+        derivedFrom[borrowed->second].push_back(carrier);
+  }
+  const auto addDerivedReads = [&](HirBindingId carrier,
+                                   std::vector<HirStatementId> &into) {
+    std::vector<HirBindingId> pending{carrier};
+    std::unordered_set<HirBindingId> seen{carrier};
+    while (!pending.empty()) {
+      const HirBindingId current = pending.back();
+      pending.pop_back();
+      const auto derived = derivedFrom.find(current);
+      if (derived == derivedFrom.end())
+        continue;
+      for (const HirBindingId binding : derived->second) {
+        if (!seen.insert(binding).second)
+          continue;
+        if (const auto found = readers.find(binding); found != readers.end())
+          into.insert(into.end(), found->second.begin(), found->second.end());
+        pending.push_back(binding);
+      }
+    }
+  };
+
   // Each loan's own uses, then its dependents' uses (a parent outlives its
   // children).
   std::unordered_map<SemanticLoanId, std::vector<HirStatementId>> uses;
@@ -323,6 +404,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     for (const HirBindingId carrier : loan.carriers) {
       if (const auto found = readers.find(carrier); found != readers.end())
         own.insert(own.end(), found->second.begin(), found->second.end());
+      addDerivedReads(carrier, own);
       if (const auto declared = declaringStatement.find(carrier);
           declared != declaringStatement.end()) {
         own.push_back(declared->second);

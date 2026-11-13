@@ -1471,13 +1471,17 @@ void mutableSignatureArguments() {
             place->projections.front().kind !=
                 lang::MirProjectionKind::PackElement)
           continue;
-        expect(loan.access == lang::AccessMode::Mutable &&
-                   !loan.carriers.empty(),
-               "pack reference entries retain their element carrier and "
-               "exact access");
+        expect(loan.access == lang::AccessMode::Mutable,
+               "pack reference entries retain exact access");
         auto forged = result.mir;
         auto *body = lang::findMirBody(
             forged, {lang::MirBodyKind::Function, function.id});
+        body->loans[loan.id - 1].semanticLoan = 0;
+        expect(lang::verifyMirProgram(forged).valid(),
+               "a pack entry needs no semantic loan identity");
+        forged = result.mir;
+        body = lang::findMirBody(forged,
+                                 {lang::MirBodyKind::Function, function.id});
         body->loans[loan.id - 1].access = lang::AccessMode::ReadOnly;
         expect(!lang::verifyMirProgram(forged).valid(),
                "pack entry access cannot be downgraded");
@@ -1487,6 +1491,12 @@ void mutableSignatureArguments() {
         body->loans[loan.id - 1].escapes = true;
         expect(!lang::verifyMirProgram(forged).valid(),
                "pack entry capability cannot escape its invocation");
+        forged = result.mir;
+        body = lang::findMirBody(forged,
+                                 {lang::MirBodyKind::Function, function.id});
+        body->loans[loan.id - 1].carriers.clear();
+        expect(!lang::verifyMirProgram(forged).valid(),
+               "pack entry capability stays carried by its formal binding");
         forged = result.mir;
         body = lang::findMirBody(forged,
                                  {lang::MirBodyKind::Function, function.id});

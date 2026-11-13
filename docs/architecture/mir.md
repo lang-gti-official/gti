@@ -2993,7 +2993,7 @@ A `MirBody` owns:
   call-input representation rule, not proof of complete constructor-pack
   or C++ constructor-field support; the remaining gaps are tracked in the
   active standard-library campaign;
-- each mutable-reference element of a concrete formal pack has one semantic
+- each mutable-reference element of a concrete formal pack has one
   `Parameter` entry loan over its exact `PackElement` place. The carrier binding
   remains immutable, while the loan grants mutable access to the caller's
   referent. Forwarding stages the exact loan, not a borrow of the whole pack.
@@ -3341,7 +3341,17 @@ reads that pass's loans as `LoanFacts` (carriers, parent, stored and owner
 dependencies, entry, lifecycle binding, access, borrowed root) and plans each
 end over the body's statement tree; the second pass lowers again with those
 ends materialized as `EndBorrow`. A loan whose carrier was moved away ends at
-the move, since its authority went with it. `EndBorrow` has no runtime effect:
+the move, since its authority went with it. Liveness also flows by type, as
+NLL's region liveness does: a binding that carries no loan of its own, whose
+type can hold a borrow (a reference, a text view, a lambda, or a value with
+borrowed state) and whose initializer reads another binding, may hold what
+that binding borrows, so its reads are uses of that binding's loans. A binding
+with its own loan keeps exactly the dependencies MIR recorded for it; when that
+loan borrows another binding's storage (a reference to it, a callable wrapper
+over it), using the carrier reads that binding. A closure that captures a dynamic
+text view by copy, a copy or wrapper of that closure, and the view its call
+returns therefore keep the view's owner borrowed, although none of them is a
+recorded carrier. `EndBorrow` has no runtime effect:
 it records the analysis for the verifier and the optimizer.
 
 MIR derives a body's entry loans (what the caller lends it) from the
@@ -3474,6 +3484,12 @@ group, the group's reborrowed referent (with a parent) or its source, or the
 additional owner the path names. Each other owner the group designates along
 the same path is a possible referent and becomes a dependency of the
 selection. Semantic loans now only name MIR loans for later HIR facts.
+Neither the body verifier nor the program verifier reads that number. A
+two-phase reservation and its unretained `CallResult` ancestry, a call-argument
+loan, a lambda's captured-reference entry and a formal-pack element entry are
+admitted by their MIR shape alone (kind, access, producer, parent, carriers,
+escape and exact source place), and no rule pairs or counts MIR loans by a
+semantic identity: per-element pack coverage is the exact entry-loan count.
 
 A range loop's loans are the loans its hidden bindings carry: the range loan
 is the one loan the range carrier holds (a consuming range owns its range and
