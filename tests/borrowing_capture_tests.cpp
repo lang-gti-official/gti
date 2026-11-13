@@ -906,9 +906,10 @@ int main() {
       if (root != nullptr && root != &loan && capturedEntry(*root))
         ++capturedAliasLoans;
     }
-  // `accessor` and `again` share the accessor result's loan; `whole`,
-  // `left`, `right`, `alias` and `seen` each hold their own.
-  expect(carrierFreeEntries && capturedAliasLoans == 6,
+  // `accessor` and `again` share the accessor result's loan, and `left`, a
+  // shared reborrow through `whole`'s read-only loan, joins it; `right`,
+  // `alias` and `seen` each hold their own.
+  expect(carrierFreeEntries && capturedAliasLoans == 5,
          "each capture alias carries a physical loan below the capture entry");
   // A captured-reference entry is admitted by its MIR shape, not by a
   // semantic loan number; a malformed shape is still rejected.
