@@ -7609,6 +7609,7 @@
         "std::tcp::ipv6_address::to_string",
         "std::tcp::listen",
         "std::tcp::listener::accept",
+        "std::tcp::listener::accept_from",
         "std::tcp::listener::bind",
         "std::tcp::listener::close",
         "std::tcp::listener::is_open",
