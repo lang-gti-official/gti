@@ -3425,7 +3425,14 @@ that themselves reborrow an ancestor). A read-only carrier initialized from a
 read-only origin loan reborrows that origin exactly when the origin protects
 the carrier's referent place (`mir_detail::loanProtectsPlace`, the verifier's
 own place containment; a Stored group protects only places reached through a
-dereference past its source). Semantic loans still name these MIR loans for
+dereference past its source). A carrier that stores its borrowed shell
+argument borrows it by MIR facts alone: through a reference formal's entry
+loan it reborrows that loan's referent; through a local reborrow alias it is
+rooted where the alias's chain begins, with the stored dependency protecting
+what the shell references (a shared alias of an exclusive formal never stands
+in for the formal); a call-result or by-value shell is borrowed in place.
+Entry loans name their receiver, capture, parameter or pack-element place
+directly from the entry site. Semantic loans still name these MIR loans for
 later HIR facts.
 
 A reference bound to an enum payload borrows the extracted field. Through a

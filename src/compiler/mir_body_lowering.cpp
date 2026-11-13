@@ -10625,14 +10625,52 @@ private:
           !shellReferenceInput)
         shellContract = nullptr;
       if (shellContract != nullptr) {
-        origin = placeForLoan(*shellContract, shellArgument);
+        // The carrier borrows its shell argument. A reference formal's entry
+        // loan is reborrowed through its referent. A local reborrow alias is
+        // transparent: the carrier is rooted where the alias's chain begins,
+        // and the stored dependency below protects what the shell references.
+        // A shell that is itself a call result, or one held by value, is
+        // borrowed in place.
+        const MirLoanId argumentLoan = loanForValue(shellArgument->id);
+        const MirLoan *argument = output.findLoan(argumentLoan);
+        const MirPlaceId shellPlace = placeForValue(shellArgument->id);
+        const MirPlace *shell = output.findPlace(shellPlace);
         parent = 0;
-        if (shellContract->parent != 0) {
-          const auto found = semanticLoans.find(shellContract->parent);
-          if (found == semanticLoans.end())
-            valid = false;
-          else
-            parent = found->second;
+        if (argument == nullptr || argument->kind == MirLoanKind::Stored) {
+          origin = shellPlace;
+        } else if (argument->kind == MirLoanKind::Local &&
+                   argument->parent != 0) {
+          MirLoanId root = argumentLoan;
+          for (std::size_t guard = 0; guard < output.loans.size() &&
+                                      output.loans[root - 1].parent != 0;
+               ++guard)
+            root = output.loans[root - 1].parent;
+          origin = output.loans[root - 1].source;
+        } else if (shell != nullptr && shell->root == MirPlaceRootKind::Loan) {
+          origin = argument->source;
+        } else {
+          origin = 0;
+          for (const MirPlace &existing : output.places)
+            if (existing.root == MirPlaceRootKind::Loan &&
+                existing.loan == argumentLoan && existing.projections.empty() &&
+                existing.type == shellArgument->info.type) {
+              origin = existing.id;
+              break;
+            }
+          if (origin == 0) {
+            // The referent keeps the identity of the place the argument's
+            // loan borrows.
+            MirPlace referent{.root = MirPlaceRootKind::Loan,
+                              .loan = argumentLoan,
+                              .type = shellArgument->info.type,
+                              .access = shellArgument->info.access,
+                              .traits = shellArgument->info.traits,
+                              .sourceValue = shellArgument->id};
+            if (const MirPlace *borrowed = output.findPlace(argument->source))
+              referent.key = borrowed->key;
+            origin = appendPlace(std::move(referent));
+          }
+          parent = argumentLoan;
         }
       }
       // A fresh adapter over a local dynamic text view has no binding
@@ -15384,6 +15422,11 @@ private:
     // The semantic loan place this carrier's identity is recorded under.
     std::string key;
     HirBindingId binding = 0;
+    bool receiver = false;
+    // A lambda capture's symbol and one-based capture index.
+    SymbolId captureSymbol = 0;
+    std::size_t capture = 0;
+    std::optional<std::size_t> packElement;
   };
 
   [[nodiscard]] static std::string entryIdentityKey(const HirLoan &loan) {
@@ -15414,6 +15457,73 @@ private:
 
   // Every entry carrier of this body in the order its loans are created:
   // receiver, captures, then parameters.
+  // The place an entry carrier names: the receiver, a capture, a parameter
+  // or one element of a parameter pack.
+  [[nodiscard]] MirPlaceId entrySitePlace(const EntryCarrierSite &site,
+                                          AccessMode access) {
+    if (site.receiver) {
+      MirPlace receiver{.root = MirPlaceRootKind::This, .access = access};
+      if (function != nullptr && function->owner && *function->owner != 0 &&
+          *function->owner <= program.classInstances().size()) {
+        const auto &owner = program.classInstances()[*function->owner - 1];
+        receiver.type = owner.type;
+        receiver.traits = owner.traits;
+        receiver.access = function->source != nullptr &&
+                                  receiverAllowsMutation(
+                                      function->source->receiverMutability())
+                              ? AccessMode::Mutable
+                              : AccessMode::ReadOnly;
+      } else if (destructor != nullptr && destructor->owner != 0 &&
+                 destructor->owner <= program.classInstances().size()) {
+        const auto &owner = program.classInstances()[destructor->owner - 1];
+        receiver.type = owner.type;
+        receiver.traits = owner.traits;
+        receiver.access = AccessMode::Mutable;
+      } else {
+        return 0;
+      }
+      receiver.key = PlaceKey{.domain = output.placeDomain, .receiver = true};
+      return appendPlace(std::move(receiver));
+    }
+    if (site.capture != 0 && lambda != nullptr &&
+        site.capture <= lambda->captures.size()) {
+      const auto &field = lambda->captures[site.capture - 1];
+      return appendPlace({.root = MirPlaceRootKind::Symbol,
+                          .symbol = site.captureSymbol,
+                          .capture = site.capture,
+                          .type = field.type,
+                          .access = access,
+                          .traits = field.traits,
+                          .key = PlaceKey{.domain = output.placeDomain,
+                                          .root = site.captureSymbol},
+                          .initiallyAvailable = true});
+    }
+    if (site.binding == 0)
+      return 0;
+    const MirPlaceId base = placeForBinding(site.binding);
+    if (!site.packElement)
+      return base;
+    const MirPlace *place = output.findPlace(base);
+    if (place == nullptr || place->type.kind != SemanticType::TypePack ||
+        !place->type.concretePack ||
+        *site.packElement >= place->type.arguments.size())
+      return 0;
+    MirPlace element = *place;
+    element.id = 0;
+    const SemanticType elementType = place->type.arguments[*site.packElement];
+    element.key =
+        PlaceKey{.domain = output.placeDomain,
+                 .root = place->key ? place->key->root : 0,
+                 .projections = {{.kind = PlaceProjectionKind::ConstantIndex,
+                                  .index = *site.packElement}}};
+    element.type = elementType;
+    element.traits = resolvedTraits(elementType);
+    element.access = AccessMode::ReadOnly;
+    element.projections.push_back({.kind = MirProjectionKind::PackElement,
+                                   .constantIndex = *site.packElement});
+    return appendPackElementPlace(std::move(element));
+  }
+
   [[nodiscard]] std::vector<EntryCarrierSite> entryCarrierSites() const {
     std::vector<EntryCarrierSite> sites;
     const HirClassInstance *owner = nullptr;
@@ -15427,16 +15537,22 @@ private:
     if (owner != nullptr && output.kind != MirBodyKind::Constructor)
       sites.push_back({.loans = deriveEntryLoans(owner->type,
                                                  EntryCarrier::Receiver, false),
-                       .key = "this"});
+                       .key = "this",
+                       .receiver = true});
     if (lambda != nullptr)
-      for (const auto &capture : lambda->captures)
+      for (std::size_t captureIndex = 0; captureIndex < lambda->captures.size();
+           ++captureIndex) {
+        const auto &capture = lambda->captures[captureIndex];
         sites.push_back(
             {.loans = deriveEntryLoans(capture.type,
                                        isBorrowingCapture(capture.mode)
                                            ? EntryCarrier::BorrowCapture
                                            : EntryCarrier::ValueCapture,
                                        false),
-             .key = std::to_string(capture.bindingSymbol)});
+             .key = std::to_string(capture.bindingSymbol),
+             .captureSymbol = capture.bindingSymbol,
+             .capture = captureIndex + 1});
+      }
     const std::vector<HirBindingId> *bindings =
         function != nullptr      ? &function->parameterBindings
         : constructor != nullptr ? &constructor->parameterBindings
@@ -15457,7 +15573,8 @@ private:
              ++element) {
           const auto &elementType = type.arguments[element];
           EntryCarrierSite site{.key = key + "#" + std::to_string(element),
-                                .binding = binding->id};
+                                .binding = binding->id,
+                                .packElement = element};
           if (auto paths = storedReferenceEntries(elementType);
               !paths.empty()) {
             const AccessMode access = paths.front().reference.referenceAccess;
@@ -15604,9 +15721,9 @@ private:
       for (const DerivedEntryLoan &derived : site.loans) {
         const HirLoan *identity = identityFor(site.key, derived.kind);
         const MirPlaceId sourcePlace =
-            identity != nullptr ? placeForLoan(*identity)
-            : site.binding != 0 ? placeForBinding(site.binding)
-                                : 0;
+            identity != nullptr || site.binding != 0
+                ? entrySitePlace(site, derived.access)
+                : 0;
         if (sourcePlace == 0)
           continue;
         const MirLoanId lowered = seedEntryLoan(
