@@ -4158,9 +4158,6 @@ private:
         range.sentinelType = resolved->sentinelType;
         range.elementType = resolved->elementType;
         range.elementAccess = resolved->elementAccess;
-        range.rangeLoan = resolved->rangeLoan;
-        range.elementLoan = resolved->elementLoan;
-        range.elementOwnerLoan = resolved->elementOwnerLoan;
         range.beginFunction = resolved->beginFunction;
         range.endFunction = resolved->endFunction;
         range.compareFunction = resolved->compareFunction;

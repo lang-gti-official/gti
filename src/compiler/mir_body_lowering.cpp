@@ -14498,8 +14498,8 @@ private:
           source.statements.begin(), source.statements.end(),
           [&](const HirStatement &statement) {
             return statement.rangeIteration &&
-                   statement.rangeIteration->elementLoan ==
-                       desired->semanticLoan &&
+                   (statement.rangeIteration->element == binding ||
+                    statement.rangeIteration->elementOwner == binding) &&
                    statement.rangeIteration->elementAccessValue == valueId;
           });
       if (exactRangeElement && existing != 0 &&

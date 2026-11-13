@@ -77,12 +77,12 @@ Generated default construction retains the already-admitted concrete owner's
 discovery depth: its field schedule is not a second source-instantiation edge.
 Each distinct generic constructor still consumes the request's instance budget;
 ordinary constructor bodies and all other discovery limits remain unchanged.
-Every reanalyzed body has its own loan-number domain, including a range whose
-types do not depend on generic parameters. Plan verification retains exact
-non-dependent range types and selected protocol operations, compares loan
-relationships across primary/instance domains, and independently checks the
-actual body-local loans, access modes, source bindings and carriers. Numeric
-loan equality with an unrelated primary analysis is not a provenance proof.
+Every reanalyzed body has its own analysis, including a range whose types do
+not depend on generic parameters. Plan verification retains exact
+non-dependent range types and selected protocol operations, and checks the
+range's source bindings, element access and staging. `HirRangeIteration`
+carries no loan ids: MIR lowering derives range and element loans from those
+bindings, and the MIR verifier owns their access, parent and carrier checks.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
@@ -859,13 +859,13 @@ not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
-Read-only reference range bindings retain an explicit `elementOwner` statement,
-binding and loan in `HirRangeIteration`, together with the original dereference
+Read-only reference range bindings retain an explicit `elementOwner` statement
+and binding in `HirRangeIteration`, together with the original dereference
 value. Semantics chooses a checked alias for reference yields or independent
 owned per-iteration storage for eligible value yields; `materializesElementValue`
 preserves that choice. Verification checks the synthetic AST identity, exact
-source producer, concrete type/category/ownership, and the written element's
-borrow of that binding. Generic symbolic range facts do not decide a concrete
+source producer, concrete type/category/ownership, and that the written
+element reads that binding; the element's loan is a MIR fact. Generic symbolic range facts do not decide a concrete
 yield's storage policy. Mutable-reference and ordinary by-value loop bindings
 keep their direct paths. HIR does not create temporary-reference permissions
 or infer storage from a backend representation.

@@ -381,9 +381,6 @@ struct HirRangeIteration {
   HirValueId elementAccessValue = 0;
   HirValueId increment = 0;
   HirStatementId coreLoop = 0;
-  SemanticLoanId rangeLoan = 0;
-  SemanticLoanId elementLoan = 0;
-  SemanticLoanId elementOwnerLoan = 0;
   FunctionId beginFunction = 0;
   FunctionId endFunction = 0;
   FunctionId compareFunction = 0;

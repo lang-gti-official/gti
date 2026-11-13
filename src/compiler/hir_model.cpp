@@ -2914,15 +2914,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         return expression && value != nullptr &&
                body.valueForSource(*expression) == value;
       };
-      const HirLoan *rangeLoan =
-          range == nullptr ? nullptr : body.findLoan(range->rangeLoan);
-      const HirLoan *elementLoan =
-          range == nullptr ? nullptr : body.findLoan(range->elementLoan);
-      const HirLoan *elementOwnerLoan =
-          range == nullptr ? nullptr : body.findLoan(range->elementOwnerLoan);
-      const bool referenceElement =
-          source != nullptr && source->elementBinding() != nullptr &&
-          source->elementBinding()->type().reference.has_value();
       const HirBinding *rangeCarrier =
           range == nullptr ? nullptr : bindingFor(range->rangeCarrier);
       const HirBinding *iterator =
@@ -2998,7 +2989,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             elementAccessValue->borrowPlace ||
             element->info.type.kind == SemanticType::Reference ||
             range->rangeCarrier != 0 || range->sentinel != 0 ||
-            range->rangeLoan != 0 || range->elementLoan != 0 ||
             range->elementOwner != 0 || range->increment != 0 ||
             !range->ownsRangeTemporary || range->compareFunction == 0 ||
             range->dereferenceFunction == 0) {
@@ -3028,20 +3018,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            containsUnresolvedGeneric(semantic->iteratorType) ||
            containsUnresolvedGeneric(semantic->sentinelType) ||
            containsUnresolvedGeneric(semantic->elementType));
-      const bool exactLoanProvenance =
-          semantic != nullptr && range != nullptr &&
-          (((genericSemantic || concreteReanalysis) &&
-            (range->rangeLoan != 0) == (semantic->rangeLoan != 0) &&
-            (range->elementLoan != 0) == (semantic->elementLoan != 0) &&
-            (genericSemantic ||
-             ((range->elementOwnerLoan != 0) ==
-                  (semantic->elementOwnerLoan != 0) &&
-              (range->rangeLoan == range->elementLoan) ==
-                  (semantic->rangeLoan == semantic->elementLoan)))) ||
-           (!genericSemantic && !concreteReanalysis &&
-            range->rangeLoan == semantic->rangeLoan &&
-            range->elementLoan == semantic->elementLoan &&
-            range->elementOwnerLoan == semantic->elementOwnerLoan));
       const bool exactSemantic =
           (primaryDeferred && range != nullptr && exactConcreteTypes) ||
           (semantic != nullptr && range != nullptr && exactConcreteTypes &&
@@ -3052,7 +3028,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                 range->elementType == semantic->elementType &&
                                 range->arrayLength == semantic->arrayLength)) &&
            range->elementAccess == semantic->elementAccess &&
-           exactLoanProvenance &&
            (genericSemantic ||
             (range->beginFunction == semantic->beginFunction &&
              range->endFunction == semantic->endFunction &&
@@ -3086,23 +3061,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                          ? source->elementBinding()->initializer()
                          : source->elementOwnerBinding()->initializer()) &&
           exactValue(range->increment, source->coreLoop()->increment());
-      const bool exactLoans =
-          rangeLoan != nullptr && rangeLoan->access == range->elementAccess &&
-          std::find(rangeLoan->carriers.begin(), rangeLoan->carriers.end(),
-                    range->rangeCarrier) != rangeLoan->carriers.end() &&
-          (!referenceElement ||
-           (elementLoan != nullptr &&
-            elementLoan->access == range->elementAccess &&
-            std::find(elementLoan->carriers.begin(),
-                      elementLoan->carriers.end(),
-                      range->element) != elementLoan->carriers.end() &&
-            (range->elementAccess == AccessMode::ReadOnly ||
-             (range->elementLoan != range->rangeLoan &&
-              elementLoan->parent == range->rangeLoan)))) &&
-          (range->elementAccess == AccessMode::ReadOnly ||
-           range->strategy != RangeIterationStrategy::Structural ||
-           std::find(rangeLoan->carriers.begin(), rangeLoan->carriers.end(),
-                     range->iterator) != rangeLoan->carriers.end());
+      // Range loans, their carriers and parents are MIR facts: MIR lowering
+      // derives them from the range bindings and the MIR verifier checks them.
       const HirValue *writtenElementSource =
           source == nullptr || source->elementBinding() == nullptr
               ? nullptr
@@ -3112,7 +3072,6 @@ verifyHirProgramPlans(const SemanticModel &semantics,
           elementAccessValue != nullptr &&
           (source->elementOwnerBinding() == nullptr
                ? elementOwner == nullptr && range->elementOwnerStatement == 0 &&
-                     range->elementOwnerLoan == 0 &&
                      !range->materializesElementValue
                : source->elementOwnerBinding()->isRangeElementOwner() &&
                      elementOwner != nullptr &&
@@ -3145,26 +3104,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                     BorrowOriginKind::None &&
                                 elementOwner->info.type ==
                                     elementAccessValue->info.type &&
-                                range->elementOwnerLoan == 0 &&
-                                range->elementAccess == AccessMode::ReadOnly &&
-                                (!referenceElement ||
-                                 (elementLoan != nullptr &&
-                                  elementLoan->parent == 0 &&
-                                  elementLoan->place.root ==
-                                      elementOwner->info.symbol &&
-                                  elementLoan->place.projections.empty() &&
-                                  !elementLoan->place.receiver))
+                                range->elementAccess == AccessMode::ReadOnly
                           : elementAccessValue->info.category ==
                                     ValueCategory::Place &&
                                 elementOwner->info.type.kind ==
-                                    SemanticType::Reference &&
-                                elementOwnerLoan != nullptr &&
-                                elementOwnerLoan->access ==
-                                    AccessMode::ReadOnly &&
-                                std::find(elementOwnerLoan->carriers.begin(),
-                                          elementOwnerLoan->carriers.end(),
-                                          elementOwner->id) !=
-                                    elementOwnerLoan->carriers.end()));
+                                    SemanticType::Reference));
       const bool exactStrategy =
           range != nullptr &&
           ((range->strategy == RangeIterationStrategy::FixedArray &&
@@ -3192,11 +3136,10 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                      endpoint->info.type.kind != SemanticType::Reference &&
                      !endpoint->info.traits.containsBorrowedState &&
                      endpoint->borrowOrigin == BorrowOriginKind::None));
-      if (!exactSemantic || !exactStructure || !exactLoans || !exactStrategy ||
-          !exactOwner || range == nullptr || !exactEndpointResult ||
-          !exactElementStaging) {
+      if (!exactSemantic || !exactStructure || !exactStrategy || !exactOwner ||
+          range == nullptr || !exactEndpointResult || !exactElementStaging) {
         result.errors.emplace_back(
-            "range HIR plan differs from semantic owner/loan/protocol facts");
+            "range HIR plan differs from semantic owner/protocol facts");
       }
     }
   };
