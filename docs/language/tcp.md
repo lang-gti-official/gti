@@ -61,6 +61,8 @@ All three address types conform to the `std::formatting` protocol concept, so
 `expected<std::vector<socket_address>, errc>` in resolver preference order (at
 most 16 entries). Numeric hosts need no name service. An empty host is
 `invalid_address`; an unknown name is `name_not_found`.
+`resolve(host, port, address_family)` keeps only endpoints of that family, and
+reports `name_not_found` when the host has none.
 
 ## Streams
 
@@ -95,16 +97,22 @@ A stream also satisfies `std::io::reader` and `std::io::writer`:
 succeeds while the stream is open (a stream has no user-space buffer). Every
 `std::io` helper therefore works on a socket: `read_exact`, `write_all`,
 `copy`, `getline`, and `buffered_reader`/`buffered_writer` borrowing the
-stream. Through that interface a closed stream reports `invalid_stream`; other
-failures collapse to `read_failed`/`write_failed`. Use `receive`/`send` when
-the specific `tcp::errc` matters.
+stream. Through that interface the transport outcomes keep their meaning:
+`would_block`, `timed_out` and `broken_pipe` map to the `std::io_errc` values
+of the same name, `connection_reset` and `connection_aborted` to
+`connection_reset`, and a closed stream to `invalid_stream`. Other failures
+are `read_failed`/`write_failed` (`flush_failed` for a `buffered_stream`
+flush). Use `receive`/`send` when the full `tcp::errc` matters.
 
 ## Listeners
 
 `std::tcp::listener::bind(socket_address&, int32_t backlog = 0)` binds with
 address reuse and starts listening; a nonpositive backlog uses the host
 default. Port 0 selects an ephemeral port, which `local_address()` reports.
-`accept() mut` returns a connected, blocking `stream`. A nonblocking listener
+`accept() mut` returns a connected, blocking `stream`. `accept_from() mut`
+returns an `incoming` holding that `connection` and the `peer` address the
+host recorded at accept time; unlike a later `peer_address()`, reading it
+cannot fail because the client has already reset. A nonblocking listener
 (`set_nonblocking(true)`) reports `would_block` when nothing is pending, and
 `wait_acceptable(nanoseconds)` waits for a connection or fails with
 `timed_out`. `close()` and `is_open()` behave as for streams. A listener has the
@@ -179,7 +187,8 @@ for concept std::tcp::connection_handler<Echo> {
 auto summary = ?std::tcp::serve(server, echo);  // serve_summary{accepted, failed}
 ```
 
-The handler owns each connection. A handler error drops only that connection
+`serve` accepts with `accept_from`, so the handler receives the recorded peer
+address. The handler owns each connection. A handler error drops only that connection
 and counts in `failed`; `serve_control::stop` ends the loop. Accept failures
 caused by one aborted client (`connection_aborted`, `connection_reset`) are
 skipped; any other accept failure ends `serve` with that error. A type without

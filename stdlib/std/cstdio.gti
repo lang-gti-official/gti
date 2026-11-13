@@ -105,6 +105,12 @@ enum class io_errc {
   write_failed,
   seek_failed,
   flush_failed,
+  // Transport outcomes, reported by readers and writers over a connection
+  // (std::tcp) so a caller can tell a retryable condition from a lost peer.
+  would_block,
+  timed_out,
+  connection_reset,
+  broken_pipe,
 };
 
 /// File access policy selected when opening a stream.

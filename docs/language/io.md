@@ -111,7 +111,12 @@ without treating normal completion as a failure.
 
 The error categories are `end_of_file`, `open_failed`, `read_failed`,
 `write_failed`, `seek_failed`, `flush_failed`, `close_failed`,
-`invalid_stream`, and `unsupported_mode`.
+`invalid_stream`, and `unsupported_mode`. Readers and writers over a
+connection, such as `std::tcp::stream`, also report the transport categories
+`would_block` (a nonblocking operation found nothing to do), `timed_out` (a
+read or write timeout expired), `connection_reset` (the peer aborted the
+connection) and `broken_pipe` (writing after the peer closed), so generic
+`std::io` code can retry or give up without the source's own error type.
 
 ## File and mode semantics
 
