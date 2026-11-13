@@ -3455,7 +3455,38 @@ through the parameter). A payload's place overlaps its enum subject's storage
 and takes the subject's key, or, for a subject read through a reference
 binding carrying a local loan, the key of what that loan borrows. A stored
 reference payload selection is recognized from the extraction's own kind, and
-an alias reborrowing a selection loan's referent selects the same reference. A reference binding's access is its reference type's, and
+an alias reborrowing a selection loan's referent selects the same reference. Which loan a by-value carrier binding carries is MIR's
+decision as well (`carrierBindingLoan`), and it reads no semantic identity
+either: the binding carries the loan its initializer evaluates to. A loan the
+initializer produces, a call's or a construction's publication, is the
+binding's own. It already names what the result borrows, below the loans it
+was reached through, and it is not joined to the loan of a carrier whose
+borrowed state it relays: a second loan on the same owner restricts nothing
+the first does not, and each stays live while its own binding is used (after
+Polonius, the result's origin holds the loans that flowed into it; which
+binding names them is not a fact the checker needs). An initializer that names
+a loan something already holds, a copied or moved carrier, shares that loan as
+one more carrier; a value copied through a reference carries the reference
+loan's stored dependency, the group retaining the referent's owners, rather
+than the reference's loan on the carrier shell. So does a fresh loan that
+reborrows nothing and names a place its own stored dependency already protects
+(a text value relayed out of a stored reference field): it retains only what
+that group retains. A loan on a carrier shell names no such place and stays
+the binding's own. A consuming call or move that
+publishes a lifecycle-bound loan for the same owner and parent as the
+lifecycle-bound loan its moved argument held retires the consumed loan there.
+The range protocol is the one structural exception: a synthesized cursor
+carries the traversal's loan, the held loan its own loan was lowered below,
+because a child loan would conflict with the loop's own uses of the range
+carrier. A cursor whose call stored a reference to the range shell (its loan
+names the traversal's referent and keeps a stored dependency), the staged
+cursor and element of a range over a formal, and a physical proxy protocol
+binding keep the call's loan below the traversal instead. A retained group
+takes its derived shape when it is lifecycle-bound, mutable, designates
+fields, has a stored dependency, or reborrows a held loan (a transient
+accessor result is not one, the held loan beneath it is); a plain read-only
+single-owner group keeps its bare shape, which a read-only reference may
+join. A reference binding's access is its reference type's, and
 its parent is the loan its referent's place is reached through: a reference
 binding's current loan, a receiver's or global's entry loan (its Stored entry
 group only for a place reached through one of the root's stored references,

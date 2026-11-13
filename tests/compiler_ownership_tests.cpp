@@ -49,9 +49,10 @@ const lang::MirPlace *mirLoanSource(const MirRetained &retained) {
              : retained.function->body.findPlace(retained.loan->source);
 }
 
-// A by-value carrier moved through a call publishes a fresh Stored loan for the
-// result; the transfer keeps the consumed carrier's exact owner place and
-// permission (the result may name the field that now holds the reference).
+// A by-value carrier a call produces from another carrier, moved or relayed,
+// publishes a fresh Stored loan for the result; it keeps the input carrier's
+// exact owner place and permission (the result may name the field that now
+// holds the reference).
 bool transfersDependency(const MirRetained &input, const MirRetained &result) {
   return input.loan != nullptr && result.loan != nullptr &&
          input.function == result.function && input.loan != result.loan &&
@@ -8704,7 +8705,7 @@ int main() {
              !first->traits.copyAssignable && firstLoan.loan != nullptr &&
              firstLoan.loan->access == lang::AccessMode::ReadOnly &&
              copiedLoan.loan == firstLoan.loan &&
-             advancedLoan.loan == firstLoan.loan,
+             transfersDependency(firstLoan, advancedLoan),
          "forward read cursors should copy-construct independent positions "
          "while preserving one read-only owner dependency");
 
@@ -9789,13 +9790,12 @@ int shared_aliases() {
           resolvedIndexOperator->borrowAccess == lang::AccessMode::ReadOnly &&
           callableBinding != nullptr && calledViewBinding != nullptr &&
           indexedViewBinding != nullptr &&
-          mirRetained(valid, callable).loan != nullptr &&
-          mirRetained(valid, callable).loan ==
-              mirRetained(valid, calledView).loan &&
-          mirRetained(valid, callable).loan ==
-              mirRetained(valid, indexedView).loan,
+          transfersDependency(mirRetained(valid, callable),
+                              mirRetained(valid, calledView)) &&
+          transfersDependency(mirRetained(valid, callable),
+                              mirRetained(valid, indexedView)),
       "operator() and operator[] returning stored-reference values should "
-      "preserve their receiver dependency and MIR loan identity");
+      "preserve their receiver dependency in a loan of their own");
 
   const lang::HirValue *hirOperatorCall = nullptr;
   const lang::HirValue *hirIndexOperator = nullptr;
