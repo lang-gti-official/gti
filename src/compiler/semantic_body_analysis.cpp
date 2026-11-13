@@ -6062,11 +6062,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                   .variant = pattern.variantIndex}},
                   .reference = variant->payloadTypes[payload.payloadIndex]};
               semanticModel.recordLoan(std::move(loan));
-              for (const auto &dependency : dependencies->dependencies)
-                if (dependency.protectsStorage)
-                  registerStorageLoan(dependency.place.root,
-                                      dependency.place.receiver,
-                                      payload.binding.retainedLoan);
               loanFlow.records.at(payload.binding.retainedLoan)
                   .confinedToRegion = false;
               semanticModel.recordBorrowDependencySet(*payload.source,
@@ -7279,7 +7274,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   const bool textTarget =
       simpleAssignment && (targetType.kind == SemanticType::StringView ||
                            targetType.kind == SemanticType::CString);
-  if (textTarget && !capturedTextLoans(expr.value().get()).empty())
+  if (textTarget && !capturedTextViews(expr.value().get()).empty())
     reportOwnerDependentTextStorage(expr.value(),
                                     "assigned into an existing binding");
   else if (const auto targetView =

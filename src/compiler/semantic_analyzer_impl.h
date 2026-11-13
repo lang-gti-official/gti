@@ -1246,15 +1246,12 @@ private:
   struct LoanFlowState {
     bool finalized = false;
     // Closures over a dynamic view, and local views given a call result
-    // returning such a capture's text, with the views' loans each carries:
-    // a use of the carrier keeps those owners borrowed, as a copy of the view
-    // would (L-OWN-02).
-    std::unordered_map<SymbolId, std::vector<SemanticLoanId>>
-        capturedTextCarriers;
+    // returning such a capture's text, with the dynamic views each carries
+    // (L-OWN-02).
+    std::unordered_map<SymbolId, std::vector<SymbolId>> capturedTextCarriers;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
-    std::vector<SemanticLoanId> receiverStorageLoans;
     std::vector<PendingBorrowConflict> conflicts;
     std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowStatementBoundary> statementBoundaries;
@@ -1422,7 +1419,6 @@ private:
     // payload, selected by a switch pattern or reborrowed at that same
     // referent. A binding fact, independent of any loan record.
     bool selectedReference = false;
-    std::vector<SemanticLoanId> storageLoans;
     // Conditional dependency facts follow value flow. Existing valueState and
     // loan flow remain the authority for availability and liveness.
     std::optional<SemanticBorrowDependencySet> completeBorrowSet;
@@ -2416,11 +2412,11 @@ private:
                            std::string destination = {});
   void noteLocalTextFlow(const ExprPtr &value, SymbolId target);
   [[nodiscard]] bool finalizeCapturedText();
-  // The loans of the dynamic views whose text an expression's value carries
-  // through copy or move captures: a closure over such a view, a call of a
-  // lambda that returns its captured text, and a local holding either.
-  [[nodiscard]] std::vector<SemanticLoanId>
-  capturedTextLoans(const Expr *expression) const;
+  // The dynamic views whose text an expression's value carries through copy
+  // or move captures: a closure over such a view, a call of a lambda that
+  // returns its captured text, and a local holding either.
+  [[nodiscard]] std::vector<SymbolId>
+  capturedTextViews(const Expr *expression) const;
   void recordCapturedTextCarriers(const VariableDecl &declaration);
   void removeCapturedTextCarrier(const Symbol &carrier);
 
@@ -3185,8 +3181,6 @@ private:
   [[nodiscard]] const Variable *
   directStorageVariable(const ExprPtr &expression) const;
 
-  [[nodiscard]] bool hasRetainedBorrow(const Variable &variable) const;
-
   [[nodiscard]] std::optional<RetainedLoanSource>
   retainedLoanSource(const ExprPtr &expression) const;
   [[nodiscard]] std::optional<RetainedLoanSource>
@@ -3336,8 +3330,6 @@ private:
 
   void attachLoanCarrier(SemanticLoanId loan, Symbol &carrier,
                          SymbolId carrierSymbol, bool transfer);
-
-  void registerStorageLoan(SymbolId owner, bool receiver, SemanticLoanId loan);
 
   // A retained borrow of foreign storage has no GTI owner lifetime. Reports
   // GTI-S2054 at the borrow's origin and returns false; needs no loan record.

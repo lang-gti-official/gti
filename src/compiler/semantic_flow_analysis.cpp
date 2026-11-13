@@ -9467,10 +9467,6 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         for (auto &field : target->second.rawPointerFields)
           for (auto &origin : field.origins)
             origin.possible = true;
-        target->second.storageLoans = leftSymbol->second.storageLoans;
-        for (const SemanticLoanId loan : rightSymbol->second.storageLoans) {
-          appendUniqueLoan(target->second.storageLoans, loan);
-        }
         const bool sameRetainedLoan =
             leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan;
         target->second.retainedLoan = sameRetainedLoan
