@@ -312,10 +312,11 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       readers[binding->second].push_back(*statement);
   }
 
-  // Type-based region flow: a binding whose type can hold a borrow and whose
-  // initializer reads another binding may hold what that binding borrows, so
-  // its reads are uses of that binding's loans too (a closure capturing a
-  // view, a copy of that closure, the view its call returns).
+  // Type-based region flow: a binding that carries no loan of its own, whose
+  // type can hold a borrow and whose initializer reads another binding, may
+  // hold what that binding borrows, so its reads are uses of that binding's
+  // loans too (a closure capturing a view, a copy of that closure, the view
+  // its call returns).
   const auto canHoldBorrow = [](const HirBinding &binding) {
     const SemanticType &type = binding.info.type;
     return type.kind == SemanticType::Reference ||
@@ -324,6 +325,11 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
            type.kind == SemanticType::Lambda ||
            binding.info.traits.containsBorrowedState;
   };
+  // A binding that carries a loan of its own already has MIR's exact
+  // dependencies; type-based flow only covers bindings MIR left unloaned.
+  std::unordered_set<HirBindingId> loaned;
+  for (const LoanFacts &loan : loans)
+    loaned.insert(loan.carriers.begin(), loan.carriers.end());
   std::unordered_map<HirBindingId, std::vector<HirBindingId>> derivedFrom;
   for (const HirStatement &statement : body.statements) {
     if (!statement.binding || !statement.value)
@@ -332,7 +338,8 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     for (const HirBinding &candidate : body.bindings)
       if (candidate.id == *statement.binding)
         derived = &candidate;
-    if (derived == nullptr || !canHoldBorrow(*derived))
+    if (derived == nullptr || !canHoldBorrow(*derived) ||
+        loaned.contains(derived->id))
       continue;
     std::vector<HirValueId> pending{*statement.value};
     std::unordered_set<HirValueId> visited;
@@ -353,6 +360,18 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
       if (value->receiver)
         pending.push_back(*value->receiver);
     }
+  }
+  // A loan on a binding's own storage (a reference to it, a callable
+  // wrapper borrowing it) makes its carriers read that binding when used.
+  for (const LoanFacts &loan : loans) {
+    if (loan.placeRoot == 0)
+      continue;
+    const auto borrowed = bindingOfSymbol.find(loan.placeRoot);
+    if (borrowed == bindingOfSymbol.end())
+      continue;
+    for (const HirBindingId carrier : loan.carriers)
+      if (carrier != borrowed->second)
+        derivedFrom[borrowed->second].push_back(carrier);
   }
   const auto addDerivedReads = [&](HirBindingId carrier,
                                    std::vector<HirStatementId> &into) {

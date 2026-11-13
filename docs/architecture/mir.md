@@ -3342,10 +3342,13 @@ dependencies, entry, lifecycle binding, access, borrowed root) and plans each
 end over the body's statement tree; the second pass lowers again with those
 ends materialized as `EndBorrow`. A loan whose carrier was moved away ends at
 the move, since its authority went with it. Liveness also flows by type, as
-NLL's region liveness does: a binding whose type can hold a borrow (a
-reference, a text view, a lambda, or a value with borrowed state) and whose
-initializer reads another binding may hold what that binding borrows, so its
-reads are uses of that binding's loans. A closure that captures a dynamic
+NLL's region liveness does: a binding that carries no loan of its own, whose
+type can hold a borrow (a reference, a text view, a lambda, or a value with
+borrowed state) and whose initializer reads another binding, may hold what
+that binding borrows, so its reads are uses of that binding's loans. A binding
+with its own loan keeps exactly the dependencies MIR recorded for it; when that
+loan borrows another binding's storage (a reference to it, a callable wrapper
+over it), using the carrier reads that binding. A closure that captures a dynamic
 text view by copy, a copy or wrapper of that closure, and the view its call
 returns therefore keep the view's owner borrowed, although none of them is a
 recorded carrier. `EndBorrow` has no runtime effect:
