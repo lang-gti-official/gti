@@ -138,31 +138,6 @@ struct HirBinding {
   std::optional<HirDropObligationId> dropObligation;
 };
 
-struct HirReferenceSelection {
-  HirValueId value = 0;
-  HirValueId carrier = 0;
-  SemanticLoanId transferredFrom = 0;
-  std::vector<SymbolId> fields;
-  std::vector<BorrowDependencyCondition> conditions;
-  SemanticType reference = SemanticType::Unknown;
-};
-
-struct HirLoan {
-  SemanticLoanId semanticLoan = 0;
-  SemanticLoanKind kind = SemanticLoanKind::Reference;
-  SemanticLoanId parent = 0;
-  SemanticLoanId storedDependency = 0;
-  SemanticLoanPlace place;
-  AccessMode access = AccessMode::ReadOnly;
-  std::vector<SymbolId> designatedFields;
-  std::vector<BorrowDependencyCondition> conditions;
-  std::vector<SemanticLoanDependency> additionalDependencies;
-  std::optional<HirReferenceSelection> referenceSelection;
-  bool lifecycleBound = false;
-  std::vector<HirBindingId> carriers;
-  bool entry = false;
-};
-
 enum class HirCallInputKind {
   Value,
   CopyValue,
@@ -504,7 +479,6 @@ struct HirBody {
   PlaceDomain placeDomain;
   SourceDebugRecord<HirSourceDebugTables> sourceDebug;
   std::vector<HirBinding> bindings;
-  std::vector<HirLoan> loans;
   std::vector<HirFullExpression> fullExpressions;
   std::vector<HirDropObligation> dropObligations;
   std::vector<HirValue> values;
@@ -533,8 +507,6 @@ struct HirBody {
   initializerValueForSource(const Expr &source) const;
 
   [[nodiscard]] const HirStatement *findStatement(HirStatementId id) const;
-
-  [[nodiscard]] const HirLoan *findLoan(SemanticLoanId id) const;
 
   [[nodiscard]] const HirDropObligation *
   findDropObligation(HirDropObligationId id) const {

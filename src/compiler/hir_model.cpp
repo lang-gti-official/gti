@@ -305,14 +305,6 @@ const HirStatement *HirBody::findStatement(HirStatementId id) const {
   return found == statements.end() ? nullptr : &*found;
 }
 
-const HirLoan *HirBody::findLoan(SemanticLoanId id) const {
-  const auto found =
-      std::find_if(loans.begin(), loans.end(), [id](const HirLoan &loan) {
-        return loan.semanticLoan == id;
-      });
-  return found == loans.end() ? nullptr : &*found;
-}
-
 std::size_t HirProgram::valueCount() const {
   std::size_t count = moduleBody.values.size();
   for (const auto &storage : threadLocalStorage_)
