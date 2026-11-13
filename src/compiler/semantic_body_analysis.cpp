@@ -6020,6 +6020,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                         "'mut', or select before the loop.");
             diagnostics.emplace_back(std::move(diagnostic));
           } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            carrier->selectedReference = true;
             // The extraction observes incoming authority before handoff.
             // Its value fact is distinct from the successor loan published
             // after retirement of the old group.

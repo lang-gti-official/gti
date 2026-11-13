@@ -3351,6 +3351,23 @@ dependency, so `classifyExpression` chooses owner-dependent text information
 without reading a loan identity. `validateRetainedBorrowOwner` rejects a
 retained borrow of foreign storage (`GTI-S2054`) without a loan record.
 
+Retained-borrow diagnostics read binding facts, not loan records.
+`validateSelectedReferenceReborrow` rejects a projected or consuming alias of a
+reference selected from an enum payload (`GTI-S2054`): `Symbol::selectedReference`
+marks the payload binding and each same-referent reborrow of it, and
+`semanticPlace` supplies the projection. `validateReferenceBinding` reports a
+read-only loan upgrade (`GTI-S2017`) when a non-mutable initializer is reached
+through a local reference binding or through a field or element of a local
+borrowed-state value; its note points at that local's initializer. A
+parameter, the receiver or plain owner storage gets the ordinary
+mutable-initializer diagnostic, and a reference to the carrier object itself is
+a shell reference, not an upgrade. A composed value with an unowned dependency
+is rejected once, by `validateStoredBorrowInitialization` (`GTI-S2045`), and an
+unaddressable reference initializer by `validateReferenceBinding`. The loan
+flow adds no diagnostic of its own when such a value takes no loan, or when a
+borrowed-state local retains a mutable reborrow; MIR checks that reborrow's
+exclusivity.
+
 Global and local loan-flow places use the same analysis-local domain. HIR
 qualifies those places with its concrete snapshot/body identity; qualifying
 only global dependencies during semantic conflict checks would incorrectly

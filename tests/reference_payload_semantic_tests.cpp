@@ -1273,5 +1273,61 @@ int main() {
                             return diagnostic.code == "GTI-S2067";
                           }),
          "a carrier moved inside the loop fails value flow at the backedge");
+  // A selected reference reborrows only at its own referent. The selection is
+  // a binding fact, so a same-referent child stays selected and its own
+  // projection is still rejected (GTI-S2054) rather than reaching MIR.
+  const std::string selectedPoint = R"gti(
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(Point& value) };
+int inspect(Reading input) {
+  switch (input) {
+  case Reading::item(value): {
+)gti";
+  const auto selectedReborrow = [&](const std::string &body) {
+    return analyzeMir(selectedPoint + body + R"gti(
+  }
+  case Reading::empty: return 0;
+  }
+}
+int main() { Point p = Point(1, 2); return inspect(Reading::item(p)); }
+)gti");
+  };
+  const auto selectedProjection = [](const lang::FrontendResult &result) {
+    return !result.semanticValid &&
+           std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                       [](const auto &diagnostic) {
+                         return diagnostic.code == "GTI-S2054" &&
+                                diagnostic.message.find(
+                                    "selected reference can currently be "
+                                    "reborrowed only at the same referent") !=
+                                    std::string::npos;
+                       }) &&
+           std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        });
+  };
+  expect(selectedProjection(selectedReborrow("int& x = value.x; return x;")),
+         "a projected alias of a selected reference is rejected");
+  expect(selectedProjection(selectedReborrow(
+             "Point& same = value; int& x = same.x; return x;")),
+         "a same-referent child keeps the selected-reference restriction");
+  {
+    const auto same = analyzeMir(R"gti(
+enum Reading { empty, item(int& value) };
+int inspect(Reading input) {
+  switch (input) {
+  case Reading::item(value): { int& same = value; return same; }
+  case Reading::empty: return 0;
+  }
+}
+int main() { int owner = 1; return inspect(Reading::item(owner)); }
+)gti");
+    for (const auto &diagnostic : same.diagnostics)
+      std::cerr << "selected same-referent: " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+    expect(same.canGenerateCode(),
+           "a same-referent reborrow of a selected reference is accepted");
+  }
   return failures == 0 ? 0 : 1;
 }

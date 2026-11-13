@@ -5077,40 +5077,44 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
            "GTI-S2017");
     return;
   }
-  if (reference.referenceAccess == AccessMode::Mutable) {
-    const std::optional<RetainedLoanSource> source =
-        retainedLoanSource(initializer);
-    const SemanticLoanInfo *sourceLoan =
-        source ? semanticModel.findLoan(source->loan) : nullptr;
-    const bool carrierShell =
-        sourceLoan != nullptr &&
-        sourceLoan->kind == SemanticLoanKind::StoredValue &&
-        (typeTraits(referent).containsBorrowedState ||
-         receiverStorageBorrow(initializer));
-    const AccessMode sourceAccess =
-        source && source->dependency ? source->dependency->access
-        : sourceLoan != nullptr      ? sourceLoan->access
-                                     : AccessMode::ReadOnly;
-    if (sourceLoan != nullptr && !carrierShell &&
-        sourceAccess == AccessMode::ReadOnly) {
+  if (reference.referenceAccess == AccessMode::Mutable &&
+      info->access != AccessMode::Mutable) {
+    // A read-only place reached through a local borrow (a reference binding,
+    // or a field or element of a borrowed-state local) cannot become a
+    // mutable reborrow. A reference to the carrier object itself is a shell
+    // reference, not a reborrow of its dependency. Binding facts only.
+    const SemanticPlace place = semanticPlace(initializer);
+    const Symbol *root =
+        place.receiver || place.root == nullptr ||
+                place.root->bindingKind != SemanticBindingKind::LocalVariable
+            ? nullptr
+            : place.root;
+    const bool throughReference =
+        root != nullptr && root->type.kind == SemanticType::Reference;
+    const bool throughCarrier = root != nullptr && !throughReference &&
+                                typeTraits(root->type).containsBorrowedState &&
+                                !(place.projections.empty() &&
+                                  (typeTraits(referent).containsBorrowedState ||
+                                   receiverStorageBorrow(initializer)));
+    if (throughReference || throughCarrier) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(initializer),
           "A read-only loan cannot be upgraded to a mutable reborrow.");
-      if (sourceLoan->origin != nullptr) {
+      if (root->variableDeclaration != nullptr &&
+          root->variableDeclaration->initializer()) {
         diagnostic.related.push_back(
-            {tokenSpan(expressionToken(*sourceLoan->origin)),
+            {tokenSpan(
+                 expressionToken(root->variableDeclaration->initializer())),
              "The read-only parent loan originates here."});
       }
       diagnostic.hints.emplace_back(
           "Create the mutable borrow from mutable owner storage or from an "
           "active mutable parent loan.");
       diagnostics.emplace_back(std::move(diagnostic));
-    } else if (info->access != AccessMode::Mutable) {
-      if (!reportReceiverRestrictedReference(initializer)) {
-        report(expressionToken(initializer),
-               "A mutable reference requires a mutable initializer.",
-               "GTI-S2017");
-      }
+    } else if (!reportReceiverRestrictedReference(initializer)) {
+      report(expressionToken(initializer),
+             "A mutable reference requires a mutable initializer.",
+             "GTI-S2017");
     }
   }
 }
