@@ -4935,6 +4935,103 @@ int main() {
          "moving borrowed state should transfer one semantic loan identity "
          "instead of creating a second owner dependency");
 
+  const lang::ClassDecl *iteratorClass =
+      findTopLevelClass(frontend.program, "BorrowingIterator");
+  const lang::ClassLifecycleInfo *lifecycle =
+      iteratorClass == nullptr
+          ? nullptr
+          : frontend.semantics.findClassLifecycle(*iteratorClass);
+  expect(lifecycle != nullptr && lifecycle->traits.containsBorrowedState &&
+             lifecycle->traits.copyable && lifecycle->traits.movable &&
+             !lifecycle->traits.copyAssignable &&
+             !lifecycle->traits.moveAssignable &&
+             lifecycle->constructors.size() == 1 &&
+             lifecycle->constructors.front().borrowParameter == 0,
+         "read-only stored-reference classes should copy-construct independent "
+         "borrow carriers without becoming assignable");
+
+  const lang::ClassDecl *rangeClass =
+      findTopLevelClass(frontend.program, "SingleRange");
+  const auto *begin = rangeClass == nullptr
+                          ? nullptr
+                          : dynamic_cast<const lang::FunctionDecl *>(
+                                rangeClass->members().at(3).get());
+  const auto *returnStatement =
+      begin == nullptr ? nullptr
+                       : dynamic_cast<const lang::ReturnStmt *>(
+                             begin->body()->statements().front().get());
+  const auto *construction =
+      returnStatement == nullptr
+          ? nullptr
+          : dynamic_cast<const lang::Call *>(returnStatement->value().get());
+  const lang::ResolvedConstructionInfo *resolvedConstruction =
+      construction == nullptr
+          ? nullptr
+          : frontend.semantics.findConstruction(*construction);
+  expect(resolvedConstruction != nullptr &&
+             resolvedConstruction->borrowOrigin ==
+                 lang::BorrowOriginKind::Argument &&
+             resolvedConstruction->borrowArgument == 0,
+         "stored-reference construction should identify its exact owner "
+         "argument before HIR lowering");
+
+  bool foundStoredLoan = false;
+  bool foundEscapingFieldLoan = false;
+  bool foundReceiverReturnLoan = false;
+  for (const lang::MirConstructorInstance &constructorInstance :
+       frontend.mir.constructorInstances()) {
+    for (const lang::MirLoan &loan : constructorInstance.body.loans) {
+      foundEscapingFieldLoan =
+          foundEscapingFieldLoan ||
+          (loan.kind == lang::MirLoanKind::Stored && loan.escapes &&
+           loan.storedField != 0 && loan.source != 0);
+    }
+  }
+  for (const lang::MirFunctionInstance &function :
+       frontend.mir.functionInstances()) {
+    for (const lang::MirLoan &loan : function.body.loans) {
+      foundStoredLoan =
+          foundStoredLoan || (loan.kind == lang::MirLoanKind::Stored &&
+                              !loan.escapes && loan.source != 0);
+      foundReceiverReturnLoan =
+          foundReceiverReturnLoan || (loan.kind == lang::MirLoanKind::Return &&
+                                      loan.escapes && loan.source != 0);
+    }
+  }
+  expect(frontend.mir.valid() && foundStoredLoan && foundEscapingFieldLoan &&
+             foundReceiverReturnLoan,
+         "MIR should retain local, field-stored, and receiver-returned borrow "
+         "provenance");
+
+  std::size_t iteratorInstances = 0;
+  bool exactIteratorSpecialMembers = true;
+  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
+    const lang::ClassTypeInfo *info =
+        frontend.semantics.findClassType(instance.type.classId);
+    if (instance.type.kind != lang::SemanticType::Class || info == nullptr ||
+        info->qualifiedName != "BorrowingIterator")
+      continue;
+    ++iteratorInstances;
+    // The stored `T& value` field keeps read-only reference access.
+    const bool readOnlyStorage =
+        !instance.declaredFields.empty() &&
+        instance.declaredFields.front().type.kind ==
+            lang::SemanticType::Reference &&
+        instance.declaredFields.front().type.referenceAccess ==
+            lang::AccessMode::ReadOnly;
+    exactIteratorSpecialMembers =
+        exactIteratorSpecialMembers && readOnlyStorage &&
+        instance.copyConstructor == lang::SpecialMemberStatus::Generated &&
+        instance.moveConstructor == lang::SpecialMemberStatus::Generated &&
+        instance.copyAssignment == lang::SpecialMemberStatus::Deleted;
+  }
+  expect(iteratorInstances != 0 && exactIteratorSpecialMembers &&
+             nativeBackendEmits(frontend),
+         "MIR should preserve read-only storage and frontend special-member "
+         "decisions on each concrete iterator application");
+}
+
+void testStoredReferenceStandardStringRanges() {
   const lang::FrontendResult standardStringRange = lang::Frontend().analyze(
       "standard-string-range.gti",
       "import std.string;\n"
@@ -5066,7 +5163,9 @@ int main() {
                            "live"),
          "a retained string iterator should prevent storage-invalidating "
          "mutation");
+}
 
+void testStoredReferenceBranchInvalidation() {
   const lang::FrontendResult controlFlowBorrow = lang::Frontend().analyze(
       "control-flow-string-borrow.gti",
       "import std.string;\n"
@@ -5214,7 +5313,9 @@ int main() {
                            "live"),
          "a use after an if must keep the retained loan live across an "
          "intervening invalidation");
+}
 
+void testStoredReferenceBranchInvalidation2() {
   const lang::FrontendResult branchLocalInvalidation = lang::Frontend().analyze(
       "branch-local-string-invalidation.gti",
       "import std.string;\n"
@@ -5562,7 +5663,9 @@ int main() {
   expect(terminatingNestedArm.canGenerateCode(),
          "a terminating nested arm should clean up its loan while the "
          "fallthrough arm ends at the nested merge before mutation");
+}
 
+void testStoredReferenceBranchInvalidation3() {
   const lang::FrontendResult terminatingReturnUse = lang::Frontend().analyze(
       "terminating-return-borrow-use.gti",
       "import std.string;\n"
@@ -5711,7 +5814,9 @@ int main() {
           {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(deeplyNestedInvalidations.canGenerateCode(),
          "recursive endpoint planning should cover multiple nested if edges");
+}
 
+void testStoredReferenceBranchInvalidation4() {
   const lang::FrontendResult mutationBeforeNestedUse = lang::Frontend().analyze(
       "mutation-before-nested-use.gti",
       "import std.string;\n"
@@ -5737,7 +5842,9 @@ int main() {
                  }),
          "mutation before a later nested use should remain rejected with "
          "borrow-origin context and the narrowing hint");
+}
 
+void testStoredReferenceLoopInvalidation() {
   const lang::FrontendResult loopBorrow = lang::Frontend().analyze(
       "loop-string-borrow.gti",
       "import std.string;\n"
@@ -5887,7 +5994,9 @@ int main() {
   expect(forLoop.canGenerateCode(),
          "classic for-loop increment and continue edges should preserve a "
          "pre-existing retained loan until cleanup exits the loop");
+}
 
+void testStoredReferenceLoopInvalidation2() {
   const lang::FrontendResult doWhileLoop = lang::Frontend().analyze(
       "do-while-loop-loan.gti",
       "import std.string;\n"
@@ -6013,7 +6122,9 @@ int main() {
                  transferredIteratorBinding->retainedLoan,
          "inferred carrier bindings should retain semantic symbols and the "
          "same transferred loan identity through HIR/MIR lowering");
+}
 
+void testStoredReferenceLoopInvalidation3() {
   const lang::FrontendResult transferInsideLoop = lang::Frontend().analyze(
       "transfer-inside-loop.gti",
       "import std.string;\n"
@@ -6104,7 +6215,9 @@ int main() {
              !hasDiagnosticCode(continueInvalidation.diagnostics, "GTI-B0001"),
          "an owner mutation before continue must remain rejected because the "
          "next condition reuses the retained carrier");
+}
 
+void testStoredReferenceLoopInvalidation4() {
   const lang::FrontendResult breakPathInvalidation = lang::Frontend().analyze(
       "break-path-invalidation.gti",
       "import std.string;\n"
@@ -6164,7 +6277,9 @@ int main() {
              !hasDiagnosticCode(conditionalInsideLoop.diagnostics, "GTI-B0001"),
          "an unbraced conditional inside a loop must retain conservative "
          "semantic loan extent instead of relying on MIR backedge failure");
+}
 
+void testStoredReferenceScopedStorage() {
   const lang::FrontendResult scopedBorrow = lang::Frontend().analyze(
       "scoped-string-borrow.gti",
       "import std.string;\n"
@@ -6192,101 +6307,6 @@ int main() { return 0; }
           !hasDiagnostic(applicationStorageBorrow.diagnostics, "Unknown type"),
       "ordinary source must receive focused private-access diagnostics "
       "without unknown-type cascades");
-
-  const lang::ClassDecl *iteratorClass =
-      findTopLevelClass(frontend.program, "BorrowingIterator");
-  const lang::ClassLifecycleInfo *lifecycle =
-      iteratorClass == nullptr
-          ? nullptr
-          : frontend.semantics.findClassLifecycle(*iteratorClass);
-  expect(lifecycle != nullptr && lifecycle->traits.containsBorrowedState &&
-             lifecycle->traits.copyable && lifecycle->traits.movable &&
-             !lifecycle->traits.copyAssignable &&
-             !lifecycle->traits.moveAssignable &&
-             lifecycle->constructors.size() == 1 &&
-             lifecycle->constructors.front().borrowParameter == 0,
-         "read-only stored-reference classes should copy-construct independent "
-         "borrow carriers without becoming assignable");
-
-  const lang::ClassDecl *rangeClass =
-      findTopLevelClass(frontend.program, "SingleRange");
-  const auto *begin = rangeClass == nullptr
-                          ? nullptr
-                          : dynamic_cast<const lang::FunctionDecl *>(
-                                rangeClass->members().at(3).get());
-  const auto *returnStatement =
-      begin == nullptr ? nullptr
-                       : dynamic_cast<const lang::ReturnStmt *>(
-                             begin->body()->statements().front().get());
-  const auto *construction =
-      returnStatement == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::Call *>(returnStatement->value().get());
-  const lang::ResolvedConstructionInfo *resolvedConstruction =
-      construction == nullptr
-          ? nullptr
-          : frontend.semantics.findConstruction(*construction);
-  expect(resolvedConstruction != nullptr &&
-             resolvedConstruction->borrowOrigin ==
-                 lang::BorrowOriginKind::Argument &&
-             resolvedConstruction->borrowArgument == 0,
-         "stored-reference construction should identify its exact owner "
-         "argument before HIR lowering");
-
-  bool foundStoredLoan = false;
-  bool foundEscapingFieldLoan = false;
-  bool foundReceiverReturnLoan = false;
-  for (const lang::MirConstructorInstance &constructorInstance :
-       frontend.mir.constructorInstances()) {
-    for (const lang::MirLoan &loan : constructorInstance.body.loans) {
-      foundEscapingFieldLoan =
-          foundEscapingFieldLoan ||
-          (loan.kind == lang::MirLoanKind::Stored && loan.escapes &&
-           loan.storedField != 0 && loan.source != 0);
-    }
-  }
-  for (const lang::MirFunctionInstance &function :
-       frontend.mir.functionInstances()) {
-    for (const lang::MirLoan &loan : function.body.loans) {
-      foundStoredLoan =
-          foundStoredLoan || (loan.kind == lang::MirLoanKind::Stored &&
-                              !loan.escapes && loan.source != 0);
-      foundReceiverReturnLoan =
-          foundReceiverReturnLoan || (loan.kind == lang::MirLoanKind::Return &&
-                                      loan.escapes && loan.source != 0);
-    }
-  }
-  expect(frontend.mir.valid() && foundStoredLoan && foundEscapingFieldLoan &&
-             foundReceiverReturnLoan,
-         "MIR should retain local, field-stored, and receiver-returned borrow "
-         "provenance");
-
-  std::size_t iteratorInstances = 0;
-  bool exactIteratorSpecialMembers = true;
-  for (const lang::MirClassInstance &instance : frontend.mir.classInstances()) {
-    const lang::ClassTypeInfo *info =
-        frontend.semantics.findClassType(instance.type.classId);
-    if (instance.type.kind != lang::SemanticType::Class || info == nullptr ||
-        info->qualifiedName != "BorrowingIterator")
-      continue;
-    ++iteratorInstances;
-    // The stored `T& value` field keeps read-only reference access.
-    const bool readOnlyStorage =
-        !instance.declaredFields.empty() &&
-        instance.declaredFields.front().type.kind ==
-            lang::SemanticType::Reference &&
-        instance.declaredFields.front().type.referenceAccess ==
-            lang::AccessMode::ReadOnly;
-    exactIteratorSpecialMembers =
-        exactIteratorSpecialMembers && readOnlyStorage &&
-        instance.copyConstructor == lang::SpecialMemberStatus::Generated &&
-        instance.moveConstructor == lang::SpecialMemberStatus::Generated &&
-        instance.copyAssignment == lang::SpecialMemberStatus::Deleted;
-  }
-  expect(iteratorInstances != 0 && exactIteratorSpecialMembers &&
-             nativeBackendEmits(frontend),
-         "MIR should preserve read-only storage and frontend special-member "
-         "decisions on each concrete iterator application");
 
   const lang::FrontendResult invalid = lang::Frontend().analyze(
       "invalid-stored-references.gti", R"(
@@ -23814,6 +23834,25 @@ constexpr NamedTest kTests[] = {
     {"testReceiverTiedReferenceReturns", testReceiverTiedReferenceReturns},
     {"testArgumentTiedReferenceReturns", testArgumentTiedReferenceReturns},
     {"testStoredReferenceGroundwork", testStoredReferenceGroundwork},
+    {"testStoredReferenceStandardStringRanges",
+     testStoredReferenceStandardStringRanges},
+    {"testStoredReferenceBranchInvalidation",
+     testStoredReferenceBranchInvalidation},
+    {"testStoredReferenceBranchInvalidation2",
+     testStoredReferenceBranchInvalidation2},
+    {"testStoredReferenceBranchInvalidation3",
+     testStoredReferenceBranchInvalidation3},
+    {"testStoredReferenceBranchInvalidation4",
+     testStoredReferenceBranchInvalidation4},
+    {"testStoredReferenceLoopInvalidation",
+     testStoredReferenceLoopInvalidation},
+    {"testStoredReferenceLoopInvalidation2",
+     testStoredReferenceLoopInvalidation2},
+    {"testStoredReferenceLoopInvalidation3",
+     testStoredReferenceLoopInvalidation3},
+    {"testStoredReferenceLoopInvalidation4",
+     testStoredReferenceLoopInvalidation4},
+    {"testStoredReferenceScopedStorage", testStoredReferenceScopedStorage},
     {"testMutableStoredDependencies", testMutableStoredDependencies},
     {"testComposedCarrierFunctionTransfer",
      testComposedCarrierFunctionTransfer},
