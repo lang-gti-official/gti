@@ -3421,8 +3421,12 @@ binding's current loan, a receiver's or global's entry loan (its Stored entry
 group only for a place reached through one of the root's stored references,
 never for the root's own fields), or for a call
 result's referent the call's parent (climbing past intermediate call results
-that themselves reborrow an ancestor). Semantic loans still name these MIR loans for later HIR
-facts.
+that themselves reborrow an ancestor). A read-only carrier initialized from a
+read-only origin loan reborrows that origin exactly when the origin protects
+the carrier's referent place (`mir_detail::loanProtectsPlace`, the verifier's
+own place containment; a Stored group protects only places reached through a
+dereference past its source). Semantic loans still name these MIR loans for
+later HIR facts.
 
 A reference bound to an enum payload borrows the extracted field. Through a
 reference carrier it reborrows the carrier's loan and keeps that loan's stored

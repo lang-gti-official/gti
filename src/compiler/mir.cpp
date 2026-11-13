@@ -7108,6 +7108,44 @@ verifyMirLifecycleFlow(const MirBody &body, std::size_t owner,
 
 } // namespace
 
+bool mir_detail::loanProtectsPlace(
+    const MirBody &body, MirLoanId loanId, MirPlaceId placeId,
+    const std::unordered_map<HirBindingId, MirLoanId> &carried) {
+  const MirLoan *loan = body.findLoan(loanId);
+  if (loan == nullptr)
+    return false;
+  std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindings;
+  for (const auto &[binding, carrier] : carried)
+    bindings.emplace(binding, std::vector<MirLoanId>{carrier});
+  const MirLoanState inactive(body.loans.size(), MirLoanFlowState::Inactive);
+  const MirCanonicalPlace child =
+      canonicalPlace(body, placeId, bindings, inactive);
+  if (child.ambiguous)
+    return false;
+  const auto contains = [&](MirPlaceId source) {
+    if (source == 0)
+      return false;
+    const MirCanonicalPlace parent =
+        canonicalPlace(body, source, bindings, inactive);
+    if (!canonicalPlaceContains(parent, child))
+      return false;
+    return loan->kind != MirLoanKind::Stored ||
+           std::any_of(
+               child.projections.begin() +
+                   static_cast<std::ptrdiff_t>(parent.projections.size()),
+               child.projections.end(),
+               [](const MirPlaceProjection &projection) {
+                 return projection.kind == MirProjectionKind::Dereference;
+               });
+  };
+  return contains(loan->source) ||
+         std::any_of(loan->additionalDependencies.begin(),
+                     loan->additionalDependencies.end(),
+                     [&](const auto &dependency) {
+                       return contains(dependency.source);
+                     });
+}
+
 MirVerificationResult verifyMirPersistentStorageLoanFlow(
     const MirBody &body, std::size_t owner,
     std::span<const MirPersistentStorageAccess> hidden,
