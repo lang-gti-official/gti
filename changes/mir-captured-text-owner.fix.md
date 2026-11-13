@@ -1,0 +1,1 @@
+A text view captured by a lambda keeps its owner borrowed again while the lambda, a copy or wrapper of it, or a view it returns is still used: mutating or moving the owner in that window is rejected with GTI-S2017 instead of being accepted.
