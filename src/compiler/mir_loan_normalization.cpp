@@ -181,8 +181,6 @@ BodyRenumbering normalizeBody(MirBody &body, MirBodyAddress address) {
       renumbering.rewrite(event.point.instruction,
                           "MirSourceValueEvent::point.instruction");
   }
-  for (MirLoan &loan : body.loans)
-    loan.semanticLoan = 0;
   return renumbering;
 }
 

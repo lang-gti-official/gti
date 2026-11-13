@@ -13,7 +13,7 @@ LLVM_INPUT_FIELDS(MirInstruction, id, kind, tombstone, hostedStartupOperation, t
 LLVM_INPUT_FIELDS(MirTerminator, kind, hostedStartupOperation, hirValue, hirStatement, value, returnLoan, invokeInstruction, failureRecord, target, elseTarget, targetArguments, elseArguments, switchTargets, successLifecycle, provenance)
 LLVM_INPUT_FIELDS(MirPlace, id, hostedStartupOperation, root, binding, symbol, capture, temporary, value, loan, projections, type, access, traits, sourceValue, key, foreignStorage, initiallyAvailable)
 LLVM_INPUT_FIELDS(MirOperand, kind, value, place, loan, literal, type)
-LLVM_INPUT_FIELDS(MirLoan, id, semanticLoan, parent, storedDependency, kind, source, additionalDependencies, referenceSelection, access, producedBy, carriers, storedField, designatedFields, conditions, lifecycleBound, twoPhase, entry, escapes)
+LLVM_INPUT_FIELDS(MirLoan, id, parent, storedDependency, kind, source, additionalDependencies, referenceSelection, access, producedBy, carriers, storedField, designatedFields, conditions, lifecycleBound, twoPhase, entry, escapes)
 LLVM_INPUT_FIELDS(MirBorrowDependencySet, dependencies, possibleAlternatives)
 LLVM_INPUT_FIELDS(MirReferenceSelection, value, carrier, transferredFrom, fields, conditions, reference)
 LLVM_INPUT_FIELDS(MirLoanDependency, source, parent, designatedFields, access, conditions)

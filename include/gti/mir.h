@@ -374,7 +374,6 @@ struct MirReferenceSelection {
 
 struct MirLoan {
   MirLoanId id = 0;
-  SemanticLoanId semanticLoan = 0;
   MirLoanId parent = 0;
   // source/parent protect a reference's physical carrier shell. This
   // independent Stored loan protects its inherited external owners without

@@ -15,13 +15,11 @@ namespace lang {
 // bookkeeping the only permitted difference. This normalizer erases exactly
 // that bookkeeping, so the remaining MIR text can be compared byte for byte.
 //
-// It changes exactly three things and nothing else:
+// It changes exactly two things and nothing else:
 //
-//   1. Every MirLoan::semanticLoan becomes 0. The semantic loan number is the
-//      only semantics-assigned loan identity MIR retains.
-//   2. Every non-tombstone EndBorrow instruction is removed. EndBorrow is the
+//   1. Every non-tombstone EndBorrow instruction is removed. EndBorrow is the
 //      only MIR representation of a loan end.
-//   3. Instruction IDs are renumbered densely per body (1..n, in block order,
+//   2. Instruction IDs are renumbered densely per body (1..n, in block order,
 //      then instruction order within a block), because removing an EndBorrow
 //      shifts every later counter-allocated ID. Every field holding an
 //      instruction ID is rewritten through the same per-body map:

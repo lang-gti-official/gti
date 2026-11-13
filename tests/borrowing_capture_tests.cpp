@@ -928,8 +928,6 @@ int main() {
         mutate(body->loans[loan.id - 1]);
         return lang::verifyMirProgram(forged).valid();
       };
-      expect(forge([](lang::MirLoan &entry) { entry.semanticLoan = 0; }),
-             "a captured-reference entry needs no semantic loan identity");
       expect(!forge([](lang::MirLoan &entry) { entry.escapes = true; }),
              "a captured-reference entry cannot escape");
       expect(!forge([&](lang::MirLoan &entry) {

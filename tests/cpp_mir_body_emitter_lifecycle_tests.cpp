@@ -7589,8 +7589,7 @@ int main() {
   expect(referenceCarrier != nullptr && carrierLoans == 1 &&
              retained != nullptr &&
              retained->kind == lang::MirLoanKind::CallResult &&
-             retained->parent == 0 && retained->semanticLoan != 0 &&
-             initializesFromRetainedLoan,
+             retained->parent == 0 && initializesFromRetainedLoan,
          "a retained root call result should preserve its exact loan pointer "
          "as the local reference carrier");
   const lang::CppMirBodyEmissionMap map(

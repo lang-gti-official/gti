@@ -186,23 +186,6 @@ std::string localDeclarationKey(const lang::SymbolRecord &symbol) {
   return key.str();
 }
 
-// The MIR printer may still print a request-local semantic loan number on
-// each loan row while semantic loan identity is being retired. A deferred
-// body's number depends on the demand that reached it, so a reused instance
-// may differ there alone; erase that column from the printed text. MIR-local
-// loan identity, ancestry, carriers and liveness stay compared exactly.
-std::string withoutSemanticLoanColumn(std::string text) {
-  static constexpr std::string_view column = " semantic=";
-  for (std::size_t at = text.find(column); at != std::string::npos;
-       at = text.find(column, at)) {
-    std::size_t end = at + column.size();
-    while (end < text.size() && text[end] >= '0' && text[end] <= '9')
-      ++end;
-    text.erase(at, end - at);
-  }
-  return text;
-}
-
 void canonicalizeLocalSymbols(lang::MirBody &body,
                               const ConcreteSymbols &names) {
   const auto rename = [&](lang::SymbolId &symbol) {
@@ -266,7 +249,7 @@ std::string outcome(const lang::FrontendResult &result) {
     }
     std::ostringstream mir;
     lang::MirPrinter().print(canonical, mir);
-    text << withoutSemanticLoanColumn(mir.str());
+    text << mir.str();
   }
   return text.str();
 }
