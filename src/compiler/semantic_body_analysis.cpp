@@ -5168,7 +5168,6 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   loanFlow.conditionals.push_back(
       {.statement = &stmt,
        .useBegin = loanFlow.uses.size(),
-       .conflictBegin = loanFlow.conflicts.size(),
        .parentPath = loanFlow.activeConditionalArms,
        .parentSwitchPath = loanFlow.activeSwitchArms});
   loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
@@ -5184,15 +5183,11 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
 
   loanFlow.conditionals[conditionalIndex].thenArm.useBegin =
       loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].thenArm.conflictBegin =
-      loanFlow.conflicts.size();
   loanFlow.activeConditionalArms.push_back(
       {.conditional = conditionalIndex, .thenBranch = true});
   analyzeConditionalArm(stmt.thenBranch());
   loanFlow.activeConditionalArms.pop_back();
   loanFlow.conditionals[conditionalIndex].thenArm.useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].thenArm.conflictEnd =
-      loanFlow.conflicts.size();
   const ScopeStack thenScopes = scopes;
   const FlowSummary thenFlow = summarizeFlow(stmt.thenBranch().get());
   const std::vector<ValueControlFlowContext> thenValueControlFlow =
@@ -5202,8 +5197,6 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   valueControlFlow = beforeValueControlFlow;
   loanFlow.conditionals[conditionalIndex].elseArm.useBegin =
       loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].elseArm.conflictBegin =
-      loanFlow.conflicts.size();
   if (stmt.elseBranch()) {
     loanFlow.activeConditionalArms.push_back(
         {.conditional = conditionalIndex, .thenBranch = false});
@@ -5211,11 +5204,7 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
     loanFlow.activeConditionalArms.pop_back();
   }
   loanFlow.conditionals[conditionalIndex].elseArm.useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].elseArm.conflictEnd =
-      loanFlow.conflicts.size();
   loanFlow.conditionals[conditionalIndex].useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].conflictEnd =
-      loanFlow.conflicts.size();
   loanFlow.conditionals[conditionalIndex].endSequence = loanFlow.nextSequence++;
   const ScopeStack elseScopes = scopes;
   const FlowSummary elseFlow = summarizeFlow(stmt.elseBranch().get());
@@ -6036,13 +6025,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             if (reborrow)
               for (auto &dependency : dependencies->dependencies)
                 dependency.parent = subjectDependency;
-            for (const auto &dependency : dependencies->dependencies)
-              reportBorrowConflict(
-                  *payload.name,
-                  conflictingLoans(dependency.place, dependency.access,
-                                   dependency.parent),
-                  "Cannot select this reference while an overlapping "
-                  "external borrow may still be live.");
             const auto &primary = dependencies->dependencies.front();
             payload.binding.retainedLoan = createRetainedLoan(
                 *carrier, symbol, SemanticLoanKind::Reference, payload.source,
@@ -6120,10 +6102,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             // reference's external owner. A dependency group carried by an
             // owned enum cannot authorize a child loan into that enum's shell.
             // A reference to the enum itself still supplies its normal parent.
-            reportBorrowConflict(
-                *payload.name, conflictingLoans(place, access, parent),
-                "Cannot borrow this payload while an overlapping enum borrow "
-                "may still be live.");
             // Variant replacement invalidates every field. The original enum
             // is the conservative alias root even when the runtime referent
             // is one exact active payload field.
@@ -7349,10 +7327,6 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
   } else {
-    reportLoanPlaceConflict(
-        expr.name(), targetPlace, AccessMode::Mutable,
-        "Cannot assign to storage while an overlapping borrow may still be "
-        "live.");
   }
   const bool valueAssignable =
       !simpleAssignment ||
@@ -8501,10 +8475,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         report(expr.paren(),
                "Fixed array member functions do not take generic arguments.");
       }
-      reportLoanPlaceConflict(
-          expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
-          "Fixed-array member receiver overlaps a mutable borrow or child "
-          "reborrow that may still be live.");
       analyzeArrayMemberCall(expr, *member, argumentTypes, expr.paren());
       return;
     }
@@ -8514,10 +8484,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                "String-view member functions do not take generic arguments.",
                "GTI-S2035");
       }
-      reportLoanPlaceConflict(
-          expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
-          "String-view member receiver overlaps a mutable borrow or child "
-          "reborrow that may still be live.");
       analyzeStringViewMemberCall(expr, *member, argumentTypes, expr.paren());
       return;
     }
@@ -9991,10 +9957,6 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
            "GTI-S2002");
   } else if (!overloadedMutation) {
     if (targetPlace.root != nullptr) {
-      reportLoanPlaceConflict(
-          expr.dereference(), targetPlace, AccessMode::Mutable,
-          "Cannot write through a dereference while an overlapping borrow "
-          "may still be live.");
     }
   }
   if (simpleAssignment && !isOwnershipAssignment(valueTarget, valueType,
@@ -10080,9 +10042,6 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
 
   const SemanticPlace targetPlace = semanticPlace(expr.target());
   if (targetPlace.root != nullptr) {
-    reportLoanPlaceConflict(expr.oper(), targetPlace, AccessMode::Mutable,
-                            "Cannot write while an overlapping borrow may "
-                            "still be live.");
   }
   // Unlike a source operator's reserved projection, an ordinary accessor
   // executes fully before the right operand. Its mutable result remains
@@ -10547,12 +10506,6 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
       appendReadOnlyPlaceContext(diagnostics.back(), expr.object());
     }
   } else if (!overloadedMutation) {
-    reportLoanPlaceConflict(
-        expr.bracket(),
-        trackedFixedArrayElement ? targetPlace : semanticPlace(expr.object()),
-        AccessMode::Mutable,
-        "Cannot write through an index while an overlapping borrow may "
-        "still be live.");
   }
   const bool valueAssignable =
       !simpleAssignment ||
@@ -10892,10 +10845,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  "Borrowing captures overlap while at least one requires "
                  "exclusive mutable access.",
                  "GTI-S2017");
-      reportLoanPlaceConflict(
-          capture.name, dependency.place, dependency.access,
-          "A borrowing capture overlaps a borrow that may still be live.",
-          dependency.parent);
       captureDependencies.push_back(std::move(dependency));
     } else if (typeTraits(captureType).containsBorrowedState) {
       auto dependencies = storedBorrowDependencies(capture.initializer);
@@ -12765,10 +12714,6 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
       appendReadOnlyPlaceContext(diagnostics.back(), expr.object());
     }
   } else if (!overloadedMutation) {
-    reportLoanPlaceConflict(
-        expr.name(), targetPlace, AccessMode::Mutable,
-        "Cannot assign to a field while an overlapping borrow may still be "
-        "live.");
   }
   if (simpleAssignment && !isOwnershipAssignment(targetType, valueType,
                                                  expr.value(), targetPlace)) {
@@ -16468,8 +16413,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
         (source.root->variableDeclaration == nullptr ||
          !structuredBindingElements.contains(
              source.root->variableDeclaration)) &&
-        unavailableProjectedState(source, true) == nullptr &&
-        conflictingLoans(loanPlace(source), AccessMode::Mutable).empty()) {
+        unavailableProjectedState(source, true) == nullptr) {
       diagnostic.hints.emplace_back(
           "Transfer ownership explicitly with std::move(owner) if the "
           "original binding is no longer needed.");

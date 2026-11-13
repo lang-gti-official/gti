@@ -2819,11 +2819,6 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     const SemanticLoanPlace place = transientLoanPlace(*argument.expression);
     recordMutableBindingUse(place.root);
     if (place.root != 0 || place.receiver) {
-      reportLoanPlaceConflict(
-          paren, place, AccessMode::Mutable,
-          "Mutable constructor argument overlaps a borrow that may still "
-          "be live.",
-          accessLoan(*argument.expression));
     }
   }
   std::vector<SemanticType> concreteParameterTypes;

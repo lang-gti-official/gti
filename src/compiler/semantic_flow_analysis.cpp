@@ -4031,7 +4031,6 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     semanticModel.recordPlace(expr, placeKey(expressionPlace));
   }
   validateProjectedPlaceRead(expr);
-  validateLoanPlaceAccess(expr, requestedRoles);
   Token token = expressionToken(expr);
   const ExprKind kind = expr.exprKind();
   SemanticBindingKind bindingKind = SemanticBindingKind::None;

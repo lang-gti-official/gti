@@ -1118,18 +1118,6 @@ private:
                            const ActiveLoanFlowSwitchArm &) = default;
   };
 
-  struct PendingBorrowConflict {
-    std::vector<SemanticLoanId> loans;
-    std::size_t region = 0;
-    std::size_t order = 0;
-    std::size_t sequence = 0;
-    const Stmt *statement = nullptr;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
-    std::vector<std::size_t> loops;
-    Diagnostic diagnostic;
-  };
-
   struct LoanFlowUse {
     SemanticLoanId loan = 0;
     std::size_t sequence = 0;
@@ -1167,8 +1155,6 @@ private:
   struct LoanFlowConditionalArm {
     std::size_t useBegin = 0;
     std::size_t useEnd = 0;
-    std::size_t conflictBegin = 0;
-    std::size_t conflictEnd = 0;
     std::vector<std::size_t> nestedConditionals;
     bool containsUnsupportedControlFlow = false;
   };
@@ -1177,8 +1163,6 @@ private:
     const IfStmt *statement = nullptr;
     std::size_t useBegin = 0;
     std::size_t useEnd = 0;
-    std::size_t conflictBegin = 0;
-    std::size_t conflictEnd = 0;
     std::size_t endSequence = 0;
     std::vector<ActiveLoanFlowConditionalArm> parentPath;
     std::vector<ActiveLoanFlowSwitchArm> parentSwitchPath;
@@ -1252,7 +1236,6 @@ private:
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
-    std::vector<PendingBorrowConflict> conflicts;
     std::vector<LoanFlowUse> uses;
     std::vector<LoanFlowStatementBoundary> statementBoundaries;
     std::vector<LoanFlowSwitchBoundary> switchBoundaries;
@@ -3220,32 +3203,9 @@ private:
   [[nodiscard]] static bool loanPlacesOverlap(const SemanticLoanPlace &left,
                                               const SemanticLoanPlace &right);
 
-  [[nodiscard]] bool loanIsAncestor(SemanticLoanId ancestor,
-                                    SemanticLoanId descendant) const;
-
   [[nodiscard]] SemanticLoanId accessLoan(const SemanticPlace &place) const;
 
   [[nodiscard]] SemanticLoanId accessLoan(const ExprPtr &expression) const;
-
-  [[nodiscard]] std::vector<SemanticLoanId>
-  conflictingLoans(const SemanticLoanPlace &place, AccessMode requested,
-                   SemanticLoanId throughLoan = 0) const;
-
-  void reportLoanPlaceConflict(const Token &token,
-                               const SemanticLoanPlace &stable,
-                               AccessMode requested, std::string message,
-                               SemanticLoanId throughLoan = 0);
-
-  void reportLoanPlaceConflicts(const Token &token,
-                                std::span<const SemanticLoanPlace> places,
-                                AccessMode requested, std::string message,
-                                SemanticLoanId throughLoan = 0);
-
-  void reportLoanPlaceConflict(const Token &token, const SemanticPlace &place,
-                               AccessMode requested, std::string message,
-                               SemanticLoanId throughLoan = 0);
-
-  void validateLoanPlaceAccess(const Expr &expression, OccurrenceRole roles);
 
   void
   validateMutableCallArgumentLoans(std::span<const SemanticType> parameterTypes,
@@ -3382,10 +3342,6 @@ private:
   // enclosing join. A nested if can therefore either end the loan at its own
   // merge, or recursively end it on both of its arms when a conflict occurs
   // before that merge. Loops and switch edges remain conservative.
-
-  void reportBorrowConflict(const Token &token,
-                            const std::vector<SemanticLoanId> &loans,
-                            std::string message);
 
   void finalizeLoanFlow();
 
