@@ -2993,7 +2993,7 @@ A `MirBody` owns:
   call-input representation rule, not proof of complete constructor-pack
   or C++ constructor-field support; the remaining gaps are tracked in the
   active standard-library campaign;
-- each mutable-reference element of a concrete formal pack has one semantic
+- each mutable-reference element of a concrete formal pack has one
   `Parameter` entry loan over its exact `PackElement` place. The carrier binding
   remains immutable, while the loan grants mutable access to the caller's
   referent. Forwarding stages the exact loan, not a borrow of the whole pack.
@@ -3445,6 +3445,12 @@ group, the group's reborrowed referent (with a parent) or its source, or the
 additional owner the path names. Each other owner the group designates along
 the same path is a possible referent and becomes a dependency of the
 selection. Semantic loans now only name MIR loans for later HIR facts.
+Neither the body verifier nor the program verifier reads that number. A
+two-phase reservation and its unretained `CallResult` ancestry, a call-argument
+loan, a lambda's captured-reference entry and a formal-pack element entry are
+admitted by their MIR shape alone (kind, access, producer, parent, carriers,
+escape and exact source place), and no rule pairs or counts MIR loans by a
+semantic identity: per-element pack coverage is the exact entry-loan count.
 
 A range loop's loans are the loans its hidden bindings carry: the range loan
 is the one loan the range carrier holds (a consuming range owns its range and

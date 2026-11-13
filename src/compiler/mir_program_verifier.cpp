@@ -19006,9 +19006,9 @@ verifyMirProgramContracts(const MirProgram &program) {
                 source->projections.front().constantIndex != element)
               continue;
             if (loan.kind == MirLoanKind::Stored && lanePaths.size() == 1 &&
-                loan.semanticLoan == 0 && loan.carriers.empty() &&
-                loan.parent == 0 && loan.storedDependency == 0 &&
-                !loan.escapes && !loan.lifecycleBound &&
+                loan.carriers.empty() && loan.parent == 0 &&
+                loan.storedDependency == 0 && !loan.escapes &&
+                !loan.lifecycleBound &&
                 loan.designatedFields == lanePaths.front().fields &&
                 loan.access == lanePaths.front().reference.referenceAccess &&
                 loan.additionalDependencies.empty() && source->type == type &&
@@ -19028,8 +19028,7 @@ verifyMirProgramContracts(const MirProgram &program) {
                  loan.access == type.referenceAccess) ||
                 (storedCarrier && loan.kind == MirLoanKind::Stored &&
                  loan.access == storedPaths.front().reference.referenceAccess);
-            if (!exactAccess || (loan.semanticLoan == 0 && !summarizedOrigin) ||
-                loan.escapes || loan.parent != 0 ||
+            if (!exactAccess || loan.escapes || loan.parent != 0 ||
                 loan.carriers != std::vector<HirBindingId>{binding} ||
                 source->type != type || !source->initiallyAvailable) {
               result.errors.push_back(

@@ -1404,14 +1404,6 @@ int main() {
          "the verifier should reject control-flow joins whose incoming loan "
          "states disagree");
 
-  lang::MirBody duplicateSemanticLoan = *twoBorrows;
-  duplicateSemanticLoan.loans[1].semanticLoan =
-      duplicateSemanticLoan.loans.front().semanticLoan;
-  expect(duplicateSemanticLoan.loans.front().semanticLoan != 0 &&
-             hasVerificationMessage(duplicateSemanticLoan,
-                                    "represented by more than one MIR loan"),
-         "the verifier should reject duplicate semantic loan identities");
-
   lang::MirBody duplicateCarrier = *aliasedBorrow;
   duplicateCarrier.loans.front().carriers.push_back(
       duplicateCarrier.loans.front().carriers.front());

@@ -3337,9 +3337,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       const auto &candidate = body.loans[parent - 1];
       if (candidate.kind != MirLoanKind::CallResult || candidate.twoPhase ||
           candidate.access != AccessMode::Mutable || candidate.entry ||
-          candidate.escapes || candidate.semanticLoan != 0 ||
-          !candidate.carriers.empty() || candidate.lifecycleBound ||
-          candidate.storedDependency != 0 ||
+          candidate.escapes || !candidate.carriers.empty() ||
+          candidate.lifecycleBound || candidate.storedDependency != 0 ||
           !candidate.additionalDependencies.empty())
         break;
       result.push_back(parent);
@@ -13290,7 +13289,6 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
     }
   }
 
-  std::unordered_set<SemanticLoanId> semanticLoans;
   for (std::size_t index = 0; index < body.loans.size(); ++index) {
     const MirLoan &loan = body.loans[index];
     if (loan.referenceSelection) {
@@ -13437,12 +13435,6 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                            " has an invalid or duplicate carrier binding");
       }
     }
-    if (loan.semanticLoan != 0 &&
-        !semanticLoans.insert(loan.semanticLoan).second) {
-      return failure(body, owner,
-                     "semantic loan " + std::to_string(loan.semanticLoan) +
-                         " is represented by more than one MIR loan");
-    }
     // The destination field and its field-relative external dependency path
     // are distinct. Program verification additionally requires the exact
     // initialized operand, whole-group publication and normal-exit coverage.
@@ -13471,9 +13463,9 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
       const MirPlace *source = body.findPlace(loan.source);
       if (loan.kind != MirLoanKind::CallResult || loan.entry || loan.escapes ||
           loan.access != AccessMode::Mutable || loan.producedBy == 0 ||
-          loan.semanticLoan != 0 || loan.storedField != 0 ||
-          !loan.designatedFields.empty() || !loan.carriers.empty() ||
-          source == nullptr || source->root == MirPlaceRootKind::Symbol ||
+          loan.storedField != 0 || !loan.designatedFields.empty() ||
+          !loan.carriers.empty() || source == nullptr ||
+          source->root == MirPlaceRootKind::Symbol ||
           source->root == MirPlaceRootKind::Temporary ||
           source->root == MirPlaceRootKind::Value) {
         return failure(body, owner,
@@ -13500,8 +13492,8 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                                                 source->sourceValue)) ||
            bool(findMirMovedTemporaryMaterialization(body, *source,
                                                      source->sourceValue)));
-      if (loan.semanticLoan != 0 || loan.parent != 0 || loan.entry ||
-          loan.escapes || (!receiver && loan.access != AccessMode::ReadOnly) ||
+      if (loan.parent != 0 || loan.entry || loan.escapes ||
+          (!receiver && loan.access != AccessMode::ReadOnly) ||
           loan.producedBy == 0 || !loan.carriers.empty() ||
           loan.storedField != 0 || loan.lifecycleBound || loan.twoPhase ||
           !loan.additionalSources().empty() || source == nullptr ||
@@ -13529,19 +13521,15 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
           source->initiallyAvailable &&
           source->type.kind == SemanticType::Reference &&
           source->type.referenceAccess == loan.access &&
-          loan.kind == MirLoanKind::Parameter && loan.semanticLoan != 0 &&
-          loan.producedBy == 0 && loan.parent == 0 && !loan.escapes &&
-          loan.carriers.empty();
-      // A summarized return origin seeds its own Parameter entry without a
-      // semantic loan, on the whole formal or on the one pack element the
-      // contract names; the function summary verifies that formal.
-      const bool seededReferenceEntry =
           loan.kind == MirLoanKind::Parameter && loan.producedBy == 0 &&
-          loan.parent == 0 && !loan.carriers.empty();
+          loan.parent == 0 && !loan.escapes && loan.carriers.empty();
+      // A pack-element entry is admitted by its structure alone: entry loans
+      // have no parent, the check below requires no producer and the formal
+      // binding among the carriers, and the program verifier pins the exact
+      // per-element access, carrier set and count against the pack type.
       const bool packElement =
           source != nullptr && source->projections.size() == 1 &&
           source->projections.front().kind == MirProjectionKind::PackElement &&
-          (loan.semanticLoan != 0 || seededReferenceEntry) &&
           ((source->type.kind == SemanticType::Reference &&
             source->type.referenceAccess == loan.access &&
             loan.kind == MirLoanKind::Parameter) ||
