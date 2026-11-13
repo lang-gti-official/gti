@@ -1508,6 +1508,10 @@ private:
     // This binding holds a borrowed dependency (a reference's referent or a
     // borrowed-state value's owner), whatever loan records that dependency.
     bool retainsDependency = false;
+    // This reference binding designates a reference stored in an enum
+    // payload, selected by a switch pattern or reborrowed at that same
+    // referent. A binding fact, independent of any loan record.
+    bool selectedReference = false;
     std::vector<SemanticLoanId> storageLoans;
     // Conditional dependency facts follow value flow. Existing valueState and
     // loan flow remain the authority for availability and liveness.
@@ -3433,6 +3437,13 @@ private:
   // GTI-S2054 at the borrow's origin and returns false; needs no loan record.
   [[nodiscard]] bool validateRetainedBorrowOwner(const SemanticLoanPlace &place,
                                                  const Expr *origin);
+
+  // A selected payload reference can be reborrowed only at its own referent:
+  // a projected or consuming alias has no exact checked address and
+  // dependency transfer yet. Reports GTI-S2054 and returns false; marks an
+  // accepted same-referent reborrow selected. Reads binding facts only.
+  [[nodiscard]] bool validateSelectedReferenceReborrow(Symbol &carrier,
+                                                       const Expr *expression);
 
   SemanticLoanId createRetainedLoan(
       Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,

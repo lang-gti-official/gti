@@ -10806,6 +10806,35 @@ auto SemanticVisitor::Impl::validateRetainedBorrowOwner(
   return false;
 }
 
+auto SemanticVisitor::Impl::validateSelectedReferenceReborrow(
+    Symbol &carrier, const Expr *expression) -> bool {
+  if (carrier.type.kind != SemanticType::Reference || expression == nullptr)
+    return true;
+  const Expr *selected = expression;
+  while (const auto *group = exprAs<Grouping>(selected))
+    selected = group->expression().get();
+  bool transfer = false;
+  if (const auto *call = exprAs<Call>(selected);
+      call != nullptr && call->arguments().size() == 1 &&
+      resolvedIntrinsicKind(*call) == IntrinsicKind::Move) {
+    selected = call->arguments().front().get();
+    transfer = true;
+  }
+  const SemanticPlace place = semanticPlace(selected);
+  if (place.root == nullptr || place.receiver || !place.root->selectedReference)
+    return true;
+  if (place.projections.empty() && !transfer) {
+    carrier.selectedReference = true;
+    return true;
+  }
+  report(expressionToken(*expression),
+         "A selected reference can currently be reborrowed only at the same "
+         "referent; projected or consuming aliases require an exact checked "
+         "address and dependency transfer.",
+         "GTI-S2054");
+  return false;
+}
+
 auto SemanticVisitor::Impl::createRetainedLoan(
     Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
     const Expr *origin, SemanticLoanPlace place, SymbolId owner,
@@ -11193,6 +11222,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     return;
   }
 
+  if (!validateSelectedReferenceReborrow(*carrier, expression))
+    return;
   const SymbolId carrierSymbol = toolingSymbolFor(*carrier);
   const ExpressionInfo *info =
       expression ? semanticModel.findExpression(*expression) : nullptr;
@@ -11523,13 +11554,10 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
        (resolved != nullptr && (!resolved->borrowArguments.empty() ||
                                 !resolved->borrowFields.empty())))) {
     auto dependencies = storedBorrowDependencies(expression);
-    if (dependencies.empty()) {
-      report(sourceToken,
-             "Every dependency of a composed borrowed value must have a "
-             "checked stable owner.",
-             "GTI-S2045");
+    // validateStoredBorrowInitialization already rejected a composed value
+    // with an unowned dependency (GTI-S2045); there is no loan to create.
+    if (dependencies.empty())
       return;
-    }
     // Consuming a complete carrier transfers its capabilities rather than
     // competing with them. Constructors and ordinary functions use the same
     // exact moved by-value input rule; lvalues and reference parameters still
@@ -11756,15 +11784,11 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
         carrier->type.kind == SemanticType::Reference) {
       const auto selectedPlace = semanticPlace(expression);
       auto dependencies = selectedReferenceDependencies(selectedPlace);
+      // validateSelectedReferenceReborrow rejected a projected or consuming
+      // alias (GTI-S2054); only a same-referent reborrow takes a child loan.
       if (!dependencies || !selectedPlace.projections.empty() ||
-          source->transfer) {
-        report(sourceToken,
-               "A selected reference can currently be reborrowed only at "
-               "the same referent; projected or consuming aliases require "
-               "an exact checked address and dependency transfer.",
-               "GTI-S2054");
+          source->transfer)
         return;
-      }
       const auto origin = *sourceLoan;
       for (auto &dependency : *dependencies) {
         if (carrierAccess == AccessMode::Mutable &&
@@ -11912,13 +11936,10 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
       // Opaque checked erasure hides fields, not the original object's
       // identity: it must retain both its shell and its nested dependencies.
       SemanticLoanPlace shell = retainedLoanPlace(expression);
-      if (shell.root == 0 && !shell.receiver) {
-        report(sourceToken,
-               "A reference to borrowed-state storage requires a stable "
-               "carrier object.",
-               "GTI-S2017");
+      // validateReferenceBinding already requires an addressable, stable
+      // initializer; a shell without a place has no loan to create.
+      if (shell.root == 0 && !shell.receiver)
         return;
-      }
       const SemanticLoanId dependency =
           sourceLoan->kind == SemanticLoanKind::StoredValue
               ? sourceLoan->id
@@ -12036,13 +12057,8 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
     };
     if (retainedStoredBorrow && !exactStoredReborrow &&
         (sourceLoan->access == AccessMode::Mutable || mutableAncestry())) {
-      report(sourceToken,
-             "A local borrowed-state value cannot retain a mutable parent "
-             "or child reborrow.",
-             "GTI-S2017");
-      diagnostics.back().hints.emplace_back(
-          "Use the borrowed-state value only as a non-retained temporary, "
-          "or borrow from ordinary read-only owner storage.");
+      // A retained mutable reborrow takes no semantic loan; MIR checks its
+      // exclusivity.
       return;
     }
     if (sourceLoan->access == AccessMode::ReadOnly &&
