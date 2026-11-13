@@ -10,6 +10,7 @@
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
 #include "gti/support.h"
+#include "mir_borrow_audit_parity.h"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -916,7 +917,11 @@ FrontendResult Frontend::analyze(
   result.sources = sourceLoader.sources();
   append(result.diagnostics, sourceLoader.errors());
   result.sourceValid = !sourceLoader.hadError();
-  result = finishAnalysis(entryPath, std::move(result));
+  {
+    MirBorrowAuditParityScope parity(options);
+    result = finishAnalysis(entryPath, std::move(result));
+    parity.finish(result);
+  }
   if (options.suggestIncludes && !options.completionOffset &&
       options.stopAfter != FrontendPhase::Parsing) {
     addIncludeSuggestions(result, options, entryPath, preludePaths,
@@ -940,7 +945,10 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
   result.sources = std::move(sources);
   result.diagnostics = std::move(sourceDiagnostics);
   result.sourceValid = sourceValid;
-  return finishAnalysis(entryPath, std::move(result));
+  MirBorrowAuditParityScope parity(options);
+  result = finishAnalysis(entryPath, std::move(result));
+  parity.finish(result);
+  return result;
 }
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
@@ -1360,6 +1368,17 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     }
     append(result.diagnostics, semantic.errors());
     const std::size_t semanticDiagnosticCount = semantic.errors().size();
+    // Development parity measurement only (GTI_PARITY_RAW_AUDIT).
+    if (auto *parity = MirBorrowAuditParityScope::active();
+        parity != nullptr &&
+        parity->semanticFindings(result.diagnostics, preSemanticDiagnostics) &&
+        !result.semanticValid && !semantic.cancelled()) {
+      // The set-aside findings stay recorded in the analyzer; only a new
+      // request diagnostic keeps the program rejected.
+      (void)semantic.applyProgramRequest(result.program, options.program);
+      result.semanticValid =
+          semantic.errors().size() == semanticDiagnosticCount;
+    }
     // Complete the requested inference phases before applying CI policy, so
     // Strict and Warn discover the same concrete bodies and audit findings.
     const bool discoveredTestEntry = options.program.testSuite &&
@@ -1549,6 +1568,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     if (completeMetadata.valid()) {
       MirLoweringResult complete =
           MirLowerer().lower(checked, completeMetadata.metadata);
+      if (auto *parity = MirBorrowAuditParityScope::active())
+        parity->observe(complete.program, checked);
       if (!complete.valid()) {
         MirBorrowCheck check =
             mirBorrowDiagnostics(complete, complete.program, checked);
@@ -1617,6 +1638,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   MirLoweringResult mir =
       MirLowerer().lower(result.hir, result.failureMetadata);
   mirProgress.finish();
+  if (auto *parity = MirBorrowAuditParityScope::active())
+    parity->observe(mir.program, result.hir);
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
   if (!mir.diagnostics.empty()) {

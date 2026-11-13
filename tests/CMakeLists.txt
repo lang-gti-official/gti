@@ -1398,6 +1398,9 @@ add_test(NAME mir_thread_local COMMAND gti_mir_thread_local_tests)
 add_executable(gti_mir_persistent_storage_tests mir_persistent_storage_tests.cpp)
 target_link_libraries(gti_mir_persistent_storage_tests PRIVATE gti_compiler)
 add_test(NAME mir_persistent_storage COMMAND gti_mir_persistent_storage_tests)
+add_executable(gti_mir_borrow_audit_tests mir_borrow_audit_tests.cpp)
+target_link_libraries(gti_mir_borrow_audit_tests PRIVATE gti_compiler)
+add_test(NAME mir_borrow_audit COMMAND gti_mir_borrow_audit_tests)
 
 add_executable("gti_mir_program_initialization_tests"
                "${PROJECT_SOURCE_DIR}/tests/mir_program_initialization_tests.cpp")
