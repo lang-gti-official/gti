@@ -237,19 +237,7 @@ void record(std::vector<MirBorrowAuditFinding> &findings, const MirBody &body,
                                 .instruction = error.instruction,
                                 .detail =
                                     std::string(kind) + ": " + error.message};
-  if (const MirBlock *block = body.findBlock(error.block))
-    for (const auto &instruction : block->instructions)
-      if (instruction.id == error.instruction) {
-        finding.hirValue = instruction.hirValue;
-        finding.hirStatement = instruction.hirStatement;
-        finding.callSite = instruction.callSite;
-        if (const MirPlace *place =
-                instruction.destination
-                    ? body.findPlace(*instruction.destination)
-                    : nullptr;
-            place != nullptr && place->root == MirPlaceRootKind::Binding)
-          finding.binding = place->binding;
-      }
+  attachMirFindingSource(body, finding);
   if (error.borrow.loan != 0)
     finding.loans.push_back(error.borrow.loan);
   findings.push_back(std::move(finding));

@@ -117,6 +117,56 @@ int main() {
   }
 })") == 0,
          "reseating a raw pointer replaces its provenance");
+  expect(rawFindings(R"(
+unsafe void write_address(int* pointer) { unsafe { *pointer = 9; } }
+unsafe void write_forwarded(int* pointer) { unsafe { write_address(pointer); } }
+int main() {
+  mut int owner = 7;
+  int* pointer = &owner;
+  int& held = owner;
+  unsafe { write_forwarded(pointer); }
+  return held;
+})") == 1,
+         "a callee's write through a raw formal is a caller finding, "
+         "through forwarding calls");
+  expect(rawFindings(R"(
+mut int global = 7;
+int* source() { return &global; }
+int main() {
+  auto pointer = source();
+  int& checked = global;
+  unsafe { *pointer = 9; }
+  return checked;
+})") == 1,
+         "a callee's returned global address keeps its provenance");
+  expect(rawFindings(R"(
+int main() {
+  mut int owner = 7;
+  const int* pointer = &owner;
+  auto read = [pointer]() -> int { unsafe { return *pointer; } };
+  mut int& held = owner;
+  int observed = read();
+  held = 8;
+  return observed + held;
+})") == 1,
+         "a closure's read through a captured raw pointer is a caller finding");
+  expect(rawFindings(R"(
+struct Cursor {
+  mut int* target = nullptr;
+public:
+  Cursor() = default;
+  void write() { unsafe { *this.target = 9; } }
+};
+int main() {
+  mut int owner = 7;
+  mut Cursor cursor{};
+  unsafe { cursor.target = &owner; }
+  int& held = owner;
+  cursor.write();
+  return held;
+})") == 1,
+         "a method's write through a receiver-held raw pointer is a caller "
+         "finding");
 }
 
 void persistentStorageParity() {

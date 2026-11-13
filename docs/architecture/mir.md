@@ -3500,12 +3500,15 @@ destination, operand or receiver place below a raw step, but not address
 formation) is a finding when one of its possible targets overlaps the source
 or an additional dependency of a live non-Stored loan that is not the
 pointer's own loan or one of its ancestors, and either side is a write.
-A function's raw-pointer formals start with their own pointee as provenance;
-an access through it becomes the function's summary instead of a finding, as
-do the globals and formal pointees its result can carry. A call to a
-summarized function performs those accesses on its arguments' targets and
-returns those targets, so the summaries are a fixed point over the call graph.
-A closure's captured raw pointer is not yet summarized.
+Each formal starts with its own pointee as provenance: a raw-pointer
+parameter or capture exactly, any other parameter, the receiver and other
+captures at every nested pointer slot. An access through a formal becomes the
+body's summary instead of a finding, as do the globals and formal pointees its
+result can carry (for a constructor, the targets it stores in the object). A
+call of a summarized function, closure or constructor performs those accesses
+on the targets its arguments, receiver or closure can carry and returns those
+targets, so the summaries are a fixed point over the call graph. A closure
+keeps its captures' targets, and a call input keeps its place's targets.
 
 `auditMirPersistentStorageBorrows` (`mir_storage_effects.cpp`) shares the
 persistent-storage effect closure of `verifyMirPersistentStorageEffects`: each

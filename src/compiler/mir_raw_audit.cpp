@@ -56,9 +56,12 @@ using ValueOrigins = std::map<Steps, OriginSet>;
 // Storage slot -> raw targets stored there.
 using StorageState = std::map<Path, OriginSet>;
 
-// A raw-pointer formal's pointee is named by a Value-rooted path whose id is
-// the formal's one-based index; ordinary storage paths never use that root.
+// A formal's pointee is named by a Value-rooted path; ordinary storage paths
+// never use that root. Ids: a parameter's one-based index, the receiver, or a
+// closure capture's index above captureFormal.
 constexpr MirPlaceRootKind formalRoot = MirPlaceRootKind::Value;
+constexpr std::size_t receiverFormal = std::size_t{1} << 20;
+constexpr std::size_t captureFormal = std::size_t{2} << 20;
 
 // What a function does with raw addresses it receives: the accesses through a
 // formal's pointee, and the raw targets its result can carry (globals and
@@ -69,7 +72,7 @@ struct RawSummary {
 
   friend bool operator==(const RawSummary &, const RawSummary &) = default;
 };
-using RawSummaries = std::map<HirFunctionInstanceId, RawSummary>;
+using RawSummaries = std::map<std::pair<MirBodyKind, std::size_t>, RawSummary>;
 
 bool wildcard(const Step &step) {
   return step.kind == StepKind::Any || step.kind == StepKind::Dynamic;
@@ -130,16 +133,7 @@ public:
     for (const auto &loan : body.loans)
       if (loan.entry)
         entryLoans[body.entry - 1][loan.id - 1] = 1;
-    if (address.kind == MirBodyKind::Function)
-      if (const auto *function = program.findFunctionInstance(address.owner))
-        for (std::size_t index = 0; index < function->parameterBindings.size();
-             ++index)
-          if (index < function->parameterTypes.size() &&
-              function->parameterTypes[index].kind == SemanticType::RawPointer)
-            entryStates[body.entry -
-                        1][{.root = MirPlaceRootKind::Binding,
-                            .id = function->parameterBindings[index]}]
-                .insert({.target = {.root = formalRoot, .id = index + 1}});
+    seedFormals(entryStates[body.entry - 1]);
     constexpr int maximumRounds = 64;
     for (int round = 0; round < maximumRounds; ++round) {
       changed = false;
@@ -157,6 +151,59 @@ public:
 
   RawSummary summary;
 
+private:
+  // Every formal's storage starts holding its own pointee as provenance: a
+  // raw-pointer parameter or capture exactly, any other formal, the receiver
+  // and by-value captures at any nested pointer slot.
+  void seedFormals(StorageState &entry) const {
+    const auto seed = [&](Path slot, bool pointer, std::size_t formal) {
+      if (!pointer)
+        slot.steps.push_back({StepKind::Any, 0});
+      entry[slot].insert({.target = {.root = formalRoot, .id = formal}});
+    };
+    if (address.kind == MirBodyKind::Function)
+      if (const auto *function = program.findFunctionInstance(address.owner))
+        for (std::size_t index = 0;
+             index < function->parameterBindings.size() &&
+             index < function->parameterTypes.size();
+             ++index)
+          seed({.root = MirPlaceRootKind::Binding,
+                .id = function->parameterBindings[index]},
+               function->parameterTypes[index].kind == SemanticType::RawPointer,
+               index + 1);
+    if (address.kind == MirBodyKind::Constructor)
+      if (const auto *constructor =
+              program.findConstructorInstance(address.owner))
+        for (std::size_t index = 0;
+             index < constructor->parameterBindings.size() &&
+             index < constructor->parameterTypes.size();
+             ++index)
+          seed({.root = MirPlaceRootKind::Binding,
+                .id = constructor->parameterBindings[index]},
+               constructor->parameterTypes[index].kind ==
+                   SemanticType::RawPointer,
+               index + 1);
+    if (address.kind == MirBodyKind::Lambda)
+      for (const auto &lambda : program.lambdaInstances())
+        if (lambda.id == address.owner)
+          for (std::size_t index = 0; index < lambda.parameterBindings.size() &&
+                                      index < lambda.parameterTypes.size();
+               ++index)
+            seed({.root = MirPlaceRootKind::Binding,
+                  .id = lambda.parameterBindings[index]},
+                 lambda.parameterTypes[index].kind == SemanticType::RawPointer,
+                 index + 1);
+    if (address.kind != MirBodyKind::Constructor)
+      seed({.root = MirPlaceRootKind::This}, false, receiverFormal);
+    for (const auto &place : body.places)
+      if (place.capture != 0 && place.projections.empty() &&
+          place.root == MirPlaceRootKind::Symbol)
+        seed({.root = place.root, .id = place.symbol},
+             place.type.kind == SemanticType::RawPointer,
+             captureFormal + place.capture);
+  }
+
+public:
 private:
   const MirProgram &program;
   const MirBody &body;
@@ -429,7 +476,7 @@ private:
     for (const auto &origin : targets) {
       if (origin.target.root == formalRoot) {
         summary.accesses.insert(
-            {origin.target.id - 1, origin.target.steps, access});
+            {origin.target.id, origin.target.steps, access});
         continue;
       }
       for (const auto &loan : body.loans) {
@@ -469,15 +516,14 @@ private:
           existing->loans.push_back(loan);
       return;
     }
-    findings.push_back(
-        {.body = address,
-         .block = block.id,
-         .instruction = instruction.id,
-         .hirValue = instruction.hirValue,
-         .hirStatement = instruction.hirStatement,
-         .callSite = instruction.callSite,
-         .loans = std::move(conflicts),
-         .detail = access == AccessMode::Mutable ? "write" : "read"});
+    MirBorrowAuditFinding finding{
+        .body = address,
+        .block = block.id,
+        .instruction = instruction.id,
+        .loans = std::move(conflicts),
+        .detail = access == AccessMode::Mutable ? "write" : "read"};
+    attachMirFindingSource(body, finding);
+    findings.push_back(std::move(finding));
   }
 
   void audit(const MirBlock &block, const MirInstruction &instruction,
@@ -509,26 +555,72 @@ private:
                     state, live);
     if (const RawSummary *callee = calleeSummary(instruction))
       for (const auto &[formal, steps, access] : callee->accesses) {
-        if (formal >= instruction.operands.size())
-          continue;
         std::vector<Origin> targets;
-        for (const auto &origin : lookupRelative(
-                 operandOrigins(instruction.operands[formal], state), {})) {
-          Origin target = origin;
-          target.target.steps.insert(target.target.steps.end(), steps.begin(),
+        for (auto origin : argumentOrigins(instruction, formal, state)) {
+          origin.target.steps.insert(origin.target.steps.end(), steps.begin(),
                                      steps.end());
-          targets.push_back(std::move(target));
+          targets.push_back(std::move(origin));
         }
         checkTargets(block, instruction, targets, access, live);
       }
   }
 
+  // What a callee's formal names at this call: every raw target its argument
+  // (receiver, closure) can carry.
+  OriginSet argumentOrigins(const MirInstruction &instruction,
+                            std::size_t formal,
+                            const StorageState &state) const {
+    const MirOperand *operand = nullptr;
+    if (formal >= receiverFormal) {
+      if (instruction.receiver)
+        operand = &*instruction.receiver;
+    } else if (formal >= 1 && formal <= instruction.operands.size())
+      operand = &instruction.operands[formal - 1];
+    OriginSet result;
+    if (operand == nullptr)
+      return result;
+    for (const auto &[relative, set] : operandOrigins(*operand, state))
+      result.insert(set.begin(), set.end());
+    return result;
+  }
+
   const RawSummary *calleeSummary(const MirInstruction &instruction) const {
-    if (instruction.kind != MirInstructionKind::Call ||
-        !instruction.functionTarget || instruction.receiver)
+    std::optional<std::pair<MirBodyKind, std::size_t>> key;
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.functionTarget)
+      key = {MirBodyKind::Function, *instruction.functionTarget};
+    else if (instruction.kind == MirInstructionKind::Call &&
+             instruction.lambdaTarget)
+      key = {MirBodyKind::Lambda, *instruction.lambdaTarget};
+    else if (instruction.kind == MirInstructionKind::Construct &&
+             instruction.constructorTarget)
+      key = {MirBodyKind::Constructor, *instruction.constructorTarget};
+    if (!key)
       return nullptr;
-    const auto found = summaries.find(*instruction.functionTarget);
+    const auto found = summaries.find(*key);
     return found == summaries.end() ? nullptr : &found->second;
+  }
+
+  ValueOrigins calleeResult(const MirInstruction &instruction,
+                            const StorageState &state) const {
+    ValueOrigins result;
+    const RawSummary *callee = calleeSummary(instruction);
+    if (callee == nullptr)
+      return result;
+    for (const auto &origin : callee->returned) {
+      if (origin.target.root != formalRoot) {
+        result[{}].insert(origin);
+        continue;
+      }
+      for (auto relayed :
+           argumentOrigins(instruction, origin.target.id, state)) {
+        relayed.target.steps.insert(relayed.target.steps.end(),
+                                    origin.target.steps.begin(),
+                                    origin.target.steps.end());
+        result[{}].insert(relayed);
+      }
+    }
+    return result;
   }
 
   void transfer(const MirInstruction &instruction, StorageState &state) {
@@ -573,6 +665,7 @@ private:
       }
       case MirOperation::Aggregate:
       case MirOperation::PayloadConstruct:
+      case MirOperation::Closure:
         for (const auto &operand : instruction.operands)
           setValue(*instruction.result, nested(operandOrigins(operand, state)));
         return;
@@ -589,11 +682,11 @@ private:
       if (instruction.result) {
         if (instruction.kind == MirInstructionKind::Load ||
             (!instruction.operands.empty() &&
-             instruction.operands.front().kind == MirOperandKind::Value))
+             (instruction.operands.front().kind == MirOperandKind::Value ||
+              instruction.operands.front().place != 0)))
           setValue(
               *instruction.result,
-              instruction.kind == MirInstructionKind::Load &&
-                      !instruction.operands.empty() &&
+              !instruction.operands.empty() &&
                       instruction.operands.front().place != 0
                   ? [&] {
                       ValueOrigins loaded;
@@ -619,26 +712,7 @@ private:
       return;
     case MirInstructionKind::Call:
       if (instruction.result)
-        if (const RawSummary *callee = calleeSummary(instruction)) {
-          ValueOrigins result;
-          for (const auto &origin : callee->returned) {
-            if (origin.target.root != formalRoot) {
-              result[{}].insert(origin);
-              continue;
-            }
-            const std::size_t formal = origin.target.id - 1;
-            if (formal >= instruction.operands.size())
-              continue;
-            for (auto relayed : lookupRelative(
-                     operandOrigins(instruction.operands[formal], state), {})) {
-              relayed.target.steps.insert(relayed.target.steps.end(),
-                                          origin.target.steps.begin(),
-                                          origin.target.steps.end());
-              result[{}].insert(relayed);
-            }
-          }
-          setValue(*instruction.result, result);
-        }
+        setValue(*instruction.result, calleeResult(instruction, state));
       return;
     case MirInstructionKind::Construct: {
       ValueOrigins origins;
@@ -646,6 +720,11 @@ private:
         for (const auto &[relative, set] :
              nested(operandOrigins(operand, state)))
           origins[relative].insert(set.begin(), set.end());
+      // A constructor that stores its arguments' raw targets publishes them
+      // in the constructed object.
+      for (const auto &[relative, set] :
+           nested(calleeResult(instruction, state)))
+        origins[relative].insert(set.begin(), set.end());
       if (instruction.result)
         setValue(*instruction.result, origins);
       if (instruction.destination)
@@ -707,12 +786,23 @@ private:
     }
     const auto &terminator = block.terminator;
     if (report) {
+      const auto publish = [&](const Origin &origin) {
+        if (origin.target.root == formalRoot ||
+            origin.target.root == MirPlaceRootKind::Symbol)
+          summary.returned.insert({.target = origin.target});
+      };
       if (terminator.kind == MirTerminatorKind::Return && terminator.value)
         for (const auto &origin :
              lookupRelative(operandOrigins(*terminator.value, state), {}))
-          if (origin.target.root == formalRoot ||
-              origin.target.root == MirPlaceRootKind::Symbol)
-            summary.returned.insert({.target = origin.target});
+          publish(origin);
+      if (terminator.kind == MirTerminatorKind::Return &&
+          address.kind == MirBodyKind::Constructor)
+        for (const auto &[slot, set] : state)
+          if (slot.root == MirPlaceRootKind::This)
+            for (const auto &origin : set)
+              if (!(origin.target.root == formalRoot &&
+                    origin.target.id == receiverFormal))
+                publish(origin);
       return;
     }
     if (terminator.target != 0)
@@ -738,6 +828,39 @@ bool hasRawPlace(const MirBody &body) {
 
 } // namespace
 
+void attachMirFindingSource(const MirBody &body,
+                            MirBorrowAuditFinding &finding) {
+  const MirBlock *block = body.findBlock(finding.block);
+  bool after = false;
+  // Follow the normal successor chain a few blocks for the instructions an
+  // invocation's own block ends before.
+  for (std::size_t step = 0; block != nullptr && step < 4; ++step) {
+    for (const auto &instruction : block->instructions) {
+      if (after) {
+        if (instruction.hirValue != 0)
+          finding.following.push_back(instruction.hirValue);
+        if (instruction.hirStatement != 0)
+          finding.followingStatements.push_back(instruction.hirStatement);
+        continue;
+      }
+      if (instruction.id != finding.instruction)
+        continue;
+      after = true;
+      finding.hirValue = instruction.hirValue;
+      finding.hirStatement = instruction.hirStatement;
+      finding.callSite = instruction.callSite;
+      if (const MirPlace *place = instruction.destination
+                                      ? body.findPlace(*instruction.destination)
+                                      : nullptr;
+          place != nullptr && place->root == MirPlaceRootKind::Binding)
+        finding.binding = place->binding;
+    }
+    if (!after)
+      return;
+    block = body.findBlock(block->terminator.target);
+  }
+}
+
 std::vector<MirBorrowAuditFinding>
 auditMirRawAccesses(const MirProgram &program) {
   // Function summaries are a monotone fixed point over the call graph
@@ -758,30 +881,46 @@ auditMirRawAccesses(const MirProgram &program) {
             return std::any_of(
                 block.instructions.begin(), block.instructions.end(),
                 [&](const MirInstruction &instruction) {
-                  return instruction.functionTarget &&
-                         summaries.contains(*instruction.functionTarget);
+                  return (instruction.functionTarget &&
+                          summaries.contains({MirBodyKind::Function,
+                                              *instruction.functionTarget})) ||
+                         (instruction.lambdaTarget &&
+                          summaries.contains({MirBodyKind::Lambda,
+                                              *instruction.lambdaTarget})) ||
+                         (instruction.constructorTarget &&
+                          summaries.contains({MirBodyKind::Constructor,
+                                              *instruction.constructorTarget}));
                 });
           });
       const auto *function = address.kind == MirBodyKind::Function
                                  ? program.findFunctionInstance(address.owner)
                                  : nullptr;
+      const auto rawTypes = [](const std::vector<SemanticType> &types) {
+        return std::any_of(types.begin(), types.end(),
+                           [](const SemanticType &type) {
+                             return type.kind == SemanticType::RawPointer;
+                           });
+      };
+      const auto *constructor =
+          address.kind == MirBodyKind::Constructor
+              ? program.findConstructorInstance(address.owner)
+              : nullptr;
       const bool formals =
-          function != nullptr &&
-          (function->returnType.kind == SemanticType::RawPointer ||
-           std::any_of(function->parameterTypes.begin(),
-                       function->parameterTypes.end(),
-                       [](const SemanticType &type) {
-                         return type.kind == SemanticType::RawPointer;
-                       }));
+          (function != nullptr &&
+           (function->returnType.kind == SemanticType::RawPointer ||
+            rawTypes(function->parameterTypes))) ||
+          (constructor != nullptr && rawTypes(constructor->parameterTypes));
       if (!raw && !calls && !formals)
         continue;
       BodyAudit audit(program, *body, address, summaries);
       auto found = audit.run();
       findings.insert(findings.end(), std::make_move_iterator(found.begin()),
                       std::make_move_iterator(found.end()));
-      if (address.kind == MirBodyKind::Function &&
+      if ((address.kind == MirBodyKind::Function ||
+           address.kind == MirBodyKind::Constructor ||
+           address.kind == MirBodyKind::Lambda) &&
           (!audit.summary.accesses.empty() || !audit.summary.returned.empty()))
-        next[address.owner] = std::move(audit.summary);
+        next[{address.kind, address.owner}] = std::move(audit.summary);
     }
     if (next == summaries)
       break;

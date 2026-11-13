@@ -61,7 +61,7 @@ std::optional<SourceSpan> findingSpan(const HirProgram &hir,
   const HirBody *body = hirBody(hir, finding.body);
   if (body == nullptr)
     return std::nullopt;
-  for (const HirValueId id : {finding.hirValue, finding.callSite}) {
+  const auto valueSpan = [&](HirValueId id) -> std::optional<SourceSpan> {
     const HirValue *value = id == 0 ? nullptr : body->findValue(id);
     while (value != nullptr && value->source == nullptr &&
            value->operands.size() == 1)
@@ -71,17 +71,34 @@ std::optional<SourceSpan> findingSpan(const HirProgram &hir,
       if (!token.lexeme.empty())
         return tokenSpan(token);
     }
-  }
+    return std::nullopt;
+  };
+  for (const HirValueId id : {finding.hirValue, finding.callSite})
+    if (auto span = valueSpan(id))
+      return span;
+  // A scope-exit drop names the destroyed local.
   for (const HirBinding &binding : body->bindings)
     if (finding.binding != 0 && binding.id == finding.binding &&
         binding.variable != nullptr)
       return tokenSpan(binding.variable->name());
-  if (const HirStatement *statement =
-          finding.hirStatement == 0 ? nullptr
-                                    : body->findStatement(finding.hirStatement);
-      statement != nullptr && statement->source != nullptr &&
-      statement->source->extent())
-    return *statement->source->extent();
+  const auto statementSpan =
+      [&](HirStatementId id) -> std::optional<SourceSpan> {
+    const HirStatement *statement = id == 0 ? nullptr : body->findStatement(id);
+    if (statement != nullptr && statement->source != nullptr &&
+        statement->source->extent())
+      return *statement->source->extent();
+    return std::nullopt;
+  };
+  if (auto span = statementSpan(finding.hirStatement))
+    return span;
+  // An expanded pack element has no expression of its own; the expansion's
+  // next source-bearing instruction names it.
+  for (const HirValueId id : finding.following)
+    if (auto span = valueSpan(id))
+      return span;
+  for (const HirStatementId id : finding.followingStatements)
+    if (auto span = statementSpan(id))
+      return span;
   return std::nullopt;
 }
 
@@ -153,6 +170,12 @@ void MirBorrowAuditParityScope::observe(const MirProgram &program,
       for (const auto loan : finding.loans)
         detail << loan << ',';
       detail << ' ' << finding.detail;
+      if (!span)
+        detail << " (no source: hir-body="
+               << (hirBody(hir, finding.body) != nullptr)
+               << " value=" << finding.hirValue
+               << " statement=" << finding.hirStatement
+               << " following=" << finding.following.size() << ')';
       mir.push_back(
           {kind, span.value_or(SourceSpan{"?", 0, 0, 0}), detail.str()});
     }
@@ -194,11 +217,15 @@ void MirBorrowAuditParityScope::finish(FrontendResult &result) {
   for (const auto &unit : result.sourceGraph.sourceUnits())
     if (unit.id == entry)
       name = unit.path.string();
-  std::map<std::string, std::array<int, 3>> counts;
+  std::map<std::string, std::array<int, 4>> counts;
   for (const auto &[key, messages] : semanticSites) {
     const bool match = mirSites.contains(key);
-    ++counts[std::get<0>(key)][match ? 0 : 1];
-    out << "PARITY " << std::get<0>(key) << (match ? " match " : " sem-only ")
+    ++counts[std::get<0>(key)][match ? 0 : observed ? 1 : 3];
+    // Without MIR (another error stopped the pipeline) nothing was compared.
+    out << "PARITY " << std::get<0>(key)
+        << (match      ? " match "
+            : observed ? " sem-only "
+                       : " sem-unmeasured ")
         << std::get<1>(key) << ':' << std::get<2>(key) << '\n';
   }
   for (const auto &[key, details] : mirSites) {
@@ -215,6 +242,7 @@ void MirBorrowAuditParityScope::finish(FrontendResult &result) {
     const auto &count = counts[kind];
     out << "PARITY-SUMMARY " << kind << ' ' << name << " match=" << count[0]
         << " sem-only=" << count[1] << " mir-only=" << count[2]
+        << " sem-unmeasured=" << count[3]
         << " mir-observed=" << (observed ? 1 : 0)
         << " forced=" << (forced ? 1 : 0)
         << " semantic-valid=" << (result.semanticValid ? 1 : 0)

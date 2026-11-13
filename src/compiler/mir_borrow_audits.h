@@ -22,9 +22,17 @@ struct MirBorrowAuditFinding {
   // The binding an instruction without an HIR value acts on (a scope-exit
   // drop names the destroyed local).
   HirBindingId binding = 0;
+  // HIR values of the instructions that follow in the same block, for an
+  // instruction with no source of its own (an expanded pack element).
+  std::vector<HirValueId> following;
+  std::vector<HirStatementId> followingStatements;
   std::vector<MirLoanId> loans;
   std::string detail;
 };
+
+// Fills a finding's source facts from its instruction in `body`.
+void attachMirFindingSource(const MirBody &body,
+                            MirBorrowAuditFinding &finding);
 
 // Raw-pointer audit: a raw dereference/index access whose address may
 // designate storage protected by a live, incompatible checked loan. Loan
