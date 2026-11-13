@@ -238,6 +238,9 @@ struct CompletionInput {
   const std::atomic<bool> *cancellation = nullptr;
   std::unordered_map<std::string, std::uint64_t> sourceGenerations;
   std::unordered_map<std::string, std::uint64_t> sourceDigests;
+  // See FrontendOptions::deferPreambleBuild. Completion never builds a
+  // missing preamble; the editor's analysis schedules that build.
+  bool deferPreambleBuild = false;
 };
 
 class LanguageQueries {

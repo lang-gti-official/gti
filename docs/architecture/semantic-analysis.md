@@ -2081,7 +2081,17 @@ and an analysis with the raw-pointer audit enabled never uses it.
   preamble is built, every body that bounded analysis would have deferred is
   analysed in place but *held back*: its body diagnostics and the function
   records it consulted are kept beside the body instead of being reported.
-  Prefix construction receives the request's cancellation token and uses the
+  With `FrontendOptions::deferPreambleBuild`, an analysis that finds no
+  cached preamble does not build one: it runs as bounded analysis without a
+  preamble (which reports the same diagnostics) and returns a
+  `SemanticPreambleBuild` in `FrontendResult::deferredPreambleBuild`. The
+  build owns copies of the source graph and sources and shares the prefix
+  declarations, so a caller can run it on another thread after the analysis
+  has finished; it stores its result in the same cache, and reuses an entry
+  another build stored meanwhile. A complete prefix costs several times a
+  bounded analysis of one file, so the editor builds it off the path to its
+  first diagnostics.
+  Prefix construction receives the caller's cancellation token and uses the
   same cancellation checkpoints and catching boundary as ordinary `check`.
   An invalid or interrupted prefix returns no preamble. Interrupted state is
   never frozen or cached, and the frontend reports cancellation. A completed

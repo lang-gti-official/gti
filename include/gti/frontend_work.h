@@ -46,6 +46,9 @@ struct FrontendWorkMetrics {
   // preamble holds and how many this analysis reached and reported.
   std::size_t semanticPreambleBuilds = 0;
   std::size_t semanticPreambleBuildMicroseconds = 0;
+  // Analyses that found no cached preamble and deferred its build (see
+  // FrontendOptions::deferPreambleBuild).
+  std::size_t semanticPreambleDeferrals = 0;
   std::size_t semanticPreambleAdoptions = 0;
   std::size_t semanticPreambleAdoptMicroseconds = 0;
   std::size_t semanticPreambleBodies = 0;
@@ -120,6 +123,7 @@ struct FrontendWorkMetrics {
     semanticFinalizationMicroseconds = 0;
     semanticPreambleBuilds = 0;
     semanticPreambleBuildMicroseconds = 0;
+    semanticPreambleDeferrals = 0;
     semanticPreambleAdoptions = 0;
     semanticPreambleAdoptMicroseconds = 0;
     semanticPreambleBodies = 0;

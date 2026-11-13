@@ -1129,6 +1129,18 @@ def test_preamble_concept_proofs_across_snapshots(executable, root):
         session.receive_until(lambda message: message.get("id") == 1)
         session.send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
         open_document(session, uri, source)
+        # The first snapshot defers the preamble build; the edits below run
+        # once the preamble worker has stored it, so they all adopt it.
+        deadline = time.monotonic() + 120
+        while not (
+            trace_path.exists()
+            and any(
+                json.loads(line)["kind"] == "preamble"
+                for line in trace_path.read_text(encoding="utf-8").splitlines()
+            )
+        ):
+            assert time.monotonic() < deadline, "preamble never built"
+            time.sleep(0.05)
         for version, text, broken in (
             (2, source + "int broken = missing_name;\n", True),
             (3, source, False),
@@ -1157,8 +1169,9 @@ def test_preamble_concept_proofs_across_snapshots(executable, root):
             json.loads(line)
             for line in trace_path.read_text(encoding="utf-8").splitlines()
             if json.loads(line)["kind"] == "analysis"
+            and json.loads(line)["preambleAdoptions"] == 1
         ]
-        assert len(records) >= 3, records
+        assert len(records) >= 2, records
         assert records[0]["conceptProofRecords"] > 0, records[0]
         assert all(record["conceptProofReuses"] > 0 for record in records[1:]), records
         # Concrete initializer-effect queries over standard-library instances
@@ -10111,9 +10124,12 @@ def test_instance_reuse_across_snapshots(executable, root):
 
 def test_preamble_across_snapshots(executable, root):
     # The standard-library prefix is analysed once (SemanticPreambleCache) and
-    # every later snapshot of the same include graph resumes from it. The
-    # preamble is invisible: diagnostics, semantic tokens, hover and definition
-    # are unchanged, and editing a library unit builds a new preamble.
+    # every later snapshot of the same include graph resumes from it. A
+    # snapshot that finds no preamble is analysed without one and the build
+    # runs on the preamble worker, so the first diagnostics never wait for a
+    # complete analysis of the library. The preamble is invisible: diagnostics,
+    # semantic tokens, hover and definition are unchanged, and editing a
+    # library unit builds a new preamble.
     source = (
         "import std.string;\n"
         "import std.vector;\n"
@@ -10144,6 +10160,15 @@ def test_preamble_across_snapshots(executable, root):
             )
             if record["kind"] in kinds and record["uri"] == uri
         ]
+
+    def wait_for_record(kinds, predicate):
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            matches = [record for record in root_analyses(kinds) if predicate(record)]
+            if matches:
+                return matches[-1]
+            time.sleep(0.05)
+        raise AssertionError(f"timed out waiting for {kinds}: {root_analyses(kinds)}")
 
     def wait_for_analyses(count):
         deadline = time.monotonic() + 60
@@ -10195,9 +10220,14 @@ def test_preamble_across_snapshots(executable, root):
         initialize_session(session)
         open_document(session, uri, source)
         first = wait_for_analyses(1)[-1]
-        assert first["preambleBuilds"] == 1, first
-        assert first["preambleAdoptions"] == 1, first
-        assert first["preambleBodies"] > first["preambleReachedBodies"] > 0, first
+        assert first["preambleBuilds"] == 0, first
+        assert first["preambleDeferrals"] == 1, first
+        assert first["preambleAdoptions"] == 0, first
+        built = wait_for_record(
+            ("preamble",), lambda record: record["generation"] == first["generation"]
+        )
+        assert built["preambleBuilds"] == 1, built
+        # Answered from the bounded snapshot; the adopting snapshot must agree.
         tokens, hover, definition = queries()
         assert tokens, tokens
         assert "push_back" in json.dumps(hover), hover
@@ -10212,9 +10242,10 @@ def test_preamble_across_snapshots(executable, root):
         assert not any(item.get("severity", 1) == 1 for item in diagnostics)
         second = wait_for_analyses(2)[-1]
         assert second["preambleBuilds"] == 0, second
+        assert second["preambleDeferrals"] == 0, second
         assert second["preambleAdoptions"] == 1, second
         assert second["preambleCache"]["hits"] >= 1, second
-        assert second["preambleReachedBodies"] == first["preambleReachedBodies"], second
+        assert second["preambleBodies"] > second["preambleReachedBodies"] > 0, second
         assert queries() == (tokens, hover, definition)
 
         # A reached library body's diagnostics are reported like gti check's.
@@ -10226,6 +10257,7 @@ def test_preamble_across_snapshots(executable, root):
         assert any(item.get("code") == "GTI-S2001" for item in failed), failed
         third = wait_for_analyses(3)[-1]
         assert third["preambleBuilds"] == 0, third
+        assert third["preambleAdoptions"] == 1, third
 
         library_source = library_path.read_text(encoding="utf-8")
         open_document(
@@ -10234,20 +10266,22 @@ def test_preamble_across_snapshots(executable, root):
             library_source + "\nnamespace std { int edited_unit() { return 1; } }\n",
             expect_clean=False,
         )
-        # Opening the library re-analyses its dependant; that analysis or the
-        # next edit builds the new preamble, and the latest one adopts it. The
-        # next edit may stop the re-analysis after its build (`cancelled`).
+        # Opening the library re-analyses its dependant, which finds no
+        # preamble for the edited unit and defers a new build; a snapshot
+        # after that build adopts it.
         session.send(full_change(uri, 4, edited))
         publication_for(session, uri, 4)
-        later = wait_for_analyses(4)[3:]
-        rebuilt = [
-            record
-            for record in root_analyses(("analysis", "cancelled"))
-            if record["generation"] > third["generation"]
-        ]
-        assert any(record["preambleBuilds"] == 1 for record in rebuilt), rebuilt
-        assert later[-1]["preambleAdoptions"] == 1, later[-1]
-        assert later[-1]["preambleCache"]["entries"] >= 1, later[-1]
+        rebuilt = wait_for_record(
+            ("preamble",), lambda record: record["generation"] > third["generation"]
+        )
+        assert rebuilt["preambleBuilds"] == 1, rebuilt
+        session.send(full_change(uri, 5, source))
+        publication_for(session, uri, 5)
+        later = wait_for_record(
+            ("analysis",), lambda record: record["generation"] > rebuilt["generation"]
+        )
+        assert later["preambleAdoptions"] == 1, later
+        assert later["preambleCache"]["entries"] >= 1, later
         assert queries() == (tokens, hover, definition)
     finally:
         session.close()

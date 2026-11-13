@@ -153,6 +153,80 @@ void testPreambleGlobalOwnerParity() {
   }
 }
 
+void testDeferredPreambleBuild() {
+  using namespace lang;
+  const auto root =
+      std::filesystem::current_path() / "deferred-preamble-fixture";
+  const auto api = root / "api.gti", entry = root / "main.gti";
+  const std::string valid = "int main() { return library_value(); }";
+  const std::string broken = "int main() { return library_value() + gap; }";
+  const std::unordered_map<std::string, std::string> sources{
+      {api.string(), "export module api; "
+                     "export int library_value() { return 42; }"}};
+  FrontendWorkMetrics metrics;
+  FrontendOptions options;
+  options.stopAfter = FrontendPhase::Semantics;
+  options.suggestIncludes = false;
+  options.requireEntryPoint = true;
+  options.trustedBodies = TrustedBodyAnalysis::Reachable;
+  options.cache = std::make_shared<FrontendCache>();
+  options.preambleCache = std::make_shared<SemanticPreambleCache>();
+  options.deferPreambleBuild = true;
+  options.workMetrics = &metrics;
+  const auto analyze = [&](const std::string &text) {
+    metrics.clear();
+    return Frontend(options).analyze(entry, text, {api}, sources);
+  };
+  const auto codes = [](const FrontendResult &result) {
+    std::vector<std::string> found;
+    for (const auto &diagnostic : result.diagnostics)
+      found.push_back(diagnostic.code);
+    return found;
+  };
+
+  const auto bounded = analyze(valid);
+  expect(!bounded.cancelled && bounded.semanticValid &&
+             bounded.diagnostics.empty() &&
+             bounded.deferredPreambleBuild != nullptr &&
+             options.preambleCache->stats().stores == 0 &&
+             metrics.semanticPreambleDeferrals == 1 &&
+             metrics.semanticPreambleBuilds == 0 &&
+             metrics.semanticPreambleAdoptions == 0,
+         "a cold prefix is deferred: the analysis neither builds nor adopts");
+  const auto boundedBroken = analyze(broken);
+  expect(!boundedBroken.semanticValid && !codes(boundedBroken).empty() &&
+             boundedBroken.deferredPreambleBuild != nullptr,
+         "every analysis without a cached prefix defers its build");
+
+  std::atomic<bool> stop{true};
+  expect(boundedBroken.deferredPreambleBuild->run(&stop) == nullptr &&
+             boundedBroken.deferredPreambleBuild->cancelled() &&
+             options.preambleCache->stats().stores == 0,
+         "a cancelled deferred build stores nothing");
+
+  FrontendWorkMetrics buildMetrics;
+  const auto built = bounded.deferredPreambleBuild->run(nullptr, &buildMetrics);
+  expect(built != nullptr && !bounded.deferredPreambleBuild->cancelled() &&
+             options.preambleCache->stats().stores == 1 &&
+             buildMetrics.semanticPreambleBuilds == 1,
+         "running a deferred build stores the prefix for later analyses");
+  expect(bounded.deferredPreambleBuild->run() == built &&
+             options.preambleCache->stats().stores == 1,
+         "a deferred build whose prefix is cached reuses it");
+
+  const auto resumed = analyze(valid);
+  expect(!resumed.cancelled && resumed.semanticValid &&
+             resumed.diagnostics.empty() &&
+             resumed.deferredPreambleBuild == nullptr &&
+             metrics.semanticPreambleDeferrals == 0 &&
+             metrics.semanticPreambleAdoptions == 1,
+         "an analysis after the deferred build adopts its prefix");
+  const auto resumedBroken = analyze(broken);
+  expect(metrics.semanticPreambleAdoptions == 1 &&
+             codes(resumedBroken) == codes(boundedBroken),
+         "bounded and adopting analyses report the same diagnostics");
+}
+
 void testCancelledPreambleDoesNotPublish() {
   using namespace lang;
   const auto root =
@@ -222,6 +296,7 @@ void testCancelledPreambleDoesNotPublish() {
 
 int main() {
   testCancelledPreambleDoesNotPublish();
+  testDeferredPreambleBuild();
   testPreambleGlobalDeclarationParity();
   testPreambleGlobalOwnerParity();
   const auto stdlib =
