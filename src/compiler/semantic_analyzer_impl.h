@@ -1308,20 +1308,16 @@ private:
     LocalTextEscapeKind kind = LocalTextEscapeKind::Storage;
     std::string destination;
   };
-  struct LoanFlowState {
-    bool finalized = false;
+  // Body-local flow facts that are not loans: they gate return-path and
+  // captured-text diagnostics and outlive the semantic loan flow. Every site
+  // that saves, resets or restores `loanFlow` does the same to `bodyFlow`.
+  struct BodyFlowState {
     // Local views given text a lambda capture provided, local views each
     // copies into, and escapes of such text or of local views that held
     // ownerless text when checked (`finalizeCapturedText`).
     std::unordered_set<SymbolId> capturedTextLocals;
     std::vector<std::pair<SymbolId, SymbolId>> localTextFlows;
     std::vector<LocalTextEscape> localTextEscapes;
-    // Closures over a dynamic view, and local views given a call result
-    // returning such a capture's text, with the views' loans each carries:
-    // a use of the carrier keeps those owners borrowed, as a copy of the view
-    // would (L-OWN-02).
-    std::unordered_map<SymbolId, std::vector<SemanticLoanId>>
-        capturedTextCarriers;
     // A symbolic constexpr branch has unknown control/ownership effects.
     // Name/type checking continues, but this body's flow is not a proof until
     // concrete instance analysis selects every branch and reruns the checks.
@@ -1332,6 +1328,15 @@ private:
     // The complete result sets of synthetic early returns that have that
     // evidence, in addition to the body's explicit ReturnStmt facts.
     std::vector<SemanticBorrowDependencySet> implicitResultReturns;
+  };
+  struct LoanFlowState {
+    bool finalized = false;
+    // Closures over a dynamic view, and local views given a call result
+    // returning such a capture's text, with the views' loans each carries:
+    // a use of the carrier keeps those owners borrowed, as a copy of the view
+    // would (L-OWN-02).
+    std::unordered_map<SymbolId, std::vector<SemanticLoanId>>
+        capturedTextCarriers;
     std::size_t rawConditionalExpressionDepth = 0;
     std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
     std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
@@ -1500,6 +1505,9 @@ private:
     // every other symbol. See symbolVisibleNow.
     std::size_t declarationOrder = 0;
     SemanticLoanId retainedLoan = 0;
+    // This binding holds a borrowed dependency (a reference's referent or a
+    // borrowed-state value's owner), whatever loan records that dependency.
+    bool retainsDependency = false;
     std::vector<SemanticLoanId> storageLoans;
     // Conditional dependency facts follow value flow. Existing valueState and
     // loan flow remain the authority for availability and liveness.
@@ -3420,6 +3428,11 @@ private:
                          SymbolId carrierSymbol, bool transfer);
 
   void registerStorageLoan(SymbolId owner, bool receiver, SemanticLoanId loan);
+
+  // A retained borrow of foreign storage has no GTI owner lifetime. Reports
+  // GTI-S2054 at the borrow's origin and returns false; needs no loan record.
+  [[nodiscard]] bool validateRetainedBorrowOwner(const SemanticLoanPlace &place,
+                                                 const Expr *origin);
 
   SemanticLoanId createRetainedLoan(
       Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
@@ -7562,9 +7575,10 @@ private:
     };
     std::vector<LexicalFrame> lexicalFrames;
     std::size_t lexicalFrameVersion = 0;
-    // Declaration-level loan flow between leaves of the walk; a paused
-    // leaf's own loan flow lives in its BodyLocalState.
+    // Declaration-level loan and body flow between leaves of the walk; a
+    // paused leaf's own flow lives in its BodyLocalState.
     LoanFlowState lexicalLoanFlow;
+    BodyFlowState lexicalBodyFlow;
     // Diagnostics emitted while a demand advanced the walk past the leaf
     // being analysed, one entry per open leaf. They are appended after that
     // leaf's own diagnostics so the result reads in source order.
@@ -7589,6 +7603,7 @@ private:
     bool resolvingGenericTypeDefault = false;
     bool deferringTypeAliasConstraints = false;
     LoanFlowState loanFlow;
+    BodyFlowState bodyFlow;
     bool instanceClassContextActive = false;
     bool instanceAnalysisActive = false;
     const SemanticModel *instanceBaseModel = nullptr;
@@ -7854,6 +7869,7 @@ private:
       requestSession.lexicalFrames;
   std::size_t &lexicalFrameVersion = requestSession.lexicalFrameVersion;
   LoanFlowState &lexicalLoanFlow = requestSession.lexicalLoanFlow;
+  BodyFlowState &lexicalBodyFlow = requestSession.lexicalBodyFlow;
   std::vector<std::vector<Diagnostic>> &heldDiagnostics =
       requestSession.heldDiagnostics;
   std::unordered_set<const FunctionDecl *> &lexicallyReachableFunctions =
@@ -7962,6 +7978,7 @@ private:
     bool currentStaticMemberFunction = false;
     bool allowPackTypeReference = false;
     LoanFlowState loanFlow;
+    BodyFlowState bodyFlow;
     std::vector<ProgramFullExpressionState> fullExpressionStates;
     std::vector<ValueControlFlowContext> valueControlFlow;
     decltype(RequestSessionState::contextualInitializerType)
@@ -8042,6 +8059,7 @@ private:
   bool &deferringTypeAliasConstraints =
       requestSession.deferringTypeAliasConstraints;
   LoanFlowState &loanFlow = requestSession.loanFlow;
+  BodyFlowState &bodyFlow = requestSession.bodyFlow;
   std::vector<ValueControlFlowContext> &valueControlFlow =
       requestSession.valueFlow.controlFlow;
   bool &instanceClassContextActive = requestSession.instanceClassContextActive;

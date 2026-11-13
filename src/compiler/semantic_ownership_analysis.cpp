@@ -3274,7 +3274,7 @@ auto SemanticVisitor::Impl::capturedTextSymbol(const Symbol &symbol) const
     return symbol.type.kind == SemanticType::StringView ||
            symbol.type.kind == SemanticType::CString;
   const auto local = localTextView(symbol);
-  return local && loanFlow.capturedTextLocals.contains(*local);
+  return local && bodyFlow.capturedTextLocals.contains(*local);
 }
 
 auto SemanticVisitor::Impl::textValueSources(const Expr *expression) const
@@ -3345,10 +3345,10 @@ auto SemanticVisitor::Impl::noteLocalTextEscape(const ExprPtr &value,
   // if it is ever given such text, which only the complete body decides.
   const auto sources = textValueSources(value.get());
   if (sources.captured)
-    loanFlow.localTextEscapes.push_back(
+    bodyFlow.localTextEscapes.push_back(
         {.value = value.get(), .kind = kind, .destination = destination});
   for (const auto local : sources.locals)
-    loanFlow.localTextEscapes.push_back({.local = local,
+    bodyFlow.localTextEscapes.push_back({.local = local,
                                          .value = value.get(),
                                          .kind = kind,
                                          .destination = destination});
@@ -3360,13 +3360,13 @@ auto SemanticVisitor::Impl::noteLocalTextFlow(const ExprPtr &value,
     return;
   const auto sources = textValueSources(value.get());
   if (sources.captured)
-    loanFlow.capturedTextLocals.insert(target);
+    bodyFlow.capturedTextLocals.insert(target);
   for (const auto local : sources.locals)
-    loanFlow.localTextFlows.emplace_back(local, target);
+    bodyFlow.localTextFlows.emplace_back(local, target);
 }
 
 auto SemanticVisitor::Impl::finalizeCapturedText() -> bool {
-  auto &state = loanFlow;
+  auto &state = bodyFlow;
   // A local view given a capture's text anywhere holds it everywhere, and
   // so does each local view it is copied into.
   for (bool grew = !state.capturedTextLocals.empty(); grew;) {
@@ -4059,11 +4059,11 @@ auto SemanticVisitor::Impl::capturedTextValue(const Expr &expression) const
     -> bool {
   // An escape decided once its body was complete, or one checked now.
   return std::any_of(
-             loanFlow.localTextEscapes.begin(), loanFlow.localTextEscapes.end(),
+             bodyFlow.localTextEscapes.begin(), bodyFlow.localTextEscapes.end(),
              [&](const LocalTextEscape &escape) {
                return escape.value == &expression &&
                       (escape.local == 0 ||
-                       loanFlow.capturedTextLocals.contains(escape.local));
+                       bodyFlow.capturedTextLocals.contains(escape.local));
              }) ||
          textValueSources(&expression).captured;
 }
@@ -10770,6 +10770,7 @@ auto SemanticVisitor::Impl::attachLoanCarrier(SemanticLoanId loan,
   flow.carriers.insert(carrierSymbol);
   loanFlow.carrierLoans.insert_or_assign(carrierSymbol, loan);
   carrier.retainedLoan = loan;
+  carrier.retainsDependency = true;
   semanticModel.recordLoanCarrier(loan, carrierSymbol);
 }
 
@@ -10792,21 +10793,27 @@ auto SemanticVisitor::Impl::registerStorageLoan(SymbolId owner, bool receiver,
   }
 }
 
+auto SemanticVisitor::Impl::validateRetainedBorrowOwner(
+    const SemanticLoanPlace &place, const Expr *origin) -> bool {
+  if (semanticModel.findForeignStorage(place.root) == nullptr ||
+      origin == nullptr)
+    return true;
+  report(expressionToken(*origin),
+         "Foreign storage has no GTI owner lifetime for a checked reference; "
+         "use "
+         "an explicit raw-to-checked operation with a valid owner witness.",
+         "GTI-S2054");
+  return false;
+}
+
 auto SemanticVisitor::Impl::createRetainedLoan(
     Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
     const Expr *origin, SemanticLoanPlace place, SymbolId owner,
     bool receiverOrigin, AccessMode access, bool protectsStorage,
     SemanticLoanId parent, bool entry, std::vector<SymbolId> designatedFields,
     std::vector<BorrowDependencyCondition> conditions) -> SemanticLoanId {
-  if (semanticModel.findForeignStorage(place.root) != nullptr &&
-      origin != nullptr) {
-    report(expressionToken(*origin),
-           "Foreign storage has no GTI owner lifetime for a checked reference; "
-           "use "
-           "an explicit raw-to-checked operation with a valid owner witness.",
-           "GTI-S2054");
+  if (!validateRetainedBorrowOwner(place, origin))
     return 0;
-  }
   const SemanticLoanId id = nextSemanticLoanId++;
   const bool lifecycleBound = lifecycleBoundBorrowCarrierFor(carrier.type);
   semanticModel.recordLoan({.id = id,
@@ -10833,6 +10840,7 @@ auto SemanticVisitor::Impl::createRetainedLoan(
                          .lifecycleBound = lifecycleBound});
   loanFlow.carrierLoans.insert_or_assign(carrierSymbol, id);
   carrier.retainedLoan = id;
+  carrier.retainsDependency = true;
   if (protectsStorage) {
     registerStorageLoan(owner, receiverOrigin, id);
   }
@@ -11987,6 +11995,7 @@ auto SemanticVisitor::Impl::recordRetainedBorrow(const VariableDecl &binding,
             }
           }
           sourceCarrier->retainedLoan = 0;
+          sourceCarrier->retainsDependency = false;
         }
       }
       attachLoanCarrier(source->loan, *carrier, carrierSymbol, true);
@@ -13054,10 +13063,9 @@ auto SemanticVisitor::Impl::reportRawLoanConflict(
 }
 
 auto SemanticVisitor::Impl::finalizeLoanFlow() -> void {
-  (void)finalizeCapturedText();
   recordProgramScopeBorrowCleanup();
   loanFlow.finalized = true;
-  if (loanFlow.deferredGenericFlow) {
+  if (bodyFlow.deferredGenericFlow) {
     // Unselected arms can add uses and conflicts. Publishing endpoints from
     // this incomplete primary would assert liveness that was never proved.
     return;
@@ -13296,6 +13304,7 @@ auto SemanticVisitor::Impl::removeLoanCarrier(Symbol &carrier) -> void {
   const SymbolId carrierId = toolingSymbolFor(carrier);
   loanFlow.carrierLoans.erase(carrierId);
   carrier.retainedLoan = 0;
+  carrier.retainsDependency = false;
   const auto found = loanFlow.records.find(loan);
   if (found == loanFlow.records.end()) {
     return;

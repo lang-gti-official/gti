@@ -1,0 +1,1 @@
+The semantic analyzer keeps body flow facts that are not loans (deferred generic flow, implicit result returns, captured text) in a `BodyFlowState` apart from the semantic loan flow, and classifies retained text bindings from a binding flag rather than a loan identity.

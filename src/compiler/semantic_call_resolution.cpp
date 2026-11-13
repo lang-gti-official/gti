@@ -1116,7 +1116,7 @@ auto SemanticVisitor::Impl::analyzeFixedPackForwardingCall(
   if (!arguments) {
     // A declaration-wide pack has no arity yet: each concrete instance selects
     // its fixed target from its exact lanes. Publish no provisional target.
-    loanFlow.deferredGenericFlow = true;
+    bodyFlow.deferredGenericFlow = true;
     requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
     std::optional<SemanticType> common;
     for (const CallableCandidate &candidate : overloadSet.overloads) {

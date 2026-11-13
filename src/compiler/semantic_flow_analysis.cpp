@@ -3109,6 +3109,7 @@ auto SemanticVisitor::Impl::analyzeStatementsInRegion(
   bool hasUnreachableTail = false;
   ScopeStack reachableScopes;
   LoanFlowState reachableLoanFlow;
+  BodyFlowState reachableBodyFlow;
   std::vector<ValueControlFlowContext> reachableValueControlFlow;
   SemanticType reachableType = currentType;
   const bool measureStatements = measureTopLevelStatements;
@@ -3140,6 +3141,7 @@ auto SemanticVisitor::Impl::analyzeStatementsInRegion(
         }
         reachableScopes = scopes;
         reachableLoanFlow = loanFlow;
+        reachableBodyFlow = bodyFlow;
         reachableValueControlFlow = valueControlFlow;
         reachableType = currentType;
         hasUnreachableTail = true;
@@ -3165,6 +3167,7 @@ auto SemanticVisitor::Impl::analyzeStatementsInRegion(
   if (hasUnreachableTail) {
     scopes = std::move(reachableScopes);
     loanFlow = std::move(reachableLoanFlow);
+    bodyFlow = std::move(reachableBodyFlow);
     valueControlFlow = std::move(reachableValueControlFlow);
     currentType = std::move(reachableType);
   }
@@ -3357,7 +3360,7 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
                    (symbol->ownerClass == 0 || symbol->staticMember ||
                     receiverAllowsMutation(currentReceiverMutability)));
     if (borrowedTextType(type) && symbol != nullptr &&
-        (symbol->retainedLoan != 0 ||
+        (symbol->retainsDependency ||
          (symbol->ownerClass != 0 && !symbol->staticMember &&
           symbol->type.kind == SemanticType::Reference))) {
       return ownerDependentTextInfo(type, ValueCategory::Place,
@@ -3380,7 +3383,7 @@ auto SemanticVisitor::Impl::classifyExpression(const Expr &expr,
     // A local binding that retains a dependent text value (L-OWN-02). A
     // reference binding's loan is its referent's, not a text dependency.
     if (textDependentType(type) && symbol != nullptr && symbol->type == type &&
-        symbol->retainedLoan != 0 && symbol->variableDeclaration != nullptr) {
+        symbol->retainsDependency && symbol->variableDeclaration != nullptr) {
       const auto *binding =
           semanticModel.findBinding(*symbol->variableDeclaration);
       if (binding != nullptr && binding->traits.containsBorrowedState)
@@ -4495,11 +4498,14 @@ auto SemanticVisitor::Impl::analyze(const Expr &expr,
     Impl &owner;
     ValueFlowState values;
     LoanFlowState loans;
+    BodyFlowState body;
     explicit RestoreDeferredArgumentFlow(Impl &owner)
-        : owner(owner), values(owner.valueFlow), loans(owner.loanFlow) {}
+        : owner(owner), values(owner.valueFlow), loans(owner.loanFlow),
+          body(owner.bodyFlow) {}
     ~RestoreDeferredArgumentFlow() {
       owner.valueFlow = std::move(values);
       owner.loanFlow = std::move(loans);
+      owner.bodyFlow = std::move(body);
     }
   };
   std::optional<RestoreDeferredArgumentFlow> argumentFlow;
@@ -10005,7 +10011,7 @@ auto SemanticVisitor::Impl::reinitializePlace(const SemanticPlace &place)
 auto SemanticVisitor::Impl::reportUnavailablePlace(
     const Token &use, const ProjectedValueState &state,
     const SemanticPlace *place) -> void {
-  if (loanFlow.deferredGenericFlow) {
+  if (bodyFlow.deferredGenericFlow) {
     return;
   }
   std::string name = place != nullptr && place->receiver ? "this"
@@ -10069,7 +10075,7 @@ auto SemanticVisitor::Impl::analyzeProjectionBase(const ExprPtr &expression)
 auto SemanticVisitor::Impl::requireInitializedReceiver(const Token &location)
     -> void {
   if (currentReceiverMutability == ReceiverMutability::Consuming ||
-      loanFlow.deferredGenericFlow) {
+      bodyFlow.deferredGenericFlow) {
     return;
   }
   const Symbol *receiver = receiverStateSymbol();
@@ -10105,7 +10111,7 @@ auto SemanticVisitor::Impl::packRequiresMove(const SemanticType &type) const
 auto SemanticVisitor::Impl::reportUnavailableValue(const Token &use,
                                                    const Symbol &symbol)
     -> void {
-  if (loanFlow.deferredGenericFlow) {
+  if (bodyFlow.deferredGenericFlow) {
     return;
   }
   report(use,
@@ -10214,10 +10220,14 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         for (const SemanticLoanId loan : rightSymbol->second.storageLoans) {
           appendUniqueLoan(target->second.storageLoans, loan);
         }
-        target->second.retainedLoan =
-            leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan
-                ? leftSymbol->second.retainedLoan
-                : baseSymbol.retainedLoan;
+        const bool sameRetainedLoan =
+            leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan;
+        target->second.retainedLoan = sameRetainedLoan
+                                          ? leftSymbol->second.retainedLoan
+                                          : baseSymbol.retainedLoan;
+        target->second.retainsDependency =
+            sameRetainedLoan ? leftSymbol->second.retainsDependency
+                             : baseSymbol.retainsDependency;
         // Complete transport facts describe values reaching this join. A
         // terminating arm is absent, not an unknown supplier to join with the
         // continuing arm. Keep the conservative loan union above separate.

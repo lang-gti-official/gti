@@ -375,9 +375,9 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
                                                           residualInput);
     }
   if (residualReturn && residualReturn->dependencies.empty())
-    loanFlow.implicitResultReturns.push_back(std::move(*residualReturn));
+    bodyFlow.implicitResultReturns.push_back(std::move(*residualReturn));
   else
-    loanFlow.unknownImplicitResultReturn = true;
+    bodyFlow.unknownImplicitResultReturn = true;
   if (outputDependencies)
     semanticModel.recordBorrowDependencySet(expr, *outputDependencies);
   semanticModel.recordTryablePropagation(
