@@ -103,6 +103,14 @@ def main():
             fixed = designated.replace("return read({.x = 1});",
                                        "Point point = {.x = 1}; return read(point);")
             assert change(fixed, 10) == []
+
+            # A recovered program stops before MIR: a hosted main taking
+            # argv once reported a MIR internal error beside the parse error.
+            hosted = ("import std.string;\nimport std.vector;\n"
+                      "int main(int argc, std::vector<std::string> argv) { return 0; }\n")
+            errors = change(hosted.replace("return 0;", "return 0"), 11)
+            assert [error["code"] for error in errors] == ["GTI-P0001"], errors
+            assert change(hosted, 12) == []
         finally:
             session.close()
 
