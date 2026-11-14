@@ -19631,6 +19631,22 @@ MirBody MirLowerer::lowerBody(
       std::optional<SourceSpan> loanOrigin;
       std::optional<SourceSpan> laterUse;
       bool lifecycleBound = false;
+      std::string borrowedBindingName;
+      const MirLoanId witness = error.borrow.conflictingLoan != 0
+                                    ? error.borrow.conflictingLoan
+                                    : error.borrow.loan;
+      if (const MirLoan *loan = result.findLoan(witness))
+        if (const MirPlace *place = result.findPlace(loan->source);
+            place && place->root == MirPlaceRootKind::Binding &&
+            place->projections.empty())
+          for (const HirBinding &binding : body.bindings)
+            if (binding.id == place->binding) {
+              if (binding.variable)
+                borrowedBindingName = binding.variable->name().lexeme;
+              else if (binding.parameter)
+                borrowedBindingName = binding.parameter->name.lexeme;
+              break;
+            }
       if ((error.borrow.kind == MirBorrowRejectionKind::Conflict ||
            error.borrow.kind == MirBorrowRejectionKind::ParentUse) &&
           rejectedAt)
@@ -19652,7 +19668,8 @@ MirBody MirLowerer::lowerBody(
            .lifecycleBound = lifecycleBound,
            .temporaryDestroyed =
                temporaryDestroyed &&
-               error.borrow.kind == MirBorrowRejectionKind::Conflict});
+               error.borrow.kind == MirBorrowRejectionKind::Conflict,
+           .borrowedBindingName = std::move(borrowedBindingName)});
     }
     if (!lowerer->rejection() && !lowerer->userRejection() &&
         lowerer->proof().valid())

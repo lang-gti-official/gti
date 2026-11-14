@@ -134,7 +134,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if (explained != nullptr) {
       if (explained->loanOrigin)
         diagnostic.related.push_back(
-            {*explained->loanOrigin, "Retained borrow originates here."});
+            {*explained->loanOrigin,
+             "Retained borrow originates here." +
+                 (explained->borrowedBindingName.empty()
+                      ? std::string{}
+                      : " This borrows '" + explained->borrowedBindingName +
+                            "'.")});
       if (explained->lifecycleBound)
         diagnostic.hints.emplace_back(
             "This borrow protects a resource until its carrier is destroyed, "

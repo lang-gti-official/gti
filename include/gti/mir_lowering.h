@@ -26,6 +26,9 @@ struct MirLoweringError {
   // Conflict: the rejected write is the end-of-life drop of a temporary that
   // the live loan borrows.
   bool temporaryDestroyed = false;
+  // Source spelling for a concrete whole binding borrowed by the rejected
+  // loan. Empty for projections and unnamed/indirect storage.
+  std::string borrowedBindingName;
 };
 
 struct MirLoweringResult {

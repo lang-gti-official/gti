@@ -674,6 +674,8 @@ int main() {
   expect(hasDiagnosticCode(borrowResult.diagnostics, "GTI-S2017") &&
              hasRelatedDiagnostic(borrowResult.diagnostics,
                                   "borrow originates here") &&
+             hasRelatedDiagnostic(borrowResult.diagnostics,
+                                  "This borrows 'owner'.") &&
              hasRelatedDiagnostic(borrowResult.diagnostics, "used later") &&
              hasDiagnosticHint(borrowResult.diagnostics, "Finish using"),
          "retained-borrow conflicts identify their origin and later use");

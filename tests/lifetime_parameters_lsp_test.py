@@ -216,6 +216,8 @@ def main():
                 "  } return 0;\n}\n")
             errors = change(loop, 15)
             error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert any("This borrows 'value'." in item["message"]
+                       for item in error["relatedInformation"]), error
             note = next(item for item in error["relatedInformation"]
                         if "later loop iteration" in item["message"])
             assert note["location"] == {"uri": uri, "range": source_range(
