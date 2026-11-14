@@ -114,9 +114,169 @@ int main() { Unique u{1}; Plain p{2}; return u.value + p.value - 3; }
   expect(unique != 0 && plain != 0, "#342 fixture has both class shapes");
 }
 
+// Issue #339: a projected place's recorded type is its root's type through
+// every projection, for this-, binding-, temporary- and loan-rooted places.
+void checkPlaceProjectionTypes() {
+  const auto frontend = analyzeWithStandardLibrary("nested-field-permissions.gti",
+                                                   R"(
+import std.utility;
+struct Exclusive {
+  mut int& value;
+  Exclusive(mut int& source) : value(source) {}
+};
+struct Combined {
+  int& input;
+  mut Exclusive output;
+  Combined(int& source, Exclusive target)
+      : input(source), output(std::move(target)) {}
+  int run() mut { output.value = input; return output.value; }
+};
+int main() {
+  int a = 42; mut int b = 0;
+  Exclusive item{b};
+  mut Combined group{a, std::move(item)};
+  return group.run() - 42;
+}
+)");
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "#339 baseline verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t dereferences = 0, fields = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (std::size_t index = 0; index < function.body.places.size(); ++index) {
+      const auto &place = function.body.places[index];
+      if (place.root != lang::MirPlaceRootKind::This ||
+          place.projections.size() != 3 ||
+          place.projections[0].kind != lang::MirProjectionKind::Field ||
+          place.projections[1].kind != lang::MirProjectionKind::Field ||
+          place.projections[2].kind != lang::MirProjectionKind::Dereference)
+        continue;
+      const auto forged = [&](auto mutate) {
+        auto malformed = frontend.mir;
+        auto &body = writable(*malformed.findFunctionInstance(function.id)).body;
+        mutate(writable(body.places[index]));
+        return lang::verifyMirProgram(malformed).valid();
+      };
+      ++dereferences;
+      expect(!forged([](lang::MirPlace &forgery) {
+               forgery.projections.pop_back();
+             }),
+             "#339 a place that drops its trailing Dereference is rejected");
+      ++fields;
+      expect(!forged([](lang::MirPlace &forgery) {
+               forgery.projections[1].field = 999999;
+             }),
+             "#339 a field its receiver does not declare is rejected");
+    }
+  expect(dereferences != 0 && fields != 0,
+         "#339 fixture has this.<field>.<field>.* places");
+}
+
+// Issue #340: a stage-publishing field initializer cannot be completed by an
+// untagged Initialize, including lexical fields whose stage is optional.
+void checkConstructorFieldStages() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/issue_144_class_array_field.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "#340 baseline verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t stages = 0;
+  for (const auto &constructor : frontend.mir.constructorInstances())
+    for (const auto &block : constructor.body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.kind != lang::MirInstructionKind::Initialize ||
+            instruction.constructorInitializer == 0 ||
+            instruction.info.type.kind != lang::SemanticType::Array)
+          continue;
+        ++stages;
+        auto malformed = frontend.mir;
+        const auto *changed =
+            malformed.findConstructorInstance(constructor.id);
+        for (const auto &candidateBlock : changed->body.blocks)
+          for (const auto &candidate : candidateBlock.instructions)
+            if (candidate.id == instruction.id)
+              writable(candidate).constructorInitializer = 0;
+        expect(!lang::verifyMirProgram(malformed).valid(),
+               "#340 an untagged field array Initialize is rejected (" +
+                   std::to_string(instruction.id) + ")");
+      }
+  expect(stages == 6, "#340 fixture stages all six class-array fields");
+}
+
+// Issue #341: a reference selected from a local payload carrier sources the
+// carrier's field-less Stored loan place, which is provenance only. Reading
+// the selected binding through that place instead must be rejected.
+void checkProvenanceOnlyCarrierOwners() {
+  const auto path = std::filesystem::path(__FILE__).parent_path() /
+                    "fixtures/borrowed_enum_local_selection.gti";
+  std::ifstream input(path);
+  const std::string source{std::istreambuf_iterator<char>(input), {}};
+  const auto frontend = analyzeWithStandardLibrary(path.string(), source);
+  expect(frontend.canGenerateCode() &&
+             lang::verifyMirProgram(frontend.mir).valid(),
+         "#341 baseline verifies");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t forged = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &place : function.body.places) {
+      const auto *stored = place.root == lang::MirPlaceRootKind::Loan
+                               ? function.body.findLoan(place.loan)
+                               : nullptr;
+      const auto selection =
+          std::find_if(function.body.loans.begin(), function.body.loans.end(),
+                       [&](const lang::MirLoan &loan) {
+                         return loan.source == place.id &&
+                                loan.referenceSelection &&
+                                loan.carriers.size() == 1;
+                       });
+      if (stored == nullptr || stored->kind != lang::MirLoanKind::Stored ||
+          stored->storedField != 0 || selection == function.body.loans.end())
+        continue;
+      auto malformed = frontend.mir;
+      auto &body = writable(*malformed.findFunctionInstance(function.id)).body;
+      bool changed = false;
+      for (auto &block : body.blocks)
+        for (auto &instruction : block.instructions) {
+          if (changed || instruction.kind != lang::MirInstructionKind::Load ||
+              instruction.operands.size() != 1)
+            continue;
+          const auto *operand =
+              function.body.findPlace(instruction.operands.front().place);
+          if (operand != nullptr &&
+              operand->root == lang::MirPlaceRootKind::Binding &&
+              operand->binding == selection->carriers.front() &&
+              operand->projections.size() == 1 &&
+              operand->projections.front().kind ==
+                  lang::MirProjectionKind::Dereference &&
+              operand->type == place.type) {
+            instruction.operands.front().place = place.id;
+            changed = true;
+          }
+        }
+      if (!changed)
+        continue;
+      ++forged;
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "#341 reading through a provenance-only carrier owner place is "
+             "rejected");
+    }
+  expect(forged >= 10, "#341 fixture exercises the carrier selections");
+}
+
 } // namespace
 
 int main() {
+  checkProvenanceOnlyCarrierOwners();
+  checkConstructorFieldStages();
+  checkPlaceProjectionTypes();
   checkIntegerLiteralRange();
   checkSpecialMemberPolicy();
   if (failures != 0)

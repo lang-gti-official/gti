@@ -982,10 +982,9 @@ void checkLocalCarrierSelections() {
       body->loans[selection->id - 1].referenceSelection.reset();
       expect(!lang::verifyMirProgram(malformed).valid(),
              "a carrier selection cannot lose its exact payload extract");
-      // Each owner's referent is read through the selected binding. MIR
-      // verification does not yet reject redirecting that read to the
-      // provenance-only owner place; cpp_mir_borrow_origin keeps the C++
-      // admission check for that mutation.
+      // Each owner's referent is read through the selected binding.
+      // Redirecting that read to the provenance-only owner place is rejected
+      // by MIR verification (mir_verifier_hardening, issue #341).
       evaluated +=
           std::any_of(function.body.blocks.begin(), function.body.blocks.end(),
                       [&](const lang::MirBlock &block) {
