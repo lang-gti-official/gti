@@ -5,7 +5,7 @@ The fixture traces a move-only payload in every mode: `?` and the consuming
 `value() &&` move the value out exactly once, `reset`, `emplace` and move
 assignment end and start one lifetime each, a failed `?` destroys only the
 values already taken, and an empty access panics after cleaning up the
-enclosing scope. --stable exercises the same source through `import std;`
+enclosing scope, at the caller's line. --stable exercises the same source through `import std;`
 with the promoted class and example 166; the default retains example 162.
 """
 
@@ -37,6 +37,8 @@ def main():
     label = "source optional" if args.stable else "experimental optional"
     example = pathlib.Path(__file__).parent.parent / "examples" / (
         "166-source-optional.gti" if args.stable else "162-experimental-optional.gti")
+    misuse_line = source.read_text().splitlines().index(
+        "  Tracked never = std::move(empty).value();") + 1
     modes = native_modes()
     with tempfile.TemporaryDirectory(prefix="gti-experimental-optional-") as directory:
         if args.stable:
@@ -64,6 +66,10 @@ def main():
                             "empty_owner_access" in result.stderr, (name, result.stderr)
                     else:
                         assert "empty optional" in result.stderr, (name, result.stderr)
+                        # value() is [[track_caller]]: the panic names the
+                        # misusing call in the fixture, not the library line.
+                        assert f"{source.name}:{misuse_line}: runtime error" in \
+                            result.stderr, (name, misuse_line, result.stderr)
                 else:
                     assert not result.stderr, (name, phase, result.stderr)
             demo = pathlib.Path(directory) / f"example-{name}"

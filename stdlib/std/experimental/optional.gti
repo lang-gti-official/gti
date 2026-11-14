@@ -63,7 +63,9 @@ public:
     return this.has_value();
   }
 
-  /// Returns a read-only reference to the live value.
+  /// Returns a read-only reference to the live value. Misuse panics at the caller's
+  /// call site.
+  [[track_caller]]
   T& value() {
     switch (this.state) {
     case detail::optional_state<T>::engaged(auto& payload):
@@ -73,7 +75,9 @@ public:
     }
   }
 
-  /// Returns an exclusive reference to the live value.
+  /// Returns an exclusive reference to the live value. Misuse panics at the caller's
+  /// call site.
+  [[track_caller]]
   mut T& value() mut {
     switch (this.state) {
     case detail::optional_state<T>::engaged(mut auto& payload):
@@ -83,7 +87,9 @@ public:
     }
   }
 
-  /// Moves the live value out of a consumed optional.
+  /// Moves the live value out of a consumed optional. Misuse panics at the caller's
+  /// call site.
+  [[track_caller]]
   T value() && {
     switch (std::move(this.state)) {
     case detail::optional_state<T>::engaged(payload):
