@@ -2464,6 +2464,17 @@ class RawBox<T> {
   qualifiedReturnLayout("bool compare(){return left<middle>limits::value();}",
                         "return left < middle > limits::value();");
   qualifiedReturnLayout("Parcel<Item> Factory::", "Factory::");
+  // A declaration after an attribute list keeps its generic return type.
+  qualifiedReturnLayout(
+      "[[discardable]] expected < void, std::filesystem::errc > walk(mut "
+      "Node& node){return;}",
+      "[[discardable]] expected<void, std::filesystem::errc> walk(");
+  qualifiedReturnLayout("[[discardable]] Parcel < Item > Factory::create(){}",
+                        "[[discardable]] Parcel<Item> Factory::create() {");
+  // A subscript closing `]]` is not an attribute list.
+  qualifiedReturnLayout(
+      "bool compare(){return grid[rows[i]]<middle>limits::value();}",
+      "return grid[rows[i]] < middle > limits::value();");
 
   const lang::FormatConfigResult parsedStyle =
       lang::parseFormatConfig("IndentWidth: 4\n"
