@@ -6710,13 +6710,18 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
                        "its owner dependency is local.",
              "GTI-S2045");
     } else if (instanceField) {
-      report(stmt.name(),
-             cString ? "An owner-dependent c_string cannot be stored "
-                       "in a field in the single-owner text-borrow "
-                       "model."
-                     : "A dynamic std::string_view cannot be stored "
-                       "in a field in the single-owner view model.",
-             "GTI-S2045");
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2045", DiagnosticPhase::Semantics, stmt.name(),
+          cString ? "A c_string field cannot be initialized with text that "
+                    "borrows a local owner: stored text must outlive every "
+                    "object that holds it."
+                  : "A std::string_view field cannot be initialized with "
+                    "text that borrows a local owner: stored text must "
+                    "outlive every object that holds it.");
+      diagnostic.hints.emplace_back(
+          "Make the field an owning std::string, or initialize it with "
+          "static text such as a string literal.");
+      diagnostics.emplace_back(std::move(diagnostic));
     }
     BindingInfo updated = *semanticModel.findBinding(stmt);
     updated.traits = initializerInfo->traits;

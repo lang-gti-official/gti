@@ -2820,7 +2820,68 @@ int main() {
          "a function forwarding to that constructor requires ownerless text");
 }
 
+// Issue #379: storing a view into a field names what the view borrows. A
+// temporary owner dies at the end of the statement; a named owner is local.
+// Both suggest an owning std::string field.
+void testStoredViewOwnerDiagnostics() {
+  const std::string declarations = R"gti(
+import std.filesystem;
+struct Metadata {
+  Metadata() {}
+  mut std::string_view name = "";
+};
+)gti";
+  const auto diagnosticWith = [](const lang::FrontendResult &result,
+                                 std::string_view text) {
+    return std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                        [&](const lang::Diagnostic &diagnostic) {
+                          return diagnostic.code == "GTI-S2045" &&
+                                 diagnostic.message.find(text) !=
+                                     std::string::npos;
+                        });
+  };
+  const auto temporary = analyzeText(declarations + R"gti(
+int main() {
+  std::filesystem::path entry = std::filesystem::path("dir/file.txt");
+  mut Metadata data{};
+  data.name = entry.filename().view();
+  return 0;
+}
+)gti");
+  const auto fromTemporary =
+      diagnosticWith(temporary, "borrows a temporary that is destroyed");
+  expect(fromTemporary != temporary.diagnostics.end() &&
+             std::any_of(fromTemporary->related.begin(),
+                         fromTemporary->related.end(),
+                         [](const auto &related) {
+                           return related.message.find(
+                                      "This temporary owns the text") !=
+                                  std::string::npos;
+                         }) &&
+             std::any_of(fromTemporary->hints.begin(),
+                         fromTemporary->hints.end(),
+                         [](const std::string &hint) {
+                           return hint.find("owning std::string") !=
+                                  std::string::npos;
+                         }),
+         "#379 a view of a temporary owner names the temporary");
+  const auto named = analyzeText(declarations + R"gti(
+int main() {
+  std::filesystem::path entry = std::filesystem::path("dir/file.txt");
+  mut Metadata data{};
+  data.name = entry.view();
+  return 0;
+}
+)gti");
+  const auto fromNamed = diagnosticWith(named, "borrows 'entry'");
+  expect(fromNamed != named.diagnostics.end() &&
+             fromNamed->message.find("temporary") == std::string::npos &&
+             fromNamed->message.find("single-owner") == std::string::npos,
+         "#379 a view of a named local owner names that owner");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testStoredViewOwnerDiagnostics", testStoredViewOwnerDiagnostics},
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
     {"testRawMemoryTextReads", testRawMemoryTextReads},
