@@ -55,14 +55,52 @@ int main() {
 }
 
 
+# End-to-end acceptance: ordinary inline storage, generic over its element and
+# capacity. No compiler recognition of this declaration is permitted.
+FIXED_SLOTS = '''struct FixedSlots<T, uint64_t Capacity> {
+  mut T values[Capacity];
+  mut uint64_t used;
+  FixedSlots():values({}),used(0){}
+  bool push(T value) mut {
+    if (this.used == Capacity) { return false; }
+    this.values[this.used] = value;
+    this.used += 1;
+    return true;
+  }
+  T at(uint64_t index) { return this.values[index]; }
+  uint64_t size() { return this.used; }
+};
+'''
+CASES['fixed_slots_owned_control'] = (True, FIXED_SLOTS + '''int main() {
+  mut FixedSlots<int, 2> slots{};
+  if (!slots.push(11) || !slots.push(22) || slots.push(33)) { return 1; }
+  return slots.size() == 2 && slots.at(0) == 11 && slots.at(1) == 22 ? 0 : 2;
+}''')
+CASES['fixed_slots_two_owners'] = (True, FIXED_SLOTS + '''int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut FixedSlots<std::string_view, 2> slots{};
+  if (!slots.push(first.view()) || !slots.push(second.view())) { return 1; }
+  return slots.size() == 2 && slots.at(0) == "first" && slots.at(1) == "second" ? 0 : 2;
+}''')
+CASES['fixed_slots_literal_control'] = (
+    True, CASES['fixed_slots_two_owners'][1].replace('first.view()', '"first"')
+          .replace('second.view()', '"second"'))
+CASES['fixed_array_two_owners'] = (True, '''int main() {
+  std::string first{"first"}; std::string second{"second"};
+  std::string_view views[2] = {first.view(), second.view()};
+  return views[0] == "first" && views[1] == "second" ? 0 : 1;
+}''')
+
+
 # Copy and move preserve both dependencies without changing runtime contents.
 for operation in ('copy', 'move'):
-    _, source = CASES['two_owner_record']
-    initializer = 'labels' if operation == 'copy' else 'std::move(labels)'
-    source = source.replace('  return labels.first',
-                            '  auto transferred = ' + initializer + ';\n  return transferred.first')
-    source = source.replace('&& labels.second', '&& transferred.second')
-    CASES['two_owner_record_' + operation] = (True, source)
+    for spelling in ('auto', 'Labels'):
+        _, source = CASES['two_owner_record']
+        initializer = 'labels' if operation == 'copy' else 'std::move(labels)'
+        source = source.replace('  return labels.first',
+                                '  ' + spelling + ' transferred = ' + initializer + ';\n  return transferred.first')
+        source = source.replace('&& labels.second', '&& transferred.second')
+        CASES['two_owner_record_' + operation + '_' + spelling] = (True, source)
 
 
 # The same aggregate publication must retain every owner through copies.

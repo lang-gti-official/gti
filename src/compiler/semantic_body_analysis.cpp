@@ -16214,6 +16214,42 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
        initializerType.kind == SemanticType::CString) &&
       initializerInfo != nullptr &&
       initializerInfo->traits.containsBorrowedState;
+  const bool ownerDependentValue =
+      !type.reference && !rangeOwnerReference && initializerInfo != nullptr &&
+      isTextDependentValue(*initializerInfo);
+  if (ownerDependentValue) {
+    // Inference must retain the same value-level borrowing facts as an
+    // explicitly typed declaration. It does not grant extraction of a
+    // dependent subobject or a reference alias of that subobject.
+    const Expr *source = declaration.initializer().get();
+    while (source != nullptr) {
+      if (const auto *group = exprAs<Grouping>(source))
+        source = group->expression().get();
+      else if (const auto *call = exprAs<Call>(source);
+               call != nullptr && call->arguments().size() == 1 &&
+               resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+        source = call->arguments().front().get();
+      else
+        break;
+    }
+    const auto *variable = exprAs<Variable>(source);
+    const Symbol *symbol = variable ? resolve(variable->name()) : nullptr;
+    const bool alias = symbol && symbol->type.kind == SemanticType::Reference &&
+                       symbol->variableDeclaration &&
+                       dependentReferenceAliases.contains(symbol->variableDeclaration);
+    consumeTextDependentValue(declaration.initializer());
+    if (exprAs<Get>(source) != nullptr || alias ||
+        (!variable && initializerInfo->category == ValueCategory::Place))
+      report(expressionToken(declaration.initializer()),
+             "This field holds dynamic text from a local owner; a switch on "
+             "the field can observe it, but it cannot yet be copied or moved "
+             "out of its value.", "GTI-S2045");
+    if (!local || declaration.isStatic() || declaration.isThreadLocal())
+      report(declaration.name(),
+             "A value holding dynamic text cannot have global or static "
+             "storage duration because its owner dependency is local.",
+             "GTI-S2045");
+  }
   if (rangeOwnerReference) {
     inferredType = SemanticType::referenceTo(
         initializerType,
@@ -16308,7 +16344,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
         "type provides one.");
   }
   if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
-      (typeTraits(inferredType).containsBorrowedState || ownerDependentText)) {
+      (typeTraits(inferredType).containsBorrowedState || ownerDependentText ||
+       ownerDependentValue)) {
     validateStoredBorrowInitialization(inferredType, declaration.initializer());
   }
 
@@ -16331,7 +16368,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                             diagnostics.size() == declarationDiagnosticStart &&
                                 initializerAssignable);
   BindingInfo info = bindingInfo(inferredType, access);
-  if (ownerDependentText) {
+  if (ownerDependentText || ownerDependentValue) {
     info.traits = initializerInfo->traits;
   }
   info.symbol = symbol;
@@ -16345,8 +16382,9 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
          .symbol = symbol,
          .name = type.name.last().lexeme,
          .type = inferredType,
-         .traits = ownerDependentText ? initializerInfo->traits
-                                      : typeTraits(inferredType),
+         .traits = ownerDependentText || ownerDependentValue
+                       ? initializerInfo->traits
+                       : typeTraits(inferredType),
          .access = access,
          .mutableBinding = declaration.isMutable()});
   }
@@ -16389,7 +16427,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                                  !isDirectOwnerType(initializerType);
   const bool retainedStoredValue =
       !type.reference && !rangeOwnerReference &&
-      (typeTraits(inferredType).containsBorrowedState || ownerDependentText);
+      (typeTraits(inferredType).containsBorrowedState || ownerDependentText ||
+       ownerDependentValue);
   const auto *rangeIteratorCall =
       declaration.isRangeIterator() && declaration.initializer()
           ? exprAs<Call>(declaration.initializer().get())

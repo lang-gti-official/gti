@@ -2823,6 +2823,7 @@ int main() {
 void testMultipleTextOwners() {
   const auto result = analyzeText(R"gti(
 import std.string;
+import std.utility;
 struct Labels<lifetime a, lifetime b> {
   std::string_view<a> first;
   std::string_view<b> second;
@@ -2831,7 +2832,10 @@ struct Labels<lifetime a, lifetime b> {
 int main() {
   std::string first{"first"}; std::string second{"second"};
   Labels labels{first.view(), second.view()};
-  return labels.first == "first" && labels.second == "second" ? 0 : 1;
+  auto copy = labels;
+  auto moved = std::move(labels);
+  return copy.first == "first" && copy.second == "second" &&
+         moved.first == "first" && moved.second == "second" ? 0 : 1;
 }
 )gti");
   if (!result.canGenerateCode())
