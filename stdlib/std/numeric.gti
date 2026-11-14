@@ -61,13 +61,13 @@ export namespace std {
 
   concept accumulates_into<Iterator, T> = std::dereferences_to<Iterator, T>;
 
-  /// Linear interpolation over any vector space: `from` when `t` is zero and
-  /// `to` when `t` is one. Evaluated as `from + (to - from) * t`, so a domain
-  /// type needs only the ordinary member operators the concept names, and a
-  /// built-in numeric type satisfies it for its own scalar. Unlike the C++
-  /// overload this is not restricted to floating point and does not promise a
-  /// monotonic or exactly-`to` endpoint: it performs exactly the three named
-  /// domain operations.
+  /// Linear interpolation over a user-defined vector space: `from` when `t` is
+  /// zero and `to` when `t` is one. Evaluated as `from + (to - from) * t`, so a
+  /// domain type needs only the member operators `std::vector_space` names.
+  /// Built-in numeric types do not satisfy that concept: `float` and `double`
+  /// use the dedicated overloads below, and built-in integers have no `lerp`.
+  /// This overload does not promise a monotonic or exactly-`to` endpoint: it
+  /// performs exactly the three named domain operations.
   T lerp<T, Scalar>(T& from, T& to, Scalar t)
     requires std::vector_space<T, Scalar> {
     T delta = to - from;
@@ -75,7 +75,9 @@ export namespace std {
     return from + scaled;
   }
 
-  /// The additive inverse of a vector-space value.
+  /// The additive inverse of a user-defined `std::negatable` value. Built-in
+  /// numeric types do not satisfy that member-operator concept; negate them
+  /// with unary `-`.
   T negated<T>(T& value) requires std::negatable<T> {
     return -value;
   }
