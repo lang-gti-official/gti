@@ -661,15 +661,18 @@ int main() {
                  std::string::npos,
          "loop-carried conflicts explain the next-iteration use even when "
          "that use precedes the conflicting access in source order");
-  expect(analyze(R"(
+  const auto disjointResult = analyze(R"(
 int run(bool condition) {
   mut int value = 1;
   int& borrowed = value;
   if (condition) { value = 2; return value; }
   return borrowed;
 }
-)")
-             .canGenerateCode(),
+)");
+  if (!disjointResult.canGenerateCode())
+    for (const auto &diagnostic : disjointResult.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(disjointResult.canGenerateCode(),
          "a use in a disjoint branch does not keep a borrow live at an access");
 
   const std::string records = R"(
