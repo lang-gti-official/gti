@@ -4,6 +4,7 @@
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
 #include "mir_loan_liveness.h"
+#include "mir_carrier_flow.h"
 #include "mir_source_debug.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
@@ -747,6 +748,40 @@ public:
 
   [[nodiscard]] std::vector<LoanFacts> mirLoanFacts() const {
     std::vector<LoanFacts> facts;
+    if (output.loans.empty())
+      return facts;
+    const MirCarrierFlow flow = deriveMirCarrierFlow(output);
+    bool precise = flow.complete;
+    std::unordered_map<MirLoanId, std::vector<HirValueId>> useValues;
+    std::unordered_map<MirLoanId, std::vector<HirStatementId>> useStatements;
+    const auto use = [&](const MirCarriedLoans &held, HirValueId value,
+                         HirStatementId statement) {
+      if (!held) {
+        precise = false;
+        return;
+      }
+      for (const MirLoanId id : *held) {
+        if (!output.findLoan(id) || (!value && !statement)) {
+          precise = false;
+          continue;
+        }
+        if (statement)
+          useStatements[id].push_back(statement);
+        else
+          useValues[id].push_back(value);
+      }
+    };
+    for (const auto &block : output.blocks) {
+      for (const auto &instruction : block.instructions)
+        if (const auto found = flow.reads.find(instruction.id);
+            found != flow.reads.end())
+          use(found->second, instruction.hirValue, instruction.hirStatement);
+      if (const auto found = flow.exits.find(block.id); found != flow.exits.end())
+        use(found->second, block.terminator.hirValue, block.terminator.hirStatement);
+    }
+    for (const auto &loan : output.loans)
+      if (!loan.entry && !loan.carriers.empty() && !loan.producedBy)
+        precise = false;
     for (const MirLoan &loan : output.loans) {
       LoanFacts fact{.id = loan.id,
                      .reference = loan.kind != MirLoanKind::Stored,
@@ -756,6 +791,11 @@ public:
                      .entry = loan.entry,
                      .lifecycleBound = loan.lifecycleBound,
                      .access = loan.access};
+      if (precise) {
+        fact.exactUseValues = useValues[loan.id];
+        fact.exactUseStatements = useStatements[loan.id];
+        fact.producedBy = loan.producedBy;
+      }
       for (const auto &dependency : loan.additionalDependencies)
         fact.dependencyParents.push_back(dependency.parent);
       if (const MirPlace *place = output.findPlace(loan.source);

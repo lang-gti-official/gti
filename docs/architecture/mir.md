@@ -3354,6 +3354,28 @@ returns therefore keep the view's owner borrowed, although none of them is a
 recorded carrier. `EndBorrow` has no runtime effect:
 it records the analysis for the verifier and the optimizer.
 
+The RFC 0003 groundwork adds `deriveMirCarrierFlow` in
+`src/compiler/mir_carrier_flow.cpp`. It uses the shared MIR forward-dataflow
+solver to track carried loan groups at program points. Exact direct replacement
+replaces a root's set; projected or aliased stores union into every candidate
+root. Copies retain independent sets, joins union, and loop backedges converge.
+A read through a reference uses the physical storage loan, while an independent
+copied element or scalar result does not retain that physical loan. Failure
+edges retain both possible destination versions and withhold the failed SSA
+result. Known-empty and unknown provenance are distinct; a fact absent on an
+executable predecessor stays unknown at a join. Reads include receivers and
+return operands, and writes through references keep their physical access loans
+alive through the store.
+
+Only a complete query with source-mappable uses supplies occurrence-level uses
+to `deriveLoanEnds`. Unmodelled retaining calls, raw storage, unsupported effects,
+or failed convergence retain conservative liveness. This is staged analysis,
+not admission of dynamic array elements or retaining stores: call store summaries,
+assignment dependency updates, and typed-storage obligations still have to be
+implemented before those source restrictions can be relaxed. The focused
+`mir_carrier_flow` test covers replacement/copies, branch and loop joins,
+simultaneous edge arguments, alias widening, failure paths and unknown facts.
+
 MIR derives a body's entry loans (what the caller lends it) from the
 declared types of its receiver, captures and parameters: which carriers
 receive one, its kind and access, the stored reference paths a by-value

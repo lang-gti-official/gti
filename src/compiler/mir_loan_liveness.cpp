@@ -401,12 +401,27 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   for (const LoanFacts &loan : loans) {
     auto &own = uses[loan.id];
     std::optional<HirStatementId> creation;
+    if (loan.exactUseValues) {
+      own = loan.exactUseStatements;
+      for (const auto value : *loan.exactUseValues)
+        if (const auto statement = tree.statementOfValue(value))
+          own.push_back(*statement);
+        else
+          unconfined.insert(loan.id);
+      creation = tree.statementOfValue(loan.producedBy);
+      if (creation)
+        own.push_back(*creation);
+      else if (!loan.entry)
+        unconfined.insert(loan.id);
+    }
     for (const HirBindingId carrier : loan.carriers) {
-      if (const auto found = readers.find(carrier); found != readers.end())
-        own.insert(own.end(), found->second.begin(), found->second.end());
-      addDerivedReads(carrier, own);
+      if (!loan.exactUseValues) {
+        if (const auto found = readers.find(carrier); found != readers.end())
+          own.insert(own.end(), found->second.begin(), found->second.end());
+        addDerivedReads(carrier, own);
+      }
       if (const auto declared = declaringStatement.find(carrier);
-          declared != declaringStatement.end()) {
+          declared != declaringStatement.end() && !loan.exactUseValues) {
         own.push_back(declared->second);
         if (!creation ||
             tree.orderOf(declared->second) < tree.orderOf(*creation))

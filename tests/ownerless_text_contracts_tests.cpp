@@ -1,4 +1,5 @@
 #include "compiler_test_fixture.h"
+#include "../src/compiler/mir_carrier_flow.h"
 #include "gti/hir.h"
 #include "gti/mir_verifier.h"
 
@@ -2889,7 +2890,34 @@ int main() {
   expect(tested, "two-owner publication is represented by a verified loan group");
 }
 
+void testCarrierFlowOnLoweredProgram() {
+  const auto result = analyzeText(R"gti(
+int main() {
+  mut int owner = 4;
+  int& view = owner;
+  int independent = view;
+  owner = 5;
+  return independent - 4;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(), "a scalar copy releases its input borrow before a write");
+  if (!result.canGenerateCode())
+    return;
+  const auto *main = namedFunction(result, "main");
+  expect(main != nullptr && !main->body.loans.empty(), "the source regression contains a real loan");
+  if (!main)
+    return;
+  const auto flow = lang::deriveMirCarrierFlow(main->body);
+  expect(flow.complete, "ordinary lowered reference/copy/store flow is complete");
+  expect(std::any_of(flow.reads.begin(), flow.reads.end(), [](const auto &item) {
+           return item.second && !item.second->empty();
+         }), "lowered uses are associated with their actual loan groups");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testCarrierFlowOnLoweredProgram", testCarrierFlowOnLoweredProgram},
     {"testMultipleTextOwners", testMultipleTextOwners},
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
