@@ -297,8 +297,11 @@ def main():
             assert "Initialize a new binding" in error["message"], error
             assert error["range"] == source_range(
                 carrier_assignment, carrier_assignment.index("inner);") + 5, 1), error
-            assert change(carrier_assignment.replace(
-                "view = View(inner);", "View inside{inner};"), 25) == []
+            scoped_binding = carrier_assignment.replace(
+                "view = View(inner);", "View inside{inner};").replace(
+                "mut View view", "View view")
+            recovered = change(scoped_binding, 25)
+            assert recovered == [], recovered
             assert change(SOURCE, 26) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
