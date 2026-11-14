@@ -117,8 +117,9 @@ int main() { Unique u{1}; Plain p{2}; return u.value + p.value - 3; }
 // Issue #339: a projected place's recorded type is its root's type through
 // every projection, for this-, binding-, temporary- and loan-rooted places.
 void checkPlaceProjectionTypes() {
-  const auto frontend = analyzeWithStandardLibrary("nested-field-permissions.gti",
-                                                   R"(
+  const auto frontend =
+      analyzeWithStandardLibrary("nested-field-permissions.gti",
+                                 R"(
 import std.utility;
 struct Exclusive {
   mut int& value;
@@ -155,19 +156,20 @@ int main() {
         continue;
       const auto forged = [&](auto mutate) {
         auto malformed = frontend.mir;
-        auto &body = writable(*malformed.findFunctionInstance(function.id)).body;
+        auto &body =
+            writable(*malformed.findFunctionInstance(function.id)).body;
         mutate(writable(body.places[index]));
         return lang::verifyMirProgram(malformed).valid();
       };
       ++dereferences;
       expect(!forged([](lang::MirPlace &forgery) {
-               forgery.projections.pop_back();
-             }),
+        forgery.projections.pop_back();
+      }),
              "#339 a place that drops its trailing Dereference is rejected");
       ++fields;
       expect(!forged([](lang::MirPlace &forgery) {
-               forgery.projections[1].field = 999999;
-             }),
+        forgery.projections[1].field = 999999;
+      }),
              "#339 a field its receiver does not declare is rejected");
     }
   expect(dereferences != 0 && fields != 0,
@@ -197,8 +199,7 @@ void checkConstructorFieldStages() {
           continue;
         ++stages;
         auto malformed = frontend.mir;
-        const auto *changed =
-            malformed.findConstructorInstance(constructor.id);
+        const auto *changed = malformed.findConstructorInstance(constructor.id);
         for (const auto &candidateBlock : changed->body.blocks)
           for (const auto &candidate : candidateBlock.instructions)
             if (candidate.id == instruction.id)

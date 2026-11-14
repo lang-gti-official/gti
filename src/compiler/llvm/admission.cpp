@@ -4547,8 +4547,8 @@ public:
         stage.info.type.referenceAccess != AccessMode::ReadOnly ||
         stage.operands.size() != 1 || stage.destination || stage.receiver ||
         stage.functionTarget || stage.constructorTarget || stage.lambdaTarget ||
-        stage.bodyTarget || stage.nativeCalleeType || !stage.lifecycle.empty() ||
-        !stage.definedFailure.empty())
+        stage.bodyTarget || stage.nativeCalleeType ||
+        !stage.lifecycle.empty() || !stage.definedFailure.empty())
       return false;
     const MirOperand &input = stage.operands.front();
     const MirPlace *place = body.findPlace(input.place);

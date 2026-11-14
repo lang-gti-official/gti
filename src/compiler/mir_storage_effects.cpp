@@ -5,8 +5,8 @@
 #include "mir_verification_support.h"
 
 #include <algorithm>
-#include <iterator>
 #include <deque>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>

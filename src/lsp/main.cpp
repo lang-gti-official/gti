@@ -4970,13 +4970,13 @@ private:
         continue;
       const lang::SourceSpan &span = related.related.span;
       JsonObject companion{
-          {"range", rangeJson(related.source, span.start,
-                              span.end >= span.start ? span.end - span.start
-                                                     : 0)},
+          {"range",
+           rangeJson(related.source, span.start,
+                     span.end >= span.start ? span.end - span.start : 0)},
           {"severity", 3},
           {"source", std::string(diagnosticSource)},
-          {"message", "A macro expansion fails here: " +
-                          published.diagnostic.message}};
+          {"message",
+           "A macro expansion fails here: " + published.diagnostic.message}};
       if (!published.diagnostic.code.empty())
         companion["code"] = published.diagnostic.code;
       const lang::SourceSpan &primary = published.diagnostic.primary;

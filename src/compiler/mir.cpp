@@ -1025,8 +1025,7 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
     if (!domain->signedValue)
       return domain->width == 64 ||
              *integer <= (std::uint64_t{1} << domain->width) - 1;
-    const std::uint64_t maximum =
-        (std::uint64_t{1} << (domain->width - 1)) - 1;
+    const std::uint64_t maximum = (std::uint64_t{1} << (domain->width - 1)) - 1;
     return *integer <= maximum || (negatedMinimum && *integer == maximum + 1);
   }
   if (const auto *floating = std::get_if<BinaryFloat>(&literal)) {
@@ -11796,30 +11795,31 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                                    std::size_t depth) -> bool {
         const auto &uses = body.usesOf(value);
         return depth < 64 && !uses.empty() &&
-               std::all_of(uses.begin(), uses.end(),
-                           [&](const MirValueUse &use) {
-                             if (use.kind != MirValueUseKind::InstructionOperand)
-                               return false;
-                             const MirBlock *useBlock = body.findBlock(use.block);
-                             if (useBlock == nullptr)
-                               return false;
-                             const auto user = std::find_if(
-                                 useBlock->instructions.begin(),
-                                 useBlock->instructions.end(),
-                                 [&](const MirInstruction &candidate) {
-                                   return candidate.id == use.instruction;
-                                 });
-                             if (user == useBlock->instructions.end() ||
-                                 user->kind != MirInstructionKind::Compute ||
-                                 user->operands.size() != 1 ||
-                                 user->info.type != resultType)
-                               return false;
-                             if (user->operation == MirOperation::Negate)
-                               return true;
-                             return user->operation == MirOperation::Identity &&
-                                    user->result &&
-                                    self(self, *user->result, depth + 1);
-                           });
+               std::all_of(
+                   uses.begin(), uses.end(),
+                   [&](const MirValueUse &use) {
+                     if (use.kind != MirValueUseKind::InstructionOperand)
+                       return false;
+                     const MirBlock *useBlock = body.findBlock(use.block);
+                     if (useBlock == nullptr)
+                       return false;
+                     const auto user =
+                         std::find_if(useBlock->instructions.begin(),
+                                      useBlock->instructions.end(),
+                                      [&](const MirInstruction &candidate) {
+                                        return candidate.id == use.instruction;
+                                      });
+                     if (user == useBlock->instructions.end() ||
+                         user->kind != MirInstructionKind::Compute ||
+                         user->operands.size() != 1 ||
+                         user->info.type != resultType)
+                       return false;
+                     if (user->operation == MirOperation::Negate)
+                       return true;
+                     return user->operation == MirOperation::Identity &&
+                            user->result &&
+                            self(self, *user->result, depth + 1);
+                   });
       };
       const bool negatedMinimum =
           instruction.result &&

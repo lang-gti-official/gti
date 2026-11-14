@@ -2850,21 +2850,20 @@ int main() {
 )gti");
   const auto fromTemporary =
       diagnosticWith(temporary, "borrows a temporary that is destroyed");
-  expect(fromTemporary != temporary.diagnostics.end() &&
-             std::any_of(fromTemporary->related.begin(),
-                         fromTemporary->related.end(),
-                         [](const auto &related) {
-                           return related.message.find(
-                                      "This temporary owns the text") !=
-                                  std::string::npos;
-                         }) &&
-             std::any_of(fromTemporary->hints.begin(),
-                         fromTemporary->hints.end(),
-                         [](const std::string &hint) {
-                           return hint.find("owning std::string") !=
-                                  std::string::npos;
-                         }),
-         "#379 a view of a temporary owner names the temporary");
+  expect(
+      fromTemporary != temporary.diagnostics.end() &&
+          std::any_of(
+              fromTemporary->related.begin(), fromTemporary->related.end(),
+              [](const auto &related) {
+                return related.message.find("This temporary owns the text") !=
+                       std::string::npos;
+              }) &&
+          std::any_of(fromTemporary->hints.begin(), fromTemporary->hints.end(),
+                      [](const std::string &hint) {
+                        return hint.find("owning std::string") !=
+                               std::string::npos;
+                      }),
+      "#379 a view of a temporary owner names the temporary");
   const auto named = analyzeText(declarations + R"gti(
 int main() {
   std::filesystem::path entry = std::filesystem::path("dir/file.txt");

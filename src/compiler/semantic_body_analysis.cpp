@@ -12980,10 +12980,9 @@ auto SemanticVisitor::Impl::reportTypeUsedAsValue(const Expr &expression,
   if (type.kind != SemanticType::TypeName)
     return false;
   const std::string spelled = typeSpelling(type);
-  Diagnostic diagnostic =
-      makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
-                     expressionToken(expression),
-                     "'" + spelled + "' names a type, not a value.");
+  Diagnostic diagnostic = makeDiagnostic(
+      "GTI-S2003", DiagnosticPhase::Semantics, expressionToken(expression),
+      "'" + spelled + "' names a type, not a value.");
   diagnostic.hints.emplace_back(
       "Construct a value with '" + spelled + "(...)' or '" + spelled +
       "{...}'; to compare types, use a compile-time query such as "
@@ -13049,14 +13048,15 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
                    "' names a region, not a value.",
                "GTI-S2128");
       } else if (typeParameter) {
-        Diagnostic diagnostic = makeDiagnostic(
-            "GTI-S2003", DiagnosticPhase::Semantics, expr.name(),
-            "Type parameter '" + expr.name().lexeme +
-                "' names a type, not a value.");
+        Diagnostic diagnostic =
+            makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics, expr.name(),
+                           "Type parameter '" + expr.name().lexeme +
+                               "' names a type, not a value.");
         diagnostic.hints.emplace_back(
             "Construct a value with '" + expr.name().lexeme +
             "{}', or test the type with a compile-time query such as "
-            "std::meta::is_same<" + expr.name().lexeme + ", U>().");
+            "std::meta::is_same<" +
+            expr.name().lexeme + ", U>().");
         diagnostics.emplace_back(std::move(diagnostic));
       } else {
         report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",

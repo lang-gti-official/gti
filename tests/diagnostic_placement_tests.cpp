@@ -27,31 +27,35 @@ void checkTypeUsedAsValue() {
     const char *source;
     const char *expected;
   } cases[] = {
-      {"return-class", "import std.string;\n"
-                       "std::string make() { return std::string; }\n"
-                       "int main() { return 0; }\n",
+      {"return-class",
+       "import std.string;\n"
+       "std::string make() { return std::string; }\n"
+       "int main() { return 0; }\n",
        "'std::string' names a type, not a value."},
-      {"auto-class", "struct Point { int x; };\n"
-                     "int main() { auto p = Point; return 0; }\n",
+      {"auto-class",
+       "struct Point { int x; };\n"
+       "int main() { auto p = Point; return 0; }\n",
        "'Point' names a type, not a value."},
-      {"argument-class", "struct Point { int x; };\n"
-                         "int use(Point p) { return p.x; }\n"
-                         "int main() { return use(Point); }\n",
+      {"argument-class",
+       "struct Point { int x; };\n"
+       "int use(Point p) { return p.x; }\n"
+       "int main() { return use(Point); }\n",
        "'Point' names a type, not a value."},
-      {"type-parameter", "bool check<T>() { return T; }\n"
-                         "int main() { return check<int32_t>() ? 1 : 0; }\n",
+      {"type-parameter",
+       "bool check<T>() { return T; }\n"
+       "int main() { return check<int32_t>() ? 1 : 0; }\n",
        "Type parameter 'T' names a type, not a value."},
   };
   for (const auto &probe : cases) {
-    const auto result = analyzeQuietly(std::string(probe.name) + ".gti",
-                                       probe.source);
+    const auto result =
+        analyzeQuietly(std::string(probe.name) + ".gti", probe.source);
     const auto *diagnostic = withMessage(result, probe.expected);
     expect(!result.canGenerateCode() && diagnostic != nullptr &&
                !diagnostic->hints.empty() &&
                withMessage(result, "Undefined name") == nullptr &&
-               withMessage(result, "Cannot return a value of type") ==
-                   nullptr,
-           std::string("#322 ") + probe.name + " names the type as not a value");
+               withMessage(result, "Cannot return a value of type") == nullptr,
+           std::string("#322 ") + probe.name +
+               " names the type as not a value");
     if (diagnostic == nullptr)
       for (const auto &other : result.diagnostics)
         std::cerr << probe.name << ": " << other.code << " " << other.message

@@ -4011,17 +4011,16 @@ auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
       owner = ungroup(member->object().get());
   const ExpressionInfo *ownerInfo =
       owner == nullptr ? nullptr : semanticModel.findExpression(*owner);
-  const bool temporaryOwner =
-      owner != nullptr && ownerInfo != nullptr &&
-      ownerInfo->type.kind != SemanticType::Reference &&
-      (exprAs<Call>(owner) != nullptr ||
-       exprAs<DirectInitializer>(owner) != nullptr ||
-       exprAs<Conversion>(owner) != nullptr);
-  const auto *namedOwner =
-      owner == nullptr ? nullptr : exprAs<Variable>(owner);
+  const bool temporaryOwner = owner != nullptr && ownerInfo != nullptr &&
+                              ownerInfo->type.kind != SemanticType::Reference &&
+                              (exprAs<Call>(owner) != nullptr ||
+                               exprAs<DirectInitializer>(owner) != nullptr ||
+                               exprAs<Conversion>(owner) != nullptr);
+  const auto *namedOwner = owner == nullptr ? nullptr : exprAs<Variable>(owner);
   std::string message;
   if (temporaryOwner)
-    message = "This " + text + " borrows a temporary that is destroyed at "
+    message = "This " + text +
+              " borrows a temporary that is destroyed at "
               "the end of the statement, so it cannot be " +
               std::string(destination) + ".";
   else if (namedOwner != nullptr)
@@ -4041,8 +4040,8 @@ auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
          "This temporary owns the text and is destroyed at the end of the "
          "statement."});
   else if (namedOwner != nullptr)
-    diagnostic.related.push_back({tokenSpan(namedOwner->name()),
-                                  "The borrowed text is owned here."});
+    diagnostic.related.push_back(
+        {tokenSpan(namedOwner->name()), "The borrowed text is owned here."});
   if (capturedText || capturedTextValue(expression))
     diagnostic.hints.emplace_back(capturedTextHint(cString));
   else

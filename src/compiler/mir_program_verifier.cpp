@@ -11,9 +11,9 @@
 #include "mir_thread_local.h"
 #include "mir_verification_queries.h"
 #include "mir_verification_support.h"
-#include <map>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 
 #include <algorithm>
 #include <functional>
@@ -22300,8 +22300,7 @@ verifyMirProgramContracts(const MirProgram &program) {
     for (const MirBlock &block : instance.body.blocks)
       for (const MirInstruction &instruction : block.instructions) {
         if (instruction.kind != MirInstructionKind::Initialize ||
-            instruction.constructorInitializer != 0 ||
-            !instruction.destination)
+            instruction.constructorInitializer != 0 || !instruction.destination)
           continue;
         const MirPlace *destination =
             instance.body.findPlace(*instruction.destination);
@@ -23342,8 +23341,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
           identity = place.binding;
           break;
         case MirPlaceRootKind::Symbol:
-          identity = (static_cast<std::uint64_t>(place.symbol) << 16) ^
-                     place.capture;
+          identity =
+              (static_cast<std::uint64_t>(place.symbol) << 16) ^ place.capture;
           break;
         case MirPlaceRootKind::This:
           break;
