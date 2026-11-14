@@ -663,15 +663,18 @@ int main() {
   return int(view.size());
 })";
   const std::string escapingScope = R"(
-import std.string;
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
 int main() {
-  std::string outer = std::string("outer");
-  mut auto view = outer.view();
+  int outer = 1;
+  mut View view{outer};
   {
-    std::string inner = std::string("inner");
-    view = inner.view();
+    int inner = 2;
+    view = View(inner);
   }
-  return int(view.size());
+  return view.value;
 }
 )";
   const auto escapingScopeResult = analyze(escapingScope);
@@ -687,9 +690,9 @@ int main() {
       "a scope-exit borrow conflict explains destruction rather than "
       "assignment");
   auto outerScope = escapingScope;
-  outerScope.replace(outerScope.find("view = inner.view()"),
-                     std::string("view = inner.view()").size(),
-                     "view = outer.view()");
+  outerScope.replace(outerScope.find("view = View(inner)"),
+                     std::string("view = View(inner)").size(),
+                     "view = View(outer)");
   expect(analyze(outerScope).canGenerateCode(),
          "borrowing the surviving outer owner preserves the valid control");
   const std::string temporary = prefix + R"(
