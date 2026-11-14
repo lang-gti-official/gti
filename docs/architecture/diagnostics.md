@@ -467,6 +467,14 @@ related spans, and what intentional alternatives remain through hints:
   owner and explains destruction at the full-expression boundary. Advice names
   the owner that must be retained; naming only the borrowed result does not
   extend the owner's lifetime.
+- A reference returned directly from a resolved owned local identifies the
+  returned expression and the local declaration whose storage ends at return.
+  MIR return-escape diagnostics also retain concrete local-storage witnesses
+  from the rejected loan, including local callable objects retained by returned
+  borrowed callable views. Alias bindings alone do not prove that their
+  referents die at return. Advice distinguishes returning an owned value from
+  borrowing caller-provided storage; a lifetime annotation cannot prolong a
+  local object's lifetime.
 - Read-only field writes, fixed-array writes, and mutable method calls relate
   the restricting declaration when it is provable through ordinary named places.
   Hints distinguish an immutable owner, a read-only reference requiring exclusive

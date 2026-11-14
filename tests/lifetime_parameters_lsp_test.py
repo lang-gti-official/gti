@@ -253,7 +253,24 @@ def main():
                 "uri": uri, "range": source_range(
                     local_return, local_return.index("value"), 5)}, error
             assert change(local_return.replace("int& invalid", "int invalid"), 20) == []
-            assert change(SOURCE, 21) == []
+            closure_escape = (
+                "import std.functional;\n"
+                "std::function_ref<int()> invalid() {\n"
+                "  int value = 1;\n"
+                "  /* 😀 */ auto callback = [&value]() -> int { return value; };\n"
+                "  std::function_ref<int()> result{callback};\n"
+                "  /* 😀 */ return result;\n}\n"
+                "int main() { auto call = invalid(); return call(); }\n")
+            errors = change(closure_escape, 21)
+            error = next(item for item in errors if item["code"] == "GTI-S2127")
+            assert error["range"] == source_range(
+                closure_escape, closure_escape.index("result;"), 6), error
+            note = next(item for item in error["relatedInformation"]
+                        if "Local 'callback'" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                closure_escape, closure_escape.index("callback"), 8)}, note
+            assert "cannot extend local storage" in error["message"], error
+            assert change(SOURCE, 22) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
