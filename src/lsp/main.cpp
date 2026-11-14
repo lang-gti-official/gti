@@ -4946,9 +4946,49 @@ private:
             diagnosticJson(diagnostic, diagnosticRelatedInformation,
                            diagnosticData, codeActionLiterals,
                            diagnosticUnnecessaryTag, diagnosticDeprecatedTag));
+        appendMacroBodyCompanions(diagnostics, publication.uri, diagnostic);
       }
       publishDiagnostics(publication.uri, std::move(diagnostics),
                          publication.version);
+    }
+  }
+
+  // A diagnostic raised inside a macro body is reported at the invocation,
+  // where its arguments come from; the body location is related information.
+  // Editors that do not draw related information would show nothing at the
+  // offending line, so a body in the published document also receives an
+  // informational companion pointing back at the invocation (issue #265).
+  static void appendMacroBodyCompanions(JsonArray &diagnostics,
+                                        const std::string &uri,
+                                        const LspDiagnostic &published) {
+    if (published.diagnostic.severity != lang::DiagnosticSeverity::Error)
+      return;
+    constexpr std::string_view marker = "In the body of macro ";
+    for (const LspRelatedDiagnostic &related : published.related) {
+      if (related.uri != uri ||
+          !std::string_view(related.related.message).starts_with(marker))
+        continue;
+      const lang::SourceSpan &span = related.related.span;
+      JsonObject companion{
+          {"range", rangeJson(related.source, span.start,
+                              span.end >= span.start ? span.end - span.start
+                                                     : 0)},
+          {"severity", 3},
+          {"source", std::string(diagnosticSource)},
+          {"message", "A macro expansion fails here: " +
+                          published.diagnostic.message}};
+      if (!published.diagnostic.code.empty())
+        companion["code"] = published.diagnostic.code;
+      const lang::SourceSpan &primary = published.diagnostic.primary;
+      companion["relatedInformation"] = JsonArray{JsonObject{
+          {"location",
+           JsonObject{{"uri", published.uri},
+                      {"range", rangeJson(published.source, primary.start,
+                                          primary.end >= primary.start
+                                              ? primary.end - primary.start
+                                              : 0)}}},
+          {"message", "The macro is expanded here."}}};
+      diagnostics.push_back(std::move(companion));
     }
   }
 

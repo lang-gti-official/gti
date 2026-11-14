@@ -13060,6 +13060,8 @@ auto SemanticVisitor::Impl::containsRawPointer(const SemanticType &type)
 auto SemanticVisitor::Impl::requireBool(const ExprPtr &expression,
                                         SemanticType type, const Token &token,
                                         std::string_view message) -> void {
+  if (expression && reportTypeUsedAsValue(*expression, type))
+    return;
   if (type.kind == SemanticType::Class && expression) {
     const std::optional<CallableCandidate> selected =
         resolveOperator(*expression, OverloadedOperator::ContextualBool,

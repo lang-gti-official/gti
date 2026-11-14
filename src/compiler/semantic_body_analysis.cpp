@@ -5403,7 +5403,7 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       if (isMoveOnlyOwnerType(valueType) &&
           isAssignable(currentReturnType, valueType, stmt.value().get())) {
         reportMoveOnlyReturnCopy(stmt.value(), valueType);
-      } else {
+      } else if (!reportTypeUsedAsValue(*stmt.value(), valueType)) {
         report(expressionToken(stmt.value()),
                "Cannot return a value of type '" + typeSpelling(valueType) +
                    "' from a function returning '" +
@@ -12974,6 +12974,24 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
   currentType = rightType;
 }
 
+auto SemanticVisitor::Impl::reportTypeUsedAsValue(const Expr &expression,
+                                                  const SemanticType &type)
+    -> bool {
+  if (type.kind != SemanticType::TypeName)
+    return false;
+  const std::string spelled = typeSpelling(type);
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2003", DiagnosticPhase::Semantics,
+                     expressionToken(expression),
+                     "'" + spelled + "' names a type, not a value.");
+  diagnostic.hints.emplace_back(
+      "Construct a value with '" + spelled + "(...)' or '" + spelled +
+      "{...}'; to compare types, use a compile-time query such as "
+      "std::meta::is_same<A, B>().");
+  diagnostics.emplace_back(std::move(diagnostic));
+  return true;
+}
+
 auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
   if (expr.isReferencePattern()) {
     report(expr.name(),
@@ -13021,11 +13039,25 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
         for (const auto &parameter :
              currentFunctionDeclaration->lifetimeParameters())
           lifetimeBinder |= parameter.name.lexeme == expr.name().lexeme;
+      // A type parameter in scope names a type, not a value (issue #322).
+      bool typeParameter = false;
+      for (const auto &scope : typeParameterScopes)
+        typeParameter |= scope.contains(expr.name().lexeme);
       if (lifetimeBinder) {
         report(expr.name(),
                "Lifetime '" + expr.name().lexeme +
                    "' names a region, not a value.",
                "GTI-S2128");
+      } else if (typeParameter) {
+        Diagnostic diagnostic = makeDiagnostic(
+            "GTI-S2003", DiagnosticPhase::Semantics, expr.name(),
+            "Type parameter '" + expr.name().lexeme +
+                "' names a type, not a value.");
+        diagnostic.hints.emplace_back(
+            "Construct a value with '" + expr.name().lexeme +
+            "{}', or test the type with a compile-time query such as "
+            "std::meta::is_same<" + expr.name().lexeme + ", U>().");
+        diagnostics.emplace_back(std::move(diagnostic));
       } else {
         report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
                "GTI-S2001");
@@ -16230,9 +16262,13 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
         initializerType,
         declaration.isMutable() ? AccessMode::Mutable : AccessMode::ReadOnly);
   }
-  if (initializerType == SemanticType::Void ||
-      initializerType == SemanticType::Function ||
-      initializerType.kind == SemanticType::TypeName) {
+  if (initializerType.kind == SemanticType::TypeName &&
+      declaration.initializer()) {
+    (void)reportTypeUsedAsValue(*declaration.initializer(), initializerType);
+    inferredType = SemanticType::Unknown;
+  } else if (initializerType == SemanticType::Void ||
+             initializerType == SemanticType::Function ||
+             initializerType.kind == SemanticType::TypeName) {
     report(declaration.name(),
            "'auto' requires an initializer with a complete value type.",
            "GTI-S2028");

@@ -390,6 +390,9 @@ add_test(NAME mir_full_expression COMMAND gti_mir_full_expression_tests)
 add_executable(gti_mir_verifier_hardening_tests mir_verifier_hardening_tests.cpp)
 target_link_libraries(gti_mir_verifier_hardening_tests PRIVATE gti_compiler)
 add_test(NAME mir_verifier_hardening COMMAND gti_mir_verifier_hardening_tests)
+add_executable(gti_diagnostic_placement_tests diagnostic_placement_tests.cpp)
+target_link_libraries(gti_diagnostic_placement_tests PRIVATE gti_compiler)
+add_test(NAME diagnostic_placement COMMAND gti_diagnostic_placement_tests)
 add_executable(gti_loop_break_reinitialization_tests
                loop_break_reinitialization_tests.cpp)
 target_link_libraries(gti_loop_break_reinitialization_tests PRIVATE gti_compiler)
@@ -6422,6 +6425,13 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(lsp_test_target PROPERTIES TIMEOUT 90)
+    add_test(
+      NAME lsp_macro_body_diagnostic
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/lsp_macro_body_diagnostic_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    set_tests_properties(lsp_macro_body_diagnostic PROPERTIES TIMEOUT 90)
     add_test(
       NAME lsp_completion_work
       COMMAND "${Python3_EXECUTABLE}"
