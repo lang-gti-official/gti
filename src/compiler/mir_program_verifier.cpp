@@ -20055,6 +20055,37 @@ verifyMirProgramContracts(const MirProgram &program) {
            .message = "generated class special member contradicts its concrete "
                       "semantic traits"});
     }
+    // The converse: an available trait names a special member that exists.
+    // HIR deletes a generated member exactly when its trait is unavailable.
+    if ((instance.traits.copyable &&
+         instance.copyConstructor == SpecialMemberStatus::Deleted) ||
+        (instance.traits.movable &&
+         instance.moveConstructor == SpecialMemberStatus::Deleted) ||
+        (instance.traits.copyAssignable &&
+         instance.copyAssignment == SpecialMemberStatus::Deleted) ||
+        (instance.traits.moveAssignable &&
+         instance.moveAssignment == SpecialMemberStatus::Deleted)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class semantic trait has no matching special member"});
+    }
+    // A deleted destructor belongs only to a class with no lifecycle at all:
+    // every special member is deleted and no drop state exists, so nothing
+    // can create, store or destroy a value of it.
+    if (instance.destructorStatus == SpecialMemberStatus::Deleted &&
+        (instance.defaultConstructor != SpecialMemberStatus::Deleted ||
+         instance.copyConstructor != SpecialMemberStatus::Deleted ||
+         instance.moveConstructor != SpecialMemberStatus::Deleted ||
+         instance.copyAssignment != SpecialMemberStatus::Deleted ||
+         instance.moveAssignment != SpecialMemberStatus::Deleted ||
+         instance.requiresActiveDropState || instance.requiresActiveCleanup)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "deleted class destructor belongs to a class with live "
+                      "special members"});
+    }
     if (instance.requiresActiveDropState != instance.destructor.has_value()) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::FieldInitializers,
