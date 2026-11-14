@@ -415,7 +415,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
               explained.end())
         continue;
       for (const HirBinding &binding : source->bindings) {
-        if (binding.id != place->binding || binding.variable == nullptr)
+        if (binding.id != place->binding || binding.variable == nullptr ||
+            binding.info.staticStorage || binding.info.threadLocal)
           continue;
         const auto root =
             std::find_if(lowered->places.begin(), lowered->places.end(),

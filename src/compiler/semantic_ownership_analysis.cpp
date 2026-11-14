@@ -7128,7 +7128,8 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
               : semanticModel.database().findSymbol(
                     semanticModel.findResolvedSymbol(*variable));
       if (local == nullptr || local->kind != SymbolKind::LocalVariable ||
-          local->type.kind == SemanticType::Reference)
+          local->type.kind == SemanticType::Reference || local->threadLocal ||
+          local->internalLinkage)
         continue;
       Diagnostic escape = makeDiagnostic(
           code, DiagnosticPhase::Semantics, variable->name(),

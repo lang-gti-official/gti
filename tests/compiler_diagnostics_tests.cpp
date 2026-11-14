@@ -423,6 +423,16 @@ int& invalid() {
   ownedReturn.erase(ownedReturn.find('&'), 1);
   expect(analyze(ownedReturn).canGenerateCode(),
          "returning the owned value preserves the valid nearby program");
+  auto threadLocalReturn = localReturn;
+  threadLocalReturn.insert(threadLocalReturn.find("int value"),
+                           "thread_local ");
+  const auto threadLocalResult = analyze(threadLocalReturn);
+  expect(threadLocalResult.syntaxValid &&
+             !hasDiagnostic(threadLocalResult.diagnostics,
+                            "Cannot return a reference to local value") &&
+             !hasRelatedDiagnostic(threadLocalResult.diagnostics,
+                                   "storage ends when the function returns"),
+         "thread-local storage is not described as dying at function return");
   const std::string closureEscape = R"(
 import std.functional;
 std::function_ref<int()> invalid() {
