@@ -6327,10 +6327,12 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
-  // A temporary carrier may retain only proven stable external dependencies.
-  // Shared by receivers and call-scoped reference arguments.
+  // Shared carrier admission for receivers and reference arguments. Receivers
+  // require stable owners; call-scoped arguments may use full-expression
+  // owners whose lifetime is proved by MIR.
   [[nodiscard]] FreshTemporaryValueAssessment
-  freshTemporaryBorrowValue(const ExprPtr &expression);
+  freshTemporaryBorrowValue(const ExprPtr &expression,
+                            bool allowFullExpressionOwners = false);
 
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryReceiverValue(const ExprPtr &expression);

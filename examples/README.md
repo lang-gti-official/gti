@@ -426,7 +426,7 @@ is a teaching helper, not a production server.
 | `188-concept-conditions.gti` | Named structural and protocol concept conditions, constexpr selection and Boolean composition. |
 | `189-protocol-format-hash.gti` | Conditional conformance formats and hashes a generic user family and uses a pair as a hash-table key (LLVM). |
 | `190-conditional-member-operators.gti` | Conditional user operators, inserting map indexing, exclusive result loans and pair equality (LLVM). |
-| `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary lifetime, constrained mutable packs and per-element exclusive access (LLVM). |
+| `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary views and their owners, constrained mutable packs and per-element exclusive access (LLVM). |
 | `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records, inferred typed copy/move destinations, checked type-erasure round trips, copied shared fields across carrier cleanup, inferred conformance-head regions, projected reference regions, function items, stored higher-ranked invocation pointers and fixed lambda environment premises; ordinary callers infer lifetime arguments (LLVM). |
 | `193-tcp-line-server.gti` | A loopback line service: `std::tcp::listen`/`connect` by host and port, `serve` driving an application type through the `connection_handler` protocol concept, and `buffered_stream` frames borrowed in place (`span<uint8_t, this>`) until `consume` (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |

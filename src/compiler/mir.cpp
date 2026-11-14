@@ -867,27 +867,6 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
        producer->closureCaptureTypes.size() != producer->operands.size() ||
        producer->closureCaptureModes.size() != producer->operands.size()))
     return {};
-  // A cursor may borrow a stable carrier's physical shell while that carrier
-  // retains external owners. Its exact producer-owned Stored loan remains
-  // the temporary's dependency; do not flatten or discard the separately
-  // recorded storedDependency. Program verification independently checks
-  // that edge against the concrete reference fields and source publication,
-  // while lifetime dataflow keeps its full ancestry live through cleanup.
-  const auto stableOwner = [&](MirPlaceId id) {
-    const auto *owner = body.findPlace(id);
-    return owner != nullptr &&
-           ((owner->root != MirPlaceRootKind::Value &&
-             owner->root != MirPlaceRootKind::Temporary) ||
-            (id == loan->source && staticCarrierRootLoan(body, *loan)));
-  };
-  if (!stableOwner(loan->source) ||
-      std::any_of(loan->additionalDependencies.begin(),
-                  loan->additionalDependencies.end(),
-                  [&](const auto &dependency) {
-                    return !stableOwner(dependency.source);
-                  })) {
-    return {};
-  }
   // Cleanup-bearing temporaries retain the same exact producer/value/drop
   // identity as passive carriers. Their Stored dependency is lifecycle-bound;
   // the separate CallArgument shell is not. Lifecycle and loan dataflow still
@@ -905,9 +884,45 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
     }
     drop = &candidate;
   }
-  return drop == nullptr
-             ? MirTemporaryCarrierDependency{}
-             : MirTemporaryCarrierDependency{materialization, loan, drop};
+  if (drop == nullptr)
+    return {};
+  // A dependency may be named storage or an owner materialized in this same
+  // full expression. Match the owner's exact root and construction/drop pair;
+  // mere membership in a temporary place is not a lifetime proof. Loan flow
+  // separately verifies that no move, mutation or cleanup invalidates the
+  // dependency while the carrier (or its argument borrow) remains live.
+  const auto liveOwner = [&](MirPlaceId id) {
+    const auto *owner = body.findPlace(id);
+    if (owner == nullptr)
+      return false;
+    if (owner->root != MirPlaceRootKind::Value &&
+        owner->root != MirPlaceRootKind::Temporary)
+      return true;
+    if (id == loan->source && staticCarrierRootLoan(body, *loan))
+      return true;
+    for (const auto &ownerDrop : body.dropObligations) {
+      const auto *root = body.findPlace(ownerDrop.place);
+      if (ownerDrop.kind != MirDropObligationKind::Value || root == nullptr ||
+          ownerDrop.hirFullExpression != drop->hirFullExpression ||
+          root->root != owner->root || root->value != owner->value ||
+          root->temporary != owner->temporary || !root->projections.empty() ||
+          ownerDrop.value != root->sourceValue ||
+          ownerDrop.dropType.type != root->type || root->id == place.id)
+        continue;
+      if (findMirTemporaryMaterialization(body, *root, root->sourceValue) ||
+          findMirMovedTemporaryMaterialization(body, *root, root->sourceValue))
+        return true;
+    }
+    return false;
+  };
+  if (!liveOwner(loan->source) ||
+      std::any_of(loan->additionalDependencies.begin(),
+                  loan->additionalDependencies.end(),
+                  [&](const auto &dependency) {
+                    return !liveOwner(dependency.source);
+                  }))
+    return {};
+  return {materialization, loan, drop};
 }
 
 bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,

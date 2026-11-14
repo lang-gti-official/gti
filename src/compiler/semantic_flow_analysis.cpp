@@ -8407,7 +8407,8 @@ auto SemanticVisitor::Impl::freshTemporaryValue(const ExprPtr &expression) const
   return result;
 }
 
-auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const ExprPtr &expression)
+auto SemanticVisitor::Impl::freshTemporaryBorrowValue(
+    const ExprPtr &expression, bool allowFullExpressionOwners)
     -> FreshTemporaryValueAssessment {
   FreshTemporaryValueAssessment result = freshTemporaryValue(expression);
   if (result.failure != FreshTemporaryValueFailure::BorrowedState) {
@@ -8415,7 +8416,7 @@ auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const ExprPtr &expression)
   }
 
   // A carrier is materialized for one immediate invocation. Its established
-  // stored-borrow summary supplies the stable external dependency.
+  // stored-borrow summary supplies the external dependencies.
   const Expr *producer = transparentTemporaryProducer(expression);
   if (producer == nullptr) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
@@ -8449,6 +8450,15 @@ auto SemanticVisitor::Impl::freshTemporaryBorrowValue(const ExprPtr &expression)
   }
   if (!ordinaryProducer) {
     result.failure = FreshTemporaryValueFailure::UnsupportedProducer;
+    return result;
+  }
+  // A read-only argument only borrows the carrier for its consuming call.
+  // MIR proves that every producer-owned dependency survives that call using
+  // the actual materialization, loan ancestry and full-expression cleanup.
+  // Do not require those dependencies to have named semantic storage.
+  if (allowFullExpressionOwners) {
+    result.eligible = true;
+    result.failure = FreshTemporaryValueFailure::None;
     return result;
   }
   const auto dependencies = storedBorrowDependencies(expression);
