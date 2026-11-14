@@ -2779,9 +2779,18 @@ instrumentation acceptance. The generated-memory probe separately exercises O0
 and O3 valid access/cleanup, native-runtime identity, cache separation/restoration,
 failed publication and invalid loads executed by GTI-generated instructions.
 It does not claim complete UBSan, foreign-library or Thread coverage.
-The explicit `llvm_native_runtime_identity` fixture is enabled
-with `GTI_LLVM_RUNTIME_TEST_COMPILER` set to a matching Clang++; it fails on a
+The explicit `llvm_native_runtime_identity` fixture, `shared_ownership_instrumented`
+and `compact_owner_layout_instrumented` are registered only with
+`GTI_LLVM_RUNTIME_TEST_COMPILER` set to a matching Clang++; they fail on a
 mismatch rather than counting a missing runtime pair as passing coverage.
+"Matching" means the upstream Clang of exactly the LLVM version the tree links:
+Apple clang is rejected, and so is a Homebrew Clang of another point release
+(set it to the Clang beside the configured `LLVM_DIR`, not the newest
+installed LLVM). On Linux the reviewed toolchain's `clang++-<major>` and
+`llvm-<major>-dev` come from the same apt.llvm.org repository and pair; the
+daily sanitizer run (`sanitizers.yml`, job `runtime-identity`) runs all three
+against that system LLVM. Release builds bundle LLVM without a Clang binary or
+compiler-rt, so the full-validation integration shards do not register them.
 
 Three narrowings hold by an exact-identity argument, stated here because each
 one moved an input out of the bypass list.

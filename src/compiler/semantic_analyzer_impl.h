@@ -6684,6 +6684,9 @@ private:
 
   [[nodiscard]] static bool containsRawPointer(const SemanticType &type);
 
+  // A type name written where a value is required (issue #322). Reports
+  // "'T' names a type, not a value" and returns true for a TypeName type.
+  bool reportTypeUsedAsValue(const Expr &expression, const SemanticType &type);
   void requireBool(const ExprPtr &expression, SemanticType type,
                    const Token &token, std::string_view message);
 

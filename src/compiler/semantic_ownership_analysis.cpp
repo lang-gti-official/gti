@@ -3992,24 +3992,67 @@ auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
   const ExpressionInfo *info = semanticModel.findExpression(expression);
   const bool cString =
       info != nullptr && info->type.kind == SemanticType::CString;
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(expression),
-      (cString ? "An owner-dependent c_string" : "A dynamic std::string_view") +
-          std::string(" cannot be ") + std::string(destination) +
-          (cString ? " in the single-owner text-borrow model."
-                   : " in the single-owner view model."));
+  const std::string text = cString ? "c_string" : "std::string_view";
+  // The owner the text borrows, when the expression is a member call such as
+  // `owner.view()`: an unnamed temporary dies at the end of the statement, so
+  // the store would dangle in any model; a named owner can outlive the store,
+  // and only the rule that stored text must not borrow a local owner applies.
+  const auto ungroup = [](const Expr *current) {
+    while (current != nullptr)
+      if (const auto *grouping = exprAs<Grouping>(current))
+        current = grouping->expression().get();
+      else
+        break;
+    return current;
+  };
+  const Expr *owner = nullptr;
+  if (const auto *call = exprAs<Call>(ungroup(&expression)))
+    if (const auto *member = exprAs<Get>(ungroup(call->callee().get())))
+      owner = ungroup(member->object().get());
+  const ExpressionInfo *ownerInfo =
+      owner == nullptr ? nullptr : semanticModel.findExpression(*owner);
+  const bool temporaryOwner = owner != nullptr && ownerInfo != nullptr &&
+                              ownerInfo->type.kind != SemanticType::Reference &&
+                              (exprAs<Call>(owner) != nullptr ||
+                               exprAs<DirectInitializer>(owner) != nullptr ||
+                               exprAs<Conversion>(owner) != nullptr);
+  const auto *namedOwner = owner == nullptr ? nullptr : exprAs<Variable>(owner);
+  std::string message;
+  if (temporaryOwner)
+    message = "This " + text +
+              " borrows a temporary that is destroyed at "
+              "the end of the statement, so it cannot be " +
+              std::string(destination) + ".";
+  else if (namedOwner != nullptr)
+    message = "This " + text + " borrows '" + namedOwner->name().lexeme +
+              "', so it cannot be " + std::string(destination) +
+              ": stored text must not borrow a local owner.";
+  else
+    message = (cString ? "An owner-dependent c_string"
+                       : "A std::string_view that borrows a local owner") +
+              std::string(" cannot be ") + std::string(destination) + ".";
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2045", DiagnosticPhase::Semantics,
+                     expressionToken(expression), std::move(message));
+  if (temporaryOwner)
+    diagnostic.related.push_back(
+        {tokenSpan(expressionToken(*owner)),
+         "This temporary owns the text and is destroyed at the end of the "
+         "statement."});
+  else if (namedOwner != nullptr)
+    diagnostic.related.push_back(
+        {tokenSpan(namedOwner->name()), "The borrowed text is owned here."});
   if (capturedText || capturedTextValue(expression))
     diagnostic.hints.emplace_back(capturedTextHint(cString));
   else
     diagnostic.hints.emplace_back(
-        cString ? "Initialize a new local C-string binding "
-                  "in a narrow lexical scope; stored and "
-                  "reassignable dependency graphs are not "
-                  "supported yet."
-                : "Initialize a new local view binding in "
-                  "a narrow lexical scope; stored and "
-                  "reassignable dependency graphs are not "
-                  "supported yet.");
+        cString ? "Store an owning std::string and take its c_str() where "
+                  "it is used, or keep the text in a local binding that is "
+                  "used only while its owner is alive."
+                : "Make the field an owning std::string (for example "
+                  "std::string(text)) so it keeps its own copy, or keep the "
+                  "view in a local binding that is used only while its owner "
+                  "is alive.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
 

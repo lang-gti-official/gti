@@ -8897,7 +8897,21 @@ private:
         if (const MirPlace *selected = output.findPlace(call.receiver->place);
             selected != nullptr && storedReferenceAccessFor(*selected))
           return call.receiver->place;
-        if (const MirPlaceId source = borrowedSourcePlace(*receiver);
+        // A by-value carrier receiver holds a Stored group for its external
+        // dependencies. A mutable result cannot lie in the referent of a
+        // read-only group (an owning container that merely retains a shared
+        // resource handle), so it borrows storage of the receiver itself and
+        // is rooted at the receiver's own place below (issue #331). A view
+        // carrier's mutable group does name the result's storage.
+        const MirLoan *receiverLoan = output.findLoan(loanForValue(*receiver));
+        const bool heldStoredGroup =
+            receiverLoan != nullptr &&
+            receiverLoan->kind == MirLoanKind::Stored &&
+            receiverLoan->access == AccessMode::ReadOnly &&
+            value.borrowAccess == AccessMode::Mutable &&
+            call.receiver->place != 0;
+        if (const MirPlaceId source =
+                heldStoredGroup ? 0 : borrowedSourcePlace(*receiver);
             source != 0) {
           // A by-reference capture's entry loan names the capture slot. A
           // receiver reached through it is the referent place itself, as a
@@ -10154,7 +10168,21 @@ private:
               value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::CallResult &&
               value.borrowAccess == AccessMode::ReadOnly));
+        // A by-value carrier binding that holds a call-result or local loan
+        // is its own storage, not part of that loan's referent: a result
+        // rooted at the binding's shell borrows the carrier, which keeps its
+        // held loan live for as long as the result can be (issue #330).
+        const MirPlace *originPlace = output.findPlace(origin);
+        const MirLoan &held = output.loans[originLoan - 1];
+        const bool carrierShellOrigin =
+            originPlace != nullptr && held.kind != MirLoanKind::Stored &&
+            originPlace->root == MirPlaceRootKind::Binding &&
+            originPlace->projections.empty() &&
+            originPlace->type.kind != SemanticType::Reference &&
+            std::find(held.carriers.begin(), held.carriers.end(),
+                      originPlace->binding) != held.carriers.end();
         if ((derivedCallResult || derivedOriginCarrier) &&
+            !carrierShellOrigin &&
             !(shellReference &&
               output.loans[originLoan - 1].kind == MirLoanKind::Stored)) {
           parent = originLoan;

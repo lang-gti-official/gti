@@ -1577,6 +1577,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       return;
     }
   }
+  if (expression && reportTypeUsedAsValue(*expression, argument))
+    return;
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2003", DiagnosticPhase::Semantics, expressionToken(expression),
       argumentLabel + std::to_string(index + 1) + " has type '" +

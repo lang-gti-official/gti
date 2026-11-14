@@ -1077,16 +1077,8 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/LSP_COMPATIBILITY.json"
   DESTINATION "${CMAKE_INSTALL_DATADIR}/gti" COMPONENT gti_toolchain)
 # The LSP uses LLVM's JSON and thread support. Ship their pinned headers with
 # the SDK so rebuilding the adapter never fetches or rebuilds LLVM/Clang.
-foreach(llvm_include IN LISTS GTI_LLVM_INCLUDE_DIRS)
-  foreach(llvm_header_root IN ITEMS llvm llvm-c)
-    if(EXISTS "${llvm_include}/${llvm_header_root}")
-      install(DIRECTORY "${llvm_include}/${llvm_header_root}"
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/gti-llvm"
-        COMPONENT gti_toolchain FILES_MATCHING PATTERN "*.h" PATTERN "*.inc"
-        PATTERN "CMakeFiles" EXCLUDE)
-    endif()
-  endforeach()
-endforeach()
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/InstallLlvmHeaders.cmake")
+gti_install_llvm_headers("${GTI_LLVM_INCLUDE_DIRS}" gti_toolchain)
 
 if(GTI_RELEASE_BUILD AND NOT TARGET gti_lsp)
   message(FATAL_ERROR "A release build requires the gti_lsp target")
