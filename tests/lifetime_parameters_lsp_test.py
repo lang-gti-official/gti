@@ -258,7 +258,7 @@ def main():
             closure_escape = (
                 "import std.functional;\n"
                 "std::function_ref<int()> invalid() {\n"
-                "  int value = 1;\n"
+                "  /* 😀 */ int value = 1;\n"
                 "  /* 😀 */ auto callback = [&value]() -> int { return value; };\n"
                 "  std::function_ref<int()> result{callback};\n"
                 "  /* 😀 */ return result;\n}\n"
@@ -268,9 +268,9 @@ def main():
             assert error["range"] == source_range(
                 closure_escape, closure_escape.index("result;"), 6), error
             note = next(item for item in error["relatedInformation"]
-                        if "Local 'callback'" in item["message"])
+                        if "Local 'value'" in item["message"])
             assert note["location"] == {"uri": uri, "range": source_range(
-                closure_escape, closure_escape.index("callback"), 8)}, note
+                closure_escape, closure_escape.index("value"), 5)}, note
             assert "cannot extend local storage" in error["message"], error
             assert change(SOURCE, 22) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",

@@ -444,16 +444,16 @@ int main() { auto call = invalid(); return call(); }
                          closureEscapeError->related.end(),
                          [&](const auto &note) {
                            return note.span.start ==
-                                      closureEscape.find("callback") &&
+                                      closureEscape.find("value") &&
                                   note.span.end ==
-                                      closureEscape.find("callback") + 8 &&
+                                      closureEscape.find("value") + 5 &&
                                   note.message.find(
                                       "destroyed when the function returns") !=
                                       std::string::npos;
                          }) &&
              hasDiagnosticHint(closureEscapeResult.diagnostics,
                                "cannot extend local storage"),
-         "an escaping borrowed callable identifies the local callable storage "
+         "an escaping borrowed callable identifies the captured local storage "
          "that the returned view cannot outlive");
   const std::string ambiguous = R"(
 int& choose(int& first, int& second, bool condition) {
