@@ -2049,11 +2049,15 @@ public:
                      [this] { runReclamationWorker(); });
     auditWorker = llvm::thread(std::optional<unsigned>{frontendWorkerStackSize},
                                [this] { runAuditWorker(); });
+    preambleWorker =
+        llvm::thread(std::optional<unsigned>{frontendWorkerStackSize},
+                     [this] { runPreambleWorker(); });
   }
 
   ~LanguageServer() {
     stopCompletionWorker();
     stopAnalysisWorker();
+    stopPreambleWorker();
     stopReclamationWorker();
     (void)stopAuditWorker();
   }
@@ -2065,6 +2069,7 @@ public:
   [[noreturn]] void exitProcess(int code) {
     stopCompletionWorker();
     stopAnalysisWorker();
+    stopPreambleWorker();
     stopReclamationWorker();
     if (stopAuditWorker()) {
       std::exit(code);
@@ -2104,6 +2109,7 @@ public:
     }
     stopCompletionWorker();
     stopAnalysisWorker();
+    stopPreambleWorker();
     stopReclamationWorker();
     return 0;
   }
@@ -3502,6 +3508,9 @@ private:
     // The standard-library prefix is analysed once per include graph and
     // adopted by every later snapshot; see SemanticPreambleCache.
     frontendOptions.preambleCache = request.frontendSources.preambleCache;
+    // A missing preamble is built on the preamble worker, not before this
+    // snapshot's diagnostics: see `runPreambleWorker`.
+    frontendOptions.deferPreambleBuild = true;
     frontendOptions.sourceGenerations = request.frontendSources.generations;
     frontendOptions.sourceDigests = request.frontendSources.digests;
     frontendOptions.target = project.configuration.target();
@@ -3557,6 +3566,9 @@ private:
         std::chrono::duration_cast<std::chrono::microseconds>(
             SteadyClock::now() - frontendStart)
             .count());
+    if (frontend.deferredPreambleBuild)
+      schedulePreambleBuild(std::move(frontend.deferredPreambleBuild), uri,
+                            request.generation);
     // HIR and MIR run so that instantiated generic bodies and body-local
     // borrow checking report the same diagnostics as `gti check`; those
     // diagnostics are already in `frontend.diagnostics`. No editor query
@@ -3972,7 +3984,8 @@ private:
                  .preambleCache = request.frontendSources.preambleCache,
                  .cancellation = request.cancellation.get(),
                  .sourceGenerations = request.frontendSources.generations,
-                 .sourceDigests = request.frontendSources.digests});
+                 .sourceDigests = request.frontendSources.digests,
+                 .deferPreambleBuild = true});
           }
         } catch (const std::exception &) {
           completion = {};
@@ -4810,6 +4823,83 @@ private:
     }
   }
 
+  // A snapshot whose standard-library prefix has no cached preamble is
+  // analysed without one (bounded analysis) and hands the build here, so the
+  // first diagnostics after opening a file or changing its imports do not
+  // wait for a complete analysis of every library body. Later snapshots of
+  // the same import graph adopt the preamble once it is stored. Builds run
+  // one at a time, newest first; a queued build for the same prefix is
+  // dropped, and the queue keeps only as many builds as the cache retains.
+  void schedulePreambleBuild(std::shared_ptr<lang::SemanticPreambleBuild> build,
+                             const std::string &uri,
+                             std::uint64_t generation) const {
+    {
+      const std::lock_guard lock(stateMutex);
+      if (stoppingPreambleWorker)
+        return;
+      if (runningPreambleBuild != nullptr &&
+          runningPreambleBuild->key() == build->key())
+        return;
+      for (const PendingPreambleBuild &pending : pendingPreambleBuilds)
+        if (pending.build->key() == build->key())
+          return;
+      pendingPreambleBuilds.push_back(
+          PendingPreambleBuild{std::move(build), uri, generation});
+      if (pendingPreambleBuilds.size() > maximumPendingPreambleBuilds)
+        pendingPreambleBuilds.erase(pendingPreambleBuilds.begin());
+    }
+    preambleCondition.notify_one();
+  }
+
+  void runPreambleWorker() {
+    while (true) {
+      PendingPreambleBuild next;
+      {
+        std::unique_lock lock(stateMutex);
+        preambleCondition.wait(lock, [this] {
+          return stoppingPreambleWorker || !pendingPreambleBuilds.empty();
+        });
+        if (stoppingPreambleWorker)
+          return;
+        next = std::move(pendingPreambleBuilds.back());
+        pendingPreambleBuilds.pop_back();
+        runningPreambleBuild = next.build;
+      }
+      lang::FrontendWorkMetrics metrics;
+      const auto start = std::chrono::steady_clock::now();
+      try {
+        (void)next.build->run(&cancelPreambleBuilds, &metrics);
+      } catch (const std::exception &error) {
+        std::cerr << "LSP preamble build failed: " << error.what() << '\n';
+      } catch (...) {
+        std::cerr << "LSP preamble build failed with an unknown exception\n";
+      }
+      recordFrontendWork(
+          next.build->cancelled() ? "preamble-cancelled" : "preamble", next.uri,
+          next.generation,
+          static_cast<std::uint64_t>(
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                  std::chrono::steady_clock::now() - start)
+                  .count()),
+          metrics);
+      const std::lock_guard lock(stateMutex);
+      runningPreambleBuild.reset();
+    }
+  }
+
+  void stopPreambleWorker() {
+    {
+      const std::lock_guard lock(stateMutex);
+      stoppingPreambleWorker = true;
+      pendingPreambleBuilds.clear();
+    }
+    cancelPreambleBuilds.store(true, std::memory_order_relaxed);
+    preambleCondition.notify_all();
+    if (preambleWorker.joinable()) {
+      preambleWorker.join();
+    }
+  }
+
   void stopReclamationWorker() {
     {
       const std::lock_guard lock(stateMutex);
@@ -5032,6 +5122,8 @@ private:
         {"includeSuggestionsRequested", includeSuggestionsRequested},
         {"preambleBuilds",
          static_cast<std::int64_t>(metrics.semanticPreambleBuilds)},
+        {"preambleDeferrals",
+         static_cast<std::int64_t>(metrics.semanticPreambleDeferrals)},
         {"preambleBuildMicroseconds",
          static_cast<std::int64_t>(metrics.semanticPreambleBuildMicroseconds)},
         {"preambleAdoptions",
@@ -5264,6 +5356,19 @@ private:
   std::size_t activeCompletions = 0;
   bool stoppingAnalysis = false;
   bool stoppingReclamation = false;
+  struct PendingPreambleBuild {
+    std::shared_ptr<lang::SemanticPreambleBuild> build;
+    std::string uri;
+    std::uint64_t generation = 0;
+  };
+  static constexpr std::size_t maximumPendingPreambleBuilds = 4;
+  // Analysis (a const query of the server) schedules builds, so the queue is
+  // mutable like `stateMutex`, which guards it.
+  mutable std::condition_variable preambleCondition;
+  bool stoppingPreambleWorker = false;
+  std::atomic<bool> cancelPreambleBuilds{false};
+  mutable std::vector<PendingPreambleBuild> pendingPreambleBuilds;
+  mutable std::shared_ptr<lang::SemanticPreambleBuild> runningPreambleBuild;
   std::vector<std::shared_ptr<const lang::FrontendResult>> retiredFrontends;
   bool stoppingCompletion = false;
   bool shutdownRequested = false;
@@ -5286,6 +5391,7 @@ private:
   std::vector<llvm::thread> analysisWorkers;
   llvm::thread reclamationWorker;
   llvm::thread auditWorker;
+  llvm::thread preambleWorker;
 };
 
 } // namespace

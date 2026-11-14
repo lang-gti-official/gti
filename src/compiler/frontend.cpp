@@ -885,6 +885,73 @@ std::string frontendCacheContext(const FrontendOptions &options) {
   return syntaxCacheContext(options);
 }
 
+struct SemanticPreambleBuild::State {
+  SemanticPreambleKey key;
+  Program prefix;
+  SourceGraph sourceGraph;
+  SourceManager sources;
+  TargetInfo target;
+  bool toolingOccurrences = true;
+  bool requireDefinitions = false;
+  SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
+  CompileLimits limits;
+  bool reuseConstantEvaluations = true;
+  std::shared_ptr<SemanticPreambleCache> cache;
+  // A deferred build first looks for a preamble another build stored since
+  // the analysis that deferred it missed the cache.
+  bool deferred = false;
+  bool ran = false;
+  bool cancelled = false;
+};
+
+SemanticPreambleBuild::SemanticPreambleBuild(std::unique_ptr<State> state)
+    : state(std::move(state)) {}
+
+SemanticPreambleBuild::~SemanticPreambleBuild() = default;
+
+const SemanticPreambleKey &SemanticPreambleBuild::key() const {
+  return state->key;
+}
+
+bool SemanticPreambleBuild::cancelled() const { return state->cancelled; }
+
+std::shared_ptr<const SemanticPreamble>
+SemanticPreambleBuild::run(const std::atomic<bool> *cancellation,
+                           FrontendWorkMetrics *workMetrics) {
+  if (state->deferred)
+    if (std::shared_ptr<const SemanticPreamble> cached =
+            state->cache->lookup(state->key);
+        cached &&
+        semanticPreambleSupportsSourceDebug(*cached, state->sourceDebugProfile))
+      return cached;
+  if (state->ran)
+    return nullptr;
+  state->ran = true;
+  const auto buildStart = std::chrono::steady_clock::now();
+  SemanticVisitor builder(
+      state->target, &state->sourceGraph, state->toolingOccurrences, nullptr,
+      &state->sources, RawPointerAuditMode::Off, state->requireDefinitions,
+      TrustedBodyAnalysis::Complete, state->sourceDebugProfile, state->limits);
+  builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
+  builder.setCancellation(cancellation);
+  // The preamble owns the prefix program; this build no longer needs it.
+  std::shared_ptr<const SemanticPreamble> preamble =
+      builder.buildPreamble(std::move(state->prefix));
+  if (builder.cancelled()) {
+    state->cancelled = true;
+    return nullptr;
+  }
+  state->cache->store(state->key, preamble);
+  if (workMetrics != nullptr) {
+    ++workMetrics->semanticPreambleBuilds;
+    workMetrics->semanticPreambleBuildMicroseconds += static_cast<std::size_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - buildStart)
+            .count());
+  }
+  return preamble;
+}
+
 Frontend::Frontend(FrontendOptions options) : options(std::move(options)) {}
 
 FrontendResult Frontend::analyze(
@@ -1169,30 +1236,37 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                           *preamble, options.sourceDebugProfile))
         preamble.reset();
       if (preamble == nullptr) {
-        const auto buildStart = std::chrono::steady_clock::now();
-        StmtList prefix(declarations.begin(),
+        auto build = std::make_shared<SemanticPreambleBuild>(
+            std::make_unique<SemanticPreambleBuild::State>(
+                SemanticPreambleBuild::State{
+                    .key = std::move(key),
+                    .prefix = Program(StmtList(
+                        declarations.begin(),
                         declarations.begin() +
-                            static_cast<std::ptrdiff_t>(preambleDeclarations));
-        SemanticVisitor builder(
-            options.target, &result.sourceGraph, options.toolingOccurrences,
-            nullptr, &result.sources, RawPointerAuditMode::Off,
-            requireDefinitions, TrustedBodyAnalysis::Complete,
-            options.sourceDebugProfile, options.limits);
-        builder.setConstantEvaluationReuse(options.reuseConstantEvaluations);
-        builder.setCancellation(options.cancellation);
-        preamble = builder.buildPreamble(Program(std::move(prefix)));
-        if (builder.cancelled()) {
-          result.cancelled = true;
-          return result;
-        }
-        options.preambleCache->store(std::move(key), preamble);
-        if (options.workMetrics != nullptr) {
-          ++options.workMetrics->semanticPreambleBuilds;
-          options.workMetrics->semanticPreambleBuildMicroseconds +=
-              static_cast<std::size_t>(
-                  std::chrono::duration_cast<std::chrono::microseconds>(
-                      std::chrono::steady_clock::now() - buildStart)
-                      .count());
+                            static_cast<std::ptrdiff_t>(preambleDeclarations))),
+                    .sourceGraph = result.sourceGraph,
+                    .sources = result.sources,
+                    .target = options.target,
+                    .toolingOccurrences = options.toolingOccurrences,
+                    .requireDefinitions = requireDefinitions,
+                    .sourceDebugProfile = options.sourceDebugProfile,
+                    .limits = options.limits,
+                    .reuseConstantEvaluations =
+                        options.reuseConstantEvaluations,
+                    .cache = options.preambleCache,
+                    .deferred = options.deferPreambleBuild}));
+        if (options.deferPreambleBuild) {
+          // Bounded analysis of this program reports what an adopted
+          // preamble would; the caller builds it for later analyses.
+          result.deferredPreambleBuild = std::move(build);
+          if (options.workMetrics != nullptr)
+            ++options.workMetrics->semanticPreambleDeferrals;
+        } else {
+          preamble = build->run(options.cancellation, options.workMetrics);
+          if (build->cancelled()) {
+            result.cancelled = true;
+            return result;
+          }
         }
       }
     }
