@@ -3760,13 +3760,6 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
             });
         if (!whole)
           continue;
-        if (!published.empty()) {
-          report(expressionToken(*argument),
-                 "A value can hold dynamic text from one owner; this argument "
-                 "would add a second owner dependency.",
-                 "GTI-S2045");
-          break;
-        }
         std::vector<SymbolId> path{entry.field};
         path.insert(path.end(), paths.front().begin(), paths.front().end());
         published.push_back({.resultFields = std::move(path),
@@ -3818,14 +3811,6 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
       if (textFieldOwnerDependency(*argument, entry.field).empty()) {
         reportOwnerDependentTextStorage(
             *argument, "passed to a function that returns it in a field");
-        break;
-      }
-      if (!published.empty()) {
-        // Phase 1 of L-OWN-02 publishes one owner per value.
-        report(expressionToken(*argument),
-               "A value can hold dynamic text from one owner; this argument "
-               "would add a second owner dependency.",
-               "GTI-S2045");
         break;
       }
       published.push_back({.resultFields = {entry.field},
@@ -4195,13 +4180,6 @@ auto SemanticVisitor::Impl::relayConstructorTextField(
   if (source == dependencies.end() || owner == nullptr ||
       member == owner->members.end())
     return;
-  if (!textOrigins.empty()) {
-    report(expressionToken(argument),
-           "A value can hold dynamic text from one owner; this argument would "
-           "add a second owner dependency.",
-           "GTI-S2045");
-    return;
-  }
   std::vector<SymbolId> path{toolingSymbolFor(member->second.symbol)};
   if (input.payload != 0)
     path.push_back(input.payload);

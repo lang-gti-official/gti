@@ -55,6 +55,19 @@ int main() {
 }
 
 
+# The same aggregate publication must retain every owner through copies.
+for owner in ('first', 'second'):
+    for copy in (False, True):
+        _, source = CASES['two_owner_record']
+        source = source.replace('std::string ' + owner + '{', 'mut std::string ' + owner + '{')
+        source = source.replace('  return labels.first',
+            ('  auto copied = labels;\n' if copy else '') +
+            '  ' + owner + '.clear();\n  return labels.first')
+        if copy:
+            source = source.replace('return labels.first', 'return copied.first').replace('&& labels.second', '&& copied.second')
+        CASES['record_' + owner + '_owner_write' + ('_copy' if copy else '')] = (False, source)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('compiler', type=Path)
@@ -98,6 +111,11 @@ def main():
                     diagnostic = result.stdout + result.stderr
                     ok = result.returncode != 0 and bool(re.search(r'error\[GTI-S\d+\]', diagnostic))
                     ok = ok and 'GTI-B0001' not in diagnostic
+                    # Admission failures do not prove owner protection.
+                    ok = ok and 'single-owner' not in diagnostic
+                    ok = ok and 'second owner dependency' not in diagnostic
+                if not ok:
+                    print(label, (result.stdout + result.stderr)[-2500:], flush=True)
                 passed = passed and ok
                 binary.unlink(missing_ok=True)
             evidence['cases'][name] = {'expected_acceptance': accepted, 'passed': passed}

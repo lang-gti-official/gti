@@ -72,6 +72,23 @@ struct HeldText {
 };
 using HeldTexts = std::set<HeldText>;
 
+// A publication retains one permission group with any number of shared
+// field dependencies. A field query must inspect every row of that group;
+// choosing only its primary row loses siblings when their owners differ.
+bool sharedGroupDesignates(const MirLoan &loan, const TextFieldPath &path) {
+  if (loan.kind != MirLoanKind::Stored || loan.access != AccessMode::ReadOnly ||
+      std::any_of(loan.additionalDependencies.begin(),
+                  loan.additionalDependencies.end(), [](const auto &dependency) {
+                    return dependency.access != AccessMode::ReadOnly;
+                  }))
+    return false;
+  return loan.designatedFields == path ||
+         std::any_of(loan.additionalDependencies.begin(),
+                     loan.additionalDependencies.end(), [&](const auto &dependency) {
+                       return dependency.designatedFields == path;
+                     });
+}
+
 struct TextBody {
   const MirBody &body;
   std::span<const SemanticType> types;
@@ -353,8 +370,7 @@ private:
     return call.dependentTextPublication && loan &&
            loan->kind == MirLoanKind::Stored &&
            loan->access == AccessMode::ReadOnly &&
-           loan->designatedFields == std::vector<SymbolId>{entry.field} &&
-           loan->additionalDependencies.empty() &&
+           sharedGroupDesignates(*loan, TextFieldPath{entry.field}) &&
            std::find(call.borrowFields.begin(), call.borrowFields.end(),
                      expected) != call.borrowFields.end();
   }
@@ -1680,11 +1696,10 @@ private:
     const auto constructor = *instruction.constructorTarget;
     const auto *loan = context.body.findLoan(*instruction.loan);
     if (!loan || loan->kind != MirLoanKind::Stored ||
-        loan->access != AccessMode::ReadOnly ||
-        !loan->additionalDependencies.empty())
+        loan->access != AccessMode::ReadOnly)
       return false;
     const auto path = rerootedTextPath(constructor, parameter, held);
-    if (!path || loan->designatedFields != path->first ||
+    if (!path || !sharedGroupDesignates(*loan, path->first) ||
         !directTextPath(program, instruction.info.type, path->first))
       return false;
     const BorrowedFieldOrigin expected{
@@ -1970,8 +1985,15 @@ private:
           if (instruction.tombstone)
             continue;
           HeldTexts produced;
-          if (const auto *loan = textPublicationLoan(body, instruction))
+          if (const auto *loan = textPublicationLoan(body, instruction)) {
             produced.insert({.loan = loan->id, .path = loan->designatedFields});
+            for (const auto &dependency : loan->additionalDependencies)
+              if (dependency.access == AccessMode::ReadOnly &&
+                  directTextPath(program, instruction.info.type,
+                                 dependency.designatedFields))
+                produced.insert({.loan = loan->id,
+                                 .path = dependency.designatedFields});
+          }
           const bool single = instruction.operands.size() == 1;
           const auto forward = [&] {
             if (single)
@@ -2346,8 +2368,7 @@ private:
     if (!instruction.dependentTextPublication || field == fields.end() ||
         !loan || loan->kind != MirLoanKind::Stored ||
         loan->access != AccessMode::ReadOnly ||
-        loan->designatedFields != field->second ||
-        !loan->additionalDependencies.empty() ||
+        !sharedGroupDesignates(*loan, field->second) ||
         !directTextPath(program, instruction.info.type, field->second))
       return false;
     const BorrowedFieldOrigin expected{.resultFields = field->second,

@@ -9624,13 +9624,7 @@ auto SemanticVisitor::Impl::analyzeDesignatedInitializer(
            !constructionKeepsPublishedText(target, nullptr));
       if (restrictedOwner)
         dependencies.clear();
-      if (!dependencies.empty() && !textOrigins.empty()) {
-        report(expressionToken(expr.arguments()[i]),
-               "A value can hold dynamic text from one owner; this "
-               "argument would add a second owner dependency.",
-               "GTI-S2045");
-        valid = false;
-      } else if (!dependencies.empty()) {
+      if (!dependencies.empty()) {
         textOrigins.push_back({.resultFields = {field},
                                .origin = BorrowOriginKind::Argument,
                                .parameter = index,

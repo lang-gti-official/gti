@@ -2027,7 +2027,7 @@ target_link_libraries(gti_ownerless_text_contracts_tests PRIVATE gti_compiler)
 add_test(NAME ownerless_text_contracts COMMAND gti_ownerless_text_contracts_tests)
 add_test(NAME borrowed_dependency_updates
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowed_dependency_updates_test.py"
-    $<TARGET_FILE:gti> --output-dir "${CMAKE_CURRENT_BINARY_DIR}/borrowed-dependency-updates")
+    $<TARGET_FILE:gti> --output-dir "${CMAKE_BINARY_DIR}/Testing/borrowed-dependency-updates")
 add_executable(gti_view_field_tests view_field_tests.cpp)
 target_link_libraries(gti_view_field_tests PRIVATE gti_compiler)
 add_test(NAME view_fields COMMAND gti_view_field_tests)
