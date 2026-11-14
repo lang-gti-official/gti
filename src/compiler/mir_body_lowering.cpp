@@ -16,6 +16,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <tuple>
 
 namespace lang {
@@ -74,6 +75,8 @@ programConstantLiteral(const ConstantValue &constant) {
 // it live across the access. A cleanup-bound loan is instead live until its
 // carrier is destroyed, whatever its last read.
 void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
+                     MirBlockId rejectedBlock,
+                     MirInstructionId rejectedInstruction,
                      const SourceSpan &rejected,
                      std::optional<SourceSpan> &origin,
                      std::optional<SourceSpan> &laterUse,
@@ -119,21 +122,10 @@ void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
       });
   if (symbols.empty() || lifecycleBound)
     return;
-  for (const HirStatement &statement : body.statements) {
-    if (!statement.source || !statement.source->extent())
-      continue;
-    const SourceSpan &span = *statement.source->extent();
-    if (span.source != rejected.source || span.start < rejected.end ||
-        (laterUse && span.start > laterUse->start))
-      continue;
-    std::vector<HirValueId> pending;
-    for (const auto &root :
-         {statement.value, statement.condition, statement.increment})
-      if (root)
-        pending.push_back(*root);
+  const auto readsCarrier = [&](HirValueId root) {
+    std::vector<HirValueId> pending{root};
     std::unordered_set<HirValueId> visited;
-    bool reads = false;
-    while (!pending.empty() && !reads) {
+    while (!pending.empty()) {
       const HirValueId next = pending.back();
       pending.pop_back();
       if (!visited.insert(next).second)
@@ -141,7 +133,8 @@ void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
       const HirValue *value = body.findValue(next);
       if (value == nullptr)
         continue;
-      reads = value->symbol != 0 && symbols.contains(value->symbol);
+      if (value->symbol != 0 && symbols.contains(value->symbol))
+        return true;
       pending.insert(pending.end(), value->operands.begin(),
                      value->operands.end());
       pending.insert(pending.end(), value->sequencedInputs.begin(),
@@ -149,9 +142,92 @@ void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
       if (value->receiver)
         pending.push_back(*value->receiver);
     }
-    if (reads && (!laterUse || span.start < laterUse->start ||
-                  span.end - span.start < laterUse->end - laterUse->start))
-      laterUse = span;
+    return false;
+  };
+  const auto useSpan = [&](HirStatementId statementId,
+                           HirValueId valueId) -> std::optional<SourceSpan> {
+    if (const auto *statement = body.findStatement(statementId);
+        statement && statement->source && statement->source->extent())
+      return statement->source->extent();
+    if (const auto *value = body.findValue(valueId); value && value->source) {
+      const auto token = expressionAnchorToken(*value->source);
+      if (token.lexeme.empty())
+        return std::nullopt;
+      const auto anchor = tokenSpan(token);
+      std::optional<SourceSpan> enclosing;
+      for (const auto &statement : body.statements) {
+        if (!statement.source || !statement.source->extent())
+          continue;
+        const auto &span = *statement.source->extent();
+        if (span.source == anchor.source && span.start <= anchor.start &&
+            span.end >= anchor.end &&
+            (!enclosing ||
+             span.end - span.start < enclosing->end - enclosing->start))
+          enclosing = span;
+      }
+      return enclosing ? enclosing : std::optional<SourceSpan>{anchor};
+    }
+    return std::nullopt;
+  };
+  const MirBlock *start = mir.findBlock(rejectedBlock);
+  if (start == nullptr)
+    return;
+  const auto rejectedAt =
+      std::find_if(start->instructions.begin(), start->instructions.end(),
+                   [&](const MirInstruction &instruction) {
+                     return instruction.id == rejectedInstruction;
+                   });
+  if (rejectedAt == start->instructions.end())
+    return;
+  // Follow executable continuations, not source order. A use before the
+  // access in source may keep this loan live on the next loop iteration;
+  // a use in a disjoint branch cannot explain this access. Stop a path when
+  // the retained loan ends so a new borrow of the same binding is not a cause.
+  using Position = std::pair<MirBlockId, std::size_t>;
+  std::vector<Position> pending{
+      {rejectedBlock,
+       static_cast<std::size_t>(rejectedAt - start->instructions.begin()) + 1}};
+  std::set<Position> visited;
+  for (std::size_t cursor = 0; cursor < pending.size(); ++cursor) {
+    const auto [blockId, offset] = pending[cursor];
+    if (!visited.insert(pending[cursor]).second)
+      continue;
+    const MirBlock *block = mir.findBlock(blockId);
+    if (block == nullptr)
+      continue;
+    bool ended = false;
+    for (std::size_t index = offset; index < block->instructions.size();
+         ++index) {
+      const auto &instruction = block->instructions[index];
+      if (instruction.tombstone)
+        continue;
+      if (instruction.kind == MirInstructionKind::EndBorrow &&
+          instruction.loan == loanId) {
+        ended = true;
+        break;
+      }
+      if (readsCarrier(instruction.hirValue)) {
+        const auto span =
+            useSpan(instruction.hirStatement, instruction.hirValue);
+        if (span && span->source == rejected.source) {
+          laterUse = span;
+          return;
+        }
+      }
+    }
+    if (ended)
+      continue;
+    if (readsCarrier(block->terminator.hirValue)) {
+      const auto span =
+          useSpan(block->terminator.hirStatement, block->terminator.hirValue);
+      if (span && span->source == rejected.source) {
+        laterUse = span;
+        return;
+      }
+    }
+    for (const auto successor :
+         mir_detail::terminatorSuccessors(block->terminator))
+      pending.emplace_back(successor, 0);
   }
 }
 } // namespace
@@ -19562,7 +19638,8 @@ MirBody MirLowerer::lowerBody(
                         error.borrow.conflictingLoan != 0
                             ? error.borrow.conflictingLoan
                             : error.borrow.loan,
-                        *rejectedAt, loanOrigin, laterUse, lifecycleBound);
+                        error.block, error.instruction, *rejectedAt, loanOrigin,
+                        laterUse, lifecycleBound);
       errors.push_back(
           {.body = {kind, owner},
            .block = error.block,

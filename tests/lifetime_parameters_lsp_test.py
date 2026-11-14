@@ -207,7 +207,25 @@ def main():
             ended = ended.replace("return child;", "return saved;")
             assert not [item for item in change(ended, 14)
                         if item.get("severity") == 1]
-            assert change(SOURCE, 15) == []
+            loop = (
+                "int main() {\n"
+                "  mut int value = 1; int& borrowed = value;\n"
+                "  for (mut int i = 0; i < 2; i += 1) {\n"
+                "    /* 😀 */ int copy = borrowed;\n"
+                "    value = copy + 1;\n"
+                "  } return 0;\n}\n")
+            errors = change(loop, 15)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            note = next(item for item in error["relatedInformation"]
+                        if "later loop iteration" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                loop, loop.index("int copy"), len("int copy = borrowed;"))}, note
+            per_iteration = loop.replace(" int& borrowed = value;", "")
+            per_iteration = per_iteration.replace(
+                "int copy = borrowed;", "int& borrowed = value; int copy = borrowed;")
+            assert not [item for item in change(per_iteration, 16)
+                        if item.get("severity") == 1]
+            assert change(SOURCE, 17) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",

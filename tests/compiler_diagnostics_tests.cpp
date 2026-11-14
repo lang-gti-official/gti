@@ -581,6 +581,39 @@ int main() {
 })");
   expect(endedBorrow.canGenerateCode(),
          "diagnostic provenance must not extend a borrow beyond its last use");
+  const std::string loopBorrow = R"(
+int main() {
+  mut int value = 1;
+  int& borrowed = value;
+  for (mut int i = 0; i < 2; i += 1) {
+    int copy = borrowed;
+    value = copy + 1;
+  }
+  return 0;
+}
+)";
+  const auto loopResult = analyze(loopBorrow);
+  const auto *loopError =
+      findDiagnosticByCode(loopResult.diagnostics, "GTI-S2017");
+  expect(loopError && loopError->related.size() == 2 &&
+             loopError->related[1].span.start == loopBorrow.find("int copy") &&
+             loopError->related[1].span.end ==
+                 loopBorrow.find("borrowed;", loopBorrow.find("int copy")) +
+                     9 &&
+             loopError->related[1].message.find("later loop iteration") !=
+                 std::string::npos,
+         "loop-carried conflicts explain the next-iteration use even when "
+         "that use precedes the conflicting access in source order");
+  expect(analyze(R"(
+int run(bool condition) {
+  mut int value = 1;
+  int& borrowed = value;
+  if (condition) { value = 2; return value; }
+  return borrowed;
+}
+)")
+             .canGenerateCode(),
+         "a use in a disjoint branch does not keep a borrow live at an access");
 
   const std::string records = R"(
 struct Ticket {

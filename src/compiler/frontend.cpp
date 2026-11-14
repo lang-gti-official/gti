@@ -141,8 +141,14 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             "not merely until its last read. End the carrier's scope before "
             "accessing the owner again.");
       else if (explained->laterUse) {
+        const bool loopUse =
+            explained->laterUse->source == diagnostic.primary.source &&
+            explained->laterUse->start < diagnostic.primary.start;
         diagnostic.related.push_back(
-            {*explained->laterUse, "The borrowed value is used later here."});
+            {*explained->laterUse,
+             loopUse ? "The borrowed value can be used again here on a later "
+                       "loop iteration."
+                     : "The borrowed value is used later here."});
         diagnostic.hints.emplace_back(
             explained->temporaryDestroyed
                 ? "Store the temporary in a named local that outlives every "
