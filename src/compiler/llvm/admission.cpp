@@ -4529,6 +4529,51 @@ public:
   // unsafe call's by-value result into its consumer. A call input carrying
   // the exact result of an admitted ordinary unsafe call performs no unsafe
   // operation of its own; the transport is admitted on its own terms.
+  // A by-value unsafe call result passed straight to a by-reference parameter
+  // is staged as a read temporary borrow of the call's result value. The
+  // staging carries the call's HIR value and therefore its unsafe marker, but
+  // the permission belongs to the call, admitted on its own terms; the staging
+  // itself only borrows the materialized result (issue #332).
+  bool unsafeCallTemporaryInput(const MirBody &body,
+                                const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
+        stage.callInputRole != MirCallInputRole::Argument ||
+        stage.callInputKind != HirCallInputKind::ReadTemporaryBorrow ||
+        stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
+        stage.hirValue == 0 || stage.callSite == 0 || stage.defaultArgument ||
+        stage.rawMemoryAccess || stage.intrinsic != IntrinsicKind::None ||
+        stage.info.type.kind != SemanticType::Reference ||
+        stage.info.type.arguments.size() != 1 ||
+        stage.info.type.referenceAccess != AccessMode::ReadOnly ||
+        stage.operands.size() != 1 || stage.destination || stage.receiver ||
+        stage.functionTarget || stage.constructorTarget || stage.lambdaTarget ||
+        stage.bodyTarget || stage.nativeCalleeType || !stage.lifecycle.empty() ||
+        !stage.definedFailure.empty())
+      return false;
+    const MirOperand &input = stage.operands.front();
+    const MirPlace *place = body.findPlace(input.place);
+    if (input.kind != MirOperandKind::BorrowRead || place == nullptr ||
+        place->root != MirPlaceRootKind::Value || place->value == 0 ||
+        !place->projections.empty() ||
+        place->type != stage.info.type.arguments.front())
+      return false;
+    // The producing call: its result is the borrowed value, with the same HIR
+    // value, the same unsafe permission and a by-value result of exactly the
+    // staged referent type.
+    for (const MirBlock &block : body.blocks)
+      for (const MirInstruction &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.result && *instruction.result == place->value &&
+            instruction.hirValue == stage.hirValue &&
+            instruction.unsafeOperation ==
+                UnsafeOperationKind::DeclaredUnsafeCall &&
+            instruction.result &&
+            instruction.info.category == ValueCategory::Value &&
+            instruction.info.type == place->type)
+          return true;
+    return false;
+  }
+
   bool unsafeCallResultStaging(const MirBody &body,
                                const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::CallInput ||
@@ -5863,6 +5908,7 @@ public:
             : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
                unsafeCallResultInput(mir, mirBlock, stage) ||
                unsafeCallResultStaging(mir, stage) ||
+               unsafeCallTemporaryInput(mir, stage) ||
                unsafeCallValueReceiver(mir, stage) ||
                unsafeCallResultReturn(mir, mirBlock, stage))
                 ? std::optional(Shape::OrdinaryUnsafeInvocation)
