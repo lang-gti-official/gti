@@ -397,6 +397,70 @@ void testOwnershipAndMissingIncludeDiagnostics() {
                                     {standardLibraryRoot()});
   };
   const std::string prefix = "import std.string;\n";
+  const std::string ambiguous = R"(
+int& choose(int& first, int& second, bool condition) {
+  if (condition) { return first; }
+  return second;
+}
+)";
+  const auto ambiguousResult = analyze(ambiguous);
+  const auto *ambiguousError =
+      findDiagnosticByCode(ambiguousResult.diagnostics, "GTI-S2017");
+  expect(
+      !ambiguousResult.canGenerateCode() && ambiguousError &&
+          ambiguousError->primary.start == ambiguous.find("choose") &&
+          ambiguousError->related.size() == 2 &&
+          ambiguousError->related[0].span.start == ambiguous.find("first") &&
+          ambiguousError->related[0].span.end == ambiguous.find("first") + 5 &&
+          ambiguousError->related[1].span.start == ambiguous.find("second") &&
+          ambiguousError->related[1].span.end == ambiguous.find("second") + 6 &&
+          ambiguousError->related[0].message.find("first") !=
+              std::string::npos &&
+          ambiguousError->related[1].message.find("second") !=
+              std::string::npos &&
+          ambiguousError->fixes.empty(),
+      "ambiguous return explains both possible suppliers, excluding the "
+      "non-borrowing condition, without guessing a lifetime fix");
+  expect(hasDiagnosticHint(ambiguousResult.diagnostics,
+                           "intended input supplier or suppliers"),
+         "ambiguous return explains the signature relationship to declare");
+  expect(analyze(R"(
+int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool condition) {
+  if (condition) { return first; }
+  return second;
+}
+)")
+             .canGenerateCode(),
+         "an explicit shared result lifetime resolves the ambiguity");
+  const std::string mismatched = R"(
+int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  return second;
+}
+)";
+  const auto mismatchResult = analyze(mismatched);
+  const auto *mismatchError =
+      findDiagnosticByCode(mismatchResult.diagnostics, "GTI-S2127");
+  expect(
+      !mismatchResult.canGenerateCode() && mismatchError &&
+          mismatchError->primary.start == mismatched.rfind("second") &&
+          mismatchError->related.size() == 2 &&
+          mismatchError->related[0].span.start == mismatched.find("<b>") + 1 &&
+          mismatchError->related[0].span.end == mismatched.find("<b>") + 2 &&
+          mismatchError->related[1].span.start == mismatched.find("<a>") + 1 &&
+          mismatchError->related[1].span.end == mismatched.find("<a>") + 2 &&
+          mismatchError->fixes.empty(),
+      "a return lifetime mismatch relates the supplied and required regions "
+      "at their exact written locations");
+  expect(hasDiagnosticHint(mismatchResult.diagnostics, "outlives<b, a>") &&
+             hasDiagnosticHint(mismatchResult.diagnostics,
+                               "does not extend the input's lifetime"),
+         "lifetime advice explains the obligation added for callers");
+  expect(analyze(R"(
+int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second)
+  requires outlives<b, a> { return second; }
+)")
+             .canGenerateCode(),
+         "a declared input-outlives-result relationship permits the return");
   const std::string moved = prefix + R"(
 int main() {
   std::string original = std::string("hello");
