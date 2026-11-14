@@ -143,6 +143,71 @@ def main():
                 **quantified, "context": {"includeDeclaration": True}})
             assert len(quantified_references) == 3, quantified_references
             assert change(SOURCE, 8) == []
+
+            def source_range(text, offset, length):
+                return {"start": lsp_position(text, offset),
+                        "end": lsp_position(text, offset + length)}
+
+            ambiguous = (
+                "/* 😀 */ int& choose(int& first, int& second, bool condition) {\n"
+                "  if (condition) { return first; } return second;\n}\n")
+            errors = change(ambiguous, 9)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert error["range"] == source_range(
+                ambiguous, ambiguous.index("choose"), 6), error
+            notes = error["relatedInformation"]
+            assert len(notes) == 2, notes
+            for note, name in zip(notes, ("first", "second")):
+                assert name in note["message"], note
+                assert note["location"] == {"uri": uri, "range": source_range(
+                    ambiguous, ambiguous.index(name), len(name))}, note
+            fixed = (
+                "/* 😀 */ int&<a> choose<lifetime a>(int&<a> first, "
+                "int&<a> second, bool condition) {\n"
+                "  if (condition) { return first; } return second;\n}\n")
+            assert change(fixed, 10) == []
+            assert not request("textDocument/codeAction", {
+                "textDocument": {"uri": uri}, "range": error["range"],
+                "context": {"diagnostics": [error], "only": ["quickfix"]}})
+
+            mismatch = (
+                "/* 😀 */ int&<a> choose<lifetime a, lifetime b>("
+                "int&<a> first, int&<b> second) { return second; }\n")
+            errors = change(mismatch, 11)
+            errors = [item for item in errors if item.get("severity") == 1]
+            assert len(errors) == 1 and errors[0]["code"] == "GTI-S2127", errors
+            error = errors[0]
+            assert error["range"] == source_range(
+                mismatch, mismatch.rindex("second"), 6), error
+            notes = error["relatedInformation"]
+            assert len(notes) == 2, notes
+            for note, region in zip(notes, ("b", "a")):
+                assert note["location"] == {"uri": uri, "range": source_range(
+                    mismatch, mismatch.index("<" + region + ">") + 1, 1)}, note
+            bounded = mismatch.replace(
+                ") { return", ") requires outlives<b, a> { return")
+            assert change(bounded, 12) == []
+            reborrow = (
+                "int main() {\n"
+                "  mut int value = 1; mut int& parent = value;\n"
+                "  { mut int& ended = parent; ended = 2; }\n"
+                "  /* 😀 */ mut int& child = parent;\n"
+                "  /* 😀 */ parent = 3;\n"
+                "  return child;\n}\n")
+            errors = change(reborrow, 13)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert error["range"] == source_range(
+                reborrow, reborrow.index("parent = 3"), 6), error
+            notes = error["relatedInformation"]
+            assert notes[0]["location"] == {"uri": uri, "range": source_range(
+                reborrow, reborrow.index("parent;", reborrow.index("child =")), 6)}, notes
+            assert notes[1]["location"] == {"uri": uri, "range": source_range(
+                reborrow, reborrow.index("return child"), len("return child;"))}, notes
+            ended = reborrow.replace("parent = 3;", "int saved = child; parent = 3;")
+            ended = ended.replace("return child;", "return saved;")
+            assert not [item for item in change(ended, 14)
+                        if item.get("severity") == 1]
+            assert change(SOURCE, 15) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
