@@ -475,6 +475,12 @@ related spans, and what intentional alternatives remain through hints:
   referents die at return. Advice distinguishes returning an owned value from
   borrowing caller-provided storage; a lifetime annotation cannot prolong a
   local object's lifetime.
+- Owning-allocation rejection (`GTI-S2018`) uses the stored-reference inventory
+  to identify captures or fields that can retain external storage. Related
+  locations point to their declarations and explain that allocating the
+  containing object does not own its referents. At most four distinct source
+  locations are reported; absent structural evidence keeps the general
+  rejection rather than guessing a capture or owner.
 - Read-only field writes, fixed-array writes, and mutable method calls relate
   the restricting declaration when it is provable through ordinary named places.
   Hints distinguish an immutable owner, a read-only reference requiring exclusive

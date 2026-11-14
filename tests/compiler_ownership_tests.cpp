@@ -6338,19 +6338,19 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !invalid.canGenerateCode() &&
-          hasDiagnostic(invalid.diagnostics,
-                        "cannot duplicate an exclusive dependency") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Every constructor of a stored-reference class") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "cannot have global or static storage") &&
-          hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
-          (hasDiagnostic(invalid.diagnostics,
-                         "Stored-reference value is derived from temporary "
-                         "storage") ||
-           mirRejectsAlone("stored-reference-temporary-owner.gti", R"(
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot duplicate an exclusive dependency") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Every constructor of a stored-reference class") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot have global or static storage") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Move assignment is unavailable for type") &&
+             (hasDiagnostic(invalid.diagnostics,
+                            "Stored-reference value is derived from temporary "
+                            "storage") ||
+              mirRejectsAlone("stored-reference-temporary-owner.gti", R"(
 class BorrowingIterator<T> {
   T& value;
 public:
@@ -6367,9 +6367,9 @@ int main() {
   return 0;
 }
 )",
-                           "derived from temporary storage")),
-      "stored-reference diagnostics should reject unsupported reference "
-      "graphs, assignment, and temporary owners");
+                              "derived from temporary storage")),
+         "stored-reference diagnostics should reject unsupported reference "
+         "graphs, assignment, and temporary owners");
 }
 
 void testMutableStoredDependencies() {
@@ -8058,7 +8058,8 @@ int use() {
              hasDiagnosticAt(copyAssignment.diagnostics, "GTI-S2003",
                              "stored-carrier-copy-assignment.gti",
                              copyAssignmentSource.rfind("right"),
-                             "Cannot assign a value of type"),
+                             "Copy assignment is unavailable for type "
+                             "'ReadCarrier'"),
          "read-only carriers should reject copy assignment at the source "
          "value because assignment could reseat their dependency");
 

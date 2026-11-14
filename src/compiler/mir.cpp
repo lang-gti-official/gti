@@ -3757,7 +3757,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
         // Using a parent while its exclusive child reborrow is live is a
         // source borrow conflict, not malformed MIR.
         const auto child = std::find_if(
-            body.loans.begin(), body.loans.end(), [&](const MirLoan &candidate) {
+            body.loans.begin(), body.loans.end(),
+            [&](const MirLoan &candidate) {
               return active[candidate.id - 1] != MirLoanFlowState::Inactive &&
                      !isParkedLoan(active[candidate.id - 1]) &&
                      isLoanAncestor(body, loan, candidate.id);
