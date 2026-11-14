@@ -423,6 +423,38 @@ int& invalid() {
   ownedReturn.erase(ownedReturn.find('&'), 1);
   expect(analyze(ownedReturn).canGenerateCode(),
          "returning the owned value preserves the valid nearby program");
+  const std::string closureEscape = R"(
+import std.functional;
+std::function_ref<int()> invalid() {
+  int value = 1;
+  auto callback = [&value]() -> int { return value; };
+  std::function_ref<int()> result{callback};
+  return result;
+}
+int main() { auto call = invalid(); return call(); }
+)";
+  const auto closureEscapeResult = analyze(closureEscape);
+  const auto *closureEscapeError =
+      findDiagnosticByCode(closureEscapeResult.diagnostics, "GTI-S2127");
+  expect(!closureEscapeResult.canGenerateCode() && closureEscapeError &&
+             closureEscapeError->primary.start ==
+                 closureEscape.find("result;",
+                                    closureEscape.find("return result")) &&
+             std::any_of(closureEscapeError->related.begin(),
+                         closureEscapeError->related.end(),
+                         [&](const auto &note) {
+                           return note.span.start ==
+                                      closureEscape.find("callback") &&
+                                  note.span.end ==
+                                      closureEscape.find("callback") + 8 &&
+                                  note.message.find(
+                                      "destroyed when the function returns") !=
+                                      std::string::npos;
+                         }) &&
+             hasDiagnosticHint(closureEscapeResult.diagnostics,
+                               "cannot extend local storage"),
+         "an escaping borrowed callable identifies the local callable storage "
+         "that the returned view cannot outlive");
   const std::string ambiguous = R"(
 int& choose(int& first, int& second, bool condition) {
   if (condition) { return first; }

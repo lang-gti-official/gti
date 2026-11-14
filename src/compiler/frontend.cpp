@@ -378,6 +378,58 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
       return {nullptr, nullptr};
     }
   };
+  // Explain only concrete storage retained by the rejected return loan. A
+  // reference binding is an alias, not evidence that its referent dies here.
+  const auto addExplainedEscape = [&](SourceSpan span, MirBodyKind kind,
+                                      std::size_t owner,
+                                      const MirBorrowRejection &rejection) {
+    const std::size_t before = check.diagnostics.size();
+    addEscape(span, kind, owner);
+    if (check.diagnostics.size() == before)
+      return;
+    const auto [lowered, source] = bodiesOf(kind, owner);
+    const MirLoan *loan = lowered ? lowered->findLoan(rejection.loan) : nullptr;
+    if (loan == nullptr || source == nullptr)
+      return;
+    std::vector<MirPlaceId> places{loan->source};
+    for (const auto &dependency : loan->additionalDependencies)
+      places.push_back(dependency.source);
+    auto &diagnostic = check.diagnostics.back();
+    std::vector<HirBindingId> explained;
+    for (const MirPlaceId id : places) {
+      const MirPlace *place = lowered->findPlace(id);
+      if (place == nullptr || place->root != MirPlaceRootKind::Binding ||
+          !place->projections.empty() ||
+          std::find(explained.begin(), explained.end(), place->binding) !=
+              explained.end())
+        continue;
+      for (const HirBinding &binding : source->bindings) {
+        if (binding.id != place->binding || binding.variable == nullptr)
+          continue;
+        const auto root =
+            std::find_if(lowered->places.begin(), lowered->places.end(),
+                         [&](const MirPlace &candidate) {
+                           return candidate.root == MirPlaceRootKind::Binding &&
+                                  candidate.binding == place->binding &&
+                                  candidate.projections.empty();
+                         });
+        if (root == lowered->places.end() ||
+            root->type.kind == SemanticType::Reference)
+          continue;
+        const Token &name = binding.variable->name();
+        diagnostic.related.push_back(
+            {tokenSpan(name),
+             "Local '" + name.lexeme +
+                 "' supplies storage retained by this result "
+                 "and is destroyed when the function returns."});
+        explained.push_back(binding.id);
+      }
+    }
+    if (!explained.empty())
+      diagnostic.hints.emplace_back(
+          "Return an owned value, or borrow storage supplied by the caller. "
+          "A lifetime annotation cannot extend local storage past the return.");
+  };
   // A conflict names where the live borrow it overlaps originates.
   const auto relateLoan = [&](const MirBodyAddress &address,
                               const MirBorrowRejection &borrow) {
@@ -423,7 +475,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
           addSupplier(*span, error.body.kind, error.body.owner);
         else
-          addEscape(*span, error.body.kind, error.body.owner);
+          addExplainedEscape(*span, error.body.kind, error.body.owner,
+                             error.borrow);
         continue;
       }
     if (error.borrow.kind == MirBorrowRejectionKind::None || !error.source) {
@@ -447,7 +500,8 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
           "with independently transferable dependencies.",
           "GTI-S2067");
     } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
-      addEscape(*error.source, error.body.kind, error.body.owner);
+      addExplainedEscape(*error.source, error.body.kind, error.body.owner,
+                         error.borrow);
     else if (exitDropUnderReturnedBorrow(error)) {
       // The exit drop sits in a cleanup block; name the return that
       // publishes the escaping loan instead.
@@ -597,7 +651,7 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
     if (error.borrow.kind == MirBorrowRejectionKind::Supplier)
       addSupplier(*span, error.bodyKind, error.owner);
     else
-      addEscape(*span, error.bodyKind, error.owner);
+      addExplainedEscape(*span, error.bodyKind, error.owner, error.borrow);
   }
   return check;
 }
