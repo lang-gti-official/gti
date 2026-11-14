@@ -2,14 +2,26 @@
 #include "gti/optimization/dataflow.h"
 
 #include <algorithm>
+#include <type_traits>
 
 namespace lang {
 namespace {
 using Fact = MirCarriedLoans;
-using Root = std::pair<MirPlaceRootKind, std::size_t>;
+using Root = MirCarrierRoot;
+using Aliases = std::optional<std::vector<Root>>;
+struct AnalysisContext {
+  const MirProgram *program = nullptr;
+  // An inserted incomplete entry also marks an in-progress query. A cycle
+  // cannot be certified as non-retaining by assuming its own answer.
+  std::map<HirFunctionInstanceId, MirRetainingStoreEffects> callEffects;
+};
+MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context);
+MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
+                                      AnalysisContext &context);
 struct State {
   std::map<Root, Fact> roots;
   std::map<MirValueId, Fact> values;
+  std::map<MirValueId, Aliases> aliases;
 };
 Fact empty() { return std::vector<MirLoanId>{}; }
 
@@ -24,7 +36,9 @@ bool mayHoldDependencies(const SemanticType &type,
          type.kind == SemanticType::Array || type.kind == SemanticType::Lambda;
 }
 
-bool join(Fact &into, const Fact &from) {
+template <class T>
+bool join(std::optional<std::vector<T>> &into,
+          const std::optional<std::vector<T>> &from) {
   if (!into)
     return false;
   if (!from) {
@@ -59,13 +73,15 @@ bool join(State &into, const State &from) {
         changed = true;
       }
     for (const auto &[key, value] : incoming) {
-      const auto [found, inserted] = target.emplace(key, Fact{});
+      const auto [found, inserted] = target.emplace(
+          key, typename std::decay_t<decltype(target)>::mapped_type{});
       changed = inserted || join(found->second, value) || changed;
     }
     return changed;
   };
   const bool roots = mergePaths(into.roots, from.roots);
-  return mergePaths(into.values, from.values) || roots;
+  const bool values = mergePaths(into.values, from.values);
+  return mergePaths(into.aliases, from.aliases) || values || roots;
 }
 
 struct Storage {
@@ -143,6 +159,8 @@ std::optional<Storage> storage(const MirBody &body, const State &state,
   if (place->root == MirPlaceRootKind::Temporary)
     return Storage{{{place->root, place->temporary}},
                    place->projections.empty()};
+  if (place->root == MirPlaceRootKind::This)
+    return Storage{{{place->root, 0}}, false};
   return std::nullopt;
 }
 Fact placeFact(const MirBody &body, const State &state, MirPlaceId id) {
@@ -189,13 +207,37 @@ Fact operandFact(const MirBody &body, const State &state,
                : Fact{};
   if (operand.kind == MirOperandKind::Value) {
     const auto found = state.values.find(operand.value);
-    return found != state.values.end() ? found->second : Fact{};
+    Fact held = found != state.values.end() ? found->second : Fact{};
+    // A staged borrow keeps an address, not a snapshot of the referent's
+    // contents. Later stores through that address can add dependencies before
+    // another call reads it. Preserve the physical capability as well.
+    const auto aliases = state.aliases.find(operand.value);
+    if (aliases != state.aliases.end() && aliases->second)
+      for (const auto root : *aliases->second) {
+        const auto current = state.roots.find(root);
+        join(held, current == state.roots.end() ? Fact{} : current->second);
+      }
+    return held;
   }
-  return placeFact(body, state, operand.place);
+  const Fact held = placeFact(body, state, operand.place);
+  // A direct Copy/Move can initialize storage without an intermediate Load.
+  // Its independent scalar value carries no loan, just like a scalar SSA
+  // result. The physical access itself is accounted for by operandRead.
+  if (operand.type.kind != SemanticType::Unknown &&
+      !mayHoldDependencies(operand.type, {}))
+    return empty();
+  return held;
 }
 Fact operandRead(const MirBody &body, const State &state,
                  const MirOperand &operand) {
   Fact read = operandFact(body, state, operand);
+  // Loading an independent scalar still reads the storage that supplies it.
+  // In particular a reference field may be lowered as a typed scalar Copy
+  // from a carrier projection rather than as a Loan-rooted place. Erasing
+  // dependencies from the produced value must not erase this access use.
+  if (operand.place && (operand.kind == MirOperandKind::Copy ||
+                        operand.kind == MirOperandKind::Move))
+    join(read, placeFact(body, state, operand.place));
   // Accessing a referent uses its physical loan even when its value is an
   // independent scalar. Apply the same rule to arguments and receivers.
   if (const auto *place = body.findPlace(operand.place);
@@ -209,21 +251,53 @@ Fact operandRead(const MirBody &body, const State &state,
   }
   return read;
 }
-void record(std::map<MirInstructionId, Fact> &facts, MirInstructionId id,
-            const Fact &value) {
+std::optional<Storage> operandStorage(const MirBody &body, const State &state,
+                                      const MirOperand &operand) {
+  if (operand.place)
+    return storage(body, state, operand.place);
+  if (operand.kind == MirOperandKind::Value) {
+    const auto found = state.aliases.find(operand.value);
+    return found != state.aliases.end() && found->second
+               ? std::optional<Storage>{{*found->second, false}}
+               : std::nullopt;
+  }
+  if (operand.kind != MirOperandKind::Loan)
+    return std::nullopt;
+  const auto *loan = body.findLoan(operand.loan);
+  if (!loan)
+    return std::nullopt;
+  auto result = storage(body, state, loan->source);
+  if (!result)
+    return std::nullopt;
+  for (const auto &dependency : loan->additionalDependencies) {
+    const auto candidate = storage(body, state, dependency.source);
+    if (!candidate)
+      return std::nullopt;
+    result->roots.insert(result->roots.end(), candidate->roots.begin(),
+                         candidate->roots.end());
+  }
+  std::sort(result->roots.begin(), result->roots.end());
+  result->roots.erase(std::unique(result->roots.begin(), result->roots.end()),
+                      result->roots.end());
+  result->exact = false;
+  return result;
+}
+template <class Key>
+void record(std::map<Key, Fact> &facts, Key id, const Fact &value) {
   const auto [found, inserted] = facts.emplace(id, value);
   if (!inserted)
     join(found->second, value);
 }
-} // namespace
-
-MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
+MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context) {
+  const auto *program = context.program;
   MirCarrierFlow result;
   if (!body.findBlock(body.entry)) {
     result.complete = false;
+    result.effectsComplete = false;
     return result;
   }
   State initial;
+  auto &callEffects = context.callEffects;
   for (const auto &loan : body.loans)
     if (loan.entry)
       for (const auto carrier : loan.carriers) {
@@ -254,6 +328,68 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
       }
       if (instruction.receiver)
         join(read, operandRead(body, state, *instruction.receiver));
+      bool checkedCallEffects = false;
+      if (instruction.kind == MirInstructionKind::Call && program &&
+          instruction.dispatch == CallDispatch::Static &&
+          instruction.functionTarget) {
+        const auto *callee =
+            program->findFunctionInstance(*instruction.functionTarget);
+        auto [cached, inserted] =
+            callEffects.try_emplace(*instruction.functionTarget);
+        if (inserted && callee)
+          cached->second = deriveEffects(*callee, context);
+        const auto &effects = cached->second;
+        if (callee && effects.complete &&
+            instruction.operands.size() == callee->parameterBindings.size()) {
+          checkedCallEffects = true;
+          const auto actual = [&](Root root) -> const MirOperand * {
+            if (root.kind == MirPlaceRootKind::This)
+              return instruction.receiver ? &*instruction.receiver : nullptr;
+            const auto found =
+                std::find(callee->parameterBindings.begin(),
+                          callee->parameterBindings.end(), root.identity);
+            return found == callee->parameterBindings.end()
+                       ? nullptr
+                       : &instruction.operands[found - callee->parameterBindings
+                                                           .begin()];
+          };
+          // Evaluate all actual sources before any retaining write. Aliasing
+          // between actuals must not make one modeled write feed another.
+          std::vector<std::pair<Storage, Fact>> writes;
+          for (const auto &effect : effects.effects) {
+            const auto *target = actual(effect.destination);
+            const auto *input = actual(effect.source);
+            auto destination =
+                target ? operandStorage(body, state, *target) : std::nullopt;
+            if (!destination || !input) {
+              checkedCallEffects = false;
+              break;
+            }
+            const Fact held = operandFact(body, state, *input);
+            if (!held) {
+              checkedCallEffects = false;
+              break;
+            }
+            writes.emplace_back(*destination, held);
+          }
+          if (checkedCallEffects)
+            for (const auto &[destination, held] : writes) {
+              record(result.storeInputs, instruction.id, held);
+              auto &targets = result.storeTargets[instruction.id];
+              for (const auto root : destination.roots) {
+                record(result.storeInputsByTarget[instruction.id], root, held);
+                auto [found, inserted] = state.roots.emplace(root, Fact{});
+                (void)inserted;
+                join(found->second, held); // Calls always widen caller storage.
+                record(result.stores, instruction.id, found->second);
+                targets.push_back(root);
+              }
+              std::sort(targets.begin(), targets.end());
+              targets.erase(std::unique(targets.begin(), targets.end()),
+                            targets.end());
+            }
+        }
+      }
       if (instruction.destination &&
           (instruction.kind == MirInstructionKind::Assign ||
            instruction.kind == MirInstructionKind::Initialize)) {
@@ -294,8 +430,20 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
           instruction.kind == MirInstructionKind::EnsureThreadLocal ||
           instruction.kind == MirInstructionKind::DrainThreadLocals ||
           instruction.kind == MirInstructionKind::BeginThreadLocals ||
-          instruction.kind == MirInstructionKind::RetireProgramStorage)
+          instruction.kind == MirInstructionKind::RetireProgramStorage) {
         result.complete = false;
+        result.effectsComplete = false;
+      }
+      // Until interprocedural effects are available, even an apparently
+      // ownerless call can mutate a receiver, reference argument or global.
+      if ((instruction.kind == MirInstructionKind::Call &&
+           !checkedCallEffects) ||
+          instruction.kind == MirInstructionKind::Construct ||
+          instruction.kind == MirInstructionKind::Drop ||
+          instruction.kind == MirInstructionKind::CleanupBeforeAssign ||
+          instruction.kind == MirInstructionKind::Count ||
+          instruction.unsafeOperation != UnsafeOperationKind::None)
+        result.effectsComplete = false;
       if (instruction.loan &&
           (instruction.kind == MirInstructionKind::Borrow ||
            instruction.kind == MirInstructionKind::Call ||
@@ -311,7 +459,7 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
       // A call can relay or retain dependencies through receiver/arguments.
       // Until its checked store-effect summary participates in this flow,
       // do not use a caller's partial facts to shorten any loan.
-      if (instruction.kind == MirInstructionKind::Call &&
+      if (instruction.kind == MirInstructionKind::Call && !checkedCallEffects &&
           (!read || !read->empty()))
         result.complete = false;
       // Reading a borrow to compute an integer/bool uses the loan but does
@@ -319,8 +467,22 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
       if (instruction.result && !instruction.loan &&
           !mayHoldDependencies(instruction.info.type, instruction.info.traits))
         produced = empty();
-      if (instruction.result)
+      if (instruction.result) {
         state.values[*instruction.result] = produced;
+        Aliases aliases;
+        if (instruction.kind == MirInstructionKind::CallInput &&
+            instruction.operands.size() == 1 &&
+            (instruction.callInputKind == HirCallInputKind::ReadBorrow ||
+             instruction.callInputKind == HirCallInputKind::MutableBorrow ||
+             instruction.callInputKind ==
+                 HirCallInputKind::ReadTemporaryBorrow ||
+             instruction.callInputKind ==
+                 HirCallInputKind::MutableTemporaryBorrow))
+          if (const auto source =
+                  operandStorage(body, state, instruction.operands.front()))
+            aliases = source->roots;
+        state.aliases[*instruction.result] = std::move(aliases);
+      }
       if (instruction.kind == MirInstructionKind::Initialize ||
           instruction.kind == MirInstructionKind::Assign) {
         const auto destination =
@@ -329,9 +491,19 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
                 : std::nullopt;
         if (!destination) {
           result.complete = false;
+          result.effectsComplete = false;
         } else {
+          record(result.storeInputs, instruction.id, producedInputs);
+          auto &targets = result.storeTargets[instruction.id];
+          targets.insert(targets.end(), destination->roots.begin(),
+                         destination->roots.end());
+          std::sort(targets.begin(), targets.end());
+          targets.erase(std::unique(targets.begin(), targets.end()),
+                        targets.end());
           Fact retained = empty();
           for (const auto &root : destination->roots) {
+            record(result.storeInputsByTarget[instruction.id], root,
+                   producedInputs);
             auto [found, inserted] = state.roots.emplace(
                 root, destination->exact ? empty() : Fact{});
             (void)inserted;
@@ -353,8 +525,10 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
           for (const auto &root : destination->roots)
             state.roots[root] = empty();
     }
-    if (block->terminator.kind == MirTerminatorKind::Invoke && !beforeInvoke)
+    if (block->terminator.kind == MirTerminatorKind::Invoke && !beforeInvoke) {
       result.complete = false;
+      result.effectsComplete = false;
+    }
     Fact exitRead = empty();
     if (block->terminator.value)
       join(exitRead, operandRead(body, state, *block->terminator.value));
@@ -375,6 +549,7 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
       const auto *next = body.findBlock(target);
       if (!next || next->parameters.size() != arguments.size()) {
         result.complete = false;
+        result.effectsComplete = false;
         return;
       }
       State incoming = state;
@@ -385,20 +560,34 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
         // cleanup, while withholding the failed operation's SSA result.
         // Unmodelled call/raw effects still mark the entire query incomplete.
         mergeMap(incoming.roots, beforeInvoke->roots);
-        if (invoked->result)
+        if (invoked->result) {
           incoming.values[*invoked->result].reset();
+          incoming.aliases[*invoked->result].reset();
+        }
       }
       // Edge parameters bind simultaneously, including loop-carried swaps.
       std::vector<Fact> argumentFacts;
+      std::vector<Aliases> argumentAliases;
       argumentFacts.reserve(arguments.size());
       for (const auto &argument : arguments) {
         argumentFacts.push_back(operandFact(body, incoming, argument));
+        Aliases aliases;
+        if (argument.kind == MirOperandKind::Value ||
+            argument.kind == MirOperandKind::Loan ||
+            argument.kind == MirOperandKind::BorrowRead ||
+            argument.kind == MirOperandKind::BorrowWrite)
+          if (const auto source = operandStorage(body, incoming, argument))
+            aliases = source->roots;
+        argumentAliases.push_back(std::move(aliases));
         join(result.exits[id], operandRead(body, incoming, argument));
       }
       result.complete = result.complete && result.exits[id].has_value();
-      for (std::size_t index = 0; index < arguments.size(); ++index)
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
         incoming.values[next->parameters[index].value] =
             std::move(argumentFacts[index]);
+        incoming.aliases[next->parameters[index].value] =
+            std::move(argumentAliases[index]);
+      }
       edges.push_back(
           {.target = target, .ordinal = ordinal, .state = std::move(incoming)});
     };
@@ -431,6 +620,153 @@ MirCarrierFlow deriveMirCarrierFlow(const MirBody &body) {
       },
       {.widenAfterUpdates = 0});
   result.complete = result.complete && solved.converged();
+  result.effectsComplete = result.effectsComplete && solved.converged();
   return result;
+}
+
+} // namespace
+
+std::map<MirLoanId, MirConservativeRetention>
+conservativeMirRetentions(const MirCarrierFlow &flow) {
+  std::map<MirLoanId, MirConservativeRetention> result;
+  for (const auto &[instruction, writes] : flow.storeInputsByTarget) {
+    (void)instruction;
+    for (const auto &[root, inputs] : writes) {
+      if (!inputs)
+        continue;
+      for (const auto loan : *inputs) {
+        auto &retained = result[loan];
+        if (root.kind == MirPlaceRootKind::Binding && root.identity)
+          retained.carriers.push_back(root.identity);
+        else
+          retained.unmappedStorage = true;
+      }
+    }
+  }
+  for (auto &[loan, retained] : result) {
+    (void)loan;
+    std::sort(retained.carriers.begin(), retained.carriers.end());
+    retained.carriers.erase(
+        std::unique(retained.carriers.begin(), retained.carriers.end()),
+        retained.carriers.end());
+  }
+  return result;
+}
+
+namespace {
+MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
+                                      AnalysisContext &context) {
+  MirRetainingStoreEffects result;
+  if (function.definitionKind != MirDefinitionKind::Source ||
+      function.body.kind != MirBodyKind::Function ||
+      function.parameterBindings.size() != function.parameterTypes.size())
+    return result;
+  const auto &body = function.body;
+  const auto flow = deriveFlow(body, context);
+  if (!flow.effectsComplete)
+    return result;
+  const auto boundary = [&](Root root) {
+    return root.kind == MirPlaceRootKind::This
+               ? function.owner.has_value() && !function.staticMember
+               : root.kind == MirPlaceRootKind::Binding &&
+                     std::find(function.parameterBindings.begin(),
+                               function.parameterBindings.end(),
+                               root.identity) !=
+                         function.parameterBindings.end();
+  };
+  // Reconstruct owners through explicit Loan-rooted reborrows. Following a
+  // parent alone is insufficient: a loan of local carrier storage must not
+  // become exportable merely because that carrier contains an input borrow.
+  std::vector<MirLoanId> visiting;
+  const auto origins = [&](const auto &self, MirLoanId id,
+                           std::vector<Root> &result) -> bool {
+    const auto *loan = body.findLoan(id);
+    if (!loan || loan->storedDependency ||
+        std::find(visiting.begin(), visiting.end(), id) != visiting.end())
+      return false;
+    visiting.push_back(id);
+    const auto sourceOrigin = [&](MirPlaceId sourceId, MirLoanId parent) {
+      const auto *source = body.findPlace(sourceId);
+      if (!source || source->capture)
+        return false;
+      if (loan->entry) {
+        if (parent || !source->projections.empty())
+          return false;
+        const Root root{
+            source->root,
+            source->root == MirPlaceRootKind::Binding ? source->binding : 0};
+        if (!boundary(root))
+          return false;
+        result.push_back(root);
+        return true;
+      }
+      if (!parent || source->root != MirPlaceRootKind::Loan ||
+          source->loan != parent ||
+          std::any_of(source->projections.begin(), source->projections.end(),
+                      [](const auto &part) {
+                        return part.kind == MirProjectionKind::Dereference ||
+                               part.kind == MirProjectionKind::RawDereference ||
+                               part.kind == MirProjectionKind::RawIndex;
+                      }))
+        return false;
+      return self(self, parent, result);
+    };
+    bool valid = sourceOrigin(loan->source, loan->parent);
+    for (const auto &dependency : loan->additionalDependencies)
+      valid = sourceOrigin(dependency.source, dependency.parent) && valid;
+    visiting.pop_back();
+    return valid;
+  };
+  for (const auto &[instruction, writes] : flow.storeInputsByTarget) {
+    (void)instruction;
+    for (const auto &[target, input] : writes) {
+      if (!boundary(target))
+        continue;
+      if (target.kind == MirPlaceRootKind::Binding) {
+        const auto position =
+            std::find(function.parameterBindings.begin(),
+                      function.parameterBindings.end(), target.identity);
+        const auto index = position - function.parameterBindings.begin();
+        // Replacing the callee's by-value parameter does not mutate caller
+        // storage. Writes through its nested references require projected
+        // provenance and deliberately remain unsupported here.
+        if (function.parameterTypes[index].kind != SemanticType::Reference)
+          continue;
+      }
+      if (!input)
+        return result;
+      for (const auto id : *input) {
+        std::vector<Root> owners;
+        if (!origins(origins, id, owners))
+          return result;
+        for (const auto origin : owners)
+          result.effects.push_back({target, origin});
+      }
+    }
+  }
+  std::sort(result.effects.begin(), result.effects.end());
+  result.effects.erase(
+      std::unique(result.effects.begin(), result.effects.end()),
+      result.effects.end());
+  result.complete = true;
+  return result;
+}
+} // namespace
+
+MirCarrierFlow deriveMirCarrierFlow(const MirBody &body,
+                                    const MirProgram *program) {
+  AnalysisContext context{.program = program};
+  return deriveFlow(body, context);
+}
+
+MirRetainingStoreEffects
+deriveMirRetainingStoreEffects(const MirFunctionInstance &function,
+                               const MirProgram *program) {
+  AnalysisContext context{.program = program};
+  // Reserve the queried function too, so direct recursion is detected at
+  // its first backedge rather than relying on a second nested traversal.
+  if (program)
+    context.callEffects.emplace(function.id, MirRetainingStoreEffects{});
+  return deriveEffects(function, context);
 }
 } // namespace lang

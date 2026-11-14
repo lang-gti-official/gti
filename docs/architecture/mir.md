@@ -3376,6 +3376,36 @@ implemented before those source restrictions can be relaxed. The focused
 `mir_carrier_flow` test covers replacement/copies, branch and loop joins,
 simultaneous edge arguments, alias widening, failure paths and unknown facts.
 
+`deriveMirRetainingStoreEffects` reconstructs direct source-body retaining
+writes from the same flow, mapping entry dependencies to the receiver or a
+reference formal. Every primary and additional owner in a represented group
+contributes an effect; conditional alternatives are conservatively unioned.
+An unknown or callee-local additional owner makes the entire summary incomplete.
+Explicit Loan-rooted reborrows reconstruct all parent origins, including
+alternative parents. A parent link alone cannot export local carrier storage;
+raw or nested dereferences, unresolved stored-shell dependencies, and cyclic
+provenance remain incomplete. Local by-value parameter replacement is not a caller-visible effect. Unknown input provenance, escaping local origins, unmodeled calls,
+cleanup, and raw effects yield an incomplete summary rather than a false empty
+one. When supplied a MIR program, `deriveMirCarrierFlow` can substitute these
+summaries at static calls and widen the actual caller storage; it
+evaluates all source inputs before updating any aliased destination. Each
+destination retains its own input set: independent writes in one invocation do
+not acquire each other's owners, while aliased destinations union both sets. Copies
+continue to carry independent dependency sets. After provisional program
+verification, body lowering supplies that verified MIR to the query when
+deriving loan ends; the provisional pass keeps conservative call handling.
+Static helper summaries compose through the same analysis and are cached within
+each body-flow query. Input permutations are substituted at every boundary. An
+in-progress cache entry remains incomplete, so recursive cycles cannot certify
+themselves by assuming a non-retaining effect.
+If exact flow is incomplete, known retaining writes still add their destination
+bindings and known MIR reads to conservative liveness. Storage without a mapped
+binding, or a new carrier requiring cleanup, keeps a conservative scope extent;
+partial facts can extend a loan but cannot justify shortening it.
+Recursive fixed-point summary solving,
+typed store admission, and replacement-loan construction remain unfinished;
+the summary does not itself authorize source stores.
+
 MIR derives a body's entry loans (what the caller lends it) from the
 declared types of its receiver, captures and parameters: which carriers
 receive one, its kind and access, the stored reference paths a by-value

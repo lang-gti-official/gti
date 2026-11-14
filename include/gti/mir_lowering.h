@@ -80,13 +80,15 @@ private:
   [[nodiscard]] static MirLoweringResult
   lowerProgram(const HirProgram &source, const FailureMetadata &failureMetadata,
                const MirDefinedFailureEffects &definedFailureEffects,
-               bool includeHostedStartup);
+               bool includeHostedStartup,
+               const MirProgram *retainingProgram = nullptr);
 
   [[nodiscard]] static MirBody lowerBody(
       const HirProgram &program, const FailureMetadata &failureMetadata,
       const HirBody &body, MirBodyKind kind, SemanticType returnType,
       const std::vector<HirValueId> &prologueValues,
-      const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
+      const MirDefinedFailureEffects &definedFailureEffects,
+      const MirProgram *retainingProgram, bool &valid,
       std::vector<MirLoweringError> &errors, std::size_t owner,
       bool implicitZeroReturn = false,
       const std::vector<HirConstructorInitializer> *initializers = nullptr,

@@ -55,6 +55,36 @@ int main() {
 }
 
 
+# Replacement must follow actual control flow, not source traversal order.
+CASES['replacement_branch_join'] = (True, ''''int check(bool replace) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  if (replace) { view = second.view(); }
+  if (replace) { return view == "second" ? 0 : 1; }
+  return view == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }
+''')
+CASES['replacement_loop_join'] = (True, ''''int check(int count) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  for (mut int i = 0; i < count; i += 1) { view = second.view(); }
+  if (count == 0) { return view == "first" ? 0 : 1; }
+  return view == "second" ? 0 : 2;
+}
+int main() { return check(0) + check(3); }
+''')
+CASES['replacement_branch_keeps_old_copy'] = (False, ''''int check(bool replace) {
+  mut std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view(); auto copied = view;
+  if (replace) { view = second.view(); }
+  first.clear();
+  return copied == "first" && view == "second" ? 0 : 1;
+}
+int main() { return check(true); }
+''')
+
+
 # End-to-end acceptance: ordinary inline storage, generic over its element and
 # capacity. No compiler recognition of this declaration is permitted.
 FIXED_SLOTS = '''struct FixedSlots<T, uint64_t Capacity> {
@@ -162,7 +192,10 @@ def main():
                     # Admission failures do not prove owner protection.
                     ok = ok and 'single-owner' not in diagnostic
                     ok = ok and 'second owner dependency' not in diagnostic
-                    if name.startswith('record_'):
+                    ok = ok and 'error[GTI-S2045]' not in diagnostic
+                    if name.startswith('record_') or name in (
+                            'copy_retains_old_owner', 'replacement_protects_new_owner',
+                            'replacement_branch_keeps_old_copy'):
                         ok = ok and 'error[GTI-S2017]' in diagnostic
                         ok = ok and 'Retained borrow originates here.' in diagnostic
                 if not ok:

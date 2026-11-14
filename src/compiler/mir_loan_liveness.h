@@ -42,6 +42,11 @@ struct LoanFacts {
   // then keep separate uses even when they occupied the same source binding.
   std::optional<std::vector<HirValueId>> exactUseValues;
   std::vector<HirStatementId> exactUseStatements;
+  // Partial MIR facts add uses to the conservative reader lists. They must
+  // never replace those lists unless the complete-flow proof succeeded.
+  std::vector<HirValueId> additionalUseValues;
+  std::vector<HirStatementId> additionalUseStatements;
+  bool scopeBound = false;
   HirValueId producedBy = 0;
   std::size_t parent = 0;
   std::size_t storedDependency = 0;

@@ -232,14 +232,18 @@ MirLowerer::lowerVerified(const HirProgram &source,
   constexpr int maximumEffectRounds = 8;
   MirDefinedFailureEffects effects =
       deriveMirDefinedFailureEffects(provisional.program);
+  // Retaining transfers come from independently verified source MIR, never
+  // from unchecked declaration hints. Reuse that conservative shape while
+  // failure cleanup is refined; source function identities remain fixed.
   MirLoweringResult result =
-      lowerProgram(source, failureMetadata, effects, true);
+      lowerProgram(source, failureMetadata, effects, true, &provisional.program);
   MirDefinedFailureEffects finalEffects =
       deriveMirDefinedFailureEffects(result.program);
   for (int round = 0; round < maximumEffectRounds && effects != finalEffects;
        ++round) {
     effects = finalEffects;
-    result = lowerProgram(source, failureMetadata, effects, true);
+    result = lowerProgram(source, failureMetadata, effects, true,
+                           &provisional.program);
     finalEffects = deriveMirDefinedFailureEffects(result.program);
   }
   const bool exactSummaries =
@@ -273,7 +277,8 @@ MirLoweringResult
 MirLowerer::lowerProgram(const HirProgram &source,
                          const FailureMetadata &failureMetadata,
                          const MirDefinedFailureEffects &definedFailureEffects,
-                         bool includeHostedStartup) {
+                         bool includeHostedStartup,
+                         const MirProgram *retainingProgram) {
   MirLoweringResult result;
   if (!source.valid()) {
     result.program.valid_ = false;
@@ -321,7 +326,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
   // Only the hosted entry wrapper waits for the derived failure contracts.
   result.program.moduleBody =
       lowerBody(source, failureMetadata, source.module(), MirBodyKind::Module,
-                SemanticType::Void, {}, definedFailureEffects, valid,
+                SemanticType::Void, {}, definedFailureEffects, retainingProgram, valid,
                 result.errors, 0, false, nullptr, nullptr, nullptr, nullptr,
                 &source.programInitializationPlan(),
                 &result.program.programInitialization);
@@ -389,13 +394,13 @@ MirLowerer::lowerProgram(const HirProgram &source,
     lowered.fieldInitializers =
         lowerBody(source, failureMetadata, instance.fieldInitializers,
                   MirBodyKind::FieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, valid, result.errors, instance.id,
+                  definedFailureEffects, retainingProgram, valid, result.errors, instance.id,
                   false, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
                   compilerTrustedSourceUnit(source, instance.sourceUnit));
     lowered.staticFieldInitializers =
         lowerBody(source, failureMetadata, instance.staticFieldInitializers,
                   MirBodyKind::StaticFieldInitializers, SemanticType::Void, {},
-                  definedFailureEffects, valid, result.errors, instance.id,
+                  definedFailureEffects, retainingProgram, valid, result.errors, instance.id,
                   false, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
                   compilerTrustedSourceUnit(source, instance.sourceUnit));
     for (auto field = instance.fields.rbegin(); field != instance.fields.rend();
@@ -521,7 +526,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
              definedFailureEffects.functions[instance.id - 1],
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Function,
-             instance.returnType, {}, definedFailureEffects, valid,
+             instance.returnType, {}, definedFailureEffects, retainingProgram, valid,
              result.errors, instance.id, implicitZeroReturn, nullptr,
              signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
              nullptr, nullptr,
@@ -632,7 +637,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Constructor,
              SemanticType::Void, instance.initializerValues,
-             definedFailureEffects, valid, result.errors, instance.id, false,
+             definedFailureEffects, retainingProgram, valid, result.errors, instance.id, false,
              &instance.initializers, nullptr,
              signatureOnly ? &*signatureOnly : &instance, nullptr, nullptr,
              nullptr, compilerTrustedSourceUnit(source, instance.sourceUnit),
@@ -685,7 +690,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
              definedFailureEffects.destructors[instance.id - 1],
          .body = lowerBody(
              source, failureMetadata, instance.body, MirBodyKind::Destructor,
-             SemanticType::Void, {}, definedFailureEffects, valid,
+             SemanticType::Void, {}, definedFailureEffects, retainingProgram, valid,
              result.errors, instance.id, false, nullptr, nullptr, nullptr,
              nullptr, nullptr, nullptr,
              compilerTrustedSourceUnit(source, instance.sourceUnit), nullptr,
@@ -732,7 +737,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     }
     lowered.body =
         lowerBody(source, failureMetadata, instance.body, MirBodyKind::Lambda,
-                  instance.returnType, {}, definedFailureEffects, valid,
+                  instance.returnType, {}, definedFailureEffects, retainingProgram, valid,
                   result.errors, instance.id, false, nullptr, nullptr, nullptr,
                   &instance, nullptr, nullptr,
                   instance.source != nullptr &&
@@ -752,7 +757,7 @@ MirLowerer::lowerProgram(const HirProgram &source,
     lowered.initializer =
         lowerBody(source, failureMetadata, storage.initializer,
                   MirBodyKind::ThreadLocalInitializer, storage.type, {},
-                  definedFailureEffects, valid, result.errors, storage.symbol);
+                  definedFailureEffects, retainingProgram, valid, result.errors, storage.symbol);
     const auto cleanup = mirUniqueCleanupType(result.program, storage.type);
     if (!cleanup && storage.requiresActiveCleanup) {
       valid = false;

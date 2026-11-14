@@ -732,6 +732,7 @@ public:
   }
   // Set on a first lowering pass: derive loan ends from its MIR loans.
   bool deriveEndsFromMir = false;
+  const MirProgram *retainingProgram = nullptr;
   std::optional<MirDerivedLoanEnds> mirEnds;
 
   void applyLoanEnds(MirDerivedLoanEnds ends) {
@@ -750,8 +751,10 @@ public:
     std::vector<LoanFacts> facts;
     if (output.loans.empty())
       return facts;
-    const MirCarrierFlow flow = deriveMirCarrierFlow(output);
+    const MirCarrierFlow flow = deriveMirCarrierFlow(output, retainingProgram);
     bool precise = flow.complete;
+    const auto retained = conservativeMirRetentions(flow);
+    std::unordered_set<MirLoanId> unmappedUses;
     std::unordered_map<MirLoanId, std::vector<HirValueId>> useValues;
     std::unordered_map<MirLoanId, std::vector<HirStatementId>> useStatements;
     const auto use = [&](const MirCarriedLoans &held, HirValueId value,
@@ -763,6 +766,8 @@ public:
       for (const MirLoanId id : *held) {
         if (!output.findLoan(id) || (!value && !statement)) {
           precise = false;
+          if (output.findLoan(id))
+            unmappedUses.insert(id);
           continue;
         }
         if (statement)
@@ -772,10 +777,21 @@ public:
       }
     };
     for (const auto &block : output.blocks) {
-      for (const auto &instruction : block.instructions)
+      for (const auto &instruction : block.instructions) {
+        if ((instruction.kind == MirInstructionKind::Drop ||
+             instruction.kind == MirInstructionKind::CleanupBeforeAssign) &&
+            instruction.destination && instruction.operands.empty() &&
+            !instruction.receiver)
+          if (const auto *destination = output.findPlace(*instruction.destination);
+              destination && !lifecycleBoundCarrier(destination->type))
+            // Passive destruction does not observe the carrier's external
+            // referents. Keep the established observing-cleanup distinction
+            // when adding partial flow uses to conservative liveness.
+            continue;
         if (const auto found = flow.reads.find(instruction.id);
             found != flow.reads.end())
           use(found->second, instruction.hirValue, instruction.hirStatement);
+      }
       if (const auto found = flow.exits.find(block.id); found != flow.exits.end())
         use(found->second, block.terminator.hirValue, block.terminator.hirStatement);
     }
@@ -795,6 +811,21 @@ public:
         fact.exactUseValues = useValues[loan.id];
         fact.exactUseStatements = useStatements[loan.id];
         fact.producedBy = loan.producedBy;
+      } else {
+        fact.additionalUseValues = useValues[loan.id];
+        fact.additionalUseStatements = useStatements[loan.id];
+        fact.scopeBound = unmappedUses.contains(loan.id);
+        if (const auto found = retained.find(loan.id); found != retained.end()) {
+          fact.scopeBound = fact.scopeBound || found->second.unmappedStorage;
+          for (const auto carrier : found->second.carriers) {
+            if (std::find(fact.carriers.begin(), fact.carriers.end(), carrier) != fact.carriers.end())
+              continue;
+            fact.carriers.push_back(carrier);
+            const auto *binding = findBinding(carrier);
+            if (!binding || lifecycleBoundCarrier(binding->info.type))
+              fact.scopeBound = true;
+          }
+        }
       }
       for (const auto &dependency : loan.additionalDependencies)
         fact.dependencyParents.push_back(dependency.parent);
@@ -19427,7 +19458,8 @@ MirBody MirLowerer::lowerBody(
     const HirProgram &program, const FailureMetadata &failureMetadata,
     const HirBody &body, MirBodyKind kind, SemanticType returnType,
     const std::vector<HirValueId> &prologueValues,
-    const MirDefinedFailureEffects &definedFailureEffects, bool &valid,
+    const MirDefinedFailureEffects &definedFailureEffects,
+    const MirProgram *retainingProgram, bool &valid,
     std::vector<MirLoweringError> &errors, std::size_t owner,
     bool implicitZeroReturn,
     const std::vector<HirConstructorInitializer> *initializers,
@@ -19444,6 +19476,7 @@ MirBody MirLowerer::lowerBody(
         programInitialization, loweredProgramInitialization, constructorOwner,
         destructor);
     lowerer->shareFailureCleanupEnabled = shareFailureCleanup_;
+    lowerer->retainingProgram = retainingProgram;
     lowerer->shareExitCleanupEnabled = shareExitCleanup;
     // Loan liveness is a MIR analysis: lower once without deciding loan
     // ends, derive them from that pass's loans and CFG uses, then lower with
@@ -19458,6 +19491,7 @@ MirBody MirLowerer::lowerBody(
           lambda, programInitialization, loweredProgramInitialization,
           constructorOwner, destructor);
       lowerer->shareFailureCleanupEnabled = shareFailureCleanup_;
+      lowerer->retainingProgram = retainingProgram;
       lowerer->shareExitCleanupEnabled = shareExitCleanup;
       if (ends)
         lowerer->applyLoanEnds(std::move(*ends));

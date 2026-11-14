@@ -2916,7 +2916,128 @@ int main() {
          }), "lowered uses are associated with their actual loan groups");
 }
 
+void testRetainingStoreEffectsOnLoweredProgram() {
+  const auto result = analyzeText(R"gti(
+import std.string;
+struct TextSlot {
+  mut std::string_view text;
+  TextSlot():text(""){}
+  void set(std::string_view value) mut { this.text = value; }
+  void forward(std::string_view value) mut { this.set(value); }
+};
+int main() {
+  mut TextSlot slot{};
+  slot.forward("earlier");
+  slot.set("literal");
+  return slot.text == "literal" ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(), "the existing ownerless setter control compiles");
+  if (!result.canGenerateCode())
+    return;
+  const auto *setter = namedFunction(result, "TextSlot::set");
+  expect(setter != nullptr, "the setter has a source MIR body");
+  if (!setter)
+    return;
+  const auto effects = lang::deriveMirRetainingStoreEffects(*setter);
+  expect(effects.complete && effects.effects.size() == 1,
+         "the setter's retaining effect is reconstructed from its real MIR");
+  if (effects.effects.size() == 1)
+    expect(effects.effects[0].destination ==
+               lang::MirCarrierRoot{lang::MirPlaceRootKind::This, 0} &&
+               effects.effects[0].source ==
+               lang::MirCarrierRoot{lang::MirPlaceRootKind::Binding,
+                                    setter->parameterBindings.front()},
+           "the setter stores its input into its receiver");
+  const auto *forwarder = namedFunction(result, "TextSlot::forward");
+  expect(forwarder != nullptr, "the retaining helper has a source MIR body");
+  if (forwarder) {
+    const auto composed = lang::deriveMirRetainingStoreEffects(*forwarder, &result.mir);
+    expect(composed.complete && composed.effects.size() == 1 &&
+               composed.effects[0].destination ==
+                   lang::MirCarrierRoot{lang::MirPlaceRootKind::This, 0} &&
+               composed.effects[0].source ==
+                   lang::MirCarrierRoot{lang::MirPlaceRootKind::Binding,
+                                        forwarder->parameterBindings.front()},
+           "a source helper preserves the nested setter's retaining obligation");
+  }
+  const auto *main = namedFunction(result, "main");
+  expect(main != nullptr, "the setter has an ordinary source caller");
+  if (!main)
+    return;
+  const auto callerFlow = lang::deriveMirCarrierFlow(main->body, &result.mir);
+  bool applied = false;
+  for (const auto &block : main->body.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.kind == lang::MirInstructionKind::Call &&
+          instruction.functionTarget == setter->id) {
+        const auto targets = callerFlow.storeTargets.find(instruction.id);
+        const auto inputs = callerFlow.storeInputs.find(instruction.id);
+        applied = targets != callerFlow.storeTargets.end() &&
+                  targets->second.size() == 1 &&
+                  targets->second.front().kind == lang::MirPlaceRootKind::Binding &&
+                  inputs != callerFlow.storeInputs.end() && inputs->second &&
+                  inputs->second->empty();
+      }
+  expect(applied, "the callee effect is substituted into the caller's actual receiver");
+  // Exercise the same verified callee with represented dynamic inputs. Source
+  // admission is deliberately still closed; this checks the MIR transfer, not
+  // whether the source-level borrowed-container feature is implemented.
+  lang::MirBody caller;
+  caller.entry = 1;
+  for (std::size_t id = 1; id <= 4; ++id)
+    caller.places.push_back({.id = id, .root = lang::MirPlaceRootKind::Binding,
+                             .binding = id});
+  caller.loans = {{.id = 1, .kind = lang::MirLoanKind::Stored, .source = 2},
+                  {.id = 2, .kind = lang::MirLoanKind::Stored, .source = 3}};
+  const lang::MirOperand receiver{.kind = lang::MirOperandKind::Copy, .place = 1};
+  caller.blocks = {{.id = 1,
+                    .instructions = {
+                        {.id = 1, .kind = lang::MirInstructionKind::Initialize,
+                         .destination = 1,
+                         .operands = {{.kind = lang::MirOperandKind::Constant}}},
+                        {.id = 2, .kind = lang::MirInstructionKind::Call,
+                         .receiver = receiver,
+                         .operands = {{.kind = lang::MirOperandKind::Loan, .loan = 1}},
+                         .functionTarget = setter->id},
+                        {.id = 3, .kind = lang::MirInstructionKind::Initialize,
+                         .destination = 4, .operands = {receiver}},
+                        {.id = 4, .kind = lang::MirInstructionKind::Call,
+                         .receiver = receiver,
+                         .operands = {{.kind = lang::MirOperandKind::Loan, .loan = 2}},
+                         .functionTarget = setter->id},
+                        {.id = 5, .kind = lang::MirInstructionKind::Load,
+                         .operands = {receiver}},
+                        {.id = 6, .kind = lang::MirInstructionKind::Load,
+                         .operands = {{.kind = lang::MirOperandKind::Copy, .place = 4}}}},
+                    .terminator = {.kind = lang::MirTerminatorKind::Return}}};
+  const auto retained = lang::deriveMirCarrierFlow(caller, &result.mir);
+  expect(retained.complete &&
+             retained.reads.at(5) == lang::MirCarriedLoans{std::vector<lang::MirLoanId>{1, 2}} &&
+             retained.reads.at(6) == lang::MirCarriedLoans{std::vector<lang::MirLoanId>{1}},
+         "successive retaining calls widen the receiver while copies keep independent owners");
+  caller.blocks[0].instructions.insert(caller.blocks[0].instructions.begin() + 1,
+      {.id = 7, .kind = lang::MirInstructionKind::CallInput,
+       .callInputKind = lang::HirCallInputKind::MutableBorrow,
+       .result = 1, .operands = {receiver}});
+  for (auto &instruction : caller.blocks[0].instructions)
+    if (instruction.kind == lang::MirInstructionKind::Call)
+      instruction.receiver = lang::MirOperand{.kind = lang::MirOperandKind::Value, .value = 1};
+  const auto staged = lang::deriveMirCarrierFlow(caller, &result.mir);
+  expect(staged.complete && staged.reads.at(5) == retained.reads.at(5) &&
+             staged.reads.at(6) == retained.reads.at(6) &&
+             staged.reads.at(4) == lang::MirCarriedLoans{std::vector<lang::MirLoanId>{1, 2}},
+         "staging a borrowed receiver preserves its physical destination");
+  caller.blocks[0].instructions[1].callInputKind = lang::HirCallInputKind::CopyValue;
+  const auto copiedReceiver = lang::deriveMirCarrierFlow(caller, &result.mir);
+  expect(!copiedReceiver.complete && !copiedReceiver.storeTargets.contains(2),
+         "an independent receiver copy must not alias the original storage");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testRetainingStoreEffectsOnLoweredProgram", testRetainingStoreEffectsOnLoweredProgram},
     {"testCarrierFlowOnLoweredProgram", testCarrierFlowOnLoweredProgram},
     {"testMultipleTextOwners", testMultipleTextOwners},
     {"testArrayElementTextStorage", testArrayElementTextStorage},

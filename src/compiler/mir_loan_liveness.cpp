@@ -400,6 +400,14 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   std::unordered_set<MirLoanId> unconfined;
   for (const LoanFacts &loan : loans) {
     auto &own = uses[loan.id];
+    own = loan.additionalUseStatements;
+    for (const auto value : loan.additionalUseValues)
+      if (const auto statement = tree.statementOfValue(value))
+        own.push_back(*statement);
+      else
+        unconfined.insert(loan.id);
+    if (loan.scopeBound)
+      unconfined.insert(loan.id);
     std::optional<HirStatementId> creation;
     if (loan.exactUseValues) {
       own = loan.exactUseStatements;
@@ -486,7 +494,7 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   // Cleanup is a use of every dependency a cleanup-bound carrier retains:
   // its ancestors cannot end at an ordinary last read beneath it.
   for (const LoanFacts &loan : loans) {
-    if (!loan.lifecycleBound)
+    if (!loan.lifecycleBound && !loan.scopeBound)
       continue;
     std::vector<MirLoanId> pending{loan.parent, loan.storedDependency};
     for (const auto dependencyParent : loan.dependencyParents)
