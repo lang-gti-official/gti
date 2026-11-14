@@ -622,6 +622,36 @@ int main() {
   owner.clear();
   return int(view.size());
 })";
+  const std::string escapingScope = R"(
+import std.string;
+int main() {
+  std::string outer = std::string("outer");
+  mut auto view = outer.view();
+  {
+    std::string inner = std::string("inner");
+    view = inner.view();
+  }
+  return int(view.size());
+}
+)";
+  const auto escapingScopeResult = analyze(escapingScope);
+  const auto *escapingScopeError =
+      findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-S2017");
+  expect(
+      !escapingScopeResult.canGenerateCode() && escapingScopeError &&
+          escapingScopeError->message.find("Cannot destroy storage") !=
+              std::string::npos &&
+          hasRelatedDiagnostic(escapingScopeResult.diagnostics, "used later") &&
+          hasDiagnosticHint(escapingScopeResult.diagnostics,
+                            "Keep the owner alive"),
+      "a scope-exit borrow conflict explains destruction rather than "
+      "assignment");
+  auto outerScope = escapingScope;
+  outerScope.replace(outerScope.find("view = inner.view()"),
+                     std::string("view = inner.view()").size(),
+                     "view = outer.view()");
+  expect(analyze(outerScope).canGenerateCode(),
+         "borrowing the surviving outer owner preserves the valid control");
   const std::string temporary = prefix + R"(
 int main() {
   auto borrowed = std::string("hello").view();

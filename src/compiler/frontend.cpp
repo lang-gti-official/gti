@@ -111,6 +111,9 @@ std::string conflictMessage(const MirBorrowRejection &borrow,
   if (borrow.instruction == MirInstructionKind::Move)
     return "Cannot move storage while an overlapping borrow may still be "
            "live.";
+  if (borrow.instruction == MirInstructionKind::Drop)
+    return "Cannot destroy storage while an overlapping borrow may still be "
+           "used.";
   if (borrow.write)
     return "Cannot assign to storage while an overlapping borrow may still "
            "be live.";
@@ -158,6 +161,9 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
             explained->temporaryDestroyed
                 ? "Store the temporary in a named local that outlives every "
                   "use of the borrowed value."
+            : explained->borrow.instruction == MirInstructionKind::Drop
+                ? "Keep the owner alive until the borrowed value's last use, "
+                  "or use an owned value outside the owner's scope."
                 : "Finish using the borrowed value before changing or moving "
                   "its owner, or perform the owner operation before creating "
                   "the borrow. Choose an order that preserves the intended "
