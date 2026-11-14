@@ -5322,9 +5322,11 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       recordMutableBindingUse(stmt.value());
     }
     forceProgramStorageBoundaryAccess(stmt.value());
-    validateReferenceReturn(currentReturnType, valueType, stmt.value());
-    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr)
-      validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
+    const bool regionValid =
+        lambdaDepth != 0 || currentFunctionDeclaration == nullptr ||
+        validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
+    validateReferenceReturn(currentReturnType, valueType, stmt.value(),
+                            regionValid);
     if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
         currentClass)
       validateReturnedReceiverRegion(*currentFunctionDeclaration, *currentClass,

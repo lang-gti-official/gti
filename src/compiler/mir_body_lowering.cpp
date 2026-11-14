@@ -19558,8 +19558,11 @@ MirBody MirLowerer::lowerBody(
       if ((error.borrow.kind == MirBorrowRejectionKind::Conflict ||
            error.borrow.kind == MirBorrowRejectionKind::ParentUse) &&
           rejectedAt)
-        explainConflict(result, body, error.borrow.loan, *rejectedAt,
-                        loanOrigin, laterUse, lifecycleBound);
+        explainConflict(result, body,
+                        error.borrow.conflictingLoan != 0
+                            ? error.borrow.conflictingLoan
+                            : error.borrow.loan,
+                        *rejectedAt, loanOrigin, laterUse, lifecycleBound);
       errors.push_back(
           {.body = {kind, owner},
            .block = error.block,

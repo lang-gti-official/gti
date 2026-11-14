@@ -41,6 +41,10 @@ struct MirBorrowRejection {
   MirLoanId loan = 0;
   // Conflict: the rejected instruction's kind (a Borrow creates a loan).
   MirInstructionKind instruction = MirInstructionKind::Compute;
+  // ParentUse: the live child that prevents access through `loan`. Preserve
+  // this witness from verification rather than guessing from all descendants
+  // when rendering the diagnostic (some may already have ended).
+  MirLoanId conflictingLoan = 0;
 
   friend bool operator==(const MirBorrowRejection &,
                          const MirBorrowRejection &) = default;

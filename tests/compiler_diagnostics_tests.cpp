@@ -455,6 +455,18 @@ int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
              hasDiagnosticHint(mismatchResult.diagnostics,
                                "does not extend the input's lifetime"),
          "lifetime advice explains the obligation added for callers");
+  expect(!hasDiagnosticCode(mismatchResult.diagnostics, "GTI-S2017"),
+         "a rejected declared region must not also demand the inferred "
+         "parameter supplier as though the lifetime contract were absent");
+  expect(hasDiagnostic(analyze(R"(
+int&<a> invalid<lifetime a, lifetime b>(int&<a> first, bool&<b> second) {
+  return second;
+}
+)")
+                           .diagnostics,
+                       "Reference return requires an exact"),
+         "region diagnostic precedence must preserve independent return type "
+         "checking");
   expect(analyze(R"(
 int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second)
   requires outlives<b, a> { return second; }
@@ -521,6 +533,27 @@ int main() {
   owner.clear();
   return int(view.size());
 })";
+  const std::string reborrowed = R"(
+int main() {
+  mut int value = 1;
+  mut int& parent = value;
+  { mut int& ended = parent; ended = 2; }
+  mut int& child = parent;
+  parent = 3;
+  return child;
+}
+)";
+  const auto reborrowResult = analyze(reborrowed);
+  const auto *reborrowError =
+      findDiagnosticByCode(reborrowResult.diagnostics, "GTI-S2017");
+  expect(reborrowError && reborrowError->related.size() == 2 &&
+             reborrowError->primary.start == reborrowed.find("parent = 3") &&
+             reborrowError->related[0].span.start ==
+                 reborrowed.find("parent;", reborrowed.find("child =")) &&
+             reborrowError->related[1].span.start ==
+                 reborrowed.find("return child"),
+         "a parent access identifies the still-live child reborrow, not the "
+         "parent's origin or an already-ended sibling");
   const auto borrowResult = analyze(borrowed);
   expect(hasDiagnosticCode(borrowResult.diagnostics, "GTI-S2017") &&
              hasRelatedDiagnostic(borrowResult.diagnostics,

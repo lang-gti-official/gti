@@ -5378,7 +5378,7 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
 
 auto SemanticVisitor::Impl::validateReferenceReturn(
     const SemanticType &reference, const SemanticType &valueType,
-    const ExprPtr &value) -> void {
+    const ExprPtr &value, bool regionValid) -> void {
   if (reference.arguments.size() != 1) {
     return;
   }
@@ -5444,6 +5444,12 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
   }
   if (!validateForeignStorageBorrow(value) ||
       !validateNativePointerSlotBorrow(value, reference)) {
+    return;
+  }
+  // A rejected declared region already explains why this value cannot supply
+  // the result. Do not also demand a different, inferred parameter supplier.
+  // Type, addressability and access checks above remain independent.
+  if (!regionValid) {
     return;
   }
   if (isBorrowedCarrierReference(reference)) {

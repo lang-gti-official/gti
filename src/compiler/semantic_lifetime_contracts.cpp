@@ -1106,18 +1106,18 @@ auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
 }
 
 auto SemanticVisitor::Impl::validateReturnedCallRegion(
-    const FunctionDecl &syntax, const ExprPtr &value) -> void {
+    const FunctionDecl &syntax, const ExprPtr &value) -> bool {
   if (!value)
-    return;
+    return true;
   const auto declared = resultRegion(syntax.returnType());
   if (!declared || declared->kind != TokenKind::IDENTIFIER)
-    return;
+    return true;
   const std::string target = declared->lexeme;
   bool functionBound = false;
   for (const auto &parameter : syntax.lifetimeParameters())
     functionBound |= parameter.name.lexeme == target;
   if (!functionBound)
-    return;
+    return true;
   const Expr *returned = value.get();
   while (const auto *group = exprAs<Grouping>(returned))
     returned = group->expression().get();
@@ -1176,9 +1176,10 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
               "> constraint makes callers prove that the input lives long "
               "enough; it does not extend the input's lifetime.");
           diagnostics.emplace_back(std::move(diagnostic));
+          return false;
         }
       }
-    return;
+    return true;
   }
   // A reference field read from a by-value carrier parameter lives in the
   // region the parameter's type supplies for that field: a written lifetime
@@ -1192,10 +1193,10 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
       const SemanticType type = typeOf(parameter);
       if (type.kind != SemanticType::Class || type.classId == 0 ||
           type.classId > classes.size())
-        return;
+        return true;
       const auto *declaration = classInfo(type.classId).declaration;
       if (declaration == nullptr)
-        return;
+        return true;
       const auto binders = declaration->lifetimeParameters();
       for (const auto &member : declaration->members()) {
         const auto *field = stmtAs<VariableDecl>(member.get());
@@ -1212,13 +1213,13 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
           index = 0; // the class's one (possibly implicit) region
         }
         if (!index)
-          return;
+          return true;
         const auto &written = parameter.type.lifetimeArguments;
         const auto supplier = *index < written.size()
                                   ? writtenRegion(written[*index])
                                   : std::nullopt;
         if (supplier && (*supplier == "_" || outlivesTarget(*supplier)))
-          return;
+          return true;
         report(get->name(),
                "Field '" + get->name().lexeme + "' of parameter '" +
                    parameter.name.lexeme + "' borrows " +
@@ -1227,20 +1228,20 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
                    ", which is not declared to outlive the result's region '" +
                    target + "'.",
                "GTI-S2127");
-        return;
+        return false;
       }
-      return;
+      return true;
     }
-    return;
+    return true;
   }
   const auto *call = exprAs<Call>(returned);
   const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
   if (resolved == nullptr || resolved->declaration == nullptr)
-    return;
+    return true;
   const FunctionDecl &callee = *resolved->declaration;
   const auto calleeRegion = resultRegion(callee.returnType());
   if (!calleeRegion || calleeRegion->kind != TokenKind::IDENTIFIER)
-    return;
+    return true;
   const auto outlives = [&](const std::string &longer) {
     if (longer == target || longer == "static")
       return true;
@@ -1265,7 +1266,7 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
        index < parameters.size() && (index < arguments.size() || forwardedPack);
        ++index) {
     if (parameters[index].pack)
-      return;
+      return true;
     std::vector<std::string> names;
     collectRegionNames(parameters[index].type, names);
     if (!contains(names, calleeRegion->lexeme))
@@ -1281,8 +1282,9 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
                ", which is not declared to outlive the result's region '" +
                target + "'.",
            "GTI-S2127");
-    return;
+    return false;
   }
+  return true;
 }
 
 auto SemanticVisitor::Impl::validateCallTypeOutlives(const Call &call,
