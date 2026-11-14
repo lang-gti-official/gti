@@ -14286,6 +14286,53 @@ private:
                  ? owners->id
                  : initial;
     }
+    // A copy construction is a copy, whichever copy constructor runs: by its
+    // signature the copied carrier retains exactly the owners its source
+    // carrier retains, so the binding shares the loan that source holds, as
+    // a copy-initialized carrier does. The construction's own publication
+    // then has no carrier and ends with its full expression.
+    if (initializer != nullptr &&
+        initializer->constructorKind == ConstructorKind::Copy &&
+        candidate->kind == MirLoanKind::Stored) {
+      const auto arguments = callArgumentValues(*initializer);
+      const HirBinding *carrier = findBinding(binding);
+      if (arguments.size() == 1 && carrier != nullptr &&
+          initializer->info.type == carrier->info.type)
+        if (const MirLoan *source = held(loanForValue(arguments.front()));
+            source != nullptr && source->kind == MirLoanKind::Stored)
+          return source->id;
+    }
+    // A call that relays its one text argument publishes a text view naming
+    // exactly the group that argument holds: the same owner and designated
+    // fields, reborrowing nothing. The result's origin holds only that
+    // argument's loan, so the binding carries that group rather than a
+    // duplicate of it. A class carrier result keeps its own loan, which
+    // reborrows the argument's group, and so does a call composing several
+    // carriers.
+    const HirBinding *textCarrier = findBinding(binding);
+    if (textCarrier != nullptr &&
+        (textCarrier->info.type.kind == SemanticType::StringView ||
+         textCarrier->info.type.kind == SemanticType::CString) &&
+        initializer != nullptr && candidate->kind == MirLoanKind::Stored &&
+        candidate->parent == 0 && candidate->storedDependency == 0 &&
+        (initializer->functionTarget || initializer->callPlan)) {
+      const MirLoan *relayed = nullptr;
+      std::size_t carried = 0;
+      for (const HirValueId argument : callArgumentValues(*initializer))
+        if (const MirLoanId loan = loanForValue(argument); loan != 0) {
+          ++carried;
+          relayed = held(loan);
+        }
+      if (carried == 1 && relayed != nullptr &&
+          relayed->kind == MirLoanKind::Stored && relayed->parent == 0 &&
+          relayed->storedDependency == 0 &&
+          relayed->source == candidate->source &&
+          relayed->access == candidate->access &&
+          relayed->designatedFields == candidate->designatedFields &&
+          relayed->conditions == candidate->conditions &&
+          relayed->additionalDependencies == candidate->additionalDependencies)
+        return relayed->id;
+    }
     // A fresh loan that reborrows nothing and names a place its own stored
     // dependency already protects (a text value relayed out of a stored
     // reference field) retains only what that group retains: like a copy
