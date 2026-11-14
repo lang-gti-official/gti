@@ -237,10 +237,23 @@ def main():
                 temporary, temporary.index(").view"), 1)}, note
             named = temporary.replace(
                 "auto borrowed = std::string(\"hello\").view();",
-                "std::string owner(\"hello\"); auto borrowed = owner.view();")
+                "std::string owner = std::string(\"hello\"); auto borrowed = owner.view();")
             assert not [item for item in change(named, 18)
                         if item.get("severity") == 1]
-            assert change(SOURCE, 19) == []
+            local_return = (
+                "int& invalid() {\n"
+                "  /* 😀 */ int value = 1;\n"
+                "  /* 😀 */ return value;\n}\n")
+            errors = change(local_return, 19)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert "local value 'value'" in error["message"], error
+            assert error["range"] == source_range(
+                local_return, local_return.rindex("value"), 5), error
+            assert error["relatedInformation"][0]["location"] == {
+                "uri": uri, "range": source_range(
+                    local_return, local_return.index("value"), 5)}, error
+            assert change(local_return.replace("int& invalid", "int invalid"), 20) == []
+            assert change(SOURCE, 21) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",

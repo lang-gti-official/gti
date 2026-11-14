@@ -397,6 +397,32 @@ void testOwnershipAndMissingIncludeDiagnostics() {
                                     {standardLibraryRoot()});
   };
   const std::string prefix = "import std.string;\n";
+  const std::string localReturn = R"(
+int& invalid() {
+  int value = 1;
+  return value;
+}
+)";
+  const auto localReturnResult = analyze(localReturn);
+  const auto *localReturnError =
+      findDiagnosticByCode(localReturnResult.diagnostics, "GTI-S2017");
+  expect(!localReturnResult.canGenerateCode() && localReturnError &&
+             localReturnError->primary.start == localReturn.rfind("value") &&
+             localReturnError->message.find("local value 'value'") !=
+                 std::string::npos &&
+             localReturnError->related.size() == 1 &&
+             localReturnError->related[0].span.start ==
+                 localReturn.find("value") &&
+             localReturnError->related[0].span.end ==
+                 localReturn.find("value") + 5 &&
+             hasDiagnosticHint(localReturnResult.diagnostics,
+                               "does not keep a local value alive"),
+         "a returned local reference identifies the escaping expression and "
+         "the local whose storage ends at return");
+  auto ownedReturn = localReturn;
+  ownedReturn.erase(ownedReturn.find('&'), 1);
+  expect(analyze(ownedReturn).canGenerateCode(),
+         "returning the owned value preserves the valid nearby program");
   const std::string ambiguous = R"(
 int& choose(int& first, int& second, bool condition) {
   if (condition) { return first; }
@@ -587,7 +613,8 @@ int main() {
   namedOwner.replace(
       namedOwner.find("  auto borrowed"),
       std::string("  auto borrowed = std::string(\"hello\").view();").size(),
-      "  std::string owner(\"hello\"); auto borrowed = owner.view();");
+      "  std::string owner = std::string(\"hello\"); auto borrowed = "
+      "owner.view();");
   expect(analyze(namedOwner).canGenerateCode(),
          "a named owner that outlives the borrowed result fixes the rejection");
   const std::string reborrowed = R"(
@@ -674,6 +701,17 @@ int run(bool condition) {
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
   expect(disjointResult.canGenerateCode(),
          "a use in a disjoint branch does not keep a borrow live at an access");
+  const auto returningUse = analyze(R"(
+int run(bool condition) {
+  mut int value = 1;
+  int& borrowed = value;
+  if (condition) { value = 2; return borrowed; }
+  return borrowed;
+}
+)");
+  expect(!returningUse.canGenerateCode() &&
+             hasDiagnosticCode(returningUse.diagnostics, "GTI-S2017"),
+         "an early return still retains a borrow that its own arm uses");
 
   const std::string records = R"(
 struct Ticket {

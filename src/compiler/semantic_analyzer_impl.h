@@ -749,7 +749,8 @@ public:
   void analyzeFunctionBody(const FunctionDecl &stmt,
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,
-                           bool constexprDeclarationValid);
+                           bool constexprDeclarationValid,
+                           bool explainMissingReturnAfterBody = false);
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
