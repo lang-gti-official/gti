@@ -114,7 +114,7 @@ int main() { return sum(1) + sum(true) - 6; }
         if (mutation == 0)
           range.elementAccess = lang::AccessMode::Mutable;
         if (mutation == 1)
-          range.rangeLoan = 0;
+          range.iterator = 0;
         if (mutation == 2)
           range.arrayLength += 1;
         if (mutation == 3)
@@ -129,8 +129,8 @@ int main() { return sum(1) + sum(true) - 6; }
     }
     expect(changed &&
                !lang::verifyHirProgramPlans(valid.semantics, malformed).valid(),
-           "concrete range plans still reject corrupted access, loans, shape "
-           "and carrier");
+           "concrete range plans still reject corrupted access, bindings, "
+           "shape and carrier");
   }
   const auto invalid = analyze(R"gti(
 int change<T>(T seed) {

@@ -52,7 +52,9 @@ Lifetime regions (RFC 0004) follow the table above:
   signature's lifetime contract: elision, well-formedness and explicit outlives
   requirements. It keeps its existing source-level ownership diagnostics.
   Inside a function body it erases lifetimes. It publishes no per-expression
-  supplier or region facts for HIR or MIR to replay. A type relation inside
+  supplier or region facts for HIR or MIR to replay, and it keeps no loan
+  records or loan identity: a binding carries only a value-compared
+  dependency summary. A type relation inside
   semantics yields lifetime constraints, never a silent equal/unequal answer.
 - **MIR** is the body-local authority. It re-infers regions from its own CFG,
   places and loans, as part of the ownership fixed-point. It checks each body

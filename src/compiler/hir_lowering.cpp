@@ -154,7 +154,7 @@ public:
       programStorageBindings.insert(step.binding);
     finalizeLifetimes(output.program.moduleBody, *baseModel,
                       programStorageBindings);
-    lowerLoans(*baseModel, output.program.moduleBody);
+    ensurePlaceDomain(output.program.moduleBody);
     processPendingInstances();
     const InstanceCounts reachable = instanceCounts();
     // Every other declaration in scope is still lowered: concrete semantic
@@ -1429,7 +1429,7 @@ private:
                                           storage.initializer);
       storage.initializer.roots.push_back(result);
       finalizeLifetimes(storage.initializer, *baseModel);
-      lowerLoans(*baseModel, storage.initializer);
+      ensurePlaceDomain(storage.initializer);
       if (declaration->initializer())
         appendInitializerSourceDebug(*baseModel, *declaration,
                                      storage.initializer, {*initializer});
@@ -2019,7 +2019,7 @@ private:
     }
     output.program.classes[index].fields = std::move(fields);
     finalizeLifetimes(fieldInitializers, *model, fieldBindings);
-    lowerLoans(*model, fieldInitializers);
+    ensurePlaceDomain(fieldInitializers);
     finishInitializerSourceDebug(fieldInitializers);
     output.program.classes[index].fieldInitializers =
         std::move(fieldInitializers);
@@ -2087,7 +2087,7 @@ private:
     }
     output.program.classes[index].staticFields = std::move(staticFields);
     finalizeLifetimes(staticFieldInitializers, *model, staticFieldBindings);
-    lowerLoans(*model, staticFieldInitializers);
+    ensurePlaceDomain(staticFieldInitializers);
     finishInitializerSourceDebug(staticFieldInitializers);
     output.program.classes[index].staticFieldInitializers =
         std::move(staticFieldInitializers);
@@ -2544,7 +2544,7 @@ private:
                           classArguments, classValueArguments, body);
     }
     finalizeLifetimes(body, *model);
-    lowerLoans(*model, body, bodyDeclaration);
+    ensurePlaceDomain(body);
     std::vector<HirCallableParameter> callableParameters;
     callableParameters.reserve(declaration->callableParameters.size());
     for (const CallableParameterContract &parameter :
@@ -3006,7 +3006,7 @@ private:
           lowerStatements(snapshot.source->body()->statements(), bodyModel,
                           classArguments, classValueArguments, body);
     finalizeLifetimes(body, bodyModel, {}, initializers);
-    lowerLoans(bodyModel, body);
+    ensurePlaceDomain(body);
     output.program.constructors[index].initializerValues =
         std::move(initializerValues);
     output.program.constructors[index].parameterBindings =
@@ -3067,7 +3067,7 @@ private:
         lowerStatements(snapshot.source->body()->statements(), *model,
                         owner.typeArguments, owner.valueArguments, body);
     finalizeLifetimes(body, *model);
-    lowerLoans(*model, body, snapshot.source);
+    ensurePlaceDomain(body);
     captureSourceDebug(SourceDebugBodyKind::Destructor, snapshot.source, *model,
                        body);
     output.program.destructors[index].body = std::move(body);
@@ -3363,110 +3363,6 @@ private:
   qualifyOwnershipEvent(OwnershipEvent event, PlaceDomain domain) {
     event.place.domain = domain;
     return event;
-  }
-
-  void lowerLoans(const SemanticModel &model, HirBody &body,
-                  const Stmt *declaration = nullptr,
-                  std::span<const LambdaCaptureInfo> captures = {}) {
-    ensurePlaceDomain(body);
-    body.loans.clear();
-    std::unordered_map<SymbolId, HirBindingId> bindings;
-    for (const HirBinding &binding : body.bindings) {
-      if (binding.info.symbol != 0) {
-        bindings.insert_or_assign(binding.info.symbol, binding.id);
-      }
-    }
-    std::unordered_set<SemanticLoanId> included;
-    std::vector<SemanticLoanId> pending;
-    for (const SemanticLoanInfo &loan : model.loans()) {
-      if ((declaration != nullptr && loan.entryDeclaration == declaration) ||
-          (loan.entry && std::any_of(captures.begin(), captures.end(),
-                                     [&](const LambdaCaptureInfo &capture) {
-                                       return capture.bindingSymbol ==
-                                              loan.place.root;
-                                     })) ||
-          std::any_of(
-              loan.carriers.begin(), loan.carriers.end(),
-              [&](SymbolId carrier) { return bindings.contains(carrier); }))
-        pending.push_back(loan.id);
-    }
-    for (const auto &value : body.values) {
-      if (value.borrowDependencies)
-        for (const auto &dependency : value.borrowDependencies->dependencies)
-          if (dependency.parent != 0)
-            pending.push_back(dependency.parent);
-      for (const auto &dependency : value.captureBorrowDependencies)
-        if (dependency.parent != 0)
-          pending.push_back(dependency.parent);
-    }
-    while (!pending.empty()) {
-      const SemanticLoanId id = pending.back();
-      pending.pop_back();
-      const auto *loan = model.findLoan(id);
-      if (loan == nullptr || !included.insert(id).second)
-        continue;
-      if (loan->parent != 0)
-        pending.push_back(loan->parent);
-      if (loan->storedDependency != 0)
-        pending.push_back(loan->storedDependency);
-      for (const auto &dependency : loan->additionalDependencies)
-        if (dependency.parent != 0)
-          pending.push_back(dependency.parent);
-    }
-    for (const SemanticLoanInfo &loan : model.loans()) {
-      if (!included.contains(loan.id))
-        continue;
-      HirLoan lowered{.semanticLoan = loan.id,
-                      .kind = loan.kind,
-                      .parent = loan.parent,
-                      .storedDependency = loan.storedDependency,
-                      .place = qualifyPlace(loan.place, body.placeDomain),
-                      .access = loan.access,
-                      .designatedFields = loan.designatedFields,
-                      .conditions = loan.conditions,
-                      .additionalDependencies = loan.additionalDependencies,
-                      .lifecycleBound = loan.lifecycleBound,
-                      .entry = loan.entry};
-      for (auto &dependency : lowered.additionalDependencies) {
-        dependency.place = qualifyPlace(dependency.place, body.placeDomain);
-      }
-      if (loan.referenceSelection) {
-        const auto &selection = *loan.referenceSelection;
-        HirReferenceSelection resolved{.transferredFrom =
-                                           selection.transferredFrom,
-                                       .fields = selection.fields,
-                                       .conditions = selection.conditions,
-                                       .reference = selection.reference};
-        std::size_t matches = 0;
-        for (const auto &value : body.values) {
-          if (value.source != selection.source ||
-              value.kind != HirValueKind::PayloadExtraction ||
-              value.operands.size() != 1)
-            continue;
-          const auto *carrier = body.findValue(value.operands.front());
-          if (carrier == nullptr || carrier->source != selection.carrier)
-            continue;
-          ++matches;
-          resolved.value = value.id;
-          resolved.carrier = carrier->id;
-        }
-        // Never resolve through the program-wide source index: repeated
-        // generic instances have distinct local values for the same syntax.
-        if (matches != 1 || selection.source == nullptr ||
-            selection.carrier == nullptr)
-          lifecycleValid = false;
-        lowered.referenceSelection = std::move(resolved);
-      }
-      for (const SymbolId carrier : loan.carriers) {
-        const auto found = bindings.find(carrier);
-        if (found != bindings.end() &&
-            std::find(lowered.carriers.begin(), lowered.carriers.end(),
-                      found->second) == lowered.carriers.end()) {
-          lowered.carriers.push_back(found->second);
-        }
-      }
-      body.loans.push_back(std::move(lowered));
-    }
   }
 
   [[nodiscard]] HirDropType dropTypeFor(const SemanticType &type) {
@@ -4158,9 +4054,6 @@ private:
         range.sentinelType = resolved->sentinelType;
         range.elementType = resolved->elementType;
         range.elementAccess = resolved->elementAccess;
-        range.rangeLoan = resolved->rangeLoan;
-        range.elementLoan = resolved->elementLoan;
-        range.elementOwnerLoan = resolved->elementOwnerLoan;
         range.beginFunction = resolved->beginFunction;
         range.endFunction = resolved->endFunction;
         range.compareFunction = resolved->compareFunction;
@@ -4601,7 +4494,7 @@ private:
     activeResultRegion = enclosingResultRegion;
     currentSourceFunctionName = enclosingSourceFunctionName;
     finalizeLifetimes(body, model);
-    lowerLoans(model, body, nullptr, info->captures);
+    ensurePlaceDomain(body);
     captureSourceDebug(SourceDebugBodyKind::Lambda, &lambda, model, body);
     std::vector<bool> captureRequiresActiveCleanup;
     captureRequiresActiveCleanup.reserve(info->captures.size());
@@ -6769,21 +6662,8 @@ private:
           const SemanticType &element = value.info.type.arguments[index];
           const SemanticTypeTraits traits =
               instanceProvider->traitsFor(element);
-          const bool storedEntry =
-              element.kind == SemanticType::Class &&
-              std::any_of(model.loans().begin(), model.loans().end(),
-                          [&](const SemanticLoanInfo &loan) {
-                            return loan.entry &&
-                                   loan.kind == SemanticLoanKind::StoredValue &&
-                                   loan.place.root == value.symbol &&
-                                   !loan.place.receiver &&
-                                   loan.place.projections.size() == 1 &&
-                                   loan.place.projections.front().kind ==
-                                       PlaceProjectionKind::ConstantIndex &&
-                                   loan.place.projections.front().index ==
-                                       index &&
-                                   !loan.designatedFields.empty();
-                          });
+          const bool storedEntry = element.kind == SemanticType::Class &&
+                                   model.isPackStoredEntry(value.symbol, index);
           HirCallInputKind inputKind = HirCallInputKind::Value;
           if (element.kind == SemanticType::Reference) {
             inputKind = element.referenceAccess == AccessMode::Mutable

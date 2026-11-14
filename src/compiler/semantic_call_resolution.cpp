@@ -827,10 +827,6 @@ auto SemanticVisitor::Impl::analyzeLambdaCall(
     valid = false;
   }
   const auto receiver = loanPlace(call.callee());
-  reportLoanPlaceConflict(
-      expressionToken(call.callee()), receiver, access,
-      "Callback invocation overlaps a borrow that may still be live.",
-      accessLoan(call.callee()));
   if (access == AccessMode::Mutable)
     recordMutableBindingUse(receiver.root);
   const CallableParameterContract *contract =
@@ -5693,7 +5689,6 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     validateRawPointerAccess(member->object(), paren, selectedReceiverAccess);
   AccessMode callReceiverAccess = selectedReceiverAccess;
   std::optional<SemanticLoanPlace> receiverPlace;
-  SemanticLoanId receiverLoan = 0;
   bool transientReceiver = false;
   const bool temporaryReceiver =
       receiverMode == CallReceiverMode::FreshTemporaryRead ||
@@ -5716,7 +5711,6 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
     } else if (!temporaryReceiver) {
       receiverPlace = loanPlace(member->object());
     }
-    receiverLoan = accessLoan(member->object());
   } else if (member == nullptr && function.ownerClass != 0 &&
              !function.staticMember) {
     receiverPlace = loanPlace(
@@ -5803,31 +5797,6 @@ auto SemanticVisitor::Impl::validateSelectedFunction(
       report(paren, "Mutable method requires a mutable receiver.");
     }
     return false;
-  }
-  if (receiverPlace) {
-    SemanticType receiverType = SemanticType::Unknown;
-    if (member != nullptr) {
-      if (const SemanticType *resolved =
-              semanticModel.findType(*member->object())) {
-        receiverType = *resolved;
-      }
-    } else if (currentClass) {
-      receiverType = openClassType(*currentClass);
-    }
-    const bool moveOnlyReceiver =
-        selectedReceiverAccess == AccessMode::Mutable &&
-        isMoveOnlyOwnerType(receiverType);
-    reportLoanPlaceConflicts(
-        paren, receiverOrigins, callReceiverAccess,
-        moveOnlyReceiver
-            ? "Mutable method cannot use move-only storage while a "
-              "reference borrowed from it may still be live."
-        : receiverAllowsMutation(function.receiverMutability)
-            ? "Mutable method receiver overlaps a borrow that may still be "
-              "live."
-            : "Read-only method receiver overlaps a mutable borrow or "
-              "child reborrow that may still be live.",
-        receiverLoan);
   }
   if (function.declaration != nullptr) {
     validateCallLifetimeRequirements(*function.declaration, arguments, paren);
@@ -6587,14 +6556,6 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
       receiverState ? loanPlace(receiverState->place) : loanPlace(receiver);
   const auto receiverOrigins =
       receiverState ? loanPlaces(receiverState->place) : loanPlaces(receiver);
-  reportLoanPlaceConflicts(
-      token, receiverOrigins, receiverAccess,
-      selected.receiverMutability == ReceiverMutability::Mutable
-          ? "Mutable constrained operator receiver overlaps a borrow that "
-            "may still be live."
-          : "Read-only constrained operator receiver overlaps a mutable "
-            "borrow that may still be live.",
-      receiverState ? accessLoan(receiverState->place) : accessLoan(receiver));
   validateMutableCallArgumentLoans(selected.parameterTypes, arguments, token);
   validateCallPlaceExclusivity(selected.parameterTypes, arguments, token,
                                receiverPlace, receiverAccess, false,
@@ -6628,24 +6589,7 @@ auto SemanticVisitor::Impl::resolveSymbolicOperator(
   if (contextual) {
     semanticModel.recordContextualConversion(site, std::move(resolved));
   } else if (projection) {
-    auto check = captureProgramStorageBorrows(tokenSpan(token));
-    const AccessMode access =
-        resolved.receiverMutability == ReceiverMutability::ReadOnly
-            ? AccessMode::ReadOnly
-            : AccessMode::Mutable;
-    if (receiver)
-      appendProgramStorageBorrowInput(check, receiver, access);
-    else if (receiverState)
-      for (const auto &place : loanPlaces(receiverState->place))
-        appendProgramStorageBorrowProtection(check, place, access,
-                                             tokenSpan(token));
-    const auto owner = currentProgramEffectOwner;
-    const auto edgeStart = programEffects[owner].edges.size();
-    const auto unknownStart = programEffects[owner].unknown.size();
     recordProgramOperatorTargetEffects(site, resolved);
-    if (owner.valid())
-      publishProgramStorageBorrowCheck(std::move(check), owner, edgeStart,
-                                       unknownStart);
     semanticModel.recordProjectionOperator(site, std::move(resolved));
   } else {
     semanticModel.recordOperator(site, std::move(resolved));
@@ -7199,18 +7143,6 @@ auto SemanticVisitor::Impl::resolveOperator(
                                    ? loanPlaces(receiver, true)
                                    : std::vector<SemanticLoanPlace>{};
   if (receiverPlace) {
-    reportLoanPlaceConflicts(
-        token, receiverOrigins, selectedReceiverAccess,
-        receiverAllowsMutation(selected.receiverMutability)
-            ? (selected.receiverMutability == ReceiverMutability::Consuming
-                   ? "Consuming operator receiver overlaps a borrow that "
-                     "may still be live."
-                   : "Mutable operator receiver overlaps a borrow that may "
-                     "still be live.")
-            : "Read-only operator receiver overlaps a mutable borrow or "
-              "child reborrow that may still be live.",
-        receiverState ? accessLoan(receiverState->place)
-                      : accessLoan(receiver));
   }
   std::vector<SemanticType> ordinaryParameters;
   std::vector<const ExprPtr *> ordinaryArguments;

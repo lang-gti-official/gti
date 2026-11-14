@@ -11,10 +11,15 @@
 
 namespace lang {
 
-enum class SemanticLoanKind {
-  Reference,
-  StoredValue,
-};
+// What one binding retains, as semantic analysis summarizes it for its own
+// borrow-origin rules. It is not a loan: MIR derives every loan, and no later
+// phase reads a summary. A summary is an immutable value naming the binding
+// that formed it; sharing one is an optimization, never an identity.
+struct BindingDependency;
+using BindingDependencyRef = std::shared_ptr<const BindingDependency>;
+// Value equality of two summaries (both absent, or equal in every fact).
+[[nodiscard]] bool sameBindingDependency(const BindingDependencyRef &left,
+                                         const BindingDependencyRef &right);
 
 enum class UnsafeOperationKind {
   None,
@@ -62,13 +67,20 @@ struct SemanticLoanDependency {
   std::vector<SymbolId> designatedFields;
   AccessMode access = AccessMode::ReadOnly;
   bool protectsStorage = false;
-  // The exact capability reborrowed to create this dependency, if any.
-  // Composed carriers can retain independently borrowed parents.
-  SemanticLoanId parent = 0;
+  // The retained dependency whose capability was reborrowed to create this
+  // one, if any. Composed carriers can retain independently borrowed parents.
+  BindingDependencyRef parent;
   std::vector<BorrowDependencyCondition> conditions;
 
-  friend bool operator==(const SemanticLoanDependency &,
-                         const SemanticLoanDependency &) = default;
+  friend bool operator==(const SemanticLoanDependency &left,
+                         const SemanticLoanDependency &right) {
+    return left.place == right.place &&
+           left.designatedFields == right.designatedFields &&
+           left.access == right.access &&
+           left.protectsStorage == right.protectsStorage &&
+           left.conditions == right.conditions &&
+           sameBindingDependency(left.parent, right.parent);
+  }
 };
 
 // Presence certifies a complete dependency set for the attached producer.
@@ -88,49 +100,9 @@ struct SemanticBorrowDependencySet {
 struct SemanticReferenceSelection {
   const Expr *source = nullptr;
   const Expr *carrier = nullptr;
-  // Exact consumed dependency group whose authority is handed off by the
-  // closed arm-entry prefix. This is provenance, not a live reborrow parent.
-  SemanticLoanId transferredFrom = 0;
   std::vector<SymbolId> fields;
   std::vector<BorrowDependencyCondition> conditions;
   SemanticType reference = SemanticType::Unknown;
-};
-
-struct SemanticLoanInfo {
-  SemanticLoanId id = 0;
-  SemanticLoanKind kind = SemanticLoanKind::Reference;
-  const Expr *origin = nullptr;
-  SymbolId owner = 0;
-  bool receiverOrigin = false;
-  SemanticLoanId parent = 0;
-  // A reference to a borrowed-state carrier protects the carrier's physical
-  // storage separately from the external owners retained by this StoredValue
-  // loan. Unlike parent, this edge neither denotes containment nor suspends
-  // the dependency's access permission.
-  SemanticLoanId storedDependency = 0;
-  bool entry = false;
-  // Receiver-only abstract entry dependencies have no source binding. This
-  // identity keeps them in their declaring body when one model holds many
-  // functions and destructors; it is consumed during HIR lowering, never by
-  // the backend.
-  const Stmt *entryDeclaration = nullptr;
-  SemanticLoanPlace place;
-  AccessMode access = AccessMode::ReadOnly;
-  bool protectsStorage = false;
-  // A lifecycle-bound owner dependency remains active until its one carrier
-  // is destroyed. It cannot use ordinary last-use loan shortening because
-  // the carrier's destructor performs the operation that releases the
-  // protected resource.
-  bool lifecycleBound = false;
-  // For a StoredValue parameter loan, this exact nominal field path ends at
-  // the reference designating its external referent. Empty for other loans.
-  std::vector<SymbolId> designatedFields;
-  // The primary dependency has the same typed alternative qualification as
-  // additionalDependencies. An empty list denotes an unconditional path.
-  std::vector<BorrowDependencyCondition> conditions;
-  std::vector<SemanticLoanDependency> additionalDependencies;
-  std::optional<SemanticReferenceSelection> referenceSelection;
-  std::vector<SymbolId> carriers;
 };
 
 enum class RangeIterationStrategy {
@@ -141,7 +113,7 @@ enum class RangeIterationStrategy {
 
 // The semantic authority for one range statement. Generated syntax remains a
 // recovery/implementation detail; later phases consume these exact owner,
-// access, protocol, and loan identities instead of rediscovering a range from
+// access, and protocol identities instead of rediscovering a range from
 // member spellings.
 struct ResolvedRangeIterationInfo {
   // Semantics selects this ordinary-call lowering after resolving the range
@@ -162,9 +134,6 @@ struct ResolvedRangeIterationInfo {
   // an independent lexical value for value yields. Its exact producer and
   // declaration identity remain part of the range contract.
   SymbolId elementOwner = 0;
-  SemanticLoanId rangeLoan = 0;
-  SemanticLoanId elementLoan = 0;
-  SemanticLoanId elementOwnerLoan = 0;
   FunctionId beginFunction = 0;
   FunctionId endFunction = 0;
   FunctionId compareFunction = 0;
@@ -2647,7 +2616,6 @@ public:
 
   [[nodiscard]] const BindingInfo *findPayloadBinding(const Token &name) const;
 
-  [[nodiscard]] const SemanticLoanInfo *findLoan(SemanticLoanId id) const;
   // Null means no complete set has been established. A present empty set
   // is affirmative evidence of no dependencies and shadows an inherited set.
   [[nodiscard]] const SemanticBorrowDependencySet *
@@ -2659,7 +2627,9 @@ public:
   [[nodiscard]] std::span<const SemanticLoanDependency>
   findCaptureBorrowDependencies(const Expr &expression) const;
 
-  [[nodiscard]] const std::vector<SemanticLoanInfo> &loans() const;
+  // A formal pack element whose class stores references: its entry is a
+  // carrier of the caller's stored dependencies, not an owned value.
+  [[nodiscard]] bool isPackStoredEntry(SymbolId pack, std::size_t index) const;
 
   [[nodiscard]] std::optional<bool>
   findConstexprBranch(const IfStmt &statement) const;
@@ -2993,14 +2963,13 @@ private:
   // Turns this model into an instance-analysis delta over baseModel: reads
   // fall back to the base while writes stay local, so concrete instance
   // reanalysis records only what it produces instead of copying the whole
-  // program's model. Loan tables deliberately do not fall back - instance
-  // analysis restarts loan identities, mirroring the clearLoans() semantics
-  // the previous whole-model copy relied on.
+  // program's model. Borrow dependency tables deliberately do not fall back -
+  // instance analysis derives its own.
   void beginInstanceDelta(const SemanticModel &baseModel,
                           SymbolId reservedIdentityCeiling = 0);
 
-  // Speculative expression analysis stays in the caller's body: preserve its
-  // loan identities locally instead of restarting them as an instance does.
+  // Speculative expression analysis stays in the caller's body: keep its
+  // pack entries locally instead of restarting them as an instance does.
   // Other facts are read through the immutable base; all writes stay local.
   void beginSpeculativeDelta(const SemanticModel &baseModel);
 
@@ -3048,11 +3017,6 @@ private:
   // declaration is unknown to both the delta and the base.
   [[nodiscard]] std::unordered_map<const FunctionDecl *, FunctionInfo>::iterator
   materializeFunction(const FunctionDecl &declaration);
-
-  [[nodiscard]] bool validLoan(SemanticLoanId id) const;
-
-  static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
-                               SemanticLoanId loan);
 
   void record(const Expr &expression, ExpressionInfo info);
 
@@ -3108,7 +3072,7 @@ private:
 
   void recordPayloadBinding(const Token &name, BindingInfo info);
 
-  void recordLoan(SemanticLoanInfo info);
+  void recordPackStoredEntry(SymbolId pack, std::size_t index);
   void
   recordBorrowDependencies(const Expr &expression,
                            std::vector<SemanticLoanDependency> dependencies);
@@ -3119,10 +3083,6 @@ private:
   void clearBorrowDependencySet(const Expr &expression);
   void recordCaptureBorrowDependencies(
       const Expr &expression, std::vector<SemanticLoanDependency> dependencies);
-
-  void recordBindingLoan(const VariableDecl &declaration, SemanticLoanId loan);
-
-  void recordBindingLoan(const Parameter &parameter, SemanticLoanId loan);
 
   void recordConstexprBranch(const IfStmt &statement,
                              std::optional<bool> thenBranch);
@@ -3149,11 +3109,7 @@ private:
   void recordStaticAssertResult(const StaticAssertDecl &declaration,
                                 StaticAssertResult result);
 
-  void recordLoanCarrier(SemanticLoanId id, SymbolId carrier);
-
-  void removeLoanCarrier(SemanticLoanId id, SymbolId carrier);
-
-  void clearLoans();
+  void clearBorrowDependencies();
 
   void record(const StructuredBindingDecl &declaration,
               StructuredBindingInfo info);
@@ -3359,7 +3315,7 @@ private:
   std::unordered_map<const VariableDecl *, BindingInfo> variableBindings;
   std::unordered_map<const Parameter *, BindingInfo> parameterBindings;
   std::unordered_map<const Token *, BindingInfo> payloadBindings;
-  std::vector<SemanticLoanInfo> retainedLoans;
+  std::vector<std::pair<SymbolId, std::size_t>> packStoredEntries;
   std::unordered_map<const Expr *, std::optional<SemanticBorrowDependencySet>>
       expressionBorrowDependencies;
   std::unordered_map<const Expr *, std::vector<SemanticLoanDependency>>

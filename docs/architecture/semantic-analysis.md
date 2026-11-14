@@ -456,9 +456,10 @@ Warn and Strict perform identical inference. Semantic/query workers emit
 typed warnings, split into observed violations, potential violations and
 incomplete analysis. The frontend promotes these warnings only after the
 requested frontend phases for Strict; promotion cannot poison query summaries.
-Audit-only conflicts are excluded from mandatory loan endpoint planning and
-inspect its completed liveness facts only for diagnostics. No checked loan,
-cleanup schedule or native output may depend on audit mode.
+A raw access that may overlap a live, incompatible checked loan is MIR's
+finding ([MIR](mir.md#borrow-audits-hosted-on-mir)), reported from MIR's own
+loan ends; semantics keeps the lifetime, witness and conversion audits. No
+checked loan, cleanup schedule or native output may depend on audit mode.
 Audit-only field-type queries look up existing declaration identities; they do
 not register unrelated methods or change mandatory MIR symbol/place identities.
 
@@ -466,8 +467,8 @@ The remaining section describes the optional analyzer, not extra mandatory
 conditions for compiling an unsafe implementation.
 
 Local raw pointer flow retains address origins as existing `PlaceKey` values,
-with the address source span and originating checked-loan identity when one
-exists. These facts travel with semantic scope/value-flow snapshots; joins
+with the address source span and the binding dependency the address was
+formed through when one exists. These facts travel with semantic scope/value-flow snapshots; joins
 union possible origins instead of replacing a known source with unknown
 validity. They do not create or extend loans. Unsafe dereference, indexing,
 member writes and selected mutable receiver calls consult source availability
@@ -1605,8 +1606,7 @@ HIR. This proof does not infer safety from a backend or from `findConstant()`.
 Closed generic calls use request-local concrete effect queries keyed by the
 declaration, concrete owner, and type/value substitutions. A reused isolated
 semantic instance worker closes queries selected by actual source-owner effect
-edges and pending persistent-storage obligations, including obligations inside
-a selected generic body whose caller has no live persistent loan. Merely
+edges. Merely
 registering a query in a speculative cache is not a root; discarded
 `if constexpr` arms do not contribute effects. Nongeneric bridge
 calls retain their graph edges, and source constructor/destructor/field effects
@@ -1675,14 +1675,15 @@ and cannot publish speculative storage writes or cleanup into caller flow.
 The closed source effect graph also computes a monotone may-propagate-failure
 bit from typed local defined-failure outcomes, unknown GTI boundaries and exact
 selected callees. It executes no GTI and adds no alternate failure semantics.
-Deferred lifecycle edges remain conservative for process-initializer ordering;
-hidden persistent-storage checks traverse them when a body can fail, alongside
-the unconditional cleanup effects recorded at actual scope/full-expression and
-replacement endpoints. Thus a no-fail constructor that moves a parameter into a
-field does not appear to destroy that moved parameter, but a potentially failing
-constructor retains field/input rollback. Concrete effect import preserves
-deferred versus executed paths rather than flattening a conditional destructor
-into an unconditional ambient write.
+Deferred lifecycle edges remain conservative for process-initializer ordering,
+alongside the unconditional cleanup effects recorded at actual
+scope/full-expression and replacement endpoints. Concrete effect import
+preserves deferred versus executed paths rather than flattening a conditional
+destructor into an unconditional ambient write. A live borrow of persistent
+storage across a call, cleanup or ordered input whose effects reach that
+storage is MIR's check
+([MIR](mir.md#borrow-audits-hosted-on-mir)), over MIR's own executable
+effect closure.
 
 Full-expression root indices and typed expression/failure slices are owned by
 the semantic-model snapshot. Concrete-instance delta brackets reset those caches
@@ -3211,7 +3212,7 @@ returned runtime place or carrier value to the same formal dependency; later
 phases do not infer the field from its type or emitted representation.
 
 Stored carriers generalize this to a set of reference-bearing field
-paths and checked owner places. `SemanticLoanInfo.additionalDependencies`
+paths and checked owner places. `BindingDependency::additionalDependencies`
 retains the remaining places, access modes, storage protection, and entry
 field paths alongside the original primary dependency. Every constructor
 binds each borrowed field from an exact parameter; resolved construction/call
@@ -3279,9 +3280,9 @@ Synthesized range dereference retains the selected physical range-storage loan
 before composing field mappings. Its transitive resource dependency remains
 separate; borrowing an element cannot be substituted with borrowing the resource
 that supplied the container's allocation.
-Moving a cleanup-bound carrier updates flow availability and transfers the
-active loan, but retains the declaration's historical loan identity so earlier
-reference uses still lower against the original shell and dependency.
+Moving a cleanup-bound carrier updates flow availability and hands its
+dependency summary to the new carrier; MIR lowers earlier reference uses
+against the original shell from its own loans.
 
 A direct by-value return of a nested copyable shared view records the exact
 receiver field prefix and the result-relative reference path. Copying that
@@ -3334,11 +3335,49 @@ lifetime validity belongs to MIR ([MIR](mir.md#body-local-lifetime-validity)).
 ## Loan Flow
 
 MIR is the single body-local borrow checker (RFC 0004,
-[MIR](mir.md#body-local-lifetime-validity)), and MIR derives every loan's
-end points. The semantic loan flow below reports no body-local borrow conflict
-or escape: it still assigns the loan identities and carriers HIR transports to
-MIR, until MIR derives loans from its own places. Semantics still owns
-signature and persistent-storage effect checks.
+[MIR](mir.md#body-local-lifetime-validity)). MIR derives every loan, its
+parent, carriers and end points from its own places, and semantic analysis
+has no loan: no loan identity, loan registry, carrier list, use, region or end
+point exists in the semantic model, and `BindingInfo` and the range plan carry
+no loan field. Semantics still owns signature checks and the borrow-origin
+rules below; persistent-storage borrows across calls and the raw audit's
+live-borrow finding are MIR's.
+
+What those origin rules read is a per-binding dependency summary,
+`BindingDependency` (`src/compiler/semantic_analyzer_impl.h`), private to
+semantic analysis. A binding that retains a borrow holds one in
+`Symbol::retainedDependency`: its kind (a `Reference` to a place, or the
+`StoredValue` owner a carrier's stored references designate), the owner place,
+access, storage protection, lifecycle bound, entry facts, designated field
+path, alternative conditions, additional dependencies and an enum-payload
+reference selection. Two links are summaries too: `parent`, the dependency
+that was reborrowed, and `storedDependency`, the carrier group a reference to
+a borrowed-state carrier reaches. A concrete parameter pack keeps one entry
+summary per element in `Symbol::packElementDependencies`.
+
+A summary is an immutable value. It names the binding that formed it
+(`binding`) and the body that did (`body`, from `LoanFlowState::body`); a
+builder that must add a stored dependency, additional dependencies or a
+selection does so through `refineBindingDependency` before any other code
+reads the binding. A copy or a move of a carrier, and a view of the same
+dependent text, hold the same value (`shareBindingDependency`), which only the
+forming body does: an enclosing body's summary stays with that body's
+bindings. Nothing compares summaries by address. `sameBindingDependency`
+is value equality; a branch join keeps a binding's summary when both arms
+agree by value, raw-pointer origins and `SemanticLoanDependency::parent`
+compare the same way, and a consumed switch subject's handoff matches its
+group by value. `SemanticLoanDependency::parent` is the only place a summary
+appears in a model type. It is opaque outside semantic analysis: HIR copies
+dependency sets without reading it, and MIR never sees it.
+
+`retainedDependencySource` maps an expression to the summary it reads through,
+with the selected dependency when a field path or a borrow-field contract
+names one. The decisions that used to read a loan record read that result:
+the reference-return origin proof (`Returned reference must derive from
+...`), stored reference selection and payload patterns (`GTI-S2067`),
+dependent text payloads and stored-borrow initialization (`GTI-S2045`), the
+read-only upgrade and reborrow rules of `recordRetainedBorrow`, and the
+dependency sets `storedBorrowDependencies` publishes.
 
 Facts that outlive the loan flow are kept apart from it. `BodyFlowState`
 (beside `LoanFlowState`, saved, reset and restored at the same points) holds
@@ -3348,33 +3387,45 @@ return sets of prefix `?`, and the captured-text locals, flows and escapes that
 `finalizeCapturedText` decides; each body finalizes captured text before its
 loan flow. `Symbol::retainsDependency` records that a binding holds a borrowed
 dependency, so `classifyExpression` chooses owner-dependent text information
-without reading a loan identity. `validateRetainedBorrowOwner` rejects a
-retained borrow of foreign storage (`GTI-S2054`) without a loan record.
+without reading a summary. `validateRetainedBorrowOwner` rejects a
+retained borrow of foreign storage (`GTI-S2054`) before a summary is formed.
+
+Retained-borrow diagnostics read binding facts.
+`validateSelectedReferenceReborrow` rejects a projected or consuming alias of a
+reference selected from an enum payload (`GTI-S2054`): `Symbol::selectedReference`
+marks the payload binding and each same-referent reborrow of it, and
+`semanticPlace` supplies the projection. `validateReferenceBinding` reports a
+read-only loan upgrade (`GTI-S2017`) when a non-mutable initializer is reached
+through a local reference binding or through a field or element of a local
+borrowed-state value; its note points at that local's initializer. A
+parameter, the receiver or plain owner storage gets the ordinary
+mutable-initializer diagnostic, and a reference to the carrier object itself is
+a shell reference, not an upgrade. A composed value with an unowned dependency
+is rejected once, by `validateStoredBorrowInitialization` (`GTI-S2045`), and an
+unaddressable reference initializer by `validateReferenceBinding`. The loan
+flow adds no diagnostic of its own when such a value takes no loan, or when a
+borrowed-state local retains a mutable reborrow; MIR checks that reborrow's
+exclusivity.
 
 Global and local loan-flow places use the same analysis-local domain. HIR
 qualifies those places with its concrete snapshot/body identity; qualifying
 only global dependencies during semantic conflict checks would incorrectly
 make every local carrier potentially alias a global owner.
 
-Retained borrows receive stable semantic loan identities. A move transfers a
-carrier; a read-only alias adds another carrier to the same identity, while a
-mutable stored carrier cannot be copied. Uses are
-recorded by loan rather than by one preferred variable, so endpoint planning
-considers every alias across straight-line statements and the supported
-conditional, loop, switch, and break shapes. Shared early endings are enabled
-for semantically read-only loans. An exclusive stored carrier instead keeps
-one origin suspended across its whole moved lifetime; a returned carrier
-re-establishes that exact dependency in the caller rather than inventing a new
-root.
+A move hands the source binding's summary to the new carrier and clears the
+source, unless the move is path-conditional; a read-only copy shares the
+summary, while a mutable stored carrier cannot be copied. A returned carrier
+re-establishes its exact dependency in the caller rather than inventing a new
+root. Uses, endpoints and suspension are MIR's.
 
 A value whose class type has no borrowed state can still carry one owner
 dependency at a direct text field (`L-OWN-02`, phase 1). Constructor and
 designated-construction selection mark the call `dependentTextPublication`
 and record a `BorrowedFieldOrigin` from the dynamic argument to the field.
 They do not record a complete dependency set: like a dynamic view, the value
-uses the retained-loan model. Its expression traits carry the borrowed state,
-and its binding's `StoredValue` loan designates the field and names the
-argument's owner. A copy adds a carrier to that loan, a move transfers it, and
+uses the binding-summary model. Its expression traits carry the borrowed state,
+and its binding's `StoredValue` summary designates the field and names the
+argument's owner. A copy shares that summary, a move hands it over, and
 a read of the designated field yields an owner-dependent view. Code outside the
 creating body reads text fields as ownerless, so `noteTextDependentValue`
 records each dependent value. A local initializer, a field read, a grouping, a
@@ -3473,7 +3524,7 @@ set is recorded for it.
   condition: a dependent value cannot be reassigned, so its alternative is
   fixed.
 - A non-consuming `switch` subject consumes the value for confinement.
-  `dependentTextPayloadLoan` finds the subject's loan when it designates an
+  `dependentTextPayloadDependency` finds the subject's loan when it designates an
   arm binding's text payload; a by-value binding then carries that loan and
   records it as its retained loan, as a local initialized from a published
   field read does, and an `auto&` binding is `GTI-S2045`.
@@ -3491,7 +3542,7 @@ Phase 2b publishes through payload-enum fields at a path `[field, payload]`:
 - `textDependentPaths` gives a dependent value's designated paths;
   `textDependentFields` keeps the direct ones. A read of an enum field
   through which a path goes is itself a dependent value, which a `switch`
-  observes: `dependentTextPayloadLoan` matches the subject's field prefix
+  observes: `dependentTextPayloadDependency` matches the subject's field prefix
   before the payload. Copying the field out of its value is `GTI-S2045`, and
   so is any relay of a path into a callee.
 - `OwnerlessTextField::payload` names a payload requirement. In a
@@ -3719,7 +3770,7 @@ raw, and opaque sources do not receive precise conflict treatment in this
 slice.
 
 Reference-return escape checking follows ordinary reference aliases through
-`SemanticLoanInfo::parent`, as it already follows accessor transients and stored
+`BindingDependency::parent`, as it already follows accessor transients and stored
 reference dependencies. A local reference slot is not an owner of its referent.
 The ancestry must reach an entry loan or receiver storage; local physical
 storage and cleanup-bound ancestors remain invalid. The separate return-origin
@@ -3991,7 +4042,7 @@ exact single-use signed-minimum literal query with native emission; ordinary
 negation and its overflow behaviour are not relaxed.
 
 Read-only and mutable reference signatures are potentially constexpr-capable when the
-referent is supported. Ordinary semantic loans and return-origin checks retain
+referent is supported. Ordinary binding dependencies and return-origin checks retain
 authority; the staged MIR evaluator alone executes reference calls and produces
 the observed referent value, not a persistent reference constant. Failed staging
 does not fall back to an AST interpretation of newly admitted reference rules.

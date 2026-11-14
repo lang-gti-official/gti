@@ -37,6 +37,64 @@ using semantic_spelling::pathSpelling;
 using semantic_spelling::qualifiedName;
 using semantic_spelling::typeRefSpelling;
 
+enum class BindingDependencyKind {
+  Reference,
+  StoredValue,
+};
+
+// What one binding retains: the place it borrows or the owner its stored
+// references designate, with the access and field paths the semantic
+// borrow-origin rules select by. A summary is an immutable value: the
+// binding that formed it holds it, a binding copied or moved from that one
+// holds the same value, and a dependency reborrowed through it keeps it as its
+// parent. Nothing compares summaries by address, no later phase can name one,
+// and MIR derives every loan without them.
+struct BindingDependency {
+  // The binding whose initialization or entry formed this summary.
+  SymbolId binding = 0;
+  // The body that formed it (LoanFlowState::body).
+  std::size_t body = 0;
+  BindingDependencyKind kind = BindingDependencyKind::Reference;
+  const Expr *origin = nullptr;
+  SymbolId owner = 0;
+  bool receiverOrigin = false;
+  // The dependency reborrowed to form this one.
+  BindingDependencyRef parent;
+  // A reference to a borrowed-state carrier protects the carrier's physical
+  // storage separately from the external owners the carrier's own StoredValue
+  // dependency retains. Unlike parent, this edge neither denotes containment
+  // nor suspends the dependency's access permission.
+  BindingDependencyRef storedDependency;
+  bool entry = false;
+  // Receiver-only abstract entry dependencies have no source binding; this
+  // keeps them in their declaring body.
+  const Stmt *entryDeclaration = nullptr;
+  SemanticLoanPlace place;
+  AccessMode access = AccessMode::ReadOnly;
+  bool protectsStorage = false;
+  // A lifecycle-bound owner dependency lasts until its one carrier is
+  // destroyed: the carrier's destructor performs the operation that releases
+  // the protected resource.
+  bool lifecycleBound = false;
+  // For a StoredValue parameter dependency, this exact nominal field path
+  // ends at the reference designating its external referent.
+  std::vector<SymbolId> designatedFields;
+  // The primary dependency has the same typed alternative qualification as
+  // additionalDependencies. An empty list denotes an unconditional path.
+  std::vector<BorrowDependencyCondition> conditions;
+  std::vector<SemanticLoanDependency> additionalDependencies;
+  std::optional<SemanticReferenceSelection> referenceSelection;
+};
+
+[[nodiscard]] bool sameBindingDependency(const BindingDependency &left,
+                                         const BindingDependency &right);
+
+// A fresh name for one analyzed body's dependency summaries.
+[[nodiscard]] inline std::size_t nextLoanFlowBody() {
+  static std::atomic<std::size_t> next{1};
+  return next.fetch_add(1, std::memory_order_relaxed);
+}
+
 class SemanticVisitor::Impl final : public ExprVisitor,
                                     public StmtVisitor,
                                     public SemanticInstanceProvider {
@@ -98,52 +156,6 @@ public:
     bool cleanup = false;
   };
 
-  struct ProgramBorrowStorageUse {
-    BorrowOriginPlace place;
-    AccessMode access = AccessMode::ReadOnly;
-    SourceSpan span;
-    bool cleanup = false;
-  };
-
-  struct ProgramStorageBorrowProtection {
-    SemanticLoanPlace place;
-    AccessMode access = AccessMode::ReadOnly;
-    SourceSpan origin;
-    // Zero denotes an invocation/result-scoped dependency. Named loans reuse
-    // the ordinary structured last-use proof before effect checks are closed.
-    SemanticLoanId loan = 0;
-    bool scopeExit = false;
-  };
-
-  enum class ProgramStorageBorrowSite {
-    Invocation,
-    OrderedInput,
-    ScopeCleanup,
-    FullExpressionCleanup,
-    FailureCleanup,
-    ReplacementCleanup,
-  };
-
-  struct ProgramFailureCondition {
-    bool direct = false;
-    bool unknown = false;
-    std::vector<ProgramEffectOwner> targets;
-  };
-
-  struct ProgramStorageBorrowCheck {
-    ProgramEffectOwner owner;
-    SourceSpan site;
-    ProgramStorageBorrowSite siteKind = ProgramStorageBorrowSite::Invocation;
-    std::vector<ProgramStorageBorrowProtection> protections;
-    std::vector<ProgramBorrowStorageUse> uses;
-    std::vector<ProgramEffectOwner> targets;
-    std::vector<ProgramUnknownEffect> unknown;
-    std::shared_ptr<const ProgramFailureCondition> failureCondition;
-    // A symbolic fold is not an executable invocation. Keep its obligation
-    // until selected concrete bodies replay it with an exact element count.
-    bool dependentPrimary = false;
-  };
-
   struct ProgramExpressionEffects {
     ProgramEffectOwner owner;
     std::size_t order = 0;
@@ -151,11 +163,7 @@ public:
     std::size_t edgeEnd = 0;
     std::size_t unknownStart = 0;
     std::size_t unknownEnd = 0;
-    std::size_t useStart = 0;
-    std::size_t useEnd = 0;
     std::size_t storageUseStart = 0;
-    std::size_t borrowCheckStart = 0;
-    bool directFailureBefore = false;
   };
 
   struct ProgramTemporaryCleanup {
@@ -180,19 +188,14 @@ public:
         fullExpressionRoots;
     std::unordered_map<const Expr *, ProgramExpressionEffects>
         programExpressionEffects;
-    std::unordered_map<const Expr *,
-                       std::shared_ptr<const ProgramFailureCondition>>
-        programOperationFailures;
   };
 
   struct ProgramEffectSummary {
-    bool directFailure = false;
     // An effect query cannot certify an invalid body. Its ordinary instance
     // analysis owns diagnostics, including discovery of independent type
     // assertions; retained errors gate that path if its result later changes.
     bool invalidBody = false;
     std::vector<ProgramStorageEffectUse> uses;
-    std::vector<ProgramBorrowStorageUse> borrowUses;
     std::vector<ProgramEffectEdge> edges;
     std::vector<ProgramUnknownEffect> unknown;
   };
@@ -337,7 +340,6 @@ public:
           savedConstructorId(visitor.nextConstructorId),
           savedFunctionId(visitor.nextFunctionId),
           savedLambdaId(visitor.nextLambdaId),
-          savedSemanticLoanId(visitor.nextSemanticLoanId),
           savedPlaceSelectionId(visitor.nextPlaceSelectionId),
           savedProgramExpressionCache(
               std::move(visitor.requestSession.programExpressionCache)),
@@ -402,7 +404,6 @@ public:
       visitor.nextConstructorId = savedConstructorId;
       visitor.nextFunctionId = savedFunctionId;
       visitor.nextLambdaId = savedLambdaId;
-      visitor.nextSemanticLoanId = savedSemanticLoanId;
       visitor.nextPlaceSelectionId = savedPlaceSelectionId;
       visitor.instanceBaseModel = nullptr;
       visitor.reanalysisBase = nullptr;
@@ -421,7 +422,6 @@ public:
     ConstructorId savedConstructorId;
     FunctionId savedFunctionId;
     LambdaId savedLambdaId;
-    SemanticLoanId savedSemanticLoanId;
     std::size_t savedPlaceSelectionId;
     ProgramExpressionCache savedProgramExpressionCache;
     std::vector<ProgramFullExpressionState> savedFullExpressionStates;
@@ -1130,20 +1130,8 @@ private:
     bool arrowCallee = false;
   };
 
-  struct LoanFlowRecord {
-    SemanticLoanId id = 0;
-    std::size_t region = 0;
-    std::size_t lastUseOrder = 0;
-    const Stmt *lastUse = nullptr;
-    std::unordered_set<SymbolId> carriers;
-    bool confinedToRegion = true;
-    bool hasAliases = false;
-    bool lifecycleBound = false;
-    bool active = true;
-  };
-
-  struct RetainedLoanSource {
-    SemanticLoanId loan = 0;
+  struct RetainedDependencySource {
+    BindingDependencyRef summary;
     const Variable *carrier = nullptr;
     bool transfer = false;
     std::optional<SemanticLoanDependency> dependency;
@@ -1157,142 +1145,10 @@ private:
     ExternalReferentProjection,
   };
 
-  struct ActiveLoanFlowConditionalArm {
-    std::size_t conditional = 0;
-    bool thenBranch = false;
-
-    friend bool operator==(const ActiveLoanFlowConditionalArm &,
-                           const ActiveLoanFlowConditionalArm &) = default;
-  };
-
-  struct ActiveLoanFlowSwitchArm {
-    std::size_t switchIndex = 0;
-    std::size_t armIndex = 0;
-
-    friend bool operator==(const ActiveLoanFlowSwitchArm &,
-                           const ActiveLoanFlowSwitchArm &) = default;
-  };
-
-  struct PendingBorrowConflict {
-    std::vector<SemanticLoanId> loans;
-    std::size_t region = 0;
-    std::size_t order = 0;
-    std::size_t sequence = 0;
-    const Stmt *statement = nullptr;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
-    std::vector<std::size_t> loops;
-    std::optional<std::size_t> programStorageCheck;
-    Diagnostic diagnostic;
-  };
-
-  struct LoanFlowUse {
-    SemanticLoanId loan = 0;
-    std::size_t sequence = 0;
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const Stmt *statement = nullptr;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
-  };
-
-  struct LoanFlowStatementBoundary {
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const Stmt *statement = nullptr;
-  };
-
-  struct LoanFlowSwitchBoundary {
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const SwitchStmt *statement = nullptr;
-  };
-
   struct LoanFlowLoop {
-    std::size_t region = 0;
-    std::size_t order = 0;
-    const Stmt *statement = nullptr;
-    // IDs below this boundary existed before loop entry and may be projected
-    // to its unified exit. Newer loans belong to initializer/body cleanup.
-    SemanticLoanId firstNestedLoan = 0;
     // Writable bindings whose complete borrow dependency set this loop's entry
     // dropped. Diagnostic provenance only; never an ownership fact.
     std::vector<SymbolId> droppedBorrowSets;
-  };
-
-  struct LoanFlowConditionalArm {
-    std::size_t useBegin = 0;
-    std::size_t useEnd = 0;
-    std::size_t conflictBegin = 0;
-    std::size_t conflictEnd = 0;
-    std::vector<std::size_t> nestedConditionals;
-    bool containsUnsupportedControlFlow = false;
-  };
-
-  struct LoanFlowConditional {
-    const IfStmt *statement = nullptr;
-    std::size_t useBegin = 0;
-    std::size_t useEnd = 0;
-    std::size_t conflictBegin = 0;
-    std::size_t conflictEnd = 0;
-    std::size_t endSequence = 0;
-    std::vector<ActiveLoanFlowConditionalArm> parentPath;
-    std::vector<ActiveLoanFlowSwitchArm> parentSwitchPath;
-    LoanFlowConditionalArm thenArm;
-    LoanFlowConditionalArm elseArm;
-  };
-
-  struct LoanFlowSwitchArm {
-    bool containsUnsupportedControlFlow = false;
-  };
-
-  struct LoanFlowSwitch {
-    const SwitchStmt *statement = nullptr;
-    std::size_t endSequence = 0;
-    std::vector<ActiveLoanFlowConditionalArm> parentPath;
-    std::vector<ActiveLoanFlowSwitchArm> parentSwitchPath;
-    std::vector<LoanFlowSwitchArm> arms;
-    bool hasDefault = false;
-  };
-
-  struct LoanFlowBreak {
-    const LoopControlStmt *statement = nullptr;
-    const Stmt *target = nullptr;
-    std::size_t region = 0;
-    std::size_t order = 0;
-    std::size_t sequence = 0;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
-  };
-
-  struct LoanFlowArmEndpoint {
-    bool atEntry = true;
-    bool proofOnly = false;
-    const Stmt *after = nullptr;
-    std::size_t sequence = 0;
-    const IfStmt *entryConditional = nullptr;
-    bool thenBranch = false;
-    const SwitchStmt *entrySwitch = nullptr;
-    std::size_t switchArm = 0;
-    std::vector<ActiveLoanFlowConditionalArm> path;
-    std::vector<ActiveLoanFlowSwitchArm> switchPath;
-  };
-
-  struct LoanFlowConditionalEndPlan {
-    std::size_t conditional = 0;
-    const IfStmt *statement = nullptr;
-    std::vector<LoanFlowArmEndpoint> endpoints;
-  };
-
-  struct LoanFlowSwitchEndPlan {
-    std::size_t switchIndex = 0;
-    const SwitchStmt *statement = nullptr;
-    std::vector<LoanFlowArmEndpoint> endpoints;
-  };
-
-  struct LoanFlowBreakEndPlan {
-    std::size_t conflict = 0;
-    LoanFlowArmEndpoint endpoint;
   };
 
   // Text a lambda capture provided has an owner the compiler cannot name: it
@@ -1332,32 +1188,18 @@ private:
   struct LoanFlowState {
     bool finalized = false;
     // Closures over a dynamic view, and local views given a call result
-    // returning such a capture's text, with the views' loans each carries:
-    // a use of the carrier keeps those owners borrowed, as a copy of the view
-    // would (L-OWN-02).
-    std::unordered_map<SymbolId, std::vector<SemanticLoanId>>
-        capturedTextCarriers;
+    // returning such a capture's text, with the dynamic views each carries
+    // (L-OWN-02).
+    std::unordered_map<SymbolId, std::vector<SymbolId>> capturedTextCarriers;
     std::size_t rawConditionalExpressionDepth = 0;
-    std::unordered_map<SemanticLoanId, LoanFlowRecord> records;
-    std::unordered_map<SymbolId, SemanticLoanId> carrierLoans;
-    std::vector<SemanticLoanId> receiverStorageLoans;
-    std::vector<PendingBorrowConflict> conflicts;
-    std::vector<std::size_t> programScopeExitChecks;
-    // Audit uses may inspect checked liveness, but cannot request an endpoint
-    // or otherwise change the mandatory loan schedule.
-    std::vector<PendingBorrowConflict> rawAuditConflicts;
-    std::vector<LoanFlowUse> uses;
-    std::vector<LoanFlowStatementBoundary> statementBoundaries;
-    std::vector<LoanFlowSwitchBoundary> switchBoundaries;
+    // Conditional and switch arms the analysis is currently inside.
+    std::size_t conditionalArmDepth = 0;
+    // Names this body in the binding dependencies it forms. A saved and
+    // restored state remains the same body.
+    std::size_t body = nextLoanFlowBody();
     std::vector<LoanFlowLoop> loops;
     std::vector<std::size_t> activeLoops;
-    std::vector<LoanFlowConditional> conditionals;
-    std::vector<ActiveLoanFlowConditionalArm> activeConditionalArms;
-    std::vector<LoanFlowSwitch> switches;
-    std::vector<ActiveLoanFlowSwitchArm> activeSwitchArms;
-    std::vector<LoanFlowBreak> breaks;
     std::size_t nextRegion = 1;
-    std::size_t nextSequence = 1;
     std::size_t currentRegion = 0;
     std::size_t currentOrder = 0;
     const Stmt *currentStatement = nullptr;
@@ -1368,7 +1210,7 @@ private:
   struct RawPointerOrigin {
     PlaceKey place;
     SourceSpan addressSite;
-    SemanticLoanId throughLoan = 0;
+    BindingDependencyRef throughDependency;
     bool invalidated = false;
     // Symbolic input pointee, not the address of the parameter's stack slot.
     bool parameterPointee = false;
@@ -1504,11 +1346,18 @@ private:
     // Lexical order of a namespace global's declaration statement; 0 for
     // every other symbol. See symbolVisibleNow.
     std::size_t declarationOrder = 0;
-    SemanticLoanId retainedLoan = 0;
+    BindingDependencyRef retainedDependency;
+    // A concrete parameter pack's elements cannot be named by source: each
+    // element with stored references keeps its own entry dependency here,
+    // indexed by element.
+    std::vector<BindingDependencyRef> packElementDependencies;
     // This binding holds a borrowed dependency (a reference's referent or a
     // borrowed-state value's owner), whatever loan records that dependency.
     bool retainsDependency = false;
-    std::vector<SemanticLoanId> storageLoans;
+    // This reference binding designates a reference stored in an enum
+    // payload, selected by a switch pattern or reborrowed at that same
+    // referent. A binding fact, independent of any loan record.
+    bool selectedReference = false;
     // Conditional dependency facts follow value flow. Existing valueState and
     // loan flow remain the authority for availability and liveness.
     std::optional<SemanticBorrowDependencySet> completeBorrowSet;
@@ -1626,7 +1475,6 @@ private:
       // A type-only use is inert: check contradictions, not pointee lifetime.
       SemanticType expectedPointee = SemanticType::Unknown;
       std::optional<AccessMode> memoryAccess;
-      std::shared_ptr<LoanFlowState> loanContext;
     };
     std::size_t identity = 0;
     std::vector<Access> accesses;
@@ -2503,11 +2351,11 @@ private:
                            std::string destination = {});
   void noteLocalTextFlow(const ExprPtr &value, SymbolId target);
   [[nodiscard]] bool finalizeCapturedText();
-  // The loans of the dynamic views whose text an expression's value carries
-  // through copy or move captures: a closure over such a view, a call of a
-  // lambda that returns its captured text, and a local holding either.
-  [[nodiscard]] std::vector<SemanticLoanId>
-  capturedTextLoans(const Expr *expression) const;
+  // The dynamic views whose text an expression's value carries through copy
+  // or move captures: a closure over such a view, a call of a lambda that
+  // returns its captured text, and a local holding either.
+  [[nodiscard]] std::vector<SymbolId>
+  capturedTextViews(const Expr *expression) const;
   void recordCapturedTextCarriers(const VariableDecl &declaration);
   void removeCapturedTextCarrier(const Symbol &carrier);
 
@@ -2542,11 +2390,11 @@ private:
   // The owner dependency of a switch subject when it designates exactly this
   // binding's text payload (L-OWN-02), through the subject's `prefix` of
   // fields of the dependency's carrier.
-  [[nodiscard]] const SemanticLoanInfo *
-  dependentTextPayloadLoan(SemanticLoanId subject,
-                           const ResolvedPayloadPatternInfo &pattern,
-                           const PayloadBindingInfo &payload,
-                           std::span<const SymbolId> prefix = {}) const;
+  [[nodiscard]] const BindingDependency *
+  dependentTextPayloadDependency(BindingDependencyRef subject,
+                                 const ResolvedPayloadPatternInfo &pattern,
+                                 const PayloadBindingInfo &payload,
+                                 std::span<const SymbolId> prefix = {}) const;
   void finalizeTextDependentValues();
 
   // Whether a construction of `type` may publish dynamic text into a direct
@@ -3272,19 +3120,14 @@ private:
   [[nodiscard]] const Variable *
   directStorageVariable(const ExprPtr &expression) const;
 
-  [[nodiscard]] bool hasRetainedBorrow(const Variable &variable) const;
-
-  [[nodiscard]] std::optional<RetainedLoanSource>
-  retainedLoanSource(const ExprPtr &expression) const;
-  [[nodiscard]] std::optional<RetainedLoanSource>
-  retainedLoanSource(const Expr *expression) const;
+  [[nodiscard]] std::optional<RetainedDependencySource>
+  retainedDependencySource(const ExprPtr &expression) const;
+  [[nodiscard]] std::optional<RetainedDependencySource>
+  retainedDependencySource(const Expr *expression) const;
 
   [[nodiscard]] std::optional<SemanticLoanDependency>
-  projectedStoredDependency(const SemanticLoanInfo &loan,
+  projectedStoredDependency(const BindingDependency &loan,
                             std::span<const PlaceProjection> projections) const;
-
-  static void appendUniqueLoan(std::vector<SemanticLoanId> &loans,
-                               SemanticLoanId loan);
 
   [[nodiscard]] SemanticLoanPlace loanPlace(SemanticPlace place);
 
@@ -3313,35 +3156,11 @@ private:
   [[nodiscard]] static bool loanPlacesOverlap(const SemanticLoanPlace &left,
                                               const SemanticLoanPlace &right);
 
-  [[nodiscard]] bool loanIsAncestor(SemanticLoanId ancestor,
-                                    SemanticLoanId descendant) const;
+  [[nodiscard]] BindingDependencyRef
+  accessDependency(const SemanticPlace &place) const;
 
-  [[nodiscard]] SemanticLoanId accessLoan(const SemanticPlace &place) const;
-
-  [[nodiscard]] SemanticLoanId accessLoan(const ExprPtr &expression) const;
-
-  [[nodiscard]] std::vector<SemanticLoanId>
-  conflictingLoans(const SemanticLoanPlace &place, AccessMode requested,
-                   SemanticLoanId throughLoan = 0) const;
-
-  void reportLoanPlaceConflict(const Token &token,
-                               const SemanticLoanPlace &stable,
-                               AccessMode requested, std::string message,
-                               SemanticLoanId throughLoan = 0);
-
-  void reportLoanPlaceConflicts(const Token &token,
-                                std::span<const SemanticLoanPlace> places,
-                                AccessMode requested, std::string message,
-                                SemanticLoanId throughLoan = 0);
-
-  void reportLoanPlaceConflict(const Token &token, const SemanticPlace &place,
-                               AccessMode requested, std::string message,
-                               SemanticLoanId throughLoan = 0);
-
-  void reportRawLoanConflict(const Token &token, const SemanticLoanPlace &place,
-                             AccessMode access, SemanticLoanId throughLoan);
-
-  void validateLoanPlaceAccess(const Expr &expression, OccurrenceRole roles);
+  [[nodiscard]] BindingDependencyRef
+  accessDependency(const ExprPtr &expression) const;
 
   void
   validateMutableCallArgumentLoans(std::span<const SemanticType> parameterTypes,
@@ -3416,139 +3235,78 @@ private:
       bool transientReceiver = false,
       std::span<const SemanticLoanPlace> receiverOrigins = {});
 
-  void noteUnsupportedNestedLoanControlFlow();
-
-  void recordLoanFlowBreak(const LoopControlStmt &statement);
-
   void beginLoanFlowLoop(const Stmt &statement);
 
   void endLoanFlowLoop();
 
-  void attachLoanCarrier(SemanticLoanId loan, Symbol &carrier,
-                         SymbolId carrierSymbol, bool transfer);
-
-  void registerStorageLoan(SymbolId owner, bool receiver, SemanticLoanId loan);
+  // `carrier` now holds the summary another binding of this body formed (a
+  // copy, a move, or a view of the same dependent text).
+  void shareBindingDependency(BindingDependencyRef loan, Symbol &carrier);
 
   // A retained borrow of foreign storage has no GTI owner lifetime. Reports
   // GTI-S2054 at the borrow's origin and returns false; needs no loan record.
   [[nodiscard]] bool validateRetainedBorrowOwner(const SemanticLoanPlace &place,
                                                  const Expr *origin);
 
-  SemanticLoanId createRetainedLoan(
-      Symbol &carrier, SymbolId carrierSymbol, SemanticLoanKind kind,
+  // A selected payload reference can be reborrowed only at its own referent:
+  // a projected or consuming alias has no exact checked address and
+  // dependency transfer yet. Reports GTI-S2054 and returns false; marks an
+  // accepted same-referent reborrow selected. Reads binding facts only.
+  [[nodiscard]] bool validateSelectedReferenceReborrow(Symbol &carrier,
+                                                       const Expr *expression);
+
+  // Whether this body formed the summary (it may share it between its
+  // bindings); an enclosing body's summary stays with that body's bindings.
+  [[nodiscard]] bool formedInThisBody(const BindingDependency *summary) const {
+    return summary != nullptr && summary->body == loanFlow.body;
+  }
+
+  // Replaces the summary `carrier` just formed by a refined value, before
+  // anything else has read it.
+  template <typename Refine>
+  void refineBindingDependency(Symbol &carrier, BindingDependencyRef &formed,
+                               Refine &&refine) {
+    if (!formed)
+      return;
+    BindingDependency value = *formed;
+    refine(value);
+    formed = std::make_shared<const BindingDependency>(std::move(value));
+    carrier.retainedDependency = formed;
+  }
+
+  BindingDependencyRef formBindingDependency(
+      Symbol &carrier, SymbolId carrierSymbol, BindingDependencyKind kind,
       const Expr *origin, SemanticLoanPlace place, SymbolId owner,
       bool receiverOrigin, AccessMode access, bool protectsStorage,
-      SemanticLoanId parent = 0, bool entry = false,
+      BindingDependencyRef parent = {}, bool entry = false,
       std::vector<SymbolId> designatedFields = {},
       std::vector<BorrowDependencyCondition> conditions = {});
 
-  void recordParameterEntryLoan(const Parameter &parameter);
-  SemanticLoanId recordStoredEntryDependency(Symbol &carrier,
-                                             SymbolId carrierSymbol,
-                                             const SemanticType &type,
-                                             bool receiver,
-                                             const Stmt *declaration = nullptr);
+  void recordParameterEntryDependency(const Parameter &parameter);
+  BindingDependencyRef
+  recordStoredEntryDependency(Symbol &carrier, SymbolId carrierSymbol,
+                              const SemanticType &type, bool receiver,
+                              const Stmt *declaration = nullptr,
+                              bool environmentOwned = false);
 
   void recordRetainedBorrow(const VariableDecl &binding,
                             const ExprPtr &expression);
   void recordRetainedBorrow(const VariableDecl &binding,
                             const Expr *expression);
 
-  void recordSemanticLoanUseForLoan(SemanticLoanId loan);
-
-  // A use of `loan` and of every authority it depends on: parents, stored
-  // dependencies and additional-dependency parents.
-  void recordSemanticLoanAuthorityUse(SemanticLoanId loan);
-
-  void recordSemanticLoanUse(SymbolId carrier);
-
-  [[nodiscard]] bool supportsProvenLoanEnd(const LoanFlowRecord &loan) const;
-
-  [[nodiscard]] bool canEndLoanEarly(const LoanFlowRecord &loan) const;
-
-  [[nodiscard]] static bool
-  supportsConditionalArmLoanEnd(const Stmt *statement);
-
-  [[nodiscard]] static bool
-  pathStartsWith(const std::vector<ActiveLoanFlowConditionalArm> &path,
-                 const std::vector<ActiveLoanFlowConditionalArm> &prefix);
-
-  [[nodiscard]] static bool
-  pathStartsWith(const std::vector<ActiveLoanFlowSwitchArm> &path,
-                 const std::vector<ActiveLoanFlowSwitchArm> &prefix);
-
-  [[nodiscard]] static bool
-  sameStructuredPath(const std::vector<ActiveLoanFlowConditionalArm> &left,
-                     const std::vector<ActiveLoanFlowSwitchArm> &leftSwitch,
-                     const std::vector<ActiveLoanFlowConditionalArm> &right,
-                     const std::vector<ActiveLoanFlowSwitchArm> &rightSwitch);
-
-  [[nodiscard]] static bool structuredPathsMayOverlap(
-      const std::vector<ActiveLoanFlowConditionalArm> &left,
-      const std::vector<ActiveLoanFlowSwitchArm> &leftSwitch,
-      const std::vector<ActiveLoanFlowConditionalArm> &right,
-      const std::vector<ActiveLoanFlowSwitchArm> &rightSwitch);
-
-  [[nodiscard]] bool pathContainsUnsupportedControlFlow(
-      const std::vector<ActiveLoanFlowConditionalArm> &path,
-      const std::vector<ActiveLoanFlowSwitchArm> &switchPath) const;
-
-  [[nodiscard]] std::optional<LoanFlowBreakEndPlan>
-  pathLocalBreakEndPlan(SemanticLoanId id, const LoanFlowRecord &loan,
-                        std::size_t conflictIndex) const;
-
-  [[nodiscard]] bool conditionalHasConflict(std::size_t conditionalIndex,
-                                            SemanticLoanId loan) const;
-
-  [[nodiscard]] bool armHasConflict(const LoanFlowConditionalArm &arm,
-                                    SemanticLoanId loan) const;
-
   // When a later use keeps the fallthrough path live, an earlier nested
   // conditional may still end the loan on a sibling path that terminates.
   // Collect only those terminating-path endpoints; reachable fallthrough paths
   // deliberately retain the loan for their continuation.
-  [[nodiscard]] std::optional<std::vector<LoanFlowArmEndpoint>>
-  provenTerminatingPathEndpoints(std::size_t conditionalIndex, bool thenBranch,
-                                 SemanticLoanId loan) const;
 
   // An arm endpoint must run on every fallthrough path that reaches the
   // enclosing join. A nested if can therefore either end the loan at its own
   // merge, or recursively end it on both of its arms when a conflict occurs
   // before that merge. Loops and switch edges remain conservative.
-  [[nodiscard]] std::optional<std::vector<LoanFlowArmEndpoint>>
-  provenConditionalArmEndpoints(std::size_t conditionalIndex, bool thenBranch,
-                                SemanticLoanId loan) const;
-
-  [[nodiscard]] static bool
-  endpointPrecedesConflict(const LoanFlowArmEndpoint &endpoint,
-                           const PendingBorrowConflict &conflict);
-
-  [[nodiscard]] bool
-  planHasResolvedConflict(const LoanFlowConditionalEndPlan &plan,
-                          SemanticLoanId loan) const;
-
-  [[nodiscard]] std::optional<LoanFlowConditionalEndPlan>
-  conditionalEndPlan(SemanticLoanId id, const LoanFlowRecord &loan) const;
-
-  [[nodiscard]] std::optional<LoanFlowSwitchEndPlan>
-  switchEndPlan(SemanticLoanId id, const LoanFlowRecord &loan) const;
-
-  [[nodiscard]] bool
-  conflictFollowsConditionalEndpoint(const LoanFlowConditionalEndPlan &plan,
-                                     std::size_t conflictIndex,
-                                     SemanticLoanId loan) const;
-
-  [[nodiscard]] bool
-  conflictIsInConditionalArm(const LoanFlowConditionalEndPlan &plan,
-                             std::size_t conflictIndex) const;
-
-  void reportBorrowConflict(const Token &token,
-                            const std::vector<SemanticLoanId> &loans,
-                            std::string message, bool rawAudit = false);
 
   void finalizeLoanFlow();
 
-  void removeLoanCarrier(Symbol &carrier);
+  void dropBindingDependency(Symbol &carrier);
 
   [[nodiscard]] bool isThreadHandleType(const SemanticType &type) const;
 
@@ -5645,23 +5403,6 @@ private:
   void recordProgramStorageEffect(const Expr &expression,
                                   SemanticBindingKind bindingKind,
                                   SymbolId symbol, OccurrenceRole roles);
-  void recordProgramBorrowStorageEffect(const Expr &expression,
-                                        OccurrenceRole roles);
-  void appendProgramStorageBorrowProtection(ProgramStorageBorrowCheck &check,
-                                            const SemanticLoanPlace &place,
-                                            AccessMode access,
-                                            const SourceSpan &origin,
-                                            SemanticLoanId loan = 0);
-  [[nodiscard]] ProgramStorageBorrowCheck
-  captureProgramStorageBorrows(const SourceSpan &site);
-  void appendProgramStorageBorrowInput(
-      ProgramStorageBorrowCheck &check, const ExprPtr &input,
-      std::optional<AccessMode> directAccess = std::nullopt);
-  void publishProgramStorageBorrowCheck(ProgramStorageBorrowCheck check,
-                                        ProgramEffectOwner owner,
-                                        std::size_t edgeStart,
-                                        std::size_t unknownStart);
-  void recordReturnedStorageBorrowCleanup(const ReturnStmt &statement);
   void recordStorageBorrowCleanup(const Symbol &symbol);
   void recordProgramScopeBorrowCleanup();
   [[nodiscard]] std::optional<std::size_t>
@@ -5671,27 +5412,15 @@ private:
   void finishProgramFullExpression(std::size_t frame);
   void recordProgramTemporary(const Expr &producer, const ExpressionInfo &info);
   void consumeProgramTemporary(const ExprPtr &value);
-  void recordProgramTemporaryFailureCleanup(
-      const Expr &operation,
-      const std::vector<ProgramTemporaryCleanup> &temporaries);
   void recordProgramExecutedCleanupEffects(const SemanticType &type,
                                            const SourceSpan &span,
                                            bool includeDirect = true);
-  [[nodiscard]] bool
-  programFailureMayHappen(const ProgramFailureCondition &condition) const;
-  void closeProgramFailureEffects();
   void recordProgramReplacementCleanup(const Expr &operation,
                                        const SemanticType &type);
-  void
-  recordProgramOrderedInputEffects(const ProgramStorageBorrowCheck &earlier,
-                                   const ExprPtr &input);
-  [[nodiscard]] bool isUnselectedProgramPack(const Symbol &symbol) const;
-  [[nodiscard]] bool isDependentProgramPackFold(const Expr &expression) const;
   void recordProgramCallEffectTargets(const Expr &expression);
   [[nodiscard]] bool
   hasExactWholeObjectVirtualTarget(const ResolvedCallInfo &resolved,
                                    const SemanticPlace &receiver);
-  void validateProgramStorageBorrowEffects();
   [[nodiscard]] bool isPersistentStorageSymbol(SymbolId symbol) const;
 
   void addProgramEffectEdge(ProgramEffectOwner target, const Expr &expression);
@@ -7666,11 +7395,8 @@ private:
         programEffects;
     std::vector<ProgramInitializationStep> threadLocalSteps;
     std::unordered_map<SymbolId, const VariableDecl *> threadLocalDeclarations;
-    std::vector<ProgramStorageBorrowCheck> programStorageBorrowChecks;
     ProgramExpressionCache programExpressionCache;
     std::vector<ProgramFullExpressionState> fullExpressionStates;
-    std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
-        programFailingEffects;
     std::shared_ptr<ProgramConcreteEffectState> programConcreteEffects;
     std::size_t programStoragePlaceUseDepth = 0;
     std::vector<const Expr *> foreignAddressPlaces;
@@ -7686,7 +7412,6 @@ private:
     std::map<std::tuple<std::string, std::size_t, std::uint32_t>,
              SourceLambdaIdentity>
         sourceLambdaIdentities;
-    SemanticLoanId nextSemanticLoanId = 1;
     std::size_t nextPlaceSelectionId = 1;
     std::vector<SemanticType> invalidOrdinaryLayouts;
     // ---- Trusted prefix preamble (see SemanticPreamble) -----------------
@@ -8108,7 +7833,6 @@ private:
       requestSession.catalog.nextDefaultArgumentEffectOwner;
   FunctionId &nextFunctionId = requestSession.catalog.nextFunctionId;
   LambdaId &nextLambdaId = requestSession.nextLambdaId;
-  SemanticLoanId &nextSemanticLoanId = requestSession.nextSemanticLoanId;
   std::size_t &nextPlaceSelectionId = requestSession.nextPlaceSelectionId;
 
   TargetInfo target;

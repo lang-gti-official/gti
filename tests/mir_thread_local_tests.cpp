@@ -145,7 +145,6 @@ int main() { return invoke(process_result); }
         lang::MirLoan loan;
         loan.id = body->loans.size() + 1;
         loan.kind = lang::MirLoanKind::Parameter;
-        loan.semanticLoan = loan.id;
         loan.source = local;
         loan.carriers = {binding};
         loan.entry = true;

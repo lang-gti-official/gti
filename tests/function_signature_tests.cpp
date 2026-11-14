@@ -1476,12 +1476,6 @@ void mutableSignatureArguments() {
         auto forged = result.mir;
         auto *body = lang::findMirBody(
             forged, {lang::MirBodyKind::Function, function.id});
-        body->loans[loan.id - 1].semanticLoan = 0;
-        expect(lang::verifyMirProgram(forged).valid(),
-               "a pack entry needs no semantic loan identity");
-        forged = result.mir;
-        body = lang::findMirBody(forged,
-                                 {lang::MirBodyKind::Function, function.id});
         body->loans[loan.id - 1].access = lang::AccessMode::ReadOnly;
         expect(!lang::verifyMirProgram(forged).valid(),
                "pack entry access cannot be downgraded");

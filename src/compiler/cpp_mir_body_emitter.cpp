@@ -2627,9 +2627,9 @@ transferredMutableStoredParameter(const MirConstructorInitializer &initializer,
          source.projections.empty() && source.type == initializer.targetType &&
          source.access == AccessMode::Mutable &&
          stored.kind == MirLoanKind::Stored && stored.source == source.id &&
-         stored.access == AccessMode::Mutable && stored.semanticLoan != 0 &&
-         stored.parent == 0 && stored.producedBy == 0 && stored.entry &&
-         stored.escapes && stored.storedField == initializer.field &&
+         stored.access == AccessMode::Mutable && stored.parent == 0 &&
+         stored.producedBy == 0 && stored.entry && stored.escapes &&
+         stored.storedField == initializer.field &&
          stored.carriers.size() == 1 &&
          stored.carriers.front() == source.binding;
 }
@@ -6284,10 +6284,9 @@ temporaryArgumentStage(const MirBody &body, const MirInstruction &call,
   const MirLoan *loan = body.findLoan(*stage->loan);
   if (loan == nullptr || loan->kind != MirLoanKind::CallArgument ||
       loan->source != stage->operands.front().place ||
-      loan->access != AccessMode::ReadOnly || loan->semanticLoan != 0 ||
-      loan->parent != 0 || loan->entry || loan->escapes ||
-      !loan->carriers.empty() || loan->storedField != 0 ||
-      loan->producedBy != stage->callSite) {
+      loan->access != AccessMode::ReadOnly || loan->parent != 0 ||
+      loan->entry || loan->escapes || !loan->carriers.empty() ||
+      loan->storedField != 0 || loan->producedBy != stage->callSite) {
     return {};
   }
   return stage;
@@ -6765,8 +6764,8 @@ transferredConstructorArgumentForSource(const MirBody &body,
     const MirPlace *retainedSource =
         retained == nullptr ? nullptr : body.findPlace(retained->source);
     if (retained == nullptr || retainedSource == nullptr ||
-        retained->kind != MirLoanKind::Stored || retained->semanticLoan != 0 ||
-        retained->parent != 0 || retained->access != AccessMode::ReadOnly ||
+        retained->kind != MirLoanKind::Stored || retained->parent != 0 ||
+        retained->access != AccessMode::ReadOnly ||
         retained->producedBy != producer->hirValue || retained->entry ||
         retained->escapes || !retained->carriers.empty() ||
         retained->storedField != 0) {

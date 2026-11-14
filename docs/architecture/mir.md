@@ -496,7 +496,11 @@ and place identity. Loan selection records distinguish an evaluated stored
 reference address (exact extraction value and carrier) from the external places
 that may own its referent. Consuming selections also identify the exact old
 dependency group in `transferredFrom`; this is a handoff claim, not a live
-reborrow parent. Body verification requires an existing, distinct group only
+reborrow parent. An access through a selection loan is the selected
+address itself or a field or element suffix of it: every possible owner has
+the selected reference's referent type, so the verifier applies the same
+suffix to each owner, while a dereference below the selection would leave
+that owner set and is rejected. Body verification requires an existing, distinct group only
 for a transfer-mode producer. Program verification must separately prove the
 closed field-transfer prefix and preserve external ancestry after the old
 carrier retires. The records alone grant no borrowing authority: independent
@@ -1054,11 +1058,9 @@ what an accessor returned (the call's own result place, as in
 `b.get().begin()`, or a reference binding initialized from it) has a `Stored`
 loan whose source is the place rooted at that accessor's `CallResult` loan and
 whose parent is that loan. It holds exactly the accessor loan's stored
-dependency, which is none for ownerless text. A temporary accessor result has
-no semantic loan of its own, so its semantic carrier contract names the
-accessor's owner; lowering refines that to the returned referent, and a binding
-that retains the accessor's loan does not move the carrier's source back to the
-owner. The program verifier admits ownerless text at that exact referent only
+dependency, which is none for ownerless text. A temporary accessor result's
+carrier is rooted at the returned referent, and a binding that retains the
+accessor's loan does not move the carrier's source back to the owner. The program verifier admits ownerless text at that exact referent only
 under its result loan.
 Conversely, a completed call with no reference or borrowed-state result can
 retire an unretained transient accessor loan even when its receiver is an
@@ -2090,7 +2092,7 @@ reference formal's referent, the range loan is the formal's entry loan, which
 no local binding carries: the cursor keeps its `begin()` `Stored` loan directly
 below the entry, and the staged element owner and element alias carry the
 element access `CallResult` whose `storedDependency` is that cursor. The
-semantic identity stays on the entry loan. The program verifier
+program verifier
 requires a borrowing call or constructor's result loan to remain `CallResult`
 or `Stored`, matching the producer, rather than accepting a forged `Local` loan
 with otherwise unchanged source metadata.
@@ -2130,11 +2132,7 @@ and schedule.
 
 A by-value call that consumes a complete borrowed carrier retires the input
 loan on the call-success continuation before initializing the returned carrier.
-An exact same-type noncopyable argument relay transports the semantic loan
-identity to its published `Stored` result only when the complete source,
-permissions, ancestry and dependency set agree and semantics has not assigned
-the result a distinct retained identity. A fresh result keeps its independent
-endpoint; the input's last-use endpoint only acknowledges its retired input
+A fresh result keeps its own loan and independent endpoint; the input's last-use endpoint only acknowledges its retired input
 loan, including carriers with mixed shared/exclusive or multiple dependencies.
 It must not leave the result
 parented to the consumed shell or resurrect the retired formal at a later local
@@ -2302,7 +2300,9 @@ field and element selection after it, is an exact producer for the same
 reason: unsafe code took on its validity and lifetime obligations, and raw
 writes are not checked text stores, so it is an inert native value with no
 GTI owner to reconstruct. A checked dereference below the raw step reads a
-referent elsewhere and keeps the ordinary rules.
+referent elsewhere and keeps the ordinary rules. Likewise a borrowed-carrier shell reached
+through a raw dereference has no checked owner: its shell loan carries no
+stored dependency, and the raw-pointer audit owns that access.
 
 A call's result holds what its callee's returns hold, mapped through the
 call's arguments and receiver. `TextContracts` summarizes each source
@@ -3424,8 +3424,70 @@ reference binding to a carrier depends on the Stored group retaining that
 carrier's references; a reference to a plain field reached through a carrier
 keeps its parent's stored dependency. A shell-stored carrier depends on its
 argument's group, or on the group retaining a loan-free argument's place (a
-receiver). A reference binding that reuses an existing loan only becomes one
-of its carriers. A reference binding's access is its reference type's, and
+receiver). Which loan a reference binding carries is MIR's decision. A
+read-only reference joins the held loan its referent is reached through as one
+more carrier, taking no loan of its own, when that is a shared reborrow of
+shared authority: the loan is read-only, or every reference holding it is
+read-only (a read-only reference retaining a mutable call result). Such a
+reborrow restricts nothing the loan does not already restrict, and the loan
+stays live while any carrier is used; after Polonius, the new reference's
+origin contains that loan and the reborrow adds none. The held loan is a
+binding's current loan or an entry loan; a call result's referent reaches it
+below its transient accessor chain, stopping at the nearest loan a binding
+carries. Every other reference binding takes its own loan below the loan its
+referent is reached through: a mutable reference, a reference through
+exclusive authority, a reference through an entry Stored group or one that
+designates field paths (a compact group is its single owner's loan and is
+joined), a restored carrier reference, and an accessor chain with no held
+loan beneath it, which the reference retains itself. A reference binding's
+loan is MIR's own; MIR loans carry no semantic loan identity, and semantic
+analysis keeps none: its per-binding dependency summaries
+([Semantic Analysis](semantic-analysis.md#loan-flow)) never reach MIR. Entry loans are
+seeded at every entry carrier site. A by-value carrier initialized by a value
+that stores a reference to its shell argument, or that relays text a class
+carrier holds through its own stored dependency, retains that shell argument;
+a range protocol binding over a class carrier keeps the traversal's structural
+loan instead, and only a cursor over a text view stores a reference to the
+view's shell. A reference binding's source place is MIR's as
+well: the place its initializer names, unless that place is reached through a
+loan a reference binding carries, which names that loan's referent instead (a
+parameter's entry loan excepted: the caller's referent is reachable only
+through the parameter). A payload's place overlaps its enum subject's storage
+and takes the subject's key, or, for a subject read through a reference
+binding carrying a local loan, the key of what that loan borrows. A stored
+reference payload selection is recognized from the extraction's own kind, and
+an alias reborrowing a selection loan's referent selects the same reference. Which loan a by-value carrier binding carries is MIR's
+decision as well (`carrierBindingLoan`), and it reads no semantic identity
+either: the binding carries the loan its initializer evaluates to. A loan the
+initializer produces, a call's or a construction's publication, is the
+binding's own. It already names what the result borrows, below the loans it
+was reached through, and it is not joined to the loan of a carrier whose
+borrowed state it relays: a second loan on the same owner restricts nothing
+the first does not, and each stays live while its own binding is used (after
+Polonius, the result's origin holds the loans that flowed into it; which
+binding names them is not a fact the checker needs). An initializer that names
+a loan something already holds, a copied or moved carrier, shares that loan as
+one more carrier; a value copied through a reference carries the reference
+loan's stored dependency, the group retaining the referent's owners, rather
+than the reference's loan on the carrier shell. So does a fresh loan that
+reborrows nothing and names a place its own stored dependency already protects
+(a text value relayed out of a stored reference field): it retains only what
+that group retains. A loan on a carrier shell names no such place and stays
+the binding's own. A consuming call or move that
+publishes a lifecycle-bound loan for the same owner and parent as the
+lifecycle-bound loan its moved argument held retires the consumed loan there.
+The range protocol is the one structural exception: a synthesized cursor
+carries the traversal's loan, the held loan its own loan was lowered below,
+because a child loan would conflict with the loop's own uses of the range
+carrier. A cursor whose call stored a reference to the range shell (its loan
+names the traversal's referent and keeps a stored dependency), the staged
+cursor and element of a range over a formal, and a physical proxy protocol
+binding keep the call's loan below the traversal instead. A retained group
+takes its derived shape when it is lifecycle-bound, mutable, designates
+fields, has a stored dependency, or reborrows a held loan (a transient
+accessor result is not one, the held loan beneath it is); a plain read-only
+single-owner group keeps its bare shape, which a read-only reference may
+join. A reference binding's access is its reference type's, and
 its parent is the loan its referent's place is reached through: a reference
 binding's current loan, a receiver's or global's entry loan (its Stored entry
 group only for a place reached through one of the root's stored references,
@@ -3435,8 +3497,20 @@ that themselves reborrow an ancestor). A read-only carrier initialized from a
 read-only origin loan reborrows that origin exactly when the origin protects
 the carrier's referent place (`mir_detail::loanProtectsPlace`, the verifier's
 own place containment; a Stored group protects only places reached through a
-dereference past its source). Semantic loans still name these MIR loans for
-later HIR facts.
+dereference past its source). A carrier that stores its borrowed shell
+argument borrows it by MIR facts alone: through a reference formal's entry
+loan it reborrows that loan's referent; through a local reborrow alias it is
+rooted where the alias's chain begins, with the stored dependency protecting
+what the shell references (a shared alias of an exclusive formal never stands
+in for the formal); a call-result or by-value shell is borrowed in place.
+Entry loans name their receiver, capture, parameter or pack-element place
+directly from the entry site. A reference binding's source place is its
+initializer's own place: a capture or global root takes its symbol's key, and a
+reference binding read through the parent loan it carries names that loan's
+Loan-rooted referent, keyed by the place the loan borrows (dereferenced when
+that place is a reference slot) and the remaining projections; a call result's
+referent has no derivable key. Lowering no longer rebuilds places from
+semantic loan places.
 
 A reference bound to an enum payload borrows the extracted field. Through a
 reference carrier it reborrows the carrier's loan and keeps that loan's stored
@@ -3454,9 +3528,7 @@ projected along the carrier's field prefix and the payload path; for a local
 group, the group's reborrowed referent (with a parent) or its source, or the
 additional owner the path names. Each other owner the group designates along
 the same path is a possible referent and becomes a dependency of the
-selection. Semantic loans now only name MIR loans for later HIR facts.
-Neither the body verifier nor the program verifier reads that number. A
-two-phase reservation and its unretained `CallResult` ancestry, a call-argument
+selection. MIR loans carry no semantic loan number. A two-phase reservation and its unretained `CallResult` ancestry, a call-argument
 loan, a lambda's captured-reference entry and a formal-pack element entry are
 admitted by their MIR shape alone (kind, access, producer, parent, carriers,
 escape and exact source place), and no rule pairs or counts MIR loans by a
@@ -3476,6 +3548,63 @@ the same diagnostics. MIR types and
 both backends see only erased types; lifetimes never change MIR shape, layout
 or emitted code, so a lifetime-free program produces the same MIR as before
 RFC 0004.
+
+### Borrow audits hosted on MIR
+
+MIR is the authority for two borrow findings that semantic loan flow used to
+decide (RFC 0004 phase 2): the raw-pointer audit's "Raw access may overlap a
+live incompatible checked borrow" (GTI-S2102, an audit warning that strict mode
+promotes) and the cross-function persistent-storage GTI-S2045. Both
+(`src/compiler/mir_borrow_audits.h`) read only MIR and MIR's own loan ends; the
+frontend reports them from the program that covers every application body
+(`mir_borrow_audit_diagnostics.cpp`).
+
+`auditMirRawAccesses` (`mir_raw_audit.cpp`) runs per body containing a
+`RawDereference` or `RawIndex` place. A forward fixed point over the body's
+CFG tracks raw-address provenance: `AddressOf` names its operand place,
+`Convert`/`Identity` copy it, `PointerAdd`/`PointerSubtract` widen a final
+element index to any element, loads and stores move the provenance of every
+pointer slot at or below the stored place (an exact single destination is a
+strong update; a raw destination with several possible targets is weak), and
+an aggregate, payload or constructed value keeps its operands' provenance
+under an unnamed field. A reference binding's dereference resolves through
+the loan it carries, and the pointer remembers that loan. The same pass keeps
+the live loans: entry loans at entry, a loan from the instruction that starts
+it until its `EndBorrow`, joined over predecessors. Each raw access (a
+destination, operand or receiver place below a raw step, but not address
+formation) is a finding when one of its possible targets overlaps the source
+or an additional dependency of a live non-Stored loan that is not the
+pointer's own loan or one of its ancestors, and either side is a write.
+Each formal starts with its own pointee as provenance: a raw-pointer
+parameter or capture exactly, any other parameter, the receiver and other
+captures at every nested pointer slot. An access through a formal becomes the
+body's summary instead of a finding, as do the globals and formal pointees its
+result can carry (for a constructor, the targets it stores in the object). A
+call of a summarized function, closure or constructor performs those accesses
+on the targets its arguments, receiver or closure can carry and returns those
+targets, so the summaries are a fixed point over the call graph. A closure
+keeps its captures' targets, and a call input keeps its place's targets.
+
+`auditMirPersistentStorageBorrows` (`mir_storage_effects.cpp`) shares the
+persistent-storage effect closure of `verifyMirPersistentStorageEffects`: each
+invocation's transitive same-thread global and thread-local accesses (an
+unknown GTI target accesses every persistent symbol mutably) are checked at
+the invocation's loan state by the body loan-flow engine. The verifier stops
+at the first rejection; the audit retires each rejected invocation and checks
+the body again, so every rejected invocation is reported. A `Drop` whose
+obligations are not available on any path reaching it (moved out, transferred
+or never initialized, per the body's lifecycle events) runs no cleanup and is
+not an invocation: a by-value parameter moved into a field, or a local moved
+into the result, does not reach its destructor's storage effects.
+
+A finding is anchored at its instruction's HIR expression, its call site, the
+local a scope-exit drop destroys, its statement, or, for an expanded pack
+element with no expression of its own, the expansion's next source-bearing
+instruction. A persistent-storage finding names the first transitive access to
+the protected storage and the protected borrow's origin. Because a
+persistent-storage conflict fails MIR verification, the frontend reports these
+findings instead of an internal error when that verification rejects the
+program.
 
 ### Shared failure cleanup
 
@@ -3818,7 +3947,11 @@ A consuming switch first initializes its hidden subject binding from the
 subject value, reparenting the subject's temporary obligation into the
 binding's obligation, and registers that binding with the enclosing scope's
 failure cleanup, so a failure while the subject's other temporaries end drops
-it once. The `Switch` terminator then read-borrows the binding. Every arm retires it at entry, after its
+it once. A borrowed-carrier subject adopts its active Stored dependency
+group, which the switch transfers to the selected payloads; when another
+binding still in scope carries that group, lowering rejects the switch
+(GTI-S2067) instead of retiring the group under it. The `Switch` terminator
+then read-borrows the binding. Every arm retires it at entry, after its
 entry-ended loans and before its first statement, and no scope drops it
 again. A binding arm emits one `PayloadExtract` per field whose operand is a
 `Move` of the subject binding place, each followed by its binding's
@@ -4702,7 +4835,7 @@ within one larger expression sequential rather than leaving the first
 receiver loan active until the expression boundary.
 
 One MIR loan may name multiple carrier bindings for a shared read-only
-semantic loan. It still has exactly one producer and one path-sensitive loan
+borrow. It still has exactly one producer and one path-sensitive loan
 state; a shared loan uses its active and inactive states. Ending it invalidates
 every carrier simultaneously, and verification rejects any subsequent carrier
 use or inconsistent state at a join. Each local reference carrier's
@@ -4791,13 +4924,13 @@ overload selection, escape rules, IR serialization or runtime loan tracking.
 
 A reference binding that retains a borrowed call result keeps that call
 result's own loan and adds itself as a carrier, whether the loan is a root or
-already hangs from the parent its retained semantic loan names. Lowering does
+already hangs from a parent. Lowering does
 not end the call result and recreate a child loan from the receiver or
 argument origin. Such a recreated loan cannot name the returned address for
 backend publication, and its source place would record the returned referent's
 type over a projection chain that derives the receiver subobject's — a place
 no later stage can key coherently. A derived call-result chain whose links do
-not already end at the retained loan's semantic parent still normalizes
+not already end at the retained loan's parent still normalizes
 through that parent, so parent suspension and reactivation are preserved.
 
 When the call's own argument or
@@ -4815,10 +4948,10 @@ verification rejects.
 
 A reference binding that retains a call-result reborrow chain keeps that
 chain's outermost link and adds itself as a carrier, including when the chain
-already bottoms out at the loan the retained semantic loan names as its parent.
+already bottoms out at the retained loan's parent.
 That is the shape a reference carrier produces: a reference parameter's entry
 loan, or a local reference binding's loan, is what gives a retained loan a
-semantic parent at all. Lowering does not end such a chain and recreate a child
+parent at all. Lowering does not end such a chain and recreate a child
 loan from the semantic place, and it decides before materializing that place.
 The place records the returned referent's type over a projection chain that
 stops at the parent loan plus the receiver subobject, so it can name neither
@@ -4883,7 +5016,7 @@ joins it as a formal's alias joins the formal's entry. The alias carries its
 own physical loan below the entry instead: the call-result loan of an accessor
 on the capture's referent, a fresh `Local` loan of the referent place it names
 through the capture or through another such alias, or the loan of the alias it
-copies. The semantic identity stays on the entry loan, and releasing a finished
+copies. Releasing a finished
 alias never folds the entry in as a transient link, so the body can still use
 the capture after the alias's last use.
 

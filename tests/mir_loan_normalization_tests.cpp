@@ -94,12 +94,10 @@ bool throwsNormalizationError(const lang::MirProgram &program) {
 }
 
 // (i) Programs that differ only in EndBorrow position (and the instruction
-// IDs a relocated EndBorrow takes) and in semantic loan numbers normalize to
-// the same text.
+// IDs a relocated EndBorrow takes) normalize to the same text.
 void loanBookkeepingNormalizesAway() {
   const lang::MirProgram reference = lowered();
   lang::MirProgram candidate = reference;
-  std::size_t semanticLoans = 0;
   const bool moved = anyBody(candidate, [&](lang::MirBody &body) {
     for (auto &block : body.blocks) {
       const auto end = std::find_if(block.instructions.begin(),
@@ -120,23 +118,13 @@ void loanBookkeepingNormalizesAway() {
     return false;
   });
   expect(moved, "the fixture has an EndBorrow to relocate");
-  anyBody(candidate, [&](lang::MirBody &body) {
-    for (auto &loan : body.loans)
-      loan.semanticLoan += 1000 + ++semanticLoans;
-    return false;
-  });
-  expect(semanticLoans != 0, "the fixture has loans");
   expect(print(reference) != print(candidate),
-         "the relocated EndBorrow and renumbered loans differ before "
-         "normalization");
+         "the relocated EndBorrow differs before normalization");
   expect(normalized(reference) == normalized(candidate),
-         "EndBorrow placement and semantic loan numbers normalize away");
+         "EndBorrow placement normalizes away");
   const std::string text = normalized(reference);
   expect(text.find("end-borrow") == std::string::npos,
          "normalized MIR has no EndBorrow");
-  expect(text.find(" semantic=0 ") != std::string::npos &&
-             text.find(" semantic=1") == std::string::npos,
-         "normalized loan rows carry semantic loan zero");
 }
 
 // (ii) A Drop moved across another non-loan instruction stays a difference.

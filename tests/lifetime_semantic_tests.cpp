@@ -111,15 +111,6 @@ namespace std {
         if (const auto *function = result.hir.findFunctionInstance(owner)) {
           evidence << "HIR owner=" << owner
                    << " declaration=" << function->declaration << '\n';
-          for (const auto &loan : function->body.loans) {
-            evidence << "HIR loan=" << loan.semanticLoan
-                     << " kind=" << static_cast<int>(loan.kind)
-                     << " parent=" << loan.parent
-                     << " stored=" << loan.storedDependency
-                     << " entry=" << loan.entry
-                     << " suppliers=" << loan.additionalDependencies.size()
-                     << " fields=" << loan.designatedFields.size() << '\n';
-          }
           for (const auto &value : function->body.values)
             if (value.borrowOrigin != lang::BorrowOriginKind::None ||
                 value.borrowDependencies)

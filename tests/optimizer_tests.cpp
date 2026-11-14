@@ -644,11 +644,10 @@ int main() {
              independentReturn->kind == lang::MirLoanKind::Return &&
              independentReturn->escapes && independentEntry != nullptr &&
              independentReturn->source == independentEntry->source &&
-             independentEntry->semanticLoan != 0 &&
              independentEntry->carriers.size() >= 3 &&
              lang::verifyMirBody(independentMir->body).valid(),
          "independent read-only aliases of one formal parameter should share "
-         "one semantic loan and lexical endpoint");
+         "one entry loan (carrying every alias) and lexical endpoint");
 
   const lang::HirFunctionInstance *mainHir = findHirFunction(frontend, "main");
   const lang::MirFunctionInstance *mainMir =
@@ -1223,10 +1222,9 @@ int main() {
     return;
   }
   expect(aliasedBorrow->loans.size() == 1 &&
-             aliasedBorrow->loans.front().semanticLoan != 0 &&
              aliasedBorrow->loans.front().carriers.size() == 2,
-         "reference aliases should share one semantic and MIR loan while "
-         "retaining both carrier bindings");
+         "reference aliases should share one MIR loan while retaining both "
+         "carrier bindings");
 
   bool loopConditionEndsBorrow = false;
   for (const lang::MirBlock &block : loopBorrow->blocks) {
@@ -6320,8 +6318,7 @@ int switch_reactivation(mut int& parent) {
   }
   expect(callEntry != nullptr && callTransient != nullptr &&
              callChild == nullptr && callTransient->parent == callEntry->id &&
-             callTransient->carriers.size() == 1 &&
-             callTransient->semanticLoan != 0 && !callTransient->escapes &&
+             callTransient->carriers.size() == 1 && !callTransient->escapes &&
              retainedChildEndings == 0 &&
              endsLoanOnFailureRoute(*retainedCallChild, callFailure,
                                     callTransient->id) &&
@@ -6392,10 +6389,8 @@ int switch_reactivation(mut int& parent) {
       firstChainSuccess == secondChainCallBlock && chainSuccessEndings == 0 &&
       chainTransients[0]->parent == chainEntry->id &&
       chainTransients[0]->carriers.empty() &&
-      chainTransients[0]->semanticLoan == 0 &&
       chainTransients[1]->parent == chainTransients[0]->id &&
-      chainTransients[1]->carriers.size() == 1 &&
-      chainTransients[1]->semanticLoan != 0 && !chainTransients[1]->escapes;
+      chainTransients[1]->carriers.size() == 1 && !chainTransients[1]->escapes;
   expect(retainedChainAncestry &&
              endsLoanOnFailureRoute(*retainedCallChain, firstChainFailure,
                                     chainTransients[0]->id) &&

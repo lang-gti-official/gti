@@ -39,8 +39,26 @@ int main() {
     expect(result.syntaxValid && result.semanticValid,
            "reference payload positive passes semantic analysis");
   };
+  // Every MIR loan of the fixture's `inspect`/`consume` body that selects one
+  // reference out of a payload carrier. Main calls that function so that it
+  // is instantiated and lowered.
+  const auto selectedLoans = [](const lang::FrontendResult &result) {
+    std::vector<std::pair<const lang::MirBody *, const lang::MirLoan *>>
+        selected;
+    for (const auto &function : result.mir.functionInstances()) {
+      const auto *hir = result.hir.findFunctionInstance(function.id);
+      if (hir == nullptr || hir->source == nullptr ||
+          (hir->source->name().lexeme != "inspect" &&
+           hir->source->name().lexeme != "consume"))
+        continue;
+      for (const auto &loan : function.body.loans)
+        if (loan.referenceSelection)
+          selected.emplace_back(&function.body, &loan);
+    }
+    return selected;
+  };
   for (const bool exclusive : {false, true}) {
-    const auto result = analyze(
+    const auto result = analyzeMir(
         std::string(exclusive
                         ? "enum Reading { empty, item(mut int& value) };\n"
                         : "enum Reading { empty, item(int& value) };\n") +
@@ -54,18 +72,25 @@ int inspect(mut Reading input) {
   case Reading::empty: return 0;
   }
 }
-int main() { return 0; }
-)gti");
+)gti" +
+        (exclusive ? "int main() { mut int x = 7; "
+                     "return inspect(Reading::item(x)) - 7; }\n"
+                   : "int main() { int x = 7; "
+                     "return inspect(Reading::item(x)) - 7; }\n"));
     acceptedSemantics(result);
     bool found = false;
-    for (const auto &loan : result.semantics.loans()) {
-      if (!loan.referenceSelection)
-        continue;
+    for (const auto &[body, selected] : selectedLoans(result)) {
+      const auto &loan = *selected;
       found = true;
-      const auto *entry = result.semantics.findLoan(loan.parent);
-      expect(entry && entry->entry &&
-                 entry->kind == lang::SemanticLoanKind::StoredValue &&
-                 !entry->protectsStorage && !loan.protectsStorage,
+      // The checked entry capability of the selected carrier: an exclusive
+      // selection reborrows it, a shared one coexists with it.
+      const lang::MirLoan *entry = nullptr;
+      for (const auto &candidate : body->loans)
+        if (candidate.entry &&
+            candidate.source == loan.referenceSelection->carrier)
+          entry = &candidate;
+      expect(entry && !entry->lifecycleBound && !loan.lifecycleBound &&
+                 (exclusive ? loan.parent == entry->id : loan.parent == 0),
              "selection retains checked external authority, not shell storage");
       expect(
           loan.designatedFields.empty() && loan.conditions.empty() &&
@@ -77,11 +102,28 @@ int main() { return 0; }
                                        : lang::AccessMode::ReadOnly),
              "resolved reference access survives selection");
       if (entry) {
-        auto external = entry->place;
-        for (const auto field : entry->designatedFields)
-          external.projections.push_back(
-              {.kind = lang::PlaceProjectionKind::Field, .field = field});
-        expect(loan.place == external &&
+        const auto *source = body->findPlace(loan.source);
+        const auto *external = body->findPlace(entry->source);
+        // The external place, the entry's designated reference field, and
+        // the dereference of that reference.
+        const std::size_t prefix = external ? external->projections.size() : 0;
+        bool exactPath = source && external && source->root == external->root &&
+                         source->binding == external->binding &&
+                         source->projections.size() ==
+                             prefix + entry->designatedFields.size() + 1 &&
+                         source->projections.back().kind ==
+                             lang::MirProjectionKind::Dereference;
+        for (std::size_t index = 0;
+             exactPath && index + 1 < source->projections.size(); ++index) {
+          const auto &projection = source->projections[index];
+          if (index < prefix)
+            exactPath = projection == external->projections[index];
+          else
+            exactPath =
+                projection.kind == lang::MirProjectionKind::Field &&
+                projection.field == entry->designatedFields[index - prefix];
+        }
+        expect(exactPath &&
                    loan.referenceSelection->fields == entry->designatedFields &&
                    loan.referenceSelection->conditions == entry->conditions,
                "selected source is the exact typed parameter reference path");
@@ -93,7 +135,7 @@ int main() { return 0; }
     expect(found,
            "checked entry must produce an exact selected reference loan");
   }
-  const auto alias = analyze(R"gti(
+  const auto alias = analyzeMir(R"gti(
 enum Reading { empty, item(mut int& value) };
 int inspect(mut Reading input) {
   switch (input) {
@@ -104,31 +146,122 @@ int inspect(mut Reading input) {
   case Reading::empty: return 0;
   }
 }
-int main() { return 0; }
+int main() { mut int x = 7; return inspect(Reading::item(x)) - 7; }
 )gti");
   bool foundAlias = false;
   acceptedSemantics(alias);
-  for (const auto &loan : alias.semantics.loans())
-    if (loan.referenceSelection)
-      if (const auto *parent = alias.semantics.findLoan(loan.parent);
-          parent && parent->referenceSelection) {
-        foundAlias = true;
-        const auto &selection = *loan.referenceSelection;
-        const auto &original = *parent->referenceSelection;
-        expect(selection.source == original.source &&
-                   selection.carrier == original.carrier &&
-                   selection.fields == original.fields &&
-                   selection.conditions == original.conditions &&
-                   selection.reference == original.reference &&
-                   selection.transferredFrom == original.transferredFrom &&
-                   loan.place == parent->place &&
-                   loan.access == lang::AccessMode::ReadOnly &&
-                   parent->access == lang::AccessMode::Mutable,
-               "same-referent aliases retain exact address and narrow access");
-      }
+  for (const auto &[body, selected] : selectedLoans(alias))
+    if (const auto *parent = body->findLoan(selected->parent);
+        parent && parent->referenceSelection) {
+      foundAlias = true;
+      const auto &loan = *selected;
+      const auto &selection = *loan.referenceSelection;
+      const auto &original = *parent->referenceSelection;
+      expect(selection.value == original.value &&
+                 selection.carrier == original.carrier &&
+                 selection.fields == original.fields &&
+                 selection.conditions == original.conditions &&
+                 selection.reference == original.reference &&
+                 selection.transferredFrom == original.transferredFrom &&
+                 body->findPlace(loan.source) != nullptr &&
+                 body->findPlace(loan.source)->root ==
+                     lang::MirPlaceRootKind::Loan &&
+                 body->findPlace(loan.source)->loan == parent->id &&
+                 body->findPlace(loan.source)->projections.empty() &&
+                 loan.access == lang::AccessMode::ReadOnly &&
+                 parent->access == lang::AccessMode::Mutable,
+             "same-referent aliases retain exact address and narrow access");
+    }
   expect(foundAlias,
          "selected reference aliases require a distinct checked child");
-  const auto independent = analyze(R"gti(
+  // A field of a selected reference is one projection applied to every
+  // possible owner; reading or writing it verifies, and an owner write while
+  // it is still read conflicts.
+  const auto projected = analyzeMir(R"gti(
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(mut Point& value) };
+int inspect(mut Reading input) {
+  switch (input) {
+  case Reading::item(mut auto& value): { value.y = value.y + 5; return value.y; }
+  case Reading::empty: return 0;
+  }
+}
+int main() { mut Point p = Point(1, 2); return inspect(Reading::item(p)) - 7; }
+)gti");
+  acceptedSemantics(projected);
+  expect(projected.canGenerateCode() && projected.mirValid,
+         "a selected reference's field projection verifies");
+  const auto projectedConflict = analyzeMir(R"gti(
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(Point& value) };
+int main() {
+  mut Point p = Point(1, 2);
+  Reading r = Reading::item(p);
+  switch (r) {
+  case Reading::item(value): { p.y = 9; return value.y; }
+  case Reading::empty: return 0;
+  }
+}
+)gti");
+  // A consuming switch transfers its subject's dependency group: a copy of
+  // the carrier still in scope shares that group and is rejected, while a
+  // copy whose scope ended is not.
+  const auto consumedShared = analyzeMir(R"gti(
+enum Selected { empty, value(int& owner) };
+int main() {
+  int x = 5;
+  Selected a = Selected::value(x);
+  Selected b = a;
+  mut int got = 0;
+  switch (std::move(a)) {
+  case Selected::value(owner): got = owner; break;
+  case Selected::empty: return 1;
+  }
+  switch (b) {
+  case Selected::value(owner): return got + owner - 10;
+  case Selected::empty: return 2;
+  }
+}
+)gti");
+  expect(std::any_of(consumedShared.diagnostics.begin(),
+                     consumedShared.diagnostics.end(),
+                     [](const lang::Diagnostic &diagnostic) {
+                       return diagnostic.code == "GTI-S2067";
+                     }) &&
+             std::none_of(consumedShared.diagnostics.begin(),
+                          consumedShared.diagnostics.end(),
+                          [](const lang::Diagnostic &diagnostic) {
+                            return diagnostic.code == "GTI-B0001";
+                          }),
+         "a consuming switch rejects a group a live copy still carries");
+  const auto consumedAfterCopy = analyzeMir(R"gti(
+enum Selected { empty, value(int& owner) };
+int main() {
+  int x = 5;
+  Selected a = Selected::value(x);
+  {
+    Selected b = a;
+    switch (b) {
+    case Selected::value(owner): if (owner != 5) return 3; break;
+    case Selected::empty: return 2;
+    }
+  }
+  switch (std::move(a)) {
+  case Selected::value(owner): return owner - 5;
+  case Selected::empty: return 1;
+  }
+}
+)gti");
+  acceptedSemantics(consumedAfterCopy);
+  expect(consumedAfterCopy.canGenerateCode() && consumedAfterCopy.mirValid,
+         "a consuming switch adopts a group no live copy carries");
+  expect(std::any_of(projectedConflict.diagnostics.begin(),
+                     projectedConflict.diagnostics.end(),
+                     [](const lang::Diagnostic &diagnostic) {
+                       return diagnostic.code == "GTI-S2017";
+                     }),
+         "an owner write conflicts with a later selected field read");
+  const auto independent = analyzeMir(R"gti(
 enum Pair { empty, both(mut int& first, mut int& second) };
 int inspect(mut Pair input) {
   switch (input) {
@@ -140,16 +273,23 @@ int inspect(mut Pair input) {
   case Pair::empty: return 0;
   }
 }
-int main() { return 0; }
+int main() { mut int a = 1; mut int b = 2; return inspect(Pair::both(a, b)) - 11; }
 )gti");
   acceptedSemantics(independent);
-  std::vector<lang::SemanticLoanPlace> owners;
-  for (const auto &loan : independent.semantics.loans())
-    if (loan.referenceSelection && loan.access == lang::AccessMode::Mutable &&
-        std::find(owners.begin(), owners.end(), loan.place) == owners.end())
-      owners.push_back(loan.place);
-  expect(owners.size() == 2 && owners[0].root == owners[1].root &&
-             owners[0].projections != owners[1].projections,
+  std::vector<const lang::MirPlace *> owners;
+  for (const auto &[body, loan] : selectedLoans(independent)) {
+    const auto *place = body->findPlace(loan->source);
+    if (place && loan->access == lang::AccessMode::Mutable &&
+        std::none_of(owners.begin(), owners.end(), [&](const auto *owner) {
+          return owner->root == place->root &&
+                 owner->binding == place->binding &&
+                 owner->projections == place->projections;
+        }))
+      owners.push_back(place);
+  }
+  expect(owners.size() == 2 && owners[0]->root == owners[1]->root &&
+             owners[0]->binding == owners[1]->binding &&
+             owners[0]->projections != owners[1]->projections,
          "separate reference fields retain distinct exact external places");
   const auto conflict = analyzeMir(R"gti(
 enum Reading { empty, item(mut int& value) };
@@ -170,7 +310,7 @@ int main() { return 0; }
                        return diagnostic.code == "GTI-S2017";
                      }),
          "an external selected referent remains protected by its live child");
-  const auto transfer = analyze(R"gti(
+  const auto transfer = analyzeMir(R"gti(
 enum Pair { empty, both(mut int& first, mut int& second) };
 int consume(mut Pair input) {
   switch (std::move(input)) {
@@ -182,32 +322,43 @@ int consume(mut Pair input) {
   case Pair::empty: return 0;
   }
 }
-int main() { return 0; }
+int main() { mut int a = 1; mut int b = 2; return consume(Pair::both(a, b)) - 10; }
 )gti");
   acceptedSemantics(transfer);
-  std::vector<lang::SemanticLoanId> transferred;
-  for (const auto &loan : transfer.semantics.loans()) {
-    if (!loan.referenceSelection ||
-        loan.referenceSelection->transferredFrom == 0)
+  std::vector<lang::MirLoanId> transferred;
+  for (const auto &[body, selected] : selectedLoans(transfer)) {
+    const auto &loan = *selected;
+    if (loan.referenceSelection->transferredFrom == 0)
       continue;
     const auto *group =
-        transfer.semantics.findLoan(loan.referenceSelection->transferredFrom);
-    expect(group && group->entry &&
-               group->kind == lang::SemanticLoanKind::StoredValue &&
-               !loan.protectsStorage,
+        body->findLoan(loan.referenceSelection->transferredFrom);
+    expect(group && group->entry && !loan.lifecycleBound,
            "transfer keeps exact abstract external provenance, not shell life");
     if (loan.parent == 0) {
       transferred.push_back(loan.id);
       expect(loan.access == lang::AccessMode::Mutable,
              "plain consuming pattern transfers mutable field authority");
-      const auto *observed = transfer.semantics.findBorrowDependencySet(
-          *loan.referenceSelection->source);
+      // The incoming parent is the MIR group named by transferredFrom; the
+      // extraction's producer-attached dependency set keeps exactly one
+      // mutable dependency before the successor handoff.
+      const auto *selected = body->findValue(loan.referenceSelection->value);
+      const lang::SemanticBorrowDependencySet *observed = nullptr;
+      for (const auto &function : transfer.mir.functionInstances()) {
+        const auto *hir = transfer.hir.findFunctionInstance(function.id);
+        const auto *source =
+            hir == nullptr || selected == nullptr || &function.body != body
+                ? nullptr
+                : hir->body.findValue(selected->sourceValue);
+        if (source != nullptr && source->source != nullptr)
+          observed =
+              transfer.semantics.findBorrowDependencySet(*source->source);
+      }
       expect(observed && observed->dependencies.size() == 1 &&
-                 observed->dependencies.front().parent ==
-                     loan.referenceSelection->transferredFrom,
+                 observed->dependencies.front().access ==
+                     lang::AccessMode::Mutable,
              "extraction retains incoming parents before successor handoff");
     } else {
-      const auto *parent = transfer.semantics.findLoan(loan.parent);
+      const auto *parent = body->findLoan(loan.parent);
       expect(parent && parent->referenceSelection &&
                  parent->referenceSelection->transferredFrom ==
                      loan.referenceSelection->transferredFrom &&
@@ -1273,5 +1424,61 @@ int main() {
                             return diagnostic.code == "GTI-S2067";
                           }),
          "a carrier moved inside the loop fails value flow at the backedge");
+  // A selected reference reborrows only at its own referent. The selection is
+  // a binding fact, so a same-referent child stays selected and its own
+  // projection is still rejected (GTI-S2054) rather than reaching MIR.
+  const std::string selectedPoint = R"gti(
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(Point& value) };
+int inspect(Reading input) {
+  switch (input) {
+  case Reading::item(value): {
+)gti";
+  const auto selectedReborrow = [&](const std::string &body) {
+    return analyzeMir(selectedPoint + body + R"gti(
+  }
+  case Reading::empty: return 0;
+  }
+}
+int main() { Point p = Point(1, 2); return inspect(Reading::item(p)); }
+)gti");
+  };
+  const auto selectedProjection = [](const lang::FrontendResult &result) {
+    return !result.semanticValid &&
+           std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                       [](const auto &diagnostic) {
+                         return diagnostic.code == "GTI-S2054" &&
+                                diagnostic.message.find(
+                                    "selected reference can currently be "
+                                    "reborrowed only at the same referent") !=
+                                    std::string::npos;
+                       }) &&
+           std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        });
+  };
+  expect(selectedProjection(selectedReborrow("int& x = value.x; return x;")),
+         "a projected alias of a selected reference is rejected");
+  expect(selectedProjection(selectedReborrow(
+             "Point& same = value; int& x = same.x; return x;")),
+         "a same-referent child keeps the selected-reference restriction");
+  {
+    const auto same = analyzeMir(R"gti(
+enum Reading { empty, item(int& value) };
+int inspect(Reading input) {
+  switch (input) {
+  case Reading::item(value): { int& same = value; return same; }
+  case Reading::empty: return 0;
+  }
+}
+int main() { int owner = 1; return inspect(Reading::item(owner)); }
+)gti");
+    for (const auto &diagnostic : same.diagnostics)
+      std::cerr << "selected same-referent: " << diagnostic.code << ": "
+                << diagnostic.message << '\n';
+    expect(same.canGenerateCode(),
+           "a same-referent reborrow of a selected reference is accepted");
+  }
   return failures == 0 ? 0 : 1;
 }

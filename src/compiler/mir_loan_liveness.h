@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gti/hir.h"
+#include "gti/mir.h"
 
 #include <cstddef>
 #include <functional>
@@ -17,16 +18,16 @@ namespace lang {
 // replaces the semantic end points that HIR used to transport.
 struct MirDerivedLoanEnds {
   // Loans retired after a statement completes.
-  std::unordered_map<HirStatementId, std::vector<SemanticLoanId>> after;
+  std::unordered_map<HirStatementId, std::vector<MirLoanId>> after;
   // Loans retired on entry to an if statement's then/else branch.
-  std::unordered_map<HirStatementId, std::vector<SemanticLoanId>> thenEntry;
-  std::unordered_map<HirStatementId, std::vector<SemanticLoanId>> elseEntry;
+  std::unordered_map<HirStatementId, std::vector<MirLoanId>> thenEntry;
+  std::unordered_map<HirStatementId, std::vector<MirLoanId>> elseEntry;
   // Loans retired on entry to one switch arm.
-  std::map<std::pair<HirStatementId, std::size_t>, std::vector<SemanticLoanId>>
+  std::map<std::pair<HirStatementId, std::size_t>, std::vector<MirLoanId>>
       switchArmEntry;
   // Development: loans left to their region's exit, with the statement whose
   // completion would otherwise have ended them.
-  std::unordered_map<SemanticLoanId, HirStatementId> regionExit;
+  std::unordered_map<MirLoanId, HirStatementId> regionExit;
 };
 
 // The loan facts liveness reads, independent of which layer recorded them.

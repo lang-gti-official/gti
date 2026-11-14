@@ -32,6 +32,34 @@ const lang::MirInstruction *producerFor(const lang::MirBody &body,
   return nullptr;
 }
 
+// The first local (non-entry) MIR loan retained by a carrier binding, in any
+// function body, that `accept` selects, with the body that owns it.
+template <typename Accept>
+std::pair<const lang::MirBody *, const lang::MirLoan *>
+findLocalLoan(const lang::FrontendResult &frontend, Accept accept) {
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &loan : function.body.loans)
+      if (!loan.entry && !loan.carriers.empty() && accept(loan))
+        return {&function.body, &loan};
+  return {nullptr, nullptr};
+}
+
+bool sameRoot(const lang::MirBody &body, lang::MirPlaceId left,
+              lang::MirPlaceId right) {
+  const auto *first = body.findPlace(left);
+  const auto *second = body.findPlace(right);
+  return first && second && first->root == second->root &&
+         first->binding == second->binding && first->symbol == second->symbol;
+}
+
+bool samePlace(const lang::MirBody &body, lang::MirPlaceId left,
+               lang::MirPlaceId right) {
+  const auto *first = body.findPlace(left);
+  const auto *second = body.findPlace(right);
+  return sameRoot(body, left, right) &&
+         first->projections == second->projections;
+}
+
 void checkNestedConstructorArguments() {
   const auto frontend = analyzeBorrowFixture("nested_carrier_arguments.gti");
   expect(frontend.canGenerateCode(),
@@ -327,18 +355,17 @@ int main() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "composed owner dependencies should independently verify");
-  const auto semantic = std::find_if(
-      frontend.semantics.loans().begin(), frontend.semantics.loans().end(),
-      [](const lang::SemanticLoanInfo &loan) {
-        return !loan.entry && !loan.additionalDependencies.empty();
+  const auto [composedBody, composed] =
+      findLocalLoan(frontend, [](const lang::MirLoan &loan) {
+        return !loan.additionalDependencies.empty();
       });
-  expect(semantic != frontend.semantics.loans().end(),
-         "semantic loan must retain the second independent place");
-  if (semantic != frontend.semantics.loans().end()) {
-    expect(semantic->place.root !=
-               semantic->additionalDependencies.front().place.root,
+  expect(composed != nullptr,
+         "a MIR loan must retain the second independent place");
+  if (composed != nullptr) {
+    expect(!sameRoot(*composedBody, composed->source,
+                     composed->additionalDependencies.front().source),
            "independent owners must not collapse into a fabricated root");
-    expect(semantic->carriers.size() == 2,
+    expect(composed->carriers.size() == 2,
            "copy construction must retain both aliases of the dependency set");
   }
   bool inspected = false;
@@ -449,14 +476,13 @@ int main() {
   }
   expect(lang::verifyMirProgram(frontend.mir).valid(),
          "mixed stored dependencies must pass independent MIR verification");
-  const auto loan = std::find_if(
-      frontend.semantics.loans().begin(), frontend.semantics.loans().end(),
-      [](const lang::SemanticLoanInfo &candidate) {
-        return !candidate.entry && candidate.additionalDependencies.size() == 4;
+  const auto [body, loan] =
+      findLocalLoan(frontend, [](const lang::MirLoan &candidate) {
+        return candidate.additionalDependencies.size() == 4;
       });
-  expect(loan != frontend.semantics.loans().end(),
-         "all five independent dependencies must survive semantic analysis");
-  if (loan != frontend.semantics.loans().end()) {
+  expect(loan != nullptr,
+         "all five independent dependencies must survive into MIR");
+  if (loan != nullptr) {
     expect(loan->access == lang::AccessMode::ReadOnly &&
                loan->additionalDependencies[0].access ==
                    lang::AccessMode::Mutable &&
@@ -573,14 +599,13 @@ int main() { int value = 14; Repeated view{value}; return view.sum() - 42; }
     for (const auto &diagnostic : shared.diagnostics)
       std::cerr << "repeated shared: " << diagnostic.code << ": "
                 << diagnostic.message << '\n';
-  const auto loan = std::find_if(
-      shared.semantics.loans().begin(), shared.semantics.loans().end(),
-      [](const auto &candidate) {
-        return !candidate.entry && candidate.additionalDependencies.size() == 2;
+  const auto [body, loan] =
+      findLocalLoan(shared, [](const lang::MirLoan &candidate) {
+        return candidate.additionalDependencies.size() == 2;
       });
-  expect(loan != shared.semantics.loans().end(),
+  expect(loan != nullptr,
          "repeated shared origins must retain all three field identities");
-  if (loan != shared.semantics.loans().end()) {
+  if (loan != nullptr) {
     expect(loan->designatedFields.size() == 1 &&
                loan->additionalDependencies[0].designatedFields.size() == 1 &&
                loan->additionalDependencies[1].designatedFields.size() == 1 &&
@@ -588,8 +613,10 @@ int main() { int value = 14; Repeated view{value}; return view.sum() - 42; }
                    loan->additionalDependencies[0].designatedFields &&
                loan->additionalDependencies[0].designatedFields !=
                    loan->additionalDependencies[1].designatedFields &&
-               loan->place == loan->additionalDependencies[0].place &&
-               loan->place == loan->additionalDependencies[1].place,
+               samePlace(*body, loan->source,
+                         loan->additionalDependencies[0].source) &&
+               samePlace(*body, loan->source,
+                         loan->additionalDependencies[1].source),
            "field identity must not be deduplicated by owner identity");
   }
 

@@ -10,6 +10,66 @@
 
 namespace {
 
+// A source local's MIR facts: the function body that declares it, its HIR
+// binding identity, and the MIR loan it retains (the most derived loan whose
+// carriers name that binding).
+struct MirRetained {
+  const lang::MirFunctionInstance *function = nullptr;
+  lang::HirBindingId binding = 0;
+  const lang::MirLoan *loan = nullptr;
+};
+
+MirRetained mirRetained(const lang::FrontendResult &frontend,
+                        const lang::VariableDecl *variable) {
+  MirRetained result;
+  if (variable == nullptr)
+    return result;
+  for (const lang::HirFunctionInstance &instance :
+       frontend.hir.functionInstances()) {
+    for (const lang::HirBinding &binding : instance.body.bindings) {
+      if (binding.variable != variable)
+        continue;
+      result.binding = binding.id;
+      result.function = frontend.mir.findFunctionInstance(instance.id);
+      if (result.function == nullptr)
+        return result;
+      for (const lang::MirLoan &loan : result.function->body.loans)
+        if (std::find(loan.carriers.begin(), loan.carriers.end(), binding.id) !=
+            loan.carriers.end())
+          result.loan = &loan;
+      return result;
+    }
+  }
+  return result;
+}
+
+const lang::MirPlace *mirLoanSource(const MirRetained &retained) {
+  return retained.function == nullptr || retained.loan == nullptr
+             ? nullptr
+             : retained.function->body.findPlace(retained.loan->source);
+}
+
+// A by-value carrier a call produces from another carrier, moved or relayed,
+// publishes a fresh Stored loan for the result; it keeps the input carrier's
+// exact owner place and permission (the result may name the field that now
+// holds the reference).
+bool transfersDependency(const MirRetained &input, const MirRetained &result) {
+  return input.loan != nullptr && result.loan != nullptr &&
+         input.function == result.function && input.loan != result.loan &&
+         input.loan->kind == lang::MirLoanKind::Stored &&
+         result.loan->kind == lang::MirLoanKind::Stored &&
+         result.loan->source == input.loan->source &&
+         result.loan->access == input.loan->access &&
+         result.loan->additionalDependencies ==
+             input.loan->additionalDependencies;
+}
+
+const lang::MirLoan *mirLoanParent(const MirRetained &retained) {
+  return retained.function == nullptr || retained.loan == nullptr
+             ? nullptr
+             : retained.function->body.findLoan(retained.loan->parent);
+}
+
 // Under MIR authority a body-local conflict is proved by MIR, which runs only
 // once semantics accepts the program; a multi-error program reports it only
 // when analyzed on its own.
@@ -2031,7 +2091,8 @@ int main() {
 
   int& shared = value;
   int& shared_alias = shared;
-  return observe(shared_alias) + pair.left + pair.right - 10;
+  return observe(shared_alias) + pair.left + pair.right - 10 +
+         checked_dereference_reactivation();
 }
 )";
   const lang::FrontendResult exclusive =
@@ -2066,134 +2127,94 @@ int main() {
   const lang::VariableDecl *projectedChild = local(16);
   const lang::VariableDecl *shared = local(19);
   const lang::VariableDecl *sharedAlias = local(20);
-  const lang::BindingInfo *parentBinding =
-      parent == nullptr ? nullptr : exclusive.semantics.findBinding(*parent);
-  const lang::BindingInfo *childBinding =
-      child == nullptr ? nullptr : exclusive.semantics.findBinding(*child);
-  const lang::BindingInfo *grandchildBinding =
-      grandchild == nullptr ? nullptr
-                            : exclusive.semantics.findBinding(*grandchild);
-  const lang::BindingInfo *leftBinding =
-      left == nullptr ? nullptr : exclusive.semantics.findBinding(*left);
-  const lang::BindingInfo *rightBinding =
-      right == nullptr ? nullptr : exclusive.semantics.findBinding(*right);
-  const lang::BindingInfo *pairParentBinding =
-      pairParent == nullptr ? nullptr
-                            : exclusive.semantics.findBinding(*pairParent);
-  const lang::BindingInfo *projectedChildBinding =
-      projectedChild == nullptr
-          ? nullptr
-          : exclusive.semantics.findBinding(*projectedChild);
-  const lang::BindingInfo *sharedBinding =
-      shared == nullptr ? nullptr : exclusive.semantics.findBinding(*shared);
-  const lang::BindingInfo *sharedAliasBinding =
-      sharedAlias == nullptr ? nullptr
-                             : exclusive.semantics.findBinding(*sharedAlias);
-  const lang::SemanticLoanInfo *parentLoan =
-      parentBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(parentBinding->retainedLoan);
-  const lang::SemanticLoanInfo *childLoan =
-      childBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(childBinding->retainedLoan);
-  const lang::SemanticLoanInfo *grandchildLoan =
-      grandchildBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(grandchildBinding->retainedLoan);
-  const lang::SemanticLoanInfo *leftLoan =
-      leftBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(leftBinding->retainedLoan);
-  const lang::SemanticLoanInfo *rightLoan =
-      rightBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(rightBinding->retainedLoan);
-  const lang::SemanticLoanInfo *pairParentLoan =
-      pairParentBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(pairParentBinding->retainedLoan);
-  const lang::SemanticLoanInfo *projectedChildLoan =
-      projectedChildBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(projectedChildBinding->retainedLoan);
-  expect(parentLoan != nullptr && childLoan != nullptr &&
-             grandchildLoan != nullptr && childLoan->id != parentLoan->id &&
-             grandchildLoan->id != childLoan->id &&
-             childLoan->parent == parentLoan->id &&
-             grandchildLoan->parent == childLoan->id &&
-             parentLoan->access == lang::AccessMode::Mutable &&
-             childLoan->access == lang::AccessMode::Mutable &&
-             grandchildLoan->access == lang::AccessMode::Mutable &&
-             parentLoan->place == childLoan->place &&
-             childLoan->place == grandchildLoan->place,
-         "mutable reborrows should form distinct parent-linked loans over one "
-         "stable place");
-  expect(leftLoan != nullptr && rightLoan != nullptr &&
-             leftLoan->place.root == rightLoan->place.root &&
-             leftLoan->place.projections.size() == 1 &&
-             rightLoan->place.projections.size() == 1 &&
-             leftLoan->place.projections.front().kind ==
-                 lang::SemanticLoanPlaceProjectionKind::Field &&
-             rightLoan->place.projections.front().kind ==
-                 lang::SemanticLoanPlaceProjectionKind::Field &&
-             leftLoan->place.projections.front().field !=
-                 rightLoan->place.projections.front().field,
+  const MirRetained parentLoan = mirRetained(exclusive, parent);
+  const MirRetained childLoan = mirRetained(exclusive, child);
+  const MirRetained grandchildLoan = mirRetained(exclusive, grandchild);
+  const MirRetained leftLoan = mirRetained(exclusive, left);
+  const MirRetained rightLoan = mirRetained(exclusive, right);
+  const MirRetained pairParentLoan = mirRetained(exclusive, pairParent);
+  const MirRetained projectedChildLoan = mirRetained(exclusive, projectedChild);
+  const MirRetained sharedLoan = mirRetained(exclusive, shared);
+  const MirRetained sharedAliasLoan = mirRetained(exclusive, sharedAlias);
+  // A reborrow's source is its parent loan's place, with no projection.
+  const auto reborrowsWhole = [](const MirRetained &reborrow,
+                                 const MirRetained &from) {
+    const lang::MirPlace *source = mirLoanSource(reborrow);
+    return reborrow.loan != nullptr && from.loan != nullptr &&
+           reborrow.loan != from.loan &&
+           reborrow.loan->parent == from.loan->id && source != nullptr &&
+           source->root == lang::MirPlaceRootKind::Loan &&
+           source->loan == from.loan->id && source->projections.empty() &&
+           reborrow.loan->access == lang::AccessMode::Mutable;
+  };
+  const lang::MirPlace *parentSource = mirLoanSource(parentLoan);
+  expect(parentLoan.loan != nullptr &&
+             parentLoan.loan->access == lang::AccessMode::Mutable &&
+             parentSource != nullptr &&
+             parentSource->root == lang::MirPlaceRootKind::Binding &&
+             reborrowsWhole(childLoan, parentLoan) &&
+             reborrowsWhole(grandchildLoan, childLoan) &&
+             !childLoan.loan->carriers.empty() &&
+             !grandchildLoan.loan->carriers.empty(),
+         "mutable reborrows should form distinct parent-linked MIR loans over "
+         "one stable place, each with its body-local carrier");
+  const lang::MirPlace *leftSource = mirLoanSource(leftLoan);
+  const lang::MirPlace *rightSource = mirLoanSource(rightLoan);
+  expect(leftSource != nullptr && rightSource != nullptr &&
+             leftSource->root == lang::MirPlaceRootKind::Binding &&
+             leftSource->binding == rightSource->binding &&
+             leftSource->projections.size() == 1 &&
+             rightSource->projections.size() == 1 &&
+             leftSource->projections.front().kind ==
+                 lang::MirProjectionKind::Field &&
+             rightSource->projections.front().kind ==
+                 lang::MirProjectionKind::Field &&
+             leftSource->projections.front().field !=
+                 rightSource->projections.front().field,
          "named sibling fields should retain disjoint stable projections");
-  expect(pairParentLoan != nullptr && projectedChildLoan != nullptr &&
-             projectedChildLoan->parent == pairParentLoan->id &&
-             projectedChildLoan->place.projections.size() == 1,
+  const lang::MirPlace *projectedSource = mirLoanSource(projectedChildLoan);
+  expect(pairParentLoan.loan != nullptr && projectedChildLoan.loan != nullptr &&
+             projectedChildLoan.loan->parent == pairParentLoan.loan->id &&
+             projectedSource != nullptr &&
+             projectedSource->root == lang::MirPlaceRootKind::Loan &&
+             projectedSource->loan == pairParentLoan.loan->id &&
+             projectedSource->projections.size() == 1 &&
+             projectedSource->projections.front().kind ==
+                 lang::MirProjectionKind::Field,
          "a projected child should suspend only its overlapping parent place, "
          "not a known-disjoint sibling field");
 
   const lang::FunctionDecl *checkedDereferenceFunction = findTopLevelFunction(
       exclusive.program, "checked_dereference_reactivation");
-  const lang::VariableDecl *checkedParent =
-      checkedDereferenceFunction == nullptr
-          ? nullptr
-          : dynamic_cast<const lang::VariableDecl *>(
-                checkedDereferenceFunction->body()->statements().at(1).get());
-  const lang::BindingInfo *checkedParentBinding =
-      checkedParent == nullptr
-          ? nullptr
-          : exclusive.semantics.findBinding(*checkedParent);
-  const lang::SemanticLoanInfo *checkedParentLoan =
-      checkedParentBinding == nullptr
-          ? nullptr
-          : exclusive.semantics.findLoan(checkedParentBinding->retainedLoan);
-  expect(checkedParentLoan != nullptr &&
-             checkedParentLoan->place.projections.size() == 1 &&
-             checkedParentLoan->place.projections.front().kind ==
-                 lang::SemanticLoanPlaceProjectionKind::Dereference,
-         "a checked owner dereference should retain its canonical stable-place "
-         "projection through exclusive reborrow analysis");
-  expect(sharedBinding != nullptr && sharedAliasBinding != nullptr &&
-             sharedBinding->retainedLoan != 0 &&
-             sharedBinding->retainedLoan == sharedAliasBinding->retainedLoan,
-         "shared read-only aliases should continue sharing one semantic loan");
-
-  const lang::HirFunctionInstance *mainInstance = nullptr;
-  for (const lang::HirFunctionInstance &function :
-       exclusive.hir.functionInstances()) {
-    if (function.source == mainFunction) {
-      mainInstance = &function;
-      break;
-    }
-  }
-  const lang::HirLoan *hirChild =
-      mainInstance == nullptr || childLoan == nullptr
-          ? nullptr
-          : mainInstance->body.findLoan(childLoan->id);
-  const lang::HirLoan *hirGrandchild =
-      mainInstance == nullptr || grandchildLoan == nullptr
-          ? nullptr
-          : mainInstance->body.findLoan(grandchildLoan->id);
-  expect(exclusive.hirValid && hirChild != nullptr &&
-             hirGrandchild != nullptr && hirChild->parent == parentLoan->id &&
-             hirGrandchild->parent == childLoan->id &&
-             !hirChild->carriers.empty() && !hirGrandchild->carriers.empty(),
-         "HIR should preserve semantic loan identity, ancestry, place, and "
-         "body-local carriers");
+  const auto checkedLocal =
+      [&](std::size_t index) -> const lang::VariableDecl * {
+    return checkedDereferenceFunction == nullptr
+               ? nullptr
+               : dynamic_cast<const lang::VariableDecl *>(
+                     checkedDereferenceFunction->body()
+                         ->statements()
+                         .at(index)
+                         .get());
+  };
+  const MirRetained checkedOwner = mirRetained(exclusive, checkedLocal(0));
+  const MirRetained checkedParentLoan = mirRetained(exclusive, checkedLocal(1));
+  const MirRetained checkedChildLoan = mirRetained(exclusive, checkedLocal(2));
+  const lang::MirPlace *checkedParentSource = mirLoanSource(checkedParentLoan);
+  expect(checkedParentLoan.loan != nullptr &&
+             checkedParentLoan.loan->kind == lang::MirLoanKind::CallResult &&
+             checkedParentLoan.loan->access == lang::AccessMode::Mutable &&
+             checkedParentSource != nullptr &&
+             checkedParentSource->root == lang::MirPlaceRootKind::Binding &&
+             checkedParentSource->binding == checkedOwner.binding &&
+             checkedParentSource->projections.empty() &&
+             reborrowsWhole(checkedChildLoan, checkedParentLoan),
+         "a checked owner dereference should retain its exact owner place "
+         "through exclusive reborrow analysis");
+  expect(sharedLoan.loan != nullptr &&
+             sharedLoan.loan == sharedAliasLoan.loan &&
+             sharedLoan.loan->access == lang::AccessMode::ReadOnly &&
+             sharedLoan.loan->carriers.size() == 2,
+         "shared read-only aliases should continue sharing one MIR loan");
 
   const lang::FrontendResult transientResults =
       lang::Frontend().analyze("transient-call-results.gti", R"(
@@ -2275,36 +2296,21 @@ int main() {
                             ? nullptr
                             : dynamic_cast<const lang::VariableDecl *>(
                                   function->body()->statements().front().get());
-    const lang::BindingInfo *binding =
-        child == nullptr ? nullptr
-                         : retainedProjected.semantics.findBinding(*child);
-    const lang::SemanticLoanInfo *semanticLoan =
-        binding == nullptr
-            ? nullptr
-            : retainedProjected.semantics.findLoan(binding->retainedLoan);
-    const lang::HirFunctionInstance *instance = nullptr;
-    for (const lang::HirFunctionInstance &candidate :
-         retainedProjected.hir.functionInstances()) {
-      if (candidate.source == function) {
-        instance = &candidate;
-        break;
-      }
-    }
-    const lang::HirLoan *hirLoan =
-        instance == nullptr || binding == nullptr
-            ? nullptr
-            : instance->body.findLoan(binding->retainedLoan);
-    const bool semanticProjection =
-        semanticLoan != nullptr && semanticLoan->parent != 0 &&
-        semanticLoan->place.projections.size() == 1 &&
-        semanticLoan->place.projections.front().kind ==
-            lang::SemanticLoanPlaceProjectionKind::Field;
-    const bool hirProjection =
-        semanticLoan != nullptr && hirLoan != nullptr && hirLoan->parent != 0 &&
-        hirLoan->place.projections == semanticLoan->place.projections;
-    expect(semanticProjection && hirProjection,
-           "semantic and HIR retained loans should preserve one exact field "
-           "projection in " +
+    // The retained call result keeps the caller-visible place below the
+    // reference parameter: one dereference and one exact field.
+    const MirRetained retained = mirRetained(retainedProjected, child);
+    const lang::MirPlace *source = mirLoanSource(retained);
+    const lang::MirLoan *entry = mirLoanParent(retained);
+    expect(retained.loan != nullptr &&
+               retained.loan->kind == lang::MirLoanKind::CallResult &&
+               entry != nullptr && entry->entry && source != nullptr &&
+               source->root == lang::MirPlaceRootKind::Binding &&
+               source->projections.size() == 2 &&
+               source->projections[0].kind ==
+                   lang::MirProjectionKind::Dereference &&
+               source->projections[1].kind == lang::MirProjectionKind::Field,
+           "MIR retained loans should preserve one exact field projection "
+           "under their entry parent in " +
                name);
   }
 
@@ -3753,69 +3759,30 @@ int main() {
   const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
   const std::array<std::string_view, 6> aliases{
       "direct", "internal", "qualified", "member", "first", "second"};
-  std::array<const lang::SemanticLoanInfo *, 6> semanticLoans{};
-  bool loansRetainGlobalPlaces = true;
+  std::array<const lang::MirPlace *, 6> loanSources{};
+  bool mirLoansUseSymbolPlaces = true;
   for (std::size_t index = 0; index < aliases.size(); ++index) {
     const lang::VariableDecl *alias =
         findDirectLocal(main, std::string(aliases[index]));
-    const lang::BindingInfo *binding =
-        alias == nullptr ? nullptr : valid.semantics.findBinding(*alias);
-    semanticLoans[index] =
-        binding == nullptr ? nullptr
-                           : valid.semantics.findLoan(binding->retainedLoan);
-    loansRetainGlobalPlaces = loansRetainGlobalPlaces &&
-                              semanticLoans[index] != nullptr &&
-                              semanticLoans[index]->place.root != 0 &&
-                              !semanticLoans[index]->place.receiver;
-  }
-  expect(loansRetainGlobalPlaces,
-         "semantic loans should retain a nonzero symbol-rooted place for "
-         "every borrowed global or static binding");
-  const auto constantIndex = [](const lang::SemanticLoanInfo *loan,
-                                std::uint64_t index) {
-    return loan != nullptr && loan->place.projections.size() == 1 &&
-           loan->place.projections.front().kind ==
-               lang::SemanticLoanPlaceProjectionKind::ConstantIndex &&
-           loan->place.projections.front().index == index;
-  };
-  expect(constantIndex(semanticLoans[4], 0) &&
-             constantIndex(semanticLoans[5], 1) &&
-             semanticLoans[4]->place.root == semanticLoans[5]->place.root,
-         "global fixed-array borrows should retain one shared symbol root "
-         "with disjoint constant-index projections");
-
-  const lang::HirFunctionInstance *mainHir = nullptr;
-  for (const lang::HirFunctionInstance &instance :
-       valid.hir.functionInstances()) {
-    if (instance.source == main) {
-      mainHir = &instance;
-      break;
-    }
-  }
-  const lang::MirFunctionInstance *mainMir =
-      mainHir == nullptr ? nullptr
-                         : valid.mir.findFunctionInstance(mainHir->id);
-  bool mirLoansUseSymbolPlaces = mainMir != nullptr;
-  if (mainMir != nullptr) {
-    for (const lang::SemanticLoanInfo *semanticLoan : semanticLoans) {
-      const auto mirLoan =
-          std::find_if(mainMir->body.loans.begin(), mainMir->body.loans.end(),
-                       [&](const lang::MirLoan &candidate) {
-                         return semanticLoan != nullptr &&
-                                candidate.semanticLoan == semanticLoan->id;
-                       });
-      const lang::MirPlace *source =
-          mirLoan == mainMir->body.loans.end()
-              ? nullptr
-              : mainMir->body.findPlace(mirLoan->source);
-      mirLoansUseSymbolPlaces =
-          mirLoansUseSymbolPlaces && source != nullptr &&
-          source->root == lang::MirPlaceRootKind::Symbol && source->symbol != 0;
-    }
+    loanSources[index] = mirLoanSource(mirRetained(valid, alias));
+    mirLoansUseSymbolPlaces =
+        mirLoansUseSymbolPlaces && loanSources[index] != nullptr &&
+        loanSources[index]->root == lang::MirPlaceRootKind::Symbol &&
+        loanSources[index]->symbol != 0;
   }
   expect(mirLoansUseSymbolPlaces,
-         "MIR should lower semantic global-loan roots to concrete symbol "
-         "places rather than producing an invalid empty operand");
+         "MIR loans should retain a nonzero concrete symbol-rooted place for "
+         "every borrowed global or static binding");
+  const auto constantIndex = [](const lang::MirPlace *place,
+                                std::uint64_t index) {
+    return place != nullptr && place->projections.size() == 1 &&
+           place->projections.front().kind == lang::MirProjectionKind::Index &&
+           place->projections.front().constantIndex == index;
+  };
+  expect(constantIndex(loanSources[4], 0) && constantIndex(loanSources[5], 1) &&
+             loanSources[4]->symbol == loanSources[5]->symbol,
+         "global fixed-array borrows should retain one shared symbol root "
+         "with disjoint constant-index projections");
 
   const lang::FrontendResult conflicting =
       lang::Frontend().analyze("conflicting-global-reference-places.gti", R"(
@@ -4929,10 +4896,10 @@ int main() {
                                : frontend.semantics.findBinding(*movedIterator);
   expect(originalIteratorBinding != nullptr &&
              movedIteratorBinding != nullptr &&
-             originalIteratorBinding->retainedLoan != 0 &&
-             originalIteratorBinding->retainedLoan ==
-                 movedIteratorBinding->retainedLoan,
-         "moving borrowed state should transfer one semantic loan identity "
+             mirRetained(frontend, originalIterator).loan != nullptr &&
+             mirRetained(frontend, originalIterator).loan ==
+                 mirRetained(frontend, movedIterator).loan,
+         "moving borrowed state should transfer one MIR loan identity "
          "instead of creating a second owner dependency");
 
   const lang::ClassDecl *iteratorClass =
@@ -5120,12 +5087,14 @@ void testStoredReferenceStandardStringRanges() {
                 releasedHirFunction->id);
   const lang::MirLoan *releasedMirLoan = nullptr;
   if (releasedMirFunction != nullptr && releasedBinding != nullptr) {
-    const auto loan = std::find_if(releasedMirFunction->body.loans.begin(),
-                                   releasedMirFunction->body.loans.end(),
-                                   [&](const lang::MirLoan &candidate) {
-                                     return candidate.semanticLoan ==
-                                            releasedBinding->retainedLoan;
-                                   });
+    const auto loan = std::find_if(
+        releasedMirFunction->body.loans.begin(),
+        releasedMirFunction->body.loans.end(),
+        [&](const lang::MirLoan &candidate) {
+          return &candidate ==
+                 mirRetained(releasedStandardStringBorrow, releasedIterator)
+                     .loan;
+        });
     if (loan != releasedMirFunction->body.loans.end()) {
       releasedMirLoan = &*loan;
     }
@@ -5226,12 +5195,13 @@ void testStoredReferenceBranchInvalidation() {
   bool foundConditionalEnd = false;
   if (controlFlowMirFunction != nullptr && controlFlowHirIf != nullptr &&
       controlFlowBinding != nullptr) {
-    const auto loan = std::find_if(controlFlowMirFunction->body.loans.begin(),
-                                   controlFlowMirFunction->body.loans.end(),
-                                   [&](const lang::MirLoan &candidate) {
-                                     return candidate.semanticLoan ==
-                                            controlFlowBinding->retainedLoan;
-                                   });
+    const auto loan = std::find_if(
+        controlFlowMirFunction->body.loans.begin(),
+        controlFlowMirFunction->body.loans.end(),
+        [&](const lang::MirLoan &candidate) {
+          return &candidate ==
+                 mirRetained(controlFlowBorrow, controlFlowIterator).loan;
+        });
     if (loan != controlFlowMirFunction->body.loans.end()) {
       for (const lang::MirBlock &block : controlFlowMirFunction->body.blocks) {
         foundConditionalEnd =
@@ -5346,10 +5316,6 @@ void testStoredReferenceBranchInvalidation2() {
   const lang::Stmt *branchLocalLastUse =
       branchLocalThen == nullptr ? nullptr
                                  : branchLocalThen->statements().front().get();
-  const lang::BindingInfo *branchLocalBinding =
-      branchLocalIterator == nullptr
-          ? nullptr
-          : branchLocalInvalidation.semantics.findBinding(*branchLocalIterator);
 
   const auto branchLocalHirFunction =
       branchLocalMain == nullptr
@@ -5374,8 +5340,8 @@ void testStoredReferenceBranchInvalidation2() {
       }
     }
   }
-  const lang::SemanticLoanId branchLocalLoanId =
-      branchLocalBinding == nullptr ? 0 : branchLocalBinding->retainedLoan;
+  const lang::MirLoan *branchLocalLoanId =
+      mirRetained(branchLocalInvalidation, branchLocalIterator).loan;
 
   const lang::MirFunctionInstance *branchLocalMirFunction =
       branchLocalHirFunction ==
@@ -5387,12 +5353,11 @@ void testStoredReferenceBranchInvalidation2() {
   bool branchLocalLastUseEnd = false;
   bool branchLocalElseEntryEnd = false;
   if (branchLocalMirFunction != nullptr) {
-    const auto loan =
-        std::find_if(branchLocalMirFunction->body.loans.begin(),
-                     branchLocalMirFunction->body.loans.end(),
-                     [&](const lang::MirLoan &candidate) {
-                       return candidate.semanticLoan == branchLocalLoanId;
-                     });
+    const auto loan = std::find_if(branchLocalMirFunction->body.loans.begin(),
+                                   branchLocalMirFunction->body.loans.end(),
+                                   [&](const lang::MirLoan &candidate) {
+                                     return &candidate == branchLocalLoanId;
+                                   });
     if (loan != branchLocalMirFunction->body.loans.end()) {
       for (const lang::MirBlock &block : branchLocalMirFunction->body.blocks) {
         if (block.failureParameter != 0) {
@@ -5448,10 +5413,6 @@ void testStoredReferenceBranchInvalidation2() {
                 unbracedMain->body()->statements().at(3).get());
   const lang::Stmt *unbracedThen =
       unbracedIf == nullptr ? nullptr : unbracedIf->thenBranch().get();
-  const lang::BindingInfo *unbracedBinding =
-      unbracedIterator == nullptr
-          ? nullptr
-          : unbracedBranchInvalidation.semantics.findBinding(*unbracedIterator);
 
   const auto unbracedHirFunction =
       unbracedMain == nullptr
@@ -5476,8 +5437,8 @@ void testStoredReferenceBranchInvalidation2() {
       }
     }
   }
-  const lang::SemanticLoanId unbracedLoanId =
-      unbracedBinding == nullptr ? 0 : unbracedBinding->retainedLoan;
+  const lang::MirLoan *unbracedLoanId =
+      mirRetained(unbracedBranchInvalidation, unbracedIterator).loan;
   const lang::MirFunctionInstance *unbracedMirFunction =
       unbracedHirFunction ==
               unbracedBranchInvalidation.hir.functionInstances().end()
@@ -5488,12 +5449,11 @@ void testStoredReferenceBranchInvalidation2() {
   bool unbracedThenEnd = false;
   bool unbracedElseEnd = false;
   if (unbracedMirFunction != nullptr) {
-    const auto loan =
-        std::find_if(unbracedMirFunction->body.loans.begin(),
-                     unbracedMirFunction->body.loans.end(),
-                     [&](const lang::MirLoan &candidate) {
-                       return candidate.semanticLoan == unbracedLoanId;
-                     });
+    const auto loan = std::find_if(unbracedMirFunction->body.loans.begin(),
+                                   unbracedMirFunction->body.loans.end(),
+                                   [&](const lang::MirLoan &candidate) {
+                                     return &candidate == unbracedLoanId;
+                                   });
     if (loan != unbracedMirFunction->body.loans.end()) {
       for (const lang::MirBlock &block : unbracedMirFunction->body.blocks) {
         for (const lang::MirInstruction &instruction : block.instructions) {
@@ -5563,11 +5523,6 @@ void testStoredReferenceBranchInvalidation2() {
           ? nullptr
           : dynamic_cast<const lang::IfStmt *>(
                 nestedBranchOuterThen->statements().front().get());
-  const lang::BindingInfo *nestedBranchBinding =
-      nestedBranchIterator == nullptr
-          ? nullptr
-          : nestedBranchInvalidation.semantics.findBinding(
-                *nestedBranchIterator);
 
   const auto nestedBranchHirFunction =
       nestedBranchMain == nullptr
@@ -5592,8 +5547,8 @@ void testStoredReferenceBranchInvalidation2() {
       }
     }
   }
-  const lang::SemanticLoanId nestedBranchLoanId =
-      nestedBranchBinding == nullptr ? 0 : nestedBranchBinding->retainedLoan;
+  const lang::MirLoan *nestedBranchLoanId =
+      mirRetained(nestedBranchInvalidation, nestedBranchIterator).loan;
 
   const lang::MirFunctionInstance *nestedBranchMirFunction =
       nestedBranchHirFunction ==
@@ -5605,12 +5560,11 @@ void testStoredReferenceBranchInvalidation2() {
   bool nestedBranchMergeEnd = false;
   bool nestedBranchOuterElseEnd = false;
   if (nestedBranchMirFunction != nullptr) {
-    const auto loan =
-        std::find_if(nestedBranchMirFunction->body.loans.begin(),
-                     nestedBranchMirFunction->body.loans.end(),
-                     [&](const lang::MirLoan &candidate) {
-                       return candidate.semanticLoan == nestedBranchLoanId;
-                     });
+    const auto loan = std::find_if(nestedBranchMirFunction->body.loans.begin(),
+                                   nestedBranchMirFunction->body.loans.end(),
+                                   [&](const lang::MirLoan &candidate) {
+                                     return &candidate == nestedBranchLoanId;
+                                   });
     if (loan != nestedBranchMirFunction->body.loans.end()) {
       for (const lang::MirBlock &block : nestedBranchMirFunction->body.blocks) {
         for (const lang::MirInstruction &instruction : block.instructions) {
@@ -5905,7 +5859,7 @@ void testStoredReferenceLoopInvalidation() {
     const auto found = std::find_if(
         loopMirFunction->body.loans.begin(), loopMirFunction->body.loans.end(),
         [&](const lang::MirLoan &candidate) {
-          return candidate.semanticLoan == loopBinding->retainedLoan;
+          return &candidate == mirRetained(loopBorrow, loopIterator).loan;
         });
     if (found != loopMirFunction->body.loans.end()) {
       loopMirLoan = &*found;
@@ -6117,11 +6071,12 @@ void testStoredReferenceLoopInvalidation2() {
              transferredIteratorBinding != nullptr &&
              transferredOriginalBinding->symbol != 0 &&
              transferredIteratorBinding->symbol != 0 &&
-             transferredOriginalBinding->retainedLoan != 0 &&
-             transferredOriginalBinding->retainedLoan ==
-                 transferredIteratorBinding->retainedLoan,
+             mirRetained(transferredForLoan, transferredOriginal).loan !=
+                 nullptr &&
+             mirRetained(transferredForLoan, transferredOriginal).loan ==
+                 mirRetained(transferredForLoan, transferredIterator).loan,
          "inferred carrier bindings should retain semantic symbols and the "
-         "same transferred loan identity through HIR/MIR lowering");
+         "same transferred MIR loan identity");
 }
 
 void testStoredReferenceLoopInvalidation3() {
@@ -6857,15 +6812,6 @@ int main() {
          "ordinary by-value calls and releases both exclusive owners");
   if (valid.canGenerateCode()) {
     const auto *main = findTopLevelFunction(valid.program, "main");
-    const auto loanFor = [&](const std::string &name) {
-      const auto *local = findDirectLocal(main, name);
-      const auto *binding =
-          local == nullptr ? nullptr : valid.semantics.findBinding(*local);
-      return binding == nullptr
-                 ? nullptr
-                 : valid.semantics.findLoan(binding->retainedLoan);
-    };
-    const auto *active = loanFor("active");
     // RFC 0004: MIR owns loan identity. A consumed carrier's binding keeps no
     // semantic loan; each carrier's MIR Stored loan carries the same facts.
     const lang::MirFunctionInstance *mainMir = nullptr;
@@ -6972,19 +6918,16 @@ int main() {
                "continuation before the returned carrier is initialized");
       }
     }
-    if (active != nullptr) {
+    if (const auto *active = mirCarrierLoan("active");
+        active != nullptr && mainMir != nullptr) {
       auto forged = valid.mir;
       bool changed = false;
-      for (const auto address : lang::enumerateMirBodyAddresses(forged)) {
-        auto *body = lang::findMirBody(forged, address);
-        if (body == nullptr)
-          continue;
-        for (auto &loan : body->loans)
-          if (loan.semanticLoan == active->id &&
-              !loan.additionalDependencies.empty()) {
-            loan.additionalDependencies.pop_back();
-            changed = true;
-          }
+      auto *body =
+          lang::findMirBody(forged, {lang::MirBodyKind::Function, mainMir->id});
+      if (body != nullptr &&
+          !body->loans[active->id - 1].additionalDependencies.empty()) {
+        body->loans[active->id - 1].additionalDependencies.pop_back();
+        changed = true;
       }
       expect(changed && !lang::verifyMirProgram(forged).valid(),
              "independent MIR verification rejects losing either exclusive "
@@ -8744,22 +8687,25 @@ int main() {
          "and drive std::next and std::binary_search");
 
   const lang::FunctionDecl *main = findTopLevelFunction(valid.program, "main");
-  const auto bindingAt = [&](std::size_t index) -> const lang::BindingInfo * {
+  const auto localAt = [&](std::size_t index) -> const lang::VariableDecl * {
     if (main == nullptr || index >= main->body()->statements().size()) {
       return nullptr;
     }
-    const auto *binding = dynamic_cast<const lang::VariableDecl *>(
+    return dynamic_cast<const lang::VariableDecl *>(
         main->body()->statements().at(index).get());
-    return binding == nullptr ? nullptr : valid.semantics.findBinding(*binding);
   };
-  const lang::BindingInfo *first = bindingAt(1);
-  const lang::BindingInfo *copied = bindingAt(2);
-  const lang::BindingInfo *advanced = bindingAt(5);
-  expect(first != nullptr && copied != nullptr && advanced != nullptr &&
-             first->traits.copyable && !first->traits.copyAssignable &&
-             first->retainedLoan != 0 &&
-             first->retainedLoan == copied->retainedLoan &&
-             first->retainedLoan == advanced->retainedLoan,
+  const lang::VariableDecl *firstLocal = localAt(1);
+  const lang::BindingInfo *first =
+      firstLocal == nullptr ? nullptr
+                            : valid.semantics.findBinding(*firstLocal);
+  const MirRetained firstLoan = mirRetained(valid, firstLocal);
+  const MirRetained copiedLoan = mirRetained(valid, localAt(2));
+  const MirRetained advancedLoan = mirRetained(valid, localAt(5));
+  expect(first != nullptr && first->traits.copyable &&
+             !first->traits.copyAssignable && firstLoan.loan != nullptr &&
+             firstLoan.loan->access == lang::AccessMode::ReadOnly &&
+             copiedLoan.loan == firstLoan.loan &&
+             transfersDependency(firstLoan, advancedLoan),
          "forward read cursors should copy-construct independent positions "
          "while preserving one read-only owner dependency");
 
@@ -8778,11 +8724,15 @@ int main() {
       binarySearchHir = &instance;
     }
   }
+  const lang::MirFunctionInstance *nextEntryMir =
+      nextHir == nullptr ? nullptr
+                         : valid.mir.findFunctionInstance(nextHir->id);
   const bool hirEntryStored =
-      nextHir != nullptr &&
-      std::any_of(nextHir->body.loans.begin(), nextHir->body.loans.end(),
-                  [](const lang::HirLoan &loan) {
-                    return loan.kind == lang::SemanticLoanKind::StoredValue &&
+      nextEntryMir != nullptr &&
+      std::any_of(nextEntryMir->body.loans.begin(),
+                  nextEntryMir->body.loans.end(),
+                  [](const lang::MirLoan &loan) {
+                    return loan.kind == lang::MirLoanKind::Stored &&
                            loan.entry &&
                            loan.access == lang::AccessMode::ReadOnly;
                   });
@@ -8790,8 +8740,9 @@ int main() {
              nextHir->returnBorrowOrigin == lang::BorrowOriginKind::Argument &&
              nextHir->returnBorrowParameter == 0 &&
              nextHir->returnBorrowAccess == lang::AccessMode::ReadOnly,
-         "concrete HIR should retain the owner-tied parameter and return "
-         "contracts used by forward-iterator utilities");
+         "concrete HIR should retain the owner-tied return contract, and MIR "
+         "the read-only stored entry loan, used by forward-iterator "
+         "utilities");
 
   const lang::MirFunctionInstance *nextMir =
       nextHir == nullptr ? nullptr
@@ -9773,10 +9724,10 @@ int shared_aliases() {
   const lang::BindingInfo *forwardedBinding =
       forwarded == nullptr ? nullptr : valid.semantics.findBinding(*forwarded);
   expect(viewBinding != nullptr && forwardedBinding != nullptr &&
-             viewBinding->retainedLoan != 0 &&
-             viewBinding->retainedLoan == forwardedBinding->retainedLoan,
-         "std::move through a borrowed-value relay should transfer one loan "
-         "identity");
+             transfersDependency(mirRetained(valid, view),
+                                 mirRetained(valid, forwarded)),
+         "std::move through a borrowed-value relay should transfer the exact "
+         "owner dependency to the result carrier");
 
   const auto *relaySource = main == nullptr
                                 ? nullptr
@@ -9793,9 +9744,8 @@ int shared_aliases() {
       genericRelay == nullptr ? nullptr
                               : valid.semantics.findBinding(*genericRelay);
   expect(relaySourceBinding != nullptr && genericRelayBinding != nullptr &&
-             relaySourceBinding->retainedLoan != 0 &&
-             relaySourceBinding->retainedLoan ==
-                 genericRelayBinding->retainedLoan,
+             transfersDependency(mirRetained(valid, relaySource),
+                                 mirRetained(valid, genericRelay)),
          "a concrete unconstrained generic borrowed-value return should "
          "publish and transfer its inferred owner dependency");
 
@@ -9839,11 +9789,13 @@ int shared_aliases() {
               lang::BorrowOriginKind::Receiver &&
           resolvedIndexOperator->borrowAccess == lang::AccessMode::ReadOnly &&
           callableBinding != nullptr && calledViewBinding != nullptr &&
-          indexedViewBinding != nullptr && callableBinding->retainedLoan != 0 &&
-          callableBinding->retainedLoan == calledViewBinding->retainedLoan &&
-          callableBinding->retainedLoan == indexedViewBinding->retainedLoan,
+          indexedViewBinding != nullptr &&
+          transfersDependency(mirRetained(valid, callable),
+                              mirRetained(valid, calledView)) &&
+          transfersDependency(mirRetained(valid, callable),
+                              mirRetained(valid, indexedView)),
       "operator() and operator[] returning stored-reference values should "
-      "preserve their receiver dependency and semantic loan identity");
+      "preserve their receiver dependency in a loan of their own");
 
   const lang::HirValue *hirOperatorCall = nullptr;
   const lang::HirValue *hirIndexOperator = nullptr;
@@ -10236,12 +10188,12 @@ int main() {
           : frontend.mir.findFunctionInstance(switchHirFunction->id);
   std::size_t reachableSwitchEnds = 0;
   if (switchMirFunction != nullptr && switchBinding != nullptr) {
-    const auto loan = std::find_if(switchMirFunction->body.loans.begin(),
-                                   switchMirFunction->body.loans.end(),
-                                   [&](const lang::MirLoan &candidate) {
-                                     return candidate.semanticLoan ==
-                                            switchBinding->retainedLoan;
-                                   });
+    const auto loan = std::find_if(
+        switchMirFunction->body.loans.begin(),
+        switchMirFunction->body.loans.end(),
+        [&](const lang::MirLoan &candidate) {
+          return &candidate == mirRetained(frontend, switchIterator).loan;
+        });
     if (loan != switchMirFunction->body.loans.end()) {
       for (const lang::MirBlock &block : switchMirFunction->body.blocks) {
         if (!block.reachable) {
@@ -10294,10 +10246,8 @@ int main() {
     }
     const auto *iterator = dynamic_cast<const lang::VariableDecl *>(
         function->body()->statements().at(1).get());
-    const lang::BindingInfo *binding =
-        iterator == nullptr ? nullptr
-                            : frontend.semantics.findBinding(*iterator);
-    if (binding == nullptr || binding->retainedLoan == 0) {
+    const lang::MirLoan *retained = mirRetained(frontend, iterator).loan;
+    if (retained == nullptr) {
       return false;
     }
     const auto hir =
@@ -10314,11 +10264,9 @@ int main() {
     if (mir == nullptr) {
       return false;
     }
-    const auto loan =
-        std::find_if(mir->body.loans.begin(), mir->body.loans.end(),
-                     [&](const lang::MirLoan &candidate) {
-                       return candidate.semanticLoan == binding->retainedLoan;
-                     });
+    const auto loan = std::find_if(
+        mir->body.loans.begin(), mir->body.loans.end(),
+        [&](const lang::MirLoan &candidate) { return &candidate == retained; });
     if (loan == mir->body.loans.end()) {
       return false;
     }
@@ -10475,10 +10423,7 @@ int loop_aliases() {
           ? nullptr
           : dynamic_cast<const lang::VariableDecl *>(
                 sequential->body()->statements().at(1).get());
-  const lang::BindingInfo *iteratorBinding =
-      iterator == nullptr ? nullptr : frontend.semantics.findBinding(*iterator);
-  const lang::SemanticLoanId sharedLoan =
-      iteratorBinding == nullptr ? 0 : iteratorBinding->retainedLoan;
+  const lang::MirLoan *sharedLoan = mirRetained(frontend, iterator).loan;
 
   const auto sequentialHir =
       sequential == nullptr
@@ -10495,11 +10440,11 @@ int loop_aliases() {
           : frontend.mir.findFunctionInstance(sequentialHir->id);
   const lang::MirLoan *mirLoan = nullptr;
   if (sequentialMir != nullptr) {
-    const auto found = std::find_if(
-        sequentialMir->body.loans.begin(), sequentialMir->body.loans.end(),
-        [&](const lang::MirLoan &candidate) {
-          return candidate.semanticLoan == sharedLoan;
-        });
+    const auto found = std::find_if(sequentialMir->body.loans.begin(),
+                                    sequentialMir->body.loans.end(),
+                                    [&](const lang::MirLoan &candidate) {
+                                      return &candidate == sharedLoan;
+                                    });
     if (found != sequentialMir->body.loans.end()) {
       mirLoan = &*found;
     }
@@ -15125,17 +15070,8 @@ int main() {
       fixedHirRanges +=
           range.strategy == lang::RangeIterationStrategy::FixedArray;
       temporaryHirRanges += range.ownsRangeTemporary;
-      const lang::HirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
-      const lang::HirLoan *elementLoan =
-          function.body.findLoan(range.elementLoan);
-      hirLoansAreReadOnly =
-          hirLoansAreReadOnly &&
-          range.elementAccess == lang::AccessMode::ReadOnly &&
-          rangeLoan != nullptr &&
-          rangeLoan->access == lang::AccessMode::ReadOnly &&
-          (range.elementLoan == 0 ||
-           (elementLoan != nullptr &&
-            elementLoan->access == lang::AccessMode::ReadOnly));
+      hirLoansAreReadOnly = hirLoansAreReadOnly &&
+                            range.elementAccess == lang::AccessMode::ReadOnly;
       if (range.strategy == lang::RangeIterationStrategy::FixedArray) {
         hirLoansAreReadOnly =
             hirLoansAreReadOnly && range.arrayLength != 0 &&
@@ -15147,7 +15083,7 @@ int main() {
   }
   expect(fixedHirRanges == 2 && temporaryHirRanges == 3 && hirLoansAreReadOnly,
          "HIR should retain fixed-array indexed strategy, structural "
-         "temporary ownership, and exact read-only loan identities");
+         "temporary ownership, and read-only element access");
 
   std::size_t fixedMirRanges = 0;
   std::size_t temporaryMirRanges = 0;
@@ -15178,8 +15114,10 @@ int main() {
       boundedLoans = boundedLoans &&
                      range.elementAccess == lang::AccessMode::ReadOnly &&
                      rangeLoan != nullptr && !rangeLoan->escapes &&
+                     rangeLoan->access == lang::AccessMode::ReadOnly &&
                      (range.elementLoan == 0 ||
-                      (elementLoan != nullptr && !elementLoan->escapes));
+                      (elementLoan != nullptr && !elementLoan->escapes &&
+                       elementLoan->access == lang::AccessMode::ReadOnly));
       if (!range.ownsRangeTemporary || range.ownerDrop == 0) {
         continue;
       }
@@ -15692,7 +15630,6 @@ int main() {
       if (payload == nullptr)
         continue;
       ++hirRanges;
-      const lang::HirLoan *loan = function.body.findLoan(range.rangeLoan);
       const auto owner = std::find_if(function.body.bindings.begin(),
                                       function.body.bindings.end(),
                                       [&](const lang::HirBinding &binding) {
@@ -15702,7 +15639,6 @@ int main() {
           exactHirPlans && !range.ownsRangeTemporary &&
           payload->borrowOrigin == lang::BorrowOriginKind::Receiver &&
           payload->borrowAccess == lang::AccessMode::ReadOnly &&
-          loan != nullptr && loan->access == lang::AccessMode::ReadOnly &&
           owner != function.body.bindings.end() &&
           owner->info.type.kind == lang::SemanticType::Reference;
     }
@@ -16019,7 +15955,6 @@ int main() { return mutate_arrays() + return_from_mutable_loop(); }
          "exclusive range and element loans");
 
   bool foundMutableFixedArray = false;
-  bool fixedArrayLoanShape = true;
   for (const lang::HirFunctionInstance &function :
        fixedArrays.hir.functionInstances()) {
     for (const lang::HirStatement &statement : function.body.statements) {
@@ -16028,23 +15963,13 @@ int main() { return mutate_arrays() + return_from_mutable_loop(); }
               lang::AccessMode::Mutable) {
         continue;
       }
-      const lang::HirRangeIteration &range = *statement.rangeIteration;
-      const lang::HirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
-      const lang::HirLoan *elementLoan =
-          function.body.findLoan(range.elementLoan);
-      foundMutableFixedArray =
-          foundMutableFixedArray ||
-          range.strategy == lang::RangeIterationStrategy::FixedArray;
-      fixedArrayLoanShape = fixedArrayLoanShape && rangeLoan != nullptr &&
-                            rangeLoan->access == lang::AccessMode::Mutable &&
-                            elementLoan != nullptr &&
-                            elementLoan->access == lang::AccessMode::Mutable &&
-                            elementLoan->parent == range.rangeLoan;
+      foundMutableFixedArray = foundMutableFixedArray ||
+                               statement.rangeIteration->strategy ==
+                                   lang::RangeIterationStrategy::FixedArray;
     }
   }
-  expect(foundMutableFixedArray && fixedArrayLoanShape,
-         "HIR should retain a mutable fixed-array range loan and one exact "
-         "mutable child element loan");
+  expect(foundMutableFixedArray,
+         "HIR should retain a mutable fixed-array range plan");
 
   bool mutableMirLoanShape = false;
   for (const lang::MirFunctionInstance &function :
@@ -16079,37 +16004,25 @@ int main() { return mutate_arrays() + return_from_mutable_loop(); }
          "the native backend should consume mutable fixed-array loans from "
          "the verified MIR plan");
 
-  lang::HirProgram invalidMutableHir = fixedArrays.hir;
-  bool corruptedMutableHir = false;
-  auto &invalidMutableHirFunctions =
-      const_cast<std::vector<lang::HirFunctionInstance> &>(
-          invalidMutableHir.functionInstances());
-  for (lang::HirFunctionInstance &function : invalidMutableHirFunctions) {
-    for (const lang::HirStatement &statement : function.body.statements) {
-      if (!statement.rangeIteration ||
-          statement.rangeIteration->elementAccess !=
-              lang::AccessMode::Mutable) {
+  lang::MirProgram detachedMutableElement = fixedArrays.mir;
+  bool corruptedMutableElement = false;
+  for (const auto address :
+       lang::enumerateMirBodyAddresses(detachedMutableElement)) {
+    lang::MirBody *body = lang::findMirBody(detachedMutableElement, address);
+    if (body == nullptr || corruptedMutableElement)
+      continue;
+    for (const lang::MirRangeIteration &range : body->rangeIterations) {
+      if (range.elementAccess != lang::AccessMode::Mutable ||
+          range.elementLoan == 0 || range.elementLoan > body->loans.size())
         continue;
-      }
-      for (lang::HirLoan &loan : function.body.loans) {
-        if (loan.semanticLoan == statement.rangeIteration->elementLoan) {
-          loan.parent = 0;
-          corruptedMutableHir = true;
-          break;
-        }
-      }
-      if (corruptedMutableHir) {
-        break;
-      }
-    }
-    if (corruptedMutableHir) {
+      body->loans[range.elementLoan - 1].parent = 0;
+      corruptedMutableElement = true;
       break;
     }
   }
-  expect(corruptedMutableHir && !lang::verifyHirProgramPlans(
-                                     fixedArrays.semantics, invalidMutableHir)
-                                     .valid(),
-         "HIR verification should reject a mutable element loan detached "
+  expect(corruptedMutableElement &&
+             !lang::verifyMirProgram(detachedMutableElement).valid(),
+         "MIR verification should reject a mutable element loan detached "
          "from its exclusive range parent");
 
   lang::MirBody invalidMutableMir;
@@ -16184,24 +16097,24 @@ int main() { return mutate_vector() + mutate_owned_temporary(); }
          "std::vector should expose bounded in-place mutable iteration");
 
   bool foundMutableVector = false;
-  for (const lang::HirFunctionInstance &function :
-       standardVector.hir.functionInstances()) {
-    for (const lang::HirStatement &statement : function.body.statements) {
-      if (!statement.rangeIteration ||
-          statement.rangeIteration->elementAccess !=
-              lang::AccessMode::Mutable) {
+  for (const lang::MirFunctionInstance &function :
+       standardVector.mir.functionInstances()) {
+    for (const lang::MirRangeIteration &range : function.body.rangeIterations) {
+      if (range.elementAccess != lang::AccessMode::Mutable) {
         continue;
       }
-      const lang::HirRangeIteration &range = *statement.rangeIteration;
-      const lang::HirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
-      const lang::HirLoan *elementLoan =
+      const lang::MirLoan *rangeLoan = function.body.findLoan(range.rangeLoan);
+      const lang::MirLoan *elementLoan =
           function.body.findLoan(range.elementLoan);
+      const lang::MirPlace *iterator = function.body.findPlace(range.iterator);
       foundMutableVector =
           range.strategy == lang::RangeIterationStrategy::Structural &&
           rangeLoan != nullptr &&
           rangeLoan->access == lang::AccessMode::Mutable &&
+          iterator != nullptr &&
+          iterator->root == lang::MirPlaceRootKind::Binding &&
           std::find(rangeLoan->carriers.begin(), rangeLoan->carriers.end(),
-                    range.iterator) != rangeLoan->carriers.end() &&
+                    iterator->binding) != rangeLoan->carriers.end() &&
           elementLoan != nullptr &&
           elementLoan->access == lang::AccessMode::Mutable &&
           elementLoan->parent == range.rangeLoan;
@@ -19370,35 +19283,26 @@ int main() {
              lang::verifyMirProgram(frontend.mir).valid(),
          "receiver-, parameter-, and global-tied fallible borrows should "
          "reach verified MIR, including local copy, move, and forwarding");
-  std::size_t scalarExtractions = 0;
-  for (const auto &loan : frontend.semantics.loans()) {
-    const auto *call = dynamic_cast<const lang::Call *>(loan.origin);
-    const auto *projection =
-        call == nullptr ? nullptr : frontend.semantics.findCall(*call);
-    // value() is an ordinary member of the prelude class.
-    const lang::FunctionInfo *member =
-        projection == nullptr
-            ? nullptr
-            : frontend.semantics.findFunction(projection->function);
-    const lang::ClassTypeInfo *owner =
-        member == nullptr || member->ownerClass == 0
-            ? nullptr
-            : frontend.semantics.findClassType(member->ownerClass);
-    if (owner != nullptr && owner->qualifiedName == "expected" &&
-        projection->declaration != nullptr &&
-        projection->declaration->name().lexeme == "value" &&
-        projection->returnType.kind == lang::SemanticType::Reference &&
-        projection->returnType.arguments.size() == 1 &&
-        projection->returnType.arguments.front().kind ==
-            lang::SemanticType::Int32) {
-      ++scalarExtractions;
-      expect(loan.storedDependency == 0,
-             "extracting a scalar fallible borrow retains the external "
-             "referent, not a physical shell dependency on its carrier");
-    }
-  }
-  expect(scalarExtractions == 1,
+  // The retained `int32_t& alias = found.value()` extraction: its MIR loan
+  // is produced by the prelude class's ordinary value() call.
+  const MirRetained scalarExtraction = mirRetained(
+      frontend,
+      findDirectLocal(findTopLevelFunction(frontend.program, "main"), "alias"));
+  bool scalarExtractionCall = false;
+  if (scalarExtraction.loan != nullptr)
+    for (const lang::MirBlock &block : scalarExtraction.function->body.blocks)
+      for (const lang::MirInstruction &instruction : block.instructions)
+        scalarExtractionCall =
+            scalarExtractionCall ||
+            (instruction.loan == scalarExtraction.loan->id &&
+             isExpectedMemberCall(frontend, instruction, "value"));
+  expect(scalarExtraction.loan != nullptr && scalarExtractionCall &&
+             scalarExtraction.loan->access == lang::AccessMode::ReadOnly,
          "the fixture retains one scalar fallible-borrow extraction");
+  expect(scalarExtraction.loan != nullptr &&
+             scalarExtraction.loan->storedDependency == 0,
+         "extracting a scalar fallible borrow retains the external "
+         "referent, not a physical shell dependency on its carrier");
 
   std::size_t fallibleFunctions = 0;
   std::size_t escapingReturnLoans = 0;

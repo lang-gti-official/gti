@@ -148,7 +148,6 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   instanceValueSubstitution.clear();
   nextLambdaId = 1;
   requestSession.sourceLambdaIdentities.clear();
-  nextSemanticLoanId = 1;
   nextPlaceSelectionId = 1;
   instanceSymbolCeiling = 0;
   instanceLambdaCeiling = 0;
@@ -236,8 +235,6 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   programEffects.clear();
   requestSession.programExpressionCache = {};
   requestSession.fullExpressionStates.clear();
-  requestSession.programStorageBorrowChecks.clear();
-  requestSession.programFailingEffects.clear();
   requestSession.programConcreteEffects =
       std::make_shared<ProgramConcreteEffectState>();
   requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
@@ -1114,9 +1111,6 @@ auto SemanticVisitor::Impl::leaveUnsafeRegion() -> void {
 }
 
 auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
-  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
-                                          .order = loanFlow.currentOrder,
-                                          .statement = &stmt});
   if (stmt.isUnsafe())
     enterUnsafeRegion(*stmt.unsafeKeyword(), false);
   beginScope();
@@ -1124,7 +1118,6 @@ auto SemanticVisitor::Impl::visitBlockStmt(const BlockStmt &stmt) -> void {
   endScope();
   if (stmt.isUnsafe())
     leaveUnsafeRegion();
-  loanFlow.statementBoundaries.pop_back();
 }
 
 // The work visitClassDecl does before its members (tooling symbol, base and
@@ -2459,7 +2452,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       declare(parameter.name, parameterType,
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
-      recordParameterEntryLoan(parameter);
+      recordParameterEntryDependency(parameter);
     }
   }
 
@@ -2935,7 +2928,6 @@ auto SemanticVisitor::Impl::visitDestructorDecl(const DestructorDecl &stmt)
 }
 
 auto SemanticVisitor::Impl::visitDoWhileStmt(const DoWhileStmt &stmt) -> void {
-  noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
   beginRawPointerLoop();
   const ScopeStack beforeLoop = scopes;
@@ -3062,7 +3054,6 @@ auto SemanticVisitor::Impl::visitExpressionStmt(const ExpressionStmt &stmt)
 }
 
 auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
-  noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
   beginScope();
   analyze(stmt.initializer());
@@ -3144,9 +3135,6 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
   const auto *syntax = stmtAs<BlockStmt>(stmt.lowered().get());
   if (syntax == nullptr || syntax->statements().empty())
     return;
-  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
-                                          .order = loanFlow.currentOrder,
-                                          .statement = syntax});
   beginScope();
   // Protocol selection needs the checked owner type. Keep both parts in the
   // same statement region so ordinary range loans retain their original
@@ -3287,14 +3275,12 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
          .dereferenceFunction = takeNext == nullptr ? 0 : takeNext->function,
          .ownsRangeTemporary = true});
     endScope();
-    loanFlow.statementBoundaries.pop_back();
     return;
   }
   analyzeStatementsInRegion(
       StmtList(syntax->statements().begin() + 1, syntax->statements().end()),
       region, 1);
   endScope();
-  loanFlow.statementBoundaries.pop_back();
 
   const bool mutableElementRequested =
       stmt.bindingMutability() == Mutability::Mutable &&
@@ -3502,10 +3488,6 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
              .sentinel = sentinel == nullptr ? 0 : sentinel->symbol,
              .element = element == nullptr ? 0 : element->symbol,
              .elementOwner = elementOwner == nullptr ? 0 : elementOwner->symbol,
-             .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
-             .elementLoan = element == nullptr ? 0 : element->retainedLoan,
-             .elementOwnerLoan =
-                 elementOwner == nullptr ? 0 : elementOwner->retainedLoan,
              .beginFunction = beginFunction,
              .endFunction = endFunction,
              .compareFunction = compareFunction,
@@ -4207,7 +4189,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
                   : declaredType,
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
-      recordParameterEntryLoan(parameter);
+      recordParameterEntryDependency(parameter);
     }
   }
 
@@ -5154,28 +5136,6 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
     return;
   }
 
-  const std::size_t conditionalIndex = loanFlow.conditionals.size();
-  if (!loanFlow.activeConditionalArms.empty()) {
-    const ActiveLoanFlowConditionalArm parent =
-        loanFlow.activeConditionalArms.back();
-    if (parent.conditional < loanFlow.conditionals.size()) {
-      LoanFlowConditional &parentConditional =
-          loanFlow.conditionals[parent.conditional];
-      LoanFlowConditionalArm &parentArm = parent.thenBranch
-                                              ? parentConditional.thenArm
-                                              : parentConditional.elseArm;
-      parentArm.nestedConditionals.push_back(conditionalIndex);
-    }
-  }
-  loanFlow.conditionals.push_back(
-      {.statement = &stmt,
-       .useBegin = loanFlow.uses.size(),
-       .conflictBegin = loanFlow.conflicts.size(),
-       .parentPath = loanFlow.activeConditionalArms,
-       .parentSwitchPath = loanFlow.activeSwitchArms});
-  loanFlow.statementBoundaries.push_back({.region = loanFlow.currentRegion,
-                                          .order = loanFlow.currentOrder,
-                                          .statement = &stmt});
   const SemanticType conditionType =
       analyzeExpectedCallableResult(stmt.condition(), SemanticType::Bool);
   requireBool(stmt.condition(), conditionType,
@@ -5184,17 +5144,9 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   const std::vector<ValueControlFlowContext> beforeValueControlFlow =
       valueControlFlow;
 
-  loanFlow.conditionals[conditionalIndex].thenArm.useBegin =
-      loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].thenArm.conflictBegin =
-      loanFlow.conflicts.size();
-  loanFlow.activeConditionalArms.push_back(
-      {.conditional = conditionalIndex, .thenBranch = true});
+  ++loanFlow.conditionalArmDepth;
   analyzeConditionalArm(stmt.thenBranch());
-  loanFlow.activeConditionalArms.pop_back();
-  loanFlow.conditionals[conditionalIndex].thenArm.useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].thenArm.conflictEnd =
-      loanFlow.conflicts.size();
+  --loanFlow.conditionalArmDepth;
   const ScopeStack thenScopes = scopes;
   const FlowSummary thenFlow = summarizeFlow(stmt.thenBranch().get());
   const std::vector<ValueControlFlowContext> thenValueControlFlow =
@@ -5202,23 +5154,11 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
 
   scopes = beforeBranches;
   valueControlFlow = beforeValueControlFlow;
-  loanFlow.conditionals[conditionalIndex].elseArm.useBegin =
-      loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].elseArm.conflictBegin =
-      loanFlow.conflicts.size();
   if (stmt.elseBranch()) {
-    loanFlow.activeConditionalArms.push_back(
-        {.conditional = conditionalIndex, .thenBranch = false});
+    ++loanFlow.conditionalArmDepth;
     analyzeConditionalArm(stmt.elseBranch());
-    loanFlow.activeConditionalArms.pop_back();
+    --loanFlow.conditionalArmDepth;
   }
-  loanFlow.conditionals[conditionalIndex].elseArm.useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].elseArm.conflictEnd =
-      loanFlow.conflicts.size();
-  loanFlow.conditionals[conditionalIndex].useEnd = loanFlow.uses.size();
-  loanFlow.conditionals[conditionalIndex].conflictEnd =
-      loanFlow.conflicts.size();
-  loanFlow.conditionals[conditionalIndex].endSequence = loanFlow.nextSequence++;
   const ScopeStack elseScopes = scopes;
   const FlowSummary elseFlow = summarizeFlow(stmt.elseBranch().get());
   const std::vector<ValueControlFlowContext> elseValueControlFlow =
@@ -5252,7 +5192,6 @@ auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
   }
   scopes = loanScopes;
   applyMoveStates(moveScopes);
-  loanFlow.statementBoundaries.pop_back();
 }
 
 auto SemanticVisitor::Impl::visitLoopControlStmt(const LoopControlStmt &stmt)
@@ -5268,7 +5207,6 @@ auto SemanticVisitor::Impl::visitLoopControlStmt(const LoopControlStmt &stmt)
     return;
   }
   if (isBreak) {
-    recordLoanFlowBreak(stmt);
   }
   recordValueControlFlowExit(isBreak);
 }
@@ -5422,7 +5360,6 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       semanticModel.recordBorrowDependencySet(
           *stmt.value(), {.dependencies = std::move(dependencies)});
     }
-    recordReturnedStorageBorrowCleanup(stmt);
     recordRawResult(stmt.value());
     requireInitializedReceiver(stmt.keyword());
     return;
@@ -5475,7 +5412,6 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       }
     }
   }
-  recordReturnedStorageBorrowCleanup(stmt);
   requireInitializedReceiver(stmt.keyword());
 }
 
@@ -5512,16 +5448,6 @@ auto SemanticVisitor::Impl::reportMoveOnlyReturnCopy(
 
 auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.expression());
-  noteUnsupportedNestedLoanControlFlow();
-  const std::size_t loanSwitchIndex = loanFlow.switches.size();
-  loanFlow.switches.push_back(
-      {.statement = &stmt,
-       .parentPath = loanFlow.activeConditionalArms,
-       .parentSwitchPath = loanFlow.activeSwitchArms,
-       .arms = std::vector<LoanFlowSwitchArm>(stmt.arms().size())});
-  loanFlow.switchBoundaries.push_back({.region = loanFlow.currentRegion,
-                                       .order = loanFlow.currentOrder,
-                                       .statement = &stmt});
   // A payload-enum field subject is observed in place, not copied out.
   const Expr *subject = stmt.expression().get();
   while (const auto *group = exprAs<Grouping>(subject))
@@ -5545,8 +5471,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       // exact receiver inventory, while the rest of the body is still checked.
       bodyFlow.deferredGenericFlow = true;
       requestSession.deferredFlowOwners.insert(currentProgramEffectOwner);
-      loanFlow.switchBoundaries.pop_back();
-      loanFlow.switches.resize(loanSwitchIndex);
       return;
     }
   }
@@ -5611,8 +5535,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                        binding) != dropped.end();
                     });
   }
-  const auto subjectSource = retainedLoanSource(stmt.expression());
-  SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
+  const auto subjectSource = retainedDependencySource(stmt.expression());
+  BindingDependencyRef subjectDependency =
+      subjectSource ? subjectSource->summary : BindingDependencyRef{};
   // A field of the dependency's carrier that the subject names, as in
   // `switch (line.word)`, prefixes the payload designation.
   std::vector<SymbolId> subjectFieldPrefix;
@@ -5620,22 +5545,17 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
     for (const auto &projection : place->projections)
       subjectFieldPrefix.push_back(
           projection.kind == PlaceProjectionKind::Field ? projection.field : 0);
-  if (const auto *loan = semanticModel.findLoan(subjectDependency);
-      loan && loan->kind == SemanticLoanKind::Reference)
+  if (BindingDependencyRef loan = subjectDependency;
+      loan && loan->kind == BindingDependencyKind::Reference)
     subjectDependency = loan->storedDependency;
   bool consumesDependency = false;
   if (consumedSubject && subjectDependencies &&
       !subjectDependencies->dependencies.empty()) {
-    const auto *group = semanticModel.findLoan(subjectDependency);
-    const auto flow = loanFlow.records.find(subjectDependency);
-    const auto *carrier = subjectSource && subjectSource->carrier
-                              ? resolve(subjectSource->carrier->name())
-                              : nullptr;
-    consumesDependency =
-        group && group->kind == SemanticLoanKind::StoredValue &&
-        !group->lifecycleBound && flow != loanFlow.records.end() &&
-        flow->second.active && flow->second.carriers.size() == 1 && carrier &&
-        flow->second.carriers.contains(toolingSymbolFor(*carrier));
+    // MIR rejects consuming a group another live carrier still holds.
+    BindingDependencyRef group = subjectDependency;
+    consumesDependency = group &&
+                         group->kind == BindingDependencyKind::StoredValue &&
+                         !group->lifecycleBound;
     if (!consumesDependency)
       report(stmt.keyword(),
              "A consuming borrowed payload requires one exact active carrier "
@@ -5646,8 +5566,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
     // Like an immutable local initialized from the subject: arms move its
     // fields out, but no source code can name or assign it.
     auto hidden = bindingInfo(subjectType, AccessMode::ReadOnly);
-    if (consumesDependency)
-      hidden.retainedLoan = subjectDependency;
     semanticModel.recordConsumedSwitchSubject(stmt, std::move(hidden));
   }
   const bool validSubject = isInteger(subjectType) ||
@@ -5799,8 +5717,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
 
     scopes = beforeSwitch;
     beginScope();
-    loanFlow.activeSwitchArms.push_back(
-        {.switchIndex = loanSwitchIndex, .armIndex = armIndex});
+    ++loanFlow.conditionalArmDepth;
     std::unordered_map<const Expr *, SemanticBorrowDependencySet>
         transferredPayloadDependencies;
     bool validHandoff = consumesDependency;
@@ -5808,7 +5725,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       // Analyze mutually exclusive arms from the same incoming authority.
       // Capture every selected external path before retiring that authority;
       // later bindings must not rediscover it through an already moved shell.
-      loanFlow.records.at(subjectDependency).active = true;
       for (const auto &[_, pattern] : payloadPatterns)
         for (const auto &payload : pattern.bindings) {
           if (payload.extractionKind !=
@@ -5827,8 +5743,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           // An abstract formal has no earlier body-local parent: retain its
           // exact identity through transferredFrom, not an expired parent.
           for (const auto &dependency : projected->dependencies)
-            if (dependency.parent == subjectDependency) {
-              const auto *group = semanticModel.findLoan(subjectDependency);
+            if (sameBindingDependency(dependency.parent, subjectDependency)) {
+              BindingDependencyRef group = subjectDependency;
               if (!group || !group->entry ||
                   !hasCheckedExternalBorrowOrigin(dependency)) {
                 validHandoff = false;
@@ -5838,28 +5754,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           transferredPayloadDependencies.emplace(payload.source,
                                                  std::move(*projected));
         }
-      if (validHandoff) {
-        loanFlow.records.at(subjectDependency).active = false;
-      }
     }
-    // Binding an observed subject's payloads reads its place at this arm's
-    // entry, as forming a selection uses its parent authority. A subject
-    // reached through a reference (a reference binding, or a call result that
-    // names no place) uses that reference's authority there; a named owned
-    // place needs none of its carried dependencies to be read.
-    if (!consumedSubject && subjectSource &&
-        std::any_of(payloadPatterns.begin(), payloadPatterns.end(),
-                    [](const auto &entry) {
-                      return std::any_of(entry.second.bindings.begin(),
-                                         entry.second.bindings.end(),
-                                         [](const auto &payload) {
-                                           return payload.name != nullptr;
-                                         });
-                    }))
-      if (const auto *loan = semanticModel.findLoan(subjectSource->loan);
-          loan && (loan->kind == SemanticLoanKind::Reference ||
-                   semanticModel.findPlace(*stmt.expression()) == nullptr))
-        recordSemanticLoanAuthorityUse(subjectSource->loan);
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -5942,20 +5837,17 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         // designates holds that owner's dynamic text (L-OWN-02). A by-value
         // binding of it is a dependent view carrying the subject's loan, as
         // a read of a published class field is.
-        if (const auto *textLoan =
-                consumedSubject
-                    ? nullptr
-                    : dependentTextPayloadLoan(subjectDependency, pattern,
-                                               payload, subjectFieldPrefix)) {
+        if (!consumedSubject &&
+            dependentTextPayloadDependency(subjectDependency, pattern, payload,
+                                           subjectFieldPrefix) != nullptr) {
           if (payload.extractionKind == PayloadExtractionKind::BorrowValue)
             report(*payload.name,
                    "A reference cannot yet bind a payload that holds dynamic "
                    "text from a local owner; bind it by value.",
                    "GTI-S2045");
           else if (Symbol *carrier = resolveMutable(*payload.name)) {
-            attachLoanCarrier(textLoan->id, *carrier, symbol, false);
+            shareBindingDependency(subjectDependency, *carrier);
             payload.binding.traits.containsBorrowedState = true;
-            payload.binding.retainedLoan = textLoan->id;
           }
         }
         if (!rawPointerFieldPaths(payload.binding.type).empty())
@@ -5997,7 +5889,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           } else if (!dependencies ||
                      (payload.extractionKind ==
                           PayloadExtractionKind::ReborrowReference &&
-                      subjectDependency == 0)) {
+                      subjectDependency == nullptr)) {
             Diagnostic diagnostic = makeDiagnostic(
                 "GTI-S2067", DiagnosticPhase::Semantics, *payload.name,
                 consumedSubject
@@ -6020,13 +5912,14 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                         "'mut', or select before the loop.");
             diagnostics.emplace_back(std::move(diagnostic));
           } else if (Symbol *carrier = resolveMutable(*payload.name)) {
+            carrier->selectedReference = true;
             // The extraction observes incoming authority before handoff.
             // Its value fact is distinct from the successor loan published
             // after retirement of the old group.
             const auto extractedDependencies = *dependencies;
             if (consumedSubject)
               for (auto &dependency : dependencies->dependencies)
-                if (dependency.parent == subjectDependency)
+                if (sameBindingDependency(dependency.parent, subjectDependency))
                   dependency.parent = 0;
             const auto enumeration = enumTypeFor(pattern.type);
             const auto variant = std::find_if(
@@ -6039,44 +5932,32 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             if (reborrow)
               for (auto &dependency : dependencies->dependencies)
                 dependency.parent = subjectDependency;
-            for (const auto &dependency : dependencies->dependencies)
-              reportBorrowConflict(
-                  *payload.name,
-                  conflictingLoans(dependency.place, dependency.access,
-                                   dependency.parent),
-                  "Cannot select this reference while an overlapping "
-                  "external borrow may still be live.");
             const auto &primary = dependencies->dependencies.front();
-            payload.binding.retainedLoan = createRetainedLoan(
-                *carrier, symbol, SemanticLoanKind::Reference, payload.source,
-                primary.place, primary.place.root, primary.place.receiver,
-                primary.access, primary.protectsStorage, primary.parent);
-            if (payload.binding.retainedLoan != 0) {
-              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
-              loan.additionalDependencies.assign(
-                  dependencies->dependencies.begin() + 1,
-                  dependencies->dependencies.end());
-              loan.referenceSelection = SemanticReferenceSelection{
-                  .source = payload.source,
-                  .carrier = stmt.expression().get(),
-                  .transferredFrom = consumedSubject ? subjectDependency : 0,
-                  .fields = {variant->payloadSymbols[payload.payloadIndex]},
-                  .conditions = {{.enumeration = pattern.type,
-                                  .variant = pattern.variantIndex}},
-                  .reference = variant->payloadTypes[payload.payloadIndex]};
-              semanticModel.recordLoan(std::move(loan));
-              for (const auto &dependency : dependencies->dependencies)
-                if (dependency.protectsStorage)
-                  registerStorageLoan(dependency.place.root,
-                                      dependency.place.receiver,
-                                      payload.binding.retainedLoan);
-              loanFlow.records.at(payload.binding.retainedLoan)
-                  .confinedToRegion = false;
+            BindingDependencyRef selected = formBindingDependency(
+                *carrier, symbol, BindingDependencyKind::Reference,
+                payload.source, primary.place, primary.place.root,
+                primary.place.receiver, primary.access, primary.protectsStorage,
+                primary.parent);
+            if (selected != nullptr) {
+              refineBindingDependency(
+                  *carrier, selected, [&](BindingDependency &loan) {
+                    loan.additionalDependencies.assign(
+                        dependencies->dependencies.begin() + 1,
+                        dependencies->dependencies.end());
+                    loan.referenceSelection = SemanticReferenceSelection{
+                        .source = payload.source,
+                        .carrier = stmt.expression().get(),
+                        .fields =
+                            {variant->payloadSymbols[payload.payloadIndex]},
+                        .conditions = {{.enumeration = pattern.type,
+                                        .variant = pattern.variantIndex}},
+                        .reference =
+                            variant->payloadTypes[payload.payloadIndex]};
+                  });
               semanticModel.recordBorrowDependencySet(*payload.source,
                                                       extractedDependencies);
               // Forming the selection uses its parent authority in the arm,
               // even when the binding is never read afterwards.
-              recordSemanticLoanUse(symbol);
             }
           }
         } else if (payload.binding.type.kind == SemanticType::Reference) {
@@ -6112,45 +5993,38 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             if (access == AccessMode::Mutable) {
               recordMutableBindingUse(stmt.expression());
             }
-            SemanticLoanId parent = 0;
+            BindingDependencyRef parent;
             // A reference result that names no place reaches the carrier's
             // storage; that carrier's dependency group is the stored owner
             // authority a reference local bound to it would inherit.
-            SemanticLoanId inheritedDependency = 0;
-            if (const auto source = retainedLoanSource(stmt.expression()))
-              if (const auto *loan = semanticModel.findLoan(source->loan)) {
-                if (loan->kind != SemanticLoanKind::StoredValue)
-                  parent = source->loan;
+            BindingDependencyRef inheritedDependency;
+            if (const auto source = retainedDependencySource(stmt.expression()))
+              if (const auto *loan = source->summary.get()) {
+                if (loan->kind != BindingDependencyKind::StoredValue)
+                  parent = source->summary;
                 else if (semanticModel.findPlace(*stmt.expression()) == nullptr)
-                  inheritedDependency = source->loan;
+                  inheritedDependency = source->summary;
               }
             // This pattern borrows physical payload storage, not a stored
             // reference's external owner. A dependency group carried by an
             // owned enum cannot authorize a child loan into that enum's shell.
             // A reference to the enum itself still supplies its normal parent.
-            reportBorrowConflict(
-                *payload.name, conflictingLoans(place, access, parent),
-                "Cannot borrow this payload while an overlapping enum borrow "
-                "may still be live.");
             // Variant replacement invalidates every field. The original enum
             // is the conservative alias root even when the runtime referent
             // is one exact active payload field.
-            payload.binding.retainedLoan = createRetainedLoan(
-                *carrier, symbol, SemanticLoanKind::Reference, payload.source,
-                place, place.root, place.receiver, access, true, parent);
-            if (const auto *ancestor = semanticModel.findLoan(parent);
-                ancestor && ancestor->storedDependency != 0)
+            BindingDependencyRef borrowed = formBindingDependency(
+                *carrier, symbol, BindingDependencyKind::Reference,
+                payload.source, place, place.root, place.receiver, access, true,
+                parent);
+            if (BindingDependencyRef ancestor = parent;
+                ancestor && ancestor->storedDependency != nullptr)
               inheritedDependency = ancestor->storedDependency;
-            if (inheritedDependency != 0) {
-              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
-              loan.storedDependency = inheritedDependency;
-              semanticModel.recordLoan(std::move(loan));
+            if (inheritedDependency != nullptr) {
+              refineBindingDependency(
+                  *carrier, borrowed, [&](BindingDependency &loan) {
+                    loan.storedDependency = inheritedDependency;
+                  });
             }
-            // The binding is born at this arm's entry, not at the switch
-            // subject's full expression. Keep its endpoint lexical until
-            // arm-local NLL creation/endpoint plans are represented.
-            loanFlow.records.at(payload.binding.retainedLoan).confinedToRegion =
-                false;
           }
         }
         semanticModel.recordPayloadBinding(*payload.name, payload.binding);
@@ -6158,7 +6032,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       semanticModel.recordPayloadPattern(*source, std::move(pattern));
     }
     analyze(arm.statements);
-    loanFlow.activeSwitchArms.pop_back();
+    --loanFlow.conditionalArmDepth;
     endScope();
     const FlowSummary flow = summarizeFlow(arm.statements);
     armResults.emplace_back(scopes, flow);
@@ -6174,8 +6048,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
       diagnostics.emplace_back(std::move(diagnostic));
     }
   }
-  if (consumesDependency)
-    loanFlow.records.at(subjectDependency).active = false;
   const bool exhaustivePayload =
       payloadEnum != nullptr && !invalidPayloadPattern &&
       coveredPayloadVariants.size() == payloadEnum->enumerators.size();
@@ -6264,10 +6136,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                          : mergedValueStates(beforeSwitch, exitStates);
   scopes = loanScopes;
   applyMoveStates(moveScopes);
-  loanFlow.switches[loanSwitchIndex].hasDefault =
-      hasDefault || exhaustivePayload;
-  loanFlow.switches[loanSwitchIndex].endSequence = loanFlow.nextSequence++;
-  loanFlow.switchBoundaries.pop_back();
 }
 
 auto SemanticVisitor::Impl::visitStructuredBindingDecl(
@@ -7048,7 +6916,6 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
 }
 auto SemanticVisitor::Impl::visitWhileStmt(const WhileStmt &stmt) -> void {
   semanticModel.recordFullExpression(stmt, stmt.condition());
-  noteUnsupportedNestedLoanControlFlow();
   beginLoanFlowLoop(stmt);
   beginRawPointerLoop();
   const ScopeStack beforeCondition = scopes;
@@ -7282,7 +7149,7 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
   const bool textTarget =
       simpleAssignment && (targetType.kind == SemanticType::StringView ||
                            targetType.kind == SemanticType::CString);
-  if (textTarget && !capturedTextLoans(expr.value().get()).empty())
+  if (textTarget && !capturedTextViews(expr.value().get()).empty())
     reportOwnerDependentTextStorage(expr.value(),
                                     "assigned into an existing binding");
   else if (const auto targetView =
@@ -7357,10 +7224,6 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
       report(expr.name(), "Cannot mutate through a read-only receiver.");
     }
   } else {
-    reportLoanPlaceConflict(
-        expr.name(), targetPlace, AccessMode::Mutable,
-        "Cannot assign to storage while an overlapping borrow may still be "
-        "live.");
   }
   const bool valueAssignable =
       !simpleAssignment ||
@@ -8509,10 +8372,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         report(expr.paren(),
                "Fixed array member functions do not take generic arguments.");
       }
-      reportLoanPlaceConflict(
-          expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
-          "Fixed-array member receiver overlaps a mutable borrow or child "
-          "reborrow that may still be live.");
       analyzeArrayMemberCall(expr, *member, argumentTypes, expr.paren());
       return;
     }
@@ -8522,10 +8381,6 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                "String-view member functions do not take generic arguments.",
                "GTI-S2035");
       }
-      reportLoanPlaceConflict(
-          expr.paren(), semanticPlace(member->object()), AccessMode::ReadOnly,
-          "String-view member receiver overlaps a mutable borrow or child "
-          "reborrow that may still be live.");
       analyzeStringViewMemberCall(expr, *member, argumentTypes, expr.paren());
       return;
     }
@@ -9999,10 +9854,6 @@ auto SemanticVisitor::Impl::visitDereferenceSetExpr(const DereferenceSet &expr)
            "GTI-S2002");
   } else if (!overloadedMutation) {
     if (targetPlace.root != nullptr) {
-      reportLoanPlaceConflict(
-          expr.dereference(), targetPlace, AccessMode::Mutable,
-          "Cannot write through a dereference while an overlapping borrow "
-          "may still be live.");
     }
   }
   if (simpleAssignment && !isOwnershipAssignment(valueTarget, valueType,
@@ -10088,9 +9939,6 @@ auto SemanticVisitor::Impl::visitPlaceSetExpr(const PlaceSet &expr) -> void {
 
   const SemanticPlace targetPlace = semanticPlace(expr.target());
   if (targetPlace.root != nullptr) {
-    reportLoanPlaceConflict(expr.oper(), targetPlace, AccessMode::Mutable,
-                            "Cannot write while an overlapping borrow may "
-                            "still be live.");
   }
   // Unlike a source operator's reserved projection, an ordinary accessor
   // executes fully before the right operand. Its mutable result remains
@@ -10555,12 +10403,6 @@ auto SemanticVisitor::Impl::visitIndexSetExpr(const IndexSet &expr) -> void {
       appendReadOnlyPlaceContext(diagnostics.back(), expr.object());
     }
   } else if (!overloadedMutation) {
-    reportLoanPlaceConflict(
-        expr.bracket(),
-        trackedFixedArrayElement ? targetPlace : semanticPlace(expr.object()),
-        AccessMode::Mutable,
-        "Cannot write through an index while an overlapping borrow may "
-        "still be live.");
   }
   const bool valueAssignable =
       !simpleAssignment ||
@@ -10885,13 +10727,13 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         SemanticBindingKind::LambdaCapture);
     semanticModel.recordLambdaCaptureMode(bindingSymbol, mode);
     if (isBorrowingCapture(mode)) {
-      const auto sourceLoan = retainedLoanSource(capture.initializer);
+      const auto sourceLoan = retainedDependencySource(capture.initializer);
       SemanticLoanDependency dependency{
           .place = retainedLoanPlace(capture.initializer),
           .designatedFields = {bindingSymbol},
           .access = captureType.referenceAccess,
           .protectsStorage = true,
-          .parent = sourceLoan ? sourceLoan->loan : SemanticLoanId{0}};
+          .parent = sourceLoan ? sourceLoan->summary : BindingDependencyRef{}};
       for (const auto &previous : captureDependencies)
         if ((previous.access == AccessMode::Mutable ||
              dependency.access == AccessMode::Mutable) &&
@@ -10900,10 +10742,6 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
                  "Borrowing captures overlap while at least one requires "
                  "exclusive mutable access.",
                  "GTI-S2017");
-      reportLoanPlaceConflict(
-          capture.name, dependency.place, dependency.access,
-          "A borrowing capture overlaps a borrow that may still be live.",
-          dependency.parent);
       captureDependencies.push_back(std::move(dependency));
     } else if (typeTraits(captureType).containsBorrowedState) {
       auto dependencies = storedBorrowDependencies(capture.initializer);
@@ -11039,33 +10877,27 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     if (!isBorrowingCapture(capture.mode)) {
       if (!isDirectStoredReferenceType(capture.type))
         continue;
-      const auto id = recordStoredEntryDependency(
-          *carrier, capture.bindingSymbol, capture.type, false);
       // The closure environment owns a by-value capture and any release
       // obligation it contains, as a caller owns a method's receiver; the
       // body never destroys it. Its entry describes the declared reference
       // fields only, so a cleanup-bound capture does not bind the body.
-      if (id != 0) {
-        auto loan = *semanticModel.findLoan(id);
-        loan.lifecycleBound = false;
-        semanticModel.recordLoan(std::move(loan));
-        loanFlow.records.at(id).lifecycleBound = false;
-      }
+      recordStoredEntryDependency(*carrier, capture.bindingSymbol, capture.type,
+                                  false, nullptr, true);
       continue;
     }
     const auto dependency =
         isDirectStoredReferenceType(capture.type.arguments.front())
             ? recordStoredEntryDependency(*carrier, capture.bindingSymbol,
                                           capture.type.arguments.front(), false)
-            : SemanticLoanId{0};
-    const auto id = createRetainedLoan(
-        *carrier, capture.bindingSymbol, SemanticLoanKind::Reference, nullptr,
-        {.root = capture.bindingSymbol}, capture.bindingSymbol, false,
-        capture.type.referenceAccess, true, 0, true);
-    if (dependency != 0) {
-      auto loan = *semanticModel.findLoan(id);
-      loan.storedDependency = dependency;
-      semanticModel.recordLoan(std::move(loan));
+            : BindingDependencyRef{};
+    auto id = formBindingDependency(
+        *carrier, capture.bindingSymbol, BindingDependencyKind::Reference,
+        nullptr, {.root = capture.bindingSymbol}, capture.bindingSymbol, false,
+        capture.type.referenceAccess, true, nullptr, true);
+    if (dependency != nullptr) {
+      refineBindingDependency(*carrier, id, [&](BindingDependency &loan) {
+        loan.storedDependency = dependency;
+      });
     }
   }
 
@@ -11076,7 +10908,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       recordProgramCleanupEffects(type, tokenSpan(parameter.name));
       declare(parameter.name, type, parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
-      recordParameterEntryLoan(parameter);
+      recordParameterEntryDependency(parameter);
     }
   }
   // A checked reference result borrows from one parameter with sufficient
@@ -12136,10 +11968,6 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
     const bool concreteEmpty =
         resolvedPack && resolvedPack->type.kind == SemanticType::TypePack &&
         resolvedPack->type.concretePack && resolvedPack->type.arguments.empty();
-    const bool dependentPrimary =
-        resolvedPack && isUnselectedProgramPack(*resolvedPack);
-    const std::size_t firstDependentCheck =
-        requestSession.programStorageBorrowChecks.size();
     struct RestoreEffectOwner {
       ProgramEffectOwner &slot;
       ProgramEffectOwner previous;
@@ -12170,11 +11998,6 @@ auto SemanticVisitor::Impl::visitPackFoldExpr(const PackFold &expr) -> void {
         argumentTypes.emplace_back(analyze(argument));
       }
     }
-    if (dependentPrimary)
-      for (std::size_t index = firstDependentCheck;
-           index < requestSession.programStorageBorrowChecks.size(); ++index)
-        requestSession.programStorageBorrowChecks[index].dependentPrimary =
-            true;
   }
 
   if (calleeType != SemanticType::Function || !callee ||
@@ -12782,10 +12605,6 @@ auto SemanticVisitor::Impl::visitSetExpr(const Set &expr) -> void {
       appendReadOnlyPlaceContext(diagnostics.back(), expr.object());
     }
   } else if (!overloadedMutation) {
-    reportLoanPlaceConflict(
-        expr.name(), targetPlace, AccessMode::Mutable,
-        "Cannot assign to a field while an overlapping borrow may still be "
-        "live.");
   }
   if (simpleAssignment && !isOwnershipAssignment(targetType, valueType,
                                                  expr.value(), targetPlace)) {
@@ -16485,8 +16304,7 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
         (source.root->variableDeclaration == nullptr ||
          !structuredBindingElements.contains(
              source.root->variableDeclaration)) &&
-        unavailableProjectedState(source, true) == nullptr &&
-        conflictingLoans(loanPlace(source), AccessMode::Mutable).empty()) {
+        unavailableProjectedState(source, true) == nullptr) {
       diagnostic.hints.emplace_back(
           "Transfer ownership explicitly with std::move(owner) if the "
           "original binding is no longer needed.");

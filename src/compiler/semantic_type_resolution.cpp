@@ -2819,11 +2819,6 @@ auto SemanticVisitor::Impl::selectConstructorCallArguments(
     const SemanticLoanPlace place = transientLoanPlace(*argument.expression);
     recordMutableBindingUse(place.root);
     if (place.root != 0 || place.receiver) {
-      reportLoanPlaceConflict(
-          paren, place, AccessMode::Mutable,
-          "Mutable constructor argument overlaps a borrow that may still "
-          "be live.",
-          accessLoan(*argument.expression));
     }
   }
   std::vector<SemanticType> concreteParameterTypes;
@@ -5077,40 +5072,44 @@ auto SemanticVisitor::Impl::validateReferenceBinding(
            "GTI-S2017");
     return;
   }
-  if (reference.referenceAccess == AccessMode::Mutable) {
-    const std::optional<RetainedLoanSource> source =
-        retainedLoanSource(initializer);
-    const SemanticLoanInfo *sourceLoan =
-        source ? semanticModel.findLoan(source->loan) : nullptr;
-    const bool carrierShell =
-        sourceLoan != nullptr &&
-        sourceLoan->kind == SemanticLoanKind::StoredValue &&
-        (typeTraits(referent).containsBorrowedState ||
-         receiverStorageBorrow(initializer));
-    const AccessMode sourceAccess =
-        source && source->dependency ? source->dependency->access
-        : sourceLoan != nullptr      ? sourceLoan->access
-                                     : AccessMode::ReadOnly;
-    if (sourceLoan != nullptr && !carrierShell &&
-        sourceAccess == AccessMode::ReadOnly) {
+  if (reference.referenceAccess == AccessMode::Mutable &&
+      info->access != AccessMode::Mutable) {
+    // A read-only place reached through a local borrow (a reference binding,
+    // or a field or element of a borrowed-state local) cannot become a
+    // mutable reborrow. A reference to the carrier object itself is a shell
+    // reference, not a reborrow of its dependency. Binding facts only.
+    const SemanticPlace place = semanticPlace(initializer);
+    const Symbol *root =
+        place.receiver || place.root == nullptr ||
+                place.root->bindingKind != SemanticBindingKind::LocalVariable
+            ? nullptr
+            : place.root;
+    const bool throughReference =
+        root != nullptr && root->type.kind == SemanticType::Reference;
+    const bool throughCarrier = root != nullptr && !throughReference &&
+                                typeTraits(root->type).containsBorrowedState &&
+                                !(place.projections.empty() &&
+                                  (typeTraits(referent).containsBorrowedState ||
+                                   receiverStorageBorrow(initializer)));
+    if (throughReference || throughCarrier) {
       Diagnostic diagnostic = makeDiagnostic(
           "GTI-S2017", DiagnosticPhase::Semantics, expressionToken(initializer),
           "A read-only loan cannot be upgraded to a mutable reborrow.");
-      if (sourceLoan->origin != nullptr) {
+      if (root->variableDeclaration != nullptr &&
+          root->variableDeclaration->initializer()) {
         diagnostic.related.push_back(
-            {tokenSpan(expressionToken(*sourceLoan->origin)),
+            {tokenSpan(
+                 expressionToken(root->variableDeclaration->initializer())),
              "The read-only parent loan originates here."});
       }
       diagnostic.hints.emplace_back(
           "Create the mutable borrow from mutable owner storage or from an "
           "active mutable parent loan.");
       diagnostics.emplace_back(std::move(diagnostic));
-    } else if (info->access != AccessMode::Mutable) {
-      if (!reportReceiverRestrictedReference(initializer)) {
-        report(expressionToken(initializer),
-               "A mutable reference requires a mutable initializer.",
-               "GTI-S2017");
-      }
+    } else if (!reportReceiverRestrictedReference(initializer)) {
+      report(expressionToken(initializer),
+             "A mutable reference requires a mutable initializer.",
+             "GTI-S2017");
     }
   }
 }
@@ -6014,13 +6013,13 @@ auto SemanticVisitor::Impl::storedFieldReadDependency(
   if (variable == nullptr || chain.empty())
     return std::nullopt;
   const Symbol *symbol = resolve(variable->name());
-  if (symbol == nullptr || symbol->retainedLoan == 0 ||
+  if (symbol == nullptr || symbol->retainedDependency == nullptr ||
       symbol->type.kind == SemanticType::Reference ||
       (symbol->bindingKind != SemanticBindingKind::LocalVariable &&
        symbol->bindingKind != SemanticBindingKind::Parameter))
     return std::nullopt;
-  const SemanticLoanInfo *loan = semanticModel.findLoan(symbol->retainedLoan);
-  if (loan == nullptr || loan->kind != SemanticLoanKind::StoredValue ||
+  BindingDependencyRef loan = symbol->retainedDependency;
+  if (loan == nullptr || loan->kind != BindingDependencyKind::StoredValue ||
       loan->referenceSelection || !loan->conditions.empty())
     return std::nullopt;
   std::vector<SymbolId> path;
@@ -6108,16 +6107,16 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     // stored field or composite dependency needs its separate full proof.
     const auto *binding = semanticModel.findBinding(parameter);
     const auto *value = semanticModel.findExpression(*expression);
-    const SemanticLoanInfo *loan =
-        symbol == nullptr || symbol->retainedLoan == 0
-            ? nullptr
-            : semanticModel.findLoan(symbol->retainedLoan);
+    BindingDependencyRef loan =
+        symbol == nullptr || symbol->retainedDependency == nullptr
+            ? BindingDependencyRef{}
+            : symbol->retainedDependency;
     const bool scalarLoan =
         loan != nullptr && symbol != nullptr &&
         ((symbol->type.kind == SemanticType::Reference &&
-          loan->kind == SemanticLoanKind::Reference) ||
+          loan->kind == BindingDependencyKind::Reference) ||
          (value != nullptr && value->traits.containsBorrowedState &&
-          loan->kind == SemanticLoanKind::StoredValue));
+          loan->kind == BindingDependencyKind::StoredValue));
     return binding != nullptr && binding->symbol != 0 && scalarLoan &&
            !loan->referenceSelection && loan->designatedFields.empty() &&
            loan->conditions.empty() && loan->additionalDependencies.empty() &&
@@ -6204,9 +6203,8 @@ auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
   }
   if (const auto *variable = exprAs<Variable>(expression)) {
     const Symbol *symbol = resolve(variable->name());
-    if (symbol != nullptr && symbol->retainedLoan != 0) {
-      const SemanticLoanInfo *loan =
-          semanticModel.findLoan(symbol->retainedLoan);
+    if (symbol != nullptr && symbol->retainedDependency != nullptr) {
+      BindingDependencyRef loan = symbol->retainedDependency;
       if (loan != nullptr && loan->receiverOrigin)
         return true;
     }
@@ -7885,8 +7883,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   loanFlow = {};
   bodyFlow = {};
   valueControlFlow.clear();
-  semanticModel.clearLoans();
-  nextSemanticLoanId = 1;
+  semanticModel.clearBorrowDependencies();
   nextPlaceSelectionId = 1;
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;

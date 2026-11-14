@@ -50,27 +50,6 @@ expected<Owner&, int> lookup(Owner& owner, bool fail) {
 }
 )";
 
-bool samePlace(lang::PlaceKey left, lang::PlaceKey right) {
-  // Independent frontend snapshots deliberately have different domains.
-  // Body/revision and all source-bound root/projection facts must still agree.
-  left.domain.snapshot = 0;
-  right.domain.snapshot = 0;
-  return left == right;
-}
-
-bool sameDependencies(const std::vector<lang::SemanticLoanDependency> &left,
-                      const std::vector<lang::SemanticLoanDependency> &right) {
-  if (left.size() != right.size())
-    return false;
-  for (std::size_t i = 0; i < left.size(); ++i)
-    if (!samePlace(left[i].place, right[i].place) ||
-        left[i].access != right[i].access ||
-        left[i].designatedFields != right[i].designatedFields ||
-        left[i].protectsStorage != right[i].protectsStorage)
-      return false;
-  return true;
-}
-
 void pair(std::string_view label, std::string_view type,
           std::string_view program, bool valid) {
   auto explicitResult =
@@ -118,24 +97,6 @@ void pair(std::string_view label, std::string_view type,
                 left.info.access == right.info.access &&
                 left.dropObligation == right.dropObligation,
             "exact binding type, access and drop parity");
-    }
-    check(function.body.loans.size() == inferred->body.loans.size(),
-          "same loan census");
-    for (std::size_t i = 0;
-         i < std::min(function.body.loans.size(), inferred->body.loans.size());
-         ++i) {
-      const auto &left = function.body.loans[i];
-      const auto &right = inferred->body.loans[i];
-      check(left.kind == right.kind && left.parent == right.parent &&
-                left.storedDependency == right.storedDependency &&
-                samePlace(left.place, right.place) &&
-                left.access == right.access &&
-                left.carriers == right.carriers &&
-                sameDependencies(left.additionalDependencies,
-                                 right.additionalDependencies) &&
-                left.lifecycleBound == right.lifecycleBound &&
-                left.entry == right.entry,
-            "exact HIR owner, access, dependency and carrier parity");
     }
   }
   for (const auto &function : explicitResult.mir.functionInstances()) {

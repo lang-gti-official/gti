@@ -10,6 +10,7 @@
 #include "gti/source_loader.h"
 #include "gti/source_owner.h"
 #include "gti/support.h"
+#include "mir_borrow_audit_diagnostics.h"
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -433,6 +434,12 @@ MirBorrowCheck mirBorrowDiagnostics(const MirLoweringResult &mir,
         check.diagnostics.back().hints.emplace_back(
             "Capture the original owner in the enclosing lambda by value, or "
             "pass the borrowed value to the inner lambda as a parameter.");
+    } else if (error.borrow.kind ==
+               MirBorrowRejectionKind::SharedConsumedGroup) {
+      add(*error.source,
+          "A consuming borrowed payload requires one exact active carrier "
+          "with independently transferable dependencies.",
+          "GTI-S2067");
     } else if (error.borrow.kind == MirBorrowRejectionKind::Escape)
       addEscape(*error.source, error.body.kind, error.body.owner);
     else if (exitDropUnderReturnedBorrow(error)) {
@@ -1544,6 +1551,25 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   // complete program above has already reported every diagnostic.
   // Every application body is borrow-checked, reachable or not: MIR checks
   // the complete HIR before code generation narrows it to what roots reach.
+  // MIR is also the authority for the raw-pointer audit's live-borrow finding
+  // and for cross-function persistent-storage borrows (GTI-S2045); both are
+  // reported from the program that covers every application body.
+  const bool rawAudit = options.rawPointerAudit != RawPointerAuditMode::Off;
+  bool rawAudited = false;
+  // A persistent-storage rejection fails MIR verification. It is the
+  // program's borrow error, anchored at the rejected invocation, not an ICE.
+  const auto persistentStorageRejection = [&](MirBorrowCheck &check,
+                                              const MirProgram &program,
+                                              const HirProgram &source) {
+    if (!check.diagnostics.empty())
+      return;
+    auto storage =
+        mirPersistentStorageDiagnostics(program, source, entryPath.string());
+    if (storage.empty())
+      return;
+    check.internal = false;
+    check.diagnostics = std::move(storage);
+  };
   if (hir.reachable && !options.retainApplicationBodies) {
     const HirProgram &checked =
         hir.borrowChecked ? *hir.borrowChecked : result.hir;
@@ -1553,9 +1579,16 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     if (completeMetadata.valid()) {
       MirLoweringResult complete =
           MirLowerer().lower(checked, completeMetadata.metadata);
+      if (rawAudit) {
+        for (Diagnostic &diagnostic : mirRawAuditDiagnostics(
+                 complete.program, checked, entryPath.string()))
+          result.diagnostics.push_back(std::move(diagnostic));
+        rawAudited = true;
+      }
       if (!complete.valid()) {
         MirBorrowCheck check =
             mirBorrowDiagnostics(complete, complete.program, checked);
+        persistentStorageRejection(check, complete.program, checked);
         const bool borrowRejection = !check.diagnostics.empty();
         // A body only this check lowers must not hide an internal failure.
         if (check.internal && check.diagnostics.empty())
@@ -1621,6 +1654,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   MirLoweringResult mir =
       MirLowerer().lower(result.hir, result.failureMetadata);
   mirProgress.finish();
+  if (rawAudit && !rawAudited)
+    for (Diagnostic &diagnostic :
+         mirRawAuditDiagnostics(mir.program, result.hir, entryPath.string()))
+      result.diagnostics.push_back(std::move(diagnostic));
   result.mirValid = mir.valid();
   result.mir = std::move(mir.program);
   if (!mir.diagnostics.empty()) {
@@ -1635,9 +1672,9 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   if (!result.mirValid) {
     // MIR is the single authority for body-local borrow validity: its borrow
     // rejections are the program's diagnostics, not internal errors.
-    if (MirBorrowCheck check =
-            mirBorrowDiagnostics(mir, result.mir, result.hir);
-        !check.diagnostics.empty() && !check.internal) {
+    MirBorrowCheck check = mirBorrowDiagnostics(mir, result.mir, result.hir);
+    persistentStorageRejection(check, result.mir, result.hir);
+    if (!check.diagnostics.empty() && !check.internal) {
       result.semanticValid = false;
       result.mirBorrowRejected = true;
       for (Diagnostic &diagnostic : check.diagnostics)

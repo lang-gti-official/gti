@@ -233,19 +233,9 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       found->second = std::make_shared<RawPointerLoopUse>(*entry);
     entry = found->second;
   };
-  std::unordered_map<const LoanFlowState *, std::shared_ptr<LoanFlowState>>
-      loanContexts;
   for (auto &loop : worker->valueFlow.rawPointerLoops)
-    for (auto &access : loop.accesses) {
+    for (auto &access : loop.accesses)
       cloneLoopUse(access.deferred);
-      if (!access.loanContext)
-        continue;
-      auto [found, inserted] =
-          loanContexts.try_emplace(access.loanContext.get());
-      if (inserted)
-        found->second = std::make_shared<LoanFlowState>(*access.loanContext);
-      access.loanContext = found->second;
-    }
   for (auto &call : worker->requestSession.rawBorrowCallUses) {
     for (auto &argument : call.arguments)
       cloneLoopUse(argument.loopUse);

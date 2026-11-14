@@ -1,11 +1,14 @@
 #include "mir_storage_effects.h"
 
 #include "gti/mir_effects.h"
+#include "mir_borrow_audits.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
 #include <deque>
 #include <map>
+#include <optional>
+#include <set>
 #include <utility>
 
 namespace lang {
@@ -31,6 +34,9 @@ struct Node {
   MirBodyAddress address;
   const MirBody *body = nullptr;
   std::vector<MirPersistentStorageAccess> direct;
+  // The direct accesses with their instructions, to name a rejection's
+  // transitive access site.
+  std::vector<MirPersistentStorageAccess> directSites;
   std::vector<MirPersistentStorageAccess> summary;
   std::vector<Invocation> invocations;
   std::vector<std::size_t> callers;
@@ -78,6 +84,111 @@ bool mergeAccess(std::vector<MirPersistentStorageAccess> &into,
   return false;
 }
 
+// Drops whose every obligation is certainly not available where they run:
+// moved out, transferred or never initialized on every path. Such a Drop
+// runs no cleanup (a moved-from owner's destructor is not executed), so it
+// cannot reach a destructor's storage effects. A forward may-analysis over
+// the body's lifecycle events, following the verifier's lifecycle states.
+std::set<MirInstructionId> inertDrops(const MirBody &body) {
+  std::set<MirInstructionId> result;
+  const std::size_t count = body.dropObligations.size();
+  if (count == 0 || body.findBlock(body.entry) == nullptr)
+    return result;
+  using Available = std::vector<char>;
+  const auto advance = [](Available &state, const MirLifecycleEvent &event) {
+    const auto set = [&](MirDropObligationId id, bool available) {
+      if (id != 0 && id <= state.size())
+        state[id - 1] = available ? 1 : 0;
+    };
+    switch (event.kind) {
+    case MirLifecycleEventKind::Initialize:
+      set(event.target, true);
+      break;
+    case MirLifecycleEventKind::Move:
+    case MirLifecycleEventKind::Reparent:
+    case MirLifecycleEventKind::Replace:
+      set(event.source, false);
+      set(event.target, true);
+      break;
+    case MirLifecycleEventKind::TransferOut:
+    case MirLifecycleEventKind::Drop:
+      set(event.source, false);
+      break;
+    }
+  };
+  std::vector<std::optional<Available>> entries(body.blocks.size());
+  Available initial(count, 0);
+  for (const auto &obligation : body.dropObligations)
+    if (obligation.initiallyActive && obligation.id != 0 &&
+        obligation.id <= count)
+      initial[obligation.id - 1] = 1;
+  entries[body.entry - 1] = initial;
+  std::set<MirInstructionId> live;
+  std::set<MirInstructionId> seen;
+  std::vector<MirBlockId> pending{body.entry};
+  const auto join = [&](MirBlockId target, const Available &state) {
+    const MirBlock *successor = body.findBlock(target);
+    if (successor == nullptr)
+      return;
+    auto &entry = entries[target - 1];
+    bool changed = !entry.has_value();
+    if (!entry)
+      entry = state;
+    else
+      for (std::size_t index = 0; index < count; ++index)
+        if (state[index] && !(*entry)[index]) {
+          (*entry)[index] = 1;
+          changed = true;
+        }
+    if (changed)
+      pending.push_back(target);
+  };
+  while (!pending.empty()) {
+    const MirBlockId id = pending.back();
+    pending.pop_back();
+    const MirBlock &block = body.blocks[id - 1];
+    Available state = *entries[id - 1];
+    Available beforeInvoke = state;
+    for (const auto &instruction : block.instructions) {
+      if (instruction.tombstone)
+        continue;
+      if (instruction.id == block.terminator.invokeInstruction)
+        beforeInvoke = state;
+      if (instruction.kind == MirInstructionKind::Drop) {
+        seen.insert(instruction.id);
+        for (const auto &event : instruction.lifecycle)
+          if (event.kind == MirLifecycleEventKind::Drop &&
+              (event.source == 0 || event.source > count ||
+               state[event.source - 1]))
+            live.insert(instruction.id);
+      }
+      for (const auto &event : instruction.lifecycle)
+        advance(state, event);
+    }
+    const auto &terminator = block.terminator;
+    if (terminator.kind == MirTerminatorKind::Invoke) {
+      Available success = state;
+      for (const auto &event : terminator.successLifecycle)
+        advance(success, event);
+      join(terminator.target, success);
+      // A failure edge leaves before the invocation's own transitions may
+      // have happened; keep both states.
+      for (std::size_t index = 0; index < count; ++index)
+        beforeInvoke[index] |= state[index];
+      join(terminator.elseTarget, beforeInvoke);
+    } else {
+      join(terminator.target, state);
+      join(terminator.elseTarget, state);
+    }
+    for (const auto &target : terminator.switchTargets)
+      join(target.target, state);
+  }
+  for (const auto id : seen)
+    if (!live.contains(id))
+      result.insert(id);
+  return result;
+}
+
 bool unknownSourceInvocation(const MirProgram &program, const MirBody &body,
                              const MirInstruction &instruction,
                              const MirInvocationTargets &targets) {
@@ -120,10 +231,50 @@ bool unknownSourceInvocation(const MirProgram &program, const MirBody &body,
          instruction.synchronization.kind == SynchronizationOperationKind::None;
 }
 
-} // namespace
+void record(std::vector<MirBorrowAuditFinding> &findings, const MirBody &body,
+            MirBodyAddress address, const MirVerificationResult &proof,
+            const char *kind) {
+  const auto &error = proof.errors.front();
+  MirBorrowAuditFinding finding{.body = address,
+                                .block = error.block,
+                                .instruction = error.instruction,
+                                .detail =
+                                    std::string(kind) + ": " + error.message};
+  attachMirFindingSource(body, finding);
+  if (error.message.find("call input is invalidated") != std::string::npos)
+    finding.context = "Earlier reference or borrowed-state inputs are already "
+                      "bound while this later input is evaluated.";
+  else if (const MirBlock *block = body.findBlock(error.block))
+    for (const auto &instruction : block->instructions) {
+      if (instruction.id != error.instruction)
+        continue;
+      const MirPlace *place = instruction.destination
+                                  ? body.findPlace(*instruction.destination)
+                                  : nullptr;
+      if (instruction.kind == MirInstructionKind::CleanupBeforeAssign)
+        finding.context =
+            "Replacing this live object runs its previous value's cleanup.";
+      else if (instruction.kind != MirInstructionKind::Drop)
+        break;
+      else if (block->activeFailure != 0)
+        finding.context = "Earlier untransferred temporaries are cleaned if "
+                          "this operation propagates a failure.";
+      else if (place != nullptr && place->root == MirPlaceRootKind::Binding)
+        finding.context = "This automatic object's cleanup runs at scope exit.";
+      else
+        finding.context = "Remaining temporaries are cleaned at this "
+                          "full-expression boundary.";
+    }
+  if (error.borrow.loan != 0)
+    finding.loans.push_back(error.borrow.loan);
+  findings.push_back(std::move(finding));
+}
 
+// With `findings`, every rejected invocation is collected (the audit form);
+// without, the first rejection is the verification result.
 MirVerificationResult
-verifyMirPersistentStorageEffects(const MirProgram &program) {
+analyzePersistentStorageEffects(const MirProgram &program,
+                                std::vector<MirBorrowAuditFinding> *findings) {
   std::vector<SymbolId> persistent;
   for (const auto &step : program.programInitializationPlan().steps)
     persistent.push_back(step.symbol);
@@ -159,8 +310,12 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
       std::vector<MirPersistentStorageAccess> direct;
       auto proof = verifyMirPersistentStorageLoanFlow(
           *node.body, node.address.owner, {}, &direct);
-      if (!proof.valid())
-        return proof;
+      if (!proof.valid()) {
+        if (findings == nullptr)
+          return proof;
+        record(*findings, *node.body, node.address, proof, "direct");
+      }
+      node.directSites = direct;
       for (const auto &access : direct)
         if (isPersistent(access.symbol)) {
           if (access.destructiveTransfer)
@@ -173,11 +328,12 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
         }
       node.direct = node.summary;
     }
+    const auto inert = inertDrops(*node.body);
     for (const auto &block : node.body->blocks) {
       if (!block.reachable)
         continue;
       for (const auto &instruction : block.instructions) {
-        if (instruction.tombstone)
+        if (instruction.tombstone || inert.contains(instruction.id))
           continue;
         const auto targets =
             mirInvocationTargets(program, *node.body, instruction);
@@ -353,12 +509,95 @@ verifyMirPersistentStorageEffects(const MirProgram &program) {
           cache.emplace(std::move(queryKey), accesses);
           return accesses;
         };
-    auto proof = verifyMirPersistentStorageLoanFlow(
-        *node.body, node.address.owner, hidden, nullptr, &query, persistent);
-    if (!proof.valid())
-      return proof;
+    if (findings == nullptr) {
+      auto proof = verifyMirPersistentStorageLoanFlow(
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+      if (!proof.valid())
+        return proof;
+      continue;
+    }
+    // Names what a rejected invocation reaches: an unknown GTI target, or the
+    // first transitive direct access to the protected persistent symbol.
+    const auto explain = [&](MirBorrowAuditFinding &finding,
+                             const MirBody &body, const Invocation &root) {
+      std::vector<SymbolId> protectedSymbols;
+      if (const MirLoan *loan = body.findLoan(
+              finding.loans.empty() ? 0 : finding.loans.front())) {
+        const auto symbolOf = [&](MirPlaceId id) {
+          const MirPlace *place = body.findPlace(id);
+          if (place != nullptr && place->root == MirPlaceRootKind::Symbol)
+            protectedSymbols.push_back(place->symbol);
+        };
+        symbolOf(loan->source);
+        for (const auto &dependency : loan->additionalDependencies)
+          symbolOf(dependency.source);
+      }
+      std::vector<bool> visited(nodes.size(), false);
+      std::vector<std::size_t> pending;
+      const auto visitInvocation = [&](const Invocation &invocation) {
+        finding.unknownEffects |= invocation.unknown;
+        for (const auto target : invocation.targets)
+          if (!visited[target]) {
+            visited[target] = true;
+            pending.push_back(target);
+          }
+      };
+      visitInvocation(root);
+      while (!pending.empty() && !finding.accessBody) {
+        const auto target = pending.front();
+        pending.erase(pending.begin());
+        for (const auto &site : nodes[target].directSites)
+          if (std::find(protectedSymbols.begin(), protectedSymbols.end(),
+                        site.symbol) != protectedSymbols.end()) {
+            finding.accessBody = nodes[target].address;
+            finding.accessBlock = site.block;
+            finding.accessInstruction = site.instruction;
+            break;
+          }
+        for (const auto &invocation : nodes[target].invocations)
+          visitInvocation(invocation);
+      }
+    };
+    // The loan-flow engine stops at its first rejection. Retire each rejected
+    // invocation and re-run until the body is accepted or the rejection is not
+    // an invocation's.
+    for (std::size_t attempt = 0; attempt <= hidden.size() + 1; ++attempt) {
+      auto proof = verifyMirPersistentStorageLoanFlow(
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+      if (proof.valid())
+        break;
+      const auto &error = proof.errors.front();
+      const auto rejected =
+          std::find_if(hidden.begin(), hidden.end(), [&](const auto &access) {
+            return access.block == error.block &&
+                   access.instruction == error.instruction;
+          });
+      record(*findings, *node.body, node.address, proof,
+             rejected == hidden.end() ? "direct" : "invocation");
+      if (rejected == hidden.end())
+        break;
+      if (const auto root = roots.find(rejected->instruction);
+          root != roots.end())
+        explain(findings->back(), *node.body, *root->second);
+      roots.erase(rejected->instruction);
+      hidden.erase(rejected);
+    }
   }
   return {};
+}
+
+} // namespace
+
+MirVerificationResult
+verifyMirPersistentStorageEffects(const MirProgram &program) {
+  return analyzePersistentStorageEffects(program, nullptr);
+}
+
+std::vector<MirBorrowAuditFinding>
+auditMirPersistentStorageBorrows(const MirProgram &program) {
+  std::vector<MirBorrowAuditFinding> findings;
+  (void)analyzePersistentStorageEffects(program, &findings);
+  return findings;
 }
 
 } // namespace lang

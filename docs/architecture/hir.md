@@ -77,12 +77,12 @@ Generated default construction retains the already-admitted concrete owner's
 discovery depth: its field schedule is not a second source-instantiation edge.
 Each distinct generic constructor still consumes the request's instance budget;
 ordinary constructor bodies and all other discovery limits remain unchanged.
-Every reanalyzed body has its own loan-number domain, including a range whose
-types do not depend on generic parameters. Plan verification retains exact
-non-dependent range types and selected protocol operations, compares loan
-relationships across primary/instance domains, and independently checks the
-actual body-local loans, access modes, source bindings and carriers. Numeric
-loan equality with an unrelated primary analysis is not a provenance proof.
+Every reanalyzed body has its own analysis, including a range whose types do
+not depend on generic parameters. Plan verification retains exact
+non-dependent range types and selected protocol operations, and checks the
+range's source bindings, element access and staging. `HirRangeIteration`
+carries no loan ids: MIR lowering derives range and element loans from those
+bindings, and the MIR verifier owns their access, parent and carrier checks.
 Successfully checked static assertions are skipped entirely: they are semantic
 obligations, not HIR declarations or executable values.
 
@@ -859,13 +859,13 @@ not infer it from `std` wrapper names or ordinary call spelling. Generated
 range operations and constructor initialization use the same resolved call
 records as ordinary source.
 
-Read-only reference range bindings retain an explicit `elementOwner` statement,
-binding and loan in `HirRangeIteration`, together with the original dereference
+Read-only reference range bindings retain an explicit `elementOwner` statement
+and binding in `HirRangeIteration`, together with the original dereference
 value. Semantics chooses a checked alias for reference yields or independent
 owned per-iteration storage for eligible value yields; `materializesElementValue`
 preserves that choice. Verification checks the synthetic AST identity, exact
-source producer, concrete type/category/ownership, and the written element's
-borrow of that binding. Generic symbolic range facts do not decide a concrete
+source producer, concrete type/category/ownership, and that the written
+element reads that binding; the element's loan is a MIR fact. Generic symbolic range facts do not decide a concrete
 yield's storage policy. Mutable-reference and ordinary by-value loop bindings
 keep their direct paths. HIR does not create temporary-reference permissions
 or infer storage from a backend representation.
@@ -1147,41 +1147,29 @@ HIR copies that record and any resolved semantic place directly; it does not
 reconstruct receiver meaning from the declaration symbol or dispatch-owner
 spelling.
 
-For exclusive reborrows, HIR copies the semantic child-loan identity, mutable
-parent identity, stable source place, access mode, and selected child endpoint
-set into each concrete body. It does not rediscover place conflicts, decide
-whether sibling children are disjoint, or decide when a suspended parent has
-no active children remaining; those are resolved semantic facts carried for
-MIR lowering and verification.
+HIR carries no loan records (RFC 0004). MIR derives every loan, its parent,
+access, stored dependency, carriers and endpoint from its own places and
+control flow, and checks conflicts itself; HIR supplies the typed values,
+bindings, places and call plans that derivation reads. The semantic model has
+no loan either: bindings and range plans carry no loan field, and the
+`parent` of a transported `SemanticLoanDependency` is a semantic-private
+binding summary that HIR copies without reading.
 
-For a by-value parameter whose concrete type directly stores one reference,
-`HirLoan.kind == SemanticLoanKind::StoredValue` records that the parameter is a
+A by-value parameter whose concrete type directly stores one reference is a
 carrier shell for an existing external dependency, not a reference parameter
-to the shell itself. The loan is an entry loan, carries the parameter binding,
-and retains the semantic access, place identity, and exact designated stored-
-reference field symbol. A checked carrier or exact stored-referent return keeps
+to the shell itself; MIR seeds its Stored entry loan from that type. A checked
+carrier or exact stored-referent return keeps
 `BorrowOriginKind::Argument`, the exact parameter index, and the returned
 value's concrete type. HIR does not turn a shell field or projection into that
 stored dependency; MIR lowering must transfer the entry loan explicitly, and
 MIR verification rechecks the transfer.
-
-References to carriers retain a separate `HirLoan.storedDependency` edge to
-the semantic stored-owner loan. The physical reference's place/access and
-parent remain distinct from that inherited authority. Body extraction closes
-over both parent and dependency identities; receiver-only abstract entries are
-selected by their declaring function or source destructor, while function/lambda
-reference entries are selected through their concrete formal bindings. Lifetime endpoints sort
-both edge kinds child-first. HIR preserves these facts for independent MIR
-verification rather than deriving them from a carrier's backend layout.
 
 A source destructor receives the same caller-owned reference-field entry as an
 ordinary method. Its declaration identity selects the body; its concrete class
 and mutable receiver provide the physical place. This entry does not acquire
 another cleanup obligation for the object being destroyed.
 
-For shared, exclusive and mixed multi-path carriers, `HirLoan.additionalDependencies` preserves
-every semantic owner place or opaque parameter field path in the same concrete
-place domain. Constructor instances retain `borrowParameters`; call values
+For shared, exclusive and mixed multi-path carriers, constructor instances retain `borrowParameters`; call values
 retain `borrowArguments`; function instances retain `returnBorrowParameters`.
 These complete origin sets supplement the primary origin without fabricating
 a merged storage root. MIR independently checks their publications and all
@@ -1199,7 +1187,7 @@ source operation. The generation prevents stale facts from separate analyses
 from comparing as one domain; it is not persistent artifact identity. Body
 qualification distinguishes concrete generic/function instances while
 retaining the resolved root, field, constant-index, or conservative
-dynamic-index projection. `HirLoan` uses the same key type. HIR does not rebuild
+dynamic-index projection. HIR does not rebuild
 a key from value shape, repeat the source ownership checker, or answer overlap
 differently. This first implementation carries fixed-array
 read/move/reinitialization facts. Dynamic-index precision and general lifetime

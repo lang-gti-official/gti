@@ -304,7 +304,9 @@ member access report an origin whose scope has ended or whose owner is known
 to be moved on a possible path. Replacing or reinitializing a
 consumed object does not revive addresses into its previous lifetime. Access
 also respects overlapping
-checked loans using their ordinary last-use endpoints. Array-element addresses
+checked loans using their ordinary last-use endpoints; the borrow checker
+(MIR) reports that finding, from the same loan ends it uses for every other
+borrow. Array-element addresses
 conservatively retain the array origin because later raw indexing can select
 another element. Unknown foreign addresses still require unsafe proof.
 

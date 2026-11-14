@@ -77,7 +77,6 @@ using GenericParameterId = std::size_t;
 using FunctionId = std::size_t;
 using LambdaId = std::size_t;
 using ProgramInitializationStepId = std::size_t;
-using SemanticLoanId = std::size_t;
 using SymbolId = std::size_t;
 using TypeAliasId = std::size_t;
 
@@ -929,7 +928,6 @@ struct BindingInfo {
   bool staticStorage = false;
   bool threadLocal = false;
   bool internalLinkage = false;
-  SemanticLoanId retainedLoan = 0;
 
   friend bool operator==(const BindingInfo &, const BindingInfo &) = default;
 };

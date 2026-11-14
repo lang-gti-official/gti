@@ -1552,8 +1552,7 @@ private:
 
   void loan(const MirLoan &value) {
     output << "  loan" << value.id << " kind=" << number(value.kind)
-           << " semantic=" << value.semanticLoan << " parent=loan"
-           << value.parent << " stored-dependency=loan"
+           << " parent=loan" << value.parent << " stored-dependency=loan"
            << value.storedDependency << " source=p" << value.source
            << " access=" << number(value.access) << " produced=v"
            << value.producedBy << " carriers=[";

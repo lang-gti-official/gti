@@ -1,0 +1,1 @@
+The remaining semantic retained-borrow diagnostics (selected-reference reborrows and read-only reference upgrades) are decided from binding facts instead of semantic loan records, and the loan flow's redundant composed-owner, stable-carrier and mutable-reborrow-retention diagnostics are removed.
