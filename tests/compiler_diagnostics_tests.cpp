@@ -455,6 +455,36 @@ int main() { auto call = invalid(); return call(); }
                                "cannot extend local storage"),
          "an escaping borrowed callable identifies the captured local storage "
          "that the returned view cannot outlive");
+  const std::string ownedErasure = R"(
+import std.functional;
+std::function<int()> invalid() {
+  int value = 1;
+  std::function<int()> callback{[&value]() -> int { return value; }};
+  return callback;
+}
+int main() { auto call = invalid(); return call(); }
+)";
+  const auto ownedErasureResult = analyze(ownedErasure);
+  const auto *ownedErasureError =
+      findDiagnosticByCode(ownedErasureResult.diagnostics, "GTI-S2018");
+  expect(
+      !ownedErasureResult.canGenerateCode() && ownedErasureError &&
+          std::any_of(ownedErasureError->related.begin(),
+                      ownedErasureError->related.end(),
+                      [&](const auto &note) {
+                        return note.span.start ==
+                                   ownedErasure.find("&value") + 1 &&
+                               note.span.end ==
+                                   ownedErasure.find("&value") + 6 &&
+                               note.message.find("Capture 'value'") !=
+                                   std::string::npos;
+                      }),
+      "owning erasure explains the source capture that retains borrowed state");
+  auto ownedCapture = ownedErasure;
+  ownedCapture.erase(ownedCapture.find("&value"), 1);
+  expect(analyze(ownedCapture).canGenerateCode(),
+         "copying the scalar into the closure gives the erased callable owned "
+         "state");
   const std::string ambiguous = R"(
 int& choose(int& first, int& second, bool condition) {
   if (condition) { return first; }

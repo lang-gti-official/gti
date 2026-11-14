@@ -272,7 +272,20 @@ def main():
             assert note["location"] == {"uri": uri, "range": source_range(
                 closure_escape, closure_escape.index("value"), 5)}, note
             assert "cannot extend local storage" in error["message"], error
-            assert change(SOURCE, 22) == []
+            owned_erasure = (
+                "import std.functional;\nstd::function<int()> invalid() {\n"
+                "  int value = 1;\n"
+                "  /* 😀 */ std::function<int()> callback{[&value]() -> int { return value; }};\n"
+                "  return callback;\n}\n"
+                "int main() { auto call = invalid(); return call(); }\n")
+            errors = change(owned_erasure, 22)
+            error = next(item for item in errors if item["code"] == "GTI-S2018")
+            note = next(item for item in error["relatedInformation"]
+                        if "Capture 'value'" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                owned_erasure, owned_erasure.index("&value") + 1, 5)}, note
+            assert change(owned_erasure.replace("[&value]", "[value]"), 23) == []
+            assert change(SOURCE, 24) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",

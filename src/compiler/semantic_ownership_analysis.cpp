@@ -14636,6 +14636,28 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
           "GTI-S2018", DiagnosticPhase::Semantics, expr.paren(),
           "Unique allocation cannot retain checked borrowed state because "
           "the owner does not track external borrow dependencies.");
+      // Use the same structural inventory as borrow verification. A generic
+      // allocation may be diagnosed in a library instance, but the terminal
+      // field/capture declaration explains which source state it would retain.
+      if (const auto paths = storedReferenceInventory(pointeeType)) {
+        for (const auto &path : *paths) {
+          if (path.fields.empty())
+            continue;
+          const auto &field = path.fields.back();
+          const SourceSpan span = tokenSpan(field.name());
+          if (std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
+                          [&](const auto &note) { return note.span == span; }))
+            continue;
+          diagnostic.related.push_back(
+              {span, std::string(field.capture ? "Capture '" : "Field '") +
+                         field.name().lexeme +
+                         "' can retain a reference to external storage; "
+                         "allocating the containing value does not own that "
+                         "storage."});
+          if (diagnostic.related.size() == 4)
+            break;
+        }
+      }
       diagnostic.hints.emplace_back(
           "Keep the borrowing value in tracked local storage, or store owned "
           "state instead.");
