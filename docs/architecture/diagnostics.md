@@ -437,6 +437,9 @@ related spans, and what intentional alternatives remain through hints:
   Restoration
   clears old causes with the existing moved state; shadowed declarations do not
   share causes. This private provenance does not decide availability or lifetime.
+  A rejected whole-value transfer after a projected move uses that same
+  projected-place provenance: it identifies the unavailable field and its
+  transfer site, rather than only saying that part of the owner is missing.
 - Retained-borrow `GTI-S2017` relates the borrowing origin and, when the flow
   analysis proves one, the later required statement or structured control-flow
   boundary. Advice distinguishes completing those uses from ending a
@@ -447,6 +450,23 @@ related spans, and what intentional alternatives remain through hints:
   publication reports one semantic diagnostic at the conflicting access, with
   the first result publication as its related origin. Ending the result's
   scope restores access; leaving an unused result alive does not.
+  Parent-use rejections retain the live child identified by verification, so
+  the related origin points to that reborrow rather than the original parent
+  or an ended sibling. Later-use witnesses follow MIR continuations after the
+  rejected instruction and stop when the loan ends. A reachable use earlier
+  in source order is explained as a possible later loop iteration; source
+  order alone is not evidence that a use follows the conflicting access.
+- Ambiguous result-lifetime elision relates each eligible input parameter and
+  asks the author to declare the intended result/input relationship. It does
+  not guess a lifetime annotation. A rejected explicit return-region relation
+  (`GTI-S2127`) relates the supplied and required written regions and explains
+  that an `outlives` constraint adds a caller obligation, not extra lifetime.
+  That rejection replaces the redundant inferred-supplier explanation, while
+  independent return type, addressability and access checks remain in force.
+- A stored borrow from a temporary receiver (`GTI-S2045`) relates the temporary
+  owner and explains destruction at the full-expression boundary. Advice names
+  the owner that must be retained; naming only the borrowed result does not
+  extend the owner's lifetime.
 - Read-only field writes, fixed-array writes, and mutable method calls relate
   the restricting declaration when it is provable through ordinary named places.
   Hints distinguish an immutable owner, a read-only reference requiring exclusive
