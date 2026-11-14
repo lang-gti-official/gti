@@ -83,10 +83,10 @@ int main() { return read(true && false) || read('a') != 'a' || read(float(1.0)) 
            "lazy scalar temporary is path-local");
 }
 void boundaries() {
-  rejected("import std.string; int measure(std::string_view& value) { return "
+  accepted("import std.string; int measure(std::string_view& value) { return "
            "int(value.size()); } "
            "int main() { return measure(std::string(\"abcd\").view()); }",
-           "text view temporary cannot retain transient owner");
+           "text view temporary retains full-expression owner");
   rejected("void write(mut int& value) { value = 1; } int main() { write(42); "
            "return 0; }",
            "mutable scalar reference");
@@ -165,6 +165,98 @@ int observe(Cursor& cursor, int later) { return cursor.read() + later; }
                             return diagnostic.code == "GTI-B0001";
                           }),
          "carrier argument protects its owner during later arguments");
+}
+
+// A user-defined carrier proves the rule is independent of text wrappers.
+void temporaryOwnedCarriers() {
+  const std::string declarations = R"gti(
+class Owner { int value; public: Owner(int v) : value(v) {} int& get() { return this.value; } };
+class View { int& value; public: View(int& v) : value(v) {} int read() { return this.value; } };
+int observe(View& first, View& second) { return first.read() + second.read(); }
+int packed<Args...>(Args&... args) { return observe(args...); }
+int forwarded<Args...>(Args&... args) { return packed(args...); }
+)gti";
+  accepted(declarations + R"gti(
+int main() { return forwarded(View(Owner(3).get()), View(Owner(4).get())) - 7; }
+)gti",
+           "reference packs forward carriers with distinct temporary owners");
+  const auto control = analyze(
+      declarations + "int main() { return forwarded(View(Owner(3).get()), "
+                     "View(Owner(4).get())) - 7; }");
+  unsigned proofs = 0;
+  if (control.canGenerateCode()) {
+    for (const auto &function : control.mir.functionInstances()) {
+      for (const auto &place : function.body.places) {
+        const auto dependency =
+            lang::findMirTemporaryCarrierDependency(function.body, place);
+        if (!dependency)
+          continue;
+        const auto *owner = function.body.findPlace(dependency.loan->source);
+        if (!owner || owner->root != lang::MirPlaceRootKind::Value)
+          continue;
+        for (const auto &drop : function.body.dropObligations) {
+          const auto *root = function.body.findPlace(drop.place);
+          if (!root || root->root != owner->root || root->value != owner->value)
+            continue;
+          auto forged = control.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          for (auto &candidate : changed->body.dropObligations)
+            if (candidate.id == drop.id)
+              candidate.hirFullExpression = 0;
+          expect(!lang::findMirTemporaryCarrierDependency(
+                     changed->body, *changed->body.findPlace(place.id)),
+                 "carrier proof requires its owner's full-expression lifetime");
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "verifier rejects a temporary carrier with an unproven owner "
+                 "lifetime");
+          ++proofs;
+        }
+      }
+    }
+  }
+  expect(proofs >= 2,
+         "independent temporary owners carry separate lifetime proofs");
+  accepted(declarations + R"gti(
+class Pair { int& first; int& second; public: Pair(int& a, int& b) : first(a), second(b) {} int read() { return this.first + this.second; } };
+int read(Pair& value) { return value.read(); }
+int main() { return read(Pair(Owner(3).get(), Owner(4).get())) - 7; }
+)gti",
+           "one carrier retains multiple temporary owners");
+  accepted(R"gti(
+import std.filesystem;
+import std.format;
+int main() { auto entry = std::filesystem::path("/tmp/example.txt");
+  std::println("entry {}", entry.filename().view()); return 0; }
+)gti",
+           "formatted print accepts a view of a temporary filename");
+  rejected(declarations + R"gti(
+void change(mut View& value) {}
+int main() { change(View(Owner(3).get())); return 0; }
+)gti",
+           "mutable reference cannot bind a fresh borrowed carrier");
+  rejected(declarations + R"gti(
+void change<Args...>(mut Args&... values) {}
+int main() { change(View(Owner(3).get())); return 0; }
+)gti",
+           "mutable reference pack cannot bind a fresh borrowed carrier");
+  for (const auto &body :
+       {"auto dangling = View(Owner(3).get()); return dangling.read();",
+        "View& dangling = View(Owner(3).get()); return dangling.read();",
+        "return retained(View(Owner(3).get())).read();"}) {
+    const auto result =
+        analyze(declarations +
+                "View& retained(View& value) { return value; } int main() { " +
+                body + " }");
+    expect(
+        !result.canGenerateCode() &&
+            std::any_of(
+                result.diagnostics.begin(), result.diagnostics.end(),
+                [](const auto &d) { return d.code.starts_with("GTI-S"); }) &&
+            std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-B0001"; }),
+        std::string("temporary carrier cannot escape: ") + body);
+  }
 }
 
 void libraryClients() {
@@ -455,6 +547,7 @@ int main() {
   boundaries();
   operators();
   carrierBoundaries();
+  temporaryOwnedCarriers();
   libraryClients();
   verifierProofs();
   primitiveBorrowInitialization();

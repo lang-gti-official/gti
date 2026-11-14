@@ -19,7 +19,7 @@ if __name__ == "__main__":
              "temporary_borrow_cpp_supported", "noreturn_temporary_borrow",
              "temporary_borrow_symbolic_producers", "borrowed_text_temporary_failure",
              "call_operator_temporary_borrow", "panic_argument_borrow_order",
-             "shared_parent_call_borrows")
+             "shared_parent_call_borrows", "temporary_owned_carrier_arguments")
     argument_order = root / "tests/fixtures/panic_argument_borrow_order.gti"
     def argument_order_line(marker):
         return next(i for i, line in enumerate(argument_order.read_text().splitlines(), 1)
@@ -52,12 +52,23 @@ if __name__ == "__main__":
     iterator_lines = (root / "stdlib/std/detail/iterator.gti").read_text().splitlines()
     cursor_check = next(i for i, line in enumerate(iterator_lines, 1)
                         if "index_bounds_check(selected - begin" in line)
+    owned_carrier = root / "tests/fixtures/temporary_owned_carrier_arguments.gti"
+    def owned_failure(marker):
+        line = next(i for i, line in enumerate(owned_carrier.read_text().splitlines(), 1)
+                    if line.endswith('// ' + marker))
+        return (f"{owned_carrier.name}:{line}: runtime error[GTI-R0002]: "
+                "division_by_zero in integer_division\n")
     main(names=names, llvm_modes=True,
          cpp_unsupported={name: (None if name in ("temporary_borrow_cpp_supported", "shared_parent_call_borrows") else
                                 "scalar, plain-enum, and text temporary reference arguments")
                           for name in names},
          fixture_paths={name: root / "examples" / f"{name}.gti" for name in names[1:3]},
-         cases={names[0]: [((), (0, output, "")),
+         cases={"temporary_owned_carrier_arguments": [
+                    ((), (0, "consume\n14\n24\n13\n23\n", "")),
+                    (("later",), (70, "14\n24\n13\n23\n", owned_failure("later-failure"))),
+                    (("body", "fails"), (70, "consume\n14\n24\n13\n23\n", owned_failure("body-failure"))),
+                    (("producer", "now", "fails"), (70, "13\n23\n", owned_failure("producer-failure")))],
+                names[0]: [((), (0, output, "")),
                            (("later",), (70, output, failure(later))),
                            (("body", "fails"), (70, output, failure(inspect))),
                            (("producer", "arg", "fails"), (70, output, failure(producer)))],

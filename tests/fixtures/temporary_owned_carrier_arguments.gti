@@ -1,0 +1,28 @@
+import std.string;
+import std.vector;
+class Owner {
+  int value;
+public:
+  Owner(int v) : value(v) {}
+  int& get() { return this.value; }
+  ~Owner() { std::println(this.value + 20); }
+};
+class View {
+  int& value;
+public:
+  View(int& v) : value(v) {}
+  int read() { return this.value; }
+  ~View() { std::println(this.value + 10); }
+};
+Owner produce(int divisor) { return Owner(4 / divisor); } // producer-failure
+int later(int divisor) { return 0 / divisor; } // later-failure
+int consume(View& first, View& second, int& ignored, int& divisor) {
+  std::println("consume");
+  return (first.read() + second.read() + ignored) / divisor; // body-failure
+}
+int observe<Args...>(Args&... args) { return consume(args...); }
+int forward<Args...>(Args&... args) { return observe(args...); }
+int main(int argc, std::vector<std::string> argv) {
+  return forward(View(Owner(3).get()), View(produce(argc == 4 ? 0 : 1).get()),
+                 later(argc == 2 ? 0 : 1), argc == 3 ? 0 : 1) - 7;
+}
