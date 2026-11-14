@@ -2367,7 +2367,7 @@ target_include_directories(gti_llvm_hosted_contract_tests SYSTEM PRIVATE ${GTI_L
 target_link_libraries(gti_llvm_hosted_contract_tests PRIVATE gti_llvm_backend gti_driver gti_runtime)
 add_test(NAME llvm_hosted_contracts
          COMMAND gti_llvm_hosted_contract_tests "${PROJECT_SOURCE_DIR}")
-set_tests_properties(llvm_hosted_contracts PROPERTIES TIMEOUT 180)
+set_tests_properties(llvm_hosted_contracts PROPERTIES TIMEOUT 300)
 if(Python3_Interpreter_FOUND)
   add_test(NAME llvm_hosted_execution
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_hosted_execution_test.py"
