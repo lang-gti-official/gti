@@ -679,22 +679,21 @@ int main() {
 )";
   const auto escapingScopeResult = analyze(escapingScope);
   const auto *escapingScopeError =
-      findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-S2017");
-  expect(
-      !escapingScopeResult.canGenerateCode() && escapingScopeError &&
-          escapingScopeError->message.find("Cannot destroy storage") !=
-              std::string::npos &&
-          hasRelatedDiagnostic(escapingScopeResult.diagnostics, "used later") &&
-          hasDiagnosticHint(escapingScopeResult.diagnostics,
-                            "Keep the owner alive"),
-      "a scope-exit borrow conflict explains destruction rather than "
-      "assignment");
-  auto outerScope = escapingScope;
-  outerScope.replace(outerScope.find("view = View(inner)"),
-                     std::string("view = View(inner)").size(),
-                     "view = View(outer)");
-  expect(analyze(outerScope).canGenerateCode(),
-         "borrowing the surviving outer owner preserves the valid control");
+      findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-S2003");
+  expect(!escapingScopeResult.canGenerateCode() && escapingScopeError &&
+             escapingScopeError->message.find(
+                 "assignment is unavailable for type 'View'") !=
+                 std::string::npos &&
+             hasDiagnosticHint(escapingScopeResult.diagnostics,
+                               "Initialize a new binding"),
+         "a nonassignable borrowed carrier explains unavailable assignment "
+         "instead of identical-type mismatch");
+  auto scopedBinding = escapingScope;
+  scopedBinding.replace(scopedBinding.find("view = View(inner);"),
+                        std::string("view = View(inner);").size(),
+                        "View inside{inner};");
+  expect(analyze(scopedBinding).canGenerateCode(),
+         "a fresh inner carrier keeps its borrow inside the owner's scope");
   const std::string temporary = prefix + R"(
 int main() {
   auto borrowed = std::string("hello").view();

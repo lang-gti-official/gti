@@ -486,6 +486,11 @@ related spans, and what intentional alternatives remain through hints:
   or move assignment rather than reporting identical types as a mismatch. It
   suggests explicit movement only when move assignment exists. Constants are
   never advised to add the forbidden `mut constexpr` combination.
+  Other exact-type assignments also name an unavailable copy or move operation
+  when the type's recorded assignment traits forbid it. This includes borrowed
+  carriers: making the binding mutable does not make its type assignable.
+  A fresh binding is suggested without claiming that a borrow can escape its
+  owner's scope.
 - A used result of a valid built-in assignment of a move-only type is
   `GTI-S2003` at the assignment operator: the result would copy the target.
   Semantic analysis records the discarded positions (an expression statement,

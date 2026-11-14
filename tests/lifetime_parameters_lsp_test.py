@@ -285,7 +285,21 @@ def main():
             assert note["location"] == {"uri": uri, "range": source_range(
                 owned_erasure, owned_erasure.index("&value") + 1, 5)}, note
             assert change(owned_erasure.replace("[&value]", "[value]"), 23) == []
-            assert change(SOURCE, 24) == []
+            carrier_assignment = (
+                "struct View<lifetime a> { int&<a> value; "
+                "View(int&<a> input) : value(input) {} };\n"
+                "int main() { int outer = 1; mut View view{outer};\n"
+                "  { int inner = 2; /* 😀 */ view = View(inner); }\n"
+                "  return view.value; }\n")
+            errors = change(carrier_assignment, 24)
+            error = next(item for item in errors if item["code"] == "GTI-S2003")
+            assert "assignment is unavailable for type 'View'" in error["message"], error
+            assert "Initialize a new binding" in error["message"], error
+            assert error["range"] == source_range(
+                carrier_assignment, carrier_assignment.index("inner);") + 5, 1), error
+            assert change(carrier_assignment.replace(
+                "view = View(inner);", "View inside{inner};"), 25) == []
+            assert change(SOURCE, 26) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",

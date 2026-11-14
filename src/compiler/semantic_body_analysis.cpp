@@ -7249,10 +7249,19 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     const auto *valueInfo = semanticModel.findExpression(*expr.value());
     const bool moving =
         valueInfo != nullptr && valueInfo->category == ValueCategory::Value;
+    const auto assignmentTraits = typeTraits(targetType);
+    const bool unavailableAssignment =
+        targetType == valueType && targetType != SemanticType::Unknown &&
+        (moving ? !assignmentTraits.moveAssignable
+                : !assignmentTraits.copyAssignable);
     report(expressionToken(expr.value()),
            ownerAssignment
                ? (moving ? "Move assignment is unavailable for type '"
                          : "Cannot copy assign move-only type '") +
+                     typeSpelling(targetType) + "'."
+           : unavailableAssignment
+               ? std::string(moving ? "Move" : "Copy") +
+                     " assignment is unavailable for type '" +
                      typeSpelling(targetType) + "'."
                : "Cannot assign a value of type '" + typeSpelling(valueType) +
                      "' to '" + expr.name().lexeme + "' of type '" +
@@ -7265,6 +7274,11 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                 "new binding from an owned value instead."
               : "Move-only owners cannot be copied; use std::move(owner) "
                 "to transfer ownership.");
+    } else if (unavailableAssignment) {
+      diagnostics.back().hints.emplace_back(
+          "Initialize a new binding instead of replacing this value by "
+          "assignment. A mutable binding does not add assignment operations "
+          "to its type.");
     }
   }
   if (!simpleAssignment) {
