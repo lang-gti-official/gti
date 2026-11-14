@@ -479,6 +479,37 @@ int main() {
   std::string destination = std::move(original);
   return int(original.size());
 })";
+  const std::string partial = prefix + R"(
+struct Pair {
+  mut std::string first;
+  mut std::string second;
+  Pair(std::string a, std::string b)
+    : first(std::move(a)), second(std::move(b)) {}
+};
+void consume(Pair input) {}
+int main() {
+  mut Pair value{std::string("a"), std::string("b")};
+  auto first = std::move(value.first);
+  consume(std::move(value));
+  return int(first.size());
+}
+)";
+  const auto partialResult = analyze(partial);
+  const auto *partialError =
+      findDiagnosticByCode(partialResult.diagnostics, "GTI-S2018");
+  expect(partialError &&
+             partialError->message.find("first") != std::string::npos &&
+             partialError->primary.start == partial.find("value));") &&
+             partialError->related.size() == 1 &&
+             partialError->related[0].span.start == partial.find("first);") &&
+             partialError->related[0].span.end == partial.find("first);") + 5,
+         "a whole-value transfer after a field move names the missing field "
+         "and identifies its transfer site");
+  auto restoredPartial = partial;
+  restoredPartial.insert(restoredPartial.find("  consume"),
+                         "  value.first = std::string(\"replacement\");\n");
+  expect(analyze(restoredPartial).canGenerateCode(),
+         "restoring a moved field permits the whole-value transfer");
   const auto movedResult = analyze(moved);
   const auto *movedError =
       findDiagnosticByCode(movedResult.diagnostics, "GTI-S2018");

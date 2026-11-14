@@ -14370,14 +14370,18 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (place.root != nullptr &&
-      unavailableProjectedState(place, true) != nullptr) {
-    report(expressionToken(argument),
-           "std::move cannot consume a value while one of its owned "
-           "places remains moved.",
-           "GTI-S2018");
-    diagnostics.back().hints.emplace_back(
-        "Reinitialize the moved place before transferring its owner.");
+  if (const auto *state = place.root != nullptr
+                              ? unavailableProjectedState(place, true)
+                              : nullptr) {
+    const auto diagnosticCount = diagnostics.size();
+    reportUnavailablePlace(expressionToken(argument), *state, &place);
+    if (diagnostics.size() != diagnosticCount) {
+      diagnostics.back().message +=
+          " The whole value cannot be transferred while one of its owned "
+          "places remains moved.";
+      diagnostics.back().hints.emplace_back(
+          "Reinitialize the moved place before transferring its owner.");
+    }
     currentType = SemanticType::Unknown;
     return;
   }
