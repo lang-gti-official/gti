@@ -8897,7 +8897,21 @@ private:
         if (const MirPlace *selected = output.findPlace(call.receiver->place);
             selected != nullptr && storedReferenceAccessFor(*selected))
           return call.receiver->place;
-        if (const MirPlaceId source = borrowedSourcePlace(*receiver);
+        // A by-value carrier receiver holds a Stored group for its external
+        // dependencies. A mutable result cannot lie in the referent of a
+        // read-only group (an owning container that merely retains a shared
+        // resource handle), so it borrows storage of the receiver itself and
+        // is rooted at the receiver's own place below (issue #331). A view
+        // carrier's mutable group does name the result's storage.
+        const MirLoan *receiverLoan = output.findLoan(loanForValue(*receiver));
+        const bool heldStoredGroup =
+            receiverLoan != nullptr &&
+            receiverLoan->kind == MirLoanKind::Stored &&
+            receiverLoan->access == AccessMode::ReadOnly &&
+            value.borrowAccess == AccessMode::Mutable &&
+            call.receiver->place != 0;
+        if (const MirPlaceId source =
+                heldStoredGroup ? 0 : borrowedSourcePlace(*receiver);
             source != 0) {
           // A by-reference capture's entry loan names the capture slot. A
           // receiver reached through it is the referent place itself, as a
