@@ -5205,6 +5205,20 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           }
           const MirCanonicalPlace otherPlace =
               canonicalPlace(body, other.source, bindingLoans, active);
+          // A by-value carrier formal's entry Stored group is the external
+          // dependency its shell holds. A reborrow of that shell which names
+          // the group as its stored dependency is derived from it, not a
+          // competing sibling (issue #221): the group must grant at least the
+          // child's access, and both must reach the same canonical root.
+          const MirLoan &child = body.loans[loan - 1];
+          if (child.storedDependency == other.id &&
+              other.kind == MirLoanKind::Stored && other.entry &&
+              !other.escapes && other.parent == 0 &&
+              (other.access == AccessMode::Mutable ||
+               child.access == AccessMode::ReadOnly) &&
+              !childPlace.ambiguous && !otherPlace.ambiguous &&
+              sameCanonicalRoot(childPlace, otherPlace))
+            continue;
           if (abstractStoredEntry(body, other) &&
               sameCanonicalRoot(childPlace, otherPlace) &&
               !abstractStoredAccess(other, childPlace).overlaps)
@@ -6322,6 +6336,20 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 sameCanonicalRoot(childPlace, otherPlace) &&
                 !abstractStoredAccess(other, childPlace).overlaps)
               continue;
+            // As for a direct child: a loan that names a by-value carrier
+            // formal's entry Stored group as its stored dependency is derived
+            // from that group (issue #221).
+            {
+              const MirLoan &derived = body.loans[loan - 1];
+              if (derived.storedDependency == other.id &&
+                  other.kind == MirLoanKind::Stored && other.entry &&
+                  !other.escapes && other.parent == 0 &&
+                  (other.access == AccessMode::Mutable ||
+                   derived.access == AccessMode::ReadOnly) &&
+                  !childPlace.ambiguous && !otherPlace.ambiguous &&
+                  sameCanonicalRoot(childPlace, otherPlace))
+                continue;
+            }
             const bool compatibleReadOnlyDependency =
                 (body.loans[loan - 1].kind == MirLoanKind::CallResult ||
                  body.loans[loan - 1].kind == MirLoanKind::Stored) &&
