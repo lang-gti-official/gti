@@ -1486,7 +1486,8 @@ auto SemanticVisitor::Impl::recordProgramScopeBorrowCleanup() -> void {
     return;
   std::vector<const Symbol *> order;
   for (const auto &[_, symbol] : scopes.back())
-    if (symbol.retainedLoan != 0 || requiresActiveCleanupFor(symbol.type))
+    if (symbol.retainedDependency != nullptr ||
+        requiresActiveCleanupFor(symbol.type))
       order.push_back(&symbol);
   std::sort(order.begin(), order.end(),
             [](const auto *left, const auto *right) {
@@ -9465,14 +9466,15 @@ auto SemanticVisitor::Impl::mergeValueStates(const ScopeStack &base,
         for (auto &field : target->second.rawPointerFields)
           for (auto &origin : field.origins)
             origin.possible = true;
-        const bool sameRetainedLoan =
-            leftSymbol->second.retainedLoan == rightSymbol->second.retainedLoan;
-        target->second.retainedLoan = sameRetainedLoan
-                                          ? leftSymbol->second.retainedLoan
-                                          : baseSymbol.retainedLoan;
+        const bool sameRetainedDependency =
+            sameBindingDependency(leftSymbol->second.retainedDependency,
+                                  rightSymbol->second.retainedDependency);
+        target->second.retainedDependency =
+            sameRetainedDependency ? leftSymbol->second.retainedDependency
+                                   : baseSymbol.retainedDependency;
         target->second.retainsDependency =
-            sameRetainedLoan ? leftSymbol->second.retainsDependency
-                             : baseSymbol.retainsDependency;
+            sameRetainedDependency ? leftSymbol->second.retainsDependency
+                                   : baseSymbol.retainsDependency;
         // Complete transport facts describe values reaching this join. A
         // terminating arm is absent, not an unknown supplier to join with the
         // continuing arm. Keep the conservative loan union above separate.
@@ -9885,15 +9887,10 @@ auto SemanticVisitor::Impl::endScope() -> void {
   recordProgramScopeBorrowCleanup();
   std::unordered_set<SymbolId> expired;
   for (auto &[_, symbol] : scopes.back()) {
-    if (symbol.valueState == ValueState::Available) {
-      const auto *loan = semanticModel.findLoan(symbol.retainedLoan);
-      if (loan != nullptr && loan->lifecycleBound)
-        ;
-    }
     if (symbol.valueState == ValueState::Available)
       applyRawCleanupWrites(symbol.type, tokenSpan(symbol.declaration),
                             symbol.rawPointerFields);
-    removeLoanCarrier(symbol);
+    dropBindingDependency(symbol);
     removeCapturedTextCarrier(symbol);
     expired.insert(symbolForDeclaration(symbol.declaration));
   }
@@ -9938,7 +9935,8 @@ auto SemanticVisitor::Impl::mergeRawPointerOrigins(
     const auto existing =
         std::find_if(target.begin(), target.end(), [&](const auto &existing) {
           return existing.place == origin.place &&
-                 existing.throughLoan == origin.throughLoan &&
+                 sameBindingDependency(existing.throughDependency,
+                                       origin.throughDependency) &&
                  existing.parameterPointee == origin.parameterPointee &&
                  existing.loopInput == origin.loopInput &&
                  existing.pointeeType == origin.pointeeType &&
@@ -10596,7 +10594,7 @@ auto SemanticVisitor::Impl::collectRawResultFields(
       }
       // Loan identities belong to the producing body. Formal sources acquire
       // the actual caller's identity when the result is instantiated.
-      result.origin.throughLoan = 0;
+      result.origin.throughDependency = 0;
       output.origins.push_back(std::move(result));
     }
     (outputRecords ? *outputRecords : query->fields)
@@ -11028,8 +11026,8 @@ auto SemanticVisitor::Impl::rawProducedFields(
             bases.push_back(
                 {.place = place,
                  .addressSite = source.origin.addressSite,
-                 .throughLoan =
-                     actual ? accessLoan(semanticPlace(actual)) : 0});
+                 .throughDependency =
+                     actual ? accessDependency(semanticPlace(actual)) : 0});
         }
         for (auto &origin : bases) {
           origin.place.projections.insert(
@@ -11102,7 +11100,7 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
     const auto place = loanPlace(value);
     if (place.valid())
       mergeRawPointerOrigins(result, {{place, tokenSpan(expressionToken(value)),
-                                       accessLoan(value)}});
+                                       accessDependency(value)}});
   };
   ResolvedCallArguments arguments;
   const std::vector<SemanticType> *parameters = nullptr;
@@ -12145,7 +12143,7 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
         std::vector<RawPointerOrigin> origins;
         for (const auto &place : places)
           origins.push_back({placeKey(place), tokenSpan(unary->oper()),
-                             accessLoan(unary->right())});
+                             accessDependency(unary->right())});
         for (auto &origin : origins)
           origin.possible = weak;
         return origins;
@@ -12176,7 +12174,8 @@ auto SemanticVisitor::Impl::rawPointerOrigins(const Expr *expression)
          place.projections.back().kind == PlaceProjectionKind::DynamicIndex))
       place.projections.pop_back();
     if (place.valid())
-      return {{place, tokenSpan(unary->oper()), accessLoan(unary->right())}};
+      return {
+          {place, tokenSpan(unary->oper()), accessDependency(unary->right())}};
   }
   if (const auto *binary = exprAs<Binary>(expression);
       binary && (binary->oper().kind == TokenKind::PLUS ||

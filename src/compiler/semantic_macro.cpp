@@ -774,7 +774,7 @@ auto SemanticVisitor::Impl::copyRequestSessionForSpeculativeModel(Impl &probe)
     }
   } restore(requestSession);
   // Copying context is value/container cloning, not semantic analysis. Its
-  // active loan identities, flow and counters are retained in the probe.
+  // active binding dependencies, flow and counters are retained in the probe.
   static_cast<RequestSessionContext &>(probe.requestSession) = requestSession;
 } // Restore the caller before creating or executing any probe model.
 

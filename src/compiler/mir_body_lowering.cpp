@@ -737,7 +737,7 @@ public:
     derivedLoanEnds = std::move(ends);
     uniqueSemanticLoanEndpoints.clear();
     for (const HirStatement &statement : source.statements)
-      for (const SemanticLoanId loan : endedAfter(statement)) {
+      for (const MirLoanId loan : endedAfter(statement)) {
         const auto [entry, inserted] =
             uniqueSemanticLoanEndpoints.emplace(loan, statement.id);
         if (!inserted && entry->second != statement.id)
@@ -1362,7 +1362,7 @@ private:
   struct BreakContext {
     MirBlockId target = 0;
     std::size_t keepScopes = 0;
-    std::vector<SemanticLoanId> exitLoans;
+    std::vector<MirLoanId> exitLoans;
     bool hasBreak = false;
   };
 
@@ -11953,7 +11953,7 @@ private:
   }
 
   [[nodiscard]] std::vector<MirLoanId>
-  childFirstLoans(const std::vector<SemanticLoanId> &loans,
+  childFirstLoans(const std::vector<MirLoanId> &loans,
                   const std::vector<Scope> *scopeState = nullptr) {
     std::vector<MirLoanId> result;
     result.reserve(loans.size());
@@ -12147,34 +12147,33 @@ private:
   }
 
   // Loan end points: the ones MIR derives from its own CFG.
-  [[nodiscard]] const std::vector<SemanticLoanId> &
+  [[nodiscard]] const std::vector<MirLoanId> &
   endedAfter(const HirStatement &statement) const {
     return derivedList(derivedLoanEnds.after, statement.id);
   }
-  [[nodiscard]] const std::vector<SemanticLoanId> &
+  [[nodiscard]] const std::vector<MirLoanId> &
   thenEntryEnded(const HirStatement &statement) const {
     return derivedList(derivedLoanEnds.thenEntry, statement.id);
   }
-  [[nodiscard]] const std::vector<SemanticLoanId> &
+  [[nodiscard]] const std::vector<MirLoanId> &
   elseEntryEnded(const HirStatement &statement) const {
     return derivedList(derivedLoanEnds.elseEntry, statement.id);
   }
-  [[nodiscard]] const std::vector<SemanticLoanId> &
+  [[nodiscard]] const std::vector<MirLoanId> &
   armEntryEnded(const HirStatement &statement, std::size_t arm) const {
-    static const std::vector<SemanticLoanId> none;
+    static const std::vector<MirLoanId> none;
     const auto found = derivedLoanEnds.switchArmEntry.find({statement.id, arm});
     return found == derivedLoanEnds.switchArmEntry.end() ? none : found->second;
   }
-  [[nodiscard]] static const std::vector<SemanticLoanId> &derivedList(
-      const std::unordered_map<HirStatementId, std::vector<SemanticLoanId>>
-          &lists,
+  [[nodiscard]] static const std::vector<MirLoanId> &derivedList(
+      const std::unordered_map<HirStatementId, std::vector<MirLoanId>> &lists,
       HirStatementId statement) {
-    static const std::vector<SemanticLoanId> none;
+    static const std::vector<MirLoanId> none;
     const auto found = lists.find(statement);
     return found == lists.end() ? none : found->second;
   }
 
-  void endSemanticLoans(const std::vector<SemanticLoanId> &loans,
+  void endSemanticLoans(const std::vector<MirLoanId> &loans,
                         HirStatementId statement) {
     const auto retained = lifecycleRetainedLoans({});
     for (const MirLoanId loan : childFirstLoans(loans)) {
@@ -12199,7 +12198,7 @@ private:
     }
   }
 
-  void endSemanticLoansIfActive(const std::vector<SemanticLoanId> &loans,
+  void endSemanticLoansIfActive(const std::vector<MirLoanId> &loans,
                                 HirStatementId statement) {
     const auto retained = lifecycleRetainedLoans({});
     for (const MirLoanId loan : childFirstLoans(loans)) {
@@ -12218,7 +12217,7 @@ private:
   }
 
   void normalizeSemanticLoanState(
-      const std::vector<SemanticLoanId> &loans, std::vector<Scope> &scopeState,
+      const std::vector<MirLoanId> &loans, std::vector<Scope> &scopeState,
       std::unordered_map<HirBindingId, MirLoanId> &bindingLoanState) {
     const auto retained = lifecycleRetainedLoans({}, &scopeState);
     for (const MirLoanId loan : childFirstLoans(loans, &scopeState)) {
@@ -18047,8 +18046,8 @@ private:
     normalizeSemanticLoanState(endedAfter(statement), exitScopes,
                                exitBindingLoans);
     if (coversEveryValue && !statement.switchArms.empty()) {
-      std::vector<SemanticLoanId> endedOnEveryArm = armEntryEnded(statement, 0);
-      std::erase_if(endedOnEveryArm, [&](SemanticLoanId loan) {
+      std::vector<MirLoanId> endedOnEveryArm = armEntryEnded(statement, 0);
+      std::erase_if(endedOnEveryArm, [&](MirLoanId loan) {
         return std::any_of(
                    statement.switchArms.begin() + 1, statement.switchArms.end(),
                    [&](const HirSwitchArm &arm) {
@@ -19275,8 +19274,7 @@ private:
   bool exitsJoined = false;
   std::unordered_map<HirValueId, const HirValue *> values;
   std::unordered_map<HirStatementId, const HirStatement *> statements;
-  std::unordered_map<SemanticLoanId, HirStatementId>
-      uniqueSemanticLoanEndpoints;
+  std::unordered_map<MirLoanId, HirStatementId> uniqueSemanticLoanEndpoints;
   // Shadow phase: MIR-derived loan end points replace the transported ones.
   MirDerivedLoanEnds derivedLoanEnds;
   std::unordered_map<HirBindingId, const HirBinding *> bindings;

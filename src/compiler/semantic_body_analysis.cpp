@@ -148,7 +148,6 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   instanceValueSubstitution.clear();
   nextLambdaId = 1;
   requestSession.sourceLambdaIdentities.clear();
-  nextSemanticLoanId = 1;
   nextPlaceSelectionId = 1;
   instanceSymbolCeiling = 0;
   instanceLambdaCeiling = 0;
@@ -2453,7 +2452,7 @@ auto SemanticVisitor::Impl::visitConstructorDecl(const ConstructorDecl &stmt)
       declare(parameter.name, parameterType,
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
-      recordParameterEntryLoan(parameter);
+      recordParameterEntryDependency(parameter);
     }
   }
 
@@ -3489,10 +3488,6 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
              .sentinel = sentinel == nullptr ? 0 : sentinel->symbol,
              .element = element == nullptr ? 0 : element->symbol,
              .elementOwner = elementOwner == nullptr ? 0 : elementOwner->symbol,
-             .rangeLoan = range == nullptr ? 0 : range->retainedLoan,
-             .elementLoan = element == nullptr ? 0 : element->retainedLoan,
-             .elementOwnerLoan =
-                 elementOwner == nullptr ? 0 : elementOwner->retainedLoan,
              .beginFunction = beginFunction,
              .endFunction = endFunction,
              .compareFunction = compareFunction,
@@ -4194,7 +4189,7 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
                   : declaredType,
               parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
-      recordParameterEntryLoan(parameter);
+      recordParameterEntryDependency(parameter);
     }
   }
 
@@ -5540,8 +5535,9 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                        binding) != dropped.end();
                     });
   }
-  const auto subjectSource = retainedLoanSource(stmt.expression());
-  SemanticLoanId subjectDependency = subjectSource ? subjectSource->loan : 0;
+  const auto subjectSource = retainedDependencySource(stmt.expression());
+  BindingDependencyRef subjectDependency =
+      subjectSource ? subjectSource->summary : BindingDependencyRef{};
   // A field of the dependency's carrier that the subject names, as in
   // `switch (line.word)`, prefixes the payload designation.
   std::vector<SymbolId> subjectFieldPrefix;
@@ -5549,16 +5545,16 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
     for (const auto &projection : place->projections)
       subjectFieldPrefix.push_back(
           projection.kind == PlaceProjectionKind::Field ? projection.field : 0);
-  if (const auto *loan = semanticModel.findLoan(subjectDependency);
-      loan && loan->kind == SemanticLoanKind::Reference)
+  if (BindingDependencyRef loan = subjectDependency;
+      loan && loan->kind == BindingDependencyKind::Reference)
     subjectDependency = loan->storedDependency;
   bool consumesDependency = false;
   if (consumedSubject && subjectDependencies &&
       !subjectDependencies->dependencies.empty()) {
     // MIR rejects consuming a group another live carrier still holds.
-    const auto *group = semanticModel.findLoan(subjectDependency);
+    BindingDependencyRef group = subjectDependency;
     consumesDependency = group &&
-                         group->kind == SemanticLoanKind::StoredValue &&
+                         group->kind == BindingDependencyKind::StoredValue &&
                          !group->lifecycleBound;
     if (!consumesDependency)
       report(stmt.keyword(),
@@ -5570,8 +5566,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
     // Like an immutable local initialized from the subject: arms move its
     // fields out, but no source code can name or assign it.
     auto hidden = bindingInfo(subjectType, AccessMode::ReadOnly);
-    if (consumesDependency)
-      hidden.retainedLoan = subjectDependency;
     semanticModel.recordConsumedSwitchSubject(stmt, std::move(hidden));
   }
   const bool validSubject = isInteger(subjectType) ||
@@ -5749,8 +5743,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           // An abstract formal has no earlier body-local parent: retain its
           // exact identity through transferredFrom, not an expired parent.
           for (const auto &dependency : projected->dependencies)
-            if (dependency.parent == subjectDependency) {
-              const auto *group = semanticModel.findLoan(subjectDependency);
+            if (sameBindingDependency(dependency.parent, subjectDependency)) {
+              BindingDependencyRef group = subjectDependency;
               if (!group || !group->entry ||
                   !hasCheckedExternalBorrowOrigin(dependency)) {
                 validHandoff = false;
@@ -5761,24 +5755,6 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
                                                  std::move(*projected));
         }
     }
-    // Binding an observed subject's payloads reads its place at this arm's
-    // entry, as forming a selection uses its parent authority. A subject
-    // reached through a reference (a reference binding, or a call result that
-    // names no place) uses that reference's authority there; a named owned
-    // place needs none of its carried dependencies to be read.
-    if (!consumedSubject && subjectSource &&
-        std::any_of(payloadPatterns.begin(), payloadPatterns.end(),
-                    [](const auto &entry) {
-                      return std::any_of(entry.second.bindings.begin(),
-                                         entry.second.bindings.end(),
-                                         [](const auto &payload) {
-                                           return payload.name != nullptr;
-                                         });
-                    }))
-      if (const auto *loan = semanticModel.findLoan(subjectSource->loan);
-          loan && (loan->kind == SemanticLoanKind::Reference ||
-                   semanticModel.findPlace(*stmt.expression()) == nullptr))
-        ;
     for (auto &[source, pattern] : payloadPatterns) {
       if (!pattern.bindings.empty() && arm.labels.size() != 1) {
         report(expressionToken(*source),
@@ -5861,20 +5837,17 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
         // designates holds that owner's dynamic text (L-OWN-02). A by-value
         // binding of it is a dependent view carrying the subject's loan, as
         // a read of a published class field is.
-        if (const auto *textLoan =
-                consumedSubject
-                    ? nullptr
-                    : dependentTextPayloadLoan(subjectDependency, pattern,
-                                               payload, subjectFieldPrefix)) {
+        if (!consumedSubject &&
+            dependentTextPayloadDependency(subjectDependency, pattern, payload,
+                                           subjectFieldPrefix) != nullptr) {
           if (payload.extractionKind == PayloadExtractionKind::BorrowValue)
             report(*payload.name,
                    "A reference cannot yet bind a payload that holds dynamic "
                    "text from a local owner; bind it by value.",
                    "GTI-S2045");
           else if (Symbol *carrier = resolveMutable(*payload.name)) {
-            attachLoanCarrier(textLoan->id, *carrier, symbol, false);
+            shareBindingDependency(subjectDependency, *carrier);
             payload.binding.traits.containsBorrowedState = true;
-            payload.binding.retainedLoan = textLoan->id;
           }
         }
         if (!rawPointerFieldPaths(payload.binding.type).empty())
@@ -5916,7 +5889,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
           } else if (!dependencies ||
                      (payload.extractionKind ==
                           PayloadExtractionKind::ReborrowReference &&
-                      subjectDependency == 0)) {
+                      subjectDependency == nullptr)) {
             Diagnostic diagnostic = makeDiagnostic(
                 "GTI-S2067", DiagnosticPhase::Semantics, *payload.name,
                 consumedSubject
@@ -5946,7 +5919,7 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             const auto extractedDependencies = *dependencies;
             if (consumedSubject)
               for (auto &dependency : dependencies->dependencies)
-                if (dependency.parent == subjectDependency)
+                if (sameBindingDependency(dependency.parent, subjectDependency))
                   dependency.parent = 0;
             const auto enumeration = enumTypeFor(pattern.type);
             const auto variant = std::find_if(
@@ -5960,24 +5933,27 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
               for (auto &dependency : dependencies->dependencies)
                 dependency.parent = subjectDependency;
             const auto &primary = dependencies->dependencies.front();
-            payload.binding.retainedLoan = createRetainedLoan(
-                *carrier, symbol, SemanticLoanKind::Reference, payload.source,
-                primary.place, primary.place.root, primary.place.receiver,
-                primary.access, primary.protectsStorage, primary.parent);
-            if (payload.binding.retainedLoan != 0) {
-              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
-              loan.additionalDependencies.assign(
-                  dependencies->dependencies.begin() + 1,
-                  dependencies->dependencies.end());
-              loan.referenceSelection = SemanticReferenceSelection{
-                  .source = payload.source,
-                  .carrier = stmt.expression().get(),
-                  .transferredFrom = consumedSubject ? subjectDependency : 0,
-                  .fields = {variant->payloadSymbols[payload.payloadIndex]},
-                  .conditions = {{.enumeration = pattern.type,
-                                  .variant = pattern.variantIndex}},
-                  .reference = variant->payloadTypes[payload.payloadIndex]};
-              semanticModel.recordLoan(std::move(loan));
+            BindingDependencyRef selected = formBindingDependency(
+                *carrier, symbol, BindingDependencyKind::Reference,
+                payload.source, primary.place, primary.place.root,
+                primary.place.receiver, primary.access, primary.protectsStorage,
+                primary.parent);
+            if (selected != nullptr) {
+              refineBindingDependency(
+                  *carrier, selected, [&](BindingDependency &loan) {
+                    loan.additionalDependencies.assign(
+                        dependencies->dependencies.begin() + 1,
+                        dependencies->dependencies.end());
+                    loan.referenceSelection = SemanticReferenceSelection{
+                        .source = payload.source,
+                        .carrier = stmt.expression().get(),
+                        .fields =
+                            {variant->payloadSymbols[payload.payloadIndex]},
+                        .conditions = {{.enumeration = pattern.type,
+                                        .variant = pattern.variantIndex}},
+                        .reference =
+                            variant->payloadTypes[payload.payloadIndex]};
+                  });
               semanticModel.recordBorrowDependencySet(*payload.source,
                                                       extractedDependencies);
               // Forming the selection uses its parent authority in the arm,
@@ -6017,17 +5993,17 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             if (access == AccessMode::Mutable) {
               recordMutableBindingUse(stmt.expression());
             }
-            SemanticLoanId parent = 0;
+            BindingDependencyRef parent;
             // A reference result that names no place reaches the carrier's
             // storage; that carrier's dependency group is the stored owner
             // authority a reference local bound to it would inherit.
-            SemanticLoanId inheritedDependency = 0;
-            if (const auto source = retainedLoanSource(stmt.expression()))
-              if (const auto *loan = semanticModel.findLoan(source->loan)) {
-                if (loan->kind != SemanticLoanKind::StoredValue)
-                  parent = source->loan;
+            BindingDependencyRef inheritedDependency;
+            if (const auto source = retainedDependencySource(stmt.expression()))
+              if (const auto *loan = source->summary.get()) {
+                if (loan->kind != BindingDependencyKind::StoredValue)
+                  parent = source->summary;
                 else if (semanticModel.findPlace(*stmt.expression()) == nullptr)
-                  inheritedDependency = source->loan;
+                  inheritedDependency = source->summary;
               }
             // This pattern borrows physical payload storage, not a stored
             // reference's external owner. A dependency group carried by an
@@ -6036,16 +6012,18 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
             // Variant replacement invalidates every field. The original enum
             // is the conservative alias root even when the runtime referent
             // is one exact active payload field.
-            payload.binding.retainedLoan = createRetainedLoan(
-                *carrier, symbol, SemanticLoanKind::Reference, payload.source,
-                place, place.root, place.receiver, access, true, parent);
-            if (const auto *ancestor = semanticModel.findLoan(parent);
-                ancestor && ancestor->storedDependency != 0)
+            BindingDependencyRef borrowed = formBindingDependency(
+                *carrier, symbol, BindingDependencyKind::Reference,
+                payload.source, place, place.root, place.receiver, access, true,
+                parent);
+            if (BindingDependencyRef ancestor = parent;
+                ancestor && ancestor->storedDependency != nullptr)
               inheritedDependency = ancestor->storedDependency;
-            if (inheritedDependency != 0) {
-              auto loan = *semanticModel.findLoan(payload.binding.retainedLoan);
-              loan.storedDependency = inheritedDependency;
-              semanticModel.recordLoan(std::move(loan));
+            if (inheritedDependency != nullptr) {
+              refineBindingDependency(
+                  *carrier, borrowed, [&](BindingDependency &loan) {
+                    loan.storedDependency = inheritedDependency;
+                  });
             }
           }
         }
@@ -10749,13 +10727,13 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
         SemanticBindingKind::LambdaCapture);
     semanticModel.recordLambdaCaptureMode(bindingSymbol, mode);
     if (isBorrowingCapture(mode)) {
-      const auto sourceLoan = retainedLoanSource(capture.initializer);
+      const auto sourceLoan = retainedDependencySource(capture.initializer);
       SemanticLoanDependency dependency{
           .place = retainedLoanPlace(capture.initializer),
           .designatedFields = {bindingSymbol},
           .access = captureType.referenceAccess,
           .protectsStorage = true,
-          .parent = sourceLoan ? sourceLoan->loan : SemanticLoanId{0}};
+          .parent = sourceLoan ? sourceLoan->summary : BindingDependencyRef{}};
       for (const auto &previous : captureDependencies)
         if ((previous.access == AccessMode::Mutable ||
              dependency.access == AccessMode::Mutable) &&
@@ -10899,32 +10877,27 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     if (!isBorrowingCapture(capture.mode)) {
       if (!isDirectStoredReferenceType(capture.type))
         continue;
-      const auto id = recordStoredEntryDependency(
-          *carrier, capture.bindingSymbol, capture.type, false);
       // The closure environment owns a by-value capture and any release
       // obligation it contains, as a caller owns a method's receiver; the
       // body never destroys it. Its entry describes the declared reference
       // fields only, so a cleanup-bound capture does not bind the body.
-      if (id != 0) {
-        auto loan = *semanticModel.findLoan(id);
-        loan.lifecycleBound = false;
-        semanticModel.recordLoan(std::move(loan));
-      }
+      recordStoredEntryDependency(*carrier, capture.bindingSymbol, capture.type,
+                                  false, nullptr, true);
       continue;
     }
     const auto dependency =
         isDirectStoredReferenceType(capture.type.arguments.front())
             ? recordStoredEntryDependency(*carrier, capture.bindingSymbol,
                                           capture.type.arguments.front(), false)
-            : SemanticLoanId{0};
-    const auto id = createRetainedLoan(
-        *carrier, capture.bindingSymbol, SemanticLoanKind::Reference, nullptr,
-        {.root = capture.bindingSymbol}, capture.bindingSymbol, false,
-        capture.type.referenceAccess, true, 0, true);
-    if (dependency != 0) {
-      auto loan = *semanticModel.findLoan(id);
-      loan.storedDependency = dependency;
-      semanticModel.recordLoan(std::move(loan));
+            : BindingDependencyRef{};
+    auto id = formBindingDependency(
+        *carrier, capture.bindingSymbol, BindingDependencyKind::Reference,
+        nullptr, {.root = capture.bindingSymbol}, capture.bindingSymbol, false,
+        capture.type.referenceAccess, true, nullptr, true);
+    if (dependency != nullptr) {
+      refineBindingDependency(*carrier, id, [&](BindingDependency &loan) {
+        loan.storedDependency = dependency;
+      });
     }
   }
 
@@ -10935,7 +10908,7 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
       recordProgramCleanupEffects(type, tokenSpan(parameter.name));
       declare(parameter.name, type, parameter.mutability == Mutability::Mutable,
               SemanticBindingKind::Parameter, nullptr, &parameter);
-      recordParameterEntryLoan(parameter);
+      recordParameterEntryDependency(parameter);
     }
   }
   // A checked reference result borrows from one parameter with sufficient

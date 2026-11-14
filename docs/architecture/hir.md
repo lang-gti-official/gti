@@ -1150,7 +1150,10 @@ spelling.
 HIR carries no loan records (RFC 0004). MIR derives every loan, its parent,
 access, stored dependency, carriers and endpoint from its own places and
 control flow, and checks conflicts itself; HIR supplies the typed values,
-bindings, places and call plans that derivation reads.
+bindings, places and call plans that derivation reads. The semantic model has
+no loan either: bindings and range plans carry no loan field, and the
+`parent` of a transported `SemanticLoanDependency` is a semantic-private
+binding summary that HIR copies without reading.
 
 A by-value parameter whose concrete type directly stores one reference is a
 carrier shell for an existing external dependency, not a reference parameter

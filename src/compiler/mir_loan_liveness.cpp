@@ -395,9 +395,9 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
 
   // Each loan's own uses, then its dependents' uses (a parent outlives its
   // children).
-  std::unordered_map<SemanticLoanId, std::vector<HirStatementId>> uses;
-  std::unordered_map<SemanticLoanId, std::optional<HirStatementId>> created;
-  std::unordered_set<SemanticLoanId> unconfined;
+  std::unordered_map<MirLoanId, std::vector<HirStatementId>> uses;
+  std::unordered_map<MirLoanId, std::optional<HirStatementId>> created;
+  std::unordered_set<MirLoanId> unconfined;
   for (const LoanFacts &loan : loans) {
     auto &own = uses[loan.id];
     std::optional<HirStatementId> creation;
@@ -473,12 +473,12 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   for (const LoanFacts &loan : loans) {
     if (!loan.lifecycleBound)
       continue;
-    std::vector<SemanticLoanId> pending{loan.parent, loan.storedDependency};
+    std::vector<MirLoanId> pending{loan.parent, loan.storedDependency};
     for (const auto dependencyParent : loan.dependencyParents)
       pending.push_back(dependencyParent);
-    std::unordered_set<SemanticLoanId> visited;
+    std::unordered_set<MirLoanId> visited;
     while (!pending.empty()) {
-      const SemanticLoanId ancestor = pending.back();
+      const MirLoanId ancestor = pending.back();
       pending.pop_back();
       if (ancestor == 0 || !visited.insert(ancestor).second)
         continue;
@@ -495,10 +495,10 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
   while (changed) {
     changed = false;
     for (const LoanFacts &loan : loans) {
-      std::vector<SemanticLoanId> parents{loan.parent, loan.storedDependency};
+      std::vector<MirLoanId> parents{loan.parent, loan.storedDependency};
       for (const auto dependencyParent : loan.dependencyParents)
         parents.push_back(dependencyParent);
-      for (const SemanticLoanId parent : parents) {
+      for (const MirLoanId parent : parents) {
         if (parent == 0 || parent == loan.id || !uses.contains(parent))
           continue;
         auto &target = uses[parent];

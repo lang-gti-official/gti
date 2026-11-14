@@ -3440,7 +3440,9 @@ exclusive authority, a reference through an entry Stored group or one that
 designates field paths (a compact group is its single owner's loan and is
 joined), a restored carrier reference, and an accessor chain with no held
 loan beneath it, which the reference retains itself. A reference binding's
-loan is MIR's own; MIR loans carry no semantic loan identity. Entry loans are
+loan is MIR's own; MIR loans carry no semantic loan identity, and semantic
+analysis keeps none: its per-binding dependency summaries
+([Semantic Analysis](semantic-analysis.md#loan-flow)) never reach MIR. Entry loans are
 seeded at every entry carrier site. A by-value carrier initialized by a value
 that stores a reference to its shell argument, or that relays text a class
 carrier holds through its own stored dependency, retains that shell argument;

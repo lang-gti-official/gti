@@ -6013,13 +6013,13 @@ auto SemanticVisitor::Impl::storedFieldReadDependency(
   if (variable == nullptr || chain.empty())
     return std::nullopt;
   const Symbol *symbol = resolve(variable->name());
-  if (symbol == nullptr || symbol->retainedLoan == 0 ||
+  if (symbol == nullptr || symbol->retainedDependency == nullptr ||
       symbol->type.kind == SemanticType::Reference ||
       (symbol->bindingKind != SemanticBindingKind::LocalVariable &&
        symbol->bindingKind != SemanticBindingKind::Parameter))
     return std::nullopt;
-  const SemanticLoanInfo *loan = semanticModel.findLoan(symbol->retainedLoan);
-  if (loan == nullptr || loan->kind != SemanticLoanKind::StoredValue ||
+  BindingDependencyRef loan = symbol->retainedDependency;
+  if (loan == nullptr || loan->kind != BindingDependencyKind::StoredValue ||
       loan->referenceSelection || !loan->conditions.empty())
     return std::nullopt;
   std::vector<SymbolId> path;
@@ -6107,16 +6107,16 @@ auto SemanticVisitor::Impl::isParameterDerivedBorrow(
     // stored field or composite dependency needs its separate full proof.
     const auto *binding = semanticModel.findBinding(parameter);
     const auto *value = semanticModel.findExpression(*expression);
-    const SemanticLoanInfo *loan =
-        symbol == nullptr || symbol->retainedLoan == 0
-            ? nullptr
-            : semanticModel.findLoan(symbol->retainedLoan);
+    BindingDependencyRef loan =
+        symbol == nullptr || symbol->retainedDependency == nullptr
+            ? BindingDependencyRef{}
+            : symbol->retainedDependency;
     const bool scalarLoan =
         loan != nullptr && symbol != nullptr &&
         ((symbol->type.kind == SemanticType::Reference &&
-          loan->kind == SemanticLoanKind::Reference) ||
+          loan->kind == BindingDependencyKind::Reference) ||
          (value != nullptr && value->traits.containsBorrowedState &&
-          loan->kind == SemanticLoanKind::StoredValue));
+          loan->kind == BindingDependencyKind::StoredValue));
     return binding != nullptr && binding->symbol != 0 && scalarLoan &&
            !loan->referenceSelection && loan->designatedFields.empty() &&
            loan->conditions.empty() && loan->additionalDependencies.empty() &&
@@ -6203,9 +6203,8 @@ auto SemanticVisitor::Impl::isReceiverDerivedBorrow(
   }
   if (const auto *variable = exprAs<Variable>(expression)) {
     const Symbol *symbol = resolve(variable->name());
-    if (symbol != nullptr && symbol->retainedLoan != 0) {
-      const SemanticLoanInfo *loan =
-          semanticModel.findLoan(symbol->retainedLoan);
+    if (symbol != nullptr && symbol->retainedDependency != nullptr) {
+      BindingDependencyRef loan = symbol->retainedDependency;
       if (loan != nullptr && loan->receiverOrigin)
         return true;
     }
@@ -7884,8 +7883,7 @@ auto SemanticVisitor::Impl::prepareInstanceAnalysis() -> void {
   loanFlow = {};
   bodyFlow = {};
   valueControlFlow.clear();
-  semanticModel.clearLoans();
-  nextSemanticLoanId = 1;
+  semanticModel.clearBorrowDependencies();
   nextPlaceSelectionId = 1;
   contextualInitializerType.reset();
   contextualInitializerExpression = nullptr;

@@ -1180,20 +1180,6 @@ SemanticModel::findPayloadBinding(const Token &name) const {
   return base == nullptr ? nullptr : base->findPayloadBinding(name);
 }
 
-[[nodiscard]] const SemanticLoanInfo *
-SemanticModel::findLoan(SemanticLoanId id) const {
-  if (id == 0 || id > retainedLoans.size()) {
-    return nullptr;
-  }
-  const SemanticLoanInfo &loan = retainedLoans[id - 1];
-  return loan.id == id ? &loan : nullptr;
-}
-
-[[nodiscard]] const std::vector<SemanticLoanInfo> &
-SemanticModel::loans() const {
-  return retainedLoans;
-}
-
 [[nodiscard]] bool SemanticModel::isPackStoredEntry(SymbolId pack,
                                                     std::size_t index) const {
   return std::find(packStoredEntries.begin(), packStoredEntries.end(),
@@ -2155,7 +2141,6 @@ void SemanticModel::clear() {
   variableBindings.clear();
   parameterBindings.clear();
   payloadBindings.clear();
-  retainedLoans.clear();
   packStoredEntries.clear();
   expressionBorrowDependencies.clear();
   captureBorrowDependencies.clear();
@@ -2452,9 +2437,8 @@ void SemanticModel::clearProgramConstantSubstitution(const Expr &expression) {
 // Turns this model into an instance-analysis delta over baseModel: reads
 // fall back to the base while writes stay local, so concrete instance
 // reanalysis records only what it produces instead of copying the whole
-// program's model. Loan tables deliberately do not fall back - instance
-// analysis restarts loan identities, mirroring the clearLoans() semantics
-// the previous whole-model copy relied on.
+// program's model. Borrow dependency tables deliberately do not fall back -
+// instance analysis derives its own.
 void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
                                        SymbolId reservedIdentityCeiling) {
   clear();
@@ -2474,7 +2458,6 @@ void SemanticModel::beginSpeculativeDelta(const SemanticModel &baseModel) {
   semanticAnalysisSeal = baseModel.analysisSeal();
   if (sourceDebug_.tables && baseModel.sourceDebug_.tables)
     sourceDebug_.tables->instance = baseModel.sourceDebug_.tables->instance;
-  retainedLoans = baseModel.retainedLoans;
   packStoredEntries = baseModel.packStoredEntries;
   setToolingOccurrencesEnabled(baseModel.semanticDatabase.toolingOccurrences);
 }
@@ -2624,14 +2607,6 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
   for (const auto &[_, unit] : semanticDatabase.occurrencesByUnit)
     occurrences += unit.size();
   std::size_t borrowedDependencies = 0;
-  for (const auto &loan : retainedLoans) {
-    borrowedDependencies += loan.conditions.size();
-    if (loan.referenceSelection)
-      borrowedDependencies += loan.referenceSelection->fields.size() +
-                              loan.referenceSelection->conditions.size();
-    for (const auto &dependency : loan.additionalDependencies)
-      borrowedDependencies += dependency.conditions.size();
-  }
   for (const auto &[_, complete] : expressionBorrowDependencies) {
     if (!complete)
       continue;
@@ -2662,7 +2637,7 @@ std::size_t SemanticModel::estimatedInstanceBytes() const {
          (statementFullExpressions.size() + constructorFullExpressions.size() +
           fullExpressionOrder.size()) *
              96 +
-         (retainedLoans.size() + borrowedDependencies) * 256 +
+         borrowedDependencies * 256 +
          (expressionBorrowDependencies.size() +
           captureBorrowDependencies.size()) *
              96 +
@@ -2692,18 +2667,6 @@ SemanticModel::materializeFunction(const FunctionDecl &declaration) {
   local = functions.insert_or_assign(inherited->declaration, *inherited).first;
   functionsById.insert_or_assign(local->second.id, inherited->declaration);
   return local;
-}
-
-[[nodiscard]] bool SemanticModel::validLoan(SemanticLoanId id) const {
-  return id != 0 && id <= retainedLoans.size() &&
-         retainedLoans[id - 1].id == id;
-}
-
-void SemanticModel::appendUniqueLoan(std::vector<SemanticLoanId> &loans,
-                                     SemanticLoanId loan) {
-  if (std::find(loans.begin(), loans.end(), loan) == loans.end()) {
-    loans.push_back(loan);
-  }
 }
 
 void SemanticModel::record(const Expr &expression, ExpressionInfo info) {
@@ -2884,38 +2847,6 @@ void SemanticModel::clearBorrowDependencySet(const Expr &expression) {
   expressionBorrowDependencies.insert_or_assign(&expression, std::nullopt);
 }
 
-void SemanticModel::recordLoan(SemanticLoanInfo info) {
-  if (info.id == 0) {
-    return;
-  }
-  if (retainedLoans.size() < info.id) {
-    retainedLoans.resize(info.id);
-  }
-  retainedLoans[info.id - 1] = std::move(info);
-}
-
-void SemanticModel::recordBindingLoan(const VariableDecl &declaration,
-                                      SemanticLoanId loan) {
-  auto binding = variableBindings.find(&declaration);
-  if (binding == variableBindings.end() && base != nullptr) {
-    if (const BindingInfo *inherited = base->findBinding(declaration)) {
-      binding =
-          variableBindings.insert_or_assign(&declaration, *inherited).first;
-    }
-  }
-  if (binding != variableBindings.end()) {
-    binding->second.retainedLoan = loan;
-  }
-}
-
-void SemanticModel::recordBindingLoan(const Parameter &parameter,
-                                      SemanticLoanId loan) {
-  if (auto binding = parameterBindings.find(&parameter);
-      binding != parameterBindings.end()) {
-    binding->second.retainedLoan = loan;
-  }
-}
-
 void SemanticModel::recordConstexprBranch(const IfStmt &statement,
                                           std::optional<bool> thenBranch) {
   constexprBranches.insert_or_assign(&statement, thenBranch);
@@ -2975,36 +2906,10 @@ void SemanticModel::recordStaticAssertResult(
   staticAssertResults.insert_or_assign(&declaration, result);
 }
 
-void SemanticModel::recordLoanCarrier(SemanticLoanId id, SymbolId carrier) {
-  if (id == 0 || carrier == 0 || id > retainedLoans.size() ||
-      retainedLoans[id - 1].id != id) {
-    return;
-  }
-  std::vector<SymbolId> &carriers = retainedLoans[id - 1].carriers;
-  if (std::find(carriers.begin(), carriers.end(), carrier) == carriers.end()) {
-    carriers.push_back(carrier);
-  }
-}
-
-void SemanticModel::removeLoanCarrier(SemanticLoanId id, SymbolId carrier) {
-  if (id == 0 || carrier == 0 || id > retainedLoans.size() ||
-      retainedLoans[id - 1].id != id) {
-    return;
-  }
-  std::erase(retainedLoans[id - 1].carriers, carrier);
-}
-
-void SemanticModel::clearLoans() {
-  retainedLoans.clear();
+void SemanticModel::clearBorrowDependencies() {
   packStoredEntries.clear();
   expressionBorrowDependencies.clear();
   captureBorrowDependencies.clear();
-  for (auto &[_, binding] : variableBindings) {
-    binding.retainedLoan = 0;
-  }
-  for (auto &[_, binding] : parameterBindings) {
-    binding.retainedLoan = 0;
-  }
 }
 
 void SemanticModel::record(const StructuredBindingDecl &declaration,
