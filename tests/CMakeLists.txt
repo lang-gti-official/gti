@@ -797,6 +797,11 @@ add_test(NAME llvm_cache_installed_toolchain
           "${PROJECT_SOURCE_DIR}/tests/llvm_cache_installed_test.py"
           "${PROJECT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
 set_tests_properties(llvm_cache_installed_toolchain PROPERTIES TIMEOUT 600)
+add_test(NAME llvm_header_install_symlink
+  COMMAND "${Python3_EXECUTABLE}"
+          "${PROJECT_SOURCE_DIR}/tests/llvm_header_install_symlink_test.py"
+          "${PROJECT_SOURCE_DIR}")
+set_tests_properties(llvm_header_install_symlink PROPERTIES TIMEOUT 60)
 add_executable(gti_test_runner_tests test_runner_tests.cpp)
 target_link_libraries(gti_test_runner_tests PRIVATE gti_driver)
 add_test(NAME test_runner COMMAND gti_test_runner_tests)
