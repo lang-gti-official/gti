@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -94,34 +95,60 @@ std::set<MirInstructionId> inertDrops(const MirBody &body) {
   const std::size_t count = body.dropObligations.size();
   if (count == 0 || body.findBlock(body.entry) == nullptr)
     return result;
-  using Available = std::vector<char>;
-  const auto advance = [](Available &state, const MirLifecycleEvent &event) {
-    const auto set = [&](MirDropObligationId id, bool available) {
-      if (id != 0 && id <= state.size())
-        state[id - 1] = available ? 1 : 0;
-    };
+  // The obligations that may be available, as a sorted set. Only a few are
+  // live at any point (most are short temporaries), so a sparse state keeps
+  // this forward analysis linear in body size; a dense vector per block was
+  // quadratic for one long body (issue #247).
+  using Available = std::vector<MirDropObligationId>;
+  const auto contains = [](const Available &state, MirDropObligationId id) {
+    return std::binary_search(state.begin(), state.end(), id);
+  };
+  const auto set = [count](Available &state, MirDropObligationId id,
+                           bool available) {
+    if (id == 0 || id > count)
+      return;
+    const auto position = std::lower_bound(state.begin(), state.end(), id);
+    const bool present = position != state.end() && *position == id;
+    if (available && !present)
+      state.insert(position, id);
+    else if (!available && present)
+      state.erase(position);
+  };
+  // Adds every member of `from` to `into`; returns whether `into` grew.
+  const auto unite = [](Available &into, const Available &from) {
+    Available merged;
+    merged.reserve(into.size() + from.size());
+    std::set_union(into.begin(), into.end(), from.begin(), from.end(),
+                   std::back_inserter(merged));
+    const bool grew = merged.size() != into.size();
+    into = std::move(merged);
+    return grew;
+  };
+  const auto advance = [&](Available &state, const MirLifecycleEvent &event) {
     switch (event.kind) {
     case MirLifecycleEventKind::Initialize:
-      set(event.target, true);
+      set(state, event.target, true);
       break;
     case MirLifecycleEventKind::Move:
     case MirLifecycleEventKind::Reparent:
     case MirLifecycleEventKind::Replace:
-      set(event.source, false);
-      set(event.target, true);
+      set(state, event.source, false);
+      set(state, event.target, true);
       break;
     case MirLifecycleEventKind::TransferOut:
     case MirLifecycleEventKind::Drop:
-      set(event.source, false);
+      set(state, event.source, false);
       break;
     }
   };
   std::vector<std::optional<Available>> entries(body.blocks.size());
-  Available initial(count, 0);
+  Available initial;
   for (const auto &obligation : body.dropObligations)
     if (obligation.initiallyActive && obligation.id != 0 &&
         obligation.id <= count)
-      initial[obligation.id - 1] = 1;
+      initial.push_back(obligation.id);
+  std::sort(initial.begin(), initial.end());
+  initial.erase(std::unique(initial.begin(), initial.end()), initial.end());
   entries[body.entry - 1] = initial;
   std::set<MirInstructionId> live;
   std::set<MirInstructionId> seen;
@@ -135,11 +162,7 @@ std::set<MirInstructionId> inertDrops(const MirBody &body) {
     if (!entry)
       entry = state;
     else
-      for (std::size_t index = 0; index < count; ++index)
-        if (state[index] && !(*entry)[index]) {
-          (*entry)[index] = 1;
-          changed = true;
-        }
+      changed = unite(*entry, state);
     if (changed)
       pending.push_back(target);
   };
@@ -159,7 +182,7 @@ std::set<MirInstructionId> inertDrops(const MirBody &body) {
         for (const auto &event : instruction.lifecycle)
           if (event.kind == MirLifecycleEventKind::Drop &&
               (event.source == 0 || event.source > count ||
-               state[event.source - 1]))
+               contains(state, event.source)))
             live.insert(instruction.id);
       }
       for (const auto &event : instruction.lifecycle)
@@ -173,8 +196,7 @@ std::set<MirInstructionId> inertDrops(const MirBody &body) {
       join(terminator.target, success);
       // A failure edge leaves before the invocation's own transitions may
       // have happened; keep both states.
-      for (std::size_t index = 0; index < count; ++index)
-        beforeInvoke[index] |= state[index];
+      unite(beforeInvoke, state);
       join(terminator.elseTarget, beforeInvoke);
     } else {
       join(terminator.target, state);
@@ -363,6 +385,14 @@ analyzePersistentStorageEffects(const MirProgram &program,
     for (const auto &invocation : nodes[caller].invocations)
       for (const auto target : invocation.targets)
         nodes[target].callers.push_back(caller);
+  // One entry per distinct caller: a body with many invocations of the same
+  // callee (a long sequence of formatted writes, say) must not be merged into
+  // once per invocation on every closure step (issue #247).
+  for (auto &node : nodes) {
+    std::sort(node.callers.begin(), node.callers.end());
+    node.callers.erase(std::unique(node.callers.begin(), node.callers.end()),
+                       node.callers.end());
+  }
 
   // A finite monotone closure over structural place/access facts, including
   // recursion. Source order and effect-summary claims confer no authority.

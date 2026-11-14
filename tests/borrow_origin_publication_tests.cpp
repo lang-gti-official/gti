@@ -695,9 +695,57 @@ int main() {
   expect(checked == 1,
          "one returned carrier protects two independent accessors");
 }
+
+// Issue #221: a mutable range-for over a by-value mutable_span formal
+// reborrows the span shell, whose entry Stored group is the external storage
+// the loop writes. The reborrows name that group as their stored dependency,
+// so they are derived from it rather than competing with it. Writing through
+// the span while an element is live stays rejected.
+void checkByValueMutableSpanRange() {
+  const std::string prefix = "import std.span;\nimport std.vector;\n";
+  const auto accepted = lang::Frontend().analyze(
+      "by-value-span-range.gti", prefix + R"(
+void twice(mut std::mutable_span<int> elements) {
+  for (mut auto& value : elements) { value = value * 2; }
+  for (mut auto& value : elements) { value = value + 1; }
+}
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  twice(values.as_mutable_span());
+  return values[std::size_t(2)] - 7;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : accepted.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "a mutable range over a by-value mutable_span formal is accepted");
+  const auto rejected = lang::Frontend().analyze(
+      "by-value-span-range-conflict.gti", prefix + R"(
+void clash(mut std::mutable_span<int> elements) {
+  for (mut auto& value : elements) {
+    elements[std::size_t(0)] = 1;
+    value = value + 1;
+  }
+}
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  clash(values.as_mutable_span());
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!rejected.semanticValid &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
+             !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+         "writing through the span while an element is live is rejected");
+}
 } // namespace
 
 int main() {
+  checkByValueMutableSpanRange();
   checkTextOwnerPublication();
   checkTextReturnPublication();
   checkReceiverFields();
