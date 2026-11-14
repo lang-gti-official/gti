@@ -938,6 +938,48 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     const auto &own = uses[loan.id];
     if (own.empty())
       continue;
+    // A returning arm cannot reach uses after its enclosing conditional.
+    // The ordinary last-use plan below only visits the final use's enclosing
+    // statement, so it otherwise misses an earlier `if (...) { ...; return; }`.
+    // Reuse the existing arm proof, but only for function-exiting arms: a
+    // break/continue can still reach uses outside that arm and needs its own
+    // target-aware plan.
+    if (created[loan.id]) {
+      const auto creationRegion = tree.regionOf(*created[loan.id]);
+      for (const auto &conditional : body.statements) {
+        if (conditional.kind != HirStatementKind::If ||
+            !(tree.regionOf(conditional.id) == creationRegion) ||
+            tree.orderOf(conditional.id) <= tree.orderOf(*created[loan.id]))
+          continue;
+        for (const bool thenBranch : {true, false}) {
+          const auto arm =
+              thenBranch ? conditional.body : conditional.elseBranch;
+          if (!arm || !cannotFallThrough(*arm) || unsupportedFlow(*arm))
+            continue;
+          std::vector<HirStatementId> statements;
+          subtree(*arm, statements);
+          const bool otherExit = std::any_of(
+              statements.begin(), statements.end(), [&](HirStatementId id) {
+                const auto *statement = indexedStatement(body, id);
+                return statement &&
+                       (statement->kind == HirStatementKind::Break ||
+                        statement->kind == HirStatementKind::Continue);
+              });
+          if (otherExit)
+            continue;
+          std::vector<Point> points;
+          if (!terminatingEndpoints(conditional, thenBranch, loan, own, points))
+            continue;
+          for (const auto &point : points) {
+            auto &target = point.kind == 0 ? result.after[point.statement]
+                           : point.kind == 1
+                               ? result.thenEntry[point.statement]
+                               : result.elseEntry[point.statement];
+            target.push_back(loan.id);
+          }
+        }
+      }
+    }
     const HirStatementId last = *std::max_element(
         own.begin(), own.end(), [&](HirStatementId left, HirStatementId right) {
           return tree.orderOf(left) < tree.orderOf(right);
@@ -1023,6 +1065,22 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
         result.switchArmEntry[{statement.id, arm}].push_back(dependency);
     }
   }
+  // A terminating-arm plan and the ordinary final-use plan can establish
+  // the same endpoint. Emit it once, retaining dependency ordering.
+  const auto uniqueEnds = [](auto &points) {
+    for (auto &[point, ids] : points) {
+      (void)point;
+      std::unordered_set<MirLoanId> seen;
+      ids.erase(
+          std::remove_if(ids.begin(), ids.end(),
+                         [&](MirLoanId id) { return !seen.insert(id).second; }),
+          ids.end());
+    }
+  };
+  uniqueEnds(result.after);
+  uniqueEnds(result.thenEntry);
+  uniqueEnds(result.elseEntry);
+  uniqueEnds(result.switchArmEntry);
   return result;
 }
 

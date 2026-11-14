@@ -3858,6 +3858,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
       hasReturnBorrowSummary &&
           (hasExplicitBorrowContract(stmt) ||
            patternResultContract(stmt, declaredReturnType)));
+  bool explainMissingReturnAfterBody = false;
   if (nestsBorrowedState(declaredReturnType) &&
       !isBorrowedCarrierReference(declaredReturnType)) {
     report(stmt.name(),
@@ -3877,7 +3878,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
                   functionInfo->ownerClass, functionInfo->staticMember,
                   functionInfo->intrinsic)
                       .eligibleParameters > 1)) {
-    reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
+    explainMissingReturnAfterBody =
+        stmt.body() && requirementsValid &&
+        !(stmt.isMacro() && !stmt.isProceduralMacro()) &&
+        !deferTrustedBody(stmt);
+    if (!explainMissingReturnAfterBody)
+      reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
   }
   if (stmt.returnMutability() == Mutability::Mutable) {
     if (!stmt.returnType().reference) {
@@ -4054,9 +4060,13 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     endTypeParameterScope();
     return;
   }
-  const bool declarationErrors = hasErrorDiagnostics(
-      std::span(diagnostics).subspan(functionDiagnosticStart));
+  const bool declarationErrors =
+      explainMissingReturnAfterBody ||
+      hasErrorDiagnostics(
+          std::span(diagnostics).subspan(functionDiagnosticStart));
   if (!instanceAnalysisActive && analyzedBodies.contains(&stmt)) {
+    if (explainMissingReturnAfterBody && functionInfo != nullptr)
+      reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
     endRequirementScope();
     endTypeParameterScope();
     return;
@@ -4077,7 +4087,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     return;
   }
   analyzeFunctionBody(stmt, functionInfo, declarationErrors,
-                      constexprDeclarationValid);
+                      constexprDeclarationValid, explainMissingReturnAfterBody);
   endRequirementScope();
   endTypeParameterScope();
 }
@@ -4089,7 +4099,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
 // performs is the one it would have performed in place.
 auto SemanticVisitor::Impl::analyzeFunctionBody(
     const FunctionDecl &stmt, const FunctionInfo *functionInfo,
-    bool declarationErrors, bool constexprDeclarationValid) -> void {
+    bool declarationErrors, bool constexprDeclarationValid,
+    bool explainMissingReturnAfterBody) -> void {
   struct SyntaxTypeScope {
     bool &flag;
     bool saved;
@@ -4195,6 +4206,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
 
   // A function body owns the parameter scope, so do not add another scope.
   analyze(stmt.body()->statements());
+  if (explainMissingReturnAfterBody && functionInfo != nullptr)
+    reportMissingFunctionReturnBorrowSummary(stmt, *functionInfo);
   const FlowSummary functionFlow = summarizeFlow(stmt.body()->statements());
   const bool canFallThrough = functionFlow.canFallThrough;
   if (functionInfo != nullptr && functionInfo->neverReturns &&
@@ -5322,9 +5335,11 @@ auto SemanticVisitor::Impl::visitReturnStmt(const ReturnStmt &stmt) -> void {
       recordMutableBindingUse(stmt.value());
     }
     forceProgramStorageBoundaryAccess(stmt.value());
-    validateReferenceReturn(currentReturnType, valueType, stmt.value());
-    if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr)
-      validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
+    const bool regionValid =
+        lambdaDepth != 0 || currentFunctionDeclaration == nullptr ||
+        validateReturnedCallRegion(*currentFunctionDeclaration, stmt.value());
+    validateReferenceReturn(currentReturnType, valueType, stmt.value(),
+                            regionValid);
     if (lambdaDepth == 0 && currentFunctionDeclaration != nullptr &&
         currentClass)
       validateReturnedReceiverRegion(*currentFunctionDeclaration, *currentClass,
@@ -7234,10 +7249,19 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
     const auto *valueInfo = semanticModel.findExpression(*expr.value());
     const bool moving =
         valueInfo != nullptr && valueInfo->category == ValueCategory::Value;
+    const auto assignmentTraits = typeTraits(targetType);
+    const bool unavailableAssignment =
+        targetType == valueType && targetType != SemanticType::Unknown &&
+        (moving ? !assignmentTraits.moveAssignable
+                : !assignmentTraits.copyAssignable);
     report(expressionToken(expr.value()),
            ownerAssignment
                ? (moving ? "Move assignment is unavailable for type '"
                          : "Cannot copy assign move-only type '") +
+                     typeSpelling(targetType) + "'."
+           : unavailableAssignment
+               ? std::string(moving ? "Move" : "Copy") +
+                     " assignment is unavailable for type '" +
                      typeSpelling(targetType) + "'."
                : "Cannot assign a value of type '" + typeSpelling(valueType) +
                      "' to '" + expr.name().lexeme + "' of type '" +
@@ -7250,6 +7274,11 @@ auto SemanticVisitor::Impl::visitAssignExpr(const Assign &expr) -> void {
                 "new binding from an owned value instead."
               : "Move-only owners cannot be copied; use std::move(owner) "
                 "to transfer ownership.");
+    } else if (unavailableAssignment) {
+      diagnostics.back().hints.emplace_back(
+          "Initialize a new binding instead of replacing this value by "
+          "assignment. A mutable binding does not add assignment operations "
+          "to its type.");
     }
   }
   if (!simpleAssignment) {

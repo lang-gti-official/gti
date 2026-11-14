@@ -143,6 +143,166 @@ def main():
                 **quantified, "context": {"includeDeclaration": True}})
             assert len(quantified_references) == 3, quantified_references
             assert change(SOURCE, 8) == []
+
+            def source_range(text, offset, length):
+                return {"start": lsp_position(text, offset),
+                        "end": lsp_position(text, offset + length)}
+
+            ambiguous = (
+                "/* 😀 */ int& choose(int& first, int& second, bool condition) {\n"
+                "  if (condition) { return first; } return second;\n}\n")
+            errors = change(ambiguous, 9)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert error["range"] == source_range(
+                ambiguous, ambiguous.index("choose"), 6), error
+            notes = error["relatedInformation"]
+            assert len(notes) == 2, notes
+            for note, name in zip(notes, ("first", "second")):
+                assert name in note["message"], note
+                assert note["location"] == {"uri": uri, "range": source_range(
+                    ambiguous, ambiguous.index(name), len(name))}, note
+            fixed = (
+                "/* 😀 */ int&<a> choose<lifetime a>(int&<a> first, "
+                "int&<a> second, bool condition) {\n"
+                "  if (condition) { return first; } return second;\n}\n")
+            assert change(fixed, 10) == []
+            assert not request("textDocument/codeAction", {
+                "textDocument": {"uri": uri}, "range": error["range"],
+                "context": {"diagnostics": [error], "only": ["quickfix"]}})
+
+            mismatch = (
+                "/* 😀 */ int&<a> choose<lifetime a, lifetime b>("
+                "int&<a> first, int&<b> second) { return second; }\n")
+            errors = change(mismatch, 11)
+            errors = [item for item in errors if item.get("severity") == 1]
+            assert len(errors) == 1 and errors[0]["code"] == "GTI-S2127", errors
+            error = errors[0]
+            assert error["range"] == source_range(
+                mismatch, mismatch.rindex("second"), 6), error
+            notes = error["relatedInformation"]
+            assert len(notes) == 2, notes
+            for note, region in zip(notes, ("b", "a")):
+                assert note["location"] == {"uri": uri, "range": source_range(
+                    mismatch, mismatch.index("<" + region + ">") + 1, 1)}, note
+            bounded = mismatch.replace(
+                ") { return", ") requires outlives<b, a> { return")
+            assert change(bounded, 12) == []
+            reborrow = (
+                "int main() {\n"
+                "  mut int value = 1; mut int& parent = value;\n"
+                "  { mut int& ended = parent; ended = 2; }\n"
+                "  /* 😀 */ mut int& child = parent;\n"
+                "  /* 😀 */ parent = 3;\n"
+                "  return child;\n}\n")
+            errors = change(reborrow, 13)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert error["range"] == source_range(
+                reborrow, reborrow.index("parent = 3"), 6), error
+            notes = error["relatedInformation"]
+            assert notes[0]["location"] == {"uri": uri, "range": source_range(
+                reborrow, reborrow.index("parent;", reborrow.index("child =")), 6)}, notes
+            assert notes[1]["location"] == {"uri": uri, "range": source_range(
+                reborrow, reborrow.index("return child"), len("return child;"))}, notes
+            ended = reborrow.replace("parent = 3;", "int saved = child; parent = 3;")
+            ended = ended.replace("return child;", "return saved;")
+            assert not [item for item in change(ended, 14)
+                        if item.get("severity") == 1]
+            loop = (
+                "int main() {\n"
+                "  mut int value = 1; int& borrowed = value;\n"
+                "  for (mut int i = 0; i < 2; i += 1) {\n"
+                "    /* 😀 */ int copy = borrowed;\n"
+                "    value = copy + 1;\n"
+                "  } return 0;\n}\n")
+            errors = change(loop, 15)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert any("This borrows 'value'." in item["message"]
+                       for item in error["relatedInformation"]), error
+            note = next(item for item in error["relatedInformation"]
+                        if "later loop iteration" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                loop, loop.index("int copy"), len("int copy = borrowed;"))}, note
+            per_iteration = loop.replace(" int& borrowed = value;", "")
+            per_iteration = per_iteration.replace(
+                "int copy = borrowed;", "int& borrowed = value; int copy = borrowed;")
+            assert not [item for item in change(per_iteration, 16)
+                        if item.get("severity") == 1]
+            temporary = (
+                "import std.string;\nint main() {\n"
+                "  /* 😀 */ auto borrowed = std::string(\"hello\").view();\n"
+                "  return int(borrowed.size());\n}\n")
+            errors = change(temporary, 17)
+            error = next(item for item in errors if item["code"] == "GTI-S2045")
+            note = next(item for item in error["relatedInformation"]
+                        if "temporary owns" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                temporary, temporary.index(").view"), 1)}, note
+            named = temporary.replace(
+                "auto borrowed = std::string(\"hello\").view();",
+                "std::string owner = std::string(\"hello\"); auto borrowed = owner.view();")
+            assert not [item for item in change(named, 18)
+                        if item.get("severity") == 1]
+            local_return = (
+                "int& invalid() {\n"
+                "  /* 😀 */ int value = 1;\n"
+                "  /* 😀 */ return value;\n}\n")
+            errors = change(local_return, 19)
+            error = next(item for item in errors if item["code"] == "GTI-S2017")
+            assert "local value 'value'" in error["message"], error
+            assert error["range"] == source_range(
+                local_return, local_return.rindex("value"), 5), error
+            assert error["relatedInformation"][0]["location"] == {
+                "uri": uri, "range": source_range(
+                    local_return, local_return.index("value"), 5)}, error
+            assert change(local_return.replace("int& invalid", "int invalid"), 20) == []
+            closure_escape = (
+                "import std.functional;\n"
+                "std::function_ref<int()> invalid() {\n"
+                "  /* 😀 */ int value = 1;\n"
+                "  /* 😀 */ auto callback = [&value]() -> int { return value; };\n"
+                "  std::function_ref<int()> result{callback};\n"
+                "  /* 😀 */ return result;\n}\n"
+                "int main() { auto call = invalid(); return call(); }\n")
+            errors = change(closure_escape, 21)
+            error = next(item for item in errors if item["code"] == "GTI-S2127")
+            assert error["range"] == source_range(
+                closure_escape, closure_escape.index("result;"), 6), error
+            note = next(item for item in error["relatedInformation"]
+                        if "Local 'value'" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                closure_escape, closure_escape.index("value"), 5)}, note
+            assert "cannot extend local storage" in error["message"], error
+            owned_erasure = (
+                "import std.functional;\nstd::function<int()> invalid() {\n"
+                "  int value = 1;\n"
+                "  /* 😀 */ std::function<int()> callback{[&value]() -> int { return value; }};\n"
+                "  return callback;\n}\n"
+                "int main() { auto call = invalid(); return call(); }\n")
+            errors = change(owned_erasure, 22)
+            error = next(item for item in errors if item["code"] == "GTI-S2018")
+            note = next(item for item in error["relatedInformation"]
+                        if "Capture 'value'" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                owned_erasure, owned_erasure.index("&value") + 1, 5)}, note
+            assert change(owned_erasure.replace("[&value]", "[value]"), 23) == []
+            carrier_assignment = (
+                "struct View<lifetime a> { int&<a> value; "
+                "View(int&<a> input) : value(input) {} };\n"
+                "int main() { int outer = 1; mut View view{outer};\n"
+                "  { int inner = 2; /* 😀 */ view = View(inner); }\n"
+                "  return view.value; }\n")
+            errors = change(carrier_assignment, 24)
+            error = next(item for item in errors if item["code"] == "GTI-S2003")
+            assert "assignment is unavailable for type 'View'" in error["message"], error
+            assert "Initialize a new binding" in error["message"], error
+            assert error["range"] == source_range(
+                carrier_assignment, carrier_assignment.index("inner);") + 5, 1), error
+            scoped_binding = carrier_assignment.replace(
+                "view = View(inner);", "View inside{inner};").replace(
+                "mut View view", "View view")
+            recovered = change(scoped_binding, 25)
+            assert recovered == [], recovered
+            assert change(SOURCE, 26) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",

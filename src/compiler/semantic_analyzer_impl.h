@@ -749,7 +749,8 @@ public:
   void analyzeFunctionBody(const FunctionDecl &stmt,
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,
-                           bool constexprDeclarationValid);
+                           bool constexprDeclarationValid,
+                           bool explainMissingReturnAfterBody = false);
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
@@ -2956,7 +2957,7 @@ private:
                                        const ClassDecl &owner);
   // A returned call whose result region several caller regions supply lives
   // as long as the shortest; each must outlive the declared result region.
-  void validateReturnedCallRegion(const FunctionDecl &syntax,
+  bool validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
   // A result in a region the class stores is supplied by references the
   // receiver stores, never by storage the receiver owns (GTI-S2127).
@@ -4388,7 +4389,7 @@ private:
 
   void validateReferenceReturn(const SemanticType &reference,
                                const SemanticType &valueType,
-                               const ExprPtr &value);
+                               const ExprPtr &value, bool regionValid);
 
   void validateCurrentReturnBorrowSource(const ExprPtr &value,
                                          std::string_view description,

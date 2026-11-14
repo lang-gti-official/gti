@@ -3756,6 +3756,13 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       if (active[loan - 1] == MirLoanFlowState::Suspended) {
         // Using a parent while its exclusive child reborrow is live is a
         // source borrow conflict, not malformed MIR.
+        const auto child = std::find_if(
+            body.loans.begin(), body.loans.end(),
+            [&](const MirLoan &candidate) {
+              return active[candidate.id - 1] != MirLoanFlowState::Inactive &&
+                     !isParkedLoan(active[candidate.id - 1]) &&
+                     isLoanAncestor(body, loan, candidate.id);
+            });
         MirVerificationResult rejected =
             failure(body, owner,
                     "loan " + std::to_string(loan) +
@@ -3767,7 +3774,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           rejected.errors.back().borrow = {
               .kind = MirBorrowRejectionKind::ParentUse,
               .loanAccess = body.loans[loan - 1].access,
-              .loan = loan};
+              .loan = loan,
+              .conflictingLoan = child != body.loans.end() ? child->id : 0};
         return rejected;
       }
       if (active[loan - 1] != MirLoanFlowState::Active) {
@@ -4057,7 +4065,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               (parent.kind == MirLoanKind::Parameter ||
                parent.kind == MirLoanKind::Local) &&
               parent.storedDependency == 0;
-          const bool overlapsDescendant = std::any_of(
+          const auto overlappingDescendant = std::find_if(
               body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
                 if (active[loan.id - 1] == MirLoanFlowState::Inactive ||
                     isParkedLoan(active[loan.id - 1]) ||
@@ -4081,7 +4089,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                                        bindingLoans, active));
                            });
               });
-          if (overlapsDescendant) {
+          if (overlappingDescendant != body.loans.end()) {
             MirVerificationResult rejected = failure(
                 body, owner,
                 "loan " + std::to_string(place.throughLoan) +
@@ -4093,7 +4101,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 .kind = MirBorrowRejectionKind::ParentUse,
                 .write = write,
                 .loanAccess = body.loans[place.throughLoan - 1].access,
-                .loan = place.throughLoan};
+                .loan = place.throughLoan,
+                .conflictingLoan = overlappingDescendant->id};
             return rejected;
           }
         }
