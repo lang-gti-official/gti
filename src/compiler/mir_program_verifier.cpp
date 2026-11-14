@@ -227,10 +227,9 @@ mirFieldProjectionType(const MirProgram &program, const SemanticType &receiver,
     const MirProgram &program, const MirConstructorInstance &instance,
     const MirStoredCarrierReference &path, std::size_t depth = 0);
 
-// A construction that publishes one dynamic text argument into a direct text
-// field (L-OWN-02). Its borrow facts describe this call: the target
-// constructor borrows nothing itself, and its sole initializer of that field
-// stores exactly that formal and no other.
+// Each dynamically borrowed text field must be justified independently by the
+// constructor's initializer. The first mapping supplies the primary origin;
+// further mappings retain additional owners in the same shared loan group.
 [[nodiscard]] bool
 dependentTextPublication(const MirProgram &program,
                          const MirInstruction &instruction,
@@ -242,31 +241,36 @@ dependentTextPublication(const MirProgram &program,
       instruction.borrowOrigin != BorrowOriginKind::Argument ||
       instruction.borrowAccess != AccessMode::ReadOnly ||
       !instruction.borrowArguments.empty() || instruction.borrowPlace ||
-      instruction.borrowFields.size() != 1)
+      instruction.borrowFields.empty() ||
+      instruction.borrowArgument != instruction.borrowFields.front().parameter)
     return false;
-  const auto &mapping = instruction.borrowFields.front();
-  // A class formal's text field re-rooted at the path its constructor stores
-  // it in: the argument's dependency at that field moves to the result.
-  if (!mapping.sourceFields.empty())
-    return mapping.origin == BorrowOriginKind::Argument &&
-           mapping.parameter == instruction.borrowArgument &&
-           mapping.globalRoot == 0 && mapping.access == AccessMode::ReadOnly &&
-           mapping.resultConditions.empty() &&
-           mapping.sourceConditions.empty() &&
-           mir_detail::dependentTextRelayPath(
-               program, constructor, mapping.parameter, mapping.sourceFields) ==
-               mapping.resultFields &&
-           mir_detail::directTextPath(program, instruction.info.type,
-                                      mapping.resultFields);
-  return mapping.origin == BorrowOriginKind::Argument &&
-         mapping.parameter == instruction.borrowArgument &&
-         mapping.globalRoot == 0 && mapping.sourceFields.empty() &&
-         (mapping.resultFields.size() == 1 ||
-          mapping.resultFields.size() == 2) &&
-         mapping.access == AccessMode::ReadOnly &&
-         mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
-         mir_detail::dependentTextFieldFormal(
-             program, constructor, mapping.resultFields) == mapping.parameter;
+  for (std::size_t index = 0; index < instruction.borrowFields.size(); ++index) {
+    const auto &mapping = instruction.borrowFields[index];
+    if (mapping.origin != BorrowOriginKind::Argument ||
+        mapping.parameter >= instruction.operands.size() ||
+        mapping.globalRoot != 0 || mapping.access != AccessMode::ReadOnly ||
+        !mapping.resultConditions.empty() || !mapping.sourceConditions.empty())
+      return false;
+    // A constructor cannot publish two unrelated sources into one field.
+    for (std::size_t previous = 0; previous < index; ++previous)
+      if (instruction.borrowFields[previous].resultFields == mapping.resultFields)
+        return false;
+    if (!mapping.sourceFields.empty()) {
+      if (mir_detail::dependentTextRelayPath(
+              program, constructor, mapping.parameter, mapping.sourceFields) !=
+              mapping.resultFields ||
+          !mir_detail::directTextPath(program, instruction.info.type,
+                                     mapping.resultFields))
+        return false;
+    } else if ((mapping.resultFields.size() != 1 &&
+                mapping.resultFields.size() != 2) ||
+               mir_detail::dependentTextFieldFormal(
+                   program, constructor, mapping.resultFields) !=
+                   mapping.parameter) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // A call whose target returns one by-value text formal in a direct text field

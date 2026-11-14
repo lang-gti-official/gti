@@ -2820,7 +2820,73 @@ int main() {
          "a function forwarding to that constructor requires ownerless text");
 }
 
+void testMultipleTextOwners() {
+  const auto result = analyzeText(R"gti(
+import std.string;
+struct Labels<lifetime a, lifetime b> {
+  std::string_view<a> first;
+  std::string_view<b> second;
+  Labels(std::string_view<a> x, std::string_view<b> y):first(x),second(y){}
+};
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  Labels labels{first.view(), second.view()};
+  return labels.first == "first" && labels.second == "second" ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(), "a shared aggregate retains two text owners");
+  if (!result.canGenerateCode())
+    return;
+  bool tested = false;
+  for (const auto &function : result.mir.functionInstances()) {
+    for (const auto &block : function.body.blocks) {
+      for (const auto &instruction : block.instructions) {
+        if (!instruction.dependentTextPublication ||
+            instruction.borrowFields.size() != 2 || !instruction.loan)
+          continue;
+        tested = true;
+        for (int mutation = 0; mutation < 6; ++mutation) {
+          auto changed = result.mir;
+          auto &body = const_cast<lang::MirFunctionInstance *>(
+                           changed.findFunctionInstance(function.id))->body;
+          auto &instructions = body.findBlock(block.id)->instructions;
+          auto *altered = &*std::find_if(
+              instructions.begin(), instructions.end(), [&](const auto &item) {
+                return item.id == instruction.id;
+              });
+          auto *loan = const_cast<lang::MirLoan *>(body.findLoan(*instruction.loan));
+          if (mutation == 0)
+            altered->borrowFields.pop_back();
+          else if (mutation == 1)
+            altered->borrowFields.back().parameter = altered->borrowFields.front().parameter;
+          else if (mutation == 2)
+            altered->borrowFields.back().resultFields = altered->borrowFields.front().resultFields;
+          else if (mutation == 3)
+            loan->additionalDependencies.clear();
+          else if (mutation == 4) {
+            expect(!loan->additionalDependencies.empty(), "second owner is retained");
+            if (loan->additionalDependencies.empty())
+              continue;
+            loan->additionalDependencies.front().source = loan->source;
+          } else {
+            expect(!loan->additionalDependencies.empty(), "second field is retained");
+            if (loan->additionalDependencies.empty())
+              continue;
+            loan->additionalDependencies.front().designatedFields = loan->designatedFields;
+          }
+          expect(!lang::verifyMirProgram(changed).valid(),
+                 "every published field and its actual owner must be verified");
+        }
+      }
+    }
+  }
+  expect(tested, "two-owner publication is represented by a verified loan group");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testMultipleTextOwners", testMultipleTextOwners},
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
     {"testRawMemoryTextReads", testRawMemoryTextReads},

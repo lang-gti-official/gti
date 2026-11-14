@@ -55,6 +55,16 @@ int main() {
 }
 
 
+# Copy and move preserve both dependencies without changing runtime contents.
+for operation in ('copy', 'move'):
+    _, source = CASES['two_owner_record']
+    initializer = 'labels' if operation == 'copy' else 'std::move(labels)'
+    source = source.replace('  return labels.first',
+                            '  auto transferred = ' + initializer + ';\n  return transferred.first')
+    source = source.replace('&& labels.second', '&& transferred.second')
+    CASES['two_owner_record_' + operation] = (True, source)
+
+
 # The same aggregate publication must retain every owner through copies.
 for owner in ('first', 'second'):
     for copy in (False, True):
@@ -114,6 +124,9 @@ def main():
                     # Admission failures do not prove owner protection.
                     ok = ok and 'single-owner' not in diagnostic
                     ok = ok and 'second owner dependency' not in diagnostic
+                    if name.startswith('record_'):
+                        ok = ok and 'error[GTI-S2017]' in diagnostic
+                        ok = ok and 'Retained borrow originates here.' in diagnostic
                 if not ok:
                     print(label, (result.stdout + result.stderr)[-2500:], flush=True)
                 passed = passed and ok
