@@ -94,6 +94,13 @@ int main() {
     movement_sum += reverse_cost->first();
   }
   if (movement_sum != 60 * 128) { return 16; }
+  // Issue #330: a by-value range element copies the paired proxy; its
+  // accessors still reach both owners.
+  mut int by_reference_sum = 0;
+  for (auto& entry : pairs) { by_reference_sum += entry.first(); }
+  mut int by_value_sum = 0;
+  for (auto entry : pairs) { by_value_sum += entry.first(); }
+  if (by_value_sum != by_reference_sum || by_value_sum == 0) { return 21; }
   std::vector<int> empty_keys{};
   auto empty = std::paired_span<int, std::string>(empty_keys.as_span(), labels.as_span());
   if (empty.begin() != empty.end()) { return 7; }

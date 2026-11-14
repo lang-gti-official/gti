@@ -10168,7 +10168,21 @@ private:
               value.borrowAccess == AccessMode::ReadOnly) ||
              (output.loans[originLoan - 1].kind == MirLoanKind::CallResult &&
               value.borrowAccess == AccessMode::ReadOnly));
+        // A by-value carrier binding that holds a call-result or local loan
+        // is its own storage, not part of that loan's referent: a result
+        // rooted at the binding's shell borrows the carrier, which keeps its
+        // held loan live for as long as the result can be (issue #330).
+        const MirPlace *originPlace = output.findPlace(origin);
+        const MirLoan &held = output.loans[originLoan - 1];
+        const bool carrierShellOrigin =
+            originPlace != nullptr && held.kind != MirLoanKind::Stored &&
+            originPlace->root == MirPlaceRootKind::Binding &&
+            originPlace->projections.empty() &&
+            originPlace->type.kind != SemanticType::Reference &&
+            std::find(held.carriers.begin(), held.carriers.end(),
+                      originPlace->binding) != held.carriers.end();
         if ((derivedCallResult || derivedOriginCarrier) &&
+            !carrierShellOrigin &&
             !(shellReference &&
               output.loans[originLoan - 1].kind == MirLoanKind::Stored)) {
           parent = originLoan;
