@@ -225,7 +225,22 @@ def main():
                 "int copy = borrowed;", "int& borrowed = value; int copy = borrowed;")
             assert not [item for item in change(per_iteration, 16)
                         if item.get("severity") == 1]
-            assert change(SOURCE, 17) == []
+            temporary = (
+                "import std.string;\nint main() {\n"
+                "  /* 😀 */ auto borrowed = std::string(\"hello\").view();\n"
+                "  return int(borrowed.size());\n}\n")
+            errors = change(temporary, 17)
+            error = next(item for item in errors if item["code"] == "GTI-S2045")
+            note = next(item for item in error["relatedInformation"]
+                        if "temporary owns" in item["message"])
+            assert note["location"] == {"uri": uri, "range": source_range(
+                temporary, temporary.index(").view"), 1)}, note
+            named = temporary.replace(
+                "auto borrowed = std::string(\"hello\").view();",
+                "std::string owner(\"hello\"); auto borrowed = owner.view();")
+            assert not [item for item in change(named, 18)
+                        if item.get("severity") == 1]
+            assert change(SOURCE, 19) == []
             session.send({"jsonrpc": "2.0", "method": "textDocument/didClose",
                           "params": {"textDocument": {"uri": uri}}})
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",

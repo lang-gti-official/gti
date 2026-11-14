@@ -564,6 +564,32 @@ int main() {
   owner.clear();
   return int(view.size());
 })";
+  const std::string temporary = prefix + R"(
+int main() {
+  auto borrowed = std::string("hello").view();
+  return int(borrowed.size());
+}
+)";
+  const auto temporaryResult = analyze(temporary);
+  const auto *temporaryError =
+      findDiagnosticByCode(temporaryResult.diagnostics, "GTI-S2045");
+  expect(
+      temporaryError && temporaryError->related.size() == 1 &&
+          temporaryError->related[0].span.start == temporary.find(").view") &&
+          temporaryError->related[0].span.end == temporary.find(").view") + 1 &&
+          temporaryError->related[0].message.find(
+              "end of this full expression") != std::string::npos &&
+          hasDiagnosticHint(temporaryResult.diagnostics,
+                            "naming only the borrowed result"),
+      "a temporary-owner rejection locates the owner and explains its "
+      "destruction boundary and the required named owner");
+  auto namedOwner = temporary;
+  namedOwner.replace(
+      namedOwner.find("  auto borrowed"),
+      std::string("  auto borrowed = std::string(\"hello\").view();").size(),
+      "  std::string owner(\"hello\"); auto borrowed = owner.view();");
+  expect(analyze(namedOwner).canGenerateCode(),
+         "a named owner that outlives the borrowed result fixes the rejection");
   const std::string reborrowed = R"(
 int main() {
   mut int value = 1;

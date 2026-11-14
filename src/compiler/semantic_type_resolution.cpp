@@ -5219,7 +5219,7 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
   // Under MIR authority MIR proves the binding's loans outlive their uses,
   // except for a result borrowing the own storage of a temporary receiver
   // that holds no borrow: MIR does not see that temporary's storage end.
-  const bool temporaryReceiverStorage = [&] {
+  const ExprPtr *temporaryReceiverStorage = [&]() -> const ExprPtr * {
     const Expr *expression = initializer.get();
     while (const auto *group = exprAs<Grouping>(expression))
       expression = group->expression().get();
@@ -5231,17 +5231,28 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const ExpressionInfo *receiver =
         member == nullptr ? nullptr
                           : semanticModel.findExpression(*member->object());
-    return resolved != nullptr && receiver != nullptr &&
-           resolved->borrowOrigin == BorrowOriginKind::Receiver &&
-           receiver->category == ValueCategory::Value &&
-           receiver->type.kind == SemanticType::Class &&
-           !receiver->traits.containsBorrowedState;
+    const bool temporary =
+        resolved != nullptr && receiver != nullptr &&
+        resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+        receiver->category == ValueCategory::Value &&
+        receiver->type.kind == SemanticType::Class &&
+        !receiver->traits.containsBorrowedState;
+    return temporary ? &member->object() : nullptr;
   }();
   if (temporaryReceiverStorage && !hasStableBorrowStorage(initializer)) {
     report(expressionToken(initializer),
            "Stored-reference value is derived from temporary storage that "
            "does not outlive the binding.",
            "GTI-S2045");
+    diagnostics.back().related.push_back(
+        {tokenSpan(expressionToken(*temporaryReceiverStorage)),
+         "This temporary owns the borrowed storage and is destroyed at the "
+         "end of this full expression."});
+    diagnostics.back().hints.emplace_back(
+        "Store the owner in a named local, then borrow from that local. Keep "
+        "the owner alive until every use of the borrowed value has finished; "
+        "naming only the borrowed result does not extend the owner's "
+        "lifetime.");
   }
 }
 
