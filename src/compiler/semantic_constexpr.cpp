@@ -841,6 +841,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.constructors = constructors;
   }
   worker.impl->requestSession.constexprWork = work;
+  worker.impl->requestSession.bodyDemand = requestSession.bodyDemand;
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
@@ -986,6 +987,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const SemanticModel &stagingModel = constexprStagingModel();
   const auto *function = std::get_if<const FunctionDecl *>(&selected);
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
+  if (function && *function)
+    (void)requireBody(*function);
   const auto *info =
       function && *function ? stagingModel.findFunction(**function) : nullptr;
   if ((function &&

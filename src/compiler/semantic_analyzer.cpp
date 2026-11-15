@@ -11,7 +11,9 @@ SemanticVisitor::SemanticVisitor(
     : impl(std::make_unique<Impl>(
           std::move(target), sourceGraph, toolingOccurrences, workMetrics,
           sources, rawPointerAudit, requireFunctionDefinitions, trustedBodies,
-          sourceDebugProfile, compileLimits)) {}
+          sourceDebugProfile, compileLimits)) {
+  impl->canonicalAnalyzer = true;
+}
 
 SemanticVisitor::~SemanticVisitor() = default;
 SemanticVisitor::SemanticVisitor(SemanticVisitor &&) noexcept = default;
@@ -26,6 +28,7 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
   fresh->cancellation = cancellation;
   fresh->reuseConstantEvaluations = reuseConstantEvaluations;
   fresh->requiredFunctionBodies = requiredFunctionBodies;
+  fresh->canonicalAnalyzer = true;
   return fresh;
 }
 

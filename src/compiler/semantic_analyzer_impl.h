@@ -482,6 +482,8 @@ public:
   // analysis must be repeated with lateDemandedBodies required.
   bool lateDemandFailed = false;
   std::vector<const FunctionDecl *> lateDemandedBodies;
+  // Whether this analyzer owns the request's canonical model (not a worker).
+  bool canonicalAnalyzer = false;
   // Deferred declarations by position in deferredBodies.
   std::unordered_map<const FunctionDecl *, std::size_t> deferredBodyIndex;
   // Program-effect owners the initializer-effect validation visited.
@@ -1879,6 +1881,18 @@ private:
   };
 
   using ConstexprLocalValue = std::optional<ConstantValue>;
+
+  // Request-wide readiness of deferred trusted bodies (#398). The canonical
+  // analyzer owns the pending set: it inserts a body when it defers it and
+  // erases it, bumping generation, when it analyses it. Every analyzer,
+  // worker or not, reads it through requireBody; a demand that cannot be met
+  // where it arises is appended to unmet for an outer scope to resolve.
+  struct BodyDemand {
+    std::unordered_set<const FunctionDecl *> pending;
+    std::vector<const FunctionDecl *> unmet;
+    std::uint64_t generation = 0;
+  };
+  enum class BodyReadiness { Ready, Unavailable };
 
   struct ConstexprWorkBudget {
     std::size_t steps = 0;
@@ -7242,6 +7256,8 @@ private:
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
     // Only nested staging workers share the request's execution budget.
     std::shared_ptr<ConstexprWorkBudget> constexprWork;
+    // See BodyDemand. Created per request; shared with every worker.
+    std::shared_ptr<BodyDemand> bodyDemand;
     // Every analyzer of the request shares its proved staged constants.
     std::shared_ptr<StagedConstantResults> stagedConstants;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
@@ -7762,6 +7778,10 @@ private:
   // Analyses `function`'s body now if it has not been analysed yet, so a
   // body-derived fact a caller consumes never depends on source order.
   void ensureBodyAnalyzed(const FunctionInfo &function);
+  // The one readiness contract for compile-time paths: Ready when the body is
+  // not pending, or when this canonical analyzer could analyse it in place;
+  // otherwise the demand is recorded in BodyDemand::unmet.
+  BodyReadiness requireBody(const FunctionDecl *declaration);
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);

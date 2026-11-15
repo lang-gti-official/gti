@@ -131,6 +131,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   constexprDefinitionsAnalyzed.clear();
   constexprConstructorsAnalyzed.clear();
   requestSession.constexprWork.reset();
+  requestSession.bodyDemand = std::make_shared<BodyDemand>();
   requestSession.deferredFlowOwners.clear();
   genericDefaultConstants.clear();
   genericDefaultConstantUses.clear();
@@ -4072,6 +4073,8 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     return;
   }
   if (deferTrustedBody(stmt)) {
+    if (canonicalAnalyzer && requestSession.bodyDemand)
+      requestSession.bodyDemand->pending.insert(&stmt);
     deferredBodyIndex.emplace(&stmt, deferredBodies.size());
     deferredBodies.push_back(
         {.declaration = &stmt,
@@ -4122,6 +4125,9 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
                          : nullptr);
   if (!instanceAnalysisActive) {
     analyzedBodies.insert(&stmt);
+    if (canonicalAnalyzer && requestSession.bodyDemand &&
+        requestSession.bodyDemand->pending.erase(&stmt) != 0)
+      ++requestSession.bodyDemand->generation;
     semanticModel.recordAnalyzedFunctionBody(stmt);
     bodiesInProgress.insert(&stmt);
     if (lateAnalyzedBodies != nullptr)
@@ -4253,8 +4259,11 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     }
   }
   endScope();
+  // Only a primary analysis completes a definition; an instance reanalysis
+  // of the same declaration must not stand in for it.
   if ((stmt.isConstexpr() || stmt.isProceduralMacro()) &&
-      constexprDeclarationValid && !functionErrors()) {
+      constexprDeclarationValid && !functionErrors() &&
+      !instanceAnalysisActive) {
     constexprDefinitionsAnalyzed.insert(&stmt);
   }
   --functionDepth;
@@ -4920,6 +4929,25 @@ auto SemanticVisitor::Impl::drainDemandedDeferredBodies() -> void {
       analyzeDeferredBody(body);
     }
   }
+}
+
+auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
+    -> BodyReadiness {
+  const auto &demand = requestSession.bodyDemand;
+  if (declaration == nullptr || !demand ||
+      !demand->pending.contains(declaration))
+    return BodyReadiness::Ready;
+  if (canonicalAnalyzer && bodyPhaseActive && !instanceAnalysisActive &&
+      !bodiesInProgress.contains(declaration))
+    if (const FunctionInfo *info = semanticModel.findFunction(*declaration)) {
+      ensureBodyAnalyzed(*info);
+      if (!demand->pending.contains(declaration))
+        return BodyReadiness::Ready;
+    }
+  if (std::find(demand->unmet.begin(), demand->unmet.end(), declaration) ==
+      demand->unmet.end())
+    demand->unmet.push_back(declaration);
+  return BodyReadiness::Unavailable;
 }
 
 auto SemanticVisitor::Impl::pendingDeferredBody(
@@ -15181,6 +15209,7 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
             : "Call to non-constexpr function '" + declaration->name().lexeme +
                   "' cannot be evaluated during compilation.");
   }
+  (void)requireBody(declaration);
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
     return constexprFailure(
