@@ -3421,7 +3421,7 @@ void testConstexprAllocation() {
                 << result.detail << '\n';
     }
     if (function.source->name().lexeme == "allocate_scalar") {
-      for (const auto limits : {lang::MirConstantLimits{.steps = 4},
+      for (const auto &limits : {lang::MirConstantLimits{.steps = 4},
                                 lang::MirConstantLimits{.allocations = 0},
                                 lang::MirConstantLimits{.heapUnits = 0}}) {
         const auto limited = lang::evaluateMirConstantFunction(
