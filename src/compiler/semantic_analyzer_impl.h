@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <deque>
 #include <limits>
 #include <map>
@@ -26,6 +27,7 @@
 #include <set>
 #include <span>
 #include <tuple>
+#include <unordered_set>
 
 namespace lang {
 
@@ -6637,6 +6639,22 @@ private:
                         bool strong);
   static bool rawWritesAreLinear(const StmtList &statements);
   [[nodiscard]] Symbol *rawPointerRoot(const PlaceKey &place);
+  // Roots that every namespace index missed, valid while those indexes keep
+  // the membership generations recorded with them. Most audit roots are
+  // body-local bindings of other bodies, which no namespace index holds, so
+  // a miss otherwise rescans every visible symbol of every source unit.
+  std::vector<std::uint64_t> rawRootMissGenerations;
+  std::vector<std::uint64_t> rawRootGenerationScratch;
+  std::unordered_set<SymbolId> rawRootMisses;
+  // Membership generations of the namespace indexes, in search order.
+  void namespaceIndexGenerations(std::vector<std::uint64_t> &generations,
+                                 const DeclarationIndex<Symbol> *current);
+  // Namespace program-storage bindings (globals and static fields), in the
+  // indexes' iteration order, valid for the recorded generations. Their raw
+  // pointer types are still checked per use: a binding's type is refined in
+  // place without changing index membership.
+  std::vector<RawProgramStorageState> rawStorageBindings;
+  std::vector<std::uint64_t> rawStorageBindingGenerations;
   // Replaces program storage's raw facts with symbolic inputs, so a cached
   // source-result summary describes the storage rather than one caller's
   // current value.
