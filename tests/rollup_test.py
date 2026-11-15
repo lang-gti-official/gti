@@ -420,6 +420,26 @@ class Compose(Repositories):
         self.assertIn("never resolves conflicts", self.api.prs[rebase["number"]]["comments"][0]["body"])
         self.assertEqual(git(self.remote, "show", "main:base.txt"), "main moved")
 
+    def test_a_red_gate_is_reported_once_per_head(self):
+        red = self.member("red", gate="failure")
+        self.member("pending", gate=None)
+        self.member("unlabelled", labels=(), gate="failure")
+        for _ in range(2):
+            self.bot().compose()
+        bodies = [c["body"] for c in self.api.prs[red["number"]]["comments"]]
+        self.assertEqual(len(bodies), 1)
+        self.assertIn(red["head"]["sha"], bodies[0])
+        self.assertIn("rollup bot skips this PR", bodies[0])
+        # Only the labelled red candidate is told; pending and unlabelled PRs are not.
+        self.assertEqual([w for w in self.api.writes if w[1].endswith("/comments")],
+                         [("POST", f"/issues/{red['number']}/comments")])
+        # A new head that fails again gets its own notice.
+        head = self.push_more(red)
+        self.api.set_gate(head, conclusion="failure")
+        self.bot().compose()
+        self.assertEqual(len(self.api.prs[red["number"]]["comments"]), 2)
+        self.assertIn(head, self.api.prs[red["number"]]["comments"][1]["body"])
+
     def test_needs_rebase_clears_once_the_pr_merges_cleanly(self):
         self.member("one")
         healed = self.member("two", labels=(rollup.MAYBE, rollup.REBASE))
@@ -437,13 +457,14 @@ class Compose(Repositories):
             self.bot(max_members=9)
 
     def test_no_eligible_members_is_a_no_op(self):
-        self.member("red", gate="failure")
+        red = self.member("red", gate="failure")
         self.member("pending", gate=None)
         self.member("draft", draft=True)
         report = self.bot().compose()
         self.assertIsNone(report["rollup"])
         self.assertEqual(report["reason"], "no eligible members")
-        self.assertEqual(self.api.writes, [])
+        # The only write is the red candidate's one-time notice.
+        self.assertEqual(self.api.writes, [("POST", f"/issues/{red['number']}/comments")])
         self.assertEqual(git(self.remote, "for-each-ref", "refs/heads/rollup"), "")
 
     def test_identities_skip_existing_branches_and_prs(self):
