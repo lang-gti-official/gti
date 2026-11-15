@@ -92,7 +92,7 @@ public surface includes:
 | --- | --- |
 | `std::size_t` | Transparent alias of `uint64_t` |
 | `std::ptrdiff_t` | Transparent alias of `int64_t` |
-| `std::string_view` | Counted read-only text, either literal-backed or tied to a checked owner through the supported factories |
+| `std::string_view` | Counted read-only text, either literal-backed or tied to a checked owner through the supported factories; `substr`, `remove_prefix` and `remove_suffix` select part of it without copying |
 | `std::print` and `std::println` | Portable output over string views, `char`, and all fixed-width integers |
 | `std::transferable<T>` | Compiler-backed transfer-capability concept |
 | `std::shareable<T>` | Compiler-backed read-only sharing concept |
@@ -1579,6 +1579,40 @@ operations. They preserve the view-shell and dynamic-owner loans; returning a
 cursor into a local view shell remains invalid. The implementation names in
 `std::detail` remain private. See the
 [counted text iteration example](../../examples/146-counted-text-view-iteration.gti).
+
+`view.substr(position, count)` returns a counted sub-view of the same
+characters without copying them; `view.substr(position)` takes the rest. As in
+C++, the count clamps to the characters remaining after `position`, and a
+position equal to `size()` yields an empty view. A position past `size()`
+raises `GTI-R0007` (`index_out_of_bounds` in `string_view`), even when the
+count is zero, as checked indexing does. The result carries the source view's
+owner dependency, not a borrow of the view itself: a literal-backed source
+gives an ownerless result, a view of a `std::string` keeps that string
+borrowed, and the sub-view of a temporary view such as
+`owner.view().substr(1)` may be bound like the view it came from. Every rule
+for dynamic views above applies to the result unchanged, so it cannot outlive
+or escape its owner. `std::string::substr` remains the owning copy.
+
+`view.remove_prefix(count)` and `view.remove_suffix(count)` shrink a writable
+view place in place; the place keeps its owner dependency. Because a dynamic
+view cannot be reassigned, a loop that consumes text from the front advances a
+`mut` view with `remove_prefix` rather than assigning `rest = rest.substr(n)`.
+A count past `size()` raises `GTI-R0007`, where C++ leaves the behavior
+undefined. A function may return its own by-value `mut std::string_view`
+parameter after shrinking it, and the result relays the argument's owner; a
+mutable local copy carries no such body-provable relay and cannot be returned
+when its source is dynamic. See the
+[sub-view example](../../examples/194-string-view-subviews.gti).
+
+These members are ordinary source functions in `<std/string_view>`, bound to
+the builtin view by trusted declaration identity like its cursor operations.
+Their only compiler primitive is an unsafe in-place narrowing of a writable
+view's address and count, private to that unit: the counted carrier's
+representation belongs to the compiler, while bounds checking and clamping are
+library policy. Narrowing creates no loan and changes no owner, so the
+existing relay of a by-value text parameter carries the dependency. Editor
+hover and completion present them as `std::string_view` members, with
+`remove_prefix` and `remove_suffix` marked `mut`.
 
 `std::string::c_string()` exposes the same live bytes as a non-null
 NUL-terminated `c_string`. Embedded NUL bytes are allowed and cause ordinary C

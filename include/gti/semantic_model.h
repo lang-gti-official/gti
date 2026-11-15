@@ -505,6 +505,9 @@ enum class IntrinsicKind {
   ThreadScope,
   AtomicFetchAddWrapping,
   AtomicFetchSubWrapping,
+  // Narrows a counted text view in place to [offset, offset + count). The
+  // unsafe caller proves that extent; the view keeps its owner dependency.
+  TextViewNarrow,
   Count,
 };
 

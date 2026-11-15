@@ -7450,6 +7450,14 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   if (scope.size() != 1) {
     return IntrinsicKind::None;
   }
+  // The counted text carrier is a compiler representation, so narrowing its
+  // address/count pair is a primitive; checked sub-view policy is source.
+  if (unit && unit->role == SourceUnitRole::StandardLibrary &&
+      unit->standardLibraryName == "std/string_view") {
+    return scope.front() == "gti_internal" && name == "narrow_text_view"
+               ? IntrinsicKind::TextViewNarrow
+               : IntrinsicKind::None;
+  }
   if (isThreadLibraryUnit(sourceUnit)) {
     if (scope.front() != "gti_internal") {
       return IntrinsicKind::None;
@@ -13606,6 +13614,43 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
                                .borrowOrigin = BorrowOriginKind::Argument,
                                .borrowArgument = witness,
                                .borrowAccess = AccessMode::ReadOnly});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::TextViewNarrow) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.paren(),
+                  "Narrowing a counted text view without a bounds check");
+    const ExpressionInfo *view =
+        arguments.empty() ? nullptr
+                          : semanticModel.findExpression(*expr.arguments()[0]);
+    // Narrowing rewrites only the address and count of an existing view
+    // place. The place keeps whatever owner dependency it already has, so a
+    // dynamic view needs no new loan and an ownerless view stays ownerless.
+    if (arguments.size() != 3 || !expr.typeArguments().empty() ||
+        arguments[0] != SemanticType::StringView ||
+        arguments[1] != SemanticType::UInt64 ||
+        arguments[2] != SemanticType::UInt64 || view == nullptr ||
+        view->category != ValueCategory::Place ||
+        view->access != AccessMode::Mutable) {
+      report(expr.paren(),
+             "Narrowing a text view requires one writable view place and "
+             "uint64_t offset and count.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    arguments[0] = SemanticType::referenceTo(SemanticType::StringView,
+                                             AccessMode::Mutable);
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(arguments),
+                               .intrinsic = intrinsic});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

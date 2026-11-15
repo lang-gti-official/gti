@@ -72,23 +72,32 @@ std::string
 SignaturePrinter::forwardedMemberCall(const FunctionInfo &info,
                                       const ResolvedCallInfo &selected,
                                       std::string_view name) const {
-  if (selected.argumentReceiver == nullptr || selected.parameterTypes.empty() ||
-      selected.parameterTypes.front().kind != SemanticType::Reference ||
-      selected.parameterTypes.front().arguments.size() != 1)
+  if (selected.argumentReceiver == nullptr || selected.parameterTypes.empty())
+    return {};
+  // The receiver formal is a reference to the receiver type, or the receiver
+  // type itself when the member takes its builtin receiver by value. A
+  // mutable reference receiver presents as a mut member.
+  const SemanticType &receiverFormal = selected.parameterTypes.front();
+  const bool referenced = receiverFormal.kind == SemanticType::Reference;
+  if (referenced && receiverFormal.arguments.size() != 1)
     return {};
   auto labels = parameterLabels(
       selected.parameterTypes,
       info.declaration ? &info.declaration->parameters() : nullptr, false);
   std::string result =
       types.print(selected.returnType) + " " +
-      types.print(selected.parameterTypes.front().arguments.front()) +
+      types.print(referenced ? SemanticType(receiverFormal.arguments.front())
+                             : receiverFormal) +
       "::" + std::string(name) + "(";
   for (std::size_t index = 1; index < labels.size(); ++index) {
     if (index != 1)
       result += ", ";
     result += labels[index];
   }
-  return result + ")";
+  result += ")";
+  if (referenced && receiverFormal.referenceAccess == AccessMode::Mutable)
+    result += " mut";
+  return result;
 }
 
 [[nodiscard]] std::string

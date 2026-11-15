@@ -1574,6 +1574,17 @@ class under the separate source-view proposal (historical PR #109), these would
 become ordinary member calls on a class value and subsume this intrinsic route.
 That proposal is not the current primitive-view implementation.
 
+`TextViewNarrow` (`gti_internal::narrow_text_view` in `<std/string_view>`)
+rewrites one writable view place to `[offset, offset + count)` of its current
+characters. It is admitted as the `CountedText` shape only as an unsafe
+`PointerArithmetic` call with no result, a mutable `std::string_view`
+reference and two `uint64_t` counts. LLVM loads the descriptor, advances its
+address with an in-bounds byte GEP (offset zero is valid for the null address
+of an empty view), stores the new count and writes the descriptor back. The
+source caller proves the extent; the backend adds no check. The place's owner
+loan is untouched, which is why the source `substr`, `remove_prefix` and
+`remove_suffix` members need no new loan or relay rule.
+
 A moved nominal callable receiver uses a different contract from a by-value
 argument. Its exact MIR Move initializes a Value-rooted lifetime slot, the
 receiver CallInput aliases that slot, and invocation retains its obligation.

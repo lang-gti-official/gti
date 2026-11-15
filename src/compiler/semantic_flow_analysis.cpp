@@ -3115,6 +3115,13 @@ auto SemanticVisitor::Impl::storageBoundsCheckDetail() const
       }
     }
   }
+  // The builtin counted view has no class; its trusted member unit reports
+  // a sub-view position as indexing that view does.
+  if (const auto *unit =
+          sourceGraph ? sourceGraph->findUnit(currentSourceUnit) : nullptr;
+      unit && unit->role == SourceUnitRole::StandardLibrary &&
+      unit->standardLibraryName == "std/string_view")
+    return DefinedFailureDetail::StringView;
   return DefinedFailureDetail::PrivateStorage;
 }
 
@@ -3406,6 +3413,7 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
                             DefinedFailureDetail::MemberAccess);
           break;
         case IntrinsicKind::TextViewFromAddress:
+        case IntrinsicKind::TextViewNarrow:
         case IntrinsicKind::EraseReference:
         case IntrinsicKind::EraseReferenceMut:
         case IntrinsicKind::RestoreReference:
@@ -6495,6 +6503,19 @@ auto SemanticVisitor::Impl::captureMemberCompletion(
                        (factory->parameterTypes.size() == 1
                             ? "()"
                             : "(std::size_t position)"),
+             .scopeDistance = 0});
+      }
+    }
+    for (const auto &[name, detail] :
+         {std::pair{"substr", "(std::size_t position, std::size_t count)"},
+          std::pair{"remove_prefix", "(std::size_t count) mut"},
+          std::pair{"remove_suffix", "(std::size_t count) mut"}}) {
+      if (const auto factory = textViewMemberFactory(name)) {
+        context.candidates.push_back(
+            {.kind = SemanticCompletionCandidateKind::Method,
+             .name = name,
+             .qualifiedName = name,
+             .detail = typeSpelling(factory->returnType) + " " + name + detail,
              .scopeDistance = 0});
       }
     }

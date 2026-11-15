@@ -70,6 +70,93 @@ void forgedRange(const lang::FrontendResult &frontend, Mutation mutation,
   expect(changed && rejected,
          "backend refuses forged iteration materialization");
 }
+// Sub-views relay the source view's owner through a by-value formal, and the
+// in-place primitive keeps its exact writable-view contract in verified MIR.
+void checkSubviews(const std::filesystem::path &root) {
+  const auto entry = root / "text-view-subview-compiler-test.gti";
+  const std::string source = R"(
+import std.string;
+std::string_view inner(std::string_view text) {
+  return text.substr(std::size_t(1), text.size() - std::size_t(2));
+}
+int main() {
+  std::string owner{"[abc]"};
+  std::string_view part = inner(owner.view());
+  mut std::string_view rest = owner.view().substr(std::size_t(1));
+  rest.remove_suffix(std::size_t(1));
+  return part.size() == rest.size() ? 0 : 1;
+}
+)";
+  const auto frontend = lang::Frontend().analyze(
+      entry, source, {root / "stdlib/prelude.gti"},
+      {{std::filesystem::weakly_canonical(entry).string(), source}},
+      {root / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "sub-view source analyzes");
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "sub-views and in-place shrinking verify");
+  const auto hover =
+      lang::LanguageQueries().hover(frontend, frontend.sourceGraph.entryUnit(),
+                                    source.find("text.substr") + 5);
+  expect(hover && hover->signature.find("substr") != std::string::npos &&
+             hover->signature.find("gti_internal") == std::string::npos,
+         "sub-view hover names the public member");
+  const auto shrink =
+      lang::LanguageQueries().hover(frontend, frontend.sourceGraph.entryUnit(),
+                                    source.find("rest.remove_suffix") + 5);
+  expect(shrink &&
+             shrink->signature.find("std::string_view::remove_suffix(") !=
+                 std::string::npos &&
+             shrink->signature.ends_with(" mut"),
+         "in-place member hover presents a mut receiver");
+  const auto narrowing = [](const lang::MirInstruction &instruction) {
+    return instruction.intrinsic == lang::IntrinsicKind::TextViewNarrow;
+  };
+  std::size_t found = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &block : function.body.blocks)
+      found += std::count_if(block.instructions.begin(),
+                             block.instructions.end(), narrowing);
+  expect(found != 0, "the narrowing primitive reaches verified MIR");
+  const auto mutate = [&](auto mutation, std::string_view label) {
+    auto mir = frontend.mir;
+    bool changed = false;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             mir.functionInstances()))
+      for (auto &block : function.body.blocks)
+        for (auto &instruction : block.instructions)
+          if (!changed && narrowing(instruction)) {
+            mutation(function.body, instruction);
+            changed = true;
+          }
+    expect(changed && !lang::verifyMirProgram(mir).valid(), label);
+  };
+  mutate([](auto &, auto &instruction) { instruction.loan = 1; },
+         "narrowing cannot invent a loan");
+  mutate(
+      [](auto &, auto &instruction) {
+        instruction.borrowOrigin = lang::BorrowOriginKind::Argument;
+      },
+      "narrowing cannot forge an owner relay");
+  mutate(
+      [](auto &, auto &instruction) {
+        instruction.operands[0].type = lang::SemanticType::referenceTo(
+            lang::SemanticType::StringView, lang::AccessMode::ReadOnly);
+        instruction.parameterTypes[0] = instruction.operands[0].type;
+      },
+      "narrowing requires a writable view");
+  mutate([](auto &, auto &instruction) { instruction.operands.pop_back(); },
+         "narrowing keeps both counts");
+  mutate(
+      [](auto &, auto &instruction) {
+        instruction.unsafeOperation = lang::UnsafeOperationKind::None;
+      },
+      "narrowing keeps its unsafe extent obligation");
+}
 } // namespace
 
 int main() {
@@ -132,7 +219,8 @@ int main() {
        .preludePaths = {root / "stdlib/prelude.gti"},
        .standardLibraryRoots = {root / "stdlib"}});
   for (const std::string_view member :
-       {"begin", "end", "rbegin", "rend", "iterator_at"})
+       {"begin", "end", "rbegin", "rend", "iterator_at", "substr",
+        "remove_prefix", "remove_suffix"})
     expect(
         std::any_of(completion.candidates.begin(), completion.candidates.end(),
                     [&](const auto &item) { return item.label == member; }),
@@ -293,5 +381,6 @@ int main() {
     }
   }
   expect(normalized, "test contains a normalized builtin member call");
+  checkSubviews(root);
   return failures == 0 ? 0 : 1;
 }
