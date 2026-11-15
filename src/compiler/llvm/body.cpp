@@ -254,6 +254,17 @@ private:
   Memory objectMemory;
   PolymorphicStorage polymorphicStorage;
   std::vector<llvm::Value *> channels;
+  // One write-only channel per function for failures nothing observes: an
+  // unchecked cleanup's channel and a terminal allocation abort's record.
+  llvm::Value *scratch = nullptr;
+  llvm::Value *scratchChannel() {
+    if (scratch == nullptr) {
+      llvm::IRBuilder<> entry(&function.getEntryBlock(),
+                              function.getEntryBlock().begin());
+      scratch = entry.CreateAlloca(session.abi().failureChannel());
+    }
+    return scratch;
+  }
   std::vector<llvm::BasicBlock *> blocks;
   std::vector<llvm::Value *> live;
   llvm::Value *thisAddress = nullptr;
@@ -918,9 +929,7 @@ private:
     ir.CreateCondBr(condition, failed, normal);
     ir.SetInsertPoint(failed);
     if (terminalAllocation) {
-      llvm::IRBuilder<> entry(&function.getEntryBlock(),
-                              function.getEntryBlock().begin());
-      auto *channel = entry.CreateAlloca(session.abi().failureChannel());
+      auto *channel = scratchChannel();
       failures.originate(ir, channel, *stage, outcome, callerSite,
                          callerArtifact);
       ir.CreateCall(
@@ -1682,11 +1691,8 @@ private:
     llvm::Value *channel = nullptr;
     if (checked)
       channel = channels.at(term.failureRecord);
-    else {
-      llvm::IRBuilder<> entry(&function.getEntryBlock(),
-                              function.getEntryBlock().begin());
-      channel = entry.CreateAlloca(session.abi().failureChannel());
-    }
+    else
+      channel = scratchChannel();
     auto *address = memory.address(
         instruction.destination.value_or(obligation ? obligation->place : 0));
     if (obligation &&
@@ -2837,6 +2843,73 @@ private:
           const auto &place = *input.findPlace(local.place);
           debug->local(ir, place, memory.address(place.id));
         }
+    // Each record needs channel storage only while its failure is in flight.
+    // A channel is read and written only as a block's active record (the
+    // failure being unwound) and as its terminator's record (written on a
+    // failure edge, or read to propagate), so a record produced while another
+    // is active is nested in it: it must not share storage with that record
+    // or with any record the active one is itself nested in, since a
+    // contained secondary failure resumes unwinding them. Records with no
+    // such relation share one channel; giving every record its own made
+    // frames tens of KB at -O0 (issue #397). A shared cleanup continuation
+    // receives the active failure unchanged and never reads its source again,
+    // so it may reuse that source's channel (the copy is then skipped) and
+    // inherits only what the source is nested in.
+    std::vector<std::size_t> channelSlot(input.failureRecords.size() + 1, 0);
+    std::size_t channelSlots = 0;
+    {
+      const std::size_t count = input.failureRecords.size();
+      std::vector<std::set<MirFailureRecordId>> enclosing(count + 1);
+      struct Nesting {
+        MirFailureRecordId outer = 0;
+        MirFailureRecordId inner = 0;
+        bool transfer = false;
+      };
+      std::vector<Nesting> nested;
+      for (const auto &block : input.blocks)
+        if (block.activeFailure != 0 && block.terminator.failureRecord != 0 &&
+            block.activeFailure != block.terminator.failureRecord &&
+            block.activeFailure <= count &&
+            block.terminator.failureRecord <= count)
+          nested.push_back(
+              {block.activeFailure, block.terminator.failureRecord,
+               block.terminator.kind == MirTerminatorKind::ContinueFailure});
+      for (bool changed = true; changed;) {
+        changed = false;
+        for (const auto &[outer, inner, transfer] : nested) {
+          auto &set = enclosing[inner];
+          const auto before = set.size();
+          if (!transfer)
+            set.insert(outer);
+          set.insert(enclosing[outer].begin(), enclosing[outer].end());
+          set.erase(inner);
+          changed = changed || set.size() != before;
+        }
+      }
+      std::vector<std::set<MirFailureRecordId>> interferes(count + 1);
+      for (MirFailureRecordId record = 1; record <= count; ++record)
+        for (const auto outer : enclosing[record]) {
+          interferes[record].insert(outer);
+          interferes[outer].insert(record);
+        }
+      std::vector<std::vector<MirFailureRecordId>> slots;
+      for (MirFailureRecordId record = 1; record <= count; ++record) {
+        std::size_t slot = 0;
+        while (slot < slots.size() &&
+               std::any_of(
+                   slots[slot].begin(), slots[slot].end(),
+                   [&](MirFailureRecordId other) {
+                     return interferes[record].contains(other);
+                   }))
+          ++slot;
+        if (slot == slots.size())
+          slots.emplace_back();
+        slots[slot].push_back(record);
+        channelSlot[record] = slot;
+      }
+      channelSlots = slots.size();
+    }
+    std::vector<llvm::Value *> slotChannels(channelSlots, nullptr);
     for (const auto &record : input.failureRecords) {
 #if !defined(GTI_LLVM_C04_NATIVE_UNWIND)
       // A propagation-only body has no local cleanup that can observe or
@@ -2850,7 +2923,10 @@ private:
         continue;
       }
 #endif
-      channels.at(record.id) = ir.CreateAlloca(session.abi().failureChannel());
+      auto &slot = slotChannels.at(channelSlot.at(record.id));
+      if (slot == nullptr)
+        slot = ir.CreateAlloca(session.abi().failureChannel());
+      channels.at(record.id) = slot;
     }
     if (constructor && owner &&
         owner->compilerCapability ==

@@ -223,6 +223,48 @@ def scalar_return_rejections(gti, root, scratch, endpoints, env):
     print("scalar return checked cast: original failure/site preserved at all endpoints", flush=True)
 
 
+def o0_failure_channel_reuse(gti, root, scratch, env):
+    """Issue #397: failure channels are shared between records whose failures
+    are never in flight together, so -O0 frames stay small enough for
+    ordinary recursion."""
+    source = root / "tests/fixtures/llvm_o0_recursive_frames.gti"
+    work = scratch / "o0-frames"
+    work.mkdir(parents=True, exist_ok=True)
+    ir_path = work / "program.ll"
+    emitted = subprocess.run(
+        [str(gti), "-O0", "--emit-llvm", str(source), "-o", str(ir_path)],
+        cwd=root, env=env, text=True, capture_output=True, check=False,
+        timeout=120)
+    if emitted.returncode != 0:
+        raise AssertionError(f"O0 frames IR: {emitted}")
+    counts = {}
+    current = None
+    for line in ir_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("define "):
+            current = line.split("@", 1)[1].split("(", 1)[0]
+            counts[current] = 0
+        elif line.startswith("}"):
+            current = None
+        elif current and "alloca %gti.failure_channel.v1" in line:
+            counts[current] += 1
+    widest = max(counts.values(), default=0)
+    if widest > 3:
+        raise AssertionError(
+            f"O0 failure channels are not shared: {sorted(counts.items(), key=lambda item: -item[1])[:3]}")
+    program = work / "program"
+    built = subprocess.run([str(gti), "-O0", str(source), "-o", str(program)],
+                           cwd=root, env=env, text=True, capture_output=True,
+                           check=False, timeout=120)
+    if built.returncode != 0:
+        raise AssertionError(f"O0 frames build: {built}")
+    ran = subprocess.run([str(program)], cwd=root, env=env, text=True,
+                         capture_output=True, check=False, timeout=60)
+    if (ran.returncode, ran.stdout, ran.stderr) != (1000 % 7, "", ""):
+        raise AssertionError(f"O0 recursion of 1000 levels: {ran}")
+    print(f"O0 frames: at most {widest} failure channels per function; "
+          "1000-level recursion ran", flush=True)
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--list-evidence":
         list_evidence(Path(sys.argv[2]).resolve())
@@ -321,6 +363,8 @@ def main():
                   flush=True)
         if selection in {"all", "text-return"}:
             text_source_rejections(gti, root, scratch, endpoints, env)
+        if selection == "all":
+            o0_failure_channel_reuse(gti, root, scratch, env)
 
 
 if __name__ == "__main__":
