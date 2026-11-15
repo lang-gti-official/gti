@@ -41494,6 +41494,22 @@ private:
       output << ");\n";
       return;
     }
+    // Native code is never constant evaluation; the evaluator-owned storage
+    // pair is unreachable behind that false query and aborts if reached.
+    if (instruction.kind == MirInstructionKind::Call &&
+        instruction.intrinsic == IntrinsicKind::ConstantEvaluation) {
+      if (instruction.result)
+        output << "__gti_mir_v_" << *instruction.result << " = false;\n";
+      return;
+    }
+    if (instruction.kind == MirInstructionKind::Call &&
+        (instruction.intrinsic == IntrinsicKind::ConstantAllocate ||
+         instruction.intrinsic == IntrinsicKind::ConstantRelease)) {
+      output << "std::abort();\n";
+      if (instruction.result)
+        output << "__gti_mir_v_" << *instruction.result << " = nullptr;\n";
+      return;
+    }
     if (instruction.kind == MirInstructionKind::Call &&
         (instruction.intrinsic == IntrinsicKind::ObjectSize ||
          instruction.intrinsic == IntrinsicKind::ObjectAlignment)) {

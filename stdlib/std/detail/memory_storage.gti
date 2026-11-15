@@ -59,6 +59,18 @@ public:
         (request.alignment & (request.alignment - uint64_t(1))) != uint64_t(0)) {
       return unexpected(std::alloc_errc::invalid_alignment);
     }
+    // Constant evaluation owns its storage and bounds, ahead of any target
+    // layout query; native code never takes this path.
+    if (gti_internal::constant_evaluation()) {
+      if (request.bytes == uint64_t(0)) {
+        return std::detail::raw_allocation(nullptr, request.bytes, request.alignment, uint64_t(0));
+      }
+      unsafe {
+        return std::detail::raw_allocation(
+            gti_internal::constant_allocate(request.bytes, request.alignment),
+            request.bytes, request.alignment, uint64_t(0));
+      }
+    }
     // The byte-provider ABI carries at most 64 bits; c_size_t retains the
     // target C size type's exact layout. These bounds fold with target layout.
     uint64_t size_bytes = std::layout_of<c_size_t>().bytes;
@@ -107,6 +119,10 @@ public:
   }
   unsafe constexpr void release(std::detail::raw_allocation allocation) {
     if (allocation.address == nullptr) { return; }
+    if (gti_internal::constant_evaluation()) {
+      unsafe { gti_internal::constant_release(allocation.address); }
+      return;
+    }
     unsafe {
 #if target.os == "windows"
       gti_internal::runtime::gti_rt_aligned_free_v1(allocation.address);

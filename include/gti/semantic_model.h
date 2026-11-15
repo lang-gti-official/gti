@@ -505,6 +505,13 @@ enum class IntrinsicKind {
   ThreadScope,
   AtomicFetchAddWrapping,
   AtomicFetchSubWrapping,
+  // Compile-time allocation floor. ConstantEvaluation is true only inside the
+  // MIR constant evaluator; every backend lowers it to false, so the runtime
+  // path is the only reachable one there. ConstantAllocate/ConstantRelease are
+  // evaluator-owned storage operations that no backend ever executes.
+  ConstantEvaluation,
+  ConstantAllocate,
+  ConstantRelease,
   Count,
 };
 

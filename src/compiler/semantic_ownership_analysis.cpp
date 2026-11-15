@@ -7563,6 +7563,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "c_string_from_address") {
       return IntrinsicKind::CStringFromAddress;
     }
+    if (name == "constant_evaluation")
+      return IntrinsicKind::ConstantEvaluation;
+    if (name == "constant_allocate")
+      return IntrinsicKind::ConstantAllocate;
+    if (name == "constant_release")
+      return IntrinsicKind::ConstantRelease;
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
     }
@@ -14011,6 +14017,59 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
   }
   if (intrinsic == IntrinsicKind::StorageBoundsCheck) {
     analyzeStorageBoundsCheckCall(expr);
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
+  if (intrinsic == IntrinsicKind::ConstantEvaluation ||
+      intrinsic == IntrinsicKind::ConstantAllocate ||
+      intrinsic == IntrinsicKind::ConstantRelease) {
+    // The compile-time allocation floor: an execution-context query and the
+    // evaluator-owned storage pair. Native code never takes the storage path.
+    // The pair demands an unsafe context for its caller contract, but has no
+    // function target and no raw access for MIR to verify, so it records no
+    // unsafe operation kind (DeclaredUnsafeCall requires an exact target).
+    std::vector<SemanticType> argumentTypes;
+    for (const ExprPtr &argument : expr.arguments())
+      argumentTypes.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    const auto rawVoid = [](const SemanticType &type) {
+      return type.kind == SemanticType::RawPointer &&
+             type.arguments.size() == 1 &&
+             type.arguments.front() == SemanticType::Void &&
+             type.pointerAccess == AccessMode::Mutable;
+    };
+    SemanticType result = SemanticType::Bool;
+    bool valid = expr.typeArguments().empty();
+    if (intrinsic == IntrinsicKind::ConstantEvaluation) {
+      valid = valid && argumentTypes.empty();
+    } else if (intrinsic == IntrinsicKind::ConstantAllocate) {
+      requireUnsafe(expr, UnsafeOperationKind::None, expr.paren(),
+                    "Allocating constant-evaluation storage");
+      valid = valid && argumentTypes.size() == 2 &&
+              argumentTypes[0] == SemanticType::UInt64 &&
+              argumentTypes[1] == SemanticType::UInt64;
+      result = SemanticType::rawPointerTo(SemanticType::Void);
+    } else {
+      requireUnsafe(expr, UnsafeOperationKind::None, expr.paren(),
+                    "Releasing constant-evaluation storage");
+      valid = valid && argumentTypes.size() == 1 && rawVoid(argumentTypes[0]);
+      result = SemanticType::Void;
+    }
+    if (!valid) {
+      report(expr.paren(),
+             "Constant-evaluation storage intrinsics take no type arguments: "
+             "constant_evaluation(), constant_allocate(uint64_t, uint64_t) "
+             "and constant_release(void*).",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = result;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = result,
+                               .parameterTypes = std::move(argumentTypes),
+                               .intrinsic = intrinsic});
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }

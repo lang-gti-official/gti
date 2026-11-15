@@ -462,6 +462,14 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .maySynchronize = true},   // ThreadScope
     MirEffectTraits{.initializesValue = true}, // AtomicFetchAddWrapping
     MirEffectTraits{.initializesValue = true}, // AtomicFetchSubWrapping
+    harmless(), // ConstantEvaluation: a pure constant per execution context.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .mayTrap = true}, // ConstantAllocate
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .mayTrap = true}, // ConstantRelease
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -781,6 +789,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "thread-scope",
     "atomic-fetch-add-wrapping",
     "atomic-fetch-sub-wrapping",
+    "constant-evaluation",
+    "constant-allocate",
+    "constant-release",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
