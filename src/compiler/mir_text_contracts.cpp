@@ -2548,6 +2548,14 @@ private:
               call = &instruction;
               calleeFormal = {.receiver = true};
             }
+            // A receiver the call takes directly, as an operator call on
+            // `this` does (`this[i]`), is forwarded to that call's receiver
+            // exactly like a staged receiver input (issue #393).
+            if (receiver && call == nullptr &&
+                instruction.kind == MirInstructionKind::Call) {
+              call = &instruction;
+              calleeFormal = {.receiver = true};
+            }
             const auto *target =
                 forwardTarget(call, calleeFormal, formalType(*formal));
             if (!target) {
