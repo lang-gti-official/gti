@@ -500,6 +500,44 @@ int main() {
          "a contextually selected item should reject an inexact signature "
          "without conversion ranking");
 
+  // The callable contract comes from the callee's body. Selection must read
+  // it after that body is analysed, whether the body follows the call in
+  // source order, is reached through a forwarding generic, or is deferred.
+  for (const std::string later : {
+           R"(void invoke<Function>(Function function);
+void selected(bool value) {}
+int main() {
+  invoke(selected);
+  return 0;
+}
+void invoke<Function>(Function function) { function(1); }
+)",
+           R"(void selected(bool value) {}
+void run();
+int main() {
+  run();
+  return 0;
+}
+void run() { forward(selected); }
+void forward<Function>(Function function) { invoke(function); }
+void invoke<Function>(Function function) { function(1); }
+)"}) {
+    const lang::FrontendResult ordered =
+        analyze("function-item-later-contract.gti", later);
+    const auto selection =
+        std::find_if(ordered.diagnostics.begin(), ordered.diagnostics.end(),
+                     [](const lang::Diagnostic &diagnostic) {
+                       return diagnostic.code == "GTI-S2090";
+                     });
+    expect(
+        !ordered.canGenerateCode() && selection != ordered.diagnostics.end() &&
+            selection->primary.start == later.find("selected);") &&
+            hasMessage(ordered, "No eligible namespace-scope GTI function") &&
+            !hasCode(ordered, "GTI-S2003"),
+        "a callee body later in source order should reject the item at "
+        "its selection, exactly as when the callee comes first");
+  }
+
   const lang::FrontendResult ambiguous =
       analyze("function-item-ambiguous.gti", R"(
 void invoke<Function>(Function function) {

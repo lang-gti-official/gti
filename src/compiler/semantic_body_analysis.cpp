@@ -7840,7 +7840,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                  "' does not take generic arguments.",
              "GTI-S2030");
     }
-    if (isNumeric(alias->type) ||
+    if (isNumeric(alias->type) || alias->type == SemanticType::Char ||
         alias->type.kind == SemanticType::RawPointer) {
       analyzeAliasConversion(expr, alias->type, alias->qualifiedName);
       return;
@@ -7865,7 +7865,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     } else {
       report(expressionToken(expr.callee()),
              "Type alias '" + alias->qualifiedName +
-                 "' does not name a constructible class, numeric or raw "
+                 "' does not name a constructible class, numeric, character or "
+                 "raw "
                  "pointer type.",
              "GTI-S2030");
       currentType = SemanticType::Unknown;
@@ -9014,6 +9015,51 @@ auto SemanticVisitor::Impl::isCharacterCodeConversion(
          (source == SemanticType::UInt8 && target == SemanticType::Char);
 }
 
+auto SemanticVisitor::Impl::analyzeConstantCharacterConversion(
+    const Expr &source, const ExprPtr &operand, const SemanticType &valueType,
+    const SemanticType &targetType) -> bool {
+  if (targetType != SemanticType::Char || valueType == SemanticType::UInt8 ||
+      !isInteger(valueType))
+    return false;
+  ConstexprInterpreter context = makeConstexprInterpreter();
+  context.requireMir = true;
+  context.recordValues = false;
+  context.immediateRoot = &source;
+  ConstexprEvaluation result = evaluateConstexprExpression(operand, context);
+  if (result.genericDependency) {
+    currentType = targetType;
+    return true; // Concrete reanalysis must establish the constant value.
+  }
+  const auto *integer =
+      result.value ? std::get_if<ConstantInteger>(&*result.value) : nullptr;
+  if (!integer || integer->negative || integer->magnitude > 255) {
+    report(expressionToken(operand),
+           integer
+               ? "Character conversion requires an integer constant in the "
+                 "range 0..255."
+               : "Character conversion requires a constant integer expression; "
+                 "runtime integers must convert explicitly through uint8_t.",
+           "GTI-S2014");
+    if (!result.detail.empty())
+      diagnostics.back().hints.push_back(result.detail);
+    if (!result.limitHint.empty())
+      diagnostics.back().hints.push_back(result.limitHint);
+    currentType = SemanticType::Unknown;
+    return true;
+  }
+  // Publish a proven value through the existing immediate-expression boundary.
+  // The operand is evaluated only by CTFE, never by runtime optimization.
+  const ConstantValue value =
+      CharacterLiteral{static_cast<std::uint8_t>(integer->magnitude)};
+  semanticModel.recordImmediateInvocation(
+      source, {.info = expressionInfo(targetType), .value = value});
+  semanticModel.recordConstant(source, value);
+  semanticModel.recordDefinedFailure(source, {});
+  discardImmediateProgramEffects(source);
+  currentType = targetType;
+  return true;
+}
+
 auto SemanticVisitor::Impl::analyzeTypeParameterCall(
     const Call &expr, const SemanticType &targetType) -> void {
   bool valid = true;
@@ -9198,6 +9244,9 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
     currentType = targetType;
     return;
   }
+  if (valid && analyzeConstantCharacterConversion(
+                   expr, expr.arguments().front(), valueType, targetType))
+    return;
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (!isNumeric(targetType) && !characterCodeConversion) {
@@ -9303,8 +9352,19 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
                          .intrinsic = IntrinsicKind::RawPointerConversion});
     return;
   }
+  if (analyzeConstantCharacterConversion(expr, expr.arguments().front(),
+                                         valueType, targetType))
+    return;
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
+  if (targetType == SemanticType::Char && !characterCodeConversion) {
+    report(expressionToken(expr.arguments().front()),
+           "Character conversion requires uint8_t or a constant integer "
+           "expression in the range 0..255.",
+           "GTI-S2014");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (valueType != SemanticType::Unknown && !isNumeric(valueType) &&
       !characterCodeConversion) {
     report(expressionToken(expr.arguments().front()),
@@ -9500,6 +9560,9 @@ auto SemanticVisitor::Impl::visitConversionExpr(const Conversion &expr)
     currentType = SemanticType::Unknown;
     return;
   }
+  if (analyzeConstantCharacterConversion(expr, expr.value(), valueType,
+                                         targetType))
+    return;
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (!isNumeric(targetType) && !characterCodeConversion) {
@@ -13634,6 +13697,10 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     return type.arguments.size() == 1 &&
            isSupportedConstexprType(type.arguments[0], allowDependent, visiting,
                                     true);
+  // A raw pointer is execution-local too: the verified executor checks every
+  // access against its own allocations and never publishes a pointer.
+  if (transient && type.kind == SemanticType::RawPointer)
+    return type.arguments.size() == 1;
   if (transient && type.kind == SemanticType::TypePack)
     return (!type.concretePack && allowDependent) ||
            (type.concretePack &&

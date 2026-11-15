@@ -505,6 +505,13 @@ enum class IntrinsicKind {
   ThreadScope,
   AtomicFetchAddWrapping,
   AtomicFetchSubWrapping,
+  // Compile-time allocation floor. ConstantEvaluation is true only inside the
+  // MIR constant evaluator; every backend lowers it to false, so the runtime
+  // path is the only reachable one there. ConstantAllocate/ConstantRelease are
+  // evaluator-owned storage operations that no backend ever executes.
+  ConstantEvaluation,
+  ConstantAllocate,
+  ConstantRelease,
   // Narrows a counted text view in place to [offset, offset + count). The
   // unsafe caller proves that extent; the view keeps its owner dependency.
   TextViewNarrow,
@@ -2576,7 +2583,8 @@ public:
   findConstant(const Expr &expression) const;
 
   // A completed immediate invocation, including the conversion applied by a
-  // declaration. The source operand keeps its own type/constant facts.
+  // declaration, or a required constant scalar conversion. The source operand
+  // keeps its own type/constant facts.
   struct ImmediateInvocationInfo {
     ExpressionInfo info;
     ConstantValue value;

@@ -1240,11 +1240,23 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const HirProgram &hirProgram = closure->hir;
   const MirProgram &mirProgram = closure->mir;
   const MirBodyAddress root = closure->root;
-  const MirConstantLimits limits{
+  MirConstantLimits limits{
       .steps = compileLimits.constexprSteps -
                std::min(context.work->steps, compileLimits.constexprSteps),
       .callDepth =
           compileLimits.constexprDepth - context.work->stagingDepth + 1};
+  // Layout queries and raw-region typing use the frontend's checked target
+  // layout, the same facts a sizeof/alignof query observes.
+  limits.objectLayout =
+      [this](const SemanticType &type) -> std::optional<ObjectLayout> {
+    const LayoutEvaluation layout = evaluateLayout(type);
+    if (!layout)
+      return std::nullopt;
+    if (layout.nativeRepresentation)
+      semanticModel.requireNativeObjectLayout();
+    return ObjectLayout{.size = layout.sizeBytes,
+                        .alignment = layout.abiAlignmentBytes};
+  };
   auto result = [&] {
     const PhaseTimeScope evaluateScope("constexpr-staged-evaluate");
     if (context.procedural) {

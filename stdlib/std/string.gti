@@ -166,8 +166,8 @@ namespace std {
       mut prefix_owner<char> data;
 
     public:
-      terminated_prefix_owner() {}
-      terminated_prefix_owner(size_t capacity) {
+      constexpr terminated_prefix_owner() {}
+      constexpr terminated_prefix_owner(size_t capacity) {
         if (capacity != size_t(0)) {
           this.data = prefix_owner<char>(capacity + size_t(1));
           unsafe { this.data.append_unchecked('\0'); }
@@ -209,37 +209,41 @@ namespace std {
         }
       }
 
-      size_t length() {
+      constexpr size_t length() {
         if (this.data.length() == size_t(0)) { return size_t(0); }
         return this.data.length() - size_t(1);
       }
-      size_t capacity() {
+      constexpr size_t capacity() {
         if (this.data.capacity() == size_t(0)) { return size_t(0); }
         return this.data.capacity() - size_t(1);
       }
-      char& read(size_t index) {
+      constexpr char& read(size_t index) {
         gti_internal::index_bounds_check(index, this.length());
         unsafe { return this.data.read_unchecked(index); }
       }
-      mut char& read_mut(size_t index) mut {
+      constexpr mut char& read_mut(size_t index) mut {
         gti_internal::index_bounds_check(index, this.length());
         unsafe { return this.data.read_mut_unchecked(index); }
       }
-      unsafe char& read_unchecked(size_t index) {
+      unsafe constexpr char& read_unchecked(size_t index) {
         unsafe { return this.data.read_unchecked(index); }
       }
-      unsafe mut char& read_mut_unchecked(size_t index) mut {
+      unsafe constexpr mut char& read_mut_unchecked(size_t index) mut {
         unsafe { return this.data.read_mut_unchecked(index); }
       }
-      prefix_owner<char>& prefix() { return this.data; }
-      mut prefix_owner<char>& prefix_mut() mut { return this.data; }
-      unsafe const char* address() {
+      constexpr prefix_owner<char>& prefix() { return this.data; }
+      constexpr mut prefix_owner<char>& prefix_mut() mut { return this.data; }
+      unsafe constexpr const char* address() {
         if (this.data.capacity() == size_t(0)) {
+          // Compile-time evaluation has no process-lifetime terminator; an
+          // empty counted view never reads its address, and the
+          // NUL-terminated accessors are runtime operations.
+          if (gti_internal::constant_evaluation()) { return nullptr; }
           return &empty_string_terminator;
         }
         unsafe { return this.data.address(); }
       }
-      unsafe void append(char value) mut {
+      unsafe constexpr void append(char value) mut {
         size_t last = this.length();
         unsafe {
           this.data.read_mut_unchecked(last) = value;
@@ -251,7 +255,7 @@ namespace std {
       // The source interval [source_first, source_first + count) is in value.
       // Code-unit reads and char construction cannot fail for these bounds;
       // publish the constructed prefix and its terminator once, after copying.
-      unsafe void append(string_view value, size_t source_first, size_t count) mut {
+      unsafe constexpr void append(string_view value, size_t source_first, size_t count) mut {
         if (count == size_t(0)) { return; }
         size_t source_end = source_first + count;
         if (source_end > value.size()) {
@@ -271,22 +275,22 @@ namespace std {
               gti_internal::integer_wrapping_add(end, size_t(1)));
         }
       }
-      unsafe void append(string_view value) mut {
+      unsafe constexpr void append(string_view value) mut {
         unsafe { this.append(value, size_t(0), value.size()); }
       }
-      unsafe void pop() mut {
+      unsafe constexpr void pop() mut {
         unsafe {
           this.data.pop_unchecked();
           this.data.read_mut_unchecked(this.data.length() - size_t(1)) = '\0';
         }
       }
-      void clear() mut {
+      constexpr void clear() mut {
         this.data.clear();
         if (this.data.capacity() != size_t(0)) {
           unsafe { this.data.append_unchecked('\0'); }
         }
       }
-      void reserve(size_t requested) mut {
+      constexpr void reserve(size_t requested) mut {
         if (requested <= this.capacity()) { return; }
         mut prefix_owner<char> replacement{requested + size_t(1)};
         unsafe { this.data.relocate_to_unchecked(replacement); }
@@ -295,7 +299,7 @@ namespace std {
         }
         this.data = std::move(replacement);
       }
-      void shrink_to_fit() mut {
+      constexpr void shrink_to_fit() mut {
         size_t length = this.length();
         if (length == this.capacity()) { return; }
         if (length == size_t(0)) {
@@ -508,10 +512,10 @@ namespace std {
 
   /// An owning, move-only, mutable sequence of characters.
   export class string {
-    string(detail::terminated_prefix_owner storage) : data(std::move(storage)) {}
+    constexpr string(detail::terminated_prefix_owner storage) : data(std::move(storage)) {}
     mut detail::terminated_prefix_owner data;
 
-    bool equals(string_view other) {
+    constexpr bool equals(string_view other) {
       if (this.data.length() != other.size()) {
         return false;
       }
@@ -523,7 +527,7 @@ namespace std {
       return true;
     }
 
-    bool equals(string& other) {
+    constexpr bool equals(string& other) {
       if (this.data.length() != other.size()) {
         return false;
       }
@@ -535,7 +539,7 @@ namespace std {
       return true;
     }
 
-    int compare_bytes(string_view other) {
+    constexpr int compare_bytes(string_view other) {
       mut size_t shared = this.data.length();
       if (other.size() < shared) { shared = other.size(); }
       for (mut size_t index = 0; index < shared; index++) {
@@ -551,7 +555,7 @@ namespace std {
       return 0;
     }
 
-    bool matches_at(size_t position, string_view value) {
+    constexpr bool matches_at(size_t position, string_view value) {
       if (position > this.data.length() || value.size() > this.data.length() - position) {
         return false;
       }
@@ -566,7 +570,7 @@ namespace std {
     // Implicit growth for push_back, append and a growing replace reaches at
     // least twice the current capacity, so a sequence of appends takes
     // amortized linear time. Explicit reserve and resize stay exact.
-    void grow_for(size_t additional) mut {
+    constexpr void grow_for(size_t additional) mut {
       size_t length = this.data.length();
       size_t capacity = this.data.capacity();
       if (additional <= capacity - length) { return; }
@@ -577,7 +581,7 @@ namespace std {
       this.data.reserve(grown);
     }
 
-    void check_position(size_t position) {
+    constexpr void check_position(size_t position) {
       if (position > this.data.length()) {
         gti_internal::index_bounds_check(position, this.data.length());
       }
@@ -592,10 +596,10 @@ namespace std {
 
     static constexpr size_t npos = uint64_t(18446744073709551615);
 
-    string() {}
+    constexpr string() {}
 
     /// `std::string text = "literal";` constructs through this constructor.
-    implicit string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {
+    implicit constexpr string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {
       unsafe { this.data.append(value); }
     }
 
@@ -630,7 +634,7 @@ namespace std {
       }
     }
 
-    string<uint64_t N>(char values[N]) : data(detail::terminated_prefix_owner(N)) {
+    constexpr string<uint64_t N>(char values[N]) : data(detail::terminated_prefix_owner(N)) {
       while (this.data.length() < N) {
         unsafe { this.data.append(values[this.data.length()]); }
       }
@@ -649,7 +653,7 @@ namespace std {
 
     /// Copies the code units in [begin, end) into an independent owner.
     /// Requires begin <= end <= other.size(); invalid ranges raise GTI-R0007.
-    string(std::size_t begin, std::size_t end, std::string& other)
+    constexpr string(std::size_t begin, std::size_t end, std::string& other)
         : data(detail::terminated_prefix_owner()) {
       // Validate the full range before subtraction, allocation, or any read.
       // Equality is valid at either endpoint, including an empty source.
@@ -669,17 +673,17 @@ namespace std {
     string(string&& other) = default;
 
     /// Returns the number of live characters.
-    size_t size() {
+    constexpr size_t size() {
       return this.data.length();
     }
 
     /// Returns whether the string contains no characters.
-    bool empty() {
+    constexpr bool empty() {
       return this.data.length() == 0;
     }
 
     /// Search counted code units; empty needles match at any valid position.
-    size_t find(string_view needle, size_t position) {
+    constexpr size_t find(string_view needle, size_t position) {
       if (position > this.data.length() || needle.size() > this.data.length() - position) {
         return string::npos;
       }
@@ -692,9 +696,9 @@ namespace std {
       }
     }
 
-    size_t find(string_view needle) { return this.find(needle, size_t(0)); }
+    constexpr size_t find(string_view needle) { return this.find(needle, size_t(0)); }
 
-    size_t find(char needle, size_t position) {
+    constexpr size_t find(char needle, size_t position) {
       size_t length = this.data.length();
       if (position >= length) { return string::npos; }
       mut size_t index = position;
@@ -728,10 +732,10 @@ namespace std {
       return string::npos;
     }
 
-    size_t find(char needle) { return this.find(needle, size_t(0)); }
+    constexpr size_t find(char needle) { return this.find(needle, size_t(0)); }
 
     /// Position is the latest allowed starting offset, not an end offset.
-    size_t rfind(string_view needle, size_t position) {
+    constexpr size_t rfind(string_view needle, size_t position) {
       if (needle.size() > this.data.length()) { return string::npos; }
       mut size_t index = this.data.length() - needle.size();
       if (position < index) { index = position; }
@@ -742,9 +746,9 @@ namespace std {
       }
     }
 
-    size_t rfind(string_view needle) { return this.rfind(needle, string::npos); }
+    constexpr size_t rfind(string_view needle) { return this.rfind(needle, string::npos); }
 
-    size_t rfind(char needle, size_t position) {
+    constexpr size_t rfind(char needle, size_t position) {
       if (this.data.length() == 0) { return string::npos; }
       mut size_t index = this.data.length() - 1;
       if (position < index) { index = position; }
@@ -755,71 +759,71 @@ namespace std {
       }
     }
 
-    size_t rfind(char needle) { return this.rfind(needle, string::npos); }
-    bool contains(string_view needle) { return this.find(needle) != string::npos; }
-    bool contains(char needle) { return this.find(needle) != string::npos; }
-    bool starts_with(string_view prefix) { return this.matches_at(size_t(0), prefix); }
-    bool starts_with(char prefix) {
+    constexpr size_t rfind(char needle) { return this.rfind(needle, string::npos); }
+    constexpr bool contains(string_view needle) { return this.find(needle) != string::npos; }
+    constexpr bool contains(char needle) { return this.find(needle) != string::npos; }
+    constexpr bool starts_with(string_view prefix) { return this.matches_at(size_t(0), prefix); }
+    constexpr bool starts_with(char prefix) {
       unsafe { return this.data.length() != 0 && this.data.read_unchecked(size_t(0)) == prefix; }
     }
 
-    bool ends_with(string_view suffix) {
+    constexpr bool ends_with(string_view suffix) {
       if (suffix.size() > this.data.length()) { return false; }
       return this.matches_at(this.data.length() - suffix.size(), suffix);
     }
 
-    bool ends_with(char suffix) {
+    constexpr bool ends_with(char suffix) {
       unsafe {
         return this.data.length() != 0 && this.data.read_unchecked(this.data.length() - 1) == suffix;
       }
     }
 
-    int compare(string_view other) { return this.compare_bytes(other); }
+    constexpr int compare(string_view other) { return this.compare_bytes(other); }
 
     // Borrow an owning input without allocating another string.
-    size_t find(string& needle, size_t position) { return this.find(needle.view(), position); }
-    size_t find(string& needle) { return this.find(needle.view()); }
-    size_t rfind(string& needle, size_t position) { return this.rfind(needle.view(), position); }
-    size_t rfind(string& needle) { return this.rfind(needle.view()); }
-    bool contains(string& needle) { return this.contains(needle.view()); }
-    bool starts_with(string& prefix) { return this.starts_with(prefix.view()); }
-    bool ends_with(string& suffix) { return this.ends_with(suffix.view()); }
-    int compare(string& other) { return this.compare_bytes(other.view()); }
+    constexpr size_t find(string& needle, size_t position) { return this.find(needle.view(), position); }
+    constexpr size_t find(string& needle) { return this.find(needle.view()); }
+    constexpr size_t rfind(string& needle, size_t position) { return this.rfind(needle.view(), position); }
+    constexpr size_t rfind(string& needle) { return this.rfind(needle.view()); }
+    constexpr bool contains(string& needle) { return this.contains(needle.view()); }
+    constexpr bool starts_with(string& prefix) { return this.starts_with(prefix.view()); }
+    constexpr bool ends_with(string& suffix) { return this.ends_with(suffix.view()); }
+    constexpr int compare(string& other) { return this.compare_bytes(other.view()); }
 
     /// Returns an independent owner. The length is clamped to the remainder;
     /// a position past size() raises GTI-R0007, even for an empty slice.
-    string substr(size_t position, size_t length) {
+    constexpr string substr(size_t position, size_t length) {
       this.check_position(position);
       mut size_t copied = this.data.length() - position;
       if (length < copied) { copied = length; }
       return string(position, position + copied, this);
     }
 
-    string substr(size_t position) { return this.substr(position, string::npos); }
-    string substr() { return this.substr(size_t(0), string::npos); }
+    constexpr string substr(size_t position) { return this.substr(position, string::npos); }
+    constexpr string substr() { return this.substr(size_t(0), string::npos); }
 
-    char& front() {
+    constexpr char& front() {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
       unsafe { return this.data.read_unchecked(size_t(0)); }
     }
 
-    mut char& front() mut {
+    constexpr mut char& front() mut {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
       unsafe { return this.data.read_mut_unchecked(size_t(0)); }
     }
 
-    char& back() {
+    constexpr char& back() {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
       unsafe { return this.data.read_unchecked(this.data.length() - 1); }
     }
 
-    mut char& back() mut {
+    constexpr mut char& back() mut {
       gti_internal::index_bounds_check(size_t(0), this.data.length());
       unsafe { return this.data.read_mut_unchecked(this.data.length() - 1); }
     }
 
     /// Returns the number of characters that fit without growing storage.
-    size_t capacity() {
+    constexpr size_t capacity() {
       return this.data.capacity();
     }
 
@@ -865,7 +869,7 @@ namespace std {
     }
 
     /// Returns a counted read-only text view tied to this string.
-    string_view view() {
+    constexpr string_view view() {
       unsafe { return std::assume_string_view(this.data.address(), this.size(), this); }
     }
 
@@ -900,60 +904,60 @@ namespace std {
       return mutable_span<char>(this.data.prefix_mut(), size_t(0), length);
     }
 
-    char& at(int index) {
+    constexpr char& at(int index) {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
       unsafe { return this.data.read_unchecked(uint64_t(index)); }
     }
 
-    mut char& at(int index) mut {
+    constexpr mut char& at(int index) mut {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
       unsafe { return this.data.read_mut_unchecked(uint64_t(index)); }
     }
 
-    char& at(size_t index) {
+    constexpr char& at(size_t index) {
       gti_internal::index_bounds_check(index, this.data.length());
       unsafe { return this.data.read_unchecked(index); }
     }
 
-    mut char& at(size_t index) mut {
+    constexpr mut char& at(size_t index) mut {
       gti_internal::index_bounds_check(index, this.data.length());
       unsafe { return this.data.read_mut_unchecked(index); }
     }
 
-    char& operator[](int index) {
+    constexpr char& operator[](int index) {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
       unsafe { return this.data.read_unchecked(uint64_t(index)); }
     }
 
-    mut char& operator[](int index) mut {
+    constexpr mut char& operator[](int index) mut {
       gti_internal::index_bounds_check(uint64_t(index), this.data.length());
       unsafe { return this.data.read_mut_unchecked(uint64_t(index)); }
     }
 
-    char& operator[](size_t index) {
+    constexpr char& operator[](size_t index) {
       gti_internal::index_bounds_check(index, this.data.length());
       unsafe { return this.data.read_unchecked(index); }
     }
 
-    mut char& operator[](size_t index) mut {
+    constexpr mut char& operator[](size_t index) mut {
       gti_internal::index_bounds_check(index, this.data.length());
       unsafe { return this.data.read_mut_unchecked(index); }
     }
 
     /// The caller proves index < size(); the trailing NUL is not an element.
-    unsafe char& get_unchecked(size_t index) {
+    unsafe constexpr char& get_unchecked(size_t index) {
       unsafe { return this.data.read_unchecked(index); }
     }
 
-    unsafe mut char& get_unchecked_mut(size_t index) mut {
+    unsafe constexpr mut char& get_unchecked_mut(size_t index) mut {
       unsafe { return this.data.read_mut_unchecked(index); }
     }
 
-    void reserve(size_t requested) mut {
+    constexpr void reserve(size_t requested) mut {
       this.data.reserve(requested);
     }
 
-    void resize(size_t requested) mut {
+    constexpr void resize(size_t requested) mut {
       while (this.data.length() > requested) {
         unsafe { this.data.pop(); }
       }
@@ -963,18 +967,18 @@ namespace std {
       }
     }
 
-    void shrink_to_fit() mut {
+    constexpr void shrink_to_fit() mut {
       this.data.shrink_to_fit();
     }
 
-    void push_back(char value) mut {
+    constexpr void push_back(char value) mut {
       // Keep the common non-growing path to one comparison.
       if (this.data.length() == this.data.capacity()) { this.grow_for(size_t(1)); }
       unsafe { this.data.append(value); }
     }
 
     /// Exchange two bytes; the terminating NUL is never part of the range.
-    void swap_elements(size_t left, size_t right) mut {
+    constexpr void swap_elements(size_t left, size_t right) mut {
       gti_internal::index_bounds_check(left, this.size());
       gti_internal::index_bounds_check(right, this.size());
       char saved = this[left];
@@ -982,14 +986,14 @@ namespace std {
       this[right] = saved;
     }
 
-    void pop_back() mut {
+    constexpr void pop_back() mut {
       if (this.data.length() == 0) {
         return;
       }
       unsafe { this.data.pop(); }
     }
 
-    void append(string_view value) mut {
+    constexpr void append(string_view value) mut {
       this.grow_for(value.size());
       unsafe { this.data.append(value); }
     }
@@ -1003,7 +1007,7 @@ namespace std {
 
     /// Replaces a clamped range in linear time, retaining capacity where
     /// possible. Ordinary exclusive-receiver rules forbid an aliased view.
-    void replace(size_t position, size_t length, string_view value) mut {
+    constexpr void replace(size_t position, size_t length, string_view value) mut {
       this.check_position(position);
       mut size_t removed = this.data.length() - position;
       if (length < removed) { removed = length; }
@@ -1038,27 +1042,27 @@ namespace std {
       }
     }
 
-    void insert(size_t position, string_view value) mut {
+    constexpr void insert(size_t position, string_view value) mut {
       this.replace(position, size_t(0), value);
     }
 
-    void insert(size_t position, string& value) mut { this.insert(position, value.view()); }
-    void replace(size_t position, size_t length, string& value) mut {
+    constexpr void insert(size_t position, string& value) mut { this.insert(position, value.view()); }
+    constexpr void replace(size_t position, size_t length, string& value) mut {
       this.replace(position, length, value.view());
     }
 
-    void erase(size_t position, size_t length) mut {
+    constexpr void erase(size_t position, size_t length) mut {
       this.replace(position, length, "");
     }
 
-    void erase(size_t position) mut { this.erase(position, string::npos); }
-    void erase() mut { this.clear(); }
+    constexpr void erase(size_t position) mut { this.erase(position, string::npos); }
+    constexpr void erase() mut { this.clear(); }
 
-    void clear() mut {
+    constexpr void clear() mut {
       this.data.clear();
     }
 
-    string clone() {
+    constexpr string clone() {
       mut string result = string();
       result.reserve(this.data.length());
       unsafe { result.data.append(this.view()); }
@@ -1066,76 +1070,76 @@ namespace std {
     }
 
     /// Exchanges storage, size, and capacity without copying code units.
-    void swap(mut string& other) mut {
+    constexpr void swap(mut string& other) mut {
       this.data.swap(other.data);
     }
 
-    bool operator==(string_view other) {
+    constexpr bool operator==(string_view other) {
       return this.equals(other);
     }
 
-    bool operator!=(string_view other) {
+    constexpr bool operator!=(string_view other) {
       return !this.equals(other);
     }
 
-    bool operator==(string& other) {
+    constexpr bool operator==(string& other) {
       return this.equals(other);
     }
 
-    bool operator!=(string& other) {
+    constexpr bool operator!=(string& other) {
       return !this.equals(other);
     }
 
     /// Lexicographic unsigned-code-unit order, including embedded NULs.
-    bool operator<(string_view other) { return this.compare_bytes(other) < 0; }
-    bool operator>(string_view other) { return this.compare_bytes(other) > 0; }
-    bool operator<=(string_view other) { return this.compare_bytes(other) <= 0; }
-    bool operator>=(string_view other) { return this.compare_bytes(other) >= 0; }
-    bool operator<(string& other) { return this.compare_bytes(other.view()) < 0; }
-    bool operator>(string& other) { return this.compare_bytes(other.view()) > 0; }
-    bool operator<=(string& other) { return this.compare_bytes(other.view()) <= 0; }
-    bool operator>=(string& other) { return this.compare_bytes(other.view()) >= 0; }
+    constexpr bool operator<(string_view other) { return this.compare_bytes(other) < 0; }
+    constexpr bool operator>(string_view other) { return this.compare_bytes(other) > 0; }
+    constexpr bool operator<=(string_view other) { return this.compare_bytes(other) <= 0; }
+    constexpr bool operator>=(string_view other) { return this.compare_bytes(other) >= 0; }
+    constexpr bool operator<(string& other) { return this.compare_bytes(other.view()) < 0; }
+    constexpr bool operator>(string& other) { return this.compare_bytes(other.view()) > 0; }
+    constexpr bool operator<=(string& other) { return this.compare_bytes(other.view()) <= 0; }
+    constexpr bool operator>=(string& other) { return this.compare_bytes(other.view()) >= 0; }
   };
 
   /// Writes every code unit, including embedded NULs, in one counted write.
   export [[track_caller]]
-  void print(string& value) {
+  constexpr void print(string& value) {
     print(value.view());
   }
 
   export [[track_caller]]
-  void print(string value) {
+  constexpr void print(string value) {
     print(value.view());
   }
 
   export [[track_caller]]
-  void println(string& value) {
+  constexpr void println(string& value) {
     print(value.view());
     print("\n");
   }
 
   export [[track_caller]]
-  void println(string value) {
+  constexpr void println(string value) {
     print(value.view());
     print("\n");
   }
 
   /// Writes a binary32 value in decimal without adding a newline.
   export [[track_caller]]
-  void print(float value) {
+  constexpr void print(float value) {
     mut string text = detail::float_to_decimal_string(value);
     print(text);
   }
 
   /// Writes a binary32 value in decimal followed by a newline.
   export [[track_caller]]
-  void println(float value) {
+  constexpr void println(float value) {
     print(value);
     print("\n");
   }
 
   namespace detail {
-    char decimal_digit_character(uint8_t digit) {
+    constexpr char decimal_digit_character(uint8_t digit) {
       switch (digit) {
       case uint8_t(0):
         return '0';

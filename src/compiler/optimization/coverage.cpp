@@ -159,6 +159,12 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectAlignment:
     return supported("pure target-dependent representation query; scalar "
                      "interpretation overdefined");
+  case IntrinsicKind::ConstantEvaluation:
+    return supported("pure execution-context query; scalar interpretation "
+                     "overdefined until a backend or the evaluator decides it");
+  case IntrinsicKind::ConstantAllocate:
+  case IntrinsicKind::ConstantRelease:
+    return barrier("evaluator-owned raw storage; never executed natively");
   case IntrinsicKind::RawBorrow:
   case IntrinsicKind::RawBorrowMut:
   case IntrinsicKind::EraseReference:

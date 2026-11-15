@@ -462,6 +462,14 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .maySynchronize = true},   // ThreadScope
     MirEffectTraits{.initializesValue = true}, // AtomicFetchAddWrapping
     MirEffectTraits{.initializesValue = true}, // AtomicFetchSubWrapping
+    harmless(), // ConstantEvaluation: a pure constant per execution context.
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .allocates = true,
+                    .mayTrap = true}, // ConstantAllocate
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .mayTrap = true}, // ConstantRelease
     // TextViewNarrow: rewrites the referenced view's address and count; its
     // owner dependency is unchanged and the unsafe caller proves the extent.
     MirEffectTraits{.readsPlace = true, .writesPlace = true},
@@ -784,6 +792,9 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "thread-scope",
     "atomic-fetch-add-wrapping",
     "atomic-fetch-sub-wrapping",
+    "constant-evaluation",
+    "constant-allocate",
+    "constant-release",
     "text-view-narrow",
 });
 

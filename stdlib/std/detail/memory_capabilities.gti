@@ -35,6 +35,13 @@ export gti_internal::text_view text_view_from_address<Owner>(
 export gti_internal::c_string c_string_from_address<Owner>(
     const char* address, Owner& owner);
 
+// Compile-time allocation floor. Native code is never constant evaluation, so
+// backends fold constant_evaluation() to false and never execute the storage
+// pair; the MIR constant evaluator answers true and owns that storage.
+export bool constant_evaluation();
+export unsafe void* constant_allocate(uint64_t bytes, uint64_t alignment);
+export unsafe void constant_release(void* address);
+
 export gti_internal::shared_owner<T> shared_owner_empty<T>();
 export gti_internal::shared_owner<T> shared_owner_from_unique<T>(gti_internal::unique_owner<T> owner);
 export gti_internal::shared_owner<T> shared_owner_clone<T>(gti_internal::shared_owner<T>& owner);

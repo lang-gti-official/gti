@@ -1,5 +1,9 @@
 #pragma once
 
+#include "gti/object_layout.h"
+
+#include <functional>
+
 #include "gti/compile_limits.h"
 #include "gti/mir.h"
 
@@ -18,6 +22,9 @@ struct MirConstantLimits {
   // are not recycled within a request, so stale identities cannot alias reuse.
   std::size_t allocations = 1024;
   std::size_t heapUnits = 65536;
+  // Target object layout for layout queries and raw-region typing. Supplied by
+  // the frontend's checked layout evaluation; absent, layout queries fail.
+  std::function<std::optional<ObjectLayout>(const SemanticType &)> objectLayout;
 };
 
 struct MirConstantEvaluation {
