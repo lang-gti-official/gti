@@ -4552,6 +4552,17 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
 auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
     -> void {
   const FunctionDecl *declaration = function.bodyDeclaration();
+  // Under a resolving scope a worker never analyses a canonically pending
+  // body privately: it records the demand, and the scope analyses the body
+  // canonically and repeats the attempt.
+  if (!canonicalAnalyzer && declaration != nullptr &&
+      requestSession.bodyDemand && requestSession.bodyDemand->resolvers != 0 &&
+      requestSession.bodyDemand->pending.contains(declaration)) {
+    auto &unmet = requestSession.bodyDemand->unmet;
+    if (std::find(unmet.begin(), unmet.end(), declaration) == unmet.end())
+      unmet.push_back(declaration);
+    return;
+  }
   if (!bodyPhaseActive || instanceAnalysisActive || declaration == nullptr ||
       declaration->body() == nullptr || analyzedBodies.contains(declaration) ||
       bodiesInProgress.contains(declaration)) {
@@ -4949,6 +4960,73 @@ auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
       demand->unmet.end())
     demand->unmet.push_back(declaration);
   return BodyReadiness::Unavailable;
+}
+
+auto SemanticVisitor::Impl::withBodyDemands(
+    const std::function<bool()> &attempt) -> bool {
+  const auto demand = requestSession.bodyDemand;
+  if (!demand || bodyDemandAttemptActive)
+    return attempt();
+  const bool resolvable =
+      canonicalAnalyzer && bodyPhaseActive && !instanceAnalysisActive;
+  while (true) {
+    const std::size_t mark = demand->unmet.size();
+    const std::size_t diagnosticMark = diagnostics.size();
+    const std::size_t steps =
+        requestSession.constexprWork ? requestSession.constexprWork->steps : 0;
+    std::unordered_set<FunctionId> lookups;
+    bool result = false;
+    {
+      auto *const previous = SemanticModel::setRequestLookupSink(&lookups);
+      bodyDemandAttemptActive = true;
+      if (resolvable)
+        ++demand->resolvers;
+      struct Restore {
+        Impl &impl;
+        std::unordered_set<FunctionId> *previous;
+        std::unordered_set<FunctionId> &lookups;
+        bool resolvable;
+        ~Restore() {
+          SemanticModel::setRequestLookupSink(previous);
+          if (previous != nullptr)
+            previous->insert(lookups.begin(), lookups.end());
+          impl.bodyDemandAttemptActive = false;
+          if (resolvable)
+            --impl.requestSession.bodyDemand->resolvers;
+        }
+      } restore{*this, previous, lookups, resolvable};
+      result = attempt();
+    }
+    for (const FunctionId id : lookups)
+      if (const FunctionInfo *function = semanticModel.findFunction(id))
+        if (const FunctionDecl *body = function->bodyDeclaration();
+            body != nullptr && demand->pending.contains(body) &&
+            std::find(demand->unmet.begin(), demand->unmet.end(), body) ==
+                demand->unmet.end())
+          demand->unmet.push_back(body);
+    if (demand->unmet.size() == mark || !resolvable)
+      return result;
+    // Discard the attempt; the retry charges the same work afresh.
+    diagnostics.resize(diagnosticMark);
+    if (requestSession.constexprWork)
+      requestSession.constexprWork->steps = steps;
+    bool progress = false;
+    for (std::size_t index = mark; index < demand->unmet.size(); ++index) {
+      const FunctionDecl *body = demand->unmet[index];
+      if (const FunctionInfo *function = semanticModel.findFunction(*body))
+        ensureBodyAnalyzed(*function);
+      progress = progress || !demand->pending.contains(body);
+    }
+    demand->unmet.erase(std::remove_if(demand->unmet.begin() +
+                                           static_cast<std::ptrdiff_t>(mark),
+                                       demand->unmet.end(),
+                                       [&](const FunctionDecl *body) {
+                                         return !demand->pending.contains(body);
+                                       }),
+                        demand->unmet.end());
+    if (!progress)
+      return result;
+  }
 }
 
 auto SemanticVisitor::Impl::pendingDeferredBody(

@@ -20,6 +20,7 @@
 #include <cassert>
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -1891,6 +1892,10 @@ private:
     std::unordered_set<const FunctionDecl *> pending;
     std::vector<const FunctionDecl *> unmet;
     std::uint64_t generation = 0;
+    // Resolving withBodyDemands scopes currently open. While one is, a worker
+    // records a pending body instead of analysing it privately: the
+    // canonical analyzer analyses it and retries the whole attempt.
+    std::size_t resolvers = 0;
   };
   enum class BodyReadiness { Ready, Unavailable };
 
@@ -3575,6 +3580,10 @@ private:
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr,
       SemanticConstraintGuidance *guidance = nullptr) const;
+  [[nodiscard]] bool expressionRequirementSatisfiedOnce(
+      const MemberRequirement &query, std::span<const SemanticType> arguments,
+      std::string *reason, const std::vector<std::string> *lookupScope,
+      SemanticConstraintGuidance *guidance) const;
   // `{ e } -> C<x>` for a non-reference C: compares the
   // dependencies a binding of e's value would retain against the origin x.
   // `worker` is the query's isolated analyzer that has already analyzed e.
@@ -3614,6 +3623,12 @@ private:
       const std::vector<SemanticType> &arguments, std::string *reason,
       const std::vector<std::string> *lookupScope = nullptr,
       SemanticConstraintGuidance *guidance = nullptr) const;
+  [[nodiscard]] bool
+  constraintPredicateSatisfiedOnce(const ConceptApplication &application,
+                                   const std::vector<SemanticType> &arguments,
+                                   std::string *reason,
+                                   const std::vector<std::string> *lookupScope,
+                                   SemanticConstraintGuidance *guidance) const;
   [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments,
@@ -7804,6 +7819,13 @@ private:
   // not pending, or when this canonical analyzer could analyse it in place;
   // otherwise the demand is recorded in BodyDemand::unmet.
   BodyReadiness requireBody(const FunctionDecl *declaration);
+  // Run a speculative attempt and record the pending bodies it looked up as
+  // unmet. On the canonical analyzer in the body phase, roll back the
+  // attempt's diagnostics and constexpr steps, analyse those bodies and
+  // retry until none is demanded; elsewhere return the (tainted) result for
+  // an outer scope or the request-level net to resolve.
+  bool withBodyDemands(const std::function<bool()> &attempt);
+  bool bodyDemandAttemptActive = false;
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);

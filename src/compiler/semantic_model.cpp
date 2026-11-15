@@ -1390,6 +1390,17 @@ const FunctionDecl &SemanticModel::canonicalFunctionDeclaration(
                          : base->canonicalFunctionDeclaration(declaration);
 }
 
+namespace {
+thread_local std::unordered_set<FunctionId> *requestLookupSink = nullptr;
+} // namespace
+
+std::unordered_set<FunctionId> *
+SemanticModel::setRequestLookupSink(std::unordered_set<FunctionId> *sink) {
+  auto *previous = requestLookupSink;
+  requestLookupSink = sink;
+  return previous;
+}
+
 [[nodiscard]] const FunctionInfo *
 SemanticModel::findFunction(const FunctionDecl &declaration) const {
   const auto &canonical = canonicalFunctionDeclaration(declaration);
@@ -1398,6 +1409,8 @@ SemanticModel::findFunction(const FunctionDecl &declaration) const {
     if (functionDemandSink != nullptr) {
       functionDemandSink->insert(found->second.id);
     }
+    if (requestLookupSink != nullptr)
+      requestLookupSink->insert(found->second.id);
     return &found->second;
   }
   return base == nullptr ? nullptr : base->findFunction(canonical);

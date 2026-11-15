@@ -2755,6 +2755,12 @@ public:
     return previous;
   }
 
+  // Request-wide lookup record for deferred-body demand (#398). Unlike the
+  // per-model sink it records a lookup answered at any delta level, so the
+  // reads of a nested worker reach the analyzer that can resolve them.
+  static std::unordered_set<FunctionId> *
+  setRequestLookupSink(std::unordered_set<FunctionId> *sink);
+
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const;
 
   [[nodiscard]] const LambdaInfo *findLambda(LambdaId id) const;

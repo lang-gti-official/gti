@@ -534,6 +534,30 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     std::span<const SemanticType> inputArguments, std::string *reason,
     const std::vector<std::string> *lookupScope,
     SemanticConstraintGuidance *guidance) const -> bool {
+  // A deferred trusted body the query looks up is analysed canonically and
+  // the query repeated, rather than analysed privately in its worker.
+  const std::string reasonBefore = reason ? *reason : std::string();
+  const std::optional<SemanticConstraintGuidance> guidanceBefore =
+      guidance ? std::optional(*guidance) : std::nullopt;
+  bool first = true;
+  return const_cast<Impl *>(this)->withBodyDemands([&] {
+    if (!first) {
+      if (reason)
+        *reason = reasonBefore;
+      if (guidance)
+        *guidance = *guidanceBefore;
+    }
+    first = false;
+    return expressionRequirementSatisfiedOnce(query, inputArguments, reason,
+                                              lookupScope, guidance);
+  });
+}
+
+auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
+    const MemberRequirement &query,
+    std::span<const SemanticType> inputArguments, std::string *reason,
+    const std::vector<std::string> *lookupScope,
+    SemanticConstraintGuidance *guidance) const -> bool {
   if (!chargeRequirementQueryTypes(inputArguments)) {
     if (reason)
       *reason = "Expression requirements exceed the 16384-node type-expansion "
@@ -863,6 +887,30 @@ auto SemanticVisitor::Impl::borrowedCarrierResultSatisfied(
 }
 
 auto SemanticVisitor::Impl::constraintPredicateSatisfied(
+    const ConceptApplication &application,
+    const std::vector<SemanticType> &arguments, std::string *reason,
+    const std::vector<std::string> *lookupScope,
+    SemanticConstraintGuidance *guidance) const -> bool {
+  // A deferred trusted body the query looks up is analysed canonically and
+  // the query repeated, rather than analysed privately in its worker.
+  const std::string reasonBefore = reason ? *reason : std::string();
+  const std::optional<SemanticConstraintGuidance> guidanceBefore =
+      guidance ? std::optional(*guidance) : std::nullopt;
+  bool first = true;
+  return const_cast<Impl *>(this)->withBodyDemands([&] {
+    if (!first) {
+      if (reason)
+        *reason = reasonBefore;
+      if (guidance)
+        *guidance = *guidanceBefore;
+    }
+    first = false;
+    return constraintPredicateSatisfiedOnce(application, arguments, reason,
+                                            lookupScope, guidance);
+  });
+}
+
+auto SemanticVisitor::Impl::constraintPredicateSatisfiedOnce(
     const ConceptApplication &application,
     const std::vector<SemanticType> &arguments, std::string *reason,
     const std::vector<std::string> *lookupScope,
