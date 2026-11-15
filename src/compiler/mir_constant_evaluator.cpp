@@ -6,8 +6,9 @@
 #include "mir_verification_queries.h"
 
 #include <algorithm>
-#include <unordered_map>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace lang {
 namespace {
@@ -194,10 +195,9 @@ public:
       }
     }
     if (result &&
-        std::any_of(heap.begin(), heap.end(),
-                    [](const auto &allocation) {
-                      return allocation->live && !allocation->programStorage;
-                    })) {
+        std::any_of(heap.begin(), heap.end(), [](const auto &allocation) {
+          return allocation->live && !allocation->programStorage;
+        })) {
       result.value.reset();
       result.voidResult = false;
       result.failure = ConstantEvaluationFailure::UnsupportedExpression;
@@ -396,6 +396,9 @@ private:
     // An element of a raw region, which pointer arithmetic may move. Any
     // other base designates exactly one place (offset zero).
     bool element = false;
+    // The executing frame that owns a frame-local place, or zero. A pointer
+    // outlives its frame only as a dangling value that no access accepts.
+    std::size_t frameSerial = 0;
   };
 
   struct Loan {
@@ -421,13 +424,20 @@ private:
     std::optional<Location> receiverOrigin;
     AccessMode receiverAccess = AccessMode::ReadOnly;
     std::size_t receiverEpoch = 1;
+    std::size_t serial = 0;
   };
+
+  // A frame-local pointer base is usable only while its frame executes.
+  bool baseAlive(const PointerBase &base) const {
+    return base.frameSerial == 0 || liveFrames.contains(base.frameSerial);
+  }
 
   MirConstantEvaluation fail(const Frame &frame,
                              ConstantEvaluationFailure failure,
                              std::string detail = {}) const {
     if (procedural && detail.empty() &&
-        failure == ConstantEvaluationFailure::UnsupportedExpression)
+        (failure == ConstantEvaluationFailure::UnsupportedExpression ||
+         failure == ConstantEvaluationFailure::NonConstantReference))
       detail = "This operation is outside the procedural constant-execution "
                "profile.";
     return {.failure = failure,
@@ -743,7 +753,8 @@ private:
           extra = *index;
         }
         Location target;
-        const auto resolved = resolvePointer(*pointer.value, extra, target, true);
+        const auto resolved =
+            resolvePointer(*pointer.value, extra, target, true);
         if (resolved.failure != ConstantEvaluationFailure::None)
           return resolved;
         if (!target.type)
@@ -771,40 +782,45 @@ private:
       if (!charge(1) || heap.size() >= limits.allocations)
         return {.failure = ConstantEvaluationFailure::ResourceLimit};
       heap.push_back(std::make_unique<Allocation>(
-          Allocation{.type = observedType(place.type), .units = 0,
+          Allocation{.type = observedType(place.type),
+                     .units = 0,
                      .programStorage = true}));
       found = programStorage.emplace(place.symbol, heap.size()).first;
     }
     if (found == programStorage.end()) {
       const MirBody *owner = nullptr;
       const auto defines = [&](const MirBody &body) {
-        return std::any_of(body.places.begin(), body.places.end(),
-                           [&](const MirPlace &candidate) {
-                             return candidate.symbol == place.symbol &&
-                                    candidate.projections.empty() &&
-                                    (candidate.root == MirPlaceRootKind::Symbol ||
-                                     candidate.root == MirPlaceRootKind::Binding);
-                           });
+        return std::any_of(
+            body.places.begin(), body.places.end(),
+            [&](const MirPlace &candidate) {
+              return candidate.symbol == place.symbol &&
+                     candidate.projections.empty() &&
+                     (candidate.root == MirPlaceRootKind::Symbol ||
+                      candidate.root == MirPlaceRootKind::Binding);
+            });
       };
       for (const auto &instance : program.classInstances())
         if (!owner && defines(instance.staticFieldInitializers))
           owner = &instance.staticFieldInitializers;
       if (!owner && defines(program.module()))
         owner = &program.module();
-      if (!owner ||
-          std::find(initializedStorageBodies.begin(),
+      // Storage without an initializer body in this program stays outside
+      // the profile, as before, rather than becoming an authoritative error.
+      if (!owner)
+        return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
+      if (std::find(initializedStorageBodies.begin(),
                     initializedStorageBodies.end(),
                     owner) != initializedStorageBodies.end())
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
       initializedStorageBodies.push_back(owner);
       const auto *enclosing = initializingStorage;
       initializingStorage = owner;
-      const auto result =
-          executeBody(*owner,
-                      {owner == &program.module() ? MirBodyKind::Module
-                                                  : MirBodyKind::StaticFieldInitializers,
-                       0},
-                      SemanticType::Void, {}, {}, {}, 1);
+      const auto result = executeBody(
+          *owner,
+          {owner == &program.module() ? MirBodyKind::Module
+                                      : MirBodyKind::StaticFieldInitializers,
+           0},
+          SemanticType::Void, {}, {}, {}, 1);
       initializingStorage = enclosing;
       if (!result && !result.voidResult)
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
@@ -878,7 +894,8 @@ private:
                              std::int64_t offset) {
     ConstantAggregate node{.kind = ConstantAggregateKind::TransientPointer,
                            .identity = base,
-                           .exactType = std::make_shared<const SemanticType>(type)};
+                           .exactType =
+                               std::make_shared<const SemanticType>(type)};
     node.elements.push_back(makeConstantInteger(
         {.negative = offset < 0,
          .magnitude = offset < 0 ? static_cast<std::uint64_t>(-(offset + 1)) + 1
@@ -892,7 +909,8 @@ private:
     std::int64_t offset = 0;
   };
 
-  std::optional<DecodedPointer> decodePointer(const ConstantValue &value) const {
+  std::optional<DecodedPointer>
+  decodePointer(const ConstantValue &value) const {
     if (std::holds_alternative<NullConstant>(value))
       return DecodedPointer{};
     const auto *node = std::get_if<ConstantAggregateValue>(&value);
@@ -901,7 +919,8 @@ private:
         node->value->elements.size() != 1 ||
         node->value->identity > pointerBases.size())
       return std::nullopt;
-    const auto *offset = std::get_if<ConstantInteger>(&node->value->elements[0]);
+    const auto *offset =
+        std::get_if<ConstantInteger>(&node->value->elements[0]);
     if (!offset)
       return std::nullopt;
     const auto magnitude = static_cast<std::int64_t>(offset->magnitude);
@@ -944,7 +963,8 @@ private:
   }
 
   // Gives an untyped raw region its object type on its first typed view.
-  ConstantEvaluation typeRegion(Allocation &region, const SemanticType &element) {
+  ConstantEvaluation typeRegion(Allocation &region,
+                                const SemanticType &element) {
     if (region.typed)
       return region.type == element
                  ? ConstantEvaluation{.value = true}
@@ -976,6 +996,8 @@ private:
     if (!decoded || decoded->base == 0)
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
     const auto &base = pointerBases[decoded->base - 1];
+    if (!baseAlive(base))
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
     const std::int64_t offset = decoded->offset + extra;
     if (base.location.allocation) {
       auto &region = *heap[base.location.allocation - 1];
@@ -983,9 +1005,9 @@ private:
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
       if (region.raw && (base.element || base.untyped)) {
         if (base.untyped || !region.typed)
-          return {.failure = access
-                                 ? ConstantEvaluationFailure::NonConstantReference
-                                 : ConstantEvaluationFailure::None};
+          return {.failure =
+                      access ? ConstantEvaluationFailure::NonConstantReference
+                             : ConstantEvaluationFailure::None};
         const auto count = static_cast<std::int64_t>(region.slots.size());
         if (offset < 0 || offset > count || (access && offset == count))
           return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -1013,13 +1035,15 @@ private:
     if (scalarType(type) || type.kind == SemanticType::RawPointer)
       return true;
     if (type.kind == SemanticType::Array)
-      return type.arguments.size() == 1 && passiveType(type.arguments[0], depth + 1);
+      return type.arguments.size() == 1 &&
+             passiveType(type.arguments[0], depth + 1);
     if (type.kind == SemanticType::Enum) {
       const auto *payload = program.findPayloadEnum(type);
       return payload == nullptr || !payload->requiresActiveCleanup;
     }
     const auto *instance = record(type);
-    return instance && !instance->requiresActiveCleanup && !instance->destructor;
+    return instance && !instance->requiresActiveCleanup &&
+           !instance->destructor;
   }
 
   // A fresh raw region from the constant byte provider.
@@ -1029,9 +1053,12 @@ private:
       return {.failure = ConstantEvaluationFailure::ResourceLimit};
     if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
-    heap.push_back(std::make_unique<Allocation>(
-        Allocation{.type = SemanticType::Void, .units = 0, .raw = true,
-                   .bytes = bytes, .alignment = alignment}));
+    heap.push_back(
+        std::make_unique<Allocation>(Allocation{.type = SemanticType::Void,
+                                                .units = 0,
+                                                .raw = true,
+                                                .bytes = bytes,
+                                                .alignment = alignment}));
     Location location{.epoch = heap.back()->epoch,
                       .type = &heap.back()->type,
                       .allocation = heap.size()};
@@ -1075,6 +1102,8 @@ private:
       return {.value = pointerValue(target, 0, 0)};
     const auto &pointee = target.arguments[0];
     auto base = pointerBases[decoded->base - 1];
+    if (!baseAlive(base))
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
     if (base.location.allocation && heap[base.location.allocation - 1]->raw &&
         (base.element || base.untyped)) {
       auto &region = *heap[base.location.allocation - 1];
@@ -1109,9 +1138,9 @@ private:
 
   std::optional<std::int64_t> signedOffset(const ConstantValue &value) const {
     const auto *integer = std::get_if<ConstantInteger>(&value);
-    if (!integer || integer->magnitude >
-                        static_cast<std::uint64_t>(
-                            std::numeric_limits<std::int64_t>::max()))
+    if (!integer ||
+        integer->magnitude > static_cast<std::uint64_t>(
+                                 std::numeric_limits<std::int64_t>::max()))
       return std::nullopt;
     const auto magnitude = static_cast<std::int64_t>(integer->magnitude);
     return integer->negative ? -magnitude : magnitude;
@@ -1125,10 +1154,16 @@ private:
       return std::nullopt;
     if (a->base == 0 || b->base == 0)
       return a->base == b->base;
+    if (!baseAlive(pointerBases[a->base - 1]) ||
+        !baseAlive(pointerBases[b->base - 1]))
+      return std::nullopt;
     const auto &x = pointerBases[a->base - 1].location;
     const auto &y = pointerBases[b->base - 1].location;
+    // Element pointers carry their element in the offset; a subobject
+    // pointer carries its slot and field path.
     if (x.allocation || y.allocation)
-      return x.allocation == y.allocation && a->offset == b->offset;
+      return x.allocation == y.allocation && x.slot == y.slot &&
+             x.path == y.path && a->offset == b->offset;
     return x.frame == y.frame && x.root == y.root && x.cell == y.cell &&
            x.path == y.path && a->offset == b->offset;
   }
@@ -1484,8 +1519,10 @@ private:
       if (!charge(1) || heap.size() >= limits.allocations)
         return {.failure = ConstantEvaluationFailure::ResourceLimit};
       heap.push_back(std::make_unique<Allocation>(
-          Allocation{.type = observedType(target->type), .value = value,
-                     .units = 0, .programStorage = true}));
+          Allocation{.type = observedType(target->type),
+                     .value = value,
+                     .units = 0,
+                     .programStorage = true}));
       programStorage.emplace(target->symbol, heap.size());
     }
     return written;
@@ -1688,7 +1725,8 @@ private:
       const auto formed = resolvePointer(values[0], *delta, ignored, false);
       if (formed.failure != ConstantEvaluationFailure::None)
         return formed;
-      return {.value = pointerValue(type, pointer->base, pointer->offset + *delta)};
+      return {.value =
+                  pointerValue(type, pointer->base, pointer->offset + *delta)};
     }
     if (instruction.operation == MirOperation::PointerDifference &&
         values.size() == 2) {
@@ -1715,7 +1753,7 @@ private:
       if (!same)
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       return {.value = instruction.operation == MirOperation::Equal ? *same
-                                                                     : !*same};
+                                                                    : !*same};
     }
     if ((instruction.operation == MirOperation::Less ||
          instruction.operation == MirOperation::LessEqual ||
@@ -1734,10 +1772,14 @@ private:
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       const auto a = left->offset, b = right->offset;
       switch (instruction.operation) {
-      case MirOperation::Less: return {.value = a < b};
-      case MirOperation::LessEqual: return {.value = a <= b};
-      case MirOperation::Greater: return {.value = a > b};
-      default: return {.value = a >= b};
+      case MirOperation::Less:
+        return {.value = a < b};
+      case MirOperation::LessEqual:
+        return {.value = a <= b};
+      case MirOperation::Greater:
+        return {.value = a > b};
+      default:
+        return {.value = a >= b};
       }
     }
     if (instruction.operation == MirOperation::Convert && values.size() == 1 &&
@@ -2069,10 +2111,12 @@ private:
                                 false,
                                 true});
       } else {
+        const std::size_t owner =
+            !location.allocation && location.frame ? location.frame->serial : 0;
         pointerBases.push_back(
             {location,
              location.allocation ? heap[location.allocation - 1]->epoch : 0,
-             false});
+             false, false, owner});
       }
       if (!charge(1))
         return stepLimitFailure(frame);
@@ -2535,9 +2579,9 @@ private:
         // The evaluator is the one context where this query is true.
         evaluated.value = true;
       } else if (instruction.intrinsic == IntrinsicKind::ConstantAllocate) {
-        const auto *bytes =
-            arguments.size() == 2 ? std::get_if<ConstantInteger>(&arguments[0])
-                                  : nullptr;
+        const auto *bytes = arguments.size() == 2
+                                ? std::get_if<ConstantInteger>(&arguments[0])
+                                : nullptr;
         const auto *alignment =
             arguments.size() == 2 ? std::get_if<ConstantInteger>(&arguments[1])
                                   : nullptr;
@@ -2698,7 +2742,8 @@ private:
         text.reserve(static_cast<std::size_t>(*count));
         for (std::int64_t index = 0; index < *count; ++index) {
           Location element;
-          const auto resolved = resolvePointer(arguments[0], index, element, true);
+          const auto resolved =
+              resolvePointer(arguments[0], index, element, true);
           if (resolved.failure != ConstantEvaluationFailure::None)
             return fail(frame, resolved.failure);
           const auto byte = readLocation(element);
@@ -2723,15 +2768,16 @@ private:
         voidResult = true;
       } else if (const auto outcome =
                      intrinsicBooleanFailureOutcome(instruction.intrinsic)) {
-        if (arguments.size() != 1 || !std::holds_alternative<bool>(arguments[0]))
+        if (arguments.size() != 1 ||
+            !std::holds_alternative<bool>(arguments[0]))
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
         if (!std::get<bool>(arguments[0]))
-          return fail(frame, ConstantEvaluationFailure::Panicked,
-                      "Defined failure: " +
-                          std::string(definedFailureCodeName(outcome->code)) +
-                          " (" +
-                          std::string(definedFailureDetailName(outcome->detail)) +
-                          ").");
+          return fail(
+              frame, ConstantEvaluationFailure::Panicked,
+              "Defined failure: " +
+                  std::string(definedFailureCodeName(outcome->code)) + " (" +
+                  std::string(definedFailureDetailName(outcome->detail)) +
+                  ").");
         voidResult = true;
       } else if (instruction.receiver && arguments.empty() &&
                  (instruction.intrinsic == IntrinsicKind::StringViewSize ||
@@ -3024,7 +3070,14 @@ private:
         .block = body.entry,
         .receiver = std::move(receiver),
         .receiverOrigin = std::move(receiverOrigin),
-        .receiverAccess = receiverAccess};
+        .receiverAccess = receiverAccess,
+        .serial = ++frameSerials};
+    liveFrames.insert(frame.serial);
+    struct FrameExit {
+      std::unordered_set<std::size_t> &live;
+      std::size_t serial;
+      ~FrameExit() { live.erase(serial); }
+    } frameExit{liveFrames, frame.serial};
     if (depth >= limits.callDepth)
       return depthLimitFailure(frame);
     for (const auto &obligation : body.dropObligations) {
@@ -3574,6 +3627,8 @@ private:
   bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
   std::vector<PointerBase> pointerBases;
+  std::unordered_set<std::size_t> liveFrames;
+  std::size_t frameSerials = 0;
   std::unordered_map<SymbolId, std::size_t> programStorage;
   std::vector<const MirBody *> initializedStorageBodies;
   const MirBody *initializingStorage = nullptr;

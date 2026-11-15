@@ -2481,8 +2481,14 @@ body to mark and is constant-eligible with its class.
 - Releasing a region requires every object needing cleanup in it to have been
   destroyed. Every region must be released before the request completes, so an
   owning container never becomes a persistent constant.
-- A read-only class static or namespace variable read during evaluation takes
-  the value its verified initializer computes.
+- A `constexpr` class static or namespace variable read during evaluation
+  takes the value its verified initializer computes. Other static storage is
+  not a constant.
+- Raw pointers are execution-local constant values. They may appear in
+  `constexpr` signatures, locals and fields, but never in a published constant.
+  Every access must designate a live object: a null pointer, a pointer into a
+  released region or a returned call's local, and arithmetic outside one
+  region or place all fail evaluation.
 
 Shared ownership, virtual/recursive owning destruction, stored-reference
 carriers, unions and inherited objects require further constant-execution

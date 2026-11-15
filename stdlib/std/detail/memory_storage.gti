@@ -55,8 +55,8 @@ constexpr void fail_allocation(std::alloc_errc error) {
 // target layout of c_size_t, the bound the runtime reports as SIZE_MAX.
 export constexpr uint64_t native_size_limit() {
   if (gti_internal::constant_evaluation()) {
-    uint64_t size_bytes = std::layout_of<c_size_t>().bytes;
-    return uint64_t(18446744073709551615) >> ((uint64_t(8) - size_bytes) * uint64_t(8));
+    uint64_t target_size_bytes = std::layout_of<c_size_t>().bytes;
+    return uint64_t(18446744073709551615) >> ((uint64_t(8) - target_size_bytes) * uint64_t(8));
   }
   return runtime::gti_rt_native_size_max_v1();
 }

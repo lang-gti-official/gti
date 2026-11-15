@@ -826,13 +826,13 @@ private:
             : baseModel->findConstructor(*construction.declaration);
     const bool constant =
         declaration != nullptr && declaration->constexprConstructor;
-    // A defaulted constructor has no body to complete; its generated
-    // member-wise definition stages with its class.
-    const bool defaulted =
-        construction.declaration != nullptr &&
-        construction.declaration->specifier() &&
-        construction.declaration->specifier()->kind ==
-            SpecialMemberSpecifierKind::Defaulted;
+    // A defaulted copy or move constructor has no body to complete; its
+    // generated member-wise transfer stages with its class.
+    const bool defaulted = construction.declaration != nullptr &&
+                           construction.declaration->specifier() &&
+                           construction.declaration->specifier()->kind ==
+                               SpecialMemberSpecifierKind::Defaulted &&
+                           construction.declaration->parameters().size() == 1;
     if (constantClosure && !construction.generatedDefault &&
         (!constant ||
          (!defaulted &&
@@ -6443,15 +6443,19 @@ private:
                qualified && constantClosure &&
                model.findEnumerator(*qualified) == nullptr &&
                model.findExpression(*raw) != nullptr &&
+               constantIntegerDomain(model.findExpression(*raw)->type)
+                   .has_value() &&
                (model.findExpression(*raw)->category == ValueCategory::Value ||
                 model.findExpression(*raw)->access == AccessMode::ReadOnly) &&
                model.findConstant(*raw) &&
-               std::holds_alternative<ConstantInteger>(*model.findConstant(*raw)) &&
+               std::holds_alternative<ConstantInteger>(
+                   *model.findConstant(*raw)) &&
                !std::get<ConstantInteger>(*model.findConstant(*raw)).negative) {
       // A constant closure has no static storage plan: a qualified constant
       // such as Type::npos reads as its value, as a named constant does.
       kind = HirValueKind::Literal;
-      literal = Literal{std::get<ConstantInteger>(*model.findConstant(*raw)).magnitude};
+      literal = Literal{
+          std::get<ConstantInteger>(*model.findConstant(*raw)).magnitude};
     } else if (const auto *qualified = exprAs<QualifiedName>(raw)) {
       kind = HirValueKind::QualifiedName;
       if (const ResolvedEnumeratorInfo *resolved =

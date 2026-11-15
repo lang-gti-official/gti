@@ -68,10 +68,10 @@ static_assert(busiest_bucket() == 2);
 int main() {
   // The computed constant sizes a fixed array.
   char path_buffer[path_capacity] = {};
-  std::println(std::to_string(sizeof(char[path_capacity])));
-  std::println(std::to_string(palette_size));
+  if (sizeof(char[path_capacity]) != std::size_t(22)) { return 1; }
   // The same code runs at run time with the same results.
-  std::println(std::to_string(asset_path_length("textures/ui", "button")));
-  std::println(std::to_string(busiest_bucket()));
+  if (asset_path_length("textures/ui", "button") != path_capacity) { return 2; }
+  if (distinct_words() != palette_size) { return 3; }
+  if (busiest_bucket() != 2) { return 4; }
   return 0;
 }
