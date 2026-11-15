@@ -2069,7 +2069,12 @@ private:
             appendInitializerSourceDebug(*model, *field.declaration,
                                          staticFieldInitializers,
                                          {*lowered.initializer});
-          if (declaration->genericParameters.empty()) {
+          // A constant closure has no whole-program storage plan. A read-only
+          // static with a recorded constant needs none: its uses read the
+          // constant, exactly as the whole-program plan would.
+          if (declaration->genericParameters.empty() &&
+              !(constantClosure && info.constant &&
+                info.access == AccessMode::ReadOnly)) {
             lifecycleValid = false;
           }
         } else {

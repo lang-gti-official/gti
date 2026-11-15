@@ -13605,6 +13605,10 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     return type.arguments.size() == 1 &&
            isSupportedConstexprType(type.arguments[0], allowDependent, visiting,
                                     true);
+  // A raw pointer is execution-local too: the verified executor checks every
+  // access against its own allocations and never publishes a pointer.
+  if (transient && type.kind == SemanticType::RawPointer)
+    return type.arguments.size() == 1;
   if (transient && type.kind == SemanticType::TypePack)
     return (!type.concretePack && allowDependent) ||
            (type.concretePack &&

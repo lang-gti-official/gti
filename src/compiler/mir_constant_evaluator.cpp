@@ -1,10 +1,12 @@
 #include "gti/mir_constant_evaluator.h"
+#include "gti/failure.h"
 #include "gti/mir_procedural.h"
 #include "gti/mir_verifier.h"
 #include "gti/support.h"
 #include "mir_verification_queries.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace lang {
 namespace {
@@ -220,7 +222,8 @@ private:
       return ConstantEvaluationFailure::ResourceLimit;
     if (!node->value ||
         (node->value->kind == ConstantAggregateKind::TransientOwner ||
-         node->value->kind == ConstantAggregateKind::TransientSyntax))
+         node->value->kind == ConstantAggregateKind::TransientSyntax ||
+         node->value->kind == ConstantAggregateKind::TransientPointer))
       return ConstantEvaluationFailure::InvalidOperands;
     for (const auto &item : node->value->elements)
       if (const auto failure = persistentValue(item, depth + 1);
@@ -235,7 +238,8 @@ private:
 
   bool persistentType(const SemanticType &type, std::size_t depth = 0) const {
     if (depth >= limits.callDepth || type.kind == SemanticType::UniqueOwner ||
-        type.kind == SemanticType::Reference)
+        type.kind == SemanticType::Reference ||
+        type.kind == SemanticType::RawPointer)
       return false;
     if (type.kind == SemanticType::Class) {
       const auto *instance = record(type);
@@ -316,6 +320,10 @@ private:
     if (type.kind == SemanticType::Array)
       return type.arguments.size() == 1 && type.arrayLengthParameterId == 0 &&
              storageType(type.arguments[0], depth + 1);
+    // A raw pointer is a request-local value; its pointee is checked where
+    // it is accessed, so a node may point at its own class.
+    if (type.kind == SemanticType::RawPointer)
+      return type.arguments.size() == 1;
     if (type.kind != SemanticType::Class)
       return false;
     const auto *instance = record(type);
@@ -347,6 +355,15 @@ private:
     bool live = true;
     std::size_t units = 1;
     std::vector<RetiredProjection> retired;
+    // Raw storage from the constant byte provider. Bytes are untyped until
+    // the region is first viewed as T*; it then holds independently
+    // addressable slots of T, each vacant until an object is constructed.
+    bool raw = false;
+    std::uint64_t bytes = 0;
+    std::uint64_t alignment = 1;
+    bool typed = false;
+    std::vector<std::optional<ConstantValue>> slots;
+    std::vector<std::size_t> slotEpochs;
   };
   // A checked reference designates an existing constant cell and a resolved
   // field/index path, never a target address. Frames live throughout nested
@@ -361,6 +378,15 @@ private:
     const SemanticType *type = nullptr;
     AccessMode access = AccessMode::ReadOnly;
     std::size_t allocation = 0;
+    // One plus the raw-region slot index; zero for every other storage.
+    std::size_t slot = 0;
+  };
+  // A raw pointer designates an element of a typed raw region, the start of
+  // an untyped region, or one ordinary place (offset zero only).
+  struct PointerBase {
+    Location location;
+    std::size_t regionEpoch = 0;
+    bool untyped = false;
   };
 
   struct Loan {
@@ -508,6 +534,8 @@ private:
   }
 
   std::optional<ConstantValue> &storage(const Location &location) {
+    if (location.allocation && location.slot)
+      return heap[location.allocation - 1]->slots[location.slot - 1];
     if (location.allocation)
       return heap[location.allocation - 1]->value;
     if (location.root == MirPlaceRootKind::This)
@@ -518,6 +546,8 @@ private:
   }
 
   std::size_t &epoch(const Location &location) {
+    if (location.allocation && location.slot)
+      return heap[location.allocation - 1]->slotEpochs[location.slot - 1];
     if (location.allocation)
       return heap[location.allocation - 1]->epoch;
     if (location.root == MirPlaceRootKind::This)
@@ -673,6 +703,40 @@ private:
         projectedType = &field->type;
         if (field->access == AccessMode::ReadOnly)
           location.access = AccessMode::ReadOnly;
+      } else if (projection.kind == MirProjectionKind::RawDereference ||
+                 projection.kind == MirProjectionKind::RawIndex) {
+        // Raw access designates the object a constant pointer names; the
+        // verifier owns the unsafe obligation, execution owns its validity.
+        if (!projectedType || projectedType->kind != SemanticType::RawPointer)
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
+        location.type = projectedType;
+        const auto pointer = readLocation(location);
+        if (!pointer)
+          return pointer;
+        std::int64_t extra = 0;
+        if (projection.kind == MirProjectionKind::RawIndex) {
+          std::optional<std::int64_t> index;
+          if (projection.index != 0 && projection.index < frame.values.size() &&
+              frame.values[projection.index])
+            index = signedOffset(*frame.values[projection.index]);
+          else if (projection.constantIndex &&
+                   *projection.constantIndex <=
+                       static_cast<std::uint64_t>(
+                           std::numeric_limits<std::int64_t>::max()))
+            index = static_cast<std::int64_t>(*projection.constantIndex);
+          if (!index)
+            return {.failure = ConstantEvaluationFailure::NonConstantReference};
+          extra = *index;
+        }
+        Location target;
+        const auto resolved = resolvePointer(*pointer.value, extra, target, true);
+        if (resolved.failure != ConstantEvaluationFailure::None)
+          return resolved;
+        if (!target.type)
+          return {.failure = ConstantEvaluationFailure::UnsupportedType};
+        location = std::move(target);
+        projectedType = location.type;
+        continue;
       } else {
         return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
       }
@@ -733,6 +797,247 @@ private:
     return true;
   }
 
+  // ---------------------------------------------------------------- raw memory
+
+  ConstantValue pointerValue(const SemanticType &type, std::size_t base,
+                             std::int64_t offset) {
+    ConstantAggregate node{.kind = ConstantAggregateKind::TransientPointer,
+                           .identity = base,
+                           .exactType = std::make_shared<const SemanticType>(type)};
+    node.elements.push_back(makeConstantInteger(
+        {.negative = offset < 0,
+         .magnitude = offset < 0 ? static_cast<std::uint64_t>(-(offset + 1)) + 1
+                                 : static_cast<std::uint64_t>(offset)},
+        {.width = 64, .signedValue = true}));
+    return makeConstantAggregate(std::move(node));
+  }
+
+  struct DecodedPointer {
+    std::size_t base = 0; // zero: null
+    std::int64_t offset = 0;
+  };
+
+  std::optional<DecodedPointer> decodePointer(const ConstantValue &value) const {
+    if (std::holds_alternative<NullConstant>(value))
+      return DecodedPointer{};
+    const auto *node = std::get_if<ConstantAggregateValue>(&value);
+    if (!node || !node->value ||
+        node->value->kind != ConstantAggregateKind::TransientPointer ||
+        node->value->elements.size() != 1 ||
+        node->value->identity > pointerBases.size())
+      return std::nullopt;
+    const auto *offset = std::get_if<ConstantInteger>(&node->value->elements[0]);
+    if (!offset)
+      return std::nullopt;
+    const auto magnitude = static_cast<std::int64_t>(offset->magnitude);
+    return DecodedPointer{node->value->identity,
+                          offset->negative ? -magnitude : magnitude};
+  }
+
+  ConstantEvaluation convertPointer(const ConstantValue &value,
+                                    const SemanticType &type) {
+    const auto decoded = decodePointer(value);
+    if (!decoded)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (const auto *node = std::get_if<ConstantAggregateValue>(&value);
+        node && node->value && node->value->exactType &&
+        *node->value->exactType == type)
+      return {.value = value};
+    // Only the pointee's access may differ implicitly; a different pointee is
+    // an explicit raw conversion (convertRawPointer).
+    if (const auto *node = std::get_if<ConstantAggregateValue>(&value);
+        node && node->value && node->value->exactType &&
+        (node->value->exactType->kind != SemanticType::RawPointer ||
+         node->value->exactType->arguments != type.arguments))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    return {.value = pointerValue(type, decoded->base, decoded->offset)};
+  }
+
+  std::optional<std::uint64_t> slotCount(const Allocation &region) const {
+    if (!region.typed)
+      return std::nullopt;
+    return region.slots.size();
+  }
+
+  std::optional<ObjectLayout> layoutOf(const SemanticType &type) const {
+    if (!limits.objectLayout)
+      return std::nullopt;
+    auto layout = limits.objectLayout(type);
+    if (!layout || !layout->valid)
+      return std::nullopt;
+    return layout;
+  }
+
+  // Gives an untyped raw region its object type on its first typed view.
+  ConstantEvaluation typeRegion(Allocation &region, const SemanticType &element) {
+    if (region.typed)
+      return region.type == element
+                 ? ConstantEvaluation{.value = true}
+                 : ConstantEvaluation{
+                       .failure = ConstantEvaluationFailure::UnsupportedType};
+    const auto layout = layoutOf(element);
+    if (!layout || layout->size == 0 || region.bytes % layout->size != 0 ||
+        layout->alignment > region.alignment)
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    const auto count = region.bytes / layout->size;
+    if (count > limits.heapUnits - std::min(heapUnits, limits.heapUnits) ||
+        !charge(count))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    heapUnits += count;
+    region.units += count;
+    region.type = element;
+    region.typed = true;
+    region.slots.assign(count, std::nullopt);
+    region.slotEpochs.assign(count, 1);
+    return {.value = true};
+  }
+
+  // Resolves a pointer plus an element offset to the place it designates.
+  // A typed-region element may be formed one past the end but not accessed.
+  ConstantEvaluation resolvePointer(const ConstantValue &value,
+                                    std::int64_t extra, Location &location,
+                                    bool access) {
+    const auto decoded = decodePointer(value);
+    if (!decoded || decoded->base == 0)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    const auto &base = pointerBases[decoded->base - 1];
+    const std::int64_t offset = decoded->offset + extra;
+    if (base.location.allocation) {
+      auto &region = *heap[base.location.allocation - 1];
+      if (!region.live || region.epoch != base.regionEpoch)
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      if (region.raw) {
+        if (base.untyped || !region.typed)
+          return {.failure = access
+                                 ? ConstantEvaluationFailure::NonConstantReference
+                                 : ConstantEvaluationFailure::None};
+        const auto count = static_cast<std::int64_t>(region.slots.size());
+        if (offset < 0 || offset > count || (access && offset == count))
+          return {.failure = ConstantEvaluationFailure::InvalidOperands};
+        if (offset == count)
+          return {};
+        location = {.epoch = region.slotEpochs[offset],
+                    .type = &region.type,
+                    .access = AccessMode::Mutable,
+                    .allocation = base.location.allocation,
+                    .slot = static_cast<std::size_t>(offset) + 1};
+        location.cell = static_cast<std::size_t>(offset);
+        return {};
+      }
+    }
+    if (offset != 0)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    location = base.location;
+    return {};
+  }
+
+  // A fresh raw region from the constant byte provider.
+  ConstantEvaluation allocateRaw(std::uint64_t bytes, std::uint64_t alignment,
+                                 const SemanticType &type) {
+    if (!charge(1) || heap.size() >= limits.allocations)
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    if (bytes == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    heap.push_back(std::make_unique<Allocation>(
+        Allocation{.type = SemanticType::Void, .units = 0, .raw = true,
+                   .bytes = bytes, .alignment = alignment}));
+    Location location{.epoch = heap.back()->epoch,
+                      .type = &heap.back()->type,
+                      .allocation = heap.size()};
+    pointerBases.push_back({location, heap.back()->epoch, true});
+    return {.value = pointerValue(type, pointerBases.size(), 0)};
+  }
+
+  ConstantEvaluation releaseRaw(const ConstantValue &value) {
+    const auto decoded = decodePointer(value);
+    if (!decoded || decoded->base == 0 || decoded->offset != 0)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    const auto &base = pointerBases[decoded->base - 1];
+    if (!base.location.allocation)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    auto &region = *heap[base.location.allocation - 1];
+    if (!region.raw || !region.live || region.epoch != base.regionEpoch)
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    // Releasing storage that still holds objects would end their lifetimes
+    // without cleanup; the source sequence must destroy them first.
+    if (std::any_of(region.slots.begin(), region.slots.end(),
+                    [](const auto &slot) { return slot.has_value(); }))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    region.live = false;
+    region.slots.clear();
+    region.slotEpochs.clear();
+    heapUnits -= std::min(heapUnits, region.units);
+    region.units = 0;
+    ++region.epoch;
+    return {.value = true};
+  }
+
+  // An explicit raw conversion between pointer types, including void*.
+  ConstantEvaluation convertRawPointer(const ConstantValue &value,
+                                       const SemanticType &target) {
+    const auto decoded = decodePointer(value);
+    if (!decoded)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (decoded->base == 0)
+      return {.value = pointerValue(target, 0, 0)};
+    const auto &pointee = target.arguments[0];
+    auto base = pointerBases[decoded->base - 1];
+    if (base.location.allocation && heap[base.location.allocation - 1]->raw) {
+      auto &region = *heap[base.location.allocation - 1];
+      if (!region.live || region.epoch != base.regionEpoch)
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      if (pointee == SemanticType::Void) {
+        // Erasing the element type keeps the same element offset.
+        return {.value = pointerValue(target, decoded->base, decoded->offset)};
+      }
+      const auto typed = typeRegion(region, pointee);
+      if (!typed)
+        return typed;
+      if (base.untyped) {
+        if (decoded->offset != 0)
+          return {.failure = ConstantEvaluationFailure::InvalidOperands};
+        pointerBases.push_back({{.epoch = region.epoch,
+                                 .type = &region.type,
+                                 .allocation = base.location.allocation},
+                                region.epoch,
+                                false});
+        return {.value = pointerValue(target, pointerBases.size(), 0)};
+      }
+      return {.value = pointerValue(target, decoded->base, decoded->offset)};
+    }
+    // An ordinary place keeps its own object type.
+    if (pointee != SemanticType::Void && base.location.type &&
+        *base.location.type != pointee)
+      return {.failure = ConstantEvaluationFailure::UnsupportedType};
+    return {.value = pointerValue(target, decoded->base, decoded->offset)};
+  }
+
+  std::optional<std::int64_t> signedOffset(const ConstantValue &value) const {
+    const auto *integer = std::get_if<ConstantInteger>(&value);
+    if (!integer || integer->magnitude >
+                        static_cast<std::uint64_t>(
+                            std::numeric_limits<std::int64_t>::max()))
+      return std::nullopt;
+    const auto magnitude = static_cast<std::int64_t>(integer->magnitude);
+    return integer->negative ? -magnitude : magnitude;
+  }
+
+  // Pointers compare equal when they designate the same element.
+  std::optional<bool> samePointer(const ConstantValue &left,
+                                  const ConstantValue &right) const {
+    const auto a = decodePointer(left), b = decodePointer(right);
+    if (!a || !b)
+      return std::nullopt;
+    if (a->base == 0 || b->base == 0)
+      return a->base == b->base;
+    const auto &x = pointerBases[a->base - 1].location;
+    const auto &y = pointerBases[b->base - 1].location;
+    if (x.allocation || y.allocation)
+      return x.allocation == y.allocation && a->offset == b->offset;
+    return x.frame == y.frame && x.root == y.root && x.cell == y.cell &&
+           x.path == y.path && a->offset == b->offset;
+  }
+
   ConstantValue ownerValue(const SemanticType &type, std::size_t allocation) {
     return makeConstantAggregate(
         {.kind = ConstantAggregateKind::TransientOwner,
@@ -763,6 +1068,8 @@ private:
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       return {.value = value};
     }
+    if (type.kind == SemanticType::RawPointer)
+      return convertPointer(value, type);
     if (type.kind != SemanticType::UniqueOwner)
       return convertConstantToType(value, type);
     if (std::holds_alternative<NullConstant>(value))
@@ -885,7 +1192,8 @@ private:
     const auto *aggregate = std::get_if<ConstantAggregateValue>(&value);
     if (!aggregate)
       return converted;
-    if (type.kind == SemanticType::UniqueOwner || syntaxType(type))
+    if (type.kind == SemanticType::UniqueOwner ||
+        type.kind == SemanticType::RawPointer || syntaxType(type))
       return converted;
     if (type.kind == SemanticType::TypePack) {
       for (std::size_t index = 0; index < type.arguments.size(); ++index) {
@@ -1089,7 +1397,7 @@ private:
                                          : project(*valueStorage, location.path,
                                                    *location.type, 0, &value);
     if (updated) {
-      if (location.allocation) {
+      if (location.allocation && !location.slot) {
         updated =
             storeAllocation(location.allocation, std::move(*updated.value));
         if (!updated)
@@ -1133,6 +1441,8 @@ private:
       return {.value = NullConstant{}};
     if (type.kind == SemanticType::UniqueOwner)
       return {.value = ownerValue(type, 0)};
+    if (type.kind == SemanticType::RawPointer)
+      return {.value = pointerValue(type, 0, 0)};
     return {.failure = ConstantEvaluationFailure::UnsupportedType};
   }
 
@@ -1251,6 +1561,52 @@ private:
     }
     if (instruction.operation == MirOperation::Identity && values.size() == 1) {
       return {.value = values.front()};
+    }
+    if ((instruction.operation == MirOperation::PointerAdd ||
+         instruction.operation == MirOperation::PointerSubtract) &&
+        values.size() == 2) {
+      const auto pointer = decodePointer(values[0]);
+      auto delta = signedOffset(values[1]);
+      if (!pointer || !delta || pointer->base == 0)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      if (instruction.operation == MirOperation::PointerSubtract)
+        delta = -*delta;
+      Location ignored;
+      const auto formed = resolvePointer(values[0], *delta, ignored, false);
+      if (formed.failure != ConstantEvaluationFailure::None)
+        return formed;
+      return {.value = pointerValue(type, pointer->base, pointer->offset + *delta)};
+    }
+    if (instruction.operation == MirOperation::PointerDifference &&
+        values.size() == 2) {
+      const auto left = decodePointer(values[0]);
+      const auto right = decodePointer(values[1]);
+      const auto domain = constantIntegerDomain(type);
+      if (!left || !right || !domain || left->base == 0 || right->base == 0 ||
+          pointerBases[left->base - 1].location.allocation !=
+              pointerBases[right->base - 1].location.allocation)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      const auto difference = left->offset - right->offset;
+      return {.value = makeConstantInteger(
+                  {.negative = difference < 0,
+                   .magnitude = static_cast<std::uint64_t>(
+                       difference < 0 ? -difference : difference)},
+                  *domain)};
+    }
+    if ((instruction.operation == MirOperation::Equal ||
+         instruction.operation == MirOperation::NotEqual) &&
+        values.size() == 2 && instruction.operands.size() == 2 &&
+        (instruction.operands[0].type.kind == SemanticType::RawPointer ||
+         instruction.operands[1].type.kind == SemanticType::RawPointer)) {
+      const auto same = samePointer(values[0], values[1]);
+      if (!same)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      return {.value = instruction.operation == MirOperation::Equal ? *same
+                                                                     : !*same};
+    }
+    if (instruction.operation == MirOperation::Convert && values.size() == 1 &&
+        type.kind == SemanticType::RawPointer) {
+      return convertRawPointer(values.front(), type);
     }
     if (instruction.operation == MirOperation::Convert && values.size() == 1) {
       return convertConstantToType(values.front(), type);
@@ -1448,9 +1804,7 @@ private:
       loan->active = true;
       return {};
     }
-    if (instruction.rawMemoryAccess ||
-        instruction.unsafeOperation != UnsafeOperationKind::None ||
-        instruction.bodyTarget || instruction.lambdaTarget ||
+    if (instruction.bodyTarget || instruction.lambdaTarget ||
         (instruction.callableInvocation &&
          ((*instruction.callableInvocation !=
                CallableInvocationCapability::Read &&
@@ -1547,6 +1901,38 @@ private:
         const auto checked = readPlace(frame, place->id);
         return checked ? MirConstantEvaluation{} : fail(frame, checked.failure);
       }
+    }
+    if (instruction.kind == MirInstructionKind::Compute &&
+        instruction.operation == MirOperation::AddressOf &&
+        instruction.result && instruction.operands.size() == 1 &&
+        instruction.operands.front().kind == MirOperandKind::Address &&
+        instruction.info.type.kind == SemanticType::RawPointer) {
+      Location location;
+      const auto located =
+          locate(frame, instruction.operands.front().place, location);
+      if (located.failure != ConstantEvaluationFailure::None)
+        return fail(frame, located.failure);
+      std::int64_t offset = 0;
+      if (location.allocation && location.slot) {
+        auto &region = *heap[location.allocation - 1];
+        offset = static_cast<std::int64_t>(location.slot - 1);
+        pointerBases.push_back({{.epoch = region.epoch,
+                                 .type = &region.type,
+                                 .allocation = location.allocation},
+                                region.epoch,
+                                false});
+      } else {
+        pointerBases.push_back(
+            {location,
+             location.allocation ? heap[location.allocation - 1]->epoch : 0,
+             false});
+      }
+      if (!charge(1))
+        return stepLimitFailure(frame);
+      frame.values[*instruction.result] =
+          pointerValue(instruction.info.type, pointerBases.size(), offset);
+      ++frame.valueEpochs[*instruction.result];
+      return {};
     }
     if (!observedStorageType(instruction.info.type) &&
         !(instruction.kind == MirInstructionKind::Call &&
@@ -1982,6 +2368,184 @@ private:
           return throughCall(std::move(result), frame);
         evaluated.value = std::move(result.value);
         voidResult = result.voidResult;
+      } else if (instruction.intrinsic == IntrinsicKind::ObjectSize ||
+                 instruction.intrinsic == IntrinsicKind::ObjectAlignment) {
+        const auto layout = instruction.objectLayoutType
+                                ? layoutOf(*instruction.objectLayoutType)
+                                : std::nullopt;
+        const auto domain = constantIntegerDomain(instruction.info.type);
+        if (!layout || !domain)
+          return fail(frame, ConstantEvaluationFailure::UnsupportedType,
+                      "The object layout is not available during compilation.");
+        evaluated.value = makeConstantInteger(
+            {.magnitude = instruction.intrinsic == IntrinsicKind::ObjectSize
+                              ? layout->size
+                              : layout->alignment},
+            *domain);
+      } else if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
+        if (arguments.empty())
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location slot;
+        const auto resolved = resolvePointer(arguments[0], 0, slot, true);
+        if (resolved.failure != ConstantEvaluationFailure::None)
+          return fail(frame, resolved.failure);
+        if (storage(slot))
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands,
+                      "An object was constructed over a live object.");
+        ConstantEvaluation value;
+        if (instruction.constructorTarget) {
+          const auto *callee =
+              program.findConstructorInstance(*instruction.constructorTarget);
+          if (!callee || callee->parameterTypes.size() + 1 != arguments.size())
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          std::vector<ConstantValue> inputs(arguments.begin() + 1,
+                                            arguments.end());
+          std::vector<std::optional<Location>> origins(inputs.size());
+          for (std::size_t index = 0; index < inputs.size(); ++index) {
+            const auto &type = callee->parameterTypes[index];
+            if (type.kind != SemanticType::Reference)
+              continue;
+            Location location;
+            const auto located =
+                locateOperand(frame, instruction.operands[index + 1], location);
+            if (located.failure != ConstantEvaluationFailure::None)
+              return fail(frame, located.failure);
+            location.access = type.referenceAccess;
+            origins[index] = std::move(location);
+          }
+          auto result = construct(*instruction.constructorTarget, inputs,
+                                  depth + 1, origins);
+          if (!result)
+            return throughCall(std::move(result), frame);
+          value.value = std::move(result.value);
+        } else if (arguments.size() == 1) {
+          value = defaultValue(*slot.type);
+        } else if (arguments.size() == 2) {
+          value = convertValue(arguments[1], *slot.type);
+        } else {
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        }
+        if (!value)
+          return fail(frame, value.failure);
+        const auto stored = writeLocation(slot, *value.value, true);
+        if (!stored)
+          return fail(frame, stored.failure);
+        voidResult = true;
+      } else if (instruction.intrinsic == IntrinsicKind::ObjectDestroy) {
+        if (arguments.size() != 1)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location slot;
+        const auto resolved = resolvePointer(arguments[0], 0, slot, true);
+        if (resolved.failure != ConstantEvaluationFailure::None)
+          return fail(frame, resolved.failure);
+        if (!storage(slot))
+          return fail(frame, ConstantEvaluationFailure::NonConstantReference,
+                      "A destroyed object was not alive.");
+        if (instruction.elementCleanup &&
+            instruction.elementCleanup->requiresActiveCleanup) {
+          auto result =
+              destroy(*instruction.elementCleanup, slot, frame, depth + 1);
+          if (result.failure != ConstantEvaluationFailure::None)
+            return result;
+        }
+        storage(slot).reset();
+        ++epoch(slot);
+        voidResult = true;
+      } else if (instruction.intrinsic == IntrinsicKind::ObjectTake) {
+        if (arguments.size() != 1)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location slot;
+        const auto resolved = resolvePointer(arguments[0], 0, slot, true);
+        if (resolved.failure != ConstantEvaluationFailure::None)
+          return fail(frame, resolved.failure);
+        auto &held = storage(slot);
+        if (!held)
+          return fail(frame, ConstantEvaluationFailure::NonConstantReference);
+        evaluated.value = std::move(*held);
+        held.reset();
+        ++epoch(slot);
+      } else if (instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
+                 instruction.intrinsic == IntrinsicKind::ObjectRelocateRange) {
+        const bool range =
+            instruction.intrinsic == IntrinsicKind::ObjectRelocateRange;
+        if (arguments.size() != (range ? 3u : 2u))
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        std::int64_t count = 1;
+        if (range) {
+          const auto requested = signedOffset(arguments[2]);
+          if (!requested || *requested < 0)
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+          count = *requested;
+        }
+        if (!charge(static_cast<std::size_t>(count)))
+          return stepLimitFailure(frame);
+        for (std::int64_t index = 0; index < count; ++index) {
+          Location target, source;
+          const auto a = resolvePointer(arguments[0], index, target, true);
+          const auto b = resolvePointer(arguments[1], index, source, true);
+          if (a.failure != ConstantEvaluationFailure::None)
+            return fail(frame, a.failure);
+          if (b.failure != ConstantEvaluationFailure::None)
+            return fail(frame, b.failure);
+          auto &from = storage(source);
+          if (!from || storage(target))
+            return fail(frame, ConstantEvaluationFailure::InvalidOperands,
+                        "Relocation requires a live source and vacant "
+                        "destination.");
+          auto moved = std::move(*from);
+          from.reset();
+          ++epoch(source);
+          storage(target) = std::move(moved);
+          ++epoch(target);
+        }
+        voidResult = true;
+      } else if (instruction.intrinsic == IntrinsicKind::TextViewFromAddress) {
+        if (arguments.size() != 3)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        const auto count = signedOffset(arguments[1]);
+        if (!count || *count < 0)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        if (!charge(static_cast<std::size_t>(*count)))
+          return stepLimitFailure(frame);
+        std::string text;
+        text.reserve(static_cast<std::size_t>(*count));
+        for (std::int64_t index = 0; index < *count; ++index) {
+          Location element;
+          const auto resolved = resolvePointer(arguments[0], index, element, true);
+          if (resolved.failure != ConstantEvaluationFailure::None)
+            return fail(frame, resolved.failure);
+          const auto byte = readLocation(element);
+          const auto *character =
+              byte ? std::get_if<CharacterLiteral>(&*byte.value) : nullptr;
+          if (!character)
+            return fail(frame, byte ? ConstantEvaluationFailure::InvalidOperands
+                                    : byte.failure);
+          text.push_back(static_cast<char>(character->value));
+        }
+        evaluated.value = std::move(text);
+      } else if (instruction.intrinsic == IntrinsicKind::StorageBoundsCheck) {
+        if (arguments.size() != 2)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        const auto *index = std::get_if<ConstantInteger>(&arguments[0]);
+        const auto *extent = std::get_if<ConstantInteger>(&arguments[1]);
+        if (!index || !extent || index->negative || extent->negative)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        if (index->magnitude >= extent->magnitude)
+          return fail(frame, ConstantEvaluationFailure::Panicked,
+                      "Defined failure: index_out_of_bounds.");
+        voidResult = true;
+      } else if (const auto outcome =
+                     intrinsicBooleanFailureOutcome(instruction.intrinsic)) {
+        if (arguments.size() != 1 || !std::holds_alternative<bool>(arguments[0]))
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        if (!std::get<bool>(arguments[0]))
+          return fail(frame, ConstantEvaluationFailure::Panicked,
+                      "Defined failure: " +
+                          std::string(definedFailureCodeName(outcome->code)) +
+                          " (" +
+                          std::string(definedFailureDetailName(outcome->detail)) +
+                          ").");
+        voidResult = true;
       } else if (instruction.receiver && arguments.empty() &&
                  (instruction.intrinsic == IntrinsicKind::StringViewSize ||
                   instruction.intrinsic == IntrinsicKind::StringViewEmpty)) {
@@ -2812,6 +3376,7 @@ private:
   std::size_t steps = 0;
   bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
+  std::vector<PointerBase> pointerBases;
   std::size_t heapUnits = 0;
   std::unordered_map<const MirBody *,
                      std::unordered_map<MirInstructionId, MirPlaceId>>
