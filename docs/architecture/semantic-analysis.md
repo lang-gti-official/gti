@@ -4161,6 +4161,15 @@ value; body and program verification prove its typed publication. LLVM uses its
 existing target layout constant materializer. No public library name controls
 admission, and no runtime immediate call recreates the result.
 
+Explicit character conversion of a non-`uint8_t` integer also uses this
+immediate publication boundary. Semantics requires a constant operand in
+`0..255`, with MIR-required constexpr calls and the existing request limits;
+open value-dependent requests defer to concrete reanalysis. The result is a
+character constant, so runtime lowering neither repeats operand execution nor
+introduces a new numeric-to-character instruction. The source operand retains
+its integer type. Runtime `uint8_t` conversions keep the existing code-unit
+bridge, and aliases cannot bypass either rule.
+
 A direct `consteval void` expression statement uses the same verified MIR
 executor and shared resource budget. Semantics records successful completion
 against the statement, selected function identity, and analysis snapshot. HIR

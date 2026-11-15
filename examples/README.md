@@ -192,6 +192,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
 | Build and edit JSON with runtime keys and mixed value kinds | [186: dynamic JSON](186-dynamic-json.gti) |
+| Match, search, replace and split text with regular expressions | [194: regular expressions](194-regular-expressions.gti) |
 | Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
 | Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
@@ -202,6 +203,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
+| Build strings, vectors and your own containers at compile time | [195: constexpr owned containers](195-constexpr-owned-containers.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
@@ -336,6 +338,7 @@ is a teaching helper, not a production server.
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `090-generic-algorithms.gti` | stable compaction and container erasure; search, mutation, replacement, filtered copying, chaining returned output cursors, and maximum mapped-value selection |
+| `194-regular-expressions.gti` | `std.regex` compile errors as values, named groups, borrow-checked results over a log, `$<name>` replacement, callable replacement, splitting, and linear-time matching of `(a*)*b` |
 | `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
@@ -388,6 +391,7 @@ is a teaching helper, not a production server.
 | `141-reflected-json.gti` | `std.experimental_json` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
+| `195-constexpr-owned-containers.gti` | compile-time `std::string` building, a `std::vector<std::string>`, and an application container over `std::storage`, sizing a fixed array, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
 | `156-borrowing-callbacks.gti` | shared/exclusive captures, mutable and read-only lambda parameter results through local aliases, call-scoped fresh callable borrows, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
@@ -922,3 +926,7 @@ contract. `static_assert` and a Boolean binding demonstrate conjunction,
 disjunction and negation. Build and run with `gti examples/188-concept-conditions.gti
 --backend llvm -O2 -o /tmp/concept-conditions` and `/tmp/concept-conditions`;
 success exits with 0 and prints nothing.
+
+The [constant character conversion example](constant-character/main.gti) shows
+explicit fitting integer constants, constexpr calls and value-generic code units.
+It is registered by `testCharactersAndStringViews` in `compiler_pipeline`.

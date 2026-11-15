@@ -12221,7 +12221,7 @@ verifyMirHostedStartup(const MirProgram &program) {
         append->parameterTypes == std::vector<SemanticType>{stringType} &&
         !append->staticMember && append->entryKind == ProgramEntryKind::None &&
         append->linkage == LanguageLinkage::Gti &&
-        append->externalSymbol.empty() && !append->constexprFunction &&
+        append->externalSymbol.empty() &&
         append->receiverMutability == ReceiverMutability::Mutable &&
         !append->virtualMethod && !append->pureVirtual &&
         !append->overrideMethod && append->virtualRoots.empty() &&

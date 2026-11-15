@@ -65,6 +65,10 @@ enum class ConstantAggregateKind {
   // table.
   TransientSyntax,
   PayloadEnum,
+  // Executor-local raw pointer. identity is a request-local pointer-base
+  // index (zero for null) and elements[0] the signed element offset from that
+  // base. Never a host or target address and never a persistent constant.
+  TransientPointer,
 };
 
 struct ConstantAggregateField {

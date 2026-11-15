@@ -7151,6 +7151,44 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
     return;
   }
   Diagnostic diagnostic;
+  // Once the body has been checked, a direct reference to an owned local has
+  // an exact declaration identity. Explain that escape rather than guessing
+  // an input lifetime from the signature. Unchecked/deferred bodies and local
+  // reference aliases retain the contract diagnostic below.
+  if (info.returnType.kind == SemanticType::Reference &&
+      summary.eligibleParameters == 0 && function.body()) {
+    std::vector<const ExprPtr *> returns;
+    collectBorrowReturnExpressions(function.body().get(), returns);
+    bool explainedLocal = false;
+    for (const auto *value : returns) {
+      const Expr *expression = value ? value->get() : nullptr;
+      while (const auto *group = exprAs<Grouping>(expression))
+        expression = group->expression().get();
+      const auto *variable = exprAs<Variable>(expression);
+      const auto *local =
+          variable == nullptr
+              ? nullptr
+              : semanticModel.database().findSymbol(
+                    semanticModel.findResolvedSymbol(*variable));
+      if (local == nullptr || local->kind != SymbolKind::LocalVariable ||
+          local->type.kind == SemanticType::Reference || local->threadLocal ||
+          local->internalLinkage)
+        continue;
+      Diagnostic escape = makeDiagnostic(
+          code, DiagnosticPhase::Semantics, variable->name(),
+          "Cannot return a reference to local value '" + local->name + "'.");
+      escape.related.push_back(
+          {local->nameSpan,
+           "This local's storage ends when the function returns."});
+      escape.hints.emplace_back(
+          "Return an owned value, or borrow storage supplied by the caller. "
+          "Adding a lifetime annotation does not keep a local value alive.");
+      diagnostics.emplace_back(std::move(escape));
+      explainedLocal = true;
+    }
+    if (explainedLocal)
+      return;
+  }
   if (summary.eligibleParameters > 1) {
     const std::string dependencyDescription =
         summary.access == AccessMode::Mutable
@@ -7563,6 +7601,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "c_string_from_address") {
       return IntrinsicKind::CStringFromAddress;
     }
+    if (name == "constant_evaluation")
+      return IntrinsicKind::ConstantEvaluation;
+    if (name == "constant_allocate")
+      return IntrinsicKind::ConstantAllocate;
+    if (name == "constant_release")
+      return IntrinsicKind::ConstantRelease;
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
     }
@@ -14014,6 +14058,59 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::ConstantEvaluation ||
+      intrinsic == IntrinsicKind::ConstantAllocate ||
+      intrinsic == IntrinsicKind::ConstantRelease) {
+    // The compile-time allocation floor: an execution-context query and the
+    // evaluator-owned storage pair. Native code never takes the storage path.
+    // The pair demands an unsafe context for its caller contract, but has no
+    // function target and no raw access for MIR to verify, so it records no
+    // unsafe operation kind (DeclaredUnsafeCall requires an exact target).
+    std::vector<SemanticType> argumentTypes;
+    for (const ExprPtr &argument : expr.arguments())
+      argumentTypes.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    const auto rawVoid = [](const SemanticType &type) {
+      return type.kind == SemanticType::RawPointer &&
+             type.arguments.size() == 1 &&
+             type.arguments.front() == SemanticType::Void &&
+             type.pointerAccess == AccessMode::Mutable;
+    };
+    SemanticType result = SemanticType::Bool;
+    bool valid = expr.typeArguments().empty();
+    if (intrinsic == IntrinsicKind::ConstantEvaluation) {
+      valid = valid && argumentTypes.empty();
+    } else if (intrinsic == IntrinsicKind::ConstantAllocate) {
+      requireUnsafe(expr, UnsafeOperationKind::None, expr.paren(),
+                    "Allocating constant-evaluation storage");
+      valid = valid && argumentTypes.size() == 2 &&
+              argumentTypes[0] == SemanticType::UInt64 &&
+              argumentTypes[1] == SemanticType::UInt64;
+      result = SemanticType::rawPointerTo(SemanticType::Void);
+    } else {
+      requireUnsafe(expr, UnsafeOperationKind::None, expr.paren(),
+                    "Releasing constant-evaluation storage");
+      valid = valid && argumentTypes.size() == 1 && rawVoid(argumentTypes[0]);
+      result = SemanticType::Void;
+    }
+    if (!valid) {
+      report(expr.paren(),
+             "Constant-evaluation storage intrinsics take no type arguments: "
+             "constant_evaluation(), constant_allocate(uint64_t, uint64_t) "
+             "and constant_release(void*).",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = result;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = result,
+                               .parameterTypes = std::move(argumentTypes),
+                               .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::ThreadScope) {
     analyzeThreadScopeCall(expr);
     bindIntrinsicCallDeclaration(expr, declaration);
@@ -14413,14 +14510,18 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (place.root != nullptr &&
-      unavailableProjectedState(place, true) != nullptr) {
-    report(expressionToken(argument),
-           "std::move cannot consume a value while one of its owned "
-           "places remains moved.",
-           "GTI-S2018");
-    diagnostics.back().hints.emplace_back(
-        "Reinitialize the moved place before transferring its owner.");
+  if (const auto *state = place.root != nullptr
+                              ? unavailableProjectedState(place, true)
+                              : nullptr) {
+    const auto diagnosticCount = diagnostics.size();
+    reportUnavailablePlace(expressionToken(argument), *state, &place);
+    if (diagnostics.size() != diagnosticCount) {
+      diagnostics.back().message +=
+          " The whole value cannot be transferred while one of its owned "
+          "places remains moved.";
+      diagnostics.back().hints.emplace_back(
+          "Reinitialize the moved place before transferring its owner.");
+    }
     currentType = SemanticType::Unknown;
     return;
   }
@@ -14638,6 +14739,28 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
           "GTI-S2018", DiagnosticPhase::Semantics, expr.paren(),
           "Unique allocation cannot retain checked borrowed state because "
           "the owner does not track external borrow dependencies.");
+      // Use the same structural inventory as borrow verification. A generic
+      // allocation may be diagnosed in a library instance, but the terminal
+      // field/capture declaration explains which source state it would retain.
+      if (const auto paths = storedReferenceInventory(pointeeType)) {
+        for (const auto &path : *paths) {
+          if (path.fields.empty())
+            continue;
+          const auto &field = path.fields.back();
+          const SourceSpan span = tokenSpan(field.name());
+          if (std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
+                          [&](const auto &note) { return note.span == span; }))
+            continue;
+          diagnostic.related.push_back(
+              {span, std::string(field.capture ? "Capture '" : "Field '") +
+                         field.name().lexeme +
+                         "' can retain a reference to external storage; "
+                         "allocating the containing value does not own that "
+                         "storage."});
+          if (diagnostic.related.size() == 4)
+            break;
+        }
+      }
       diagnostic.hints.emplace_back(
           "Keep the borrowing value in tracked local storage, or store owned "
           "state instead.");

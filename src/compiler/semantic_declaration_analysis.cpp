@@ -10128,7 +10128,15 @@ auto SemanticVisitor::Impl::collectMembers(const StmtList &members,
           .owner = owner.id,
           .declaration = constructor,
           .access = access,
-          .constexprConstructor = constructor->isConstexpr(),
+          // A defaulted copy or move constructor (the only defaultable
+          // one-parameter constructors) has no body to mark: its member-wise
+          // transfer is compile-time capable whenever its class's members
+          // are, which constant execution checks where it runs.
+          .constexprConstructor = constructor->isConstexpr() ||
+                                  (constructor->specifier() &&
+                                   constructor->specifier()->kind ==
+                                       SpecialMemberSpecifierKind::Defaulted &&
+                                   constructor->parameters().size() == 1),
           .requiresUnsafe = constructor->unsafeKeyword().has_value()};
       info.requiredParameterCount =
           requiredParameterCount(constructor->parameters());

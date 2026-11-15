@@ -4912,6 +4912,12 @@ private:
            kind == TokenKind::FLOAT || kind == TokenKind::DOUBLE;
   }
 
+  [[nodiscard]] static bool isBuiltinTypeToken(TokenKind kind) {
+    return isNumericTypeToken(kind) || kind == TokenKind::BOOL ||
+           kind == TokenKind::CHAR || kind == TokenKind::NULLPTR_TYPE ||
+           kind == TokenKind::VOID || kind == TokenKind::AUTO;
+  }
+
   [[nodiscard]] bool isValueGenericParameterStart() const {
     return (isNumericTypeToken(peek().kind) ||
             peek().kind == TokenKind::BOOL) &&
@@ -5174,6 +5180,13 @@ private:
           ++next;
         }
       }
+      // Recognize the declaration's shape even when its qualified type ends
+      // in a built-in keyword. The consuming parser owns the focused error;
+      // rejecting look-ahead here would instead blame the first specifier.
+      if (peekAt(next).kind == TokenKind::SCOPE &&
+          isBuiltinTypeToken(peekAt(next + 1).kind)) {
+        return signatureTypeEnd(next + 2);
+      }
       if (peekAt(next).kind != TokenKind::SCOPE ||
           !isIdentifierUseToken(peekAt(next + 1).kind)) {
         return signatureTypeEnd(next);
@@ -5341,6 +5354,22 @@ private:
   Token consume(TokenKind kind, std::string_view message) {
     if (check(kind)) {
       return advance();
+    }
+    if (kind == TokenKind::IDENTIFIER && current > 0 &&
+        previous().kind == TokenKind::SCOPE &&
+        isBuiltinTypeToken(peek().kind)) {
+      // Consume the invalid keyword before recovery so it cannot be mistaken
+      // for a new unqualified declaration starting at this same token.
+      const Token builtin = advance();
+      missingTokenError = false;
+      Diagnostic diagnostic =
+          makeDiagnostic("GTI-P0001", DiagnosticPhase::Parsing, builtin,
+                         "Built-in type '" + builtin.lexeme +
+                             "' cannot be qualified with '::'.");
+      diagnostic.hints.emplace_back("Use '" + builtin.lexeme +
+                                    "' without a namespace or type qualifier.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      throw ParseError{};
     }
     if (reservedIdentifierError(peek())) {
       throw ParseError{};

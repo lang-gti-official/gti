@@ -826,10 +826,18 @@ private:
             : baseModel->findConstructor(*construction.declaration);
     const bool constant =
         declaration != nullptr && declaration->constexprConstructor;
+    // A defaulted copy or move constructor has no body to complete; its
+    // generated member-wise transfer stages with its class.
+    const bool defaulted = construction.declaration != nullptr &&
+                           construction.declaration->specifier() &&
+                           construction.declaration->specifier()->kind ==
+                               SpecialMemberSpecifierKind::Defaulted &&
+                           construction.declaration->parameters().size() == 1;
     if (constantClosure && !construction.generatedDefault &&
         (!constant ||
-         std::find(constantConstructors.begin(), constantConstructors.end(),
-                   construction.constructor) == constantConstructors.end())) {
+         (!defaulted &&
+          std::find(constantConstructors.begin(), constantConstructors.end(),
+                    construction.constructor) == constantConstructors.end()))) {
       lifecycleValid = false;
       return 0;
     }
@@ -2069,7 +2077,12 @@ private:
             appendInitializerSourceDebug(*model, *field.declaration,
                                          staticFieldInitializers,
                                          {*lowered.initializer});
-          if (declaration->genericParameters.empty()) {
+          // A constant closure has no whole-program storage plan. A read-only
+          // static with a recorded constant needs none: its uses read the
+          // constant, exactly as the whole-program plan would.
+          if (declaration->genericParameters.empty() &&
+              !(constantClosure && info.constant &&
+                info.access == AccessMode::ReadOnly)) {
             lifecycleValid = false;
           }
         } else {
@@ -6426,6 +6439,23 @@ private:
       kind = HirValueKind::Postfix;
       operation = postfix->oper().kind;
       lowerOperand(postfix->expression());
+    } else if (const auto *qualified = exprAs<QualifiedName>(raw);
+               qualified && constantClosure &&
+               model.findEnumerator(*qualified) == nullptr &&
+               model.findExpression(*raw) != nullptr &&
+               constantIntegerDomain(model.findExpression(*raw)->type)
+                   .has_value() &&
+               (model.findExpression(*raw)->category == ValueCategory::Value ||
+                model.findExpression(*raw)->access == AccessMode::ReadOnly) &&
+               model.findConstant(*raw) &&
+               std::holds_alternative<ConstantInteger>(
+                   *model.findConstant(*raw)) &&
+               !std::get<ConstantInteger>(*model.findConstant(*raw)).negative) {
+      // A constant closure has no static storage plan: a qualified constant
+      // such as Type::npos reads as its value, as a named constant does.
+      kind = HirValueKind::Literal;
+      literal = Literal{
+          std::get<ConstantInteger>(*model.findConstant(*raw)).magnitude};
     } else if (const auto *qualified = exprAs<QualifiedName>(raw)) {
       kind = HirValueKind::QualifiedName;
       if (const ResolvedEnumeratorInfo *resolved =

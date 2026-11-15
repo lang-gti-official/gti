@@ -1013,7 +1013,8 @@ int main() {
   const lang::FrontendResult invalidCodeUnitBridge = lang::Frontend().analyze(
       "invalid-character-code-unit.gti",
       "int main() { uint8_t byte = uint8_t(65); char implicit = byte; "
-      "char wide = char(uint16_t(65)); return 0; }",
+      "uint16_t wide_byte = uint16_t(65); char wide = char(wide_byte); return "
+      "0; }",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidCodeUnitBridge.canGenerateCode() &&
              hasDiagnostic(invalidCodeUnitBridge.diagnostics,
@@ -1022,6 +1023,85 @@ int main() {
                                  "GTI-S2014") == 1,
          "the code-unit bridge should remain explicit and should not admit "
          "other integer widths");
+
+  const auto examplePath = standardLibraryRoot().parent_path() /
+                           "examples/constant-character/main.gti";
+  std::ifstream exampleInput(examplePath);
+  const std::string exampleSource(
+      (std::istreambuf_iterator<char>(exampleInput)),
+      std::istreambuf_iterator<char>());
+  expect(!exampleSource.empty(),
+         "constant character example must be registered");
+  const auto constantCharacters = lang::Frontend().analyze(
+      examplePath.string(), exampleSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(
+      constantCharacters.canGenerateCode(),
+      "constant integers, named constants, constexpr calls and generic values "
+      "should publish character constants through verified MIR");
+  if (!constantCharacters.canGenerateCode())
+    for (const auto &diagnostic : constantCharacters.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+
+  for (const std::string operand :
+       {"256", "-1", "uint64_t(256)", "runtime", "1.0", "true"}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-constant-character.gti",
+        "char convert(int runtime) { return char(" + operand + "); }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               countDiagnosticCode(rejected.diagnostics, "GTI-S2014") != 0,
+           "invalid character conversion must reject operand " + operand);
+  }
+
+  for (const std::string operand : {"256", "runtime", "1.0", "true"}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-character-alias.gti",
+        "using CodeUnit = char; char convert(int runtime) { return CodeUnit(" +
+            operand + "); }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               countDiagnosticCode(rejected.diagnostics, "GTI-S2014") != 0,
+           "aliases must preserve the character conversion rule");
+  }
+  for (const std::string source :
+       {"char value = 65;", "char unit<uint64_t N>() { return char(N); } char "
+                            "value = unit<256>();"}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-character-boundary.gti", source, {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    expect(
+        !rejected.canGenerateCode(),
+        "implicit and out-of-range concrete character conversions must reject");
+  }
+  const std::string rangeSource = "char value = char(256);";
+  const auto rangeError = lang::Frontend().analyze(
+      "character-range.gti", rangeSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *rangeDiagnostic =
+      findDiagnosticByCode(rangeError.diagnostics, "GTI-S2014");
+  expect(rangeDiagnostic &&
+             rangeDiagnostic->primary.start == rangeSource.find("256") &&
+             rangeDiagnostic->primary.end == rangeSource.find("256") + 3 &&
+             rangeDiagnostic->primary.source.find("character-range.gti") !=
+                 std::string::npos &&
+             rangeDiagnostic->fixes.empty() &&
+             rangeDiagnostic->message.find("0..255") != std::string::npos,
+         "out-of-range character diagnostic must identify the operand without "
+         "a lossy fix");
+  const auto limitedCharacter =
+      lang::Frontend(stepLimited(32))
+          .analyze("character-budget.gti",
+                   "constexpr int slow() { mut int n = 0; while (n < 1000) { "
+                   "n++; } return 65; } "
+                   "char value = char(slow());",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !limitedCharacter.canGenerateCode() &&
+          countDiagnosticCode(limitedCharacter.diagnostics, "GTI-S2014") != 0 &&
+          hasDiagnosticHint(limitedCharacter.diagnostics, "--constexpr-steps"),
+      "character conversion must preserve the shared constant-evaluation "
+      "budget");
 
   const lang::FrontendResult obsolete = lang::Frontend().analyze(
       "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",
@@ -2976,7 +3056,8 @@ void testConstexprOperators() {
     std::size_t width;
   };
   const std::vector<Rejection> rejected{
-      {"struct Item { int* x = nullptr; constexpr int operator()() mut { "
+      {"class Base { public: int b = 0; }; class Derived : public Base {}; "
+       "struct Item { Derived x; constexpr int operator()() mut { "
        "return 0; } "
        " public: Item() = default; };",
        "structural aggregate", "operator()", 8},
@@ -3265,7 +3346,21 @@ int main() { Table table = build(4); return table.total() + array_work(4) - 68; 
        "add(value, 1); return value; } constexpr int constant = "
        "inspect(runtime);",
        "GTI-S2057"},
-      {"constexpr void bad(mut int* value) {}", "GTI-S2057"},
+      {"class Base { public: int b = 0; }; class Derived : public Base {}; "
+       "constexpr void bad(Derived value) {}",
+       "GTI-S2057"},
+      // Raw pointers are execution-local: a pointer to a returned frame's
+      // local, a null pointer and arithmetic past one place never resolve.
+      {"constexpr int* leak() { mut int x = 5; return &x; } "
+       "constexpr int read() { unsafe { return *leak(); } } "
+       "constexpr int constant = read();",
+       "GTI-S2057"},
+      {"constexpr int read() { mut int* p = nullptr; unsafe { return *p; } } "
+       "constexpr int constant = read();",
+       "GTI-S2057"},
+      {"constexpr int read() { mut int x = 5; mut int* p = &x; "
+       "unsafe { return *(p + 5); } } constexpr int constant = read();",
+       "GTI-S2057"},
       {"constexpr int& retained = bad(); "
        "constexpr int& bad() { int value = 4; return value; }",
        "GTI-S2057"}};
@@ -3421,9 +3516,9 @@ void testConstexprAllocation() {
                 << result.detail << '\n';
     }
     if (function.source->name().lexeme == "allocate_scalar") {
-      for (const auto limits : {lang::MirConstantLimits{.steps = 4},
-                                lang::MirConstantLimits{.allocations = 0},
-                                lang::MirConstantLimits{.heapUnits = 0}}) {
+      for (const auto &limits : {lang::MirConstantLimits{.steps = 4},
+                                 lang::MirConstantLimits{.allocations = 0},
+                                 lang::MirConstantLimits{.heapUnits = 0}}) {
         const auto limited = lang::evaluateMirConstantFunction(
             runtime.mir, function.id, {}, limits);
         expect(!limited && limited.failure ==
@@ -4204,8 +4299,8 @@ void testConstexprReadOnlyReferences() {
   };
   const std::vector<Rejection> rejections{
       {"constexpr int& bad() { int value = 4; return value; }", "GTI-S2017",
-       "borrowed return requires", "bad()", 3},
-      {"constexpr int bad(mut int* value) { return 0; }", "GTI-S2057",
+       "Cannot return a reference to local value 'value'", "value;", 5},
+      {"constexpr int bad(Derived value) { return 0; }", "GTI-S2057",
        "parameters must be", "value)", 5},
       {"constexpr int bad() { mut int value = 4; int& ref = value; "
        "value = 5; return ref; }",
@@ -4214,11 +4309,13 @@ void testConstexprReadOnlyReferences() {
        "not constexpr", "runtime)", 7},
       {"constexpr int& retained = values.front();", "GTI-S2057",
        "not supported yet", "constexpr int&", 9},
-      {"constexpr int bad(std::string& owner) { return int(owner.size()); }",
-       "GTI-S2057", "parameters must be", "owner)", 5}};
+      {"constexpr int bad(Derived& owner) { return owner.x; }", "GTI-S2057",
+       "parameters must be", "owner)", 5}};
   const std::string prefix =
       "import std.array;\nimport std.string;\n"
       "constexpr int inspect(int& value) { return value + 1; }\n"
+      "class Base { public: int x = 0; };\n"
+      "class Derived : public Base { public: int y = 0; };\n"
       "constexpr std::array<int, 3> values = std::array<int, 3>({1,2,3});\n";
   for (const auto &test : rejections) {
     const std::string invalidSource =
@@ -4419,12 +4516,37 @@ int main() {
          "unrelated generic constructor and read-only method declarations "
          "admit runtime-only owning substitutions");
 
+  // Owning values over raw storage and raw pointers are execution-local
+  // constant values: their declarations are admitted, and evaluation
+  // rejects any that would persist into a published constant.
   for (const std::string body :
-       {"constexpr std::string invalid() { return std::string(\"asset\"); }",
-        "constexpr int invalid(std::string value) { return 7; }",
+       {"constexpr std::string text() { return std::string(\"asset\"); }",
+        "constexpr int length(std::string value) { return int(value.size()); }",
         "struct Owner { std::string value; constexpr Owner() : "
         "value(std::string(\"asset\")) {} };",
-        "constexpr T invalid<T>(mut T* value) { return 0; }",
+        "constexpr T first<T>(mut T* value) { unsafe { return *value; } }"}) {
+    const auto admitted = lang::Frontend().analyze(
+        "constexpr-library-admitted.gti",
+        "import std.string;\n" + body + "\nint main() { return 0; }\n",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    if (!admitted.semanticValid)
+      for (const auto &diagnostic : admitted.diagnostics)
+        std::cerr << diagnostic.message << '\n';
+    expect(admitted.semanticValid,
+           "execution-local owning and raw-pointer constexpr declarations "
+           "are admitted: " +
+               body);
+  }
+
+  const std::string derivedTypes =
+      "class Base { public: int x = 0; };\n"
+      "class Derived : public Base { public: int y = 0; };\n";
+  for (const std::string body :
+       {"constexpr Derived invalid(Derived value) { return value; }",
+        "constexpr int invalid(Derived value) { return 7; }",
+        "struct Owner { Derived value; constexpr Owner(Derived value) : "
+        "value(value) {} };",
+        "constexpr std::string value = std::string(\"a\");",
         "constexpr int value = std::lcm(2147483647, 2);",
         "constexpr int8_t invert(int8_t value) { return int8_t(-value); } "
         "constexpr int8_t value = invert(int8_t(-128));",
@@ -4436,7 +4558,7 @@ int main() {
         "constexpr-library-invalid.gti",
         "import std.string;\nimport std.numeric;\n"
         "import std.utility;\n" +
-            body + "\nint main() { return 0; }\n",
+            derivedTypes + body + "\nint main() { return 0; }\n",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
     expect(!invalid.semanticValid &&
                std::any_of(invalid.diagnostics.begin(),
@@ -4448,25 +4570,27 @@ int main() {
   }
 
   const std::string invalidSignature =
-      "import std.string;\nconstexpr std::string impossible() { "
-      "return std::string(\"asset\"); }\nint main() { return 0; }";
+      "class Base { public: int x = 0; };\nclass Derived : public Base { "
+      "public: int y = 0; };\nconstexpr Derived impossible(Derived value) { "
+      "return value; }\nint main() { return 0; }";
   const auto signature = lang::Frontend().analyze(
       "constexpr-invalid-signature.gti", invalidSignature,
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(!signature.canGenerateCode() &&
-             std::any_of(
-                 signature.diagnostics.begin(), signature.diagnostics.end(),
-                 [&](const auto &d) {
-                   return d.code == "GTI-S2057" &&
-                          d.message.find(
-                              "must return void or a supported value") !=
-                              std::string::npos &&
-                          d.primary.start ==
-                              invalidSignature.find("string impossible") &&
-                          d.primary.end == d.primary.start + 6;
-                 }),
-         "non-generic owning constexpr results retain their declaration-time "
-         "diagnostic and exact return-type span");
+  expect(
+      !signature.canGenerateCode() &&
+          std::any_of(signature.diagnostics.begin(),
+                      signature.diagnostics.end(),
+                      [&](const auto &d) {
+                        return d.code == "GTI-S2057" &&
+                               d.message.find(
+                                   "must return void or a supported value") !=
+                                   std::string::npos &&
+                               d.primary.start == invalidSignature.find(
+                                                      "Derived impossible") &&
+                               d.primary.end == d.primary.start + 7;
+                      }),
+      "non-generic unsupported constexpr results retain their declaration-time "
+      "diagnostic and exact return-type span");
 
   for (const std::string body :
        {"std::string value = std::string(\"a\"); "

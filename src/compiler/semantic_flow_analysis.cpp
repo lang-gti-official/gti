@@ -3466,6 +3466,11 @@ auto SemanticVisitor::Impl::classifyDefinedFailure(
         case IntrinsicKind::MutexGuardActive:
         case IntrinsicKind::MutexGuardRead:
         case IntrinsicKind::MutexGuardReadMut:
+        // Evaluator-owned storage operations: no backend executes them, and
+        // the evaluator reports its own failures.
+        case IntrinsicKind::ConstantEvaluation:
+        case IntrinsicKind::ConstantAllocate:
+        case IntrinsicKind::ConstantRelease:
           break;
         case IntrinsicKind::MutexLockFailure:
           anchor(token);
@@ -12555,6 +12560,7 @@ auto SemanticVisitor::Impl::validateRawCallAccesses(
     case IntrinsicKind::EnumUnderlyingValue:
     case IntrinsicKind::ObjectSize:
     case IntrinsicKind::ObjectAlignment:
+    case IntrinsicKind::ConstantEvaluation:
     // A terminal failure never returns, so it cannot access a raw pointee.
     case IntrinsicKind::Panic:
     case IntrinsicKind::FailEmptyOwner:

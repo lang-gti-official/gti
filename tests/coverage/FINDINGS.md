@@ -995,8 +995,10 @@ Here it did neither.
 ## S06 — A primary diagnostic with no location at all
 
 **Resolved in focused optimized checks.** Constexpr eligibility diagnostics
-use the unnamed formal's written type as their source anchor. The original
-still reports GTI-S2057, now with an in-source primary span.
+use the unnamed formal's written type as their source anchor. Raw pointers
+are now execution-local constexpr values, so the reproducer anchors on an
+inherited class parameter, which still reports GTI-S2057 with an in-source
+primary span.
 
 `reproducers/s06-constexpr-unnamed-param-no-span.gti`
 

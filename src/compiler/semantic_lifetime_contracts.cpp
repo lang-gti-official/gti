@@ -371,15 +371,32 @@ auto SemanticVisitor::Impl::validateSignatureRegions(
       if (type.kind == SemanticType::Reference ||
           typeTraits(type).containsBorrowedState)
         ++eligible;
-    if (eligible > 1)
-      report(syntax.name(),
-             std::string(elidedReference ? "The returned reference's"
-                                         : "The returned borrowing value's") +
-                 " elided region is ambiguous among " +
-                 std::to_string(eligible) +
-                 " borrowed parameters; name the suppliers with a lifetime "
-                 "parameter.",
-             "GTI-S2017");
+    if (eligible > 1) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2017", DiagnosticPhase::Semantics, syntax.name(),
+          std::string(elidedReference ? "The returned reference's"
+                                      : "The returned borrowing value's") +
+              " elided region is ambiguous among " + std::to_string(eligible) +
+              " borrowed parameters; name the suppliers with a lifetime "
+              "parameter.");
+      for (std::size_t index = 0; index < function.parameterTypes.size() &&
+                                  index < syntax.parameters().size();
+           ++index) {
+        const auto &type = function.parameterTypes[index];
+        if (type.kind != SemanticType::Reference &&
+            !typeTraits(type).containsBorrowedState)
+          continue;
+        const Token &name = syntax.parameters()[index].name;
+        diagnostic.related.push_back(
+            {tokenSpan(name), "Parameter '" + name.lexeme +
+                                  "' can supply a borrow to the result."});
+      }
+      diagnostic.hints.emplace_back(
+          "Declare a lifetime parameter and use it on the result and its "
+          "intended input supplier or suppliers. The signature must describe "
+          "which inputs the returned borrow depends on.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
   }
   std::vector<std::string> bound;
   for (const auto &parameter : syntax.lifetimeParameters())
@@ -1089,18 +1106,18 @@ auto SemanticVisitor::Impl::callerRegionOf(const FunctionDecl &caller,
 }
 
 auto SemanticVisitor::Impl::validateReturnedCallRegion(
-    const FunctionDecl &syntax, const ExprPtr &value) -> void {
+    const FunctionDecl &syntax, const ExprPtr &value) -> bool {
   if (!value)
-    return;
+    return true;
   const auto declared = resultRegion(syntax.returnType());
   if (!declared || declared->kind != TokenKind::IDENTIFIER)
-    return;
+    return true;
   const std::string target = declared->lexeme;
   bool functionBound = false;
   for (const auto &parameter : syntax.lifetimeParameters())
     functionBound |= parameter.name.lexeme == target;
   if (!functionBound)
-    return;
+    return true;
   const Expr *returned = value.get();
   while (const auto *group = exprAs<Grouping>(returned))
     returned = group->expression().get();
@@ -1136,14 +1153,33 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
           parameter.type.reference && parameter.type.referenceLifetime) {
         const std::string supplier =
             parameter.type.referenceLifetime->name.lexeme;
-        if (supplier != "_" && !outlivesTarget(supplier))
-          report(variable->name(),
-                 "The returned parameter's region '" + supplier +
-                     "' is not declared to outlive the result's region '" +
-                     target + "'.",
-                 "GTI-S2127");
+        if (supplier != "_" && !outlivesTarget(supplier)) {
+          Diagnostic diagnostic = makeDiagnostic(
+              "GTI-S2127", DiagnosticPhase::Semantics, variable->name(),
+              "The returned parameter's region '" + supplier +
+                  "' is not declared to outlive the result's region '" +
+                  target + "'.");
+          diagnostic.related.push_back(
+              {tokenSpan(parameter.type.referenceLifetime->name),
+               "Parameter '" + parameter.name.lexeme +
+                   "' supplies a reference valid for region '" + supplier +
+                   "'."});
+          diagnostic.related.push_back(
+              {tokenSpan(*declared),
+               "The result requires a reference valid for region '" + target +
+                   "'."});
+          diagnostic.hints.emplace_back(
+              "Return a value satisfying the result's lifetime, or change the "
+              "signature to express the intended relationship. A requires "
+              "outlives<" +
+              supplier + ", " + target +
+              "> constraint makes callers prove that the input lives long "
+              "enough; it does not extend the input's lifetime.");
+          diagnostics.emplace_back(std::move(diagnostic));
+          return false;
+        }
       }
-    return;
+    return true;
   }
   // A reference field read from a by-value carrier parameter lives in the
   // region the parameter's type supplies for that field: a written lifetime
@@ -1157,10 +1193,10 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
       const SemanticType type = typeOf(parameter);
       if (type.kind != SemanticType::Class || type.classId == 0 ||
           type.classId > classes.size())
-        return;
+        return true;
       const auto *declaration = classInfo(type.classId).declaration;
       if (declaration == nullptr)
-        return;
+        return true;
       const auto binders = declaration->lifetimeParameters();
       for (const auto &member : declaration->members()) {
         const auto *field = stmtAs<VariableDecl>(member.get());
@@ -1177,13 +1213,13 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
           index = 0; // the class's one (possibly implicit) region
         }
         if (!index)
-          return;
+          return true;
         const auto &written = parameter.type.lifetimeArguments;
         const auto supplier = *index < written.size()
                                   ? writtenRegion(written[*index])
                                   : std::nullopt;
         if (supplier && (*supplier == "_" || outlivesTarget(*supplier)))
-          return;
+          return true;
         report(get->name(),
                "Field '" + get->name().lexeme + "' of parameter '" +
                    parameter.name.lexeme + "' borrows " +
@@ -1192,20 +1228,20 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
                    ", which is not declared to outlive the result's region '" +
                    target + "'.",
                "GTI-S2127");
-        return;
+        return false;
       }
-      return;
+      return true;
     }
-    return;
+    return true;
   }
   const auto *call = exprAs<Call>(returned);
   const auto *resolved = call ? semanticModel.findCall(*call) : nullptr;
   if (resolved == nullptr || resolved->declaration == nullptr)
-    return;
+    return true;
   const FunctionDecl &callee = *resolved->declaration;
   const auto calleeRegion = resultRegion(callee.returnType());
   if (!calleeRegion || calleeRegion->kind != TokenKind::IDENTIFIER)
-    return;
+    return true;
   const auto outlives = [&](const std::string &longer) {
     if (longer == target || longer == "static")
       return true;
@@ -1230,7 +1266,7 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
        index < parameters.size() && (index < arguments.size() || forwardedPack);
        ++index) {
     if (parameters[index].pack)
-      return;
+      return true;
     std::vector<std::string> names;
     collectRegionNames(parameters[index].type, names);
     if (!contains(names, calleeRegion->lexeme))
@@ -1246,8 +1282,9 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
                ", which is not declared to outlive the result's region '" +
                target + "'.",
            "GTI-S2127");
-    return;
+    return false;
   }
+  return true;
 }
 
 auto SemanticVisitor::Impl::validateCallTypeOutlives(const Call &call,

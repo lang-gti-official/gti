@@ -37,7 +37,7 @@ public:
   using sentinel = detail::memory_slot_sentinel;
 
   // Source factory token prevents unchecked adoption by application code.
-  storage(gti_internal::empty_storage_adoption token,
+  constexpr storage(gti_internal::empty_storage_adoption token,
           std::detail::process_lease objects,
           std::detail::process_lease metadata,
           gti_internal::sparse_slots<T> data)
@@ -63,12 +63,12 @@ public:
   reverse_iterator rend_mut() mut { return reverse_iterator(this.data, size_t(0)); }
 
   /// Returns the number of owned `T` slots.
-  size_t capacity() {
+  constexpr size_t capacity() {
     return this.data.capacity();
   }
 
   /// Returns whether the checked slot currently contains a live `T`.
-  bool initialized(size_t index) {
+  constexpr bool initialized(size_t index) {
     gti_internal::index_bounds_check(index, this.capacity());
     return this.data.initialized(index);
   }
@@ -79,7 +79,7 @@ public:
   /// any failure in that construction follows ordinary MIR cleanup without
   /// publishing a new slot lifetime. Duplicate construction is a defined
   /// runtime failure.
-  void construct(size_t index, T value) mut requires std::movable<T> {
+  constexpr void construct(size_t index, T value) mut requires std::movable<T> {
     gti_internal::index_bounds_check(index, this.capacity());
     this.data.emplace(index, std::move(value));
   }
@@ -88,12 +88,12 @@ public:
   /// Failed construction cleans up its initialized members and leaves the
   /// slot uninitialized; it propagates the constructor's original failure.
   [[discardable]]
-  mut T& emplace<Args...>(size_t index, Args... args) mut {
+  constexpr mut T& emplace<Args...>(size_t index, Args... args) mut {
     return this.data.emplace(index, args...);
   }
 
   /// Destroys the live value in one checked slot.
-  void destroy(size_t index) mut {
+  constexpr void destroy(size_t index) mut {
     gti_internal::index_bounds_check(index, this.capacity());
     this.data.destroy(index);
   }
@@ -103,31 +103,31 @@ public:
   /// before the transfer begins; the source prefix becomes uninitialized.
   /// Outstanding element loans forbid this exclusive operation. Replacement
   /// of an already-live destination is deliberately not supported.
-  void relocate_to(mut storage<T>& destination, size_t count) mut
+  constexpr void relocate_to(mut storage<T>& destination, size_t count) mut
       requires std::movable<T> && std::relocatable<T> {
     this.data.relocate_to(destination.data, count);
   }
 
   /// Returns a checked read-only reference to a live slot.
-  T& get(size_t index) {
+  constexpr T& get(size_t index) {
     gti_internal::index_bounds_check(index, this.capacity());
     return this.data.read(index);
   }
 
   /// Returns a checked exclusive reference to a live slot.
-  mut T& get_mut(size_t index) mut {
+  constexpr mut T& get_mut(size_t index) mut {
     gti_internal::index_bounds_check(index, this.capacity());
     return this.data.read_mut(index);
   }
 
   /// Destroys every live slot once in reverse slot order.
-  void clear() mut { this.data.clear(); }
+  constexpr void clear() mut { this.data.clear(); }
 
   /// Destroys remaining live slots and releases the backing allocation.
   /// The receiver becomes empty before cleanup begins, including when an
   /// element destructor raises defined failure. Releasing an empty owner is
   /// harmless. Live element borrows prevent this exclusive operation.
-  void release() mut {
+  constexpr void release() mut {
     std::detail::process_lease previous_objects{gti_internal::empty_storage_adoption::trusted, this.objects.take()};
     std::detail::process_lease previous_metadata{gti_internal::empty_storage_adoption::trusted, this.metadata.take()};
     gti_internal::sparse_slots<T> previous = std::move(this.data);
@@ -141,7 +141,7 @@ public:
 /// release authority, so it never borrows this object and remains valid after
 /// the allocator value is destroyed.
 export class allocator {
-  expected<storage<T>, alloc_errc>
+  constexpr expected<storage<T>, alloc_errc>
   try_storage_impl<T>(size_t count, uint64_t minimum_alignment)
       requires gti_internal::sparse_element<T> {
     mut std::detail::process_lease objects{};
@@ -157,16 +157,16 @@ export class allocator {
   }
 
 public:
-  allocator() {}
+  constexpr allocator() {}
 
   /// Attempts to create naturally aligned typed storage.
-  expected<storage<T>, alloc_errc>
+  constexpr expected<storage<T>, alloc_errc>
   try_storage<T>(size_t count) requires gti_internal::sparse_element<T> {
     return this.try_storage_impl<T>(count, uint64_t(0));
   }
 
   /// Attempts to create typed storage with a minimum byte alignment.
-  expected<storage<T>, alloc_errc>
+  constexpr expected<storage<T>, alloc_errc>
   try_storage<T>(size_t count, alignment requested) requires gti_internal::sparse_element<T> {
     size_t bytes = requested.bytes();
     if (bytes == size_t(0) or

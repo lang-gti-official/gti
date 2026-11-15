@@ -23,11 +23,11 @@ import llvm_readiness_collect as collector
 
 SCHEMA = "gti.llvm.hosted-cleanup-source-contract/v1"
 TRACE_PATH = "std/detail_llvm_hosted_cleanup_trace.gti"
-CTOR = "    implicit string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {\n"
+CTOR = "    implicit constexpr string(string_view value) : data(detail::terminated_prefix_owner(value.size())) {\n"
 MOVE = "    string(string&& other) = default;\n"
 STRING_INCLUDE = "import std.iterator;\n"
 MEMORY_INCLUDE = "import std.meta;\n"
-RELEASE = """  void release() mut {
+RELEASE = """  constexpr void release() mut {
     std::detail::raw_allocation previous = this.take();
     gti_internal::process_resource process{};
     unsafe { process.release(previous); }
