@@ -938,8 +938,10 @@ and `constexpr` visibility across a demand, and mutually recursive demands.
 builds and editor snapshots/completion. Function lookups during body analysis
 record demand in a scoped sink. Deferred trusted functions are analyzed to a
 fixed point, in their original declaration contexts. Declaration registration,
-all application/package bodies, entry-file bodies, constant definitions and
-virtual/interface instance methods remain checked. Ordinary static interface
+all application/package bodies, entry-file bodies and virtual/interface
+instance methods remain checked. Trusted constexpr definitions are deferred
+like other trusted bodies and are demanded by the compile-time path that needs
+them (see "Compile-Time Body Demand" below). Ordinary static interface
 helpers follow the same demand rules as other static functions. Constructors and destructors are not
 deferred. The only cross-snapshot semantic reuse is the bounded reuse of
 concrete instance analyses described under "Instance Reuse Across Snapshots";
@@ -987,6 +989,39 @@ cannot change emitted identities or macro isolation. This deliberately costs
 an additional analysis only when an optional audit is requested.
 This bounded staging avoids unchecked code generation without
 claiming that all generic dependencies are known from declaration-time calls.
+
+#### Compile-Time Body Demand
+
+Constant evaluation, concept and expression requirements, conformance
+operations and procedural macros read body-derived facts of the functions they
+reach, which may be deferred trusted bodies (#398). One request-shared
+`BodyDemand` holds the canonical analyzer's pending set, the demands that could
+not be met where they arose (`unmet`) and a generation counter. The contract:
+
+- A compile-time path asks `requireBody`. A body that is not pending is ready.
+  The canonical analyzer in the body phase, outside instance analysis,
+  analyses a pending body in place (or reaches a body held back in an adopted
+  preamble); anywhere else the demand is recorded as unmet.
+- Workers never analyse a pending primary body. Speculative requirement
+  workers, staged-evaluation workers and their nested workers record what they
+  looked up through a request-wide lookup sink that sees every model delta
+  level; the staging instance provider records the primary bodies a closure
+  needs instead of lowering without them.
+- `withBodyDemands` wraps each speculative attempt (requirement queries,
+  predicates, staged evaluation). An attempt that added unmet demands is
+  discarded on the canonical analyzer, including its diagnostics and constexpr
+  steps; the bodies are completed and the attempt repeated. Elsewhere its
+  result is returned for an outer scope to resolve.
+- Caches stay sound under demand. Staged result and closure keys count
+  deferred constexpr definitions as complete so they do not churn; lowering
+  includes only completed definitions, and a closure that lowered a deferred
+  callee as a declaration is not reused once that callee completes. Results,
+  closures and class-assertion outcomes are recorded only from attempts that
+  added no demand.
+- A request that ends with an unmet demand, valid or not, is repeated by the
+  frontend with those bodies required, under the late-demand round bound.
+  The trusted-body parity tests assert that the example corpus needs no such
+  round.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.

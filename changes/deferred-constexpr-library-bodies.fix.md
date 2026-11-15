@@ -1,0 +1,1 @@
+Importing standard-library modules is faster: unused `constexpr` library functions are no longer analysed up front, and are analysed only when a compile-time evaluation reaches them (for example `import std` about 20% and `import std.json` about 27% less semantic time).

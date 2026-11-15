@@ -12,7 +12,6 @@
 #include "gti/support.h"
 #include "mir_borrow_audit_diagnostics.h"
 #include <cstdint>
-#include <cstdlib>
 #include <fstream>
 #include <sstream>
 
@@ -1529,6 +1528,27 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         }
         result.diagnostics.push_back(std::move(*diagnostic));
         result.semanticValid = false;
+      }
+    }
+    // Request-level net (#398): a compile-time path that needed a deferred
+    // body it could not have analysed leaves an unmet demand. Whatever the
+    // request's validity, repeat it with those bodies required, under the
+    // same bounded rounds as late demand, so a missed demand site costs time
+    // rather than correctness.
+    if (result.sourceValid && !options.completionOffset &&
+        trustedBodies == TrustedBodyAnalysis::Reachable) {
+      const std::size_t previousCount = requiredBodies.size();
+      for (const FunctionDecl *body : semantic.unmetBodyDemands())
+        requiredBodies.insert(body);
+      if (requiredBodies.size() != previousCount) {
+        if (options.workMetrics != nullptr)
+          ++options.workMetrics->semanticDemandRounds;
+        if (attempt >= 2) {
+          trustedBodies = TrustedBodyAnalysis::Complete;
+          if (options.workMetrics != nullptr)
+            ++options.workMetrics->semanticDemandFallbacks;
+        }
+        continue;
       }
     }
     if (!result.sourceValid || !result.semanticValid ||

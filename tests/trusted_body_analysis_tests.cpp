@@ -81,11 +81,22 @@ void checkFixtures(const std::filesystem::path &root) {
     expect(!analyzeSource(source).semanticValid,
            "transitive calls, function items and unused application bodies are "
            "checked");
-  expect(!analyzeSource(
-              "int main() { return 0; }", false, false,
-              "constexpr int broken_constant() { return missing_constant; }")
+  // An unused trusted constexpr definition is deferred like any other
+  // trusted body (#398); the complete check still reports it, and so does
+  // any compile-time evaluation that reaches it.
+  const std::string brokenConstant =
+      "export constexpr int broken_constant() { return missing_constant; }\n";
+  expect(analyzeSource("int main() { return 0; }", false, false, brokenConstant)
+             .semanticValid,
+         "an unused constexpr definition is deferred");
+  expect(!analyzeSource("int main() { return 0; }", true, false, brokenConstant)
               .semanticValid,
-         "constant definitions remain checked");
+         "the complete check still reports an unused constexpr definition");
+  expect(!analyzeSource("static_assert(broken_constant() == 1);\n"
+                        "int main() { return 0; }",
+                        false, false, brokenConstant)
+              .semanticValid,
+         "a constant-evaluated constexpr definition is still checked");
   expect(!analyzeSource("int main() { return 0; }", false, false,
                         "class Virtual { public: virtual int f() { return "
                         "missing_virtual; } };")

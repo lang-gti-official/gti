@@ -485,6 +485,8 @@ public:
   std::vector<const FunctionDecl *> lateDemandedBodies;
   // Whether this analyzer owns the request's canonical model (not a worker).
   bool canonicalAnalyzer = false;
+  // Demands still unmet when the request ends (see BodyDemand).
+  [[nodiscard]] std::vector<const FunctionDecl *> unmetBodyDemandList() const;
   // Deferred declarations by position in deferredBodies.
   std::unordered_map<const FunctionDecl *, std::size_t> deferredBodyIndex;
   // Program-effect owners the initializer-effect validation visited.
@@ -581,6 +583,13 @@ public:
     for (;;) {
       std::unordered_set<FunctionId> consulted;
       SemanticInstanceAnalysis result;
+      // Compile-time paths in nested workers record the deferred bodies they
+      // needed as unmet demands (#398); late demand completes them like any
+      // other consulted pending body and repeats this analysis.
+      const std::size_t unmetMark =
+          requestSession.bodyDemand ? requestSession.bodyDemand->unmet.size()
+                                    : 0;
+      const std::size_t diagnosticMark = diagnostics.size();
       {
         const FunctionDemandScope probe(semanticModel, &consulted);
         result = analyze();
@@ -601,6 +610,22 @@ public:
         if (function != nullptr && pendingDeferredBody(function->declaration))
           demanded.push_back(function->declaration);
       }
+      bool demandedByUnmet = false;
+      if (const auto &demand = requestSession.bodyDemand)
+        for (std::size_t index = unmetMark; index < demand->unmet.size();
+             ++index)
+          if (const FunctionDecl *body = demand->unmet[index];
+              pendingDeferredBody(body) &&
+              std::find(demanded.begin(), demanded.end(), body) ==
+                  demanded.end()) {
+            demanded.push_back(body);
+            demandedByUnmet = true;
+          }
+      // An attempt that needed an unavailable body is discarded with its
+      // diagnostics (a failure it reported is an artefact of the missing
+      // body), so late demand can complete the body and repeat it.
+      if (demandedByUnmet)
+        diagnostics.resize(diagnosticMark);
       if (demanded.empty() || !analyzeLateDemand(demanded)) {
         if (finalConsulted != nullptr)
           *finalConsulted = std::move(consulted);
@@ -7835,6 +7860,12 @@ private:
   bool withBodyDemands(const std::function<bool()> &attempt);
   // Record a pending body as unmet without analysing it here.
   void noteUnmetBody(const FunctionDecl *declaration);
+  // A body whose analysis is not yet available here: deferred and pending,
+  // or analysed by an adopted preamble but not yet reached.
+  [[nodiscard]] bool unresolvedBody(const FunctionDecl *declaration) const;
+  // Make an unresolved body available on the canonical analyzer: analyse a
+  // pending body, or reach a held-back preamble body.
+  void resolveBody(const FunctionDecl *declaration);
   bool bodyDemandAttemptActive = false;
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,

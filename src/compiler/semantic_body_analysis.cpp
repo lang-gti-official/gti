@@ -1,7 +1,5 @@
 #include "semantic_analyzer_impl.h"
 
-#include <cstdlib>
-
 #include <iterator>
 
 namespace lang {
@@ -4322,11 +4320,10 @@ auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
       !stmt.isStatic()) {
     return false;
   }
-  // The language requires a constexpr definition to be analysed before a
-  // constant-evaluated call to it; deferral would break that rule.
-  if (stmt.isConstexpr()) {
-    return false;
-  }
+  // A constexpr definition is deferred like any other trusted body: the
+  // compile-time path that needs it demands it (requireBody,
+  // withBodyDemands), and a demand that cannot be met in place repeats the
+  // request with the body required (#398).
   return true;
 }
 
@@ -4557,7 +4554,7 @@ auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
   // canonically and repeats the attempt.
   if (!canonicalAnalyzer && declaration != nullptr &&
       requestSession.bodyDemand && requestSession.bodyDemand->resolvers != 0 &&
-      requestSession.bodyDemand->pending.contains(declaration)) {
+      unresolvedBody(declaration)) {
     auto &unmet = requestSession.bodyDemand->unmet;
     if (std::find(unmet.begin(), unmet.end(), declaration) == unmet.end())
       unmet.push_back(declaration);
@@ -4946,27 +4943,66 @@ auto SemanticVisitor::Impl::drainDemandedDeferredBodies() -> void {
 auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
     -> BodyReadiness {
   const auto &demand = requestSession.bodyDemand;
-  if (declaration == nullptr || !demand ||
-      !demand->pending.contains(declaration))
+  if (declaration == nullptr || !demand || !unresolvedBody(declaration))
     return BodyReadiness::Ready;
   if (canonicalAnalyzer && bodyPhaseActive && !instanceAnalysisActive &&
-      !bodiesInProgress.contains(declaration))
-    if (const FunctionInfo *info = semanticModel.findFunction(*declaration)) {
-      ensureBodyAnalyzed(*info);
-      if (!demand->pending.contains(declaration))
-        return BodyReadiness::Ready;
-    }
+      !bodiesInProgress.contains(declaration)) {
+    resolveBody(declaration);
+    if (!unresolvedBody(declaration))
+      return BodyReadiness::Ready;
+  }
   if (std::find(demand->unmet.begin(), demand->unmet.end(), declaration) ==
       demand->unmet.end())
     demand->unmet.push_back(declaration);
   return BodyReadiness::Unavailable;
 }
 
+auto SemanticVisitor::Impl::unmetBodyDemandList() const
+    -> std::vector<const FunctionDecl *> {
+  std::vector<const FunctionDecl *> unmet;
+  if (const auto &demand = requestSession.bodyDemand)
+    for (const FunctionDecl *body : demand->unmet)
+      if (unresolvedBody(body))
+        unmet.push_back(body);
+  return unmet;
+}
+
+auto SemanticVisitor::Impl::unresolvedBody(
+    const FunctionDecl *declaration) const -> bool {
+  // Compile-time body demand covers what compile-time execution needs:
+  // constexpr functions and procedural macros. Other deferred bodies keep the
+  // existing late-demand and drain rules unchanged.
+  if (declaration == nullptr ||
+      !(declaration->isConstexpr() || declaration->isProceduralMacro()))
+    return false;
+  if (requestSession.bodyDemand &&
+      requestSession.bodyDemand->pending.contains(declaration))
+    return true;
+  return requestSession.preambleBodies.contains(declaration) &&
+         !reachedPreambleBodies.contains(declaration);
+}
+
+auto SemanticVisitor::Impl::resolveBody(const FunctionDecl *declaration)
+    -> void {
+  if (requestSession.bodyDemand &&
+      requestSession.bodyDemand->pending.contains(declaration)) {
+    if (const FunctionInfo *function = semanticModel.findFunction(*declaration))
+      ensureBodyAnalyzed(*function);
+    return;
+  }
+  if (requestSession.preambleBodies.contains(declaration) &&
+      !reachedPreambleBodies.contains(declaration)) {
+    const FunctionDecl *const roots[] = {declaration};
+    (void)reachPreambleBodies(roots, false);
+    if (requestSession.bodyDemand)
+      ++requestSession.bodyDemand->generation;
+  }
+}
+
 auto SemanticVisitor::Impl::noteUnmetBody(const FunctionDecl *declaration)
     -> void {
   const auto &demand = requestSession.bodyDemand;
-  if (declaration == nullptr || !demand ||
-      !demand->pending.contains(declaration))
+  if (declaration == nullptr || !demand || !unresolvedBody(declaration))
     return;
   if (std::find(demand->unmet.begin(), demand->unmet.end(), declaration) ==
       demand->unmet.end())
@@ -5011,7 +5047,7 @@ auto SemanticVisitor::Impl::withBodyDemands(
     for (const FunctionId id : lookups)
       if (const FunctionInfo *function = semanticModel.findFunction(id))
         if (const FunctionDecl *body = function->bodyDeclaration();
-            body != nullptr && demand->pending.contains(body) &&
+            body != nullptr && unresolvedBody(body) &&
             std::find(demand->unmet.begin(), demand->unmet.end(), body) ==
                 demand->unmet.end())
           demand->unmet.push_back(body);
@@ -5024,17 +5060,15 @@ auto SemanticVisitor::Impl::withBodyDemands(
     bool progress = false;
     for (std::size_t index = mark; index < demand->unmet.size(); ++index) {
       const FunctionDecl *body = demand->unmet[index];
-      if (const FunctionInfo *function = semanticModel.findFunction(*body))
-        ensureBodyAnalyzed(*function);
-      progress = progress || !demand->pending.contains(body);
+      resolveBody(body);
+      progress = progress || !unresolvedBody(body);
     }
-    demand->unmet.erase(std::remove_if(demand->unmet.begin() +
-                                           static_cast<std::ptrdiff_t>(mark),
-                                       demand->unmet.end(),
-                                       [&](const FunctionDecl *body) {
-                                         return !demand->pending.contains(body);
-                                       }),
-                        demand->unmet.end());
+    demand->unmet.erase(
+        std::remove_if(
+            demand->unmet.begin() + static_cast<std::ptrdiff_t>(mark),
+            demand->unmet.end(),
+            [&](const FunctionDecl *body) { return !unresolvedBody(body); }),
+        demand->unmet.end());
     if (!progress)
       return result;
   }
@@ -11402,6 +11436,11 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
       // A query must validate the classes it needs by value, even when it is
       // erased before HIR. Reuse ordinary assertion analysis in an isolated
       // context: no field initialization, lifetime event, or caller-flow edit.
+      // A cached outcome must not depend on a body that was unavailable
+      // while it was computed (#398 negative-cache rule).
+      const std::size_t unmetMark =
+          requestSession.bodyDemand ? requestSession.bodyDemand->unmet.size()
+                                    : 0;
       auto worker = unevaluatedExpressionWorker();
       worker->prepareInstanceAnalysis();
       worker->openReanalyses()->push_back(key);
@@ -11437,11 +11476,6 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
   const bool valid = validate();
   // A requirement may consume an ordinary invalid-class diagnostic. Resource
   // exhaustion is different: it cannot establish that a requirement is false.
-      // A cached outcome must not depend on a body that was unavailable
-      // while it was computed (#398 negative-cache rule).
-      const std::size_t unmetMark =
-          requestSession.bodyDemand ? requestSession.bodyDemand->unmet.size()
-                                    : 0;
   // Preserve it at the root even if an intervening speculative probe erased it.
   if (restore.root && work && work->failure &&
       std::none_of(diagnostics.begin(), diagnostics.end(),
