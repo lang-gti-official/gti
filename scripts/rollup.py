@@ -42,6 +42,7 @@ QUEUE_BRANCH = re.compile(r"gh-readonly-queue/main/pr-([0-9]+)-[0-9a-f]{40}\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REQUEUE_MARKER = "<!-- gti-rollup-requeue -->"
 PARTIAL_MARKER = "<!-- gti-rollup-partial -->"
+GATE_MARKER = "<!-- gti-rollup-red-gate "
 SECRETS = ("GTI_ROLLUP_APP_ID", "GTI_ROLLUP_APP_PRIVATE_KEY")
 SETUP = '.github/README.md, section "Rollup bot"'
 MISSING_TOKEN = ("GH_TOKEN is not set. The rollup bot writes only with a GitHub App installation token minted "
@@ -453,6 +454,8 @@ class Rollup:
                 run = self.gate(pr["head"]["sha"])
                 if not green(run):
                     reason = "CI gate has not passed on the head"
+                    if run and run.get("status") == "completed" and run.get("conclusion") == "failure":
+                        self.note_red_gate(pr, run)
             if reason:
                 if labels(pr) & ELIGIBLE:
                     report["skipped"].append({"pr": pr["number"], "reason": reason})
@@ -566,6 +569,24 @@ class Rollup:
             if is_rollup(pr) and merged and datetime.fromisoformat(merged.replace("Z", "+00:00")) >= horizon:
                 self.reconcile_merged(pr, main, report)
         return report
+
+    def note_red_gate(self, pr, run):
+        """Tell a labelled candidate, once per head, that its red gate keeps it out.
+
+        Compose otherwise records the skip only in its own report, so a PR
+        whose author believes it was "submitted for rollup" waits forever
+        without a visible reason (2026-11-15: #383 sat a day this way). The
+        bot never re-runs or fixes the PR; a new green head is picked up as
+        usual.
+        """
+        number, head = pr["number"], pr["head"]["sha"]
+        marker = f"{GATE_MARKER}{head} -->"
+        if self.has_comment(number, marker):
+            return
+        self.comment(number, f"{marker}\nThe pull-request `CI gate` failed on head `{head[:12]}` "
+                             f"({run.get('html_url') or 'see the Checks tab'}), so the rollup bot skips this PR. "
+                             "It stays labelled for rollup but will not be composed, retried or reported again "
+                             "until a new head passes the gate. Fix the failure and push.")
 
     def flag_conflict(self, pr, main, report):
         """Label an open PR that no longer merges with main, whichever path it takes.
