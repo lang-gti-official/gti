@@ -482,9 +482,6 @@ public:
   // analysis must be repeated with lateDemandedBodies required.
   bool lateDemandFailed = false;
   std::vector<const FunctionDecl *> lateDemandedBodies;
-  // See RequestSessionState::unsatisfiedConstexprDemands.
-  [[nodiscard]] std::vector<const FunctionDecl *>
-  unsatisfiedConstexprDemandList() const;
   // Deferred declarations by position in deferredBodies.
   std::unordered_map<const FunctionDecl *, std::size_t> deferredBodyIndex;
   // Program-effect owners the initializer-effect validation visited.
@@ -2051,17 +2048,6 @@ private:
       const GenericSubstitution &substitution,
       const std::optional<ConstantValue> &receiver, const Token &callSite,
       ConstexprInterpreter &context);
-  // One staged attempt. When it stops at a runtime-only call to a constexpr
-  // callee whose trusted body is still deferred, it names that body in
-  // stagedPendingCallee so executeStagedConstexpr can analyse it and retry.
-  [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexprOnce(
-      const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
-          &target,
-      const std::vector<ConstantValue> &arguments,
-      const GenericSubstitution &substitution,
-      const std::optional<ConstantValue> &receiver, const Token &callSite,
-      ConstexprInterpreter &context);
-  const FunctionDecl *stagedPendingCallee = nullptr;
   // The reuse key of a staged evaluation, or none when it cannot be reused.
   [[nodiscard]] std::optional<StagedConstantResults::Key> stagedConstantKey(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
@@ -7256,12 +7242,6 @@ private:
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
     // Only nested staging workers share the request's execution budget.
     std::shared_ptr<ConstexprWorkBudget> constexprWork;
-    // Deferred constexpr definitions a constant evaluation needed where they
-    // could not be analysed on the spot (a namespace-scope constant before the
-    // body phase, a concrete instance, an isolated worker). Shared with every
-    // worker; a failed request repeats with these bodies required.
-    std::shared_ptr<std::vector<const FunctionDecl *>>
-        unsatisfiedConstexprDemands;
     // Every analyzer of the request shares its proved staged constants.
     std::shared_ptr<StagedConstantResults> stagedConstants;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
@@ -7306,8 +7286,6 @@ private:
     };
     std::vector<DeferredBody> deferredBodies;
     std::unordered_set<FunctionId> demandedFunctions;
-    // demandedFunctions.size() when the constexpr demand closure last ran.
-    std::size_t constexprDemandClosureSize = 0;
     // Declarations visitFunctionDecl has processed, bodies analyzeFunctionBody
     // has run, and bodies currently being analysed; see ensureBodyAnalyzed.
     std::unordered_set<const FunctionDecl *> visitedFunctionDeclarations;
@@ -7601,8 +7579,6 @@ private:
       requestSession.deferredBodies;
   std::unordered_set<FunctionId> &demandedFunctions =
       requestSession.demandedFunctions;
-  std::size_t &constexprDemandClosureSize =
-      requestSession.constexprDemandClosureSize;
   // Lookup is unchanged; a scoped sink records a conservative demand set.
   // Declaration bookkeeping must not itself demand the function's body.
   struct FunctionDemandScope {
@@ -7786,13 +7762,6 @@ private:
   // Analyses `function`'s body now if it has not been analysed yet, so a
   // body-derived fact a caller consumes never depends on source order.
   void ensureBodyAnalyzed(const FunctionInfo &function);
-  // Analyse a pending deferred constexpr definition, and the pending constexpr
-  // definitions its analysis demands, before constant evaluation consults
-  // the completed inventory. No-op when the body is complete or not deferred.
-  void demandConstexprDefinition(const FunctionDecl *declaration);
-  // demandConstexprDefinition, then record the body for a required-body
-  // repeat if it is still pending here. Returns whether it is now complete.
-  bool requireConstexprDefinition(const FunctionDecl *declaration);
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);

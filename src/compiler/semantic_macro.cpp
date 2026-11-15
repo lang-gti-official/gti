@@ -101,7 +101,6 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
          "The procedural macro is declared here."});
     currentType = SemanticType::Unknown;
   };
-  (void)requireConstexprDefinition(&definition);
   if (!function || !constexprDefinitionsAnalyzed.contains(&definition)) {
     reject("The procedural definition must complete semantic analysis before "
            "expansion.");

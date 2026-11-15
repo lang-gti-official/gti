@@ -175,10 +175,6 @@ public:
   // must discard this analysis and require the returned bodies instead.
   [[nodiscard]] bool lateDemandFailed() const;
   [[nodiscard]] std::vector<const FunctionDecl *> lateDemandedBodies() const;
-  // Deferred constexpr definitions a constant evaluation needed but could not
-  // analyse in place; a failed Reachable request repeats with them required.
-  [[nodiscard]] std::vector<const FunctionDecl *>
-  unsatisfiedConstexprDemands() const;
 
 private:
   class Impl;

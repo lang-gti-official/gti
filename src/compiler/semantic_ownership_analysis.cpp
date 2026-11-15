@@ -5187,8 +5187,6 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->defaultArgumentDependencies = defaultArgumentDependencies;
   worker->nextLambdaId = nextLambdaId;
   worker->requestSession.constexprWork = requestSession.constexprWork;
-  worker->requestSession.unsatisfiedConstexprDemands =
-      requestSession.unsatisfiedConstexprDemands;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;

@@ -81,40 +81,11 @@ void checkFixtures(const std::filesystem::path &root) {
     expect(!analyzeSource(source).semanticValid,
            "transitive calls, function items and unused application bodies are "
            "checked");
-  // Unused trusted constexpr bodies are deferred like any other (#398);
-  // constant evaluation demands the ones it executes, transitively, and an
-  // error in a demanded body is still reported.
-  const std::string brokenConstant =
-      "export constexpr int broken_constant() { return missing_constant; }\n";
-  expect(analyzeSource("int main() { return 0; }", false, false, brokenConstant)
-             .semanticValid,
-         "an unused constexpr definition is deferred");
-  expect(!analyzeSource("int main() { return 0; }", true, false, brokenConstant)
+  expect(!analyzeSource(
+              "int main() { return 0; }", false, false,
+              "constexpr int broken_constant() { return missing_constant; }")
               .semanticValid,
-         "complete checks still reject an unused constexpr definition");
-  expect(!analyzeSource("static_assert(broken_constant() == 1);\n"
-                        "int main() { return 0; }",
-                        false, false, brokenConstant)
-              .semanticValid,
-         "a constant-evaluated constexpr definition is still checked");
-  const std::string constantChain =
-      "constexpr int chain_leaf(int n) { return n * 2; }\n"
-      "constexpr int chain_middle(int n) { return chain_leaf(n) + 1; }\n"
-      "export constexpr int chain_root(int n) { return chain_middle(n); }\n"
-      "export class Scaled<T> { public: Scaled() = default; constexpr int "
-      "twice(int n) { return chain_leaf(n); } };\n";
-  const auto chained = analyzeSource(
-      "static_assert(chain_root(20) == 41);\n"
-      "int instance<T>() { static_assert(Scaled<T>().twice(3) == 6); "
-      "if constexpr (chain_root(1) == 3) { return 0; } return 1; }\n"
-      "int main() { return instance<int32_t>(); }",
-      false, false, constantChain);
-  if (!chained.semanticValid)
-    for (const auto &diagnostic : chained.diagnostics)
-      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
-  expect(chained.semanticValid,
-         "constant evaluation demands deferred constexpr callees "
-         "transitively, including from a concrete generic instance");
+         "constant definitions remain checked");
   expect(!analyzeSource("int main() { return 0; }", false, false,
                         "class Virtual { public: virtual int f() { return "
                         "missing_virtual; } };")
