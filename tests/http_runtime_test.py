@@ -183,13 +183,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_bytes(201, marker.encode() + b":" + body)
 
 
-def run(command: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], timeout: int = 120,
+        expected_code: int = 0) -> subprocess.CompletedProcess[str]:
     root = pathlib.Path(__file__).resolve().parent.parent
     environment = dict(os.environ, GTI_STDLIB_PATH=str(root / "stdlib"),
                        NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
                             env=environment)
-    if result.returncode:
+    if result.returncode != expected_code:
         raise AssertionError(
             f"{command!r}: exit {result.returncode}\n{result.stdout}{result.stderr}"
         )
@@ -652,6 +653,12 @@ int main() {
   mut auto after_cancel = std::move(after_cancel_result).value();
   auto after_cancel_size = drain(after_cancel);
   if (!after_cancel_size || after_cancel_size.value() != 0) { return 67; }
+  auto encoded_url = endpoint("encoded");
+  auto decoded_result = client.get(encoded_url.view());
+  if (!decoded_result) { return 68; }
+  auto decoded = std::move(decoded_result).value();
+  auto decoded_body = decoded.body();
+  if (decoded_body != "encoded-body") { return 69; }
   return 0;
 }
 '''
@@ -682,6 +689,18 @@ def main() -> None:
             )
             streaming = output / "http_streaming.gti"
             streaming.write_text(streaming_source_text(http_url, https_url, certificate), encoding="utf-8")
+            rejections = {
+                "copy": ("import std.http;\nvoid duplicate(std::http::streaming_response& value) { auto duplicate = value; }\nint main() { return 0; }\n", "GTI-S2003"),
+                "moved": ("import std.http;\nvoid invalid(std::http::streaming_response value) { auto moved = std::move(value); [[discard]] value.status(); }\nint main() { return 0; }\n", "GTI-S2018"),
+                "forge": ("import std.http;\nint main() { auto forged = gti_internal::http_stream_handle(int64_t(1)); return 0; }\n", "GTI-S2058"),
+            }
+            for name, (text, diagnostic) in rejections.items():
+                rejected = output / f"streaming-{name}.gti"
+                rejected.write_text(text, encoding="utf-8")
+                result = run([str(compiler), str(rejected), "--emit-mir", "-o",
+                              str(output / f"streaming-{name}.mir")], expected_code=65)
+                if diagnostic not in result.stderr:
+                    raise AssertionError(f"missing {diagnostic}: {result.stderr}")
             for optimization in optimizations:
                 binary = output / f"http-{optimization}"
                 run(

@@ -311,7 +311,10 @@ different trust policy can keep `none` and perform explicit requests.
 
 A 303 changes the next method to GET unless it was HEAD; 301 and 302 change POST
 to GET. These conversions drop the request body. 307 and 308 preserve method
-and body. A rejected destination reports `redirect_rejected`; exceeding the
+and body, including across origins when the caller opts into `secure`. Choosing
+that cross-origin policy therefore authorizes body replay: stripping headers
+does not remove credentials or private data embedded in the body. Use
+`same_origin` or explicit requests when such replay must be prohibited. A rejected destination reports `redirect_rejected`; exceeding the
 hop limit reports `too_many_redirects`. The total timeout continues across all
 hops. `streaming_response::effective_url()` reports the final URL as an owned
 copy, so it remains valid independently of the response.
