@@ -43,7 +43,7 @@ def main():
             session.send({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
                 "textDocument": {"uri": uri, "languageId": "gti", "version": 1, "text": source}}})
             diagnostics = published(1)
-            error = next(item for item in diagnostics if item["code"] == "GTI-S2012")
+            error = next(item for item in diagnostics if item["code"] == "GTI-S2003")
             assert error["range"]["start"]["line"] == 1, error
             assert error["range"]["start"]["character"] >= lsp_position(source, source.index("std::assert"))["character"], error
             assert not change(2, valid)

@@ -658,7 +658,7 @@ int main() { return (helper!(true), 0); }
 import std.assert;
 int main() { std::debug_assert!(1); return 0; }
 )",
-           "GTI-S2012", "exactly matches");
+           "GTI-S2003", "parameter requires 'bool'");
   negative(R"(
 #macro helper(bool value) {}
 int main() { auto callback = helper; return 0; }
