@@ -1017,7 +1017,7 @@ extern "C" std::uint64_t gti_rt_http_stream_bytes_read_v1(std::int64_t handle) {
 }
 extern "C" gti_http_error_v1 gti_rt_http_stream_error_v1(std::int64_t handle) {
   auto *stream = decodeHandle<HttpStream>(handle);
-  return stream ? stream->error : GTI_HTTP_REQUEST_FAILED_V1;
+  return stream ? stream->error : gti_http_error_v1(GTI_HTTP_REQUEST_FAILED_V1);
 }
 extern "C" std::int32_t gti_rt_http_stream_native_code_v1(std::int64_t handle) {
   auto *stream = decodeHandle<HttpStream>(handle);
