@@ -10492,10 +10492,21 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
   for (auto &scope : scopes)
     if (auto *symbol = find(scope))
       return symbol;
+  // The namespace indexes below are searched only by membership. A miss for
+  // this root is reused while every index keeps its recorded generation.
+  auto *currentBindings = currentNamespaceSymbolsMutable();
+  auto &generations = rawRootGenerationScratch;
+  namespaceIndexGenerations(generations, currentBindings);
+  if (generations != rawRootMissGenerations) {
+    rawRootMisses.clear();
+    rawRootMissGenerations = generations;
+  } else if (rawRootMisses.contains(place.root)) {
+    return nullptr;
+  }
   // A source-unit view owns the current flow facts when source loading is
   // active. Its declaration-index copy may still contain the initializer.
-  if (auto *bindings = currentNamespaceSymbolsMutable())
-    if (auto *symbol = find(*bindings))
+  if (currentBindings)
+    if (auto *symbol = find(*currentBindings))
       return symbol;
   if (auto *symbol = find(valueFlow.namespaceSymbols))
     return symbol;
@@ -10505,6 +10516,7 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
   for (auto &[_, bindings] : valueFlow.visibleNamespaceSymbols)
     if (auto *symbol = find(bindings))
       return symbol;
+  rawRootMisses.insert(place.root);
   return nullptr;
 }
 
@@ -10638,6 +10650,20 @@ auto SemanticVisitor::Impl::collectRawResultFields(
   }
 }
 
+namespace {
+// One family is the demand graph below a top-level raw-result query.
+constexpr std::size_t rawFamilyEntryBudget = 2048;
+constexpr std::size_t rawFamilyDepthBudget = 32;
+
+// The callable a raw-result query summarizes, ignoring its arguments.
+std::uint64_t rawCallableKey(std::uint64_t function, std::uint64_t constructor,
+                             std::uint64_t defaultOwner) {
+  return function      ? function << 2
+         : constructor ? constructor << 2 | 1
+                       : defaultOwner << 2 | 2;
+}
+} // namespace
+
 auto SemanticVisitor::Impl::rawResultQuery(const Call &call,
                                            const ResolvedCallInfo &resolved)
     -> std::shared_ptr<RawResultQuery> {
@@ -10697,32 +10723,32 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
                                ? owner.valueArguments
                                : std::vector<CompileTimeValue>{};
   const bool topLevel = state->depth == 0;
-  const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
-  for (const auto &entry : candidates)
-    if ((!topLevel || entry->topLevel) &&
-        entry->function == resolved.function &&
-        entry->ownerTypes == ownerTypes && entry->ownerValues == ownerValues &&
-        entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments)
-      return entry;
-  if (topLevel)
-    state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
   entry->function = resolved.function;
-  entry->linearWrites =
-      rawWritesAreLinear(function->bodyDeclaration()->body()->statements());
   entry->ownerTypes = ownerTypes;
   entry->ownerValues = ownerValues;
   entry->types = resolved.typeArguments;
   entry->values = resolved.valueArguments;
-  entry->identity = state->nextIdentity++;
+  if (auto reused = reuseRawResult(*entry, topLevel))
+    return reused;
+  if (topLevel)
+    state->familyEntries.clear();
+  entry->linearWrites =
+      rawWritesAreLinear(function->bodyDeclaration()->body()->statements());
   entry->topLevel = topLevel;
-  if (state->familyEntries.size() >= 2048 || state->depth >= 32) {
+  if (state->familyEntries.size() >= rawFamilyEntryBudget ||
+      state->depth >= rawFamilyDepthBudget) {
+    entry->identity = state->nextIdentity++;
     entry->complete = true;
+    entry->truncated = true;
+    noteRawDemand(*entry, false);
+    noteRawResultDependency(entry);
     return entry;
   }
+  entry->identity = state->nextIdentity++;
   state->familyEntries.push_back(entry);
   runRawResultQuery(entry);
+  noteRawResultDependency(entry);
   // The current projected-input contract has one slot per ordinary formal.
   // An expanded pack needs a per-element substitution before it can claim a
   // complete raw-output summary. Keep any proved origins, but not an empty
@@ -10750,20 +10776,6 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
   auto state = requestSession.rawResultQueries;
   const bool topLevel = state->depth == 0;
-  const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
-  for (const auto &entry : candidates)
-    if ((!topLevel || entry->topLevel) &&
-        entry->constructor == resolved.constructor && entry->function == 0 &&
-        entry->defaultOwner == (resolved.generatedDefault
-                                    ? resolved.constructedType.classId
-                                    : 0) &&
-        entry->ownerTypes == resolved.constructedType.arguments &&
-        entry->ownerValues == resolved.constructedType.valueArguments &&
-        entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments)
-      return entry;
-  if (topLevel)
-    state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
   entry->constructor = resolved.constructor;
   // Constructor writes remain weak: a body-only linearity test cannot prove
@@ -10774,14 +10786,24 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
   entry->ownerValues = resolved.constructedType.valueArguments;
   entry->types = resolved.typeArguments;
   entry->values = resolved.valueArguments;
-  entry->identity = state->nextIdentity++;
+  if (auto reused = reuseRawResult(*entry, topLevel))
+    return reused;
+  if (topLevel)
+    state->familyEntries.clear();
   entry->topLevel = topLevel;
-  if (state->familyEntries.size() >= 2048 || state->depth >= 32) {
+  if (state->familyEntries.size() >= rawFamilyEntryBudget ||
+      state->depth >= rawFamilyDepthBudget) {
+    entry->identity = state->nextIdentity++;
     entry->complete = true;
+    entry->truncated = true;
+    noteRawDemand(*entry, false);
+    noteRawResultDependency(entry);
     return entry;
   }
+  entry->identity = state->nextIdentity++;
   state->familyEntries.push_back(entry);
   runRawResultQuery(entry);
+  noteRawResultDependency(entry);
   if (resolved.declaration &&
       std::any_of(
           resolved.declaration->parameters().begin(),
@@ -10794,6 +10816,16 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
 auto SemanticVisitor::Impl::runRawResultQuery(
     const std::shared_ptr<RawResultQuery> &entry) -> void {
   const auto state = requestSession.rawResultQueries;
+  const auto level = state->depth;
+  entry->chargedAt = state->charged++;
+  const auto outerDeepest = std::exchange(state->deepest, level);
+  const auto outerRunning =
+      std::exchange(state->runningSince, entry->chargedAt);
+  entry->rawGlobals = state->hasRawGlobals.value_or(false);
+  entry->storageInputs = rawStorageInputKeys();
+  entry->declarationView = rawDeclarationView();
+  const auto availabilityBefore = constexprAvailabilityObservations();
+  state->reaching.emplace_back();
   ++state->depth;
   if (workMetrics)
     ++workMetrics->semanticRawAuditQueries;
@@ -10813,10 +10845,18 @@ auto SemanticVisitor::Impl::runRawResultQuery(
     worker->catalog = std::move(state->idleCatalogs.back());
     state->idleCatalogs.pop_back();
   }
+  if (!state->idleModels.empty()) {
+    worker->semanticModel = std::move(state->idleModels.back());
+    state->idleModels.pop_back();
+  }
   worker->semanticModel = semanticModel;
   worker->macroLookup = macroLookup;
   worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
+  if (!state->idleValueFlows.empty()) {
+    worker->valueFlow = std::move(state->idleValueFlows.back());
+    state->idleValueFlows.pop_back();
+  }
   worker->valueFlow = valueFlow;
   worker->valueFlow.rebindCallables(worker->catalog);
   // Cached summaries must describe global pointer inputs, not freeze the
@@ -10864,6 +10904,12 @@ auto SemanticVisitor::Impl::runRawResultQuery(
                                             entry->ownerValues, entry->types,
                                             entry->values);
   state->idleCatalogs.push_back(std::move(worker->catalog));
+  // Keep a few released copies for the next sibling query; deeper nesting
+  // would otherwise retain one whole-program copy per level.
+  if (state->idleValueFlows.size() < 4)
+    state->idleValueFlows.push_back(std::move(worker->valueFlow));
+  if (state->idleModels.size() < 4)
+    state->idleModels.push_back(std::move(worker->semanticModel));
   entry->valid = analysis.valid();
   if (!entry->valid)
     for (const auto &diagnostic : analysis.diagnostics)
@@ -10873,6 +10919,29 @@ auto SemanticVisitor::Impl::runRawResultQuery(
       }
   entry->complete = true;
   --state->depth;
+  entry->cost = state->charged - entry->chargedAt;
+  entry->height = state->deepest - level + 1;
+  state->deepest = std::max(outerDeepest, state->deepest);
+  state->runningSince = outerRunning;
+  if (!state->reaching.empty()) {
+    auto reached = std::move(state->reaching.back());
+    state->reaching.pop_back();
+    reached.push_back(rawCallableKey(entry->function, entry->constructor,
+                                     entry->defaultOwner));
+    std::sort(reached.begin(), reached.end());
+    reached.erase(std::unique(reached.begin(), reached.end()), reached.end());
+    entry->reached = std::move(reached);
+  }
+  noteRawDemand(*entry, true);
+  // The request-wide raw-global answer only turns true. A result that saw it
+  // change ran partly under each answer, which no later demand reproduces.
+  if (state->hasRawGlobals.value_or(false) != entry->rawGlobals)
+    entry->familyDependent = true;
+  // Constant evaluation and macro expansion read the request's growing set of
+  // analysed constexpr definitions (filtered by the demanding position). A
+  // result that read it may differ when demanded later or elsewhere.
+  if (constexprAvailabilityObservations() != availabilityBefore)
+    entry->familyDependent = true;
   if (entry->failure) {
     // Normalized unresolved origins retain their query identity after the
     // private family is discarded. Intern only the diagnostic used by note
@@ -10919,8 +10988,221 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   }
   if (entry->topLevel && state->cachedRoots.size() < 2048)
     state->cachedRoots.push_back(entry);
+  else if (!entry->topLevel && !entry->familyDependent &&
+           state->independentEntries.size() < 8192)
+    state->independentEntries.push_back(entry);
   if (entry->topLevel)
     state->familyEntries.clear();
+}
+
+auto SemanticVisitor::Impl::constexprAvailabilityObservations()
+    -> std::size_t & {
+  // Query workers, their constant-evaluation workers and speculative probes
+  // are separate analyzers on the same thread; a per-thread count sees all.
+  thread_local std::size_t observations = 0;
+  return observations;
+}
+
+auto SemanticVisitor::Impl::rawStorageInputKeys()
+    -> std::vector<RawStorageInputKey> {
+  std::vector<RawStorageInputKey> keys;
+  for (const auto &storage : saveRawProgramStorage())
+    keys.push_back({.space = static_cast<int>(storage.space),
+                    .unit = storage.unit,
+                    .name = storage.name,
+                    .staticField = storage.staticField});
+  std::sort(keys.begin(), keys.end());
+  return keys;
+}
+
+auto SemanticVisitor::Impl::rawDeclarationView() const
+    -> std::vector<std::size_t> {
+  // Body analysis publishes program-level bindings and completes their types
+  // as it proceeds in declaration order, and a query worker analyses with a
+  // copy of the demanding analyzer's bindings. Membership only grows and a
+  // type only goes from unknown to known, so equal counts mean the same view.
+  std::vector<std::size_t> view;
+  std::size_t unknown = 0;
+  const auto add = [&](const DeclarationIndex<Symbol> &bindings) {
+    view.push_back(bindings.size());
+    for (const auto &[_, symbol] : bindings)
+      unknown += symbol.type.kind == SemanticType::Unknown ? 1 : 0;
+  };
+  const auto addUnits = [&](const auto &units) {
+    std::vector<SourceUnitId> ids;
+    for (const auto &[unit, _] : units)
+      ids.push_back(unit);
+    std::sort(ids.begin(), ids.end());
+    view.push_back(ids.size());
+    for (const auto unit : ids) {
+      view.push_back(unit);
+      add(units.at(unit));
+    }
+  };
+  add(valueFlow.namespaceSymbols);
+  addUnits(valueFlow.internalNamespaceSymbols);
+  addUnits(valueFlow.visibleNamespaceSymbols);
+  view.push_back(valueFlow.staticFieldSymbols.size());
+  for (const auto &[_, symbol] : valueFlow.staticFieldSymbols)
+    unknown += symbol.type.kind == SemanticType::Unknown ? 1 : 0;
+  view.push_back(unknown);
+  return view;
+}
+
+auto SemanticVisitor::Impl::noteRawDemand(const RawResultQuery &demand,
+                                          bool withReach) -> void {
+  // A demand answered from any cache still belongs to the running query's
+  // reach: a fresh analysis of that query would make the same demand.
+  const auto state = requestSession.rawResultQueries;
+  if (!state || state->reaching.empty())
+    return;
+  auto &reaching = state->reaching.back();
+  reaching.push_back(
+      rawCallableKey(demand.function, demand.constructor, demand.defaultOwner));
+  if (withReach)
+    reaching.insert(reaching.end(), demand.reached.begin(),
+                    demand.reached.end());
+}
+
+namespace {
+bool sameRawDemand(const auto &left, const auto &right) {
+  return left.function == right.function &&
+         left.constructor == right.constructor &&
+         left.defaultOwner == right.defaultOwner &&
+         left.ownerTypes == right.ownerTypes &&
+         left.ownerValues == right.ownerValues && left.types == right.types &&
+         left.values == right.values;
+}
+} // namespace
+
+auto SemanticVisitor::Impl::reuseRawResult(const RawResultQuery &demand,
+                                           bool topLevel)
+    -> std::shared_ptr<RawResultQuery> {
+  const auto state = requestSession.rawResultQueries;
+  const auto sameDemand = [&](const RawResultQuery &entry) {
+    return sameRawDemand(entry, demand);
+  };
+  // An independent result describes the program declarations, raw program
+  // storage and raw-global answer it was analysed under; a fresh analysis
+  // here would see the current ones. Top-level roots keep their own,
+  // established reuse rule.
+  const bool rawGlobals = state->hasRawGlobals.value_or(false);
+  std::optional<std::vector<std::size_t>> view;
+  std::optional<std::vector<RawStorageInputKey>> storage;
+  const auto sameInputs = [&](const RawResultQuery &entry) {
+    if (entry.rawGlobals != rawGlobals)
+      return false;
+    if (!view)
+      view = rawDeclarationView();
+    if (entry.declarationView != *view)
+      return false;
+    if (!storage)
+      storage = rawStorageInputKeys();
+    return entry.storageInputs == *storage;
+  };
+  const auto use = [&](const std::shared_ptr<RawResultQuery> &entry) {
+    // Charge the running queries for what a fresh analysis of this demand
+    // would spend and reach, unless the innermost one's analysis already
+    // added or charged this entry.
+    const bool charge = state->depth != 0 && entry->complete &&
+                        std::max(entry->chargedAt, [&] {
+                          const auto found = state->reusedAt.find(entry.get());
+                          return found == state->reusedAt.end() ? std::size_t{0}
+                                                                : found->second;
+                        }()) < state->runningSince;
+    noteRawDemand(*entry, charge);
+    noteRawResultDependency(entry);
+    if (charge) {
+      state->reusedAt[entry.get()] = state->charged;
+      state->charged += entry->cost;
+      state->deepest =
+          std::max(state->deepest, state->depth + entry->height - 1);
+    }
+    return entry;
+  };
+  // An independent result is what this demand's own analysis produces when
+  // it finishes inside the family budgets. Reuse it only where a fresh
+  // analysis here would also finish inside them; elsewhere a fresh analysis
+  // is cut short and must be repeated to observe the same truncation.
+  const std::size_t familySize = topLevel ? 0 : state->familyEntries.size();
+  // Nor where a fresh analysis would meet a family entry that is still
+  // running or itself family-dependent: it would share that entry's state.
+  const auto meetsFamilyState = [&](const RawResultQuery &entry) {
+    if (topLevel)
+      return false;
+    for (const auto &member : state->familyEntries)
+      if ((!member->complete || member->familyDependent) &&
+          std::binary_search(entry.reached.begin(), entry.reached.end(),
+                             rawCallableKey(member->function,
+                                            member->constructor,
+                                            member->defaultOwner)))
+        return true;
+    return false;
+  };
+  // Prefer what this request's established caches already answer, exactly
+  // as without independent reuse: a root reuses a cached root, and within a
+  // family a demand is analysed once and later demands share it, including
+  // its truncation or in-progress state.
+  if (topLevel) {
+    for (const auto &entry : state->cachedRoots)
+      if (sameDemand(*entry))
+        return use(entry);
+  } else {
+    for (const auto &entry : state->familyEntries)
+      if (sameDemand(*entry))
+        return use(entry);
+  }
+  // Query identities are per analysis: each fresh analysis of a demand has
+  // its own, and a family shares one. A caller sees an identity only through
+  // an incomplete or invalid result, or an unresolved origin inside it, so
+  // only a result exposing none is the same under any identity.
+  const auto identityFree = [](const RawResultQuery &entry) {
+    const auto unresolved = [](const std::vector<RawResultField> &fields) {
+      return std::any_of(fields.begin(), fields.end(), [](const auto &field) {
+        return std::any_of(field.origins.begin(), field.origins.end(),
+                           [](const auto &source) {
+                             return source.origin.sourceResultQuery != 0;
+                           });
+      });
+    };
+    return entry.complete && entry.valid && entry.writesComplete &&
+           !unresolved(entry.fields) &&
+           std::none_of(entry.writes.begin(), entry.writes.end(),
+                        [&](const auto &write) {
+                          return write.destination.origin.sourceResultQuery !=
+                                     0 ||
+                                 unresolved(write.fields);
+                        }) &&
+           std::none_of(
+               entry.accesses.begin(), entry.accesses.end(),
+               [&](const auto &access) { return unresolved(access.fields); });
+  };
+  for (const auto &entry : state->independentEntries)
+    if (sameDemand(*entry) && identityFree(*entry) &&
+        !meetsFamilyState(*entry) &&
+        state->depth + entry->height <= rawFamilyDepthBudget &&
+        familySize + entry->cost <= rawFamilyEntryBudget &&
+        sameInputs(*entry)) {
+      if (!topLevel)
+        return use(entry);
+      // Stands in for a fresh root analysis, which the root cache keeps.
+      if (state->cachedRoots.size() < 2048)
+        state->cachedRoots.push_back(entry);
+      return use(entry);
+    }
+  return nullptr;
+}
+
+auto SemanticVisitor::Impl::noteRawResultDependency(
+    const std::shared_ptr<RawResultQuery> &dependency) -> void {
+  // The demanding query (the worker's own result) inherits family dependence
+  // from a cycle member still running, a budget-truncated entry, or a callee
+  // that is itself dependent. Top-level demands have no collecting query.
+  const auto &requester = requestSession.collectingRawResult;
+  if (requester && requester != dependency &&
+      (!dependency->complete || dependency->truncated ||
+       dependency->familyDependent))
+    requester->familyDependent = true;
 }
 
 auto SemanticVisitor::Impl::rawProducedFields(
@@ -11172,25 +11454,60 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
   return result;
 }
 
+auto SemanticVisitor::Impl::namespaceIndexGenerations(
+    std::vector<std::uint64_t> &generations,
+    const DeclarationIndex<Symbol> *current) -> void {
+  generations.clear();
+  generations.push_back(reinterpret_cast<std::uintptr_t>(current));
+  generations.push_back(current ? current->generation() : 0);
+  generations.push_back(valueFlow.namespaceSymbols.generation());
+  for (const auto &[unit, bindings] : valueFlow.internalNamespaceSymbols) {
+    generations.push_back(unit);
+    generations.push_back(bindings.generation());
+  }
+  generations.push_back(std::numeric_limits<std::uint64_t>::max());
+  for (const auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols) {
+    generations.push_back(unit);
+    generations.push_back(bindings.generation());
+  }
+}
+
 auto SemanticVisitor::Impl::saveRawProgramStorage()
     -> std::vector<RawProgramStorageState> {
   if (!rawAuditEnabled())
     return {};
+  // Only globals and static fields are program storage, and they are a small
+  // fraction of each index. Index membership is fixed for one generation, so
+  // collect them once per generation instead of rescanning every unit.
+  auto &generations = rawRootGenerationScratch;
+  namespaceIndexGenerations(generations, nullptr);
+  if (generations != rawStorageBindingGenerations) {
+    rawStorageBindings.clear();
+    const auto collect = [&](auto &bindings,
+                             RawProgramStorageState::Namespace space,
+                             SourceUnitId unit = 0) {
+      for (auto &[name, symbol] : bindings)
+        if (symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+            symbol.bindingKind == SemanticBindingKind::StaticField)
+          rawStorageBindings.push_back({&symbol, space, unit, name});
+    };
+    collect(valueFlow.namespaceSymbols,
+            RawProgramStorageState::Namespace::Global);
+    for (auto &[unit, bindings] : valueFlow.internalNamespaceSymbols)
+      collect(bindings, RawProgramStorageState::Namespace::Internal, unit);
+    for (auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols)
+      collect(bindings, RawProgramStorageState::Namespace::Visible, unit);
+    rawStorageBindingGenerations = generations;
+  }
   std::vector<RawProgramStorageState> result;
-  const auto save = [&](auto &bindings, RawProgramStorageState::Namespace space,
-                        SourceUnitId unit = 0) {
-    for (auto &[name, symbol] : bindings)
-      if ((symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
-           symbol.bindingKind == SemanticBindingKind::StaticField) &&
-          !rawPointerFieldPaths(symbol.type).empty())
-        result.push_back({&symbol, space, unit, name, symbol.rawPointerOrigins,
-                          symbol.rawPointerFields});
-  };
-  save(valueFlow.namespaceSymbols, RawProgramStorageState::Namespace::Global);
-  for (auto &[unit, bindings] : valueFlow.internalNamespaceSymbols)
-    save(bindings, RawProgramStorageState::Namespace::Internal, unit);
-  for (auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols)
-    save(bindings, RawProgramStorageState::Namespace::Visible, unit);
+  for (const auto &binding : rawStorageBindings) {
+    Symbol &symbol = *binding.symbol;
+    if ((symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+         symbol.bindingKind == SemanticBindingKind::StaticField) &&
+        !rawPointerFieldPaths(symbol.type).empty())
+      result.push_back({&symbol, binding.space, binding.unit, binding.name,
+                        symbol.rawPointerOrigins, symbol.rawPointerFields});
+  }
   for (auto &[declaration, symbol] : valueFlow.staticFieldSymbols)
     if (!rawPointerFieldPaths(symbol.type).empty())
       result.push_back({.symbol = &symbol,

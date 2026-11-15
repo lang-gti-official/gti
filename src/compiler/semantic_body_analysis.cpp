@@ -14207,6 +14207,7 @@ auto SemanticVisitor::Impl::evaluateConstexprConstruction(
                             "Generated constant construction requires an "
                             "available verified MIR field schedule.");
   }
+  noteConstexprAvailabilityObserved();
   if (declaration == nullptr || !declaration->isConstexpr() ||
       !constexprConstructorsAnalyzed.contains(declaration)) {
     return constexprFailure(
@@ -15236,6 +15237,7 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
             : "Call to non-constexpr function '" + declaration->name().lexeme +
                   "' cannot be evaluated during compilation.");
   }
+  noteConstexprAvailabilityObserved();
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
     return constexprFailure(

@@ -120,5 +120,46 @@ int main() {
   pressure += "const int* p = relay(&value); unsafe { return *p - 7; } }";
   check("cache capacity does not exhaust a fresh demand", pressure,
         lang::RawPointerAuditMode::Strict, false);
+
+  // Many roots share one nested helper graph. Each root's family must reuse
+  // the helpers' completed, family-independent results instead of analysing
+  // the whole graph again. Re-analysis costs roots * helpers queries.
+  {
+    constexpr int helpers = 24;
+    constexpr int roots = 48;
+    std::string shared;
+    for (int i = 0; i < helpers; ++i) {
+      const std::string next =
+          i + 1 == helpers ? "pointer"
+                           : "helper" + std::to_string(i + 1) + "(pointer)";
+      shared += "const int* helper" + std::to_string(i) +
+                "(const int* pointer) { return " + next + "; }\n";
+    }
+    std::string main = "int main() { int value = 7; mut int total = 0;\n";
+    for (int i = 0; i < roots; ++i) {
+      const std::string name = std::to_string(i);
+      shared += "const int* root" + name +
+                "(const int* pointer) { return helper0(pointer); }\n";
+      main += "const int* p" + name + " = root" + name +
+              "(&value); unsafe { total = total + *p" + name + " - 7; }\n";
+    }
+    lang::FrontendWorkMetrics metrics;
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.rawPointerAudit = lang::RawPointerAuditMode::Strict;
+    options.workMetrics = &metrics;
+    const auto result = lang::Frontend(options).analyze(
+        "raw-query-shared-helpers.gti", shared + main + "return total; }\n");
+    // Without reuse this is about roots * helpers (> 1100) queries.
+    constexpr std::size_t bound = 4 * (helpers + roots);
+    if (!result.semanticValid || metrics.semanticRawAuditQueries > bound) {
+      ++failures;
+      std::cerr << "FAIL: shared helper graph took "
+                << metrics.semanticRawAuditQueries << " raw queries (bound "
+                << bound << ")\n";
+      for (const auto &diagnostic : result.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    }
+  }
   return failures == 0 ? 0 : 1;
 }

@@ -2,7 +2,9 @@
 
 #include "gti/source_graph.h"
 
+#include <atomic>
 #include <compare>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <string_view>
@@ -36,8 +38,45 @@ template <class Value> class DeclarationIndex {
   using Storage = std::map<OwnedDeclarationName, Value>;
   Storage values;
   std::map<std::string, std::vector<Value>> alternatives;
+  // Changes whenever this index's membership may have changed: on creation,
+  // copy, move and every insertion or clear. Generations come from one
+  // process-wide sequence, so a copied or reassigned index never reuses a
+  // value another index state had. Lookups that memoise a miss across the
+  // index key on it; in-place edits of a stored value do not change it.
+  std::uint64_t generation_ = nextGeneration();
+
+  static std::uint64_t nextGeneration() {
+    static std::atomic<std::uint64_t> next{1};
+    return next.fetch_add(1, std::memory_order_relaxed);
+  }
+  void touch() { generation_ = nextGeneration(); }
 
 public:
+  DeclarationIndex() = default;
+  DeclarationIndex(const DeclarationIndex &other)
+      : values(other.values), alternatives(other.alternatives) {}
+  DeclarationIndex(DeclarationIndex &&other) noexcept
+      : values(std::move(other.values)),
+        alternatives(std::move(other.alternatives)) {
+    other.touch();
+  }
+  DeclarationIndex &operator=(const DeclarationIndex &other) {
+    values = other.values;
+    alternatives = other.alternatives;
+    touch();
+    return *this;
+  }
+  DeclarationIndex &operator=(DeclarationIndex &&other) noexcept {
+    values = std::move(other.values);
+    alternatives = std::move(other.alternatives);
+    touch();
+    other.touch();
+    return *this;
+  }
+  ~DeclarationIndex() = default;
+
+  std::uint64_t generation() const { return generation_; }
+
   using iterator = typename Storage::iterator;
   using const_iterator = typename Storage::const_iterator;
 
@@ -48,6 +87,7 @@ public:
   auto size() const { return values.size(); }
   bool empty() const { return values.empty(); }
   void clear() {
+    touch();
     values.clear();
     alternatives.clear();
   }
@@ -59,6 +99,7 @@ public:
         visitor(candidate);
   }
   void addAlternative(const std::string &name, const Value &value) {
+    touch();
     auto &candidates = alternatives[name];
     if (candidates.empty())
       candidates.push_back(values.find({name, {}})->second);
@@ -98,24 +139,32 @@ public:
     return find(name, owner) != end();
   }
   auto emplace(std::string name, Value value, DeclarationOwner owner = {}) {
+    touch();
     return values.emplace(OwnedDeclarationName{std::move(name), owner},
                           std::move(value));
   }
   auto emplace(OwnedDeclarationName name, Value value) {
+    touch();
     return values.emplace(std::move(name), std::move(value));
   }
   auto try_emplace(OwnedDeclarationName name, const Value &value) {
+    touch();
     return values.try_emplace(std::move(name), value);
   }
   auto try_emplace(std::string name, const Value &value) {
+    touch();
     return values.try_emplace(OwnedDeclarationName{std::move(name), {}}, value);
   }
   auto insert_or_assign(std::string name, Value value,
                         DeclarationOwner owner = {}) {
+    touch();
     return values.insert_or_assign(OwnedDeclarationName{std::move(name), owner},
                                    std::move(value));
   }
-  Value &operator[](const std::string &name) { return values[{name, {}}]; }
+  Value &operator[](const std::string &name) {
+    touch();
+    return values[{name, {}}];
+  }
 };
 
 } // namespace lang
