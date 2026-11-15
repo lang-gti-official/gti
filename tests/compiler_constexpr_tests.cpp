@@ -1013,7 +1013,8 @@ int main() {
   const lang::FrontendResult invalidCodeUnitBridge = lang::Frontend().analyze(
       "invalid-character-code-unit.gti",
       "int main() { uint8_t byte = uint8_t(65); char implicit = byte; "
-      "char wide = char(uint16_t(65)); return 0; }",
+      "uint16_t wide_byte = uint16_t(65); char wide = char(wide_byte); return "
+      "0; }",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalidCodeUnitBridge.canGenerateCode() &&
              hasDiagnostic(invalidCodeUnitBridge.diagnostics,
@@ -1022,6 +1023,36 @@ int main() {
                                  "GTI-S2014") == 1,
          "the code-unit bridge should remain explicit and should not admit "
          "other integer widths");
+
+  const auto examplePath = standardLibraryRoot().parent_path() /
+                           "examples/constant-character/main.gti";
+  std::ifstream exampleInput(examplePath);
+  const std::string exampleSource(
+      (std::istreambuf_iterator<char>(exampleInput)),
+      std::istreambuf_iterator<char>());
+  expect(!exampleSource.empty(),
+         "constant character example must be registered");
+  const auto constantCharacters = lang::Frontend().analyze(
+      examplePath.string(), exampleSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  expect(
+      constantCharacters.canGenerateCode(),
+      "constant integers, named constants, constexpr calls and generic values "
+      "should publish character constants through verified MIR");
+  if (!constantCharacters.canGenerateCode())
+    for (const auto &diagnostic : constantCharacters.diagnostics)
+      std::cerr << diagnostic.message << '\n';
+
+  for (const std::string operand :
+       {"256", "-1", "uint64_t(256)", "runtime", "1.0", "true"}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-constant-character.gti",
+        "char convert(int runtime) { return char(" + operand + "); }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               countDiagnosticCode(rejected.diagnostics, "GTI-S2014") != 0,
+           "invalid character conversion must reject operand " + operand);
+  }
 
   const lang::FrontendResult obsolete = lang::Frontend().analyze(
       "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",

@@ -1,0 +1,17 @@
+import std.vector;
+
+constexpr int letter_code() { return 60 + 5; }
+constexpr int nul_code = 0;
+char code_unit<uint64_t N>() { return char(N); }
+
+static_assert(char(nul_code) == '\0');
+static_assert(char(letter_code()) == 'A');
+static_assert(uint8_t(char(255)) == uint8_t(255));
+
+int main() {
+  mut std::vector<char> bytes{};
+  bytes.push_back(char(letter_code()));
+  bytes.push_back(char(0));
+  // Value-generic substitution is checked independently for each instance.
+  return bytes.at(0) == code_unit<65>() && bytes.at(1) == '\0' ? 0 : 1;
+}

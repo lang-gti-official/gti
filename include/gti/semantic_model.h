@@ -2573,7 +2573,8 @@ public:
   findConstant(const Expr &expression) const;
 
   // A completed immediate invocation, including the conversion applied by a
-  // declaration. The source operand keeps its own type/constant facts.
+  // declaration, or a required constant scalar conversion. The source operand
+  // keeps its own type/constant facts.
   struct ImmediateInvocationInfo {
     ExpressionInfo info;
     ConstantValue value;

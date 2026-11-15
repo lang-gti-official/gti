@@ -652,8 +652,14 @@ converting to `float` is the required explicit narrowing operation.
 explicit lossless conversions bridge text and byte-oriented code:
 `uint8_t(character)` extracts the code-unit bits and `char(byte)` constructs the
 same code unit from one `uint8_t`. Neither direction requires a range check.
-The conversions are not implicit, do not admit any other integer type, and do
-not make `char` satisfy an integer or numeric constraint.
+Explicit `char(expression)` also accepts other integer types when the operand
+is a constant expression with a value in `0..255`. This includes named
+constants, constant arithmetic, constexpr calls and concrete value-generic
+arguments. Semantics evaluates and publishes the character before runtime
+lowering; optimizer proofs do not affect eligibility. Other runtime integer
+values still require an explicit conversion through `uint8_t`. Negative and
+out-of-range constants are rejected rather than truncated. These conversions
+are not implicit and do not make `char` satisfy an integer or numeric constraint.
 
 `Type name{arguments};` directly constructs a declared class or struct. It is
 not C++ aggregate initialization, list conversion, initializer-list preference,

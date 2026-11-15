@@ -9014,6 +9014,48 @@ auto SemanticVisitor::Impl::isCharacterCodeConversion(
          (source == SemanticType::UInt8 && target == SemanticType::Char);
 }
 
+auto SemanticVisitor::Impl::analyzeConstantCharacterConversion(
+    const Expr &source, const ExprPtr &operand, const SemanticType &valueType,
+    const SemanticType &targetType) -> bool {
+  if (targetType != SemanticType::Char || valueType == SemanticType::UInt8 ||
+      !isInteger(valueType))
+    return false;
+  ConstexprInterpreter context = makeConstexprInterpreter();
+  ConstexprEvaluation result = evaluateConstexprExpression(operand, context);
+  if (result.genericDependency) {
+    currentType = targetType;
+    return true; // Concrete reanalysis must establish the constant value.
+  }
+  const auto *integer =
+      result.value ? std::get_if<ConstantInteger>(&*result.value) : nullptr;
+  if (!integer || integer->negative || integer->magnitude > 255) {
+    report(expressionToken(operand),
+           integer
+               ? "Character conversion requires an integer constant in the "
+                 "range 0..255."
+               : "Character conversion requires a constant integer expression; "
+                 "runtime integers must convert explicitly through uint8_t.",
+           "GTI-S2014");
+    if (!result.detail.empty())
+      diagnostics.back().hints.push_back(result.detail);
+    if (!result.limitHint.empty())
+      diagnostics.back().hints.push_back(result.limitHint);
+    currentType = SemanticType::Unknown;
+    return true;
+  }
+  // Publish a proven value through the existing immediate-expression boundary.
+  // The operand is evaluated only by CTFE, never by runtime optimization.
+  const ConstantValue value =
+      CharacterLiteral{static_cast<std::uint8_t>(integer->magnitude)};
+  semanticModel.recordImmediateInvocation(
+      source, {.info = expressionInfo(targetType), .value = value});
+  semanticModel.recordConstant(source, value);
+  semanticModel.recordDefinedFailure(source, {});
+  discardImmediateProgramEffects(source);
+  currentType = targetType;
+  return true;
+}
+
 auto SemanticVisitor::Impl::analyzeTypeParameterCall(
     const Call &expr, const SemanticType &targetType) -> void {
   bool valid = true;
@@ -9198,6 +9240,9 @@ auto SemanticVisitor::Impl::analyzeTypeParameterCall(
     currentType = targetType;
     return;
   }
+  if (valid && analyzeConstantCharacterConversion(
+                   expr, expr.arguments().front(), valueType, targetType))
+    return;
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (!isNumeric(targetType) && !characterCodeConversion) {
@@ -9303,6 +9348,9 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
                          .intrinsic = IntrinsicKind::RawPointerConversion});
     return;
   }
+  if (analyzeConstantCharacterConversion(expr, expr.arguments().front(),
+                                         valueType, targetType))
+    return;
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (valueType != SemanticType::Unknown && !isNumeric(valueType) &&
@@ -9500,6 +9548,9 @@ auto SemanticVisitor::Impl::visitConversionExpr(const Conversion &expr)
     currentType = SemanticType::Unknown;
     return;
   }
+  if (analyzeConstantCharacterConversion(expr, expr.value(), valueType,
+                                         targetType))
+    return;
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
   if (!isNumeric(targetType) && !characterCodeConversion) {
