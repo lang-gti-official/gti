@@ -10883,8 +10883,12 @@ auto SemanticVisitor::Impl::runRawResultQuery(
                                             entry->ownerValues, entry->types,
                                             entry->values);
   state->idleCatalogs.push_back(std::move(worker->catalog));
-  state->idleValueFlows.push_back(std::move(worker->valueFlow));
-  state->idleModels.push_back(std::move(worker->semanticModel));
+  // Keep a few released copies for the next sibling query; deeper nesting
+  // would otherwise retain one whole-program copy per level.
+  if (state->idleValueFlows.size() < 4)
+    state->idleValueFlows.push_back(std::move(worker->valueFlow));
+  if (state->idleModels.size() < 4)
+    state->idleModels.push_back(std::move(worker->semanticModel));
   entry->valid = analysis.valid();
   if (!entry->valid)
     for (const auto &diagnostic : analysis.diagnostics)
