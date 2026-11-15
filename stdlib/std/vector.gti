@@ -222,7 +222,7 @@ export class vector<std::vector_element T> {
     return std::move(previous);
   }
 
-  void ensure_capacity_for_one() mut {
+  constexpr void ensure_capacity_for_one() mut {
     size_t live = this.data.length();
     size_t capacity = this.data.capacity();
     if (live < capacity) {
@@ -250,7 +250,7 @@ public:
     return detail::vector_consuming_range<T>(std::move(this.data));
   }
 
-  vector() : data(std::detail::prefix_owner<T>()) {}
+  constexpr vector() : data(std::detail::prefix_owner<T>()) {}
 
   /// Collection-brace protocol: reserve once, then consume each owned element.
   static vector<T> collection_init(uint64_t count) {
@@ -264,7 +264,7 @@ public:
     return std::move(collection);
   }
 
-  vector(size_t initial_size)
+  constexpr vector(size_t initial_size)
       : data(std::detail::prefix_owner<T>(initial_size)) {
     while (this.data.length() < initial_size) {
       unsafe { this.data.append_unchecked(); }
@@ -283,12 +283,12 @@ public:
   vector(vector<T>&& other) = default;
 
   /// Returns the number of live elements.
-  size_t size() {
+  constexpr size_t size() {
     return this.data.length();
   }
 
   /// Returns the number of elements that fit without growing storage.
-  size_t capacity() {
+  constexpr size_t capacity() {
     return this.data.capacity();
   }
 
@@ -308,7 +308,7 @@ public:
   }
 
   /// Returns whether the vector contains no elements.
-  bool empty() {
+  constexpr bool empty() {
     return this.data.length() == 0;
   }
 
@@ -325,21 +325,21 @@ public:
     return false;
   }
 
-  T& front() {
+  constexpr T& front() {
     size_t live = this.data.length();
     size_t index = size_t(0);
     gti_internal::index_bounds_check(index, live);
     unsafe { return this.data.read_unchecked(index); }
   }
 
-  mut T& front() mut {
+  constexpr mut T& front() mut {
     size_t live = this.data.length();
     size_t index = size_t(0);
     gti_internal::index_bounds_check(index, live);
     unsafe { return this.data.read_mut_unchecked(index); }
   }
 
-  T& back() {
+  constexpr T& back() {
     size_t live = this.data.length();
     mut size_t index = size_t(0);
     if (live > 0) {
@@ -349,7 +349,7 @@ public:
     unsafe { return this.data.read_unchecked(index); }
   }
 
-  mut T& back() mut {
+  constexpr mut T& back() mut {
     size_t live = this.data.length();
     mut size_t index = size_t(0);
     if (live > 0) {
@@ -359,25 +359,25 @@ public:
     unsafe { return this.data.read_mut_unchecked(index); }
   }
 
-  T& at(size_t index) {
+  constexpr T& at(size_t index) {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
     unsafe { return this.data.read_unchecked(index); }
   }
 
-  mut T& at(size_t index) mut {
+  constexpr mut T& at(size_t index) mut {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
     unsafe { return this.data.read_mut_unchecked(index); }
   }
 
-  T& operator[](size_t index) {
+  constexpr T& operator[](size_t index) {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
     unsafe { return this.data.read_unchecked(index); }
   }
 
-  mut T& operator[](size_t index) mut {
+  constexpr mut T& operator[](size_t index) mut {
     size_t live = this.data.length();
     gti_internal::index_bounds_check(index, live);
     unsafe { return this.data.read_mut_unchecked(index); }
@@ -433,7 +433,7 @@ public:
     return mutable_span<T>(this.data, size_t(0), count);
   }
 
-  void reserve(size_t requested) mut {
+  constexpr void reserve(size_t requested) mut {
     if (requested <= this.data.capacity()) {
       return;
     }
@@ -444,7 +444,7 @@ public:
     this.data = std::move(replacement);
   }
 
-  void resize(size_t requested) mut
+  constexpr void resize(size_t requested) mut
     requires std::default_initializable<T> {
     while (this.data.length() > requested) {
       unsafe { this.data.pop_unchecked(); }
@@ -455,7 +455,7 @@ public:
     }
   }
 
-  void resize(size_t requested, T value) mut
+  constexpr void resize(size_t requested, T value) mut
     requires std::copyable<T> {
     while (this.data.length() > requested) {
       unsafe { this.data.pop_unchecked(); }
@@ -477,12 +477,12 @@ public:
     this.data = std::move(replacement);
   }
 
-  void push_back(T value) mut {
+  constexpr void push_back(T value) mut {
     this.ensure_capacity_for_one();
     unsafe { this.data.append_value_unchecked(std::move(value)); }
   }
 
-  void insert(size_t index, T value) mut {
+  constexpr void insert(size_t index, T value) mut {
     if (index > this.size()) { gti_internal::index_bounds_check(index, this.size()); }
     this.ensure_capacity_for_one();
     unsafe { this.data.insert_unchecked(index, std::move(value)); }
@@ -497,7 +497,7 @@ public:
     }
   }
 
-  void pop_back() mut {
+  constexpr void pop_back() mut {
     if (this.data.length() == 0) {
       return;
     }
@@ -509,7 +509,7 @@ public:
     unsafe { this.data.erase_unchecked(index); }
   }
 
-  void clear() mut {
+  constexpr void clear() mut {
     this.data.clear();
   }
 

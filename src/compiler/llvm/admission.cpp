@@ -3549,6 +3549,32 @@ public:
              (!stage.elementCleanup ||
               dispatchProofs.cleanup(*stage.elementCleanup).has_value());
     }
+    // Native code is never constant evaluation: the query lowers to false and
+    // evaluator-owned storage operations lower to a trap if ever reached.
+    if (stage.intrinsic == IntrinsicKind::ConstantEvaluation ||
+        stage.intrinsic == IntrinsicKind::ConstantAllocate ||
+        stage.intrinsic == IntrinsicKind::ConstantRelease) {
+      if (stage.kind != MirInstructionKind::Call || stage.receiver ||
+          stage.functionTarget || stage.constructorTarget || stage.bodyTarget ||
+          stage.loan || stage.operands.size() != stage.parameterTypes.size())
+        return false;
+      const auto rawVoid = [](const SemanticType &type) {
+        return type.kind == SemanticType::RawPointer &&
+               type.arguments.size() == 1 &&
+               type.arguments[0] == SemanticType::Void;
+      };
+      if (stage.intrinsic == IntrinsicKind::ConstantEvaluation)
+        return stage.parameterTypes.empty() &&
+               stage.info.type == SemanticType::Bool;
+      if (stage.intrinsic == IntrinsicKind::ConstantAllocate)
+        return stage.parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::UInt64,
+                                             SemanticType::UInt64} &&
+               rawVoid(stage.info.type);
+      return stage.parameterTypes.size() == 1 &&
+             rawVoid(stage.parameterTypes[0]) &&
+             stage.info.type == SemanticType::Void && !stage.result;
+    }
     if (stage.kind != MirInstructionKind::Call ||
         stage.info.type != SemanticType::Void || stage.result ||
         stage.receiver || stage.functionTarget || stage.constructorTarget ||

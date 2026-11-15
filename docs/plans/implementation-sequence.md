@@ -10132,6 +10132,17 @@ follow-ups:
   a passive result. Example 153 demonstrates scratch allocation and destruction.
   Independent step/depth, allocation-count and live-storage bounds fail closed.
   No AST allocation/destructor interpreter or public-name exceptions are added.
+- **Raw storage and owning containers (2026-11-15, #409):** the MIR evaluator
+  executes the source raw-memory protocol: typed slot regions from a
+  compiler-private constant byte provider (native code folds that branch
+  away), raw pointers to elements or places, pointer arithmetic and comparison,
+  raw dereference/indexing, object construct/destroy/relocate/take, counted
+  text views, frontend target layout, read-only program storage and canonical
+  `Replace` liveness. `std::string`, `std::vector`, `std::storage` and the
+  storage stack are explicitly `constexpr`; defaulted copy/move constructors
+  follow their class. A user container over `std::storage` is the general
+  evidence (`constexpr_owned_storage_runtime`, example 195). This unblocks
+  compile-time text building for procedural macros (`std::concat!`).
 - **Payload enum/source-wrapper execution (production expected campaign):**
   Extend the canonical MIR constant profile to exact active payload enums,
   source-class fields, borrowed observations and consuming receivers. Transient
@@ -10145,7 +10156,7 @@ follow-ups:
   production-cutover compatibility and release gates remain pending. No AST
   payload interpreter is introduced.
 - **Remaining scope:** Stored references, shared/virtual/recursive owning
-  cleanup, raw-memory/provider allocation protocols,
+  cleanup, other allocation providers (arenas and pools over raw storage),
   in-place constructor targets without an explicit canonical field-write schedule,
   unions, inherited aggregates,
   and polymorphism remain

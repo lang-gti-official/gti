@@ -2460,12 +2460,47 @@ identities and 65536 live logical storage units (one per value/aggregate node
 plus each text byte), independent of target layout. Exhaustion is a semantic
 diagnostic.
 
-Shared ownership, virtual/recursive owning destruction, raw-memory/provider
-allocation protocols, stored-reference carriers, unions and
-inherited objects require further constant-execution profiles. They are not
-enabled by their public library names. These new lifetime operations never
-fall back to AST execution. Example 153 demonstrates transient scratch storage
-and runtime parity.
+#### Raw storage and owning containers
+
+The raw-memory protocol that source-defined containers use also executes.
+`std::string`, `std::vector`, `std::storage` and an application's own container
+over them run their ordinary GTI source at compile time; no container is
+recognized by name. The library declares the participating functions and
+constructors `constexpr` explicitly. A defaulted copy or move constructor has no
+body to mark and is constant-eligible with its class.
+
+- The process byte provider obtains constant storage during constant
+  evaluation through compiler-private operations. Native code never takes that
+  path, so runtime allocation is unchanged.
+- A region is untyped until it is first viewed as `T*`. It then holds slots of
+  `T`, each vacant until an object is constructed in it. Element sizes come
+  from the same target layout facts `sizeof` observes.
+- A raw pointer is a request-local reference to a region element, which pointer
+  arithmetic may move within the region and one past its end, or to exactly one
+  place. Pointers to one region compare and subtract by element; null compares
+  equal only to null.
+- Raw dereference and indexing, `construct_at`, `destroy_at`, `relocate_at`,
+  `take_at` and counted text views check every access: an out-of-range element,
+  a vacant slot, a released region or a stale object reports a semantic
+  diagnostic, and the library's own checks report their defined failures, such
+  as `index_out_of_bounds` or `uninitialized_access`.
+- Releasing a region requires every object needing cleanup in it to have been
+  destroyed. Every region must be released before the request completes, so an
+  owning container never becomes a persistent constant.
+- A `constexpr` class static or namespace variable read during evaluation
+  takes the value its verified initializer computes. Other static storage is
+  not a constant.
+- Raw pointers are execution-local constant values. They may appear in
+  `constexpr` signatures, locals and fields, but never in a published constant.
+  Every access must designate a live object: a null pointer, a pointer into a
+  released region or a returned call's local, and arithmetic outside one
+  region or place all fail evaluation.
+
+Shared ownership, virtual/recursive owning destruction, stored-reference
+carriers, unions and inherited objects require further constant-execution
+profiles. They are not enabled by their public library names. These lifetime
+operations never fall back to AST execution. Example 153 demonstrates transient
+scratch storage and example 195 owning containers, both with runtime parity.
 
 Payload enums also execute in constant contexts when every possible field has
 a supported concrete type. Their exact active alternative survives construction,

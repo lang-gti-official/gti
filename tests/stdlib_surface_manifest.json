@@ -802,6 +802,46 @@
       }
     },
     {
+      "id": "constexpr-owned-storage",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_owned_storage.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "constexpr-owned-storage-index-failure",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/constexpr_owned_storage_index_failure.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "index_out_of_bounds"
+        ]
+      }
+    },
+    {
+      "id": "constexpr-owned-storage-vacant-failure",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/constexpr_owned_storage_vacant_failure.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "uninitialized_access"
+        ]
+      }
+    },
+    {
       "id": "constexpr-readonly-references",
       "mode": "run",
       "source": "tests/fixtures/constexpr_readonly_references.gti",
@@ -4175,13 +4215,18 @@
         "gti_internal::unique_owner"
       ],
       "case_ids": [
-        "unique-ptr",
+        "allocator-storage",
+        "constexpr-owned-storage",
         "shared-ptr",
-        "allocator-storage"
+        "unique-ptr"
       ],
       "evidence": [
         "tests/llvm_memory_execution_test.py",
-        "tests/stdlib_module_boundaries_test.py"
+        "tests/stdlib_module_boundaries_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
+      ],
+      "required_instantiations": [
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ]
     },
     {
@@ -4196,6 +4241,7 @@
       ],
       "case_ids": [
         "allocator-storage",
+        "constexpr-owned-storage",
         "resource-container-usage",
         "string"
       ],
@@ -4204,7 +4250,11 @@
         "tests/source_sparse_storage_tests.cpp",
         "tests/fixtures/process_storage_policy.gti",
         "tests/fixtures/process_storage_query_policy.gti",
-        "tests/stdlib_module_boundaries_test.py"
+        "tests/stdlib_module_boundaries_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
+      ],
+      "required_instantiations": [
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ]
     },
     {
@@ -5502,6 +5552,28 @@
       ]
     },
     {
+      "id": "memory.constant-storage-failures",
+      "source": "stdlib/std/memory.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::storage<T>::get<vacant slot during constant evaluation>",
+        "std::string::operator[]<past the end during constant evaluation>"
+      ],
+      "case_ids": [
+        "constexpr-owned-storage-index-failure",
+        "constexpr-owned-storage-vacant-failure"
+      ],
+      "reason": "Constant evaluation checks every raw storage access and reports the same defined failure the runtime check reports.",
+      "required_instantiations": [
+        "out-of-bounds string index",
+        "read of a never-constructed storage slot"
+      ],
+      "evidence": [
+        "tests/fixtures/constexpr_owned_storage_index_failure.gti",
+        "tests/fixtures/constexpr_owned_storage_vacant_failure.gti"
+      ]
+    },
+    {
       "id": "memory.core-primitives",
       "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
@@ -5517,18 +5589,19 @@
       ],
       "case_ids": [
         "allocator-storage",
+        "arena-pool",
+        "constexpr-owned-storage",
+        "owned-error-pipelines",
+        "raw-owner-witness",
+        "raw-pointer-conversion",
+        "resource-programmable",
+        "resource-region-contracts",
         "storage-discardable-result",
         "storage-final-address",
         "storage-immovable",
         "storage-owning-view",
         "storage-release",
-        "arena-pool",
-        "raw-owner-witness",
-        "raw-pointer-conversion",
-        "structural-relocation",
-        "owned-error-pipelines",
-        "resource-programmable",
-        "resource-region-contracts"
+        "structural-relocation"
       ],
       "required_instantiations": [
         "std::alignment(64)",
@@ -5539,7 +5612,8 @@
         "std::storage<int32_t>",
         "std::storage<tracked>",
         "std::storage<immovable object> with final-address emplacement",
-        "std::alloc_errc invalid_region and invalid_state"
+        "std::alloc_errc invalid_region and invalid_state",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
@@ -5557,7 +5631,8 @@
         "tests/source_sparse_storage_tests.cpp",
         "tests/source_sparse_storage_runtime_test.py",
         "tests/fixtures/source_sparse_slots.gti",
-        "stdlib/std/memory.gti"
+        "stdlib/std/memory.gti",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {
@@ -5606,18 +5681,19 @@
       ],
       "case_ids": [
         "allocator-storage",
+        "arena-pool",
+        "constexpr-owned-storage",
+        "owned-error-pipelines",
+        "raw-owner-witness",
+        "raw-pointer-conversion",
+        "resource-programmable",
+        "resource-region-contracts",
         "storage-discardable-result",
         "storage-final-address",
         "storage-immovable",
         "storage-owning-view",
         "storage-release",
-        "arena-pool",
-        "raw-owner-witness",
-        "raw-pointer-conversion",
-        "structural-relocation",
-        "owned-error-pipelines",
-        "resource-programmable",
-        "resource-region-contracts"
+        "structural-relocation"
       ],
       "required_instantiations": [
         "std::alignment(64)",
@@ -5628,7 +5704,8 @@
         "std::storage<int32_t>",
         "std::storage<tracked>",
         "std::storage<immovable object> with final-address emplacement",
-        "std::alloc_errc invalid_region and invalid_state"
+        "std::alloc_errc invalid_region and invalid_state",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
@@ -5646,7 +5723,8 @@
         "tests/source_sparse_storage_tests.cpp",
         "tests/source_sparse_storage_runtime_test.py",
         "tests/fixtures/source_sparse_slots.gti",
-        "stdlib/std/memory.gti"
+        "stdlib/std/memory.gti",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {
@@ -7545,20 +7623,22 @@
         "std::to_string(float)"
       ],
       "case_ids": [
+        "associative-hashes",
+        "constexpr-owned-storage",
+        "container-member-aliases",
+        "protocol-format-hash",
+        "sequence-unchecked",
         "span",
         "string",
         "string-c-string",
         "string-index-range",
-        "string-ordering",
-        "associative-hashes",
-        "container-member-aliases",
-        "sequence-unchecked",
-        "protocol-format-hash"
+        "string-ordering"
       ],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)",
-        "owning string elements in source-protocol-hashed pair keys"
+        "owning string elements in source-protocol-hashed pair keys",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -7573,7 +7653,8 @@
         "tests/fixtures/associative_hash_contracts.gti",
         "stdlib/std/string.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/protocol_format_hash_runtime_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {
@@ -8356,14 +8437,15 @@
         "std::vector_element<T>"
       ],
       "case_ids": [
-        "span",
-        "vector",
-        "utility-clone",
-        "vector-construction-only",
-        "optional-expected-composition",
+        "constexpr-owned-storage",
         "container-member-aliases",
+        "optional-expected-composition",
+        "sequence-unchecked",
         "source-prefix-complete-elements",
-        "sequence-unchecked"
+        "span",
+        "utility-clone",
+        "vector",
+        "vector-construction-only"
       ],
       "required_instantiations": [
         "std::vector<int32_t>",
@@ -8373,7 +8455,8 @@
         "user-defined Record",
         "construction-only Message",
         "std::vector<std::optional<std::string>>",
-        "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking"
+        "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -8385,7 +8468,8 @@
         "stdlib/std/vector.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/source_prefix_complete_elements.gti",
-        "tests/source_prefix_owner_runtime_test.py"
+        "tests/source_prefix_owner_runtime_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {
