@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "gti/hir.h"
 #include <cstdlib>
 
@@ -6431,6 +6433,25 @@ private:
       kind = HirValueKind::Postfix;
       operation = postfix->oper().kind;
       lowerOperand(postfix->expression());
+    } else if (std::getenv("GTI_TRACE_STAGING") && constantClosure && exprAs<QualifiedName>(raw) &&
+               (std::fprintf(stderr, "HIR qualified %s constant=%d category=%d access=%d\n",
+                             exprAs<QualifiedName>(raw)->name().last().lexeme.c_str(),
+                             (int)model.findConstant(*raw).has_value(),
+                             model.findExpression(*raw) ? (int)model.findExpression(*raw)->category : -1,
+                             model.findExpression(*raw) ? (int)model.findExpression(*raw)->access : -1), false)) {
+    } else if (const auto *qualified = exprAs<QualifiedName>(raw);
+               qualified && constantClosure &&
+               model.findEnumerator(*qualified) == nullptr &&
+               model.findExpression(*raw) != nullptr &&
+               (model.findExpression(*raw)->category == ValueCategory::Value ||
+                model.findExpression(*raw)->access == AccessMode::ReadOnly) &&
+               model.findConstant(*raw) &&
+               std::holds_alternative<ConstantInteger>(*model.findConstant(*raw)) &&
+               !std::get<ConstantInteger>(*model.findConstant(*raw)).negative) {
+      // A constant closure has no static storage plan: a qualified constant
+      // such as Type::npos reads as its value, as a named constant does.
+      kind = HirValueKind::Literal;
+      literal = Literal{std::get<ConstantInteger>(*model.findConstant(*raw)).magnitude};
     } else if (const auto *qualified = exprAs<QualifiedName>(raw)) {
       kind = HirValueKind::QualifiedName;
       if (const ResolvedEnumeratorInfo *resolved =

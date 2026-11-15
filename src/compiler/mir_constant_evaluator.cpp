@@ -8,6 +8,7 @@
 #include "mir_verification_queries.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <limits>
 
 namespace lang {
@@ -196,7 +197,9 @@ public:
     }
     if (result &&
         std::any_of(heap.begin(), heap.end(),
-                    [](const auto &allocation) { return allocation->live; })) {
+                    [](const auto &allocation) {
+                      return allocation->live && !allocation->programStorage;
+                    })) {
       result.value.reset();
       result.voidResult = false;
       result.failure = ConstantEvaluationFailure::UnsupportedExpression;
@@ -366,6 +369,9 @@ private:
     bool typed = false;
     std::vector<std::optional<ConstantValue>> slots;
     std::vector<std::size_t> slotEpochs;
+    // Program storage materialized from its verified initializer. It lives
+    // for the whole request and is never released.
+    bool programStorage = false;
   };
   // A checked reference designates an existing constant cell and a resolved
   // field/index path, never a target address. Frames live throughout nested
@@ -634,10 +640,18 @@ private:
                         frame.body.findValue(place->value)->info.type),
                     .access = place->access};
       }
+    } else if (place->root == MirPlaceRootKind::Symbol && place->capture == 0) {
+      const auto located = storageLocation(frame, *place, location);
+      if (located.failure != ConstantEvaluationFailure::None)
+        return located;
     } else {
       const auto root = cell(frame, id);
-      if (!root)
+      if (!root) {
+        if (std::getenv("GTI_TRACE_CEVAL"))
+          std::fprintf(stderr, "locate: unsupported root kind=%d symbol=%zu storage=%d typekind=%d\n", (int)place->root,
+                       (std::size_t)place->symbol, (int)observedStorageType(place->type), (int)place->type.kind);
         return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
+      }
       binding = frame.body.findPlace(root);
       if (root < frame.references.size() && frame.references[root]) {
         if (!charge(frame.references[root]->path.size()))
@@ -756,6 +770,73 @@ private:
     }
     location.type = &observedType(place->type);
     // locate's success has no value; callers distinguish it by failure.
+    return {};
+  }
+
+  // Program storage (a namespace variable or class static) read during
+  // constant execution. Its verified initializer body runs once, in a mode
+  // that may write program storage; afterwards it is read-only.
+  ConstantEvaluation storageLocation(Frame &frame, const MirPlace &place,
+                                     Location &location) {
+    auto found = programStorage.find(place.symbol);
+    if (found == programStorage.end() && initializingStorage) {
+      if (!charge(1) || heap.size() >= limits.allocations)
+        return {.failure = ConstantEvaluationFailure::ResourceLimit};
+      heap.push_back(std::make_unique<Allocation>(
+          Allocation{.type = observedType(place.type), .units = 0,
+                     .programStorage = true}));
+      found = programStorage.emplace(place.symbol, heap.size()).first;
+    }
+    if (found == programStorage.end()) {
+      const MirBody *owner = nullptr;
+      const auto defines = [&](const MirBody &body) {
+        return std::any_of(body.places.begin(), body.places.end(),
+                           [&](const MirPlace &candidate) {
+                             return candidate.symbol == place.symbol &&
+                                    candidate.projections.empty() &&
+                                    (candidate.root == MirPlaceRootKind::Symbol ||
+                                     candidate.root == MirPlaceRootKind::Binding);
+                           });
+      };
+      for (const auto &instance : program.classInstances())
+        if (!owner && defines(instance.staticFieldInitializers))
+          owner = &instance.staticFieldInitializers;
+      if (!owner && defines(program.module()))
+        owner = &program.module();
+      if (std::getenv("GTI_TRACE_CEVAL") && !owner)
+        std::fprintf(stderr, "storage symbol=%zu has no initializer body\n", (std::size_t)place.symbol);
+      if (!owner ||
+          std::find(initializedStorageBodies.begin(),
+                    initializedStorageBodies.end(),
+                    owner) != initializedStorageBodies.end())
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      initializedStorageBodies.push_back(owner);
+      const auto *enclosing = initializingStorage;
+      initializingStorage = owner;
+      const auto result =
+          executeBody(*owner,
+                      {owner == &program.module() ? MirBodyKind::Module
+                                                  : MirBodyKind::StaticFieldInitializers,
+                       0},
+                      SemanticType::Void, {}, {}, {}, 1);
+      initializingStorage = enclosing;
+      if (std::getenv("GTI_TRACE_CEVAL"))
+        std::fprintf(stderr, "storage init symbol=%zu module=%d failure=%d detail=%s found=%d\n", (std::size_t)place.symbol,
+                     (int)(owner == &program.module()), (int)result.failure, result.detail.c_str(),
+                     (int)programStorage.contains(place.symbol));
+      if (!result && !result.voidResult)
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+      found = programStorage.find(place.symbol);
+      if (found == programStorage.end())
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    }
+    auto &storage = *heap[found->second - 1];
+    location = {.frame = &frame,
+                .epoch = storage.epoch,
+                .type = &storage.type,
+                .access = initializingStorage ? AccessMode::Mutable
+                                              : AccessMode::ReadOnly,
+                .allocation = found->second};
     return {};
   }
 
@@ -1387,7 +1468,21 @@ private:
       return located;
     if (!initializing && location.access != AccessMode::Mutable)
       return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
-    return writeLocation(location, value, initializing);
+    auto written = writeLocation(location, value, initializing);
+    // A storage initializer's binding is the program variable itself: keep
+    // its value for later constant reads of that storage.
+    if (written && initializingStorage && &frame.body == initializingStorage &&
+        target && target->symbol != 0 && target->projections.empty() &&
+        target->root == MirPlaceRootKind::Binding &&
+        !programStorage.contains(target->symbol)) {
+      if (!charge(1) || heap.size() >= limits.allocations)
+        return {.failure = ConstantEvaluationFailure::ResourceLimit};
+      heap.push_back(std::make_unique<Allocation>(
+          Allocation{.type = observedType(target->type), .value = value,
+                     .units = 0, .programStorage = true}));
+      programStorage.emplace(target->symbol, heap.size());
+    }
+    return written;
   }
 
   ConstantEvaluation writeLocation(const Location &location,
@@ -3212,7 +3307,18 @@ private:
         return converted ? MirConstantEvaluation{.value = converted.value}
                          : fail(frame, converted.failure);
       }
+      case MirTerminatorKind::None:
+      case MirTerminatorKind::Exit:
+        // A storage initializer body completes at its end or its exit.
+        if (frame.address.kind == MirBodyKind::Module ||
+            frame.address.kind == MirBodyKind::StaticFieldInitializers)
+          return {.voidResult = true};
+        return fail(
+            frame, ConstantEvaluationFailure::UnsupportedExpression,
+            "Terminator is outside the constant MIR execution profile.");
       default:
+        if (std::getenv("GTI_TRACE_CEVAL"))
+          std::fprintf(stderr, "terminator kind=%d body kind=%d\n", (int)terminator.kind, (int)frame.address.kind);
         return fail(
             frame, ConstantEvaluationFailure::UnsupportedExpression,
             "Terminator is outside the constant MIR execution profile.");
@@ -3459,6 +3565,9 @@ private:
   bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
   std::vector<PointerBase> pointerBases;
+  std::unordered_map<SymbolId, std::size_t> programStorage;
+  std::vector<const MirBody *> initializedStorageBodies;
+  const MirBody *initializingStorage = nullptr;
   std::size_t heapUnits = 0;
   std::unordered_map<const MirBody *,
                      std::unordered_map<MirInstructionId, MirPlaceId>>

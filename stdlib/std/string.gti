@@ -1070,31 +1070,31 @@ namespace std {
       this.data.swap(other.data);
     }
 
-    bool operator==(string_view other) {
+    constexpr bool operator==(string_view other) {
       return this.equals(other);
     }
 
-    bool operator!=(string_view other) {
+    constexpr bool operator!=(string_view other) {
       return !this.equals(other);
     }
 
-    bool operator==(string& other) {
+    constexpr bool operator==(string& other) {
       return this.equals(other);
     }
 
-    bool operator!=(string& other) {
+    constexpr bool operator!=(string& other) {
       return !this.equals(other);
     }
 
     /// Lexicographic unsigned-code-unit order, including embedded NULs.
     constexpr bool operator<(string_view other) { return this.compare_bytes(other) < 0; }
     constexpr bool operator>(string_view other) { return this.compare_bytes(other) > 0; }
-    bool operator<=(string_view other) { return this.compare_bytes(other) <= 0; }
-    bool operator>=(string_view other) { return this.compare_bytes(other) >= 0; }
+    constexpr bool operator<=(string_view other) { return this.compare_bytes(other) <= 0; }
+    constexpr bool operator>=(string_view other) { return this.compare_bytes(other) >= 0; }
     constexpr bool operator<(string& other) { return this.compare_bytes(other.view()) < 0; }
     constexpr bool operator>(string& other) { return this.compare_bytes(other.view()) > 0; }
-    bool operator<=(string& other) { return this.compare_bytes(other.view()) <= 0; }
-    bool operator>=(string& other) { return this.compare_bytes(other.view()) >= 0; }
+    constexpr bool operator<=(string& other) { return this.compare_bytes(other.view()) <= 0; }
+    constexpr bool operator>=(string& other) { return this.compare_bytes(other.view()) >= 0; }
   };
 
   /// Writes every code unit, including embedded NULs, in one counted write.
