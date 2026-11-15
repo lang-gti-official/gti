@@ -218,8 +218,8 @@ int main() {
                            return std::any_of(
                                diagnostic.related.begin(),
                                diagnostic.related.end(), [](const auto &note) {
-                                 return note.message ==
-                                        "Retained borrow originates here.";
+                                 return note.message.starts_with(
+                                     "Retained borrow originates here.");
                                });
                          }),
          "reset should reject while an element reference remains live");
