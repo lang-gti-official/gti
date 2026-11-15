@@ -1,5 +1,3 @@
-#include <cstdio>
-#include <cstdlib>
 #include "gti/hir.h"
 #include <cstdlib>
 
@@ -6433,12 +6431,6 @@ private:
       kind = HirValueKind::Postfix;
       operation = postfix->oper().kind;
       lowerOperand(postfix->expression());
-    } else if (std::getenv("GTI_TRACE_STAGING") && constantClosure && exprAs<QualifiedName>(raw) &&
-               (std::fprintf(stderr, "HIR qualified %s constant=%d category=%d access=%d\n",
-                             exprAs<QualifiedName>(raw)->name().last().lexeme.c_str(),
-                             (int)model.findConstant(*raw).has_value(),
-                             model.findExpression(*raw) ? (int)model.findExpression(*raw)->category : -1,
-                             model.findExpression(*raw) ? (int)model.findExpression(*raw)->access : -1), false)) {
     } else if (const auto *qualified = exprAs<QualifiedName>(raw);
                qualified && constantClosure &&
                model.findEnumerator(*qualified) == nullptr &&

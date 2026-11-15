@@ -1,5 +1,3 @@
-#include <cstdio>
-#include <cstdlib>
 #include "gti/mir_constant_evaluator.h"
 #include "gti/failure.h"
 #include "gti/mir_procedural.h"
@@ -425,16 +423,6 @@ private:
   MirConstantEvaluation fail(const Frame &frame,
                              ConstantEvaluationFailure failure,
                              std::string detail = {}) const {
-    if (std::getenv("GTI_TRACE_CEVAL")) {
-      const MirInstruction *inst = nullptr;
-      for (const auto &block : frame.body.blocks)
-        for (const auto &candidate : block.instructions)
-          if (block.id == frame.block && candidate.id == frame.instruction)
-            inst = &candidate;
-      std::fprintf(stderr, "ceval-fail failure=%d kind=%d op=%d intrinsic=%d detail=%s\n",
-                   (int)failure, inst ? (int)inst->kind : -1, inst ? (int)inst->operation : -1,
-                   inst ? (int)inst->intrinsic : -1, detail.c_str());
-    }
     if (procedural && detail.empty() &&
         failure == ConstantEvaluationFailure::UnsupportedExpression)
       detail = "This operation is outside the procedural constant-execution "
@@ -647,9 +635,6 @@ private:
     } else {
       const auto root = cell(frame, id);
       if (!root) {
-        if (std::getenv("GTI_TRACE_CEVAL"))
-          std::fprintf(stderr, "locate: unsupported root kind=%d symbol=%zu storage=%d typekind=%d\n", (int)place->root,
-                       (std::size_t)place->symbol, (int)observedStorageType(place->type), (int)place->type.kind);
         return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
       }
       binding = frame.body.findPlace(root);
@@ -803,8 +788,6 @@ private:
           owner = &instance.staticFieldInitializers;
       if (!owner && defines(program.module()))
         owner = &program.module();
-      if (std::getenv("GTI_TRACE_CEVAL") && !owner)
-        std::fprintf(stderr, "storage symbol=%zu has no initializer body\n", (std::size_t)place.symbol);
       if (!owner ||
           std::find(initializedStorageBodies.begin(),
                     initializedStorageBodies.end(),
@@ -820,10 +803,6 @@ private:
                        0},
                       SemanticType::Void, {}, {}, {}, 1);
       initializingStorage = enclosing;
-      if (std::getenv("GTI_TRACE_CEVAL"))
-        std::fprintf(stderr, "storage init symbol=%zu module=%d failure=%d detail=%s found=%d\n", (std::size_t)place.symbol,
-                     (int)(owner == &program.module()), (int)result.failure, result.detail.c_str(),
-                     (int)programStorage.contains(place.symbol));
       if (!result && !result.voidResult)
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
       found = programStorage.find(place.symbol);
@@ -1696,16 +1675,6 @@ private:
         values.size() == 2) {
       const auto pointer = decodePointer(values[0]);
       auto delta = signedOffset(values[1]);
-      if (std::getenv("GTI_TRACE_CEVAL")) {
-        std::fprintf(stderr, "ptradd decoded=%d base=%zu offset=%lld delta=%d\n", (int)pointer.has_value(),
-                     pointer ? pointer->base : 0, pointer ? (long long)pointer->offset : 0, (int)delta.has_value());
-        if (pointer && pointer->base) {
-          const auto &b = pointerBases[pointer->base - 1];
-          std::fprintf(stderr, "  base alloc=%zu untyped=%d regionEpoch=%zu", b.location.allocation, (int)b.untyped, b.regionEpoch);
-          if (b.location.allocation) { auto &r = *heap[b.location.allocation-1]; std::fprintf(stderr, " live=%d epoch=%zu raw=%d typed=%d slots=%zu", (int)r.live, r.epoch, (int)r.raw, (int)r.typed, r.slots.size()); }
-          std::fprintf(stderr, "\n");
-        }
-      }
       if (!pointer || !delta || pointer->base == 0)
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       if (instruction.operation == MirOperation::PointerSubtract)
@@ -1879,8 +1848,6 @@ private:
           destructor->definitionKind != MirDefinitionKind::Source || !value)
         return fail(caller, ConstantEvaluationFailure::UnsupportedExpression,
                     "Constant destruction requires an available source body.");
-      if (std::getenv("GTI_TRACE_CEVAL"))
-        std::fprintf(stderr, "ceval destructor %zu class %zu\n", (std::size_t)destructor->id, (std::size_t)recipe.classInstance.value_or(0));
       auto result = executeBody(destructor->body,
                                 {MirBodyKind::Destructor, destructor->id},
                                 SemanticType::Void, {}, {}, {}, depth + 1,
@@ -1907,9 +1874,6 @@ private:
 
   void applyLifecycle(Frame &frame, std::span<const MirLifecycleEvent> events) {
     for (const auto &event : events) {
-      if (std::getenv("GTI_TRACE_CEVAL"))
-        std::fprintf(stderr, "  lifecycle kind=%d source=%zu target=%zu (body %d/%zu)\n", (int)event.kind,
-                     (std::size_t)event.source, (std::size_t)event.target, (int)frame.address.kind, (std::size_t)frame.address.owner);
       switch (event.kind) {
       case MirLifecycleEventKind::Initialize:
         if (event.target)
@@ -2011,10 +1975,6 @@ private:
         const auto *obligation = frame.body.findDropObligation(event.source);
         if (!obligation)
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
-        if (std::getenv("GTI_TRACE_CEVAL"))
-          std::fprintf(stderr, "  drop obligation=%zu live=%d active=%d (body %d/%zu)\n", (std::size_t)event.source,
-                       (int)frame.liveDrops[event.source], (int)obligation->dropType.requiresActiveCleanup,
-                       (int)frame.address.kind, (std::size_t)frame.address.owner);
         if (obligation->dropType.requiresActiveCleanup &&
             !frame.liveDrops[event.source]) {
           // Normal MIR may retire the shell of a moved parameter as well as
@@ -2555,11 +2515,9 @@ private:
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
         evaluated = allocateRaw(bytes->magnitude, alignment->magnitude,
                                 instruction.info.type);
-        if (std::getenv("GTI_TRACE_CEVAL")) std::fprintf(stderr, "ceval allocate bytes=%llu -> region %zu\n", (unsigned long long)bytes->magnitude, heap.size());
       } else if (instruction.intrinsic == IntrinsicKind::ConstantRelease) {
         if (arguments.size() != 1)
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
-        if (std::getenv("GTI_TRACE_CEVAL")) { auto d = decodePointer(arguments[0]); std::fprintf(stderr, "ceval release base=%zu in body kind=%d owner=%zu\n", d ? d->base : 0, (int)frame.address.kind, (std::size_t)frame.address.owner); }
         const auto released = releaseRaw(arguments[0]);
         if (!released)
           return fail(frame, released.failure,
@@ -3339,8 +3297,6 @@ private:
             frame, ConstantEvaluationFailure::UnsupportedExpression,
             "Terminator is outside the constant MIR execution profile.");
       default:
-        if (std::getenv("GTI_TRACE_CEVAL"))
-          std::fprintf(stderr, "terminator kind=%d body kind=%d\n", (int)terminator.kind, (int)frame.address.kind);
         return fail(
             frame, ConstantEvaluationFailure::UnsupportedExpression,
             "Terminator is outside the constant MIR execution profile.");
