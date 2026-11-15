@@ -273,6 +273,120 @@ std::string key(const lang::Diagnostic &diagnostic) {
   return result;
 }
 
+// Constant-evaluation demand parity (#398). Each case evaluates a trusted
+// constexpr definition at compile time through a different entry point. The
+// reachable policy must report exactly the complete check's diagnostics and
+// validity, without repeated analysis rounds, with and without a preamble.
+// These pass with constexpr bodies analysed eagerly and must keep passing
+// once unused trusted constexpr bodies are deferred.
+void checkConstantDemandParity(const std::filesystem::path &root) {
+  const auto entry = root / "tests/demand-entry.gti";
+  const auto library = root / "stdlib/std/cmath.gti";
+  const auto parityCase = [&](const std::string &caseLabel,
+                              const std::string &libraryText,
+                              const std::string &source) {
+    const auto run =
+        [&](bool complete, lang::FrontendWorkMetrics &work,
+            std::shared_ptr<lang::SemanticPreambleCache> preambles = nullptr) {
+          lang::FrontendOptions options;
+          options.stopAfter = lang::FrontendPhase::Hir;
+          options.analyzeRecoveredProgram = true;
+          options.trustedBodies = complete
+                                      ? lang::TrustedBodyAnalysis::Complete
+                                      : lang::TrustedBodyAnalysis::Reachable;
+          options.workMetrics = &work;
+          options.preambleCache = std::move(preambles);
+          return lang::Frontend(options).analyze(
+              entry, "import std.cmath;\n" + source,
+              {root / "stdlib/prelude.gti"},
+              {{library.string(), "export module cmath;\n" + libraryText}},
+              {root / "stdlib"});
+        };
+    lang::FrontendWorkMetrics completeWork;
+    const auto complete = run(true, completeWork);
+    if (!complete.semanticValid || !complete.hirValid)
+      for (const auto &diagnostic : complete.diagnostics)
+        std::cerr << caseLabel << ": " << diagnostic.code << ": "
+                  << diagnostic.message << '\n';
+    expect(complete.semanticValid && complete.hirValid,
+           caseLabel + ": the complete check accepts the program");
+    for (const bool preamble : {false, true}) {
+      const std::string label = caseLabel + (preamble ? " [preamble]" : "");
+      lang::FrontendWorkMetrics reachableWork;
+      const auto reachable = run(
+          false, reachableWork,
+          preamble ? std::make_shared<lang::SemanticPreambleCache>() : nullptr);
+      std::vector<std::string> completeKeys;
+      std::vector<std::string> reachableKeys;
+      for (const auto &diagnostic : complete.diagnostics)
+        completeKeys.push_back(key(diagnostic));
+      for (const auto &diagnostic : reachable.diagnostics)
+        reachableKeys.push_back(key(diagnostic));
+      std::sort(completeKeys.begin(), completeKeys.end());
+      std::sort(reachableKeys.begin(), reachableKeys.end());
+      if (completeKeys != reachableKeys)
+        for (const auto &item : reachableKeys)
+          std::cerr << label << " reachable: " << item << '\n';
+      expect(completeKeys == reachableKeys,
+             label + ": diagnostics equal the complete check");
+      expect(complete.semanticValid == reachable.semanticValid &&
+                 complete.hirValid == reachable.hirValid,
+             label + ": validity equals the complete check");
+      expect(reachableWork.semanticDemandRounds == 0 &&
+                 reachableWork.semanticDemandFallbacks == 0,
+             label + ": no repeated analysis round, got " +
+                 std::to_string(reachableWork.semanticDemandRounds));
+    }
+  };
+
+  // A chain of trusted constexpr callees reached only from compile time.
+  const std::string chain =
+      "constexpr int chain_leaf(int n) { return n * 2; }\n"
+      "constexpr int chain_middle(int n) { return chain_leaf(n) + 1; }\n"
+      "export constexpr int chain_root(int n) { return chain_middle(n); }\n";
+  parityCase("namespace-scope static_assert through a callee chain", chain,
+             "static_assert(chain_root(20) == 41);\n"
+             "int main() { return 0; }\n");
+  parityCase("if constexpr through a callee chain", chain,
+             "int main() { if constexpr (chain_root(1) == 3) { return 0; } "
+             "return 1; }\n");
+  // A generic library constexpr function first instantiated, and its callee
+  // first reached, from a concrete instance of a user function.
+  parityCase("constexpr callee first resolved in a concrete instance",
+             chain + "export constexpr int scaled<T>(int n) { "
+                     "return chain_leaf(n); }\n",
+             "int instance<T>() { static_assert(scaled<T>(3) == 6); "
+             "return 0; }\n"
+             "int main() { return instance<int32_t>(); }\n");
+  // A concept predicate whose wrapper calls a trusted constexpr function.
+  parityCase("concept predicate calling a trusted constexpr function",
+             "constexpr bool lib_accepts() { return true; }\n"
+             "export constexpr bool accepts<T>() { return lib_accepts(); }\n",
+             "concept accepted<T> = accepts<T>();\n"
+             "int lift<accepted T>() { return 0; }\n"
+             "int main() { return lift<int32_t>(); }\n");
+  // `?` in a constant evaluation selects trusted conformance operations.
+  parityCase("? propagation in a constant evaluation",
+             "export constexpr expected<int, int> validated(int v) { "
+             "if (v > 0) { return v; } return unexpected(v - 1); }\n",
+             "constexpr expected<int, int> doubled(int v) { "
+             "int checked = ?validated(v); return checked * 2; }\n"
+             "static_assert(doubled(21).value() == 42);\n"
+             "static_assert(doubled(0).error() == -1);\n"
+             "int main() { return 0; }\n");
+  // A class-scope static_assert over a trusted constexpr function.
+  parityCase("class-scope static_assert",
+             "export constexpr int lib_size() { return 4; }\n",
+             "class Fixed { public: Fixed() = default; "
+             "static_assert(lib_size() == 4); int value = 0; };\n"
+             "int main() { Fixed fixed{}; return fixed.value; }\n");
+  // A procedural macro whose trusted helper nothing else uses.
+  parityCase("procedural macro with an otherwise unused trusted helper",
+             "export constexpr int lib_nine() { return 9; }\n",
+             "#macro int nine() { return lib_nine(); }\n"
+             "int main() { return nine!() - 9; }\n");
+}
+
 lang::FrontendResult
 analyze(const std::filesystem::path &root, const std::filesystem::path &entry,
         lang::TrustedBodyAnalysis policy, bool entryUnitHir,
@@ -601,6 +715,7 @@ int main(int argc, char *argv[]) {
       argc > 1 ? std::filesystem::path(argv[1])
                : std::filesystem::path(__FILE__).parent_path().parent_path());
   checkFixtures(root);
+  checkConstantDemandParity(root);
   checkLibraryOnlyOmission(root);
   checkPreambleGraphs(root);
   std::vector<std::filesystem::path> entries;
