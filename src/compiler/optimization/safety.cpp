@@ -25,12 +25,14 @@
 namespace lang {
 namespace {
 
-// Verified target-layout queries inspect a type, not any live object. Reuse
-// the effect owner's exact inert-query contract in both body and call profiles.
+// Verified target-layout queries inspect a type, not any live object, and the
+// execution-context query inspects neither. Reuse the effect owner's exact
+// inert-query contract in both body and call profiles.
 [[nodiscard]] bool independentLayoutQuery(const MirInstruction &instruction,
                                           const MirEffectTraits &effect) {
   return (instruction.intrinsic == IntrinsicKind::ObjectSize ||
-          instruction.intrinsic == IntrinsicKind::ObjectAlignment) &&
+          instruction.intrinsic == IntrinsicKind::ObjectAlignment ||
+          instruction.intrinsic == IntrinsicKind::ConstantEvaluation) &&
          instruction.result && instruction.operands.empty() &&
          !instruction.receiver && !instruction.destination &&
          effect.speculatable && effect.removableWhenUnused &&
@@ -3971,12 +3973,19 @@ struct DisjointScalarFields {
   std::map<FieldOrigin, EntryRelativeField> storedRelative;
 };
 
-// Only declaration-bound process adapters have this contract. Their ordering,
-// allocation and failure effects are unchanged; this profile describes writes
-// to already-live non-byte scalar objects, not arbitrary storage bytes.
+// Only declaration-bound process adapters, and the constant byte provider
+// that stands in for them, have this contract. Their ordering, allocation and
+// failure effects are unchanged; this profile describes writes to
+// already-live non-byte scalar objects, not arbitrary storage bytes.
 [[nodiscard]] std::optional<unsigned>
 processScalarWriteWidth(const MirProgram *program,
                         const MirInstruction &instruction) {
+  if (program && instruction.kind == MirInstructionKind::Call &&
+      (instruction.intrinsic == IntrinsicKind::ConstantAllocate ||
+       instruction.intrinsic == IntrinsicKind::ConstantRelease) &&
+      !instruction.receiver && !instruction.destination &&
+      !instruction.rawMemoryAccess)
+    return 0; // Like the native provider: fresh storage, or retired storage.
   if (!program || instruction.kind != MirInstructionKind::Call ||
       instruction.dispatch != CallDispatch::Static || instruction.receiver ||
       instruction.nativeCallbackAdapter || instruction.threadTaskAdapter ||
@@ -9896,6 +9905,16 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
            op == ProcessMemoryRuntimeOperation::AlignedAllocate ||
            op == ProcessMemoryRuntimeOperation::PosixAllocate;
   };
+  // The constant byte provider has the native provider's storage contract:
+  // its allocation is fresh storage and its release retires its one address.
+  const auto constantStorage = [](const MirInstruction &instruction,
+                                  IntrinsicKind intrinsic) {
+    return instruction.kind == MirInstructionKind::Call &&
+           instruction.intrinsic == intrinsic && !instruction.receiver &&
+           !instruction.destination &&
+           instruction.operands.size() ==
+               (intrinsic == IntrinsicKind::ConstantAllocate ? 2U : 1U);
+  };
   const auto precedes = [&](InstructionSite first, InstructionSite second) {
     if (first.block != second.block)
       return dominance->dominates(first.block->id, second.block->id);
@@ -10233,10 +10252,12 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
           producer.operands.front().type.kind == SemanticType::NullPtr &&
           producer.info.type.kind == SemanticType::RawPointer)
         return self(self, producer.operands.front(), {}, site, depth + 1);
-      if (path.empty() && allocate(operation(producer)) &&
-          (operation(producer) !=
-               ProcessMemoryRuntimeOperation::PosixAllocate ||
-           privateStatusCalls.contains(producer.id)))
+      if (path.empty() &&
+          (constantStorage(producer, IntrinsicKind::ConstantAllocate) ||
+           (allocate(operation(producer)) &&
+            (operation(producer) !=
+                 ProcessMemoryRuntimeOperation::PosixAllocate ||
+             privateStatusCalls.contains(producer.id)))))
         return Origins{{.input = std::nullopt, .calls = {producer.id}}};
       if (const auto *profile = sourceProfile(producer)) {
         const auto output = profile->pointerResults.find(path);
@@ -10451,6 +10472,52 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
     return known ? std::optional<Origins>(std::move(joined)) : std::nullopt;
   };
   Origins released;
+  // The body is acyclic here. One origin may be released on mutually
+  // exclusive paths, such as the constant and native provider branches, but a
+  // release site that can reach another would retire the origin twice.
+  std::map<FreshPointerOrigin, std::vector<MirBlockId>> releaseBlocks;
+  const auto reaches = [&](MirBlockId from, MirBlockId to) {
+    std::vector<MirBlockId> pending{from};
+    std::set<MirBlockId> visited;
+    while (!pending.empty()) {
+      const MirBlockId current = pending.back();
+      pending.pop_back();
+      if (current == to)
+        return true;
+      const auto *block = body.findBlock(current);
+      if (!block || !visited.insert(current).second)
+        continue;
+      const auto &terminator = block->terminator;
+      switch (terminator.kind) {
+      case MirTerminatorKind::Switch:
+        for (const auto &target : terminator.switchTargets)
+          pending.push_back(target.target);
+        [[fallthrough]];
+      case MirTerminatorKind::Goto:
+      case MirTerminatorKind::ContinueFailure:
+        pending.push_back(terminator.target);
+        break;
+      case MirTerminatorKind::Branch:
+      case MirTerminatorKind::Invoke:
+        pending.push_back(terminator.target);
+        pending.push_back(terminator.elseTarget);
+        break;
+      default:
+        break;
+      }
+    }
+    return false;
+  };
+  const auto releaseOnce = [&](const FreshPointerOrigin &origin,
+                               MirBlockId block) {
+    auto &blocks = releaseBlocks[origin];
+    for (const MirBlockId prior : blocks)
+      if (prior == block || reaches(prior, block) || reaches(block, prior))
+        return false;
+    blocks.push_back(block);
+    released.insert(origin);
+    return true;
+  };
   bool observedReturn = false;
   for (const auto &block : body.blocks) {
     if (!dominance->isReachable(block.id))
@@ -10498,9 +10565,12 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
           return {};
         std::set<InputField> obligations;
         if (op == ProcessMemoryRuntimeOperation::PosixRelease ||
-            op == ProcessMemoryRuntimeOperation::AlignedRelease)
+            op == ProcessMemoryRuntimeOperation::AlignedRelease ||
+            constantStorage(instruction, IntrinsicKind::ConstantRelease))
           obligations.insert(InputField{0, {}});
         else if (allocate(op) ||
+                 constantStorage(instruction,
+                                 IntrinsicKind::ConstantAllocate) ||
                  op == ProcessMemoryRuntimeOperation::NativeSizeMax ||
                  // The sealed effect contract inspects address bits only;
                  // it neither reads pointed storage nor publishes captures.
@@ -10526,7 +10596,7 @@ freshStorageProfile(const MirProgram &program, MirBodyAddress address,
           if (!values)
             return {};
           for (const auto &value : *values) {
-            if (!released.insert(value).second)
+            if (!releaseOnce(value, block.id))
               return {};
             if (value.input)
               result.releasedParameters.insert(*value.input);

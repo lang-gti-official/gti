@@ -463,12 +463,11 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.initializesValue = true}, // AtomicFetchAddWrapping
     MirEffectTraits{.initializesValue = true}, // AtomicFetchSubWrapping
     harmless(), // ConstantEvaluation: a pure constant per execution context.
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
-                    .allocates = true,
-                    .mayTrap = true}, // ConstantAllocate
-    MirEffectTraits{.readsUnknownMemory = true,
-                    .writesUnknownMemory = true,
+    // The constant byte provider has the effects of the native provider it
+    // stands in for: obtaining fresh storage reads and writes no existing
+    // memory, and release ends a region without capturing its address.
+    MirEffectTraits{.allocates = true, .mayTrap = true}, // ConstantAllocate
+    MirEffectTraits{.writesUnknownMemory = true,
                     .mayTrap = true}, // ConstantRelease
     // TextViewNarrow: rewrites the referenced view's address and count; its
     // owner dependency is unchanged and the unsafe caller proves the extent.
@@ -2967,17 +2966,20 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
       }
     }
 
+    // An unknown write may store an argument or the receiver somewhere the
+    // caller cannot see, except a storage release, which only ends a region.
+    bool capturingUnknownWrite = false;
     for (const MirBlock &block : node.body->blocks) {
       for (const MirInstruction &instruction : block.instructions) {
         const ExactTargets targets =
             exactTargets(program, *node.body, instruction);
         if (isInvocation(instruction) && !targets.addresses.empty() &&
             !targets.boundary) {
-          node.local.traits =
-              merge(node.local.traits,
-                    cleanupEffects(exactInvocationShell(instruction,
-                                                        targets.nativeCleanup),
-                                   targets));
+          const MirEffectTraits invocationEffects = cleanupEffects(
+              exactInvocationShell(instruction, targets.nativeCleanup),
+              targets);
+          capturingUnknownWrite |= invocationEffects.writesUnknownMemory;
+          node.local.traits = merge(node.local.traits, invocationEffects);
           for (const MirBodyAddress target : targets.addresses) {
             const std::optional<std::size_t> targetNode =
                 findNode(nodes, target);
@@ -3012,6 +3014,10 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
                                               : shell,
               targets);
           node.local.traits = merge(node.local.traits, instructionEffects);
+          capturingUnknownWrite |=
+              instructionEffects.writesUnknownMemory &&
+              !(targets.addresses.empty() && !targets.boundary &&
+                instruction.intrinsic == IntrinsicKind::ConstantRelease);
           if (isInvocation(instruction) &&
               (targets.boundary ||
                (targets.addresses.empty() && !bodylessConstruction)) &&
@@ -3049,7 +3055,7 @@ deriveMirProgramEffectSummaries(const MirProgram &program) {
     std::sort(node.callees.begin(), node.callees.end());
     node.callees.erase(std::unique(node.callees.begin(), node.callees.end()),
                        node.callees.end());
-    if (node.unknownBoundary || node.local.traits.writesUnknownMemory) {
+    if (node.unknownBoundary || capturingUnknownWrite) {
       node.local.receiverEscapes = node.hasReceiver;
       std::fill(node.local.argumentsEscape.begin(),
                 node.local.argumentsEscape.end(), true);

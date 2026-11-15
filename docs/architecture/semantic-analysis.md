@@ -1811,9 +1811,11 @@ class representation layout. Native record source-order offsets/size/alignment
 and passive-union size/alignment are retained in `ClassTypeInfo`.
 Separately, `runtimeObjectLayoutType` validates complete concrete object types
 for the declaration-bound object-size/alignment operations behind
-`std::layout_of<T>()`. That implemented runtime representation query admits
-ordinary classes and other supported carriers; it is not a compile-time or
-stable foreign-layout promise. A `[[c_opaque]] struct Name;` instead records one
+`std::layout_of<T>()`. That representation query admits ordinary classes and
+other supported carriers. It is a `constexpr` library function: constant
+evaluation answers it from the same frontend layout facts as `sizeof` and
+`alignof`, so a constant query agrees with them. It is not a stable
+foreign-layout promise. A `[[c_opaque]] struct Name;` instead records one
 incomplete nominal `ClassId` with no layout or lifecycle. Semantic type
 validation confines that identity behind raw-pointer indirection at any
 supported recursive pointer depth. Extern-C and native-record validation admit
