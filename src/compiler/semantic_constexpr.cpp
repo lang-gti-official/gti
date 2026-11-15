@@ -988,6 +988,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
   const auto *info =
       function && *function ? stagingModel.findFunction(**function) : nullptr;
+  noteConstexprAvailabilityObserved();
   if ((function &&
        (info == nullptr || !constexprDefinitionsAnalyzed.contains(*function) ||
         !declaredBeforeCurrent(*function))) ||

@@ -1271,6 +1271,17 @@ private:
     SourceSpan site;
   };
 
+  // Identifies one raw-pointer-bearing global or static field independently
+  // of which analyzer snapshot holds its flow symbol.
+  struct RawStorageInputKey {
+    int space = 0;
+    SourceUnitId unit = 0;
+    std::string name;
+    const VariableDecl *staticField = nullptr;
+    friend auto operator<=>(const RawStorageInputKey &,
+                            const RawStorageInputKey &) = default;
+  };
+
   struct RawResultQuery {
     FunctionId function = 0;
     ConstructorId constructor = 0;
@@ -1286,18 +1297,42 @@ private:
     bool writesComplete = true;
     bool accessesComplete = true;
     std::size_t identity = 0;
-    // Only independently budgeted top-level outcomes may be reused by another
-    // demand. Nested results depend on their enclosing family's remaining work.
+    // A top-level outcome has its own budget and is reused by later root
+    // demands. A nested result is reused outside its family only under the
+    // conditions in reuseRawResult.
     bool topLevel = false;
     bool complete = false;
     bool valid = false;
     // Cut short by the family's entry or depth budget; its facts are not a
     // summary of the body and depend on where in the family it was demanded.
     bool truncated = false;
-    // This result observed family state: a cycle member still in progress, a
-    // truncated entry, or another dependent result. An independent nested
-    // result is a function of its inputs alone, like a root, and is reusable.
+    // This result observed state outside its key: a family cycle member
+    // still in progress, a truncated entry, another dependent result, a
+    // change of the raw-global answer, or the request's growing set of
+    // available constexpr definitions. An independent nested result is a
+    // function of its key and recorded inputs alone, and is reusable.
     bool familyDependent = false;
+    // What a fresh analysis of this demand would spend of the family budgets:
+    // an upper bound on the entries it would add (its own and every callee's,
+    // counting reused callees by their own cost) and the query depth it would
+    // reach below its own level. A reused result is only exact where a fresh
+    // analysis would also finish inside both budgets.
+    std::size_t cost = 0;
+    std::size_t height = 0;
+    // Charge counter when this query began; entries charged after it belong
+    // to its own analysis and are already part of its cost.
+    std::size_t chargedAt = 0;
+    // Raw program storage the analysis described as symbolic inputs, and the
+    // shared request's raw-global answer it ran under. Neither may differ
+    // when the result is reused.
+    std::vector<RawStorageInputKey> storageInputs;
+    bool rawGlobals = false;
+    // The program-level declarations the analysis could see; see
+    // rawDeclarationView.
+    std::vector<std::size_t> declarationView;
+    // Sorted rawCallableKey of this query and of every query its analysis
+    // demanded, transitively, however each demand was answered.
+    std::vector<std::uint64_t> reached;
     std::optional<Diagnostic> failure;
   };
 
@@ -1315,6 +1350,19 @@ private:
     std::vector<std::shared_ptr<RawResultQuery>> independentEntries;
     std::size_t nextIdentity = 1;
     std::size_t depth = 0;
+    // Monotonic charge counter: one per entry added to a family, plus a
+    // reused result's cost. The difference across a query is its cost.
+    std::size_t charged = 0;
+    // Deepest query level reached, or that a reused result implies, since the
+    // innermost running query began.
+    std::size_t deepest = 0;
+    // chargedAt of the innermost running query.
+    std::size_t runningSince = 0;
+    // The callables each running query has demanded so far, innermost last.
+    std::vector<std::vector<std::uint64_t>> reaching;
+    // Charge counter when a running query last reused each result. Kept here,
+    // not in the shared result, so a speculative fork's charges stay its own.
+    std::unordered_map<const RawResultQuery *, std::size_t> reusedAt;
     std::optional<bool> hasRawGlobals;
     // Sealed catalog snapshots released by completed query workers. The
     // request catalog is sealed and asserted unchanged across every instance
@@ -4938,7 +4986,20 @@ private:
   void registerConformances(const StmtList &statements,
                             std::vector<std::string> scope);
   void bindConformanceOperations();
-  void noteRawResultDependency(const std::shared_ptr<RawResultQuery> &dependency);
+  void
+  noteRawResultDependency(const std::shared_ptr<RawResultQuery> &dependency);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  reuseRawResult(const RawResultQuery &demand, bool topLevel);
+  [[nodiscard]] std::vector<RawStorageInputKey> rawStorageInputKeys();
+  [[nodiscard]] std::vector<std::size_t> rawDeclarationView() const;
+  void noteRawDemand(const RawResultQuery &demand, bool withReach);
+  // Counts, on this thread, every decision that read which constexpr and
+  // procedural definitions are available. That set grows as the request
+  // proceeds, so a raw-result query that read it is not reusable.
+  static std::size_t &constexprAvailabilityObservations();
+  static void noteConstexprAvailabilityObserved() {
+    ++constexprAvailabilityObservations();
+  }
   void validateConformanceTypes(const ConformanceDecl &declaration);
   [[nodiscard]] std::optional<ConformanceMatch>
   matchConformance(ConceptId id,
