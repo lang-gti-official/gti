@@ -2067,6 +2067,13 @@ private:
       const GenericSubstitution &substitution,
       const std::optional<ConstantValue> &receiver, const Token &callSite,
       ConstexprInterpreter &context);
+  [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexprOnce(
+      const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+          &target,
+      const std::vector<ConstantValue> &arguments,
+      const GenericSubstitution &substitution,
+      const std::optional<ConstantValue> &receiver, const Token &callSite,
+      ConstexprInterpreter &context);
   // The reuse key of a staged evaluation, or none when it cannot be reused.
   [[nodiscard]] std::optional<StagedConstantResults::Key> stagedConstantKey(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
@@ -7825,6 +7832,8 @@ private:
   // retry until none is demanded; elsewhere return the (tainted) result for
   // an outer scope or the request-level net to resolve.
   bool withBodyDemands(const std::function<bool()> &attempt);
+  // Record a pending body as unmet without analysing it here.
+  void noteUnmetBody(const FunctionDecl *declaration);
   bool bodyDemandAttemptActive = false;
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,

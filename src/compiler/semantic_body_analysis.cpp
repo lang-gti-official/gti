@@ -4962,6 +4962,17 @@ auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
   return BodyReadiness::Unavailable;
 }
 
+auto SemanticVisitor::Impl::noteUnmetBody(const FunctionDecl *declaration)
+    -> void {
+  const auto &demand = requestSession.bodyDemand;
+  if (declaration == nullptr || !demand ||
+      !demand->pending.contains(declaration))
+    return;
+  if (std::find(demand->unmet.begin(), demand->unmet.end(), declaration) ==
+      demand->unmet.end())
+    demand->unmet.push_back(declaration);
+}
+
 auto SemanticVisitor::Impl::withBodyDemands(
     const std::function<bool()> &attempt) -> bool {
   const auto demand = requestSession.bodyDemand;

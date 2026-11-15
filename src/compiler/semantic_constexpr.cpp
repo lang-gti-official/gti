@@ -96,6 +96,14 @@ public:
                          ValidateResult validate)
       : facts(facts), acquire(std::move(acquire)),
         validate(std::move(validate)) {}
+  // Staging never analyses a primary body mid-lowering: it records the
+  // demand, and the evaluation is retried once the body is complete.
+  std::function<void(const FunctionDecl &)> demandPrimaryBody;
+  bool analyzeDemandedPrimaryBody(const FunctionDecl &body) override {
+    if (demandPrimaryBody)
+      demandPrimaryBody(body);
+    return false;
+  }
   SemanticTypeTraits traitsFor(const SemanticType &type) const override {
     return facts.traitsFor(type);
   }
@@ -977,6 +985,32 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+  // A staged evaluation that needed a deferred body (looked up, demanded by
+  // its closure, or a runtime-only callee) is discarded, the body analysed
+  // canonically, and the evaluation repeated (see withBodyDemands). A
+  // staged worker snapshot taken before a body completed is not reused.
+  const auto &demand = requestSession.bodyDemand;
+  const std::uint64_t generation = demand ? demand->generation : 0;
+  std::optional<ConstexprEvaluation> evaluation;
+  bool first = true;
+  (void)withBodyDemands([&] {
+    if (!first && demand && demand->generation != generation)
+      stagedWorker = {};
+    first = false;
+    evaluation = executeStagedConstexprOnce(selected, arguments, substitution,
+                                            receiver, callSite, context);
+    return evaluation.has_value();
+  });
+  return evaluation;
+}
+
+auto SemanticVisitor::Impl::executeStagedConstexprOnce(
+    const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+        &selected,
+    const std::vector<ConstantValue> &arguments,
+    const GenericSubstitution &substitution,
+    const std::optional<ConstantValue> &receiver, const Token &callSite,
+    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
   if (sourceGraph == nullptr || sources == nullptr) {
     return std::nullopt;
   }
@@ -1149,6 +1183,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                                        request.values.end())},
               analysis);
         });
+    provider.demandPrimaryBody = [this](const FunctionDecl &body) {
+      noteUnmetBody(&body);
+    };
     HirLowerer lowerer(target);
     auto hir = [&] {
       const PhaseTimeScope lowerScope("constexpr-staged-hir");
@@ -1381,6 +1418,14 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                .location = callSite};
   }
   if (result.failure == ConstantEvaluationFailure::RuntimeOnlyCall) {
+    // A constexpr callee still deferred is a demand, not a runtime-only
+    // call: record it so the enclosing retry completes it first.
+    if (const auto *callee =
+            mirProgram.findFunctionInstance(result.runtimeCallee))
+      if (const FunctionInfo *target =
+              stagingModel.findFunction(callee->declaration);
+          target != nullptr && target->constexprFunction)
+        noteUnmetBody(target->bodyDeclaration());
     const auto *callee = mirProgram.findFunctionInstance(result.runtimeCallee);
     const FunctionInfo *target =
         callee != nullptr ? stagingModel.findFunction(callee->declaration)
