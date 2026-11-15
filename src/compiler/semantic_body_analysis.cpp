@@ -11425,8 +11425,10 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
                       });
       diagnostics.insert(diagnostics.end(), worker->diagnostics.begin(),
                          worker->diagnostics.end());
-      recordConcreteClassAssertionOutcome(type.classId, type.arguments,
-                                          type.valueArguments, failed);
+      if (!requestSession.bodyDemand ||
+          requestSession.bodyDemand->unmet.size() == unmetMark)
+        recordConcreteClassAssertionOutcome(type.classId, type.arguments,
+                                            type.valueArguments, failed);
       if (failed)
         return false;
     }
@@ -11435,6 +11437,11 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
   const bool valid = validate();
   // A requirement may consume an ordinary invalid-class diagnostic. Resource
   // exhaustion is different: it cannot establish that a requirement is false.
+      // A cached outcome must not depend on a body that was unavailable
+      // while it was computed (#398 negative-cache rule).
+      const std::size_t unmetMark =
+          requestSession.bodyDemand ? requestSession.bodyDemand->unmet.size()
+                                    : 0;
   // Preserve it at the root even if an intervening speculative probe erased it.
   if (restore.root && work && work->failure &&
       std::none_of(diagnostics.begin(), diagnostics.end(),
