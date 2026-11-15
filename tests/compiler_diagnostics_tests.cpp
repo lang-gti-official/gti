@@ -1717,6 +1717,73 @@ public:
            "and type-expression identifier surfaces");
   }
 
+  // Declaration look-ahead must preserve the offending primitive keyword.
+  for (const std::string spelling :
+       {"int", "int8_t", "int16_t", "int32_t", "int64_t", "uint", "uint8_t",
+        "uint16_t", "uint32_t", "uint64_t", "float", "double", "bool", "char",
+        "nullptr_t", "void", "auto"}) {
+    const std::string source =
+        "constexpr custom::" + spelling + " value = 1;\nint recovered = 2;\n";
+    lang::Parser parser(lexer.scan(source, "qualified-builtin.gti"));
+    const auto program = parser.parse();
+    const auto *diagnostic = findDiagnosticByCode(parser.errors(), "GTI-P0001");
+    const auto start = source.find(spelling, source.find("::") + 2);
+    expect(
+        parser.errors().size() == 1 && diagnostic &&
+            diagnostic->phase == lang::DiagnosticPhase::Parsing &&
+            diagnostic->severity == lang::DiagnosticSeverity::Error &&
+            diagnostic->primary.source == "qualified-builtin.gti" &&
+            diagnostic->primary.start == start &&
+            diagnostic->primary.end == start + spelling.size() &&
+            diagnostic->message == "Built-in type '" + spelling +
+                                       "' cannot be qualified with '::'." &&
+            diagnostic->hints ==
+                std::vector<std::string>{
+                    "Use '" + spelling +
+                    "' without a namespace or type qualifier."} &&
+            diagnostic->fixes.empty() && program.declarations().size() == 1,
+        "qualified built-in " + spelling +
+            " has one precise diagnostic and preserves the next declaration");
+  }
+  for (const std::string source :
+       {"constexpr std::uint64_t limit = 1024 * 1024 * 1024;",
+        "int main() { constexpr std::uint64_t limit = 1; return 0; }",
+        "class Holder { std::uint64_t value; };",
+        "using Wide = custom::nested::uint64_t;",
+        "int read(std::uint64_t value) { return 0; }",
+        "Box<std::uint64_t> values;", "using Wide = Box<int>::uint64_t;",
+        "int main() { auto value = std::uint64_t(4); return 0; }"}) {
+    lang::Parser parser(lexer.scan(source, "qualified-builtin-surface.gti"));
+    parser.parse();
+    const auto *diagnostic = findDiagnosticByCode(parser.errors(), "GTI-P0001");
+    expect(diagnostic && diagnostic->primary.start == source.find("uint64_t") &&
+               diagnostic->primary.end == source.find("uint64_t") + 8 &&
+               diagnostic->message.find("cannot be qualified") !=
+                   std::string::npos,
+           "qualified primitive is diagnosed at its keyword across syntax "
+           "contexts");
+  }
+  const auto qualified = lang::Frontend().analyze(
+      "qualified-builtin-invalid.gti",
+      "constexpr std::uint64_t limit = 1024 * 1024 * 1024;\n"
+      "int main() { return 0; }\n");
+  expect(!qualified.syntaxValid && !qualified.canGenerateCode() &&
+             qualified.diagnostics.size() == 1,
+         "focused recovery never admits a qualified primitive for generation");
+  const auto unqualified =
+      lang::Frontend().analyze("builtin-multiplication.gti", R"gti(
+constexpr uint64_t download_limit = uint64_t(1024) * 1024 * 1024;
+constexpr uint64_t archive_limit = 4 * download_limit;
+static_assert(download_limit == uint64_t(1073741824));
+static_assert(archive_limit == uint64_t(4294967296));
+namespace custom { using Wide = uint64_t; }
+constexpr custom::Wide named_limit = archive_limit;
+int main() { return 0; }
+)gti");
+  expect(
+      unqualified.canGenerateCode(),
+      "built-in multiplication and real qualified type aliases remain valid");
+
   const lang::FrontendResult issueReproduction = lang::Frontend().analyze(
       "issue-14.gti",
       "int main() { int template = 1; return template - 1; }\n");
