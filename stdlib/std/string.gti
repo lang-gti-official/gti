@@ -1065,45 +1065,6 @@ namespace std {
       return std::move(result);
     }
 
-    /// Concatenation into a new string. The read-only forms copy this
-    /// string; the consuming forms, selected for a temporary or an explicit
-    /// `std::move`, append in place, so `std::string("id: ") + a + b` grows
-    /// one buffer. GTI operators are members of their left operand, so a
-    /// literal or `std::string_view` on the left needs `std::string(...)`.
-    string operator+(string_view other) {
-      mut string result = string();
-      result.reserve(this.data.length() + other.size());
-      unsafe { result.data.append(this.view()); }
-      result.append(other);
-      return std::move(result);
-    }
-
-    string operator+(string& other) {
-      mut string result = string();
-      result.reserve(this.data.length() + other.size());
-      unsafe { result.data.append(this.view()); }
-      result.append(other.view());
-      return std::move(result);
-    }
-
-    string operator+(string_view other) && {
-      this.append(other);
-      return std::move(this);
-    }
-
-    string operator+(string& other) && {
-      this.append(other.view());
-      return std::move(this);
-    }
-
-    void operator+=(string_view other) mut {
-      this.append(other);
-    }
-
-    void operator+=(string& other) mut {
-      this.append(other.view());
-    }
-
     /// Exchanges storage, size, and capacity without copying code units.
     void swap(mut string& other) mut {
       this.data.swap(other.data);

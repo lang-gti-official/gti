@@ -19,13 +19,7 @@ int main() {
     return 1;
   }
 
-  // Concatenation starts from an owned string; a temporary appends in place.
-  std::string label = std::string("[") + name + "]";
-  mut std::string log = label.clone();
-  log += " ready";
-
-  if (name == "engine runtime" and copy.size() == 14 and copy[0] == 'E' and
-      label == "[engine runtime]" and log == "[engine runtime] ready") {
+  if (name == "engine runtime" and copy.size() == 14 and copy[0] == 'E') {
     return 0;
   }
   return 1;

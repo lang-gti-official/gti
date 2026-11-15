@@ -13270,19 +13270,11 @@ auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
                                            const Token &token) -> void {
   if (left != SemanticType::Unknown && right != SemanticType::Unknown &&
       (!isNumeric(left) || !isNumeric(right))) {
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2004", DiagnosticPhase::Semantics, token,
-        "Operator '" + token.lexeme +
-            "' requires numeric operands but found '" + typeSpelling(left) +
-            "' and '" + typeSpelling(right) + "'.");
-    // A text view has no members of its own to host '+', and GTI operators
-    // belong to their left operand.
-    if (token.kind == TokenKind::PLUS && left == SemanticType::StringView)
-      diagnostic.hints.emplace_back(
-          "A string literal or std::string_view has no operator+. Start from "
-          "an owned string, as in 'std::string(\"text\") + value', or build "
-          "the text with std::format.");
-    diagnostics.emplace_back(std::move(diagnostic));
+    report(token,
+           "Operator '" + token.lexeme +
+               "' requires numeric operands but found '" + typeSpelling(left) +
+               "' and '" + typeSpelling(right) + "'.",
+           "GTI-S2004");
   }
 }
 

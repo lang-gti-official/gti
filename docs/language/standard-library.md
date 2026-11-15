@@ -370,17 +370,6 @@ The current implemented foundation includes:
   These operations count bytes, not Unicode characters. Counted-view construction, append, clone and indexed
   copies construct their complete character range before publishing one final
   terminator and length; range checks and allocation precede that copy.
-  Concatenation `a + b` takes a `std::string_view` or `std::string` right
-  operand and returns a new owner; `+=` appends in place. The read-only `+`
-  copies its left operand, while a temporary or explicitly moved left operand
-  selects the consuming form, which appends to its own buffer, so
-  `std::string("id: ") + std::to_string(n) + "!"` grows one allocation. GTI
-  operators are members of their left operand and `std::string_view` has no
-  source members, so a literal or view cannot start a concatenation: write
-  `std::string("text") + value` or use `std::format`. A view-first form remains
-  a goal that needs a general heterogeneous-operator rule (operators are
-  left-operand members today, with no free or reversed lookup), not a compiler
-  case for text types.
   This unit also provides
   source-defined base-10 `std::to_string` conversion for every fixed-width
   integer, plus `print`/`println`, which write the complete contents,

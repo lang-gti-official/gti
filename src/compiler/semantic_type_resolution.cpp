@@ -8940,26 +8940,6 @@ auto SemanticVisitor::Impl::validateExternCFunction(
   const auto fail = [&](const Token &location, std::string message) {
     report(location, std::move(message), "GTI-S2054");
   };
-  // GTI `char` is a code unit, not C's plain `char`; a rejected pointer to it
-  // is almost always meant as native text, which `c_char` spells.
-  const auto failBoundaryType = [&](const Token &location, std::string message,
-                                    const SemanticType &type) {
-    const SemanticType *pointee = &type;
-    bool pointer = false;
-    while (pointee->kind == SemanticType::RawPointer &&
-           pointee->arguments.size() == 1) {
-      pointee = &pointee->arguments.front();
-      pointer = true;
-    }
-    Diagnostic diagnostic = makeDiagnostic(
-        "GTI-S2054", DiagnosticPhase::Semantics, location, std::move(message));
-    if (pointer && *pointee == SemanticType::Char)
-      diagnostic.hints.emplace_back(
-          "GTI 'char' is a text code unit, not C's 'char'. Spell a native "
-          "text pointer 'const c_char*', or use 'c_string' for a "
-          "NUL-terminated string.");
-    diagnostics.emplace_back(std::move(diagnostic));
-  };
   const FunctionInfo *functionInfo = semanticModel.findFunction(function);
   const std::string_view externalSymbol =
       functionInfo == nullptr ? std::string_view(function.name().lexeme)
@@ -9005,13 +8985,11 @@ auto SemanticVisitor::Impl::validateExternCFunction(
        returnType != SemanticType::CString && !isCAbiScalar(returnType) &&
        !isCAbiRawPointer(returnType) && !isCAbiRecordType(returnType) &&
        !isCAbiNativeFunction(returnType))) {
-    failBoundaryType(
-        function.returnType().name.last(),
-        "extern \"C\" return types are limited to void, fixed-width "
-        "integer or float scalars, c_string, valid [[c_abi]] records, and "
-        "recursive raw pointers to those types, opaque C handles, void, "
-        "or an exact named native function type.",
-        returnType);
+    fail(function.returnType().name.last(),
+         "extern \"C\" return types are limited to void, fixed-width "
+         "integer or float scalars, c_string, valid [[c_abi]] records, and "
+         "recursive raw pointers to those types, opaque C handles, void, "
+         "or an exact named native function type.");
   }
 
   for (const Parameter &parameter : function.parameters()) {
@@ -9030,15 +9008,13 @@ auto SemanticVisitor::Impl::validateExternCFunction(
       const Token &location = parameter.name.lexeme.empty()
                                   ? parameter.type.name.last()
                                   : parameter.name;
-      failBoundaryType(
-          location,
-          "extern \"C\" parameters are limited to immutable by-value "
-          "fixed-width scalars, valid [[c_abi]] records, std::string_view "
-          "counted buffers, c_string NUL-terminated pointers, and "
-          "recursive raw pointers to those record or scalar types, opaque "
-          "C handles, void, or exact "
-          "named native function types.",
-          parameterType);
+      fail(location,
+           "extern \"C\" parameters are limited to immutable by-value "
+           "fixed-width scalars, valid [[c_abi]] records, std::string_view "
+           "counted buffers, c_string NUL-terminated pointers, and "
+           "recursive raw pointers to those record or scalar types, opaque "
+           "C handles, void, or exact "
+           "named native function types.");
     }
   }
 
