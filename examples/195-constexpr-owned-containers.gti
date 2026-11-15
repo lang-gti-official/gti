@@ -1,0 +1,77 @@
+// Owning containers at compile time. std::string and std::vector are ordinary
+// GTI over raw storage; constant evaluation runs that same source, checks
+// every raw access, and requires every allocation to be released before a
+// passive result is published. The same functions also run at run time.
+import std.memory;
+import std.string;
+import std.vector;
+
+// Builds an asset path from parts and reports its length.
+constexpr std::size_t asset_path_length(std::string_view root, std::string_view name) {
+  mut std::string path = std::string(root);
+  path.push_back('/');
+  path.append(name);
+  path.append(".png");
+  return path.size();
+}
+
+// Counts the distinct words of a fixed list, using a vector of strings.
+constexpr std::size_t distinct_words() {
+  mut std::vector<std::string> seen{};
+  std::string_view words[6] = {"red", "green", "red", "blue", "green", "red"};
+  for (mut std::size_t i = 0; i < std::size_t(6); i++) {
+    mut bool known = false;
+    for (mut std::size_t j = 0; j < seen.size(); j++) {
+      if (seen[j] == words[i]) { known = true; }
+    }
+    if (!known) { seen.push_back(std::string(words[i])); }
+  }
+  return seen.size();
+}
+
+// An application-defined container over the public typed allocation
+// boundary works the same way: nothing here is a standard container.
+class Histogram {
+  mut std::storage<int> buckets;
+  std::size_t width;
+public:
+  constexpr Histogram(std::storage<int> buckets, std::size_t width)
+      : buckets(std::move(buckets)), width(width) {
+    for (mut std::size_t i = 0; i < width; i++) { this.buckets.construct(i, 0); }
+  }
+  constexpr void add(std::size_t bucket) mut { this.buckets.get_mut(bucket) += 1; }
+  constexpr int peak() {
+    mut int best = 0;
+    for (mut std::size_t i = 0; i < this.width; i++) {
+      if (this.buckets.get(i) > best) { best = this.buckets.get(i); }
+    }
+    return best;
+  }
+};
+
+constexpr int busiest_bucket() {
+  std::allocator allocator = std::allocator();
+  mut Histogram histogram = Histogram(allocator.try_storage<int>(std::size_t(4)).value(), std::size_t(4));
+  histogram.add(std::size_t(1));
+  histogram.add(std::size_t(3));
+  histogram.add(std::size_t(1));
+  return histogram.peak();
+}
+
+// Fixed-size tables sized by values computed with owning containers.
+constexpr std::size_t path_capacity = asset_path_length("textures/ui", "button");
+constexpr std::size_t palette_size = distinct_words();
+static_assert(path_capacity == std::size_t(22));
+static_assert(palette_size == std::size_t(3));
+static_assert(busiest_bucket() == 2);
+
+int main() {
+  // The computed constant sizes a fixed array.
+  char path_buffer[path_capacity] = {};
+  std::println(std::to_string(sizeof(char[path_capacity])));
+  std::println(std::to_string(palette_size));
+  // The same code runs at run time with the same results.
+  std::println(std::to_string(asset_path_length("textures/ui", "button")));
+  std::println(std::to_string(busiest_bucket()));
+  return 0;
+}

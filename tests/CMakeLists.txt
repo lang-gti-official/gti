@@ -4310,6 +4310,14 @@ if(Python3_Interpreter_FOUND)
             --ownership-checks
   )
   add_test(
+    NAME constexpr_owned_storage_runtime
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_owned_storage.gti"
+            --ownership-checks
+  )
+  add_test(
     NAME constexpr_payload_enum_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
@@ -4339,6 +4347,14 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/examples/153-constexpr-allocation.gti"
+            --ownership-checks
+  )
+  add_test(
+    NAME constexpr_owned_containers_example
+    COMMAND "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
+            "$<TARGET_FILE:gti>"
+            "${PROJECT_SOURCE_DIR}/examples/195-constexpr-owned-containers.gti"
             --ownership-checks
   )
   add_test(
