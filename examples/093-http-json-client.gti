@@ -1,14 +1,39 @@
 import std.http;
+import std.io;
+import std.cstdio;
 import std.json;
 import std.string;
 import std.vector;
 // No arguments: offline URL recipe. URL: GET. URL post: POST a JSON object.
+// URL stream FILE: copy a streaming response to a file with bounded scratch.
 // See README.md for a reproducible local-server demo (no credentials needed).
 struct named {
   std::string name = std::string("");
 public:
   named() = default;
 };
+
+// The same io::copy works with a file, socket, memory stream, or custom writer.
+int stream_file(mut std::http::client& client, std::http::request& request,
+                std::string_view destination) {
+  auto received = client.send_stream(request);
+  if (!received) { return 5; }
+  mut auto response = std::move(received).value();
+  if (response.status() < uint32_t(200) || response.status() >= uint32_t(300)) {
+    return 6;
+  }
+  auto opened = std::fopen(destination, std::file_mode::write);
+  if (!opened) { return 9; }
+  mut auto output = std::move(opened).value();
+  mut std::byte_buffer bytes{std::size_t(4096)};
+  mut auto scratch = bytes.as_mutable_span();
+  auto copied = std::io::copy(response, *output, scratch);
+  if (!copied) { return 10; }
+  auto closed = output->close();
+  if (!closed) { return 11; }
+  std::println(response.bytes_read());
+  return 0;
+}
 
 int main(int argc, std::vector<std::string> argv) {
   if (argc == 1) {
@@ -17,10 +42,12 @@ int main(int argc, std::vector<std::string> argv) {
     mut auto endpoint = base.value() / "api" / "users";
     endpoint.add_query_parameter("name", "Alice Smith");
     std::println(endpoint.view());
-    std::println("Usage: http-json URL [post]");
+    std::println("Usage: http-json URL [post | stream FILE]");
     return 0;
   }
-  if (argc > 3 || (argc == 3 && argv[std::size_t(2)].view() != "post")) { return 1; }
+  bool streaming = argc == 4 && argv[std::size_t(2)].view() == "stream";
+  if (argc > 4 || (argc == 4 && !streaming) ||
+      (argc == 3 && argv[std::size_t(2)].view() != "post")) { return 1; }
   auto parsed_url = std::http::url::parse(argv[std::size_t(1)].view());
   if (!parsed_url) { std::println("Invalid HTTP(S) URL"); return 2; }
   auto endpoint = std::move(parsed_url).value();
@@ -42,6 +69,11 @@ int main(int argc, std::vector<std::string> argv) {
   if (!created) { std::println("HTTP client unavailable"); return 4; }
   // Reuse this mutable owner for multiple sends to retain its connection pool.
   mut auto client = std::move(created).value();
+  if (streaming) {
+    request.set_redirect_policy(std::http::redirect_policy::secure);
+    request.set_redirect_limit(uint32_t(5));
+    return stream_file(client, request, argv[std::size_t(3)].view());
+  }
   auto received = client.send(request);
   if (!received) { std::println("HTTP transport failed"); return 5; }
   auto response = std::move(received).value();

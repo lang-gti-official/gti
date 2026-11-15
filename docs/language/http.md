@@ -1,11 +1,12 @@
-# Buffered HTTP And HTTPS
+# HTTP And HTTPS
 
 Status: current bounded standard-library contract
 
 `import std.http;` provides a synchronous reusable HTTP client implemented
-as ordinary GTI policy over a versioned private runtime ABI. The first surface
-is deliberately buffered: each request completes before `send` returns, and a
-successful response owns its complete headers and body.
+as ordinary GTI policy over a versioned private runtime ABI. `send` buffers a
+complete response; `send_stream` returns after the final response headers and
+exposes a bounded pull-based body through the general `std::io::reader` protocol.
+Neither API invokes the `curl` executable.
 
 ```gti
 import std.http;
@@ -143,7 +144,8 @@ has the same two forms. A request is move-only and provides:
 - `set_body(string)` and `set_body(string_view)`;
 - `set_connect_timeout_ms` and `set_timeout_ms`, whose defaults are 10 and 30
   seconds respectively;
-- `set_max_response_bytes`, whose default is 16 MiB; and
+- `set_max_response_bytes`, whose default is 16 MiB;
+- `set_redirect_policy` and `set_redirect_limit`, described below; and
 - `set_ca_bundle(path)` for a PEM trust bundle used by this request.
 
 Header mutators and `set_ca_bundle` return `expected<void, errc>`. Header names
@@ -158,6 +160,7 @@ Its operations are:
 
 ```gti
 expected<response, errc> send(request& value) mut;
+expected<streaming_response, errc> send_stream(request& value) mut;
 expected<response, errc> get(string_view url) mut;
 expected<response, errc> get(url& target) mut;
 expected<response, errc> post(string_view url, string_view body) mut;
@@ -190,7 +193,8 @@ runtime representation change without changing public layout.
 The recoverable categories are `invalid_url`, `invalid_header`,
 `unsupported_scheme`, `name_resolution_failed`, `connection_failed`,
 `tls_failed`, `timeout`, `request_failed`, `response_too_large`,
-`backend_unavailable`, and `client_creation_failed`.
+`backend_unavailable`, `client_creation_failed`, `cancelled`,
+`too_many_redirects`, and `redirect_rejected`.
 
 HTTP status codes are not transport failures. A 404 or 500 is a successful
 `response` whose `status()` carries that value. Only URL construction,
@@ -198,11 +202,119 @@ resolution, connection, TLS, timeout, response-size, backend, and native
 request failures use the unexpected alternative.
 
 Only `http://` and `https://` URLs are accepted. GET and HEAD reject a nonempty
-body. Redirect following is disabled, so a 3xx response is returned to the
-caller and credentials are never silently forwarded to another origin. The
-configured response limit applies to the decoded body; response headers also
-have an independent 1 MiB hard limit. Body and header strings preserve their
-exact bytes, including NUL.
+body. Redirect following is disabled by default, so a 3xx response is returned
+to the caller. Explicit redirect policy applies to both buffered and streaming
+sends. The configured response limit applies to the decoded body for buffered
+responses and the content-encoded body bytes for streaming responses. Response
+headers also have an independent 1 MiB hard limit. Bodies preserve binary bytes,
+including NUL.
+
+## Streaming Responses And General I/O
+
+`send_stream(request)` returns `expected<streaming_response, errc>` after the
+final response headers have arrived. It does not wait for the complete body.
+Construction, connection, TLS, and redirect failures before those headers are
+returned as errors. A body error observed in the same transport step as the
+headers is retained on the response and reported by its reader, so the status
+and headers remain available for diagnosis.
+
+A streaming response is a move-only owner of an independent transfer. It may
+outlive its originating request and client; multiple responses may remain alive
+at once. It is neither transferable between threads nor shareable. Status and
+header inspection does not advance the body. `headers()` reports the final
+response header block; later trailer fields do not mutate it. The public operations are:
+
+```gti
+uint32_t status();
+vector<header> headers();
+string effective_url();
+expected<size_t, std::io_errc> read_some(mut mutable_span<uint8_t>& output) mut;
+void cancel() mut;
+uint64_t bytes_read();
+optional<errc> last_error();
+int32_t last_native_code();
+```
+
+`read_some` writes at most the caller's span size. A positive count is a prefix
+of body bytes; zero with a nonempty output means complete body EOF. A zero-size
+output is a successful no-op and does not establish EOF. EOF remains EOF on
+later reads. Truncated content-length bodies and malformed/incomplete chunked
+framing are errors rather than successful EOF. On failure, `last_error()` keeps
+the specific HTTP error and `last_native_code()` provides native diagnostic
+information when available. Generic readers observe `timed_out` for timeout and
+`read_failed` for other transfer errors, including size-limit and cancellation
+failures. Errors remain observable on subsequent reads.
+
+`bytes_read()` counts bytes delivered to caller buffers, not bytes prefetched
+by the transport. It enables caller-defined progress reporting without a stored
+callback or a special download abstraction. `cancel()` terminates an unfinished
+transfer and is idempotent; subsequent reads report cancellation. This is
+synchronous cancellation between reads, not cross-thread interruption of a
+currently blocking call. Request timeouts bound blocking transport work. The
+total timeout spans redirect hops and caller pauses between reads; it is not
+reset by each successful read.
+
+The streaming body satisfies `std::io::reader`, so it composes with
+`read_exact`, `getline`, `buffered_reader`, and `copy`. The destination can be a
+file, socket, memory writer, or an unrelated user-defined writer. `copy` uses
+caller-provided scratch storage, reports the committed destination prefix on
+failure, and does not flush or close the destination:
+
+```gti
+mut auto response = ?client.send_stream(request);
+// HTTP status policy belongs to the caller; 404 is still a response.
+if (response.status() != uint32_t(200)) { return unexpected(my_error); }
+mut std::byte_buffer bytes{std::size_t(65536)};
+mut auto scratch = bytes.as_mutable_span();
+auto copied = std::io::copy(response, destination, scratch);
+```
+
+The example is schematic because the enclosing error type and destination are
+application policy. See [the runnable HTTP example](../../examples/093-http-json-client.gti)
+for a complete streaming-to-file mode. Atomic publication, hashing, retry
+policy, file permissions and durability remain separate composable operations;
+HTTP does not create or rename application files.
+
+The native streaming profile bounds its owned body staging to 64 KiB rather
+than the response size and pauses transport when that storage is full. It
+currently uses HTTP/1.1 to avoid HTTP/2 flow-control buffering outside that bound.
+It requests identity content encoding and does not decompress streaming bodies.
+If a server sends a content encoding, or the caller explicitly requests one,
+`read_some` returns those encoded bytes and `Content-Encoding` identifies their
+representation. HTTP transfer framing, including chunked encoding, is removed.
+This differs intentionally from buffered `send`, which retains its decoded-body
+contract. A caller may compose a decoder as another reader without requiring
+whole-body buffering.
+
+Destroying an unfinished response cancels its transfer without draining the
+remaining body. Its connection is not reused as a successfully consumed
+response. Fully completed transfers may return a connection to the originating
+client's bounded idle pool. No caller buffer or view is retained after a read.
+
+## Redirect Policy
+
+A request has `redirects_policy()` and `redirect_limit()` accessors, and setters
+`set_redirect_policy(redirect_policy)` and `set_redirect_limit(uint32_t)`. The
+default policy is `none`; its configured hop limit defaults to five and becomes
+relevant only when following is enabled.
+
+- `none` returns the redirect response without following it.
+- `same_origin` follows only within the same scheme, host and effective port.
+- `secure` allows cross-origin redirects but rejects HTTPS-to-HTTP downgrades.
+
+Both following policies resolve relative locations, limit the number of hops,
+and reject unsupported schemes and credential-bearing redirect URLs. Crossing
+an origin under `secure` removes **all explicitly configured request headers**,
+not only `Authorization`, before the next request. This prevents an application
+header with an unfamiliar name from leaking a credential. Callers needing a
+different trust policy can keep `none` and perform explicit requests.
+
+A 303 changes the next method to GET unless it was HEAD; 301 and 302 change POST
+to GET. These conversions drop the request body. 307 and 308 preserve method
+and body. A rejected destination reports `redirect_rejected`; exceeding the
+hop limit reports `too_many_redirects`. The total timeout continues across all
+hops. `streaming_response::effective_url()` reports the final URL as an owned
+copy, so it remains valid independently of the response.
 
 ## HTTPS Policy
 
@@ -221,8 +333,9 @@ cross the public GTI API.
 
 ## Runtime Boundary
 
-The versioned `gti_rt_http_*_v1` C ABI owns one easy handle per client and one
-fully buffered result per response. GTI passes URL, body, CA path, and an
+The versioned `gti_rt_http_*_v1` C ABI owns buffered response storage and bounded
+streaming transfer sessions. Streaming responses own their easy/multi transport
+state independently of their originating client. GTI passes URL, body, CA path, and an
 encoded header sequence as counted non-retained views. Fixed 4096-byte private
 buffers copy response data into public `std::string` and `std::vector` values.
 Native handle identities and runtime declarations remain private to trusted
@@ -230,12 +343,12 @@ source, whose accesses use explicit `unsafe` blocks. Applications can use GTI's
 general raw-pointer facilities; that does not expose the HTTP runtime's private
 handles or confer access to their storage.
 
-The runtime maps libcurl outcomes to the stable `errc` ordinals, disables
-redirects, enables strict TLS verification, bounds response accumulation, and
-cleans both handles deterministically. It does not own public request policy or
-recognize public GTI class names.
+The runtime maps libcurl outcomes to stable error ordinals, leaves redirect
+selection to ordinary GTI source, enables strict TLS verification, bounds
+response accumulation and streaming staging, and cleans handles deterministically.
+It does not recognize public GTI class names.
 
-Streaming bodies, cancellation, asynchronous execution, cookie jars,
+Asynchronous execution, cancellation of an in-flight blocking call, cookie jars,
 automatic authentication schemes, multipart builders, proxy configuration,
 and HTTP/2-specific controls are later layers. They must compose over this
 transport boundary rather than expose libcurl as the standard-library API.

@@ -2,12 +2,25 @@ export module http;
 
 import std.string;
 import std.vector;
+import std.io;
+import std.span;
+import std.cstdio;
+import std.optional;
+import std.chrono;
 namespace gti_internal {
   namespace runtime {
     export extern "C" {
       uint32_t gti_rt_http_client_create_v1(int64_t* output_client);
       void gti_rt_http_client_destroy_v1(int64_t client);
       uint32_t gti_rt_http_client_send_v1(int64_t client, uint32_t method, gti_internal::text_view url, gti_internal::text_view encoded_headers, uint64_t header_count, gti_internal::text_view body, uint64_t connect_timeout_ms, uint64_t request_timeout_ms, uint64_t max_response_bytes, gti_internal::text_view ca_bundle_path, int64_t* output_response, int32_t* output_native_code);
+      uint32_t gti_rt_http_client_stream_v1(int64_t client, uint32_t method, gti_internal::text_view url, gti_internal::text_view encoded_headers, uint64_t header_count, gti_internal::text_view body, uint64_t connect_timeout_ms, uint64_t request_timeout_ms, uint64_t max_response_bytes, gti_internal::text_view ca_bundle_path, int64_t* output_stream, int32_t* output_native_code);
+      void gti_rt_http_stream_destroy_v1(int64_t stream);
+      int64_t gti_rt_http_stream_metadata_v1(int64_t stream);
+      uint32_t gti_rt_http_stream_read_v1(int64_t stream, uint8_t* output, uint64_t capacity, uint64_t* count);
+      void gti_rt_http_stream_cancel_v1(int64_t stream);
+      uint64_t gti_rt_http_stream_bytes_read_v1(int64_t stream);
+      uint32_t gti_rt_http_stream_error_v1(int64_t stream);
+      int32_t gti_rt_http_stream_native_code_v1(int64_t stream);
       uint64_t gti_rt_http_client_error_size_v1(int64_t client);
       int64_t gti_rt_http_client_error_read_v1(int64_t client, uint64_t offset, uint8_t* output, uint64_t capacity);
       void gti_rt_http_response_destroy_v1(int64_t response);
@@ -52,6 +65,29 @@ namespace gti_internal {
     http_response_handle(int64_t handle) : value(handle) {}
     http_response_handle(http_response_handle& other) = delete;
     http_response_handle(http_response_handle&& other) = default;
+
+    int64_t get() {
+      return this.value;
+    }
+
+    bool is_valid() {
+      return this.value > 0;
+    }
+
+    int64_t release() mut {
+      int64_t result = this.value;
+      this.value = 0;
+      return result;
+    }
+  };
+
+  export [[no_transfer, no_share]] class http_stream_handle {
+    mut int64_t value = 0;
+
+  public:
+    http_stream_handle(int64_t handle) : value(handle) {}
+    http_stream_handle(http_stream_handle& other) = delete;
+    http_stream_handle(http_stream_handle&& other) = default;
 
     int64_t get() {
       return this.value;
@@ -573,7 +609,14 @@ namespace std {
       response_too_large,
       backend_unavailable,
       client_creation_failed,
+      cancelled,
+      too_many_redirects,
+      redirect_rejected,
     };
+
+    /// Redirect policy is opt-in. Secure permits cross-origin hops after stripping
+    /// explicit headers; neither following policy permits an HTTPS downgrade.
+    export enum class redirect_policy { none, same_origin, secure };
 
     /// Recoverable absolute-URL parsing and construction outcomes.
     export enum class url_errc {
@@ -841,6 +884,8 @@ namespace std {
       mut uint64_t connect_timeout = uint64_t(10000);
       mut uint64_t total_timeout = uint64_t(30000);
       mut uint64_t response_limit = uint64_t(16 * 1024 * 1024);
+      mut uint32_t redirects = uint32_t(5);
+      mut redirect_policy redirect_mode = redirect_policy::none;
 
     public:
       request(method verb, string_view url) : request_method(verb), request_url(std::string(url)), request_headers(vector<header>()), request_body(string()), ca_bundle_path(string()) {}
@@ -881,6 +926,11 @@ namespace std {
       uint64_t max_response_bytes() {
         return this.response_limit;
       }
+
+      uint32_t redirect_limit() { return this.redirects; }
+      redirect_policy redirects_policy() { return this.redirect_mode; }
+      void set_redirect_limit(uint32_t count) mut { this.redirects = count; }
+      void set_redirect_policy(redirect_policy policy) mut { this.redirect_mode = policy; }
 
       void set_url(string_view url) mut {
         mut string replacement = string(url);
@@ -1045,6 +1095,143 @@ namespace std {
 
 namespace gti_internal {
   namespace http_detail {
+    bool redirect_status(uint32_t status) {
+      return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+    }
+
+    bool prefix_at(std::string_view text, std::size_t at, std::string_view prefix) {
+      if (at > text.size() || prefix.size() > text.size() - at) { return false; }
+      for (mut std::size_t i = 0; i < prefix.size(); i++) {
+        if (text[at + i] != prefix[i]) { return false; }
+      }
+      return true;
+    }
+
+    void remove_last_segment(mut std::string& output) {
+      mut std::size_t end = output.size();
+      while (end > 0) {
+        end--;
+        if (output[end] == '/') { break; }
+      }
+      output.resize(end);
+    }
+
+    // RFC 3986 dot segments are literal syntax, not percent-decoded names.
+    std::string remove_dot_segments(std::string_view input) {
+      mut std::string output{};
+      mut std::size_t i = 0;
+      while (i < input.size()) {
+        if (prefix_at(input, i, "../")) { i += 3; }
+        else if (prefix_at(input, i, "./")) { i += 2; }
+        else if (prefix_at(input, i, "/./")) { i += 2; }
+        else if (prefix_at(input, i, "/.") && input.size() - i == 2) { output.push_back('/'); i += 2; }
+        else if (prefix_at(input, i, "/../")) { remove_last_segment(output); i += 3; }
+        else if (prefix_at(input, i, "/..") && input.size() - i == 3) { remove_last_segment(output); output.push_back('/'); i += 3; }
+        else if ((prefix_at(input, i, ".") && input.size() - i == 1) || (prefix_at(input, i, "..") && input.size() - i == 2)) { i = input.size(); }
+        else {
+          output.push_back(input[i]);
+          i++;
+          while (i < input.size() && input[i] != '/') { output.push_back(input[i]); i++; }
+        }
+      }
+      return std::move(output);
+    }
+
+    expected<std::string, std::http::errc> resolve_location(std::string_view base, std::string_view location) {
+      // Fragments are local identifiers and are never sent to the server.
+      mut std::size_t fragment = 0;
+      while (fragment < location.size() && location[fragment] != '#') { fragment++; }
+      auto reference = copy_text_range(location, std::size_t(0), fragment);
+      auto base_parts = analyze_url(base);
+      mut std::string combined{};
+      mut bool absolute = false;
+      for (mut std::size_t i = 0; i < reference.size(); i++) {
+        if (reference[i] == ':') { absolute = true; break; }
+        if (reference[i] == '/' || reference[i] == '?') { break; }
+      }
+      if (absolute) {
+        combined = reference.clone();
+      } else if (reference.starts_with("//")) {
+        combined = url_scheme_text(base_parts.secure());
+        combined.push_back(':');
+        combined.append(reference.view());
+      } else {
+        combined = copy_text_range(base, std::size_t(0), base_parts.authority_finish());
+        if (reference.empty()) {
+          auto rest = copy_text_range(base, base_parts.authority_finish(), base.size());
+          combined.append(rest.view());
+        } else if (reference[std::size_t(0)] == '/') {
+          combined.append(reference.view());
+        } else if (reference[std::size_t(0)] == '?') {
+          auto path = copy_text_range(base, base_parts.authority_finish(), base_parts.query_at());
+          combined.append(path.view());
+          combined.append(reference.view());
+        } else {
+          mut std::size_t slash = base_parts.query_at();
+          while (slash > base_parts.authority_finish() && base[slash - 1] != '/') { slash--; }
+          auto prefix = copy_text_range(base, base_parts.authority_finish(), slash);
+          combined.append(prefix.view());
+          if (slash == base_parts.authority_finish()) { combined.push_back('/'); }
+          combined.append(reference.view());
+        }
+      }
+      auto parts = analyze_url(combined.view());
+      if (parts.error() != 0) { return unexpected(std::http::errc::redirect_rejected); }
+      auto path = copy_text_range(combined.view(), parts.authority_finish(), parts.query_at());
+      auto normalized = remove_dot_segments(path.view());
+      mut auto result = copy_text_range(combined.view(), std::size_t(0), parts.authority_finish());
+      result.append(normalized.view());
+      auto query = copy_text_range(combined.view(), parts.query_at(), combined.size());
+      result.append(query.view());
+      return std::move(result);
+    }
+
+    std::http::request copy_request(std::http::request& input) {
+      mut std::http::request result{input.verb(), input.url().view()};
+      result.set_body(input.body().view());
+      result.set_connect_timeout_ms(input.connect_timeout_ms());
+      result.set_timeout_ms(input.timeout_ms());
+      result.set_max_response_bytes(input.max_response_bytes());
+      result.set_redirect_limit(input.redirect_limit());
+      result.set_redirect_policy(input.redirects_policy());
+      [[discard]] result.set_ca_bundle(input.ca_bundle().view());
+      for (auto& field : input.headers()) { [[discard]] result.add_header(field.name().view(), field.value().view()); }
+      return std::move(result);
+    }
+
+    expected<std::http::request, std::http::errc> redirected_request(std::http::request& input, uint32_t status, std::string_view location) {
+      auto resolved = ?resolve_location(input.url().view(), location);
+      auto before_result = std::http::url::parse(input.url().view());
+      auto after_result = std::http::url::parse(resolved.view());
+      if (!before_result || !after_result) { return unexpected(std::http::errc::redirect_rejected); }
+      auto before = std::move(before_result).value();
+      auto after = std::move(after_result).value();
+      bool same_origin = equal_header_name(before.scheme(), after.scheme()) && equal_header_name(before.host(), after.host()) && before.port() == after.port();
+      if (before.scheme() == "https" && after.scheme() != "https") { return unexpected(std::http::errc::redirect_rejected); }
+      if (!same_origin && input.redirects_policy() == std::http::redirect_policy::same_origin) { return unexpected(std::http::errc::redirect_rejected); }
+      mut auto verb = input.verb();
+      mut bool discard_body = false;
+      if ((status == 303 && verb != std::http::method::head) || ((status == 301 || status == 302) && verb == std::http::method::post)) {
+        verb = std::http::method::get;
+        discard_body = true;
+      }
+      mut std::http::request result{verb, resolved.view()};
+      if (!discard_body) { result.set_body(input.body().view()); }
+      result.set_connect_timeout_ms(input.connect_timeout_ms());
+      result.set_timeout_ms(input.timeout_ms());
+      result.set_max_response_bytes(input.max_response_bytes());
+      result.set_redirect_limit(input.redirect_limit());
+      result.set_redirect_policy(input.redirects_policy());
+      ?result.set_ca_bundle(input.ca_bundle().view());
+      if (same_origin) {
+        for (auto& field : input.headers()) {
+          bool body_header = equal_header_name(field.name().view(), "Content-Length") || equal_header_name(field.name().view(), "Content-Type") || equal_header_name(field.name().view(), "Transfer-Encoding") || equal_header_name(field.name().view(), "Content-Encoding") || equal_header_name(field.name().view(), "Expect");
+          if (!discard_body || !body_header) { ?result.add_header(field.name().view(), field.value().view()); }
+        }
+      }
+      return std::move(result);
+    }
+
     uint32_t runtime_method(std::http::method value) {
       switch (value) {
       case std::http::method::get:
@@ -1086,6 +1273,8 @@ namespace gti_internal {
         return std::http::errc::backend_unavailable;
       case uint32_t(11):
         return std::http::errc::client_creation_failed;
+      case uint32_t(12):
+        return std::http::errc::cancelled;
       default:
         return std::http::errc::request_failed;
       }
@@ -1096,6 +1285,84 @@ namespace gti_internal {
 
 namespace std {
   namespace http {
+    /// An independently owned pull response and std::io::reader. Header copies
+    /// survive the response. Reads expose transfer-decoded, content-encoded bytes.
+    export class streaming_response {
+      mut gti_internal::http_stream_handle handle;
+      string final_url;
+      int64_t metadata() { return gti_internal::runtime::gti_rt_http_stream_metadata_v1(this.handle.get()); }
+      string read_text(uint32_t kind, uint64_t index, uint64_t length) {
+        mut string result = string();
+        result.reserve(size_t(length));
+        mut uint8_t buffer[4096] = {};
+        mut uint64_t offset = uint64_t(0);
+        while (offset < length) {
+          mut uint64_t capacity = length - offset;
+          if (capacity > uint64_t(4096)) {
+            capacity = uint64_t(4096);
+          }
+          mut int64_t count = -1;
+          unsafe {
+            if (kind == uint32_t(0)) {
+              count = gti_internal::runtime::gti_rt_http_response_header_name_read_v1(this.metadata(), index, offset, &buffer[0], capacity);
+            } else if (kind == uint32_t(1)) {
+              count = gti_internal::runtime::gti_rt_http_response_header_value_read_v1(this.metadata(), index, offset, &buffer[0], capacity);
+            } else {
+              count = gti_internal::runtime::gti_rt_http_response_body_read_v1(this.metadata(), offset, &buffer[0], capacity);
+            }
+          }
+          if (count <= 0 || uint64_t(count) > capacity) {
+            return std::move(result);
+          }
+          for (mut int64_t byte = int64_t(0); byte < count; byte++) {
+            result.push_back(char(buffer[size_t(byte)]));
+          }
+          offset = offset + uint64_t(count);
+        }
+        return std::move(result);
+      }
+
+    public:
+      streaming_response(gti_internal::http_stream_handle value, string url) : handle(std::move(value)), final_url(std::move(url)) {}
+      streaming_response(streaming_response& other) = delete;
+      streaming_response(streaming_response&& other) = default;
+      ~streaming_response() { gti_internal::runtime::gti_rt_http_stream_destroy_v1(this.handle.release()); }
+      uint32_t status() { return gti_internal::runtime::gti_rt_http_response_status_v1(this.metadata()); }
+      string effective_url() { return this.final_url.clone(); }
+      vector<header> headers() {
+        uint64_t count = gti_internal::runtime::gti_rt_http_response_header_count_v1(this.metadata());
+        mut vector<header> result = vector<header>();
+        result.reserve(size_t(count));
+        for (mut uint64_t index = uint64_t(0); index < count; index++) {
+          uint64_t name_size = gti_internal::runtime::gti_rt_http_response_header_name_size_v1(this.metadata(), index);
+          uint64_t value_size = gti_internal::runtime::gti_rt_http_response_header_value_size_v1(this.metadata(), index);
+          result.push_back(header(this.read_text(uint32_t(0), index, name_size), this.read_text(uint32_t(1), index, value_size)));
+        }
+        return std::move(result);
+      }
+
+      uint64_t bytes_read() { return gti_internal::runtime::gti_rt_http_stream_bytes_read_v1(this.handle.get()); }
+      int32_t last_native_code() { return gti_internal::runtime::gti_rt_http_stream_native_code_v1(this.handle.get()); }
+      optional<errc> last_error() {
+        uint32_t status = gti_internal::runtime::gti_rt_http_stream_error_v1(this.handle.get());
+        if (status == 0) { return optional<errc>(); }
+        return optional<errc>(gti_internal::http_detail::public_error(status));
+      }
+      void cancel() mut { gti_internal::runtime::gti_rt_http_stream_cancel_v1(this.handle.get()); }
+      expected<size_t, io_errc> read_some(mut mutable_span<uint8_t>& output) mut {
+        if (output.empty()) { return size_t(0); }
+        uint64_t capacity = uint64_t(output.size());
+        mut uint64_t count = 0;
+        mut uint32_t status = 0;
+        unsafe {
+          status = gti_internal::runtime::gti_rt_http_stream_read_v1(this.handle.get(), &output.get_unchecked_mut(size_t(0)), capacity, &count);
+        }
+        if (status == 7) { return unexpected(io_errc::timed_out); }
+        if (status != 0) { return unexpected(io_errc::read_failed); }
+        return size_t(count);
+      }
+    };
+
     /// A reusable synchronous client. One mutable borrow permits one request at a
     /// time; the native easy handle retains its connection pool between calls.
     export class client {
@@ -1161,7 +1428,30 @@ namespace std {
         return std::move(result);
       }
 
-      expected<response, errc> send(request& input) mut {
+    private:
+      expected<streaming_response, errc> send_stream_once(request& input) mut {
+        auto parsed = std::http::url::parse(input.url().view());
+        if (!parsed) { return unexpected(errc::invalid_url); }
+        mut string encoded_headers = string();
+        auto& fields = input.headers();
+        for (auto& field : fields) {
+          encoded_headers.append(field.name().view());
+          encoded_headers.push_back('\0');
+          encoded_headers.append(field.value().view());
+          encoded_headers.push_back('\0');
+        }
+        mut int64_t stream = 0;
+        mut int32_t native_code = 0;
+        mut uint32_t status = 0;
+        unsafe {
+          status = gti_internal::runtime::gti_rt_http_client_stream_v1(this.handle.get(), gti_internal::http_detail::runtime_method(input.verb()), input.url().view(), encoded_headers.view(), uint64_t(fields.size()), input.body().view(), input.connect_timeout_ms(), input.timeout_ms(), input.max_response_bytes(), input.ca_bundle().view(), &stream, &native_code);
+        }
+        this.backend_code = native_code;
+        if (status != 0) { return unexpected(gti_internal::http_detail::public_error(status)); }
+        return streaming_response(gti_internal::http_stream_handle(stream), input.url().clone());
+      }
+
+      expected<response, errc> send_once(request& input) mut {
         mut string encoded_headers = string();
         vector < header >& fields = input.headers();
         for (mut size_t index = size_t(0); index < fields.size(); index++) {
@@ -1182,6 +1472,95 @@ namespace std {
           return unexpected(code);
         }
         return response(gti_internal::http_response_handle(response_value));
+      }
+
+    public:
+      expected<response, errc> send(request& input) mut {
+        this.backend_code = 0;
+        if (input.redirects_policy() == redirect_policy::none) { return this.send_once(input); }
+        auto initial_url = std::http::url::parse(input.url().view());
+        if (!initial_url) { return unexpected(errc::invalid_url); }
+        auto clock = std::chrono::steady_clock::now();
+        if (!clock) { return unexpected(errc::request_failed); }
+        auto started = std::move(clock).value();
+        mut auto current = gti_internal::http_detail::copy_request(input);
+        mut uint32_t hops = 0;
+        while (true) {
+          if (input.timeout_ms() != 0) {
+            auto clock_now = std::chrono::steady_clock::now();
+            if (!clock_now) { return unexpected(errc::request_failed); }
+            auto now = std::move(clock_now).value();
+            auto elapsed = now.elapsed_since(started);
+            if (!elapsed) { return unexpected(errc::request_failed); }
+            uint64_t milliseconds = uint64_t(elapsed.value().count() / int64_t(1000000));
+            if (milliseconds >= input.timeout_ms()) { return unexpected(errc::timeout); }
+            current.set_timeout_ms(input.timeout_ms() - milliseconds);
+          }
+          auto sent = this.send_once(current);
+          if (!sent) { return unexpected(sent.error()); }
+          auto result = std::move(sent).value();
+          if (!gti_internal::http_detail::redirect_status(result.status())) { return std::move(result); }
+          auto fields = result.headers();
+          mut std::string location{};
+          mut bool found = false;
+          for (auto& field : fields) {
+            if (gti_internal::http_detail::equal_header_name(field.name().view(), "Location")) {
+              if (found) { this.backend_code = 0; return unexpected(errc::redirect_rejected); }
+              found = true;
+              location = field.value().clone();
+            }
+          }
+          if (!found) { return std::move(result); }
+          if (hops == input.redirect_limit()) { this.backend_code = 0; return unexpected(errc::too_many_redirects); }
+          auto following = gti_internal::http_detail::redirected_request(current, result.status(), location.view());
+          if (!following) { this.backend_code = 0; return unexpected(following.error()); }
+          current = std::move(following).value();
+          hops++;
+        }
+      }
+
+      expected<streaming_response, errc> send_stream(request& input) mut {
+        this.backend_code = 0;
+        if (input.redirects_policy() == redirect_policy::none) { return this.send_stream_once(input); }
+        auto initial_url = std::http::url::parse(input.url().view());
+        if (!initial_url) { return unexpected(errc::invalid_url); }
+        auto clock = std::chrono::steady_clock::now();
+        if (!clock) { return unexpected(errc::request_failed); }
+        auto started = std::move(clock).value();
+        mut auto current = gti_internal::http_detail::copy_request(input);
+        mut uint32_t hops = 0;
+        while (true) {
+          if (input.timeout_ms() != 0) {
+            auto clock_now = std::chrono::steady_clock::now();
+            if (!clock_now) { return unexpected(errc::request_failed); }
+            auto now = std::move(clock_now).value();
+            auto elapsed = now.elapsed_since(started);
+            if (!elapsed) { return unexpected(errc::request_failed); }
+            uint64_t milliseconds = uint64_t(elapsed.value().count() / int64_t(1000000));
+            if (milliseconds >= input.timeout_ms()) { return unexpected(errc::timeout); }
+            current.set_timeout_ms(input.timeout_ms() - milliseconds);
+          }
+          auto sent = this.send_stream_once(current);
+          if (!sent) { return unexpected(sent.error()); }
+          auto result = std::move(sent).value();
+          if (!gti_internal::http_detail::redirect_status(result.status())) { return std::move(result); }
+          auto fields = result.headers();
+          mut std::string location{};
+          mut bool found = false;
+          for (auto& field : fields) {
+            if (gti_internal::http_detail::equal_header_name(field.name().view(), "Location")) {
+              if (found) { this.backend_code = 0; return unexpected(errc::redirect_rejected); }
+              found = true;
+              location = field.value().clone();
+            }
+          }
+          if (!found) { return std::move(result); }
+          if (hops == input.redirect_limit()) { this.backend_code = 0; return unexpected(errc::too_many_redirects); }
+          auto following = gti_internal::http_detail::redirected_request(current, result.status(), location.view());
+          if (!following) { this.backend_code = 0; return unexpected(following.error()); }
+          current = std::move(following).value();
+          hops++;
+        }
       }
 
       expected<response, errc> get(string_view url) mut {

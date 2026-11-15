@@ -195,7 +195,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Match, search, replace and split text with regular expressions | [194: regular expressions](194-regular-expressions.gti) |
 | Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
 | Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
-| Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
+| Build URLs, GET/POST JSON, or stream a response to a file | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
 | Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Consume owned vector elements into a record without cloning values | [186: consuming ranges](186-consuming-ranges.gti) |
@@ -341,7 +341,7 @@ is a teaching helper, not a production server.
 | `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
-| `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
+| `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, streaming through generic I/O to a file, transport/status/schema errors, and JSON responses |
 | `094-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, strict UTF-8 validation and scalar traversal |
 | `095-explicit-cloning.gti` | vector/string cloning, ownership transfer, and exact member requirements |
 | `096-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
@@ -474,6 +474,7 @@ Run these from the first terminal:
 /tmp/http-json                                      # offline URL-building recipe
 /tmp/http-json http://127.0.0.1:8765/user             # GET: prints "local demo"
 /tmp/http-json http://127.0.0.1:8765/user post        # POST JSON: prints "tea"
+/tmp/http-json http://127.0.0.1:8765/user stream /tmp/user.json # bounded copy; prints byte count
 /tmp/http-json http://127.0.0.1:8765/not-found        # status error; exits 6
 /tmp/http-json http://127.0.0.1:8765/invalid-json     # parse error; exits 7
 /tmp/http-json http://127.0.0.1:8765/missing-name     # schema error; exits 8
