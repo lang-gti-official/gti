@@ -9021,6 +9021,9 @@ auto SemanticVisitor::Impl::analyzeConstantCharacterConversion(
       !isInteger(valueType))
     return false;
   ConstexprInterpreter context = makeConstexprInterpreter();
+  context.requireMir = true;
+  context.recordValues = false;
+  context.immediateRoot = &source;
   ConstexprEvaluation result = evaluateConstexprExpression(operand, context);
   if (result.genericDependency) {
     currentType = targetType;
@@ -9353,6 +9356,14 @@ auto SemanticVisitor::Impl::analyzeAliasConversion(
     return;
   const bool characterCodeConversion =
       isCharacterCodeConversion(valueType, targetType);
+  if (targetType == SemanticType::Char && !characterCodeConversion) {
+    report(expressionToken(expr.arguments().front()),
+           "Character conversion requires uint8_t or a constant integer "
+           "expression in the range 0..255.",
+           "GTI-S2014");
+    currentType = SemanticType::Unknown;
+    return;
+  }
   if (valueType != SemanticType::Unknown && !isNumeric(valueType) &&
       !characterCodeConversion) {
     report(expressionToken(expr.arguments().front()),

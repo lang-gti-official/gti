@@ -1054,6 +1054,55 @@ int main() {
            "invalid character conversion must reject operand " + operand);
   }
 
+  for (const std::string operand : {"256", "runtime", "1.0", "true"}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-character-alias.gti",
+        "using CodeUnit = char; char convert(int runtime) { return CodeUnit(" +
+            operand + "); }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!rejected.canGenerateCode() &&
+               countDiagnosticCode(rejected.diagnostics, "GTI-S2014") != 0,
+           "aliases must preserve the character conversion rule");
+  }
+  for (const std::string source :
+       {"char value = 65;", "char unit<uint64_t N>() { return char(N); } char "
+                            "value = unit<256>();"}) {
+    const auto rejected = lang::Frontend().analyze(
+        "invalid-character-boundary.gti", source, {standardLibraryPrelude()},
+        {}, {standardLibraryRoot()});
+    expect(
+        !rejected.canGenerateCode(),
+        "implicit and out-of-range concrete character conversions must reject");
+  }
+  const std::string rangeSource = "char value = char(256);";
+  const auto rangeError = lang::Frontend().analyze(
+      "character-range.gti", rangeSource, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  const auto *rangeDiagnostic =
+      findDiagnosticByCode(rangeError.diagnostics, "GTI-S2014");
+  expect(rangeDiagnostic &&
+             rangeDiagnostic->span.start == rangeSource.find("256") &&
+             rangeDiagnostic->span.end == rangeSource.find("256") + 3 &&
+             rangeDiagnostic->span.source.find("character-range.gti") !=
+                 std::string::npos &&
+             rangeDiagnostic->fixes.empty() &&
+             rangeDiagnostic->message.find("0..255") != std::string::npos,
+         "out-of-range character diagnostic must identify the operand without "
+         "a lossy fix");
+  const auto limitedCharacter =
+      lang::Frontend(stepLimited(32))
+          .analyze("character-budget.gti",
+                   "constexpr int slow() { mut int n = 0; while (n < 1000) { "
+                   "n++; } return 65; } "
+                   "char value = char(slow());",
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(
+      !limitedCharacter.canGenerateCode() &&
+          countDiagnosticCode(limitedCharacter.diagnostics, "GTI-S2014") != 0 &&
+          hasDiagnosticHint(limitedCharacter.diagnostics, "--constexpr-steps"),
+      "character conversion must preserve the shared constant-evaluation "
+      "budget");
+
   const lang::FrontendResult obsolete = lang::Frontend().analyze(
       "obsolete-string.gti", "int main() { string text = \"old\"; return 0; }",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
