@@ -4314,6 +4314,29 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                            return covers(dependency.source, dependency.parent);
                          });
     };
+    // A two-phase reservation normally finds its parent active. A mutable
+    // parent that is suspended only because other live children borrow parts
+    // of it can still host a reservation of a disjoint part: the reservation
+    // and activation sibling checks reject any overlap with those children,
+    // and the parent stays suspended until its last suspending child ends
+    // (issue #394: writing `st.visited[i]` in a range-for over `st.dirty`
+    // through a `mut State&` parameter).
+    const auto reservationParentReady = [&](MirLoanId parent,
+                                            MirLoanId reservation) {
+      if (active[parent - 1] == MirLoanFlowState::Active)
+        return true;
+      return active[parent - 1] == MirLoanFlowState::Suspended &&
+             body.loans[parent - 1].access == AccessMode::Mutable &&
+             std::any_of(
+                 children[parent - 1].begin(), children[parent - 1].end(),
+                 [&](MirLoanId child) {
+                   return child != reservation &&
+                          (active[child - 1] == MirLoanFlowState::Active ||
+                           active[child - 1] == MirLoanFlowState::Suspended) &&
+                          suspendsParentCapability(body.loans[child - 1],
+                                                   parent);
+                 });
+    };
     const auto callInputDefinition =
         [&](const MirOperand &operand) -> const MirInstruction * {
       if (operand.kind != MirOperandKind::Value) {
@@ -4924,7 +4947,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 changingLoan(outer) = MirLoanFlowState::Suspended;
               continue;
             }
-            if (active[parent - 1] != MirLoanFlowState::Active) {
+            if (!reservationParentReady(parent, loan)) {
               return failure(body, owner,
                              "ending two-phase reservation " +
                                  std::to_string(loan) + " finds parent loan " +
@@ -5030,7 +5053,10 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                            return active[ancestor - 1] !=
                                   MirLoanFlowState::Reserved;
                          })) ||
-            (outer != 0 && active[outer - 1] != MirLoanFlowState::Active)) {
+            (outer != 0 &&
+             (ancestors.empty()
+                  ? !reservationParentReady(outer, loan)
+                  : active[outer - 1] != MirLoanFlowState::Active))) {
           return failure(body, owner,
                          "two-phase loan " + std::to_string(loan) +
                              " cannot activate while its parent loan is not "
@@ -6270,7 +6296,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           }
           if (active[parent - 1] == MirLoanFlowState::Inactive ||
               (body.loans[loan - 1].twoPhase &&
-               active[parent - 1] != MirLoanFlowState::Active)) {
+               !(reservationAncestors(body.loans[loan - 1]).empty()
+                     ? reservationParentReady(parent, loan)
+                     : active[parent - 1] == MirLoanFlowState::Active))) {
             return failure(body, owner,
                            "derived loan " + std::to_string(loan) +
                                " is created without one active parent loan " +

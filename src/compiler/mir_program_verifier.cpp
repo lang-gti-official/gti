@@ -2243,6 +2243,14 @@ mirFieldTypeThroughBases(const MirProgram &program,
             functionTarget->returnType.kind != SemanticType::Reference &&
             functionTarget->returnBorrowOrigin == BorrowOriginKind::None &&
             !instruction.info.traits.containsBorrowedState;
+        // A call that publishes one by-value text argument into a field of
+        // its fresh result (L-OWN-02) borrows that argument's owner, never
+        // the temporary receiver: the result is owned with respect to the
+        // receiver, as an owned result is (issue #392).
+        const bool argumentTextPublication =
+            functionTarget != nullptr &&
+            functionTarget->returnType.kind != SemanticType::Reference &&
+            dependentTextCallPublication(instruction, *functionTarget);
         // A text field relay (L-OWN-02) returns what a publishing
         // construction or call holds in that field: its owner's text, never a
         // view of the temporary itself.
@@ -2270,7 +2278,8 @@ mirFieldTypeThroughBases(const MirProgram &program,
             !inheritsOwner(inheritsOwner, *receiverClass, 0) ||
             !exactReceiverQualifier || !exactProducer ||
             receiverObligations != 1 ||
-            (!readObservation && !ownedResult && !externalConsumingReference) ||
+            (!readObservation && !ownedResult && !externalConsumingReference &&
+             !argumentTextPublication) ||
             (borrowedCarrier && !externalConsumingReference &&
              !textFieldRelay &&
              !supportsEphemeralBorrowResult(functionTarget,

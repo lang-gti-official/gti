@@ -8635,6 +8635,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     SemanticType argumentType;
   };
   std::vector<RejectedCopyOverload> rejectedCopies;
+  // The first argument type mismatch of each accessible candidate that
+  // accepts the argument shape. When exactly one candidate accepts that shape
+  // it is the only overload the call could mean, so its own mismatch, with
+  // that parameter's guidance, is the diagnosis rather than a list of every
+  // overload.
+  std::vector<RejectedCopyOverload> rejectedArguments;
+  std::size_t shapeCandidates = 0;
   std::vector<ConstraintFailure> constraintFailures;
   bool rejectedMutableReceiver = false;
   bool rejectedConsumingReceiver = false;
@@ -8655,11 +8662,17 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         break;
       constraintFailures.clear();
       rejectedCopies.clear();
+      rejectedArguments.clear();
+      shapeCandidates = 0;
     }
     for (const CallableCandidate &candidate : callee->overloads) {
       ContextualCallArguments candidateArguments = argumentAnalysis;
-      if (!acceptsArgumentShape(candidate, candidateArguments.types) ||
-          !contextualizeFunctionItemArguments(
+      if (!acceptsArgumentShape(candidate, candidateArguments.types))
+        continue;
+      if (isCompilerTrustedRequester(expr.paren()) ||
+          !candidate.compilerPrivate)
+        ++shapeCandidates;
+      if (!contextualizeFunctionItemArguments(
               candidate, explicitTypeArguments, explicitValueArguments,
               expr.arguments(), candidateArguments, false)) {
         continue;
@@ -8683,6 +8696,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       bool exact = true;
       std::vector<std::size_t> checkedArguments;
       std::optional<std::size_t> rejectedCopy;
+      std::optional<std::size_t> mismatchedArgument;
       for (std::size_t index = 0; index < candidateArguments.types.size();
            ++index) {
         const CallArgumentMatchKind match = functionCallArgumentMatch(
@@ -8707,6 +8721,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
             checkedArguments.push_back(index);
           } else {
             exact = false;
+            if (!candidateArguments.deferred[index])
+              mismatchedArgument = index;
             break;
           }
         }
@@ -8717,6 +8733,13 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
         }
       }
       if (!exact) {
+        if (mismatchedArgument &&
+            *mismatchedArgument < resolved.parameterTypes.size() &&
+            (isCompilerTrustedRequester(expr.paren()) ||
+             !resolved.compilerPrivate))
+          rejectedArguments.push_back(
+              {&candidate, std::move(resolved), *mismatchedArgument,
+               candidateArguments.types[*mismatchedArgument]});
         continue;
       }
       const CallReceiverMode receiverMode =
@@ -8930,6 +8953,38 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
       }
       if (viable.empty() && constraintFailures.size() == 1) {
         reportConstraintFailure(expr.paren(), constraintFailures.front());
+        currentType = SemanticType::Unknown;
+        return;
+      }
+      // Only an ordinary candidate: a generic, pack or defaulted one has its
+      // own deduction and arity explanations in the overload report.
+      const auto ordinaryCandidate = [](const CallableCandidate &candidate) {
+        return candidate.record().genericParameters.empty() &&
+               !candidate.parameterPack &&
+               candidate.requiredParameterCount ==
+                   candidate.parameterTypes.size();
+      };
+      if (viable.empty() && constraintFailures.empty() &&
+          rejectedCopies.empty() && shapeCandidates == 1 &&
+          rejectedArguments.size() == 1 &&
+          ordinaryCandidate(*rejectedArguments.front().source)) {
+        const auto &rejected = rejectedArguments.front();
+        const std::size_t diagnosticCount = diagnostics.size();
+        reportCallArgumentMismatch(
+            rejected.argument,
+            rejected.function.parameterTypes[rejected.argument],
+            rejected.argumentType, expr.arguments()[rejected.argument],
+            "Function", &rejected.function);
+        if (diagnostics.size() > diagnosticCount &&
+            rejected.source->declaration != nullptr) {
+          diagnostics.back().related.push_back(
+              {tokenSpan(rejected.source->declaration->name()),
+               "Only candidate accepting " +
+                   std::to_string(argumentTypes.size()) +
+                   (argumentTypes.size() == 1 ? " argument: "
+                                              : " arguments: ") +
+                   functionSignatureSpelling(*rejected.source)});
+        }
         currentType = SemanticType::Unknown;
         return;
       }
