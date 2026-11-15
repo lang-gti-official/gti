@@ -570,18 +570,30 @@ int main() { return discard(1, uint32_t(2)); }
     expect(backendAccepts(unnamed),
            "unnamed formals must reach verified executable emission");
   }
-  auto constexprUnnamed =
-      analyze("constexpr int32_t reads(int32_t*) { return 0; }\n"
-              "int main() { return 0; }");
+  // Raw pointers are execution-local constexpr values (static semantics,
+  // "Raw storage and owning containers"), so an inherited class is the
+  // parameter type that still fails constexpr eligibility at declaration.
+  const std::string constexprUnnamedSource =
+      "class Base { public: int32_t b = 0; };\n"
+      "class Derived : public Base {};\n"
+      "constexpr int32_t reads(Derived) { return 0; }\n"
+      "int main() { return 0; }";
+  auto constexprUnnamed = analyze(constexprUnnamedSource);
   expect(!constexprUnnamed.canGenerateCode(),
-         "raw pointer constexpr restriction remains intact");
+         "inherited-object constexpr restriction remains intact");
   const auto constDiagnostic = std::find_if(
       constexprUnnamed.diagnostics.begin(), constexprUnnamed.diagnostics.end(),
       [](const auto &d) { return d.code == "GTI-S2057"; });
+  const auto unnamedTypeStart = constexprUnnamedSource.find("Derived)");
   expect(constDiagnostic != constexprUnnamed.diagnostics.end() &&
-             constDiagnostic->primary.start == 24 &&
-             constDiagnostic->primary.end == 31,
+             constDiagnostic->primary.start == unnamedTypeStart &&
+             constDiagnostic->primary.end == unnamedTypeStart + 7,
          "unnamed constexpr diagnostic must anchor the actual type token");
+  const auto rawUnnamed =
+      analyze("constexpr int32_t reads(int32_t*) { return 0; }\n"
+              "int main() { return 0; }");
+  expect(rawUnnamed.canGenerateCode(),
+         "an unnamed raw-pointer constexpr formal is execution-local");
 
   auto wrongOrigin = analyze(R"gti(
 class Holder {
