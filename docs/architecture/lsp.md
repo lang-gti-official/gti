@@ -855,8 +855,10 @@ top-level statement and each concrete-effect owner) and stops by unwinding to
 frontend checks the flag once more between HIR and MIR; a stop there keeps the
 completed HIR instance analyses it already published. A
 preamble built before the stop is complete and stays cached. Cold preamble
-construction uses the same cancellation boundary; an interrupted prefix is
-discarded before publication, and a completed prefix retains no request token.
+construction runs on the preamble worker rather than in a request; it uses the
+same cancellation boundary with the worker's own shutdown flag, an interrupted
+prefix is discarded before publication, and a completed prefix retains no
+request token.
 The stopped run
 is not published, does not count toward the debounce median, and is traced as
 `kind: "cancelled"` under `GTI_LSP_FRONTEND_TRACE`. Raw-pointer audits are not
@@ -895,7 +897,8 @@ stack segments of the same thread (see the frontend architecture), so editor
 analysis reaches exactly the configured compile-time limits.
 
 Completion adopts compatible trusted preambles instead of registering and
-checking the standard library again for each request. Its request-owned
+checking the standard library again for each request. Like analysis, it never
+builds a missing preamble itself. Its request-owned
 cancellation flag reaches the same compiler safe points as diagnostic analysis.
 An edit, close/reopen, newer completion on the same document, explicit
 `$/cancelRequest`, or shutdown stops obsolete work. Other documents' requests
@@ -1002,9 +1005,20 @@ caches and passes it through `FrontendOptions::preambleCache`: the open
 file's standard-library prefix is analysed once per import graph and every
 later snapshot resumes from a copy of that analysis, registering and
 analysing only the file's own declarations (see "Trusted Prefix Preamble" in
-[semantic-analysis.md](semantic-analysis.md)). The first snapshot of a new
-import graph pays for the build; a changed or re-parsed library unit selects
-a new preamble. The trace reports `preambleBuilds`,
+[semantic-analysis.md](semantic-analysis.md)). A changed or re-parsed library
+unit selects a new preamble. No snapshot waits for a build: analysis and
+completion set `FrontendOptions::deferPreambleBuild`, so a snapshot whose
+import graph has no cached preamble is analysed without one (bounded
+analysis, which reports the same diagnostics) and hands the build to a
+dedicated preamble worker. A cold prefix analysed completely costs several
+times a bounded analysis of the file: for `import std` about 9 s against
+about 3 s, so the first diagnostics after opening a file or adding an import
+no longer wait for it. The worker runs one build at a time, newest first; it
+drops a request for a prefix that is queued or building, keeps at most four
+queued builds, and is cancelled at shutdown. Snapshots after the build is
+stored adopt it. Each build is traced as `kind: "preamble"` (or
+`"preamble-cancelled"`) under the document that requested it, and an analysis
+that deferred one reports `preambleDeferrals`. The trace reports `preambleBuilds`,
 `preambleBuildMicroseconds`, `preambleAdoptions`,
 `preambleAdoptMicroseconds`, `preambleBodies`, `preambleReachedBodies`, the
 cache's occupancy, `conceptProofReuses` and `conceptProofRecords` (concept

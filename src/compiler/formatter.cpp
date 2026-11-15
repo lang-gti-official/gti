@@ -2449,7 +2449,9 @@ private:
         beforeType->kind != Kind::Semicolon &&
         beforeType->kind != Kind::Colon &&
         beforeType->kind != Kind::Directive &&
-        !isDeclarationModifier(*beforeType)) {
+        !isDeclarationModifier(*beforeType) &&
+        !isAttributeListEnd(
+            lexemes, static_cast<std::size_t>(beforeType - lexemes.data()))) {
       return false;
     }
 
@@ -2637,6 +2639,24 @@ private:
       } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
         const Lexeme *next = nextSignificant(lexemes, current);
         return next != nullptr && next->kind == Kind::RightBracket;
+      }
+    }
+    return false;
+  }
+
+  // The outer ']' closing a `[[...]]` attribute list, so a declaration such as
+  // `[[discardable]] expected<T, E> name()` begins after it. A subscript
+  // closing `]]` is not one: its opener is not an attribute list start.
+  static bool isAttributeListEnd(const std::vector<Lexeme> &lexemes,
+                                 std::size_t index) {
+    if (lexemes[index].kind != Kind::RightBracket)
+      return false;
+    std::size_t depth = 0;
+    for (std::size_t current = index + 1; current-- > 0;) {
+      if (lexemes[current].kind == Kind::RightBracket) {
+        ++depth;
+      } else if (lexemes[current].kind == Kind::LeftBracket && --depth == 0) {
+        return isAttributeListStart(lexemes, current);
       }
     }
     return false;

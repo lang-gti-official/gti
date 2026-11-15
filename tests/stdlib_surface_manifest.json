@@ -4267,7 +4267,8 @@
         "? moving the value out and returning the empty residual",
         "consuming value() &&",
         "move assignment over engaged and empty optionals",
-        "empty-access panic after cleanup"
+        "empty-access panic after cleanup",
+        "value() panic reported at the caller's call site"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_experimental_optional.gti",

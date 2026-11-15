@@ -499,7 +499,8 @@ int main() {
         std::string("values.emplace_back(7);"),
         std::string("values.try_push_back(7).value();"),
         std::string("mut int& slot = values.get_mut(std::size_t(0));\n"
-                    "  slot = 9;")}) {
+                    "  slot = 9;"),
+        std::string("values[std::size_t(0)] = 9;")}) {
     negative(R"(
 import std.resource_vector;
 int use(std::resource_ref<std::process_resource> resource) {
@@ -527,6 +528,21 @@ int main() { return 0; }
 )",
            "GTI-S2017",
            "an element reference cannot escape its local container");
+  // Issue #331: assigning through a mutable subscript borrows the vector
+  // itself, not the resource the vector's stored dependency names.
+  positive(R"(
+import std.resource_vector;
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_vector<int,std::process_resource> values{resource};
+  values.push_back(5);
+  values.push_back(6);
+  values[std::size_t(0)] = 60;
+  values[std::size_t(1)] = values[std::size_t(0)] + 1;
+  return values[std::size_t(0)] + values[std::size_t(1)];
+}
+int main() { return 0; }
+)",
+           "assignment through a mutable resource_vector subscript");
   negative(resettable + R"(
 int use(std::resource_ref<Resource> resource) {
   std::resource_vector<Fixed,Resource> values{resource};

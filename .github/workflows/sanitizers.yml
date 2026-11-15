@@ -364,13 +364,90 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  runtime-identity:
+    # The native runtime-identity and instrumented ownership tests compile
+    # emitted code with the upstream Clang of exactly the LLVM gti links
+    # (GTI_LLVM_RUNTIME_TEST_COMPILER); without it CMake never registers them.
+    # On Linux the reviewed toolchain installs clang-<major> from the same
+    # apt.llvm.org repository as llvm-<major>-dev, so this system-LLVM build
+    # pairs them. Release builds bundle LLVM without a clang binary or
+    # compiler-rt, so the integration shards cannot (issue #195).
+    name: LLVM native runtime identity
+    needs: [source]
+    if: needs.source.outputs.sanitize == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GTI_TEST_BACKENDS: llvm
+      GTI_RUNTIME_IDENTITY_TESTS: '^(shared_ownership_instrumented|compact_owner_layout_instrumented|llvm_native_runtime_identity)$'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 2048
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/native
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore compiler object cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
+          restore-keys: |
+            gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-
+      - name: Configure with the Clang of the linked LLVM
+        run: |
+          llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' CMakeLists.txt)"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DGTI_LLVM_RUNTIME_TEST_COMPILER="/usr/bin/clang++-${llvm_major}"
+      - name: Build the runtime identity targets
+        run: >-
+          cmake --build build --parallel "${GTI_JOBS}"
+          --target gti gti_llvm_instrumented_source gti_llvm_cache_tests
+      - name: Run the runtime identity tests
+        run: >-
+          ctest --test-dir build --output-on-failure --no-tests=error
+          --output-junit "${RUNNER_TEMP}/runtime-identity.xml"
+          -R "${GTI_RUNTIME_IDENTITY_TESTS}"
+      - name: Require all three runtime identity tests to run
+        run: |
+          python3 - "${RUNNER_TEMP}/runtime-identity.xml" <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          suite = root if root.tag == "testsuite" else root.find("testsuite")
+          tests, skipped = int(suite.get("tests", 0)), int(suite.get("skipped", 0))
+          print(f"runtime identity tests: {tests}, skipped: {skipped}")
+          if tests != 3 or skipped:
+              sys.exit("all three runtime identity tests must execute")
+          PY
+      - name: Preserve runtime identity evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sanitizers-runtime-identity
+          path: ${{ runner.temp }}/runtime-identity.xml
+          if-no-files-found: warn
+          retention-days: 30
+
   verdict:
     # Its name carries the sanitized commit: a scheduled or dispatched run's
     # own head_sha is main's tip when it started, not the commit it checked
     # out, so the release train identifies the evidence by this job's name.
     name: Sanitizer verdict (${{ needs.source.outputs.sha }})
     if: always() && needs.source.outputs.sanitize == 'true'
-    needs: [source, sanitizers, llvm-sanitizers, tsan]
+    needs: [source, sanitizers, llvm-sanitizers, tsan, runtime-identity]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

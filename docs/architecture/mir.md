@@ -5216,8 +5216,15 @@ rvalue convention.
 
 An admitted borrowed carrier reuses this materialization and drop schedule.
 `findMirTemporaryCarrierDependency` binds the exact producer/value, one
-nonescaping `Stored` loan with its complete stable owner-dependency set, and
-full-expression value obligation. A separate `CallArgument` loan over the
+nonescaping `Stored` loan with its complete owner-dependency set, and
+full-expression value obligation. A call-scoped reference argument can retain
+another temporary in that same HIR full expression. The helper requires its
+exact root, successful materialization and matching value/drop type; naming a
+temporary place alone does not prove its lifetime. Independent loan and
+lifecycle verification still rejects premature owner cleanup, mutation, moves,
+missing dependencies and escaping references. This extends admission without
+restoring semantic body-local loan identities removed by RFC 0004.
+A separate `CallArgument` loan over the
 temporary's physical shell
 names that loan through `storedDependency`, not `parent`: the shell is not a
 subplace of the external owner, and mutable shell access cannot upgrade the

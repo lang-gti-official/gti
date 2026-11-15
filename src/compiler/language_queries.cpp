@@ -1993,6 +1993,7 @@ public:
     options.cache = input.cache;
     options.instanceCache = input.instanceCache;
     options.preambleCache = input.preambleCache;
+    options.deferPreambleBuild = input.deferPreambleBuild;
     options.cancellation = input.cancellation;
     options.synthesizeTestEntry = false;
     options.sourceGenerations = input.sourceGenerations;

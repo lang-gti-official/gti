@@ -1,0 +1,1 @@
+Read-only reference arguments, including generic reference parameter packs, can borrow temporary views whose owners live through the same full expression. Owner cleanup remains ordered after the borrowed view, and escaping or conflicting borrows remain rejected.

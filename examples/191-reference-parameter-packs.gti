@@ -10,6 +10,16 @@ public:
   Ticket(Ticket& other) = delete;
   Ticket(Ticket&& other) = default;
   int read() { return this.number; }
+  int& number_ref() { return this.number; }
+};
+
+// Borrowing a temporary view also keeps its temporary owner alive until the
+// full expression ends. No ownership is transferred into the reference pack.
+class TicketView {
+  int& number;
+public:
+  TicketView(int& value) : number(value) {}
+  int read() { return this.number; }
 };
 
 concept readable<T> = requires(T& value) { { value.read() } -> int; };
@@ -25,6 +35,9 @@ int main() {
   Ticket second{8};
   show_all(first, second, first);
   show_all(Ticket(9)); // The temporary survives the complete call.
+  show_all(TicketView(Ticket(10).number_ref()));
+  // Storing this view in a local, or passing it to a mutable reference pack,
+  // is rejected: the temporary owner only survives this expression.
   show_all();
   mut int left = 1;
   mut int right = 2;

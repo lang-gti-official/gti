@@ -1235,7 +1235,7 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
                                    record->kind == ClassKind::Struct)));
   }
   const FreshTemporaryValueAssessment assessment =
-      freshTemporaryBorrowValue(expression);
+      freshTemporaryBorrowValue(expression, true);
   return assessment.eligible && assessment.type == argument;
 }
 
@@ -1392,7 +1392,7 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
                  " cannot bind a mutable reference to a temporary.";
       } else if (isTemporaryBorrowReferentType(argument)) {
         const FreshTemporaryValueAssessment assessment =
-            freshTemporaryBorrowValue(expression);
+            freshTemporaryBorrowValue(expression, true);
         if (assessment.eligible && function != nullptr &&
             !ephemeralBorrowTargetSupported(*function, index)) {
           reason = !ephemeralBorrowResultSupported(*function, index)
@@ -1577,6 +1577,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       return;
     }
   }
+  if (expression && reportTypeUsedAsValue(*expression, argument))
+    return;
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2003", DiagnosticPhase::Semantics, expressionToken(expression),
       argumentLabel + std::to_string(index + 1) + " has type '" +

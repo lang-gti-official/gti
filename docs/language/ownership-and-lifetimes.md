@@ -707,10 +707,15 @@ own fields; it does not upgrade that shared dependency to exclusive access.
 
 This permission does not allow retaining a reference or address to the
 temporary, exporting a borrowed result from its method, moving its owner while
-active. The same stable-dependency proof also permits readonly temporary
-reference arguments to source calls and operators. Temporary owners and
-unresolved/native/virtual producers
-remain excluded. A named carrier continues to use the ordinary stored-borrow
+active. Read-only temporary reference arguments to source calls and operators
+also admit owners materialized in the same full expression: each owner must
+have an exact construction and cleanup obligation that outlives the consuming
+call and the borrowed carrier's destruction. For example,
+`observe(View(Owner().get()))` and
+`std::println("{}", path.filename().view())` retain both temporaries until the
+expression ends. Generic read-only reference parameter packs apply this rule
+to each element, including when forwarding those references to another call.
+Unresolved/native/virtual carrier producers remain excluded. A named carrier continues to use the ordinary stored-borrow
 rules below. A factory called on a complete object protects that complete
 receiver under its existing borrow summary; this feature does not infer a
 narrower private-field origin from the factory body.
@@ -731,8 +736,9 @@ by-value GTI call returning a payload enum produce such a value too, so
 `observe(make_state())` borrows the fresh enum for that call. Scalar-backed enum
 factories and built-in scalar value expressions use the same call-scoped
 temporary storage. Ownerless string literals and counted-text views whose
-source producer proves a stable external owner use this storage too. Unknown
-or transient text owners remain rejected. The compiler materializes the
+source producer proves a live external owner use this storage too. That owner
+may be named storage or a temporary with a verified full-expression lifetime.
+Unknown owners remain rejected. The compiler materializes the
 owned value at its written argument position, begins one read loan, evaluates
 later arguments, invokes the selected callable, ends the loan immediately
 afterward, and retains the value's drop obligation until the enclosing

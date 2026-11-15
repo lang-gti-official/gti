@@ -141,6 +141,40 @@ struct FrontendOptions {
   // Editor snapshots set it; builds and checks do not.
   std::shared_ptr<SemanticPreambleCache> preambleCache;
   SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
+  // With a `preambleCache` that holds no preamble for this program, analyse
+  // it without one (bounded analysis, which reports the same diagnostics)
+  // and return the build in FrontendResult::deferredPreambleBuild rather
+  // than running it first. An editor builds it off the latency-critical
+  // path: a cold prefix analysed completely costs several times a bounded
+  // analysis of one file.
+  bool deferPreambleBuild = false;
+};
+
+// A trusted-prefix preamble build that an analysis deferred (see
+// FrontendOptions::deferPreambleBuild). It owns copies of everything the
+// build reads, so any thread may run it after that analysis has finished.
+class SemanticPreambleBuild final {
+public:
+  struct State;
+  explicit SemanticPreambleBuild(std::unique_ptr<State> state);
+  ~SemanticPreambleBuild();
+  SemanticPreambleBuild(const SemanticPreambleBuild &) = delete;
+  SemanticPreambleBuild &operator=(const SemanticPreambleBuild &) = delete;
+
+  // The cache entry the build fills.
+  [[nodiscard]] const SemanticPreambleKey &key() const;
+  // Whether `run` was stopped by its cancellation token.
+  [[nodiscard]] bool cancelled() const;
+  // Builds the preamble and stores it in the analysis's cache, unless the
+  // cache already holds one for this key. Returns the cached preamble, or
+  // null when the prefix is invalid or `cancellation` stopped the build;
+  // nothing is stored then. Runs at most once.
+  std::shared_ptr<const SemanticPreamble>
+  run(const std::atomic<bool> *cancellation = nullptr,
+      FrontendWorkMetrics *workMetrics = nullptr);
+
+private:
+  std::unique_ptr<State> state;
 };
 
 struct FrontendResult {
@@ -172,6 +206,9 @@ struct FrontendResult {
   // Editors must invalidate suggestions when any of these inputs changes.
   std::vector<std::filesystem::path> includeSuggestionInputs;
   bool includeSuggestionsRequested = false;
+  // The preamble build this analysis deferred instead of running; see
+  // FrontendOptions::deferPreambleBuild.
+  std::shared_ptr<SemanticPreambleBuild> deferredPreambleBuild;
 
   [[nodiscard]] bool canGenerateCode() const {
     return sourceValid && syntaxValid && semanticValid && hirValid &&

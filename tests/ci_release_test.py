@@ -449,7 +449,8 @@ def sanitizer_contract(root):
     assert not re.search(r"secrets\.[A-Za-z]", text) and text.count("issues: write") == 1
     assert "--force" not in text and "git push" not in text
     sections = jobs(text)
-    assert list(sections) == ["source", "sanitizers", "llvm-sanitizers", "tsan", "verdict", "report"], list(sections)
+    assert list(sections) == ["source", "sanitizers", "llvm-sanitizers", "tsan", "runtime-identity",
+                              "verdict", "report"], list(sections)
     for name, body in sections.items():
         writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
         assert writes == (["issues"] if name == "report" else []), (name, writes)
@@ -460,7 +461,7 @@ def sanitizer_contract(root):
     assert text.count("${{ inputs.") == 1 and "GTI_REQUESTED_COMMIT: ${{ inputs.commit }}" in sections["source"]
     assert "release_train.py sanitizer-source" in sections["source"]
     assert "if: github.repository == 'lang-gti-official/gti'" in sections["source"]
-    for name in ("sanitizers", "llvm-sanitizers", "tsan"):
+    for name in ("sanitizers", "llvm-sanitizers", "tsan", "runtime-identity"):
         body = sections[name]
         assert "needs: [source]\n" in body and "if: needs.source.outputs.sanitize == 'true'" in body, name
         assert "ref: ${{ needs.source.outputs.sha }}" in body and "persist-credentials: false" in body, name
@@ -488,7 +489,12 @@ def sanitizer_contract(root):
     verdict = sections["verdict"]
     assert "name: Sanitizer verdict (${{ needs.source.outputs.sha }})" in verdict, \
         "the release train identifies sanitizer evidence by the commit the verdict names"
-    assert "needs: [source, sanitizers, llvm-sanitizers, tsan]" in verdict
+    assert "needs: [source, sanitizers, llvm-sanitizers, tsan, runtime-identity]" in verdict
+    identity = sections["runtime-identity"]
+    assert '-DGTI_LLVM_RUNTIME_TEST_COMPILER="/usr/bin/clang++-${llvm_major}"' in identity, \
+        "the runtime identity tests pair the system LLVM with its own Clang"
+    assert "GTI_RELEASE_BUILD" not in identity, "a release build bundles LLVM without clang"
+    assert "tests != 3 or skipped" in identity, "every runtime identity test must execute"
     assert "if: always() && needs.source.outputs.sanitize == 'true'" in verdict
     assert "release_train.py require-success" in verdict
     sys.path.insert(0, str(root / "scripts"))

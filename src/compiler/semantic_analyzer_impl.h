@@ -6328,10 +6328,12 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
-  // A temporary carrier may retain only proven stable external dependencies.
-  // Shared by receivers and call-scoped reference arguments.
+  // Shared carrier admission for receivers and reference arguments. Receivers
+  // require stable owners; call-scoped arguments may use full-expression
+  // owners whose lifetime is proved by MIR.
   [[nodiscard]] FreshTemporaryValueAssessment
-  freshTemporaryBorrowValue(const ExprPtr &expression);
+  freshTemporaryBorrowValue(const ExprPtr &expression,
+                            bool allowFullExpressionOwners = false);
 
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryReceiverValue(const ExprPtr &expression);
@@ -6683,6 +6685,9 @@ private:
 
   [[nodiscard]] static bool containsRawPointer(const SemanticType &type);
 
+  // A type name written where a value is required (issue #322). Reports
+  // "'T' names a type, not a value" and returns true for a TypeName type.
+  bool reportTypeUsedAsValue(const Expr &expression, const SemanticType &type);
   void requireBool(const ExprPtr &expression, SemanticType type,
                    const Token &token, std::string_view message);
 
