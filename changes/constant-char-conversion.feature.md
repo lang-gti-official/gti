@@ -1,0 +1,1 @@
+Explicit `char(expression)` accepts integer constant expressions in the range 0–255, including constexpr calls and named constants. Runtime integers still require the existing explicit `uint8_t` bridge.
