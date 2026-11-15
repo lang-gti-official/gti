@@ -976,6 +976,33 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+  // Unused trusted constexpr bodies are deferred. Staging lowers only
+  // completed constexpr callees, so a callee the evaluation actually
+  // executes is analysed on demand and the evaluation retried. Each retry
+  // completes at least one more body, so the loop is bounded by the deferred
+  // set; only successes are cached, and the closure cache is keyed on the
+  // completed inventory, so a retry never replays the earlier failure.
+  while (true) {
+    stagedPendingCallee = nullptr;
+    auto evaluation = executeStagedConstexprOnce(
+        selected, arguments, substitution, receiver, callSite, context);
+    const FunctionDecl *pending = stagedPendingCallee;
+    stagedPendingCallee = nullptr;
+    if (pending == nullptr || !pendingDeferredBody(pending))
+      return evaluation;
+    demandConstexprDefinition(pending);
+    if (pendingDeferredBody(pending))
+      return evaluation; // Cannot be analysed in this context.
+  }
+}
+
+auto SemanticVisitor::Impl::executeStagedConstexprOnce(
+    const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+        &selected,
+    const std::vector<ConstantValue> &arguments,
+    const GenericSubstitution &substitution,
+    const std::optional<ConstantValue> &receiver, const Token &callSite,
+    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
   if (sourceGraph == nullptr || sources == nullptr) {
     return std::nullopt;
   }
@@ -986,6 +1013,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const SemanticModel &stagingModel = constexprStagingModel();
   const auto *function = std::get_if<const FunctionDecl *>(&selected);
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
+  // A constructor root has no deferred body of its own here, but the
+  // callees its closure may execute still have to be complete.
+  demandConstexprDefinition(function ? *function : nullptr);
   const auto *info =
       function && *function ? stagingModel.findFunction(**function) : nullptr;
   if ((function &&
@@ -1384,6 +1414,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                           : nullptr;
     const std::string name =
         target != nullptr ? "'" + target->qualifiedName + "'" : "The callee";
+    if (target != nullptr && target->constexprFunction &&
+        pendingDeferredBody(target->bodyDeclaration()))
+      stagedPendingCallee = target->bodyDeclaration();
     result.detail =
         target != nullptr && target->constexprFunction
             ? "The constexpr definition of " + name +

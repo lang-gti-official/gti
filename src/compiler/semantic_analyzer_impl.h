@@ -2048,6 +2048,17 @@ private:
       const GenericSubstitution &substitution,
       const std::optional<ConstantValue> &receiver, const Token &callSite,
       ConstexprInterpreter &context);
+  // One staged attempt. When it stops at a runtime-only call to a constexpr
+  // callee whose trusted body is still deferred, it names that body in
+  // stagedPendingCallee so executeStagedConstexpr can analyse it and retry.
+  [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexprOnce(
+      const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+          &target,
+      const std::vector<ConstantValue> &arguments,
+      const GenericSubstitution &substitution,
+      const std::optional<ConstantValue> &receiver, const Token &callSite,
+      ConstexprInterpreter &context);
+  const FunctionDecl *stagedPendingCallee = nullptr;
   // The reuse key of a staged evaluation, or none when it cannot be reused.
   [[nodiscard]] std::optional<StagedConstantResults::Key> stagedConstantKey(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
@@ -7286,6 +7297,8 @@ private:
     };
     std::vector<DeferredBody> deferredBodies;
     std::unordered_set<FunctionId> demandedFunctions;
+    // demandedFunctions.size() when the constexpr demand closure last ran.
+    std::size_t constexprDemandClosureSize = 0;
     // Declarations visitFunctionDecl has processed, bodies analyzeFunctionBody
     // has run, and bodies currently being analysed; see ensureBodyAnalyzed.
     std::unordered_set<const FunctionDecl *> visitedFunctionDeclarations;
@@ -7579,6 +7592,8 @@ private:
       requestSession.deferredBodies;
   std::unordered_set<FunctionId> &demandedFunctions =
       requestSession.demandedFunctions;
+  std::size_t &constexprDemandClosureSize =
+      requestSession.constexprDemandClosureSize;
   // Lookup is unchanged; a scoped sink records a conservative demand set.
   // Declaration bookkeeping must not itself demand the function's body.
   struct FunctionDemandScope {
@@ -7762,6 +7777,10 @@ private:
   // Analyses `function`'s body now if it has not been analysed yet, so a
   // body-derived fact a caller consumes never depends on source order.
   void ensureBodyAnalyzed(const FunctionInfo &function);
+  // Analyse a pending deferred constexpr definition, and the pending constexpr
+  // definitions its analysis demands, before constant evaluation consults
+  // the completed inventory. No-op when the body is complete or not deferred.
+  void demandConstexprDefinition(const FunctionDecl *declaration);
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);

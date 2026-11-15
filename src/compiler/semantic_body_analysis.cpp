@@ -185,6 +185,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.recoveredExhaustiveSwitches.clear();
   deferredBodies.clear();
   demandedFunctions.clear();
+  constexprDemandClosureSize = 0;
   visitedFunctionDeclarations.clear();
   analyzedBodies.clear();
   bodiesInProgress.clear();
@@ -4312,11 +4313,10 @@ auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
       !stmt.isStatic()) {
     return false;
   }
-  // The language requires a constexpr definition to be analysed before a
-  // constant-evaluated call to it; deferral would break that rule.
-  if (stmt.isConstexpr()) {
-    return false;
-  }
+  // A constexpr definition must be analysed before a constant-evaluated call
+  // to it. Constant evaluation demands a pending one on the spot
+  // (demandConstexprDefinition), so an unused library constexpr body is
+  // deferred like any other.
   return true;
 }
 
@@ -4920,6 +4920,37 @@ auto SemanticVisitor::Impl::drainDemandedDeferredBodies() -> void {
       analyzeDeferredBody(body);
     }
   }
+}
+
+auto SemanticVisitor::Impl::demandConstexprDefinition(
+    const FunctionDecl *declaration) -> void {
+  if (pendingDeferredBody(declaration))
+    if (const FunctionInfo *info = semanticModel.findFunction(*declaration))
+      ensureBodyAnalyzed(*info);
+  // Staging lowers only completed constexpr callees, so the callees this body
+  // can execute must be complete too, even when the root itself already is.
+  // Analysis records them as demanded; close over pending constexpr bodies
+  // until nothing new is demanded. Each runs once, and the end-of-request
+  // drain would analyse them anyway. Rescan only after the demand set grew.
+  if (demandedFunctions.size() == constexprDemandClosureSize)
+    return;
+  bool progress = true;
+  while (progress) {
+    progress = false;
+    for (std::size_t index = 0; index < deferredBodies.size(); ++index) {
+      const RequestSessionState::DeferredBody body = deferredBodies[index];
+      if (!body.declaration->isConstexpr() ||
+          !demandedFunctions.contains(body.function) ||
+          !pendingDeferredBody(body.declaration))
+        continue;
+      if (const FunctionInfo *info =
+              semanticModel.findFunction(*body.declaration)) {
+        ensureBodyAnalyzed(*info);
+        progress = progress || !pendingDeferredBody(body.declaration);
+      }
+    }
+  }
+  constexprDemandClosureSize = demandedFunctions.size();
 }
 
 auto SemanticVisitor::Impl::pendingDeferredBody(
@@ -15181,6 +15212,7 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
             : "Call to non-constexpr function '" + declaration->name().lexeme +
                   "' cannot be evaluated during compilation.");
   }
+  demandConstexprDefinition(declaration);
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
     return constexprFailure(
