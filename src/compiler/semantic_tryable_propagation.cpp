@@ -36,6 +36,11 @@ auto SemanticVisitor::Impl::protocolOperationCall(
   }
   const CallableCandidate &candidate =
       conformance.operations[operation].overloads.front();
+  // Demand before record: the call record built below reads the operation's
+  // body-derived facts, so a deferred body must be complete first, exactly
+  // as ordinary call resolution demands its callee.
+  if (candidate.declaration != nullptr)
+    (void)const_cast<Impl *>(this)->requireBody(candidate.bodyDeclaration());
   const std::vector<GenericParameterInfo> &parameters =
       candidate.record().genericParameters;
   if (parameters.size() != binding.size()) {
