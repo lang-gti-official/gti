@@ -72,16 +72,29 @@ programConstantLiteral(const ConstantValue &constant) {
 // created, and the first later source statement that reads one of the
 // bindings carrying it (or a reborrow derived from it), which is what keeps
 // it live across the access. A cleanup-bound loan is instead live until its
-// carrier is destroyed, whatever its last read.
+// carrier is destroyed, whatever its last read. A rejected use of a parent
+// loan is kept live by its child reborrows, not by the parent's own
+// bindings, so it is explained through those children.
 void explainConflict(const MirBody &mir, const HirBody &body, MirLoanId loanId,
                      const SourceSpan &rejected,
                      std::optional<SourceSpan> &origin,
-                     std::optional<SourceSpan> &laterUse,
-                     bool &lifecycleBound) {
+                     std::optional<SourceSpan> &laterUse, bool &lifecycleBound,
+                     bool parentUse = false) {
   const MirLoan *loan = mir.findLoan(loanId);
   if (loan == nullptr)
     return;
   std::unordered_set<MirLoanId> family{loanId};
+  if (parentUse) {
+    family.clear();
+    for (const MirLoan &candidate : mir.loans)
+      if (candidate.parent == loanId) {
+        if (family.empty())
+          loan = &candidate;
+        family.insert(candidate.id);
+      }
+    if (family.empty())
+      return;
+  }
   for (bool changed = true; changed;) {
     changed = false;
     for (const MirLoan &candidate : mir.loans)
@@ -19587,7 +19600,8 @@ MirBody MirLowerer::lowerBody(
            error.borrow.kind == MirBorrowRejectionKind::ParentUse) &&
           rejectedAt)
         explainConflict(result, body, error.borrow.loan, *rejectedAt,
-                        loanOrigin, laterUse, lifecycleBound);
+                        loanOrigin, laterUse, lifecycleBound,
+                        error.borrow.kind == MirBorrowRejectionKind::ParentUse);
       errors.push_back(
           {.body = {kind, owner},
            .block = error.block,
