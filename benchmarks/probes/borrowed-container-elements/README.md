@@ -34,7 +34,7 @@ bytes. A zero count means interposition is not working.
 ## Observed allocation results
 
 macOS arm64, LLVM 23.1.2, local borrowed-container snapshot
-`4fe7766b7c01f8a4a5b0e53bd68dee3124f0a04701d5bc8da8bb7df02cab4ded`:
+`951a9f533f11021f25502d0ff082a114ff9c402d30432a724b9a5590c8b54df1`:
 
 | Program | LLVM modes | Digest | Allocations | Frees | Requested bytes |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -55,10 +55,11 @@ interposition is explicitly disabled for these timing runs.
 
 ## Observed timing result
 
-The final shared-borrowed-storage compiler (snapshot
-`abf001b7879d4b622be298f23c25651b8f12332ec09b5da61c654ad9f32b8d14`)
-measured 2.856 seconds for owned copies and 0.1194 seconds for borrowed views,
-using 34,636 rounds per sample and 15 alternating samples. Digests matched
-(`13335691264`). Views took 4.18% of the owned-copy time for this workload.
-Allocation interposition was disabled. An unrelated compiler test occupied one
-core; this is not an idle-machine or universal language-speed claim.
+The final shared-borrowed-storage candidate (snapshot
+`951a9f533f11021f25502d0ff082a114ff9c402d30432a724b9a5590c8b54df1`)
+measured 2.834838 seconds for owned copies and 0.118797 seconds for borrowed
+views, using 34,085 rounds per sample and 15 alternating samples. Digests
+matched (`13123543040`). Views took 4.19% of the owned-copy time for this
+workload. Allocation interposition was disabled. An unrelated language-server
+process occupied one core; this is not an idle-machine or universal
+language-speed claim. These ownership contracts differ as described above.

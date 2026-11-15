@@ -4186,18 +4186,18 @@ int main() {
       for (const auto &block : function.body.blocks)
         for (const auto &instruction : block.instructions) {
           checkedRead |=
-              instruction.intrinsic == lang::IntrinsicKind::RawBorrow;
-          checkedWrite |=
-              instruction.intrinsic == lang::IntrinsicKind::RawBorrowMut;
+              instruction.intrinsic == lang::IntrinsicKind::ObjectBorrowOwned;
+          checkedWrite |= instruction.intrinsic ==
+                          lang::IntrinsicKind::ObjectBorrowOwnedMut;
         }
-    expect(
-        mirClassInstanceCount(valid, "Prefixed") == 1 &&
-            hasMirIntrinsicKind(valid, lang::IntrinsicKind::ObjectConstruct) &&
-            hasMirIntrinsicKind(valid,
-                                lang::IntrinsicKind::ObjectRelocateRange) &&
-            checkedRead && checkedWrite && nativeBackendEmits(valid),
-        "source prefix policy lowers to one ordinary class instance and "
-        "general lifetime/borrow operations");
+    expect(mirClassInstanceCount(valid, "Prefixed") == 1 &&
+               hasMirIntrinsicKind(
+                   valid, lang::IntrinsicKind::ObjectInitializeOwned) &&
+               hasMirIntrinsicKind(valid,
+                                   lang::IntrinsicKind::ObjectRelocateOwned) &&
+               checkedRead && checkedWrite && nativeBackendEmits(valid),
+           "source prefix policy lowers to one ordinary class instance and "
+           "general lifetime/borrow operations");
   }
 
   const auto optionalMisuse = gti_test::analyzeTrustedPrivateMemoryFixture(
@@ -4337,7 +4337,7 @@ public:
   Buffer(uint64_t capacity)
       : data(std::detail::prefix_owner<T>(capacity)) {}
 
-  void push(T value) mut {
+  void push(T value) mut requires std::move_constructible<T> {
     this.data.append_value(std::move(value));
   }
 
@@ -4405,7 +4405,8 @@ int main() {
              atFunction != nullptr &&
              returnsOnlyEscapingLoan(*atFunction, lang::AccessMode::ReadOnly) &&
              returnTransfersCallResultLoan(*atFunction) &&
-             hasMirIntrinsicKind(frontend, lang::IntrinsicKind::RawBorrow) &&
+             hasMirIntrinsicKind(frontend,
+                                 lang::IntrinsicKind::ObjectBorrowOwned) &&
              nativeBackendEmits(frontend),
          "receiver-tied borrows should lower through exact read-only loans "
          "and publish the returned loan without copying its referent");
@@ -4910,12 +4911,12 @@ int main() {
           : frontend.semantics.findClassLifecycle(*iteratorClass);
   expect(lifecycle != nullptr && lifecycle->traits.containsBorrowedState &&
              lifecycle->traits.copyable && lifecycle->traits.movable &&
-             !lifecycle->traits.copyAssignable &&
-             !lifecycle->traits.moveAssignable &&
+             lifecycle->traits.copyAssignable &&
+             lifecycle->traits.moveAssignable &&
              lifecycle->constructors.size() == 1 &&
              lifecycle->constructors.front().borrowParameter == 0,
          "read-only stored-reference classes should copy-construct independent "
-         "borrow carriers without becoming assignable");
+         "borrow carriers and support checked whole-value replacement");
 
   const lang::ClassDecl *rangeClass =
       findTopLevelClass(frontend.program, "SingleRange");
@@ -4990,7 +4991,7 @@ int main() {
         exactIteratorSpecialMembers && readOnlyStorage &&
         instance.copyConstructor == lang::SpecialMemberStatus::Generated &&
         instance.moveConstructor == lang::SpecialMemberStatus::Generated &&
-        instance.copyAssignment == lang::SpecialMemberStatus::Deleted;
+        instance.copyAssignment == lang::SpecialMemberStatus::Generated;
   }
   expect(iteratorInstances != 0 && exactIteratorSpecialMembers &&
              nativeBackendEmits(frontend),
@@ -6335,19 +6336,17 @@ int main() {
 }
 )",
       {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  expect(
-      !invalid.canGenerateCode() &&
-          hasDiagnostic(invalid.diagnostics,
-                        "cannot duplicate an exclusive dependency") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "Every constructor of a stored-reference class") &&
-          hasDiagnostic(invalid.diagnostics,
-                        "cannot have global or static storage") &&
-          hasDiagnostic(invalid.diagnostics, "Cannot assign a value of type") &&
-          (hasDiagnostic(invalid.diagnostics,
-                         "Stored-reference value is derived from temporary "
-                         "storage") ||
-           mirRejectsAlone("stored-reference-temporary-owner.gti", R"(
+  expect(!invalid.canGenerateCode() &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot duplicate an exclusive dependency") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "Every constructor of a stored-reference class") &&
+             hasDiagnostic(invalid.diagnostics,
+                           "cannot have global or static storage") &&
+             (hasDiagnostic(invalid.diagnostics,
+                            "Stored-reference value is derived from temporary "
+                            "storage") ||
+              mirRejectsAlone("stored-reference-temporary-owner.gti", R"(
 class BorrowingIterator<T> {
   T& value;
 public:
@@ -6364,9 +6363,9 @@ int main() {
   return 0;
 }
 )",
-                           "derived from temporary storage")),
-      "stored-reference diagnostics should reject unsupported reference "
-      "graphs, assignment, and temporary owners");
+                              "derived from temporary storage")),
+         "stored-reference diagnostics should reject unsupported reference "
+         "graphs, unbound fields, global storage, and temporary owners");
 }
 
 void testMutableStoredDependencies() {
@@ -8042,22 +8041,93 @@ public:
   ReadCarrier(int& source) : referent(source) {}
 };
 int use() {
-  mut int owner = 1;
-  mut ReadCarrier left = ReadCarrier(owner);
-  ReadCarrier right = ReadCarrier(owner);
+  mut int first_owner = 1;
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
   left = right;
-  return 0;
+  first_owner = 3;
+  return left.referent - 2;
 }
 )";
   const lang::FrontendResult copyAssignment = lang::Frontend().analyze(
       "stored-carrier-copy-assignment.gti", copyAssignmentSource);
-  expect(!copyAssignment.canGenerateCode() &&
-             hasDiagnosticAt(copyAssignment.diagnostics, "GTI-S2003",
-                             "stored-carrier-copy-assignment.gti",
-                             copyAssignmentSource.rfind("right"),
-                             "Cannot assign a value of type"),
-         "read-only carriers should reject copy assignment at the source "
-         "value because assignment could reseat their dependency");
+  expect(copyAssignment.canGenerateCode() &&
+             lang::verifyMirProgram(copyAssignment.mir).valid(),
+         "whole-record shared replacement releases the previous owner and "
+         "retains the replacement's referent");
+  auto referenceCallSource =
+      std::string("int read_reference(int& value) { return value; }\n") +
+      copyAssignmentSource;
+  referenceCallSource.replace(
+      referenceCallSource.find("return left.referent - 2;"),
+      std::string_view("return left.referent - 2;").size(),
+      "return read_reference(left.referent) - 2;");
+  const auto referenceCall = lang::Frontend().analyze(
+      "stored-carrier-replaced-reference-argument.gti", referenceCallSource);
+  expect(referenceCall.canGenerateCode() &&
+             lang::verifyMirProgram(referenceCall.mir).valid(),
+         "passing a replaced record's referent to a helper uses its current "
+         "owner rather than retaining the previous value's dependency");
+  auto referenceReturnSource = referenceCallSource;
+  referenceReturnSource.replace(
+      0, std::string_view("int read_reference").size(), "int& read_reference");
+  const auto referenceReturn = lang::Frontend().analyze(
+      "stored-carrier-replaced-reference-return.gti", referenceReturnSource);
+  expect(referenceReturn.canGenerateCode() &&
+             lang::verifyMirProgram(referenceReturn.mir).valid(),
+         "a reference-returning helper preserves the current field referent");
+  if (referenceReturn.canGenerateCode()) {
+    auto forged = referenceReturn.mir;
+    bool changed = false;
+    for (const auto &candidate : forged.functionInstances()) {
+      auto &body = const_cast<lang::MirFunctionInstance &>(candidate).body;
+      for (auto &block : body.blocks)
+        for (auto &call : block.instructions) {
+          if (call.kind != lang::MirInstructionKind::Call ||
+              call.borrowOrigin != lang::BorrowOriginKind::Argument ||
+              !call.loan)
+            continue;
+          auto *loan = const_cast<lang::MirLoan *>(body.findLoan(*call.loan));
+          if (!loan || loan->kind != lang::MirLoanKind::CallResult)
+            continue;
+          for (const auto &previous : body.loans) {
+            if (previous.kind != lang::MirLoanKind::Stored || previous.entry ||
+                previous.source == loan->source)
+              continue;
+            // A live, type-correct previous owner is nevertheless the wrong
+            // result origin. Remove parent links so identity is the failing
+            // proof, rather than a malformed parent/child relationship.
+            loan->source = previous.source;
+            loan->parent = 0;
+            loan->storedDependency = 0;
+            changed = true;
+            break;
+          }
+        }
+    }
+    const auto verification = lang::verifyMirProgram(forged);
+    expect(
+        changed &&
+            std::any_of(
+                verification.errors.begin(), verification.errors.end(),
+                [](const auto &error) {
+                  return error.message.find(
+                             "selected receiver or argument source identity") !=
+                         std::string::npos;
+                }),
+        "independent staged-input flow rejects a result forged to the "
+        "previous record owner");
+  }
+  auto invalidAssignmentSource = copyAssignmentSource;
+  invalidAssignmentSource.replace(
+      invalidAssignmentSource.find("first_owner = 3"),
+      std::string_view("first_owner = 3").size(), "second_owner = 3");
+  const auto invalidAssignment = lang::Frontend().analyze(
+      "stored-carrier-copy-assignment-owner.gti", invalidAssignmentSource);
+  expect(!invalidAssignment.canGenerateCode() &&
+             hasDiagnosticCode(invalidAssignment.diagnostics, "GTI-S2017"),
+         "whole-record shared replacement still protects its new referent");
 
   const std::string mutableCopySource = R"(
 import std.vector;
@@ -8702,7 +8772,7 @@ int main() {
   const MirRetained copiedLoan = mirRetained(valid, localAt(2));
   const MirRetained advancedLoan = mirRetained(valid, localAt(5));
   expect(first != nullptr && first->traits.copyable &&
-             !first->traits.copyAssignable && firstLoan.loan != nullptr &&
+             first->traits.copyAssignable && firstLoan.loan != nullptr &&
              firstLoan.loan->access == lang::AccessMode::ReadOnly &&
              copiedLoan.loan == firstLoan.loan &&
              transfersDependency(firstLoan, advancedLoan),
@@ -9985,14 +10055,37 @@ int main() { return 0; }
                         .diagnostics,
                     "A mutable call cannot use storage while a reference "
                     "borrowed from it may still be live");
+  // Earlier signature errors stop MIR analysis of the combined fixture.
+  // Prove the receiver contract independently so this reaches carrier flow.
+  const auto wrongFactory = analyzeWithMemory("wrong-factory-return.gti", R"(
+class View {
+  int& value;
+
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+class WrongFactory {
+public:
+  View make(int& source) { return View(source); }
+public:
+  WrongFactory() = default;
+};
+
+int main() { int n=1; WrongFactory factory{}; auto v=factory.make(n); return 0; }
+)");
+  expect(!wrongFactory.canGenerateCode() &&
+             hasDiagnosticCode(wrongFactory.diagnostics, "GTI-S2085") &&
+             !hasDiagnosticCode(wrongFactory.diagnostics, "GTI-B0001"),
+         "a borrowed record returned from an unrelated method parameter must "
+         "produce a source lifetime diagnostic");
   expect((hasDiagnostic(invalid.diagnostics, "dependency is ambiguous") ||
           (hasDiagnostic(invalid.diagnostics, "region is ambiguous"))) &&
              hasDiagnostic(invalid.diagnostics,
                            "cannot derive from a mutable parameter") &&
              hasDiagnostic(invalid.diagnostics,
                            "must derive from read-only parameter 'source'") &&
-             hasDiagnostic(invalid.diagnostics,
-                           "must derive from this method's receiver") &&
              (mirConflict ||
               hasDiagnostic(invalid.diagnostics,
                             "Mutable method receiver overlaps a borrow")),
@@ -12101,29 +12194,128 @@ int main() {
              hasDiagnostic(wrongElement.diagnostics,
                            "No constructor of 'Holder' exactly matches"),
          "pack forwarding retains exact array extents and element types");
-  const auto borrowed =
-      analyzeWithMemory("array-pack-borrowed-elements.gti", R"(
+  const std::string borrowedSource = R"(
 class BorrowCarrier {
   int32_t& source;
 public:
   BorrowCarrier(int32_t& source) : source(source) {}
+  int32_t read() { return this.source; }
 };
 int32_t consume<Args...>(Args... args) { return 0; }
 int main() {
-  int32_t source = 1;
+  mut int32_t source = 1;
   BorrowCarrier values[1] = {BorrowCarrier(source)};
-  return consume(values);
+  int32_t consumed = consume(values);
+  return values[0].read() - 1 + consumed;
 }
-)");
+)";
+  const auto borrowed =
+      analyzeWithMemory("array-pack-borrowed-elements.gti", borrowedSource);
+  expect(borrowed.canGenerateCode() &&
+             lang::verifyMirProgram(borrowed.mir).valid(),
+         "passive array forwarding admits shared borrowed elements");
+  auto invalidSource = borrowedSource;
+  invalidSource.insert(invalidSource.find("  return values[0]"),
+                       "  source = 2;\n");
+  const auto invalidBorrowed = analyzeWithMemory(
+      "array-pack-borrowed-elements-owner-write.gti", invalidSource);
   expect(
-      !borrowed.canGenerateCode() &&
-          hasDiagnosticCode(borrowed.diagnostics, "GTI-S2045") &&
-          hasDiagnostic(borrowed.diagnostics,
-                        "Borrowed state cannot be nested"),
+      !invalidBorrowed.canGenerateCode() &&
+          hasDiagnosticCode(invalidBorrowed.diagnostics, "GTI-S2017") &&
+          !hasDiagnosticCode(invalidBorrowed.diagnostics, "GTI-B0001"),
       "passive array forwarding does not erase element lifetime dependencies");
 }
 
 void testVariadicStorageConstructionAndVector() {
+  {
+    const auto mixed = lang::Frontend().analyze(
+        "mixed-reference-pack-contents.gti", R"gti(
+import std.string;
+class Reading {
+public:
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+int read(std::string_view& first, Reading& middle, std::string_view& last) {
+  return first == "first" && middle.value == 7 && last == "last" ? 0 : 1;
+}
+int through_pack<Args...>(Args&... args) { return read(args...); }
+int main() {
+  mut std::string first{"first"};
+  std::string last{"last"};
+  int number = 7;
+  Reading middle{number};
+  std::string_view a = first.view();
+  std::string_view b = last.view();
+  return through_pack(a, middle, b);
+}
+)gti",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(mixed.canGenerateCode() && lang::verifyMirProgram(mixed.mir).valid(),
+           "reference pack lanes preserve text and user-record contents like "
+           "ordinary reference formals");
+    if (mixed.canGenerateCode()) {
+      auto forged = mixed.mir;
+      bool changed = false;
+      for (const auto &candidate : forged.functionInstances()) {
+        auto &body = const_cast<lang::MirFunctionInstance &>(candidate).body;
+        for (const auto &candidateLoan : body.loans) {
+          auto &loan = const_cast<lang::MirLoan &>(candidateLoan);
+          const auto *source = body.findPlace(loan.source);
+          if (loan.kind != lang::MirLoanKind::Parameter || !loan.entry ||
+              !loan.storedDependency || !source ||
+              source->projections.size() != 1 ||
+              source->projections.front().kind !=
+                  lang::MirProjectionKind::PackElement ||
+              source->type.kind != lang::SemanticType::Reference ||
+              source->type.arguments.size() != 1 ||
+              source->type.arguments.front().kind !=
+                  lang::SemanticType::StringView)
+            continue;
+          loan.storedDependency = 0;
+          changed = true;
+          break;
+        }
+        if (changed)
+          break;
+      }
+      expect(changed && !lang::verifyMirProgram(forged).valid(),
+             "a text reference pack lane cannot lose its independently "
+             "verified external-content dependency");
+      auto wrongLane = mixed.mir;
+      bool switched = false;
+      for (const auto &candidate : wrongLane.functionInstances()) {
+        auto &body = const_cast<lang::MirFunctionInstance &>(candidate).body;
+        lang::MirLoan *first = nullptr;
+        for (const auto &candidateLoan : body.loans) {
+          auto &loan = const_cast<lang::MirLoan &>(candidateLoan);
+          const auto *source = body.findPlace(loan.source);
+          if (loan.kind != lang::MirLoanKind::Parameter || !loan.entry ||
+              !loan.storedDependency || !source ||
+              source->projections.size() != 1 ||
+              source->projections.front().kind !=
+                  lang::MirProjectionKind::PackElement ||
+              source->type.kind != lang::SemanticType::Reference ||
+              source->type.arguments.size() != 1 ||
+              source->type.arguments.front().kind !=
+                  lang::SemanticType::StringView)
+            continue;
+          if (!first) {
+            first = &loan;
+          } else {
+            first->storedDependency = loan.storedDependency;
+            switched = true;
+            break;
+          }
+        }
+        if (switched)
+          break;
+      }
+      expect(switched && !lang::verifyMirProgram(wrongLane).valid(),
+             "distinct text reference lanes cannot exchange their content "
+             "authorities even when their types match");
+    }
+  }
   const lang::FrontendResult frontend =
       analyzeSourceStorageFixture("variadic-storage-construction.gti", R"(
 import std.memory;
@@ -12416,9 +12608,9 @@ int main() {
               });
         });
   };
-  expect(hasHirIntrinsic(lang::IntrinsicKind::ObjectRelocate) &&
+  expect(hasHirIntrinsic(lang::IntrinsicKind::ObjectRelocateOwned) &&
              hasHirIntrinsic(lang::IntrinsicKind::ObjectDestroy) &&
-             hasMirIntrinsic(lang::IntrinsicKind::ObjectRelocate) &&
+             hasMirIntrinsic(lang::IntrinsicKind::ObjectRelocateOwned) &&
              hasMirIntrinsic(lang::IntrinsicKind::ObjectDestroy),
          "source vector shifts preserve general relocation/destruction facts "
          "through HIR and MIR, not nominal vector operations");
@@ -13085,7 +13277,7 @@ public:
     }
   }
 
-  void push(T value) mut {
+  void push(T value) mut requires std::move_constructible<T> {
     this.data.append_value(std::move(value));
     this.count++;
   }
@@ -16130,7 +16322,7 @@ int main() { return mutate_vector() + mutate_owned_temporary(); }
     for (const auto &block : function.body.blocks)
       for (const auto &instruction : block.instructions)
         checkedMutableRead |=
-            instruction.intrinsic == lang::IntrinsicKind::RawBorrowMut;
+            instruction.intrinsic == lang::IntrinsicKind::ObjectBorrowOwnedMut;
     const lang::HirFunctionInstance *source =
         standardVector.hir.findFunctionInstance(function.id);
     failingBeginMut |= source != nullptr && source->source != nullptr &&
@@ -19124,11 +19316,15 @@ void testFallibleBorrows() {
       for (const auto &block : function.body.blocks) {
         for (const auto &instruction : block.instructions) {
           // The success constructor stages its referent argument with the
-          // exact runtime place on the stored loan operand.
+          // exact runtime place, either as a retained loan or as the checked
+          // read-borrow input whose construction publishes the stored loan.
           if ((instruction.kind != lang::MirInstructionKind::Borrow &&
                instruction.kind != lang::MirInstructionKind::CallInput) ||
               instruction.operands.size() != 1 ||
-              instruction.operands.front().kind != lang::MirOperandKind::Loan ||
+              (instruction.operands.front().kind !=
+                   lang::MirOperandKind::Loan &&
+               instruction.operands.front().kind !=
+                   lang::MirOperandKind::BorrowRead) ||
               instruction.operands.front().place == 0)
             continue;
           const auto *place =

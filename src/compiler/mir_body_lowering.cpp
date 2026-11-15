@@ -9483,6 +9483,52 @@ private:
         value.borrowArgument < call.operands.size()) {
       const std::vector<HirValueId> arguments = callArgumentValues(value);
       if (value.borrowArgument < arguments.size()) {
+        // A reference argument selected through a stored-reference field
+        // denotes that field's referent, not the enclosing carrier shell.
+        // Preserve the same exact projection as for a receiver accessor;
+        // collapsing to its stored group's root loses the selected address.
+        const MirPlaceId selectedArgument =
+            placeForValue(arguments[value.borrowArgument]);
+        if (const MirPlace *selected = output.findPlace(selectedArgument);
+            selected != nullptr && storedReferenceAccessFor(*selected)) {
+          // A replaced local carrier has a current referent distinct from its
+          // historical carrier inventory. Normalize only an exact sole shared
+          // field; program verification independently replays the staged read.
+          const auto *binding = selected->root == MirPlaceRootKind::Binding
+                                    ? findBinding(selected->binding)
+                                    : nullptr;
+          const auto path = binding
+                                ? soleStoredReferencePath(binding->info.type)
+                                : std::nullopt;
+          const auto found =
+              binding ? bindingLoans.find(binding->id) : bindingLoans.end();
+          const auto *held = found == bindingLoans.end()
+                                 ? nullptr
+                                 : output.findLoan(found->second.exact());
+          const auto *referent =
+              held ? output.findPlace(held->source) : nullptr;
+          if (binding && !binding->parameter && path && held && !held->entry &&
+              value.info.category == ValueCategory::Place &&
+              value.borrowFields.empty() &&
+              storedReferenceAccessFor(*selected) == AccessMode::ReadOnly &&
+              held->access == AccessMode::ReadOnly &&
+              held->kind == MirLoanKind::Stored && referent &&
+              referent->type == selected->type &&
+              held->additionalDependencies.empty() &&
+              (held->designatedFields.empty() ||
+               held->designatedFields == path->first) &&
+              selected->projections.size() == path->first.size() + 1 &&
+              selected->projections.back().kind ==
+                  MirProjectionKind::Dereference &&
+              std::equal(path->first.begin(), path->first.end(),
+                         selected->projections.begin(),
+                         [](SymbolId field, const auto &projection) {
+                           return projection.kind == MirProjectionKind::Field &&
+                                  projection.field == field;
+                         }))
+            return canonicalBorrowSource(held->source);
+          return selectedArgument;
+        }
         // A text view relayed from a reference formal's text field holds the
         // text of that field, which the function's field contract tracks
         // (L-OWN-02), as a receiver's text field's does: keep the field
@@ -16685,23 +16731,25 @@ private:
           EntryCarrierSite site{.key = key + "#" + std::to_string(element),
                                 .binding = binding->id,
                                 .packElement = element};
-          if (auto paths = storedReferenceEntries(elementType);
-              !paths.empty()) {
+          // A concrete pack lane has the same external-content and physical
+          // shell authority as an ordinary formal. Forwarding may retain any
+          // lane even when the wrapper itself returns no borrow.
+          if (elementType.kind == SemanticType::Reference) {
+            site.loans =
+                deriveEntryLoans(elementType, EntryCarrier::Parameter, true);
+          } else if (auto paths = storedReferenceEntries(elementType);
+                     !paths.empty()) {
             const AccessMode access = paths.front().reference.referenceAccess;
             site.loans.push_back(
                 {.kind = MirLoanKind::Stored,
                  .access = access,
                  .paths = std::move(paths),
                  .lifecycleBound = lifecycleBoundCarrier(elementType)});
-          } else if (elementType.kind == SemanticType::Reference)
-            // A forwarded reference can be retained by a constructor or
-            // another source helper even when this wrapper returns no borrow.
-            site.loans.push_back({.kind = MirLoanKind::Parameter,
-                                  .access = elementType.referenceAccess});
-          else if (elementType.kind == SemanticType::StringView ||
-                   elementType.kind == SemanticType::CString)
+          } else if (elementType.kind == SemanticType::StringView ||
+                     elementType.kind == SemanticType::CString) {
             site.loans.push_back(
                 {.kind = MirLoanKind::Stored, .access = AccessMode::ReadOnly});
+          }
           sites.push_back(std::move(site));
         }
         continue;
@@ -16795,7 +16843,9 @@ private:
     }
     if (place && place->projections.size() == 1 &&
         place->projections.front().kind == MirProjectionKind::PackElement) {
-      packEntryLoans.emplace(sourcePlace, lowered);
+      // The stored entry precedes its physical reference entry. Keep the
+      // latter as the lane's usable authority once both have been seeded.
+      packEntryLoans.insert_or_assign(sourcePlace, lowered);
     } else {
       for (const HirBindingId carrier : output.loans[lowered - 1].carriers) {
         bindingLoans.insert_or_assign(carrier, BindingLoanSet{lowered});

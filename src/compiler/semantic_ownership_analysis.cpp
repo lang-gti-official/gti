@@ -4103,14 +4103,22 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
   // independently of the publication policy (which also restricts source
   // constructors/destructors), before asking whether cleanup observes them.
   std::vector<SemanticType> capacityVisiting;
+  std::vector<std::pair<SemanticType, bool>> capacityResults;
   const auto mayCarry = [&](const auto &self,
                             const SemanticType &current) -> bool {
+    const auto cached =
+        std::find_if(capacityResults.begin(), capacityResults.end(),
+                     [&](const auto &entry) { return entry.first == current; });
+    if (cached != capacityResults.end())
+      return cached->second;
+    // Substituting a recursive generic field can grow its type at every
+    // step without ever repeating an exact type. Reuse the same structural
+    // termination rule as cleanup and capability queries.
+    if (nonDecreasingNominalRecurrence(current, capacityVisiting))
+      return true;
     if (typeTraits(current).containsBorrowedState ||
         current.kind == SemanticType::StringView ||
         current.kind == SemanticType::CString)
-      return true;
-    if (std::find(capacityVisiting.begin(), capacityVisiting.end(), current) !=
-        capacityVisiting.end())
       return true;
     capacityVisiting.push_back(current);
     bool carries = false;
@@ -4143,74 +4151,84 @@ auto SemanticVisitor::Impl::lifecycleBoundBorrowCarrierFor(
       }
     }
     capacityVisiting.pop_back();
+    capacityResults.emplace_back(current, carries);
     return carries;
   };
   std::vector<SemanticType> visiting;
+  std::vector<std::pair<SemanticType, bool>> lifecycleResults;
   const auto visit = [&](const auto &self,
                          const SemanticType &current) -> bool {
-    if (!mayCarry(mayCarry, current) || !requiresActiveCleanupFor(current))
-      return false;
-    if (current.kind == SemanticType::Enum) {
-      const auto enumeration = enumTypeFor(current);
-      if (!enumeration || !enumeration->payload ||
-          std::find(visiting.begin(), visiting.end(), current) !=
-              visiting.end())
-        return true;
-      visiting.push_back(current);
-      bool bound = false;
-      for (const auto &variant : enumeration->enumerators)
-        for (const auto &field : variant.payloadTypes)
-          bound =
-              bound || field.kind == SemanticType::Unknown || self(self, field);
-      visiting.pop_back();
-      return bound;
-    }
-    // A closure environment is an aggregate of its captures with no source
-    // destructor: generated cleanup destroys each owned capture in order and
-    // never reads a borrowing capture. Only a capture that is itself bound
-    // keeps the environment bound.
-    if (current.kind == SemanticType::Lambda) {
-      if (!current.hasLambdaShape() ||
-          std::find(visiting.begin(), visiting.end(), current) !=
-              visiting.end())
-        return true;
-      visiting.push_back(current);
-      bool bound = false;
-      for (const auto &capture : current.lambdaCaptureTypes())
-        bound = bound || capture.kind == SemanticType::Unknown ||
-                self(self, capture);
-      visiting.pop_back();
-      return bound;
-    }
-    const auto *owner = classInfo(current);
-    // Unknown/recursive cleanup is conservative. Compiler-bound resources and
-    // source destructors may use or release a declared dependency. Generated
-    // destruction of an unrelated owned field does neither.
-    if (owner == nullptr ||
-        std::find(visiting.begin(), visiting.end(), current) !=
-            visiting.end() ||
-        owner->compilerCapability != CompilerCapabilityTypeKind::None ||
-        isDefaultLibraryMutexGuardCarrier(*owner) ||
-        hasSourceDestructorBody(*owner))
-      return true;
-    visiting.push_back(current);
-    const auto substitution = classSubstitution(current);
-    bool bound = false;
-    for (const auto &base : owner->bases)
-      bound = bound || (!base.interface &&
-                        self(self, substituteType(base.type, substitution)));
-    for (const auto &field : owner->fields) {
-      if (field.declaration == nullptr)
-        continue;
-      const auto member = owner->members.find(field.declaration->name().lexeme);
-      if (member == owner->members.end()) {
-        bound = true;
-        continue;
+    const auto cached =
+        std::find_if(lifecycleResults.begin(), lifecycleResults.end(),
+                     [&](const auto &entry) { return entry.first == current; });
+    if (cached != lifecycleResults.end())
+      return cached->second;
+    const auto calculate = [&]() -> bool {
+      if (!mayCarry(mayCarry, current) || !requiresActiveCleanupFor(current))
+        return false;
+      if (current.kind == SemanticType::Enum) {
+        const auto enumeration = enumTypeFor(current);
+        if (!enumeration || !enumeration->payload ||
+            nonDecreasingNominalRecurrence(current, visiting))
+          return true;
+        visiting.push_back(current);
+        bool bound = false;
+        for (const auto &variant : enumeration->enumerators)
+          for (const auto &field : variant.payloadTypes)
+            bound = bound || field.kind == SemanticType::Unknown ||
+                    self(self, field);
+        visiting.pop_back();
+        return bound;
       }
-      bound = bound || self(self, substituteType(member->second.symbol.type,
-                                                 substitution));
-    }
-    visiting.pop_back();
+      // A closure environment is an aggregate of its captures with no source
+      // destructor: generated cleanup destroys each owned capture in order and
+      // never reads a borrowing capture. Only a capture that is itself bound
+      // keeps the environment bound.
+      if (current.kind == SemanticType::Lambda) {
+        if (!current.hasLambdaShape() ||
+            nonDecreasingNominalRecurrence(current, visiting))
+          return true;
+        visiting.push_back(current);
+        bool bound = false;
+        for (const auto &capture : current.lambdaCaptureTypes())
+          bound = bound || capture.kind == SemanticType::Unknown ||
+                  self(self, capture);
+        visiting.pop_back();
+        return bound;
+      }
+      const auto *owner = classInfo(current);
+      // Unknown/recursive cleanup is conservative. Compiler-bound resources and
+      // source destructors may use or release a declared dependency. Generated
+      // destruction of an unrelated owned field does neither.
+      if (owner == nullptr ||
+          nonDecreasingNominalRecurrence(current, visiting) ||
+          owner->compilerCapability != CompilerCapabilityTypeKind::None ||
+          isDefaultLibraryMutexGuardCarrier(*owner) ||
+          hasSourceDestructorBody(*owner))
+        return true;
+      visiting.push_back(current);
+      const auto substitution = classSubstitution(current);
+      bool bound = false;
+      for (const auto &base : owner->bases)
+        bound = bound || (!base.interface &&
+                          self(self, substituteType(base.type, substitution)));
+      for (const auto &field : owner->fields) {
+        if (field.declaration == nullptr)
+          continue;
+        const auto member =
+            owner->members.find(field.declaration->name().lexeme);
+        if (member == owner->members.end()) {
+          bound = true;
+          continue;
+        }
+        bound = bound || self(self, substituteType(member->second.symbol.type,
+                                                   substitution));
+      }
+      visiting.pop_back();
+      return bound;
+    };
+    const bool bound = calculate();
+    lifecycleResults.emplace_back(current, bound);
     return bound;
   };
   return visit(visit, type);

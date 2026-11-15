@@ -1091,7 +1091,8 @@ int main() {
     for (const auto &block : function.body.blocks) {
       for (const auto &instruction : block.instructions) {
         checkedMutableCharacters |=
-            instruction.intrinsic == lang::IntrinsicKind::RawBorrowMut &&
+            instruction.intrinsic ==
+                lang::IntrinsicKind::ObjectBorrowOwnedMut &&
             instruction.info.type == lang::SemanticType::Char &&
             instruction.borrowAccess == lang::AccessMode::Mutable &&
             instruction.loan.has_value();
@@ -6287,6 +6288,15 @@ int main() { return 0; }
       "active-cleanup queries should preserve decreasing concrete generic "
       "detection, terminate non-decreasing recurrence, and memoize repeated "
       "cleanup-free generic branches");
+
+  expect(
+      cleanupQuerySemantic.lifecycleBoundBorrowCarrierFor(
+          expandingRecurrence) &&
+          !cleanupQuerySemantic.lifecycleBoundBorrowCarrierFor(nestedCleanup) &&
+          !cleanupQuerySemantic.lifecycleBoundBorrowCarrierFor(
+              branchingCleanupFree),
+      "borrowed-content lifecycle queries terminate expanding generic "
+      "recurrence, preserve decreasing nests, and memoize repeated branches");
 
   const std::string nonShareableSource = R"(
 class RawState { int* address = nullptr;  public: RawState() = default; };

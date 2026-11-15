@@ -16,6 +16,39 @@ import threading
 
 PREFIX = 'import std.string;\nimport std.utility;\n'
 CASES = {
+    'stored_carrier_reference_argument_relay': (True, '''
+class ReadCarrier<lifetime a> {
+public:
+  int&<a> referent;
+  mut int shell = 0;
+  ReadCarrier(int&<a> source) : referent(source) {}
+  int&<a> identity() { return this.referent; }
+  int&<a> relay_call() { return this.identity(); }
+};
+
+int& relay_reference(int& source) { return source; }
+int& relay_external(ReadCarrier carrier) {
+  int& ordinary = relay_reference(carrier.referent);
+  return carrier.referent;
+}
+ReadCarrier relay_carrier(ReadCarrier carrier) {
+  int unrelated_owner = 11;
+  ReadCarrier unrelated = ReadCarrier(unrelated_owner);
+  ReadCarrier unused = unrelated;
+  return carrier;
+}
+
+int main() {
+  int owner = 7;
+  ReadCarrier first = ReadCarrier(owner);
+  ReadCarrier copied = first;
+  ReadCarrier moved = std::move(copied);
+  int& exact = relay_external(moved);
+  int& relayed_exact = moved.relay_call();
+  ReadCarrier relayed = relay_carrier(std::move(moved));
+  return exact + relayed_exact + relayed.referent - 21;
+}
+'''),
     'observing_cleanup_after_nested_move': (True, '''
 mut int closed = 0;
 struct Counter {
@@ -1810,6 +1843,225 @@ int main() {
 }
 ''')
 
+CASES['receiver_return_rejects_unrelated_parameter'] = (False, r'''
+class View {
+  int& value;
+
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+class WrongFactory {
+public:
+  View make(int& source) { return View(source); }
+public:
+  WrongFactory() = default;
+};
+
+int main() { int n=1; WrongFactory factory{}; auto v=factory.make(n); return 0; }
+''')
+
+
+CASES['record_replacement_releases_previous_owner'] = (True, r'''
+
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  first_owner = 3;
+  return left.referent - 2;
+}
+int main() { return use(); }
+''')
+CASES['record_replacement_protects_new_owner'] = (
+    False, CASES['record_replacement_releases_previous_owner'][1]
+    .replace('first_owner = 3;', 'second_owner = 3;'))
+CASES['record_replacement_protects_independent_copy'] = (
+    False, CASES['record_replacement_releases_previous_owner'][1]
+    .replace('  left = right;', '  ReadCarrier copied = left;\n  left = right;')
+    .replace('return left.referent - 2;', 'return copied.referent - 1;'))
+
+
+CASES['borrowed_cursor_algorithm_compositions'] = (True, r'''
+
+import std.algorithm;
+import std.iterator;
+import std.vector;
+
+int main() {
+  mut std::vector<int32_t> source = std::vector<int32_t>();
+  source.push_back(5);
+  source.push_back(1);
+  source.push_back(4);
+  mut std::vector<int32_t> destination = std::vector<int32_t>(std::size_t(3));
+  std::copy(source.begin(), source.end(), destination.begin_mut());
+  int32_t nine = 9;
+  std::fill(destination, nine);
+  mut std::vector<int32_t> doubled = std::vector<int32_t>(std::size_t(3));
+  std::transform(source, doubled,
+                 [](int32_t& value) -> int32_t { return value * 2; });
+  std::sort(source);
+  std::reverse(source);
+  int32_t head = source[std::size_t(0)];
+  mut auto cursor = source.begin();
+  ++cursor;
+  --cursor;
+  cursor += std::ptrdiff_t(2);
+  cursor -= std::ptrdiff_t(1);
+  auto last = source.end();
+  std::ptrdiff_t left = cursor - last;
+  auto stepped = std::prev(std::next(source.begin(), std::ptrdiff_t(2)));
+  return (*cursor == 4 && left == std::ptrdiff_t(-2) && *stepped == 4 &&
+          destination[std::size_t(0)] == 9 &&
+          doubled[std::size_t(0)] == 10 && head == 5)
+             ? 0
+             : 1;
+}
+''')
+CASES['borrowed_cursor_assignment_rejects_live_child'] = (False, r'''
+import std.vector;
+int overwrite(mut std::vector<int32_t>::iterator cursor) {
+  int32_t& held = *cursor;
+  *cursor = 7;
+  return held;
+}
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(1));
+  return overwrite(values.begin_mut());
+}
+''')
+
+
+CASES['record_replacement_reference_argument'] = (
+    True, 'int read_reference(int& value) { return value; }\n' +
+    CASES['record_replacement_releases_previous_owner'][1]
+    .replace('return left.referent - 2;',
+             'return read_reference(left.referent) - 2;'))
+CASES['record_replacement_reference_argument_protects_new_owner'] = (
+    False, CASES['record_replacement_reference_argument'][1]
+    .replace('first_owner = 3;', 'second_owner = 3;'))
+
+CASES['record_replacement_reference_return'] = (True, r'''
+int& read_reference(int& value) { return value; }
+
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  first_owner = 3;
+  return read_reference(left.referent) - 2;
+}
+int main() { return use(); }
+''')
+
+CASES['record_replacement_reference_return_protects_new_owner'] = (False, r'''
+int& read_reference(int& value) { return value; }
+
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  second_owner = 3;
+  return read_reference(left.referent) - 2;
+}
+int main() { return use(); }
+''')
+
+CASES['record_replacement_captured_reference'] = (True, r'''
+int& read_reference(int& value) { return value; }
+
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  first_owner = 3;
+  int& held = read_reference(left.referent);
+  left = ReadCarrier(first_owner);
+
+  return held - 2;
+}
+int main() { return use(); }
+''')
+
+CASES['record_replacement_captured_reference_protects_owner'] = (False, r'''
+int& read_reference(int& value) { return value; }
+
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  first_owner = 3;
+  int& held = read_reference(left.referent);
+  left = ReadCarrier(first_owner);
+  second_owner = 4;
+  return held - 2;
+}
+int main() { return use(); }
+''')
+
+CASES['mixed_reference_pack_contents'] = (True, r'''
+import std.string;
+class Reading {
+public:
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+int read(std::string_view& first, Reading& middle, std::string_view& last) {
+  return first == "first" && middle.value == 7 && last == "last" ? 0 : 1;
+}
+int through_pack<Args...>(Args&... args) { return read(args...); }
+int main() {
+  mut std::string first{"first"};
+  std::string last{"last"};
+  int number = 7;
+  Reading middle{number};
+  std::string_view a = first.view();
+  std::string_view b = last.view();
+  return through_pack(a, middle, b);
+}
+''')
+CASES['mixed_reference_pack_protects_text_owner'] = (False,
+    CASES['mixed_reference_pack_contents'][1].replace(
+        'return through_pack(a, middle, b);',
+        'first.clear(); return through_pack(a, middle, b);'))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('compiler', type=Path)
@@ -1876,6 +2128,8 @@ def main():
                 if name == 'replacement_loop_protects_inner_owner':
                     ok = ok and 'Cannot use a borrowed value after its owner' in diagnostic
                     ok = ok and 'A returned borrow' not in diagnostic
+                if name == 'borrowed_cursor_assignment_rejects_live_child':
+                    ok = ok and 'error[GTI-S2017]' in diagnostic
                 if name.startswith('record_') or '_protects_' in name or name in (
                         'copy_retains_old_owner', 'replacement_protects_new_owner',
                         'replacement_branch_keeps_old_copy'):

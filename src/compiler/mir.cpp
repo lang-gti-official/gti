@@ -2942,8 +2942,8 @@ soleInvokePredecessor(const MirBlockPredecessors &predecessors,
       source->projections.front().kind == MirProjectionKind::PackElement &&
       source->type.kind == SemanticType::Reference &&
       source->type.arguments.size() == 1 &&
-      source->type.arguments.front().kind == SemanticType::Class &&
-      loan.carriers.empty() && !loan.designatedFields.empty();
+      std::find(loan.carriers.begin(), loan.carriers.end(), source->binding) ==
+          loan.carriers.end();
   if (source == nullptr || (!source->projections.empty() && !packLane))
     return false;
   // A checked text reference borrows two things: the view object and its
@@ -3693,8 +3693,28 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       if (derived.storedDependency == dependency.id &&
           mir_detail::restoredBorrowAuthority(body, derived))
         return true;
-      if (!abstractStoredEntry(body, dependency))
-        return false;
+      if (!abstractStoredEntry(body, dependency)) {
+        // A by-value carrier's entry protects its external referent, not the
+        // carrier's physical shell. A receiver-tied result can borrow that
+        // shell while retaining the exact entry as a separate dependency.
+        // Apply the same distinction during activation as during ordinary
+        // carrier access; unrelated loans still compete with the reservation.
+        const auto *source = body.findPlace(dependency.source);
+        const auto *selected = body.findPlace(derived.source);
+        return dependency.kind == MirLoanKind::Stored && dependency.entry &&
+               !dependency.parent && !dependency.storedDependency &&
+               !dependency.escapes &&
+               derived.storedDependency == dependency.id && source &&
+               selected && source->root == MirPlaceRootKind::Binding &&
+               selected->root == MirPlaceRootKind::Binding &&
+               source->binding == selected->binding &&
+               source->projections.empty() && selected->projections.empty() &&
+               source->type.kind == SemanticType::Class &&
+               source->traits.containsBorrowedState &&
+               !dependency.designatedFields.empty() &&
+               std::find(dependency.carriers.begin(), dependency.carriers.end(),
+                         source->binding) != dependency.carriers.end();
+      }
       const auto origin =
           canonicalPlace(body, dependency.source, bindingLoans, active);
       const auto place =

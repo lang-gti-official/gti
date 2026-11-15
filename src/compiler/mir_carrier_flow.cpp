@@ -93,6 +93,60 @@ struct State {
 };
 Fact empty() { return std::vector<MirLoanId>{}; }
 
+// An opaque whole-carrier dependency can be matched to a named field only
+// when concrete layout proves that field is its sole dependency-bearing
+// component. Text, unknown layouts, alternatives and multiple references do
+// not provide that proof. This query never changes the represented owner.
+std::optional<std::vector<SymbolId>>
+soleSharedReferencePath(const MirProgram &program, const SemanticType &type) {
+  std::vector<SemanticType> visiting;
+  std::vector<SymbolId> path, selected;
+  std::size_t count = 0;
+  const auto visit = [&](const auto &self,
+                         const SemanticType &current) -> bool {
+    if (current.kind == SemanticType::Reference) {
+      if (current.referenceAccess != AccessMode::ReadOnly ||
+          current.arguments.size() != 1 || path.empty())
+        return false;
+      selected = path;
+      return ++count == 1;
+    }
+    // Opaque owning storage can retain dependencies behind a pointer even
+    // though its ordinary layout has no reference field.
+    if (current.kind == SemanticType::RawPointer ||
+        current.kind == SemanticType::SharedPointer ||
+        current.kind == SemanticType::UniqueOwner)
+      return false;
+    if (!mirTypeMayHoldDependencies(current, {}))
+      return true;
+    if (current.kind != SemanticType::Class ||
+        std::find(visiting.begin(), visiting.end(), current) != visiting.end())
+      return false;
+    const MirClassInstance *record = nullptr;
+    for (const auto &candidate : program.classInstances())
+      if (candidate.type == current) {
+        if (record)
+          return false;
+        record = &candidate;
+      }
+    if (!record || !record->bases.empty() || !record->structuralBases.empty() ||
+        record->unionLayout || record->cOpaqueHandle ||
+        record->compilerCapability != CompilerCapabilityTypeKind::None)
+      return false;
+    visiting.push_back(current);
+    for (const auto &field : record->declaredFields) {
+      path.push_back(field.symbol);
+      if (!field.symbol || !self(self, field.type))
+        return false;
+      path.pop_back();
+    }
+    visiting.pop_back();
+    return true;
+  };
+  return visit(visit, type) && count == 1 ? std::optional{selected}
+                                          : std::nullopt;
+}
+
 template <class T>
 bool join(std::optional<std::vector<T>> &into,
           const std::optional<std::vector<T>> &from) {
@@ -273,6 +327,26 @@ Fact placeFact(const MirBody &body, const State &state, MirPlaceId id,
   return mirTypeMayHoldDependencies(place->type, place->traits) ? Fact{}
                                                                 : empty();
 }
+// A checked scalar reference-field access uses the carrier's current
+// external owners. This is access provenance, never a physical storage target
+// or a claim about borrowed contents inside the referent.
+Fact scalarReferenceFieldOwners(const MirBody &body, const State &state,
+                               MirPlaceId id, bool expired) {
+  const auto *place = body.findPlace(id);
+  if (!place || place->foreignStorage ||
+      place->root != MirPlaceRootKind::Binding ||
+      mirTypeMayHoldDependencies(place->type, place->traits) ||
+      place->projections.size() < 2 ||
+      place->projections.back().kind != MirProjectionKind::Dereference ||
+      !std::all_of(place->projections.begin(), place->projections.end() - 1,
+                   [](const auto &part) {
+                     return part.kind == MirProjectionKind::Field;
+                   }))
+    return std::nullopt;
+  const auto &roots = expired ? state.expiredRoots : state.roots;
+  const auto held = roots.find({place->root, place->binding});
+  return held == roots.end() ? Fact{} : held->second;
+}
 Fact operandFact(const MirBody &body, const State &state,
                  const MirOperand &operand, bool expired = false) {
   const auto &roots = expired ? state.expiredRoots : state.roots;
@@ -300,6 +374,12 @@ Fact operandFact(const MirBody &body, const State &state,
     return held;
   }
   Fact held = placeFact(body, state, operand.place, expired);
+  // A staged reference to a scalar field preserves its access dependency
+  // across argument evaluation and the call. It does not need the scalar's
+  // nonexistent borrowed-value contents to model that reference.
+  if (!held && (operand.kind == MirOperandKind::BorrowRead ||
+                operand.kind == MirOperandKind::BorrowWrite))
+    held = scalarReferenceFieldOwners(body, state, operand.place, expired);
   // Copying a whole borrowed value from a shared reference formal retains
   // its contents. Physical access is observed independently by operandRead.
   // Inline text also supports the existing array-element projection rule.
@@ -375,8 +455,12 @@ Fact operandRead(const MirBody &body, const State &state,
   // from a carrier projection rather than as a Loan-rooted place. Erasing
   // dependencies from the produced value must not erase this access use.
   if (operand.place && (operand.kind == MirOperandKind::Copy ||
-                        operand.kind == MirOperandKind::Move))
-    join(read, placeFact(body, state, operand.place, expired));
+                        operand.kind == MirOperandKind::Move)) {
+    auto accessed = placeFact(body, state, operand.place, expired);
+    if (!accessed)
+      accessed = scalarReferenceFieldOwners(body, state, operand.place, expired);
+    join(read, accessed);
+  }
   // Accessing a referent uses its physical loan even when its value is an
   // independent scalar. Apply the same rule to arguments and receivers.
   if (const auto *place = body.findPlace(operand.place);
@@ -1320,8 +1404,7 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                 return std::any_of(
                     instruction.borrowFields.begin(),
                     instruction.borrowFields.end(), [&](const auto &field) {
-                      if (field.sourceFields != from ||
-                          field.resultFields != to ||
+                      if (field.resultFields != to ||
                           field.access != AccessMode::ReadOnly ||
                           !field.sourceConditions.empty() ||
                           !field.resultConditions.empty())
@@ -1335,6 +1418,14 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
                         input = &instruction.operands[field.parameter];
                       if (!input)
                         return false;
+                      if (field.sourceFields != from) {
+                        if (!from.empty())
+                          return false;
+                        const auto path =
+                            soleSharedReferencePath(*program, input->type);
+                        if (!path || *path != field.sourceFields)
+                          return false;
+                      }
                       const auto actual = operandFact(body, state, *input);
                       return actual && std::find(actual->begin(), actual->end(),
                                                  id) != actual->end();

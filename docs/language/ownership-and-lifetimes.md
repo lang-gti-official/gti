@@ -3142,10 +3142,15 @@ ownerless value. Indexed replacement of a text element retains its existing
 ownerless-input restriction; admitting borrowed array initializers does not
 relax every indirect write. These rules are checked before LLVM emission.
 
-Constructor field initializers obey the same storage rule. A constructor that
-directly stores a by-value text parameter in a text field requires an ownerless
-argument at each selected call. This includes generic fields after substitution,
-parenthesized inputs, and explicit movement: moving a view does not move its
+Ordinary constructor field initialization still requires an ownerless argument
+when a constructor directly stores a by-value text parameter in a text field.
+Owner-aware final-address construction is a separate checked publication path:
+`std::construct_owned_at` can retain that argument’s external dependencies in
+the supplied storage owner, as exercised by `owned_construction_text_field`.
+This path currently excludes classes with user-defined destructors, as described
+under Source-Defined Vector above. The following restrictions apply to ordinary
+construction without that owner-aware publication proof, including generic
+fields after substitution, parenthesized inputs, and explicit movement: moving a view does not move its
 owner. Literal-backed inputs and ownerless defaults remain valid. A computed
 dynamic initializer such as `text(owner.view())` is rejected at its initializer;
 an ordinary view parameter forwarded to a storing constructor is potentially

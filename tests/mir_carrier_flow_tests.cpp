@@ -8,6 +8,10 @@
 
 namespace lang {
 struct MirProgramTestAccess {
+  static void classes(MirProgram &program,
+                      std::vector<MirClassInstance> classes) {
+    program.classes = std::move(classes);
+  }
   static void functions(MirProgram &program,
                         std::vector<MirFunctionInstance> functions) {
     program.functions = std::move(functions);
@@ -1154,6 +1158,56 @@ void representedResultKeepsRelayedContents() {
       sameFieldCopy.reads.at(4) == set({3}) &&
           sameFieldCopy.unavailableReads.at(4) == set({}),
       "an identity relay preserves exact field provenance without remapping");
+  auto opaqueField = independent;
+  SemanticType recordType = SemanticType::Class;
+  recordType.classId = 17;
+  MirClassInstance recordTypeInfo;
+  recordTypeInfo.id = 1;
+  recordTypeInfo.type = recordType;
+  recordTypeInfo.traits.containsBorrowedState = true;
+  recordTypeInfo.declaredFields = {
+      {.symbol = 1,
+       .type = SemanticType::referenceTo(SemanticType::Int32,
+                                         AccessMode::ReadOnly)}};
+  auto recordRelay = relay;
+  recordRelay.parameterTypes = {recordType};
+  recordRelay.returnType = recordType;
+  recordRelay.body.returnType = recordType;
+  recordRelay.body.places[0].type = recordType;
+  MirProgram recordProgram;
+  MirProgramTestAccess::functions(recordProgram, {recordRelay});
+  MirProgramTestAccess::classes(recordProgram, {recordTypeInfo});
+  opaqueField.loans.back().designatedFields = {1};
+  auto &fieldCall = opaqueField.blocks[0].instructions[0];
+  fieldCall.info.type = recordType;
+  fieldCall.operands.front().type = recordType;
+  fieldCall.borrowFields = {{.resultFields = {1},
+                             .origin = BorrowOriginKind::Argument,
+                             .parameter = 0,
+                             .sourceFields = {1}}};
+  const auto opaqueCopy = deriveMirCarrierFlow(opaqueField, &recordProgram);
+  expect(opaqueCopy.reads.at(4) == set({3}) &&
+             opaqueCopy.unavailableReads.at(4) == set({}),
+         "an opaque dependency relays through the proved sole reference field");
+  recordTypeInfo.declaredFields.push_back(
+      {.symbol = 2,
+       .type = SemanticType::referenceTo(SemanticType::Int32,
+                                         AccessMode::ReadOnly)});
+  MirProgramTestAccess::classes(recordProgram, {recordTypeInfo});
+  expect(deriveMirCarrierFlow(opaqueField, &recordProgram)
+                 .unavailableReads.at(4) == set({1}),
+         "multiple reference fields cannot guess an opaque dependency path");
+  recordTypeInfo.declaredFields.back().type = SemanticType::StringView;
+  MirProgramTestAccess::classes(recordProgram, {recordTypeInfo});
+  expect(deriveMirCarrierFlow(opaqueField, &recordProgram)
+                 .unavailableReads.at(4) == set({1}),
+         "opaque text beside a reference prevents sole-dependency inference");
+  recordTypeInfo.declaredFields.back().type =
+      SemanticType::rawPointerTo(SemanticType::Int32);
+  MirProgramTestAccess::classes(recordProgram, {recordTypeInfo});
+  expect(deriveMirCarrierFlow(opaqueField, &recordProgram)
+                 .unavailableReads.at(4) == set({1}),
+         "opaque pointer storage cannot prove a sole reference dependency");
   auto mappedField = fieldOrigin;
   mappedField.blocks[0].instructions[0].borrowFields = {
       {.origin = BorrowOriginKind::Argument,
@@ -1337,6 +1391,47 @@ void scalarProjectionStillReadsCarrier() {
              flow.stores.at(2) == set({}) && flow.reads.at(3) == set({}),
          "a scalar projection uses its carrier without retaining it in the "
          "result");
+  mir.places[2].projections.push_back({.kind = MirProjectionKind::Dereference});
+  mir.blocks[0].instructions.insert(mir.blocks[0].instructions.begin() + 1,
+                                    store(4, 1, loan(2)));
+  auto replaced = deriveMirCarrierFlow(mir);
+  expect(replaced.complete && replaced.reads.at(2) == set({2}) &&
+             replaced.stores.at(2) == set({}),
+         "a scalar reference-field read uses the replacement's current "
+         "dependency without retaining it in the scalar result");
+  mir.blocks[0].instructions.insert(
+      mir.blocks[0].instructions.begin() + 2,
+      {.id = 5, .kind = MirInstructionKind::EndBorrow, .loan = 2});
+  replaced = deriveMirCarrierFlow(mir);
+  expect(replaced.unavailableReads.at(2) == set({2}),
+         "a scalar reference-field read cannot revive an expired owner");
+  auto staged = mir;
+  auto &input = staged.blocks[0].instructions[3];
+  input.kind = MirInstructionKind::CallInput;
+  input.callInputKind = HirCallInputKind::ReadBorrow;
+  input.result = 1;
+  input.operands.front().kind = MirOperandKind::BorrowRead;
+  input.operands.front().type =
+      SemanticType::referenceTo(SemanticType::Int32, AccessMode::ReadOnly);
+  input.info.type = input.operands.front().type;
+  staged.blocks[0].instructions.push_back(
+      store(6, 4, {.kind = MirOperandKind::Value, .value = 1}));
+  const auto stagedFlow = deriveMirCarrierFlow(staged);
+  expect(stagedFlow.reads.at(2) == set({2}) &&
+             stagedFlow.unavailableReads.at(2) == set({2}) &&
+             stagedFlow.stores.at(6) == set({2}) &&
+             stagedFlow.unavailableReads.at(6) == set({2}),
+         "a staged scalar reference keeps the current owner and its expiration");
+  mir.places[2].projections.back().kind = MirProjectionKind::RawDereference;
+  expect(!deriveMirCarrierFlow(mir).reads.at(2),
+         "raw pointer fields do not inherit checked reference-field reads");
+  mir.places[2].projections.back().kind = MirProjectionKind::Dereference;
+  mir.places[2].type = SemanticType::StringView;
+  mir.blocks[0].instructions[3].operands.front().type =
+      SemanticType::StringView;
+  expect(!deriveMirCarrierFlow(mir).reads.at(2),
+         "reading borrowed contents through a reference still requires its "
+         "own content provenance");
 }
 void expiredCarriedValues() {
   auto mir = body();

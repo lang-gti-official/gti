@@ -3367,6 +3367,42 @@ executable predecessor stays unknown at a join. Reads include receivers and
 return operands, and writes through references keep their physical access loans
 alive through the store.
 
+Scalar reads through checked reference fields use the carrier's current
+dependency set, rather than its declaration's historical attachments. This
+keeps exact record replacement precise without treating a scalar result as
+borrowed. Staged scalar-reference arguments retain that same current set.
+For a local carrier with one unconditional shared-reference field, a reference
+returned from such an argument can use its exact current referent. The program
+verifier reconstructs this source from the staged input's flow and concrete
+field inventory, independently of the returned loan; a previous owner's live,
+type-correct place is still rejected as the wrong source. Raw dereferences and reads of dependency-bearing referents still
+require their own provenance. A fresh shared result can replace an input's
+loan only when it independently represents the same owners and the verified
+field relay preserves their provenance. An unnamed whole-carrier dependency
+can match a named field when the concrete declared-field inventory proves a
+sole shared-reference path; multiple references, hidden text, pointer-backed
+storage and unknown layouts do not justify that inference.
+
+The semantic lifecycle query that discovers borrowed-content capacity shares
+cleanup's non-decreasing nominal recurrence guard. Growing generic field shapes
+are conservative instead of recursively expanding without a bound; decreasing
+concrete nests still reach their leaf types. Per-query memoization avoids
+revisiting identical field branches for capacity and observing cleanup.
+
+Each concrete reference-pack lane derives the same entry capabilities as an
+ordinary reference formal. A reference to borrowed contents has a distinct
+external-content entry and physical-reference entry, even when the wrapper
+returns no borrow. The lane map selects the physical entry after both are
+created. Verification independently checks the lane's formal type, content
+paths, exact dependency link and entry counts; equal-typed lanes cannot exchange
+content authority.
+
+A by-value carrier's stored entry protects its external referent separately
+from the carrier's physical storage. Mutable receiver-result activation uses
+that same distinction as ordinary access: the exact stored entry is not a
+competing loan of its own carrier. Other overlapping loans still prevent
+activation, and whole-program verification checks the stored-dependency link.
+
 Call-result source snapshots (`resultSourceContents` and
 `unavailableResultSourceContents`) record the physical source's contents after
 that invocation's modeled writes. They distinguish a mutating accessor's
