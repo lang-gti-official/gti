@@ -25,6 +25,29 @@ bool check_character_windows() {
   return true;
 }
 
+// Concatenation copies a read-only left operand and appends in place to a
+// consumed one; embedded NULs and empty operands keep exact sizes.
+bool check_concatenation() {
+  std::string base{"id"};
+  std::string tail{"\0z"};
+  std::string joined = base + ": " + tail + std::string("!");
+  if (joined.size() != 7 || joined != "id: \0z!" || base != "id" ||
+      tail.size() != 2) { return false; }
+  std::string copied = base + tail;
+  if (copied.size() != 4 || copied[2] != '\0' || base != "id") { return false; }
+  std::string empty = std::string() + "" + std::string();
+  if (!empty.empty()) { return false; }
+  mut std::string owner{"a"};
+  owner.reserve(std::size_t(64));
+  std::string moved = std::move(owner) + "b";
+  if (moved != "ab" || moved.capacity() != 64) { return false; }
+  mut std::string accumulated{"x"};
+  accumulated += "y";
+  accumulated += tail;
+  accumulated += "";
+  return accumulated.size() == 4 && accumulated == "xy\0z";
+}
+
 int main() {
   std::string empty{};
   std::string text{"abcabc\0tail"};
@@ -90,5 +113,6 @@ int main() {
   growing.replace(std::size_t(0), std::string::npos, addition);
   if (growing != addition) { return 20; }
   if (!check_character_windows()) { return 21; }
+  if (!check_concatenation()) { return 22; }
   return 0;
 }

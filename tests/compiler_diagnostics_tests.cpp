@@ -3959,6 +3959,52 @@ int main() {
          "an explicitly moved println argument remains accepted");
 }
 
+// Text-boundary guidance: a `char*` at a C boundary names `c_char`, and a
+// text view on the left of '+' names the owned-string form.
+void testTextBoundaryGuidance() {
+  const std::string source = R"(import std.string;
+extern "C" {
+  const char* text_result();
+  void text_argument(char** text);
+  const c_char* native_result();
+  int32_t* counted_result();
+}
+int main() {
+  std::string joined = "id: " + std::to_string(1);
+  std::string owned = std::string("id: ") + std::to_string(1);
+  return 0;
+})";
+  const auto result = lang::Frontend().analyze(
+      "text-boundary-guidance.gti", source, {standardLibraryPrelude()}, {},
+      {standardLibraryRoot()});
+  std::vector<const lang::Diagnostic *> boundaries;
+  const lang::Diagnostic *concatenation = nullptr;
+  for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+    if (diagnostic.code == "GTI-S2054")
+      boundaries.push_back(&diagnostic);
+    else if (diagnostic.code == "GTI-S2004")
+      concatenation = &diagnostic;
+  }
+  const auto namesCChar = [](const lang::Diagnostic *diagnostic) {
+    return diagnostic->hints.size() == 1 &&
+           diagnostic->hints.front().find("'const c_char*'") !=
+               std::string::npos;
+  };
+  expect(result.diagnostics.size() == 3 && boundaries.size() == 2 &&
+             boundaries[0]->primary.start == source.find("char* text_result") &&
+             boundaries[1]->primary.start == source.find("text)") &&
+             namesCChar(boundaries[0]) && namesCChar(boundaries[1]),
+         "a GTI char pointer at an extern C return or parameter should point "
+         "at c_char, while c_char and integer pointers stay valid");
+  expect(concatenation != nullptr &&
+             concatenation->primary.start == source.find("+ std::to_string") &&
+             concatenation->hints.size() == 1 &&
+             concatenation->hints.front().find("std::string(\"text\") + value") !=
+                 std::string::npos,
+         "a literal on the left of '+' should suggest an owned string, while "
+         "owned-string concatenation is accepted");
+}
+
 void testConversionDiagnosticGuidance() {
   const auto result =
       analyzeDiagnosticFixture("a05-string-view-help-suggests-invalid-form");
@@ -4398,6 +4444,7 @@ constexpr NamedTest kTests[] = {
     {"testGenericArgumentDiagnosticGuidance",
      testGenericArgumentDiagnosticGuidance},
     {"testConversionDiagnosticGuidance", testConversionDiagnosticGuidance},
+    {"testTextBoundaryGuidance", testTextBoundaryGuidance},
     {"testOverloadFailureGuidance", testOverloadFailureGuidance},
     {"testRawAuditDiagnosticPublication", testRawAuditDiagnosticPublication},
     {"testSemanticDiagnostics", testSemanticDiagnostics},

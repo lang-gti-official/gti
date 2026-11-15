@@ -12,7 +12,20 @@ int main() {
   mut std::string copy = name.clone();
   copy[0] = 'E';
 
-  if (name == "engine runtime" and copy.size() == 14 and copy[0] == 'E') {
+  // Escapes: control bytes, one hexadecimal code unit, and a Unicode scalar
+  // written as UTF-8 (U+00E9 is two code units).
+  std::string_view escaped = "\t\x41\u00e9";
+  if (escaped.size() != 4 or escaped[1] != 'A') {
+    return 1;
+  }
+
+  // Concatenation starts from an owned string; a temporary appends in place.
+  std::string label = std::string("[") + name + "]";
+  mut std::string log = label.clone();
+  log += " ready";
+
+  if (name == "engine runtime" and copy.size() == 14 and copy[0] == 'E' and
+      label == "[engine runtime]" and log == "[engine runtime] ready") {
     return 0;
   }
   return 1;

@@ -866,6 +866,10 @@
       "suite": "diagnostics"
     },
     {
+      "name": "testTextBoundaryGuidance",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testOverloadFailureGuidance",
       "suite": "diagnostics"
     },

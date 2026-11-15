@@ -7439,6 +7439,8 @@
         "std::string::find",
         "std::string::insert",
         "std::string::npos",
+        "std::string::operator+",
+        "std::string::operator+=",
         "std::string::operator=(string_view)",
         "std::string::replace",
         "std::string::rfind",
