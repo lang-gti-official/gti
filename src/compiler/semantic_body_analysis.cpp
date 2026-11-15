@@ -179,6 +179,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   stagedWorker = {};
   primitiveRequirementProofs.clear();
   primitiveRequirementProofCount = 0;
+  idleQueryCatalogs.clear();
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
