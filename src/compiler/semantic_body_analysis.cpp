@@ -7840,7 +7840,7 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
                  "' does not take generic arguments.",
              "GTI-S2030");
     }
-    if (isNumeric(alias->type) ||
+    if (isNumeric(alias->type) || alias->type == SemanticType::Char ||
         alias->type.kind == SemanticType::RawPointer) {
       analyzeAliasConversion(expr, alias->type, alias->qualifiedName);
       return;
@@ -7865,7 +7865,8 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
     } else {
       report(expressionToken(expr.callee()),
              "Type alias '" + alias->qualifiedName +
-                 "' does not name a constructible class, numeric or raw "
+                 "' does not name a constructible class, numeric, character or "
+                 "raw "
                  "pointer type.",
              "GTI-S2030");
       currentType = SemanticType::Unknown;
