@@ -10799,10 +10799,18 @@ auto SemanticVisitor::Impl::runRawResultQuery(
     worker->catalog = std::move(state->idleCatalogs.back());
     state->idleCatalogs.pop_back();
   }
+  if (!state->idleModels.empty()) {
+    worker->semanticModel = std::move(state->idleModels.back());
+    state->idleModels.pop_back();
+  }
   worker->semanticModel = semanticModel;
   worker->macroLookup = macroLookup;
   worker->macroLookupBase = macroLookupBase;
   worker->nextExpansion = nextExpansion;
+  if (!state->idleValueFlows.empty()) {
+    worker->valueFlow = std::move(state->idleValueFlows.back());
+    state->idleValueFlows.pop_back();
+  }
   worker->valueFlow = valueFlow;
   worker->valueFlow.rebindCallables(worker->catalog);
   // Cached summaries must describe global pointer inputs, not freeze the
@@ -10850,6 +10858,8 @@ auto SemanticVisitor::Impl::runRawResultQuery(
                                             entry->ownerValues, entry->types,
                                             entry->values);
   state->idleCatalogs.push_back(std::move(worker->catalog));
+  state->idleValueFlows.push_back(std::move(worker->valueFlow));
+  state->idleModels.push_back(std::move(worker->semanticModel));
   entry->valid = analysis.valid();
   if (!entry->valid)
     for (const auto &diagnostic : analysis.diagnostics)
