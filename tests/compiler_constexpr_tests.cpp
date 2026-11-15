@@ -4204,7 +4204,7 @@ void testConstexprReadOnlyReferences() {
   };
   const std::vector<Rejection> rejections{
       {"constexpr int& bad() { int value = 4; return value; }", "GTI-S2017",
-       "borrowed return requires", "bad()", 3},
+       "Cannot return a reference to local value 'value'", "value;", 5},
       {"constexpr int bad(mut int* value) { return 0; }", "GTI-S2057",
        "parameters must be", "value)", 5},
       {"constexpr int bad() { mut int value = 4; int& ref = value; "

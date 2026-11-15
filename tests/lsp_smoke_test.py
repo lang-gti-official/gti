@@ -13428,7 +13428,7 @@ def test_owner_dependent_span_tooling(executable, root):
             "Choose an order that preserves the intended effects."
         ], diagnostic
         assert any(
-            related["message"] == "Retained borrow originates here."
+            related["message"].startswith("Retained borrow originates here.")
             for related in diagnostic["relatedInformation"]
         ), diagnostic
         assert any(
@@ -13545,7 +13545,7 @@ def test_owner_dependent_span_tooling(executable, root):
             )
         )["params"]
         assert any(
-            related["message"] == "Retained borrow originates here."
+            related["message"].startswith("Retained borrow originates here.")
             for diagnostic in invalidated_text["diagnostics"]
             if diagnostic.get("code") == "GTI-S2017"
             for related in diagnostic.get("relatedInformation", [])

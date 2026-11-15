@@ -192,6 +192,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
 | Build and edit JSON with runtime keys and mixed value kinds | [186: dynamic JSON](186-dynamic-json.gti) |
+| Match, search, replace and split text with regular expressions | [194: regular expressions](194-regular-expressions.gti) |
 | Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
 | Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
 | Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
@@ -337,6 +338,7 @@ is a teaching helper, not a production server.
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `090-generic-algorithms.gti` | stable compaction and container erasure; search, mutation, replacement, filtered copying, chaining returned output cursors, and maximum mapped-value selection |
+| `194-regular-expressions.gti` | `std.regex` compile errors as values, named groups, borrow-checked results over a log, `$<name>` replacement, callable replacement, splitting, and linear-time matching of `(a*)*b` |
 | `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
