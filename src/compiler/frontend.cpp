@@ -1531,6 +1531,25 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         result.semanticValid = false;
       }
     }
+    // A constant evaluation that needed a deferred constexpr definition where
+    // it could not be analysed in place repeats the request with that body
+    // required, under the same bounded rounds as late demand.
+    if (result.sourceValid && !result.semanticValid &&
+        trustedBodies == TrustedBodyAnalysis::Reachable) {
+      const std::size_t previousCount = requiredBodies.size();
+      for (const FunctionDecl *body : semantic.unsatisfiedConstexprDemands())
+        requiredBodies.insert(body);
+      if (requiredBodies.size() != previousCount) {
+        if (options.workMetrics != nullptr)
+          ++options.workMetrics->semanticDemandRounds;
+        if (attempt >= 2) {
+          trustedBodies = TrustedBodyAnalysis::Complete;
+          if (options.workMetrics != nullptr)
+            ++options.workMetrics->semanticDemandFallbacks;
+        }
+        continue;
+      }
+    }
     if (!result.sourceValid || !result.semanticValid ||
         options.completionOffset ||
         options.stopAfter == FrontendPhase::Semantics) {

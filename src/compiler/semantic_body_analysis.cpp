@@ -131,6 +131,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   constexprDefinitionsAnalyzed.clear();
   constexprConstructorsAnalyzed.clear();
   requestSession.constexprWork.reset();
+  requestSession.unsatisfiedConstexprDemands =
+      std::make_shared<std::vector<const FunctionDecl *>>();
   requestSession.deferredFlowOwners.clear();
   genericDefaultConstants.clear();
   genericDefaultConstantUses.clear();
@@ -4951,6 +4953,24 @@ auto SemanticVisitor::Impl::demandConstexprDefinition(
     }
   }
   constexprDemandClosureSize = demandedFunctions.size();
+}
+
+auto SemanticVisitor::Impl::unsatisfiedConstexprDemandList() const
+    -> std::vector<const FunctionDecl *> {
+  const auto &demands = requestSession.unsatisfiedConstexprDemands;
+  return demands ? *demands : std::vector<const FunctionDecl *>{};
+}
+
+auto SemanticVisitor::Impl::requireConstexprDefinition(
+    const FunctionDecl *declaration) -> bool {
+  demandConstexprDefinition(declaration);
+  if (!pendingDeferredBody(declaration))
+    return true;
+  auto &unsatisfied = requestSession.unsatisfiedConstexprDemands;
+  if (unsatisfied && std::find(unsatisfied->begin(), unsatisfied->end(),
+                               declaration) == unsatisfied->end())
+    unsatisfied->push_back(declaration);
+  return false;
 }
 
 auto SemanticVisitor::Impl::pendingDeferredBody(
@@ -15212,7 +15232,7 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
             : "Call to non-constexpr function '" + declaration->name().lexeme +
                   "' cannot be evaluated during compilation.");
   }
-  demandConstexprDefinition(declaration);
+  (void)requireConstexprDefinition(declaration);
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
     return constexprFailure(

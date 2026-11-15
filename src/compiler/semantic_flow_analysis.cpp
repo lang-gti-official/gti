@@ -610,6 +610,8 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker->defaultArgumentDependencies = defaultArgumentDependencies;
             worker->nextLambdaId = nextLambdaId;
             worker->requestSession.constexprWork = requestSession.constexprWork;
+            worker->requestSession.unsatisfiedConstexprDemands =
+                requestSession.unsatisfiedConstexprDemands;
             worker->requestSession.stagedConstants =
                 requestSession.stagedConstants;
             worker->requestSession.programConcreteEffects = state;
@@ -10828,6 +10830,8 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // Source-summary analysis can require staged constants. Keep their bounded
   // work account across this isolated worker instead of restarting it.
   worker->requestSession.constexprWork = requestSession.constexprWork;
+  worker->requestSession.unsatisfiedConstexprDemands =
+      requestSession.unsatisfiedConstexprDemands;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.rawResultQueries = state;
   worker->requestSession.collectingRawResult = entry;

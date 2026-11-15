@@ -841,6 +841,8 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.constructors = constructors;
   }
   worker.impl->requestSession.constexprWork = work;
+  worker.impl->requestSession.unsatisfiedConstexprDemands =
+      requestSession.unsatisfiedConstexprDemands;
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
@@ -990,9 +992,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     stagedPendingCallee = nullptr;
     if (pending == nullptr || !pendingDeferredBody(pending))
       return evaluation;
-    demandConstexprDefinition(pending);
-    if (pendingDeferredBody(pending))
-      return evaluation; // Cannot be analysed in this context.
+    if (!requireConstexprDefinition(pending))
+      return evaluation; // Recorded for a required-body repeat.
   }
 }
 
