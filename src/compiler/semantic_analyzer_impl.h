@@ -1999,7 +1999,8 @@ private:
     void record(Result result);
     [[nodiscard]] std::shared_ptr<const Closure>
     findClosure(const Key &key) const;
-    void recordClosure(std::shared_ptr<const Closure> closure);
+    void recordClosure(std::shared_ptr<const Closure> closure,
+                       bool replaceExisting = false);
     // Executor-local transient owners name allocations of one evaluation;
     // neither a key nor a result may carry one.
     [[nodiscard]] static bool reusable(const ConstantValue &value);
@@ -7964,8 +7965,20 @@ private:
     std::size_t declarationOrder = 0;
     std::size_t definitions = 0;
     std::size_t constructors = 0;
+    // BodyDemand::generation when the snapshot was taken: a deferred body
+    // completed since then is missing from the worker's model.
+    std::uint64_t generation = 0;
   };
   StagedWorker stagedWorker;
+  // Constexpr definitions a staged evaluation may count on: those analysed
+  // plus deferred ones, which a demand completes when actually reached.
+  // Keying staged caches on this keeps them stable while bodies are demanded.
+  [[nodiscard]] std::vector<const FunctionDecl *>
+  virtualConstexprInventory() const;
+  // The unmet-demand count when the current staged attempt began. A result
+  // or closure is recorded only if the attempt added no demand.
+  std::size_t stagedUnmetMark = 0;
+  [[nodiscard]] bool stagedAttemptUntainted() const;
   [[nodiscard]] Impl &
   stagedWorkerFor(const SemanticModel &stagingModel,
                   const std::shared_ptr<ConstexprWorkBudget> &work);

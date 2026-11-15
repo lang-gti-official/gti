@@ -680,6 +680,10 @@ struct SemanticVisitor::Impl::StagedConstantResults::Closure {
   std::size_t depth = 0;
   std::vector<Diagnostic> warnings;
   bool nativeObjectLayout = false;
+  // Deferred constexpr callees this closure lowered as signature-only
+  // declarations. The closure stays reusable only while all of them are
+  // still deferred: once one completes, a fresh lowering includes its body.
+  std::vector<const FunctionDecl *> deferredCallees;
 };
 
 auto SemanticVisitor::Impl::StagedConstantResults::findClosure(
@@ -696,7 +700,7 @@ auto SemanticVisitor::Impl::StagedConstantResults::findClosure(
 }
 
 auto SemanticVisitor::Impl::StagedConstantResults::recordClosure(
-    std::shared_ptr<const Closure> closure) -> void {
+    std::shared_ptr<const Closure> closure, bool replaceExisting) -> void {
   if (!enabled)
     return;
   auto &bucket = closures[hash(closure->key)];
@@ -706,7 +710,7 @@ auto SemanticVisitor::Impl::StagedConstantResults::recordClosure(
       });
   if (found != bucket.end()) {
     // A deeper lowering proves the shallower ones too.
-    if ((*found)->depth < closure->depth)
+    if ((*found)->depth < closure->depth || replaceExisting)
       *found = std::move(closure);
     return;
   }
@@ -750,7 +754,7 @@ auto SemanticVisitor::Impl::stagedConstantKey(
     identity.insert(identity.end(), values.begin(), values.end());
   };
   std::vector<std::uintptr_t> values;
-  for (const FunctionDecl *definition : constexprDefinitionsAnalyzed)
+  for (const FunctionDecl *definition : virtualConstexprInventory())
     if (declaredBeforeCurrent(definition))
       values.push_back(reinterpret_cast<std::uintptr_t>(definition));
   append(std::move(values));
@@ -804,8 +808,10 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     const SemanticModel &stagingModel,
     const std::shared_ptr<ConstexprWorkBudget> &work) -> Impl & {
   std::size_t definitions = 0;
-  for (const FunctionDecl *definition : constexprDefinitionsAnalyzed)
+  for (const FunctionDecl *definition : virtualConstexprInventory())
     definitions += declaredBeforeCurrent(definition) ? 1 : 0;
+  const std::uint64_t generation =
+      requestSession.bodyDemand ? requestSession.bodyDemand->generation : 0;
   std::size_t constructors = 0;
   for (const auto *definition : constexprConstructorsAnalyzed)
     constructors += declaredBeforeCurrent(definition) ? 1 : 0;
@@ -813,7 +819,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   StagedWorker &worker = stagedWorker;
   if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
       worker.declarationOrder != currentDeclarationOrder ||
-      worker.definitions != definitions ||
+      worker.definitions != definitions || worker.generation != generation ||
       worker.constructors != constructors) {
     const PhaseTimeScope workerScope("constexpr-staged-worker");
     worker.impl = std::make_unique<Impl>(target, sourceGraph, false,
@@ -846,6 +852,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.reanalysis = reanalysis;
     worker.declarationOrder = currentDeclarationOrder;
     worker.definitions = definitions;
+    worker.generation = generation;
     worker.constructors = constructors;
   }
   worker.impl->requestSession.constexprWork = work;
@@ -1004,6 +1011,22 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   return evaluation;
 }
 
+auto SemanticVisitor::Impl::virtualConstexprInventory() const
+    -> std::vector<const FunctionDecl *> {
+  std::vector<const FunctionDecl *> inventory(
+      constexprDefinitionsAnalyzed.begin(), constexprDefinitionsAnalyzed.end());
+  if (const auto &demand = requestSession.bodyDemand)
+    for (const FunctionDecl *pending : demand->pending)
+      if (pending->isConstexpr() || pending->isProceduralMacro())
+        inventory.push_back(pending);
+  return inventory;
+}
+
+auto SemanticVisitor::Impl::stagedAttemptUntainted() const -> bool {
+  const auto &demand = requestSession.bodyDemand;
+  return !demand || demand->unmet.size() == stagedUnmetMark;
+}
+
 auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
         &selected,
@@ -1011,6 +1034,14 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+  const std::size_t enclosingUnmetMark = stagedUnmetMark;
+  stagedUnmetMark =
+      requestSession.bodyDemand ? requestSession.bodyDemand->unmet.size() : 0;
+  struct RestoreMark {
+    std::size_t &mark;
+    std::size_t saved;
+    ~RestoreMark() { mark = saved; }
+  } restoreMark{stagedUnmetMark, enclosingUnmetMark};
   if (sourceGraph == nullptr || sources == nullptr) {
     return std::nullopt;
   }
@@ -1084,10 +1115,28 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     if (const auto *candidate = stagingModel.findConstructor(*declaration))
       constructors.push_back(candidate->id);
   }
+  // Lowering includes only completed definitions: a deferred callee stays a
+  // signature-only declaration, and executing it records a demand.
   for (const auto *declaration : constexprDefinitionsAnalyzed) {
     if (const auto *candidate = stagingModel.findFunction(*declaration)) {
       completed.push_back(candidate->id);
     }
+  }
+  // The cache key counts deferred definitions as complete, so it does not
+  // churn as they are demanded; a closure records the deferred callees it
+  // lowered without bodies and is not reused once one of them completes.
+  std::vector<FunctionId> keyCompleted = completed;
+  if (const auto &demand = requestSession.bodyDemand) {
+    // Naming a deferred definition in a key is not a use of it: neither the
+    // request-wide record nor any model's demand sink may see these lookups.
+    auto *const lookups = SemanticModel::setRequestLookupSink(nullptr);
+    const FunctionDemandScope pauseStaging(stagingModel, nullptr);
+    const FunctionDemandScope pauseCanonical(semanticModel, nullptr);
+    for (const FunctionDecl *pending : demand->pending)
+      if (pending->isConstexpr() || pending->isProceduralMacro())
+        if (const auto *candidate = stagingModel.findFunction(*pending))
+          keyCompleted.push_back(candidate->id);
+    SemanticModel::setRequestLookupSink(lookups);
   }
   // A success this request already proved is replayed (see
   // StagedConstantResults), unless the outer authority has since closed a
@@ -1101,7 +1150,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   const auto reuseKey =
       !concreteEffects || concreteEffects->invalidInstances.empty()
           ? stagedConstantKey(selected, info, arguments, substitution, receiver,
-                              completed, constructors)
+                              keyCompleted, constructors)
           : std::nullopt;
   const std::size_t depth = enclosingDepth + context.callDepth;
   if (reuseKey && !context.procedural) {
@@ -1134,6 +1183,14 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   }
   std::shared_ptr<const StagedConstantResults::Closure> closure =
       closureKey ? stagedConstants->findClosure(*closureKey) : nullptr;
+  bool staleClosure = false;
+  if (closure != nullptr && requestSession.bodyDemand)
+    for (const FunctionDecl *callee : closure->deferredCallees)
+      if (!requestSession.bodyDemand->pending.contains(callee)) {
+        staleClosure = true;
+        closure.reset();
+        break;
+      }
   if (closure != nullptr &&
       (closure->depth < depth ||
        context.work->steps + closure->steps > compileLimits.constexprSteps))
@@ -1267,13 +1324,33 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     lowered->warnings = hir.diagnostics;
     lowered->nativeObjectLayout = hir.program.requiresNativeObjectLayout();
     lowered->hir = std::move(hir.program);
+    if (const auto &demand = requestSession.bodyDemand) {
+      // An instance of a generic member names its primary declaration
+      // through its function identity, not its source syntax.
+      auto *const lookups = SemanticModel::setRequestLookupSink(nullptr);
+      const FunctionDemandScope pauseStaging(stagingModel, nullptr);
+      for (const auto &instance : lowered->hir.functionInstances()) {
+        const FunctionInfo *function =
+            stagingModel.findFunction(instance.declaration);
+        const FunctionDecl *body =
+            function != nullptr ? function->bodyDeclaration() : nullptr;
+        if (body != nullptr && body->isConstexpr() &&
+            demand->pending.contains(body) &&
+            std::find(lowered->deferredCallees.begin(),
+                      lowered->deferredCallees.end(),
+                      body) == lowered->deferredCallees.end())
+          lowered->deferredCallees.push_back(body);
+      }
+      SemanticModel::setRequestLookupSink(lookups);
+    }
     lowered->mir = std::move(mir.program);
     // Like a result, a closure lowered while a layout query exhausted its
     // work is not a completed lowering.
     if (closureKey && (!requestSession.layoutAssertionWork ||
                        !requestSession.layoutAssertionWork->failure)) {
       lowered->key = *closureKey;
-      stagedConstants->recordClosure(lowered);
+      if (stagedAttemptUntainted())
+        stagedConstants->recordClosure(lowered, staleClosure);
     }
     closure = std::move(lowered);
   }
@@ -1355,6 +1432,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   // A speculative predicate can consume a nested assertion diagnostic, but
   // an exhausted layout query still has no reusable completed result.
   const bool recordable = reuseKey && !context.procedural &&
+                          stagedAttemptUntainted() &&
                           (!requestSession.layoutAssertionWork ||
                            !requestSession.layoutAssertionWork->failure);
   if (result.voidResult) {
