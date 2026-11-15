@@ -1338,6 +1338,7 @@ private:
 
   struct SemanticCatalog;
 
+  struct ValueFlowState;
   struct RawResultQueryState {
     // Interned diagnostic records only. Keeping evidence is independent of
     // admitting a complete root result to the bounded reuse cache.
@@ -1369,6 +1370,12 @@ private:
     // analysis, so each snapshot has the same content; a later worker takes a
     // released one instead of re-registering every callable declaration.
     std::vector<SemanticCatalog> idleCatalogs;
+    // Value-flow and model storage released by completed query workers. A
+    // worker copy-assigns the caller's current state into one, so its content
+    // is exactly a fresh copy; reusing the storage avoids rebuilding and
+    // freeing every namespace index, symbol and overload list per query.
+    std::vector<ValueFlowState> idleValueFlows;
+    std::vector<SemanticModel> idleModels;
   };
 
   struct CompleteReturnQuery {
