@@ -1081,9 +1081,9 @@ int main() {
   const auto *rangeDiagnostic =
       findDiagnosticByCode(rangeError.diagnostics, "GTI-S2014");
   expect(rangeDiagnostic &&
-             rangeDiagnostic->span.start == rangeSource.find("256") &&
-             rangeDiagnostic->span.end == rangeSource.find("256") + 3 &&
-             rangeDiagnostic->span.source.find("character-range.gti") !=
+             rangeDiagnostic->primary.start == rangeSource.find("256") &&
+             rangeDiagnostic->primary.end == rangeSource.find("256") + 3 &&
+             rangeDiagnostic->primary.source.find("character-range.gti") !=
                  std::string::npos &&
              rangeDiagnostic->fixes.empty() &&
              rangeDiagnostic->message.find("0..255") != std::string::npos,
