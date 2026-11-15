@@ -235,6 +235,10 @@ namespace std {
       constexpr mut prefix_owner<char>& prefix_mut() mut { return this.data; }
       unsafe constexpr const char* address() {
         if (this.data.capacity() == size_t(0)) {
+          // Compile-time evaluation has no process-lifetime terminator; an
+          // empty counted view never reads its address, and the
+          // NUL-terminated accessors are runtime operations.
+          if (gti_internal::constant_evaluation()) { return nullptr; }
           return &empty_string_terminator;
         }
         unsafe { return this.data.address(); }

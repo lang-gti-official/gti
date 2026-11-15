@@ -393,6 +393,9 @@ private:
     Location location;
     std::size_t regionEpoch = 0;
     bool untyped = false;
+    // An element of a raw region, which pointer arithmetic may move. Any
+    // other base designates exactly one place (offset zero).
+    bool element = false;
   };
 
   struct Loan {
@@ -978,7 +981,7 @@ private:
       auto &region = *heap[base.location.allocation - 1];
       if (!region.live || region.epoch != base.regionEpoch)
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
-      if (region.raw) {
+      if (region.raw && (base.element || base.untyped)) {
         if (base.untyped || !region.typed)
           return {.failure = access
                                  ? ConstantEvaluationFailure::NonConstantReference
@@ -1072,7 +1075,8 @@ private:
       return {.value = pointerValue(target, 0, 0)};
     const auto &pointee = target.arguments[0];
     auto base = pointerBases[decoded->base - 1];
-    if (base.location.allocation && heap[base.location.allocation - 1]->raw) {
+    if (base.location.allocation && heap[base.location.allocation - 1]->raw &&
+        (base.element || base.untyped)) {
       auto &region = *heap[base.location.allocation - 1];
       if (!region.live || region.epoch != base.regionEpoch)
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
@@ -1090,7 +1094,8 @@ private:
                                  .type = &region.type,
                                  .allocation = base.location.allocation},
                                 region.epoch,
-                                false});
+                                false,
+                                true});
         return {.value = pointerValue(target, pointerBases.size(), 0)};
       }
       return {.value = pointerValue(target, decoded->base, decoded->offset)};
@@ -1712,6 +1717,29 @@ private:
       return {.value = instruction.operation == MirOperation::Equal ? *same
                                                                      : !*same};
     }
+    if ((instruction.operation == MirOperation::Less ||
+         instruction.operation == MirOperation::LessEqual ||
+         instruction.operation == MirOperation::Greater ||
+         instruction.operation == MirOperation::GreaterEqual) &&
+        values.size() == 2 && instruction.operands.size() == 2 &&
+        instruction.operands[0].type.kind == SemanticType::RawPointer &&
+        instruction.operands[1].type.kind == SemanticType::RawPointer) {
+      // Only elements of one allocation are ordered.
+      const auto left = decodePointer(values[0]);
+      const auto right = decodePointer(values[1]);
+      if (!left || !right || left->base == 0 || right->base == 0 ||
+          pointerBases[left->base - 1].location.allocation == 0 ||
+          pointerBases[left->base - 1].location.allocation !=
+              pointerBases[right->base - 1].location.allocation)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      const auto a = left->offset, b = right->offset;
+      switch (instruction.operation) {
+      case MirOperation::Less: return {.value = a < b};
+      case MirOperation::LessEqual: return {.value = a <= b};
+      case MirOperation::Greater: return {.value = a > b};
+      default: return {.value = a >= b};
+      }
+    }
     if (instruction.operation == MirOperation::Convert && values.size() == 1 &&
         type.kind == SemanticType::RawPointer) {
       return convertRawPointer(values.front(), type);
@@ -2029,14 +2057,17 @@ private:
       if (located.failure != ConstantEvaluationFailure::None)
         return fail(frame, located.failure);
       std::int64_t offset = 0;
-      if (location.allocation && location.slot) {
+      // The address of a whole raw slot is an element pointer, which pointer
+      // arithmetic may move; a subobject's address designates that place.
+      if (location.allocation && location.slot && location.path.empty()) {
         auto &region = *heap[location.allocation - 1];
         offset = static_cast<std::int64_t>(location.slot - 1);
         pointerBases.push_back({{.epoch = region.epoch,
                                  .type = &region.type,
                                  .allocation = location.allocation},
                                 region.epoch,
-                                false});
+                                false,
+                                true});
       } else {
         pointerBases.push_back(
             {location,

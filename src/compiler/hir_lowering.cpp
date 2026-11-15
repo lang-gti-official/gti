@@ -826,10 +826,18 @@ private:
             : baseModel->findConstructor(*construction.declaration);
     const bool constant =
         declaration != nullptr && declaration->constexprConstructor;
+    // A defaulted constructor has no body to complete; its generated
+    // member-wise definition stages with its class.
+    const bool defaulted =
+        construction.declaration != nullptr &&
+        construction.declaration->specifier() &&
+        construction.declaration->specifier()->kind ==
+            SpecialMemberSpecifierKind::Defaulted;
     if (constantClosure && !construction.generatedDefault &&
         (!constant ||
-         std::find(constantConstructors.begin(), constantConstructors.end(),
-                   construction.constructor) == constantConstructors.end())) {
+         (!defaulted &&
+          std::find(constantConstructors.begin(), constantConstructors.end(),
+                    construction.constructor) == constantConstructors.end()))) {
       lifecycleValid = false;
       return 0;
     }
