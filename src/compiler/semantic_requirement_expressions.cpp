@@ -149,14 +149,67 @@ auto SemanticVisitor::Impl::collectRequirementTypeArguments(
   }
 }
 
+SemanticVisitor::Impl::UnevaluatedWorker::~UnevaluatedWorker() {
+  // Body analysis never edits a sealed catalog, so the copy a finished query
+  // leaves behind equals a fresh copy of its creator's catalog. Keep a few
+  // for the creator's next queries.
+  if (impl && idleCatalogs != nullptr && impl->catalog.sealed &&
+      idleCatalogs->size() < 4) {
+    impl->catalog.assertUnchangedSinceSeal();
+    idleCatalogs->push_back(std::move(impl->catalog));
+  }
+}
+
 auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
-    -> std::unique_ptr<Impl> {
+    -> UnevaluatedWorker {
   auto worker = std::make_unique<Impl>(
       target, sourceGraph, false, nullptr, sources, RawPointerAuditMode::Off,
       false, trustedBodies, sourceDebugProfile, compileLimits);
-  // The query is logically const, but its fork temporarily suspends and
-  // restores request-local expression scratch before any probe work begins.
-  const_cast<Impl *>(this)->copyRequestSessionForSpeculativeModel(*worker);
+  if (workMetrics != nullptr)
+    ++workMetrics->semanticQueryWorkers;
+  // The catalog is the bulk of the request session. Once it is sealed, the
+  // worker takes an idle copy of it instead of copying it with the session.
+  std::optional<SemanticCatalog> workerCatalog;
+  if (catalog.sealed) {
+    while (!idleQueryCatalogs.empty() && !workerCatalog) {
+      if (idleQueryCatalogs.back().sealedShape == catalog.sealedShape)
+        workerCatalog.emplace(std::move(idleQueryCatalogs.back()));
+      idleQueryCatalogs.pop_back();
+    }
+    if (workerCatalog) {
+      if (workMetrics != nullptr)
+        ++workMetrics->semanticQueryCatalogReuses;
+    } else {
+      workerCatalog.emplace(catalog);
+    }
+  }
+  {
+    // Only while the session is copied is the caller's catalog moved aside.
+    // No analysis runs meanwhile, and its callable records, which the
+    // session's symbols point to, keep their addresses.
+    struct SetCatalogAside {
+      SemanticCatalog &caller;
+      SemanticCatalog held;
+      bool active;
+      SetCatalogAside(SemanticCatalog &caller, bool active)
+          : caller(caller), active(active) {
+        if (active)
+          std::swap(held, caller);
+      }
+      SetCatalogAside(const SetCatalogAside &) = delete;
+      SetCatalogAside &operator=(const SetCatalogAside &) = delete;
+      ~SetCatalogAside() {
+        if (active)
+          std::swap(held, caller);
+      }
+    } aside(catalog, workerCatalog.has_value());
+    // The query is logically const, but its fork temporarily suspends and
+    // restores request-local expression scratch before any probe work
+    // begins.
+    const_cast<Impl *>(this)->copyRequestSessionForSpeculativeModel(*worker);
+  }
+  if (workerCatalog)
+    worker->catalog = std::move(*workerCatalog);
   worker->macroLookupBase = this;
   worker->nextExpansion = nextExpansion;
   worker->macroExpansionDepth = macroExpansionDepth;
@@ -248,7 +301,7 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
   worker->requestSession.trackAssertionDiagnostics = false;
   worker->requestSession.trackedAssertionFailed = false;
   worker->requestSession.assertionDiagnostics.clear();
-  return worker;
+  return {std::move(worker), &idleQueryCatalogs};
 }
 
 auto SemanticVisitor::Impl::prepareRequirementLookup(
