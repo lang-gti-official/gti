@@ -305,6 +305,9 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::RestoringIndexedSwap:
     return barrier("exclusive restoring ownership transfer; mutable place "
                    "facts invalidated");
+  case IntrinsicKind::TextViewNarrow:
+    return barrier("rewrites a referenced counted view; mutable place facts "
+                   "invalidated");
   case IntrinsicKind::ThreadSpawn:
   case IntrinsicKind::ThreadScope:
   case IntrinsicKind::ThreadJoin:

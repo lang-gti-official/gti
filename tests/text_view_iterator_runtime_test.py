@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builtin text-view normalization, checked cursors, and shell lifetimes."""
+"""Builtin text-view normalization, checked cursors, sub-views and shell lifetimes."""
 import argparse
 import os
 from pathlib import Path
@@ -43,7 +43,10 @@ def main():
                      (root / "tests/fixtures/text_view_iterator_module.gti", []),
                      (root / "tests/fixtures/text_view_iterator_failure.gti",
                       [root / "tests/fixtures/text_view_iterator_support.cpp"]),
-                     (root / "examples/146-counted-text-view-iteration.gti", [])]
+                     (root / "examples/146-counted-text-view-iteration.gti", []),
+                     (root / "tests/fixtures/text_view_subview.gti", []),
+                     (root / "tests/fixtures/text_view_subview_failure.gti", []),
+                     (root / "examples/194-string-view-subviews.gti", [])]
             for source, support in cases:
                 executable = output / f"{source.stem}-{name}"
                 command = [compiler, source, *flags, "--progress=never", *keep_cpp(flags), "-o", executable]
@@ -71,9 +74,18 @@ def main():
                         assert ("GTI-R0014" in failed.stderr) == (count == 9), (name, count, failed.stderr)
                         assert not any(word in failed.stderr for word in
                                        ("AddressSanitizer", "UndefinedBehaviorSanitizer", "double-free")), failed.stderr
+                elif source.stem == "text_view_subview_failure":
+                    # substr past size(), remove_prefix and remove_suffix past
+                    # size() each raise index_out_of_bounds after cleanup.
+                    for arguments in ([], ["prefix"], ["prefix", "suffix"]):
+                        failed = run([executable, *arguments], timeout=30)
+                        assert (failed.returncode, failed.stdout) == (70, "1\n"), (name, arguments, failed)
+                        assert "GTI-R0007" in failed.stderr and "in string_view" in failed.stderr, failed.stderr
                 else:
+                    expected_stdout = ("name\ngti\neral\n"
+                                       if source.stem == "194-string-view-subviews" else "")
                     passed = run([executable], timeout=30)
-                    assert (passed.returncode, passed.stdout, passed.stderr) == (0, "", ""), (name, source.name, passed)
+                    assert (passed.returncode, passed.stdout, passed.stderr) == (0, expected_stdout, ""), (name, source.name, passed)
                 print(f"{source.stem}: {name} passed", flush=True)
 
         invalid = {
@@ -92,6 +104,29 @@ def main():
                 'mut auto cursor = view.begin(); *cursor = \'z\'; return 0; }', "GTI-S2002"),
             "escaped-view-shell": ('import std.string;\nimport std.string_view;\nstd::string_view_iterator escape(std::string& owner) { '
                 'std::string_view view = owner.view(); return view.begin(); } int main() { return 0; }', "GTI-S2045"),
+            # A sub-view keeps the source's owner borrowed and cannot outlive
+            # it; a dynamic view is shrunk in place, never reassigned.
+            "subview-owner-invalidation": ('import std.string;\nint main() { mut std::string owner{"abc"}; '
+                'std::string_view part = owner.view().substr(std::size_t(1)); owner.clear(); return int(part.size()); }', "GTI-S2017"),
+            "subview-escapes-local-owner": ('import std.string;\nstd::string_view leak() { std::string owner{"abc"}; '
+                'return owner.view().substr(std::size_t(1), std::size_t(1)); } int main() { return 0; }', "GTI-S2045"),
+            "subview-outlives-owner": ('import std.string;\nint main() { mut std::string_view kept = ""; '
+                '{ std::string owner{"abc"}; std::string_view part = owner.view().substr(std::size_t(1)); kept = part; } '
+                'return int(kept.size()); }', "GTI-S2045"),
+            "shrunk-view-owner-invalidation": ('import std.string;\nint main() { mut std::string owner{"abc"}; '
+                'mut std::string_view rest = owner.view(); rest.remove_prefix(std::size_t(1)); owner.clear(); '
+                'return int(rest.size()); }', "GTI-S2017"),
+            "shrink-under-live-cursor": ('import std.string;\nint main() { std::string owner{"abc"}; '
+                'mut std::string_view rest = owner.view(); auto cursor = rest.begin(); '
+                'rest.remove_prefix(std::size_t(1)); return *cursor == \'a\' ? 0 : 1; }', "GTI-S2017"),
+            "shrink-readonly-view": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
+                'view.remove_prefix(std::size_t(1)); return 0; }', "GTI-S2017"),
+            "shrink-temporary-view": ('import std.string;\nint main() { std::string owner{"abc"}; '
+                'owner.view().remove_suffix(std::size_t(1)); return 0; }', "GTI-S2017"),
+            "subview-arity": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
+                'auto part = view.substr(std::size_t(1), std::size_t(1), std::size_t(1)); return 0; }', "GTI-S2035"),
+            "private-narrowing-primitive": ('import std.string_view;\nint main() { mut std::string_view view = "abc"; '
+                'unsafe { gti_internal::narrow_text_view(view, std::size_t(1), std::size_t(1)); } return 0; }', "GTI-S2058"),
             "temporary-view-shell": ('import std.string_view;\nint main() { auto cursor = "abc".begin(); return int(*cursor); }', "GTI-S2017"),
             "ordinary-value-temporary-reference": ('import std.string_view;\nint main() { std::string_view view = "abc"; '
                 'auto cursor = view.begin(); char& character = *cursor; return int(character); }', "GTI-S2017"),

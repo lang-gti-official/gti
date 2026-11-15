@@ -1,0 +1,28 @@
+import std.string;
+import std.vector;
+
+class Noisy {
+  int id;
+public:
+  Noisy(int id) : id(id) {}
+  ~Noisy() { std::println(this.id); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Noisy guard{1};
+  std::string owner{"abc"};
+  std::string_view view = owner.view();
+  std::size_t selected = std::size_t(argc);
+  if (selected == std::size_t(2)) {
+    mut std::string_view rest = view;
+    rest.remove_prefix(std::size_t(4));
+    return int(rest.size());
+  }
+  if (selected == std::size_t(3)) {
+    mut std::string_view rest = view;
+    rest.remove_suffix(std::size_t(4));
+    return int(rest.size());
+  }
+  // One past size() is out of range even for an empty result.
+  return int(view.substr(selected + std::size_t(3), std::size_t(0)).size());
+}
