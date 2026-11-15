@@ -1,0 +1,2098 @@
+export module regex;
+
+// <std/regex> -- ECMAScript regular expressions over counted byte text.
+//
+// The pattern grammar follows the ECMAScript grammar of C++ std::regex
+// (std::regex_constants::ECMAScript), plus named groups `(?<name>...)` and
+// named backreferences `\k<name>`. Compilation and matching are ordinary GTI;
+// no regex type or operation has compiler recognition.
+//
+// Deliberate departures from C++ std::regex, each answering a long-standing
+// criticism of it:
+//
+// - Errors are values. `std::regex::compile` returns
+//   `expected<regex, regex_error>`, with the byte offset of the failure.
+// - Matching cannot overflow the native stack and does not backtrack
+//   catastrophically. The matcher keeps its own explicit stack, and for every
+//   pattern without backreferences or lookaheads it records the (instruction,
+//   position) branch states it has already tried. Matching then takes time
+//   linear in the subject for a fixed pattern, so `(a*)*b` against a long run
+//   of `a` does not hang. Patterns with backreferences or lookaheads keep full
+//   ECMAScript semantics without that bound.
+// - Results are returned, not written through out-parameters. `regex_match`
+//   and `regex_search` return a `match_results` that is empty when nothing
+//   matched and tests as false. Its text accessors read the subject it was
+//   matched against, which the borrow checker keeps alive and unmodified for
+//   as long as the result is used, so a match cannot dangle.
+// - One grammar. The POSIX basic/extended/awk/grep/egrep grammars, locale
+//   traits and collation are not provided; `[[:alpha:]]`-style classes are
+//   the C locale's. Matching is by byte: `.` and negated classes match one
+//   byte, and `icase` folds ASCII letters only.
+// - `regex_replace` also accepts a callable that computes each replacement.
+import std.memory;
+import std.optional;
+import std.panic;
+import std.string;
+import std.vector;
+
+namespace std {
+
+/// Why a pattern failed to compile. The enumerators follow C++
+/// std::regex_constants::error_type without the `error_` prefix.
+export enum class regex_errc {
+  collate,
+  ctype,
+  escape,
+  backref,
+  brack,
+  paren,
+  brace,
+  badbrace,
+  range,
+  space,
+  badrepeat,
+  complexity,
+  stack,
+};
+
+export std::string_view describe(regex_errc code) {
+  switch (code) {
+    case regex_errc::collate: return "invalid collating element name";
+    case regex_errc::ctype: return "invalid character class name";
+    case regex_errc::escape: return "invalid escape sequence";
+    case regex_errc::backref: return "backreference to a group that does not exist";
+    case regex_errc::brack: return "unmatched '[' in a character class";
+    case regex_errc::paren: return "unmatched '(' or ')'";
+    case regex_errc::brace: return "unmatched '{' in a repetition count";
+    case regex_errc::badbrace: return "invalid repetition count in '{}'";
+    case regex_errc::range: return "invalid character range";
+    case regex_errc::space: return "the pattern needs more memory than is allowed";
+    case regex_errc::badrepeat: return "a repetition operator has nothing to repeat";
+    case regex_errc::complexity: return "the compiled pattern exceeds the size limit";
+    case regex_errc::stack: return "the pattern nests too deeply";
+  }
+  return "unknown regex error";
+}
+
+/// A pattern compilation failure: what went wrong and the byte offset in the
+/// pattern where it was detected.
+export struct regex_error {
+  regex_errc code = regex_errc::escape;
+  std::size_t position = 0;
+
+  regex_error(regex_errc code, std::size_t position) : code(code), position(position) {}
+
+  std::string_view description() { return describe(this.code); }
+};
+
+/// Compilation options, the C++ syntax_option_type flags as named fields:
+/// `std::regex::compile("a+", {.icase = true})`.
+///
+/// - `icase`: ASCII letters match either case.
+/// - `nosubs`: groups do not capture; a match reports only the whole match.
+/// - `multiline`: `^` and `$` also match at line boundaries.
+/// - `dotall`: `.` also matches line terminators (ECMAScript's `s` flag).
+export struct regex_options {
+  bool icase = false;
+  bool nosubs = false;
+  bool multiline = false;
+  bool dotall = false;
+
+  regex_options() = default;
+};
+
+namespace detail {
+
+constexpr std::size_t rx_none = uint64_t(18446744073709551615);
+constexpr std::size_t rx_max_program = 200000;
+constexpr std::size_t rx_max_depth = 1000;
+constexpr std::size_t rx_max_look_depth = 32;
+constexpr std::size_t rx_max_count = 10000;
+// Above this many memo bits (64 MiB) the matcher stops recording states.
+constexpr std::size_t rx_max_memo_bits = uint64_t(536870912);
+
+// ---------------------------------------------------------------- bytes
+
+bool rx_is_digit(uint8_t value) { return value >= uint8_t(48) && value <= uint8_t(57); }
+bool rx_is_upper(uint8_t value) { return value >= uint8_t(65) && value <= uint8_t(90); }
+bool rx_is_lower(uint8_t value) { return value >= uint8_t(97) && value <= uint8_t(122); }
+bool rx_is_alpha(uint8_t value) { return rx_is_upper(value) || rx_is_lower(value); }
+bool rx_is_word(uint8_t value) {
+  return rx_is_alpha(value) || rx_is_digit(value) || value == uint8_t(95);
+}
+bool rx_is_space(uint8_t value) {
+  return value == uint8_t(32) || (value >= uint8_t(9) && value <= uint8_t(13));
+}
+bool rx_is_line_terminator(uint8_t value) {
+  return value == uint8_t(10) || value == uint8_t(13);
+}
+uint8_t rx_fold(uint8_t value) {
+  if (rx_is_upper(value)) { return uint8_t(value + uint8_t(32)); }
+  return value;
+}
+uint8_t rx_byte(std::string_view text, std::size_t index) { return uint8_t(text[index]); }
+
+std::size_t rx_hex_value(uint8_t value) {
+  if (rx_is_digit(value)) { return std::size_t(value - uint8_t(48)); }
+  if (value >= uint8_t(97) && value <= uint8_t(102)) { return std::size_t(value - uint8_t(87)); }
+  if (value >= uint8_t(65) && value <= uint8_t(70)) { return std::size_t(value - uint8_t(55)); }
+  return rx_none;
+}
+
+// ---------------------------------------------------------------- byte sets
+
+// A set of bytes is four 64-bit words appended to a shared table.
+void rx_set_add(mut std::vector<uint64_t>& bits, std::size_t set, uint8_t value) {
+  std::size_t index = set * std::size_t(4) + std::size_t(value) / std::size_t(64);
+  uint64_t mask = uint64_t(1) << uint64_t(std::size_t(value) % std::size_t(64));
+  bits[index] = bits[index] | mask;
+}
+
+bool rx_set_has(std::vector<uint64_t>& bits, std::size_t set, uint8_t value) {
+  std::size_t index = set * std::size_t(4) + std::size_t(value) / std::size_t(64);
+  uint64_t mask = uint64_t(1) << uint64_t(std::size_t(value) % std::size_t(64));
+  return (bits[index] & mask) != uint64_t(0);
+}
+
+void rx_set_add_range(mut std::vector<uint64_t>& bits, std::size_t set, uint8_t low, uint8_t high) {
+  mut std::size_t value = std::size_t(low);
+  while (value <= std::size_t(high)) {
+    rx_set_add(bits, set, uint8_t(value));
+    value = value + std::size_t(1);
+  }
+}
+
+// Adds every byte that satisfies one of the named predicates below.
+void rx_set_add_kind(mut std::vector<uint64_t>& bits, std::size_t set, std::size_t kind, bool negated) {
+  mut std::size_t value = 0;
+  while (value < std::size_t(256)) {
+    bool member = rx_class_kind_has(kind, uint8_t(value));
+    if (member != negated) { rx_set_add(bits, set, uint8_t(value)); }
+    value = value + std::size_t(1);
+  }
+}
+
+// Named byte classes: 0 digit, 1 word, 2 space, then the POSIX names.
+bool rx_class_kind_has(std::size_t kind, uint8_t value) {
+  if (kind == std::size_t(0)) { return rx_is_digit(value); }
+  if (kind == std::size_t(1)) { return rx_is_word(value); }
+  if (kind == std::size_t(2)) { return rx_is_space(value); }
+  if (kind == std::size_t(3)) { return rx_is_alpha(value) || rx_is_digit(value); }   // alnum
+  if (kind == std::size_t(4)) { return rx_is_alpha(value); }                         // alpha
+  if (kind == std::size_t(5)) { return value == uint8_t(32) || value == uint8_t(9); }  // blank
+  if (kind == std::size_t(6)) { return value < uint8_t(32) || value == uint8_t(127); } // cntrl
+  if (kind == std::size_t(7)) { return value > uint8_t(32) && value < uint8_t(127); }  // graph
+  if (kind == std::size_t(8)) { return rx_is_lower(value); }                         // lower
+  if (kind == std::size_t(9)) { return value >= uint8_t(32) && value < uint8_t(127); } // print
+  if (kind == std::size_t(10)) {                                                     // punct
+    return value > uint8_t(32) && value < uint8_t(127) && !rx_is_alpha(value) && !rx_is_digit(value);
+  }
+  if (kind == std::size_t(11)) { return rx_is_upper(value); }                        // upper
+  if (kind == std::size_t(12)) { return rx_hex_value(value) != rx_none; }            // xdigit
+  return false;
+}
+
+std::size_t rx_posix_class(std::string_view name) {
+  if (name == "d" || name == "digit") { return 0; }
+  if (name == "w") { return 1; }
+  if (name == "s" || name == "space") { return 2; }
+  if (name == "alnum") { return 3; }
+  if (name == "alpha") { return 4; }
+  if (name == "blank") { return 5; }
+  if (name == "cntrl") { return 6; }
+  if (name == "graph") { return 7; }
+  if (name == "lower") { return 8; }
+  if (name == "print") { return 9; }
+  if (name == "punct") { return 10; }
+  if (name == "upper") { return 11; }
+  if (name == "xdigit") { return 12; }
+  return rx_none;
+}
+
+// ---------------------------------------------------------------- syntax tree
+
+enum class rx_kind {
+  empty,
+  byte,        // a: byte value
+  any,         // any byte except line terminators unless dotall
+  set,         // a: byte-set index
+  group,       // a: capture index (rx_none: non-capturing); children[0]
+  concat,      // children
+  alternation, // children
+  repeat,      // a: minimum, b: maximum (rx_none: unbounded), flag: greedy; children[0]
+  assertion,   // a: 0 ^, 1 $, 2 \b, 3 \B
+  backref,     // a: group number
+  lookahead,   // flag: negative; children[0]
+};
+
+struct rx_node {
+  rx_kind kind;
+  std::size_t a;
+  std::size_t b;
+  bool flag;
+  mut {
+    std::vector<std::size_t> children;
+    bool nullable;
+  }
+
+  rx_node(rx_kind kind, std::size_t a, std::size_t b, bool flag)
+      : kind(kind), a(a), b(b), flag(flag), children(std::vector<std::size_t>()), nullable(true) {}
+  rx_node(rx_node& other) = delete;
+  rx_node(rx_node&& other) = default;
+};
+
+struct rx_pending_name {
+  std::size_t node;
+  std::size_t position;
+  std::string name;
+  rx_pending_name(std::size_t node, std::size_t position, std::string name)
+      : node(node), position(position), name(std::move(name)) {}
+  rx_pending_name(rx_pending_name& other) = delete;
+  rx_pending_name(rx_pending_name&& other) = default;
+};
+
+struct rx_parser {
+  mut {
+    std::size_t position;
+    std::vector<rx_node> nodes;
+    std::vector<uint64_t> set_bits;
+    std::size_t set_count;
+    std::size_t groups;
+    std::vector<std::string> names;
+    std::vector<rx_pending_name> pending_names;
+    std::size_t max_backref;
+    std::size_t max_backref_position;
+    bool has_backref;
+    bool has_lookahead;
+    bool failed;
+    regex_errc code;
+    std::size_t failure_position;
+  }
+  bool icase;
+  bool nosubs;
+  bool multiline;
+  bool dotall;
+
+  rx_parser(regex_options& options)
+      : position(0), nodes(std::vector<rx_node>()), set_bits(std::vector<uint64_t>()),
+        set_count(0), groups(0), names(std::vector<std::string>()),
+        pending_names(std::vector<rx_pending_name>()), max_backref(0), max_backref_position(0),
+        has_backref(false), has_lookahead(false), failed(false), code(regex_errc::escape),
+        failure_position(0), icase(options.icase), nosubs(options.nosubs),
+        multiline(options.multiline), dotall(options.dotall) {}
+
+  [[discardable]] std::size_t fail(regex_errc code, std::size_t position) mut {
+    if (!this.failed) {
+      this.failed = true;
+      this.code = code;
+      this.failure_position = position;
+    }
+    return rx_none;
+  }
+
+  // Nodes are added children first, so a node's nullability (whether it
+  // can match the empty string) follows from its children's.
+  std::size_t add(rx_node node) mut {
+    this.nodes.push_back(std::move(node));
+    std::size_t index = this.nodes.size() - std::size_t(1);
+    this.nodes[index].nullable = this.compute_nullable(index);
+    return index;
+  }
+
+  bool compute_nullable(std::size_t index) {
+    rx_kind kind = this.nodes[index].kind;
+    if (kind == rx_kind::byte || kind == rx_kind::any || kind == rx_kind::set) { return false; }
+    if (kind == rx_kind::concat) {
+      for (std::size_t child : this.nodes[index].children) {
+        if (!this.nodes[child].nullable) { return false; }
+      }
+      return true;
+    }
+    if (kind == rx_kind::alternation) {
+      for (std::size_t child : this.nodes[index].children) {
+        if (this.nodes[child].nullable) { return true; }
+      }
+      return false;
+    }
+    if (kind == rx_kind::group) { return this.nodes[this.nodes[index].children[std::size_t(0)]].nullable; }
+    if (kind == rx_kind::repeat) {
+      return this.nodes[index].a == std::size_t(0) ||
+             this.nodes[this.nodes[index].children[std::size_t(0)]].nullable;
+    }
+    return true;
+  }
+
+  std::size_t new_set() mut {
+    this.set_bits.push_back(uint64_t(0));
+    this.set_bits.push_back(uint64_t(0));
+    this.set_bits.push_back(uint64_t(0));
+    this.set_bits.push_back(uint64_t(0));
+    this.set_count = this.set_count + std::size_t(1);
+    return this.set_count - std::size_t(1);
+  }
+
+  // Adds a byte to a set, with its other ASCII case under icase.
+  void set_add(std::size_t set, uint8_t value) mut {
+    rx_set_add(this.set_bits, set, value);
+    if (this.icase) {
+      if (rx_is_upper(value)) { rx_set_add(this.set_bits, set, uint8_t(value + uint8_t(32))); }
+      if (rx_is_lower(value)) { rx_set_add(this.set_bits, set, uint8_t(value - uint8_t(32))); }
+    }
+  }
+};
+
+bool rx_at_end(rx_parser& p, std::string_view pattern) { return p.position >= pattern.size(); }
+uint8_t rx_peek(rx_parser& p, std::string_view pattern) { return rx_byte(pattern, p.position); }
+bool rx_peek_is(rx_parser& p, std::string_view pattern, char value) {
+  return p.position < pattern.size() && pattern[p.position] == value;
+}
+bool rx_peek_at(rx_parser& p, std::string_view pattern, std::size_t offset, char value) {
+  std::size_t index = p.position + offset;
+  return index < pattern.size() && pattern[index] == value;
+}
+
+// Reads a decimal number at the cursor, saturating at rx_max_count + 1.
+std::size_t rx_parse_count(mut rx_parser& p, std::string_view pattern) {
+  mut std::size_t value = 0;
+  while (!rx_at_end(p, pattern) && rx_is_digit(rx_peek(p, pattern))) {
+    std::size_t digit = std::size_t(rx_peek(p, pattern) - uint8_t(48));
+    if (value <= rx_max_count) { value = value * std::size_t(10) + digit; }
+    p.position = p.position + std::size_t(1);
+  }
+  return value;
+}
+
+// Reads a group name up to '>', which it consumes. Names are ASCII
+// identifiers: a letter, '_' or '$' followed by those or digits.
+std::string rx_parse_name(mut rx_parser& p, std::string_view pattern) {
+  mut std::string name = std::string("");
+  std::size_t start = p.position;
+  while (!rx_at_end(p, pattern) && !rx_peek_is(p, pattern, '>')) {
+    uint8_t value = rx_peek(p, pattern);
+    bool first = p.position == start;
+    bool valid = rx_is_alpha(value) || value == uint8_t(95) || value == uint8_t(36) ||
+                 (!first && rx_is_digit(value));
+    if (!valid) {
+      p.fail(regex_errc::escape, p.position);
+      return name;
+    }
+    name.push_back(char(value));
+    p.position = p.position + std::size_t(1);
+  }
+  if (rx_at_end(p, pattern) || name.empty()) {
+    p.fail(regex_errc::escape, start);
+    return name;
+  }
+  p.position = p.position + std::size_t(1);
+  return name;
+}
+
+// Reads exactly `digits` hexadecimal digits, or returns rx_none.
+std::size_t rx_parse_hex(mut rx_parser& p, std::string_view pattern, std::size_t digits) {
+  mut std::size_t value = 0;
+  mut std::size_t count = 0;
+  while (count < digits) {
+    if (rx_at_end(p, pattern)) { return rx_none; }
+    std::size_t digit = rx_hex_value(rx_peek(p, pattern));
+    if (digit == rx_none) { return rx_none; }
+    value = value * std::size_t(16) + digit;
+    p.position = p.position + std::size_t(1);
+    count = count + std::size_t(1);
+  }
+  return value;
+}
+
+// Character escapes shared by atoms and classes, after the backslash: the
+// control letters, \0, \cX, \xHH, \uHHHH and identity escapes of
+// non-alphanumeric bytes. Returns the byte, or rx_none after reporting.
+// \u escapes above 0x7F are accepted only as atoms, where they expand to
+// their UTF-8 bytes; `utf8` receives the code point in that case.
+std::size_t rx_parse_char_escape(mut rx_parser& p, std::string_view pattern, mut std::size_t& utf8) {
+  std::size_t start = p.position - std::size_t(1);
+  if (rx_at_end(p, pattern)) { return p.fail(regex_errc::escape, start); }
+  uint8_t value = rx_peek(p, pattern);
+  p.position = p.position + std::size_t(1);
+  if (value == uint8_t(110)) { return 10; }   // n
+  if (value == uint8_t(116)) { return 9; }    // t
+  if (value == uint8_t(114)) { return 13; }   // r
+  if (value == uint8_t(102)) { return 12; }   // f
+  if (value == uint8_t(118)) { return 11; }   // v
+  if (value == uint8_t(48)) {                 // 0
+    if (!rx_at_end(p, pattern) && rx_is_digit(rx_peek(p, pattern))) {
+      return p.fail(regex_errc::escape, start);
+    }
+    return 0;
+  }
+  if (value == uint8_t(99)) {                 // cX
+    if (rx_at_end(p, pattern) || !rx_is_alpha(rx_peek(p, pattern))) {
+      return p.fail(regex_errc::escape, start);
+    }
+    std::size_t letter = std::size_t(rx_peek(p, pattern));
+    p.position = p.position + std::size_t(1);
+    return letter % std::size_t(32);
+  }
+  if (value == uint8_t(120)) {                // xHH
+    std::size_t code = rx_parse_hex(p, pattern, 2);
+    if (code == rx_none) { return p.fail(regex_errc::escape, start); }
+    return code;
+  }
+  if (value == uint8_t(117)) {                // uHHHH
+    std::size_t code = rx_parse_hex(p, pattern, 4);
+    if (code == rx_none) { return p.fail(regex_errc::escape, start); }
+    if (code > std::size_t(127)) {
+      utf8 = code;
+      return std::size_t(256);
+    }
+    return code;
+  }
+  if (rx_is_alpha(value) || rx_is_digit(value)) { return p.fail(regex_errc::escape, start); }
+  return std::size_t(value);
+}
+
+void rx_append_utf8(mut std::vector<uint8_t>& out, std::size_t point) {
+  if (point < std::size_t(128)) {
+    out.push_back(uint8_t(point));
+  } else if (point < std::size_t(2048)) {
+    out.push_back(uint8_t(std::size_t(192) + point / std::size_t(64)));
+    out.push_back(uint8_t(std::size_t(128) + point % std::size_t(64)));
+  } else {
+    out.push_back(uint8_t(std::size_t(224) + point / std::size_t(4096)));
+    out.push_back(uint8_t(std::size_t(128) + (point / std::size_t(64)) % std::size_t(64)));
+    out.push_back(uint8_t(std::size_t(128) + point % std::size_t(64)));
+  }
+}
+
+std::size_t rx_byte_node(mut rx_parser& p, uint8_t value) {
+  if (p.icase && rx_is_alpha(value)) {
+    std::size_t set = p.new_set();
+    p.set_add(set, value);
+    return p.add(rx_node(rx_kind::set, set, 0, false));
+  }
+  return p.add(rx_node(rx_kind::byte, std::size_t(value), 0, false));
+}
+
+std::size_t rx_kind_set_node(mut rx_parser& p, std::size_t kind, bool negated) {
+  std::size_t set = p.new_set();
+  rx_set_add_kind(p.set_bits, set, kind, negated);
+  return p.add(rx_node(rx_kind::set, set, 0, false));
+}
+
+// One class member after '['. Returns the byte it denotes, or rx_none when
+// it was a class escape (\d, [:alpha:], ...) already added to `set`.
+std::size_t rx_parse_class_atom(mut rx_parser& p, std::string_view pattern, std::size_t set,
+                                mut bool& was_class) {
+  was_class = false;
+  std::size_t start = p.position;
+  uint8_t value = rx_peek(p, pattern);
+  if (value == uint8_t(91) && p.position + std::size_t(1) < pattern.size()) {   // '['
+    uint8_t marker = rx_byte(pattern, p.position + std::size_t(1));
+    if (marker == uint8_t(58) || marker == uint8_t(61) || marker == uint8_t(46)) {  // : = .
+      p.position = p.position + std::size_t(2);
+      std::size_t name_start = p.position;
+      while (p.position + std::size_t(1) < pattern.size() &&
+             !(rx_byte(pattern, p.position) == marker &&
+               rx_byte(pattern, p.position + std::size_t(1)) == uint8_t(93))) {
+        p.position = p.position + std::size_t(1);
+      }
+      if (p.position + std::size_t(1) >= pattern.size()) {
+        p.fail(regex_errc::brack, start);
+        return rx_none;
+      }
+      std::size_t name_end = p.position;
+      p.position = p.position + std::size_t(2);
+      if (marker == uint8_t(58)) {
+        mut std::string name = std::string("");
+        mut std::size_t index = name_start;
+        while (index < name_end) {
+          name.push_back(pattern[index]);
+          index = index + std::size_t(1);
+        }
+        std::size_t kind = rx_posix_class(name.view());
+        if (kind == rx_none) {
+          p.fail(regex_errc::ctype, start);
+          return rx_none;
+        }
+        rx_set_add_kind(p.set_bits, set, kind, false);
+        if (p.icase && (kind == std::size_t(8) || kind == std::size_t(11))) {
+          rx_set_add_kind(p.set_bits, set, 4, false);
+        }
+        was_class = true;
+        return rx_none;
+      }
+      // [=c=] and [.c.] name one collating element: a single byte here.
+      if (name_end != name_start + std::size_t(1)) {
+        p.fail(regex_errc::collate, start);
+        return rx_none;
+      }
+      return std::size_t(rx_byte(pattern, name_start));
+    }
+  }
+  p.position = p.position + std::size_t(1);
+  if (value != uint8_t(92)) { return std::size_t(value); }   // not a backslash
+  if (rx_at_end(p, pattern)) {
+    p.fail(regex_errc::escape, start);
+    return rx_none;
+  }
+  uint8_t escape = rx_peek(p, pattern);
+  if (escape == uint8_t(100) || escape == uint8_t(68) || escape == uint8_t(119) ||
+      escape == uint8_t(87) || escape == uint8_t(115) || escape == uint8_t(83)) {  // d D w W s S
+    p.position = p.position + std::size_t(1);
+    std::size_t kind = escape == uint8_t(100) || escape == uint8_t(68) ? std::size_t(0)
+                       : escape == uint8_t(119) || escape == uint8_t(87) ? std::size_t(1)
+                                                                          : std::size_t(2);
+    rx_set_add_kind(p.set_bits, set, kind, rx_is_upper(escape));
+    was_class = true;
+    return rx_none;
+  }
+  if (escape == uint8_t(98)) {                                  // \b is backspace in a class
+    p.position = p.position + std::size_t(1);
+    return 8;
+  }
+  if (escape == uint8_t(45)) {                                  // \-
+    p.position = p.position + std::size_t(1);
+    return 45;
+  }
+  mut std::size_t point = 0;
+  std::size_t code = rx_parse_char_escape(p, pattern, point);
+  if (code == std::size_t(256)) {
+    p.fail(regex_errc::escape, start);
+    return rx_none;
+  }
+  return code;
+}
+
+std::size_t rx_parse_class(mut rx_parser& p, std::string_view pattern) {
+  std::size_t start = p.position;
+  p.position = p.position + std::size_t(1);   // '['
+  bool negated = rx_peek_is(p, pattern, '^');
+  if (negated) { p.position = p.position + std::size_t(1); }
+  std::size_t set = p.new_set();
+  mut bool first = true;
+  while (true) {
+    if (rx_at_end(p, pattern)) { return p.fail(regex_errc::brack, start); }
+    if (rx_peek_is(p, pattern, ']') && !first) { break; }
+    if (rx_peek_is(p, pattern, ']') && first) {
+      // ECMAScript: "[]" is an empty class and "[^]" matches any byte.
+      break;
+    }
+    first = false;
+    mut bool low_class = false;
+    std::size_t low_position = p.position;
+    std::size_t low = rx_parse_class_atom(p, pattern, set, low_class);
+    if (p.failed) { return rx_none; }
+    bool range = rx_peek_is(p, pattern, '-') && !rx_peek_at(p, pattern, 1, ']') &&
+                 p.position + std::size_t(1) < pattern.size();
+    if (!range) {
+      if (!low_class) { p.set_add(set, uint8_t(low)); }
+      continue;
+    }
+    p.position = p.position + std::size_t(1);   // '-'
+    mut bool high_class = false;
+    std::size_t high = rx_parse_class_atom(p, pattern, set, high_class);
+    if (p.failed) { return rx_none; }
+    if (low_class || high_class || low > high) { return p.fail(regex_errc::range, low_position); }
+    mut std::size_t value = low;
+    while (value <= high) {
+      p.set_add(set, uint8_t(value));
+      value = value + std::size_t(1);
+    }
+  }
+  p.position = p.position + std::size_t(1);   // ']'
+  if (negated) {
+    std::size_t inverse = p.new_set();
+    mut std::size_t value = 0;
+    while (value < std::size_t(256)) {
+      if (!rx_set_has(p.set_bits, set, uint8_t(value))) { rx_set_add(p.set_bits, inverse, uint8_t(value)); }
+      value = value + std::size_t(1);
+    }
+    return p.add(rx_node(rx_kind::set, inverse, 0, false));
+  }
+  return p.add(rx_node(rx_kind::set, set, 0, false));
+}
+
+// An open group on the parser's explicit stack: the alternatives finished
+// so far and the terms of the current one. The root is the bottom entry.
+struct rx_open_group {
+  std::size_t start;
+  std::size_t capture;   // rx_none: not capturing
+  bool root;
+  bool lookahead;
+  bool negative;
+  mut {
+    std::vector<std::size_t> alternatives;
+    std::vector<std::size_t> terms;
+  }
+  rx_open_group(std::size_t start, std::size_t capture, bool root, bool lookahead, bool negative)
+      : start(start), capture(capture), root(root), lookahead(lookahead), negative(negative),
+        alternatives(std::vector<std::size_t>()), terms(std::vector<std::size_t>()) {}
+  rx_open_group(rx_open_group& other) = delete;
+  rx_open_group(rx_open_group&& other) = default;
+};
+
+// Parses a group's opening at '(' and its `?:`, `?=`, `?!` or `?<name>`
+// header. Returns the open group, or one with `start == rx_none` after
+// reporting a failure.
+rx_open_group rx_open(mut rx_parser& p, std::string_view pattern) {
+  std::size_t start = p.position;
+  p.position = p.position + std::size_t(1);   // '('
+  if (!rx_peek_is(p, pattern, '?')) {
+    p.groups = p.groups + std::size_t(1);
+    return rx_open_group(start, p.nosubs ? rx_none : p.groups, false, false, false);
+  }
+  if (rx_peek_at(p, pattern, 1, ':')) {
+    p.position = p.position + std::size_t(2);
+    return rx_open_group(start, rx_none, false, false, false);
+  }
+  if (rx_peek_at(p, pattern, 1, '=') || rx_peek_at(p, pattern, 1, '!')) {
+    bool negative = rx_peek_at(p, pattern, 1, '!');
+    p.has_lookahead = true;
+    p.position = p.position + std::size_t(2);
+    return rx_open_group(start, rx_none, false, true, negative);
+  }
+  if (rx_peek_at(p, pattern, 1, '<') && !rx_peek_at(p, pattern, 2, '=') && !rx_peek_at(p, pattern, 2, '!')) {
+    p.position = p.position + std::size_t(2);
+    std::size_t name_position = p.position;
+    std::string name = rx_parse_name(p, pattern);
+    if (p.failed) { return rx_open_group(rx_none, rx_none, false, false, false); }
+    mut bool duplicate = false;
+    for (std::string& existing : p.names) {
+      if (existing == name) { duplicate = true; }
+    }
+    if (duplicate) {
+      p.fail(regex_errc::escape, name_position);
+      return rx_open_group(rx_none, rx_none, false, false, false);
+    }
+    p.groups = p.groups + std::size_t(1);
+    while (p.names.size() < p.groups - std::size_t(1)) { p.names.push_back(std::string("")); }
+    p.names.push_back(std::move(name));
+    return rx_open_group(start, p.nosubs ? rx_none : p.groups, false, false, false);
+  }
+  p.fail(regex_errc::paren, start);
+  return rx_open_group(rx_none, rx_none, false, false, false);
+}
+
+// Ends the current alternative of an open group.
+void rx_end_alternative(mut rx_parser& p, mut rx_open_group& group) {
+  mut rx_node concat = rx_node(rx_kind::concat, 0, 0, false);
+  for (std::size_t term : group.terms) { concat.children.push_back(term); }
+  group.terms.clear();
+  group.alternatives.push_back(p.add(std::move(concat)));
+}
+
+// Closes an open group into one node: its body, wrapped as a capture,
+// non-capturing group or lookahead.
+std::size_t rx_close(mut rx_parser& p, mut rx_open_group& group) {
+  rx_end_alternative(p, group);
+  mut std::size_t body = group.alternatives[std::size_t(0)];
+  if (group.alternatives.size() > std::size_t(1)) {
+    mut rx_node alternation = rx_node(rx_kind::alternation, 0, 0, false);
+    for (std::size_t alternative : group.alternatives) { alternation.children.push_back(alternative); }
+    group.alternatives.clear();
+    body = p.add(std::move(alternation));
+  }
+  if (group.root) { return body; }
+  if (group.lookahead) {
+    mut rx_node node = rx_node(rx_kind::lookahead, 0, 0, group.negative);
+    node.children.push_back(body);
+    return p.add(std::move(node));
+  }
+  mut rx_node node = rx_node(rx_kind::group, group.capture, 0, false);
+  node.children.push_back(body);
+  return p.add(std::move(node));
+}
+
+// An atom escape after '\' outside a class.
+std::size_t rx_parse_atom_escape(mut rx_parser& p, std::string_view pattern) {
+  std::size_t start = p.position;
+  p.position = p.position + std::size_t(1);   // '\'
+  if (rx_at_end(p, pattern)) { return p.fail(regex_errc::escape, start); }
+  uint8_t value = rx_peek(p, pattern);
+  if (value == uint8_t(100) || value == uint8_t(68)) {   // d D
+    p.position = p.position + std::size_t(1);
+    return rx_kind_set_node(p, 0, value == uint8_t(68));
+  }
+  if (value == uint8_t(119) || value == uint8_t(87)) {   // w W
+    p.position = p.position + std::size_t(1);
+    return rx_kind_set_node(p, 1, value == uint8_t(87));
+  }
+  if (value == uint8_t(115) || value == uint8_t(83)) {   // s S
+    p.position = p.position + std::size_t(1);
+    return rx_kind_set_node(p, 2, value == uint8_t(83));
+  }
+  if (value == uint8_t(98) || value == uint8_t(66)) {    // b B
+    p.position = p.position + std::size_t(1);
+    return p.add(rx_node(rx_kind::assertion, value == uint8_t(98) ? std::size_t(2) : std::size_t(3), 0, false));
+  }
+  if (rx_is_digit(value) && value != uint8_t(48)) {      // \1 .. \99...
+    std::size_t number = rx_parse_count(p, pattern);
+    p.has_backref = true;
+    if (number > p.max_backref) {
+      p.max_backref = number;
+      p.max_backref_position = start;
+    }
+    return p.add(rx_node(rx_kind::backref, number, 0, false));
+  }
+  if (value == uint8_t(107)) {                           // \k<name>
+    p.position = p.position + std::size_t(1);
+    if (!rx_peek_is(p, pattern, '<')) { return p.fail(regex_errc::escape, start); }
+    p.position = p.position + std::size_t(1);
+    std::string name = rx_parse_name(p, pattern);
+    if (p.failed) { return rx_none; }
+    p.has_backref = true;
+    std::size_t node = p.add(rx_node(rx_kind::backref, 0, 0, false));
+    p.pending_names.push_back(rx_pending_name(node, start, std::move(name)));
+    return node;
+  }
+  mut std::size_t point = 0;
+  std::size_t code = rx_parse_char_escape(p, pattern, point);
+  if (p.failed) { return rx_none; }
+  if (code == std::size_t(256)) {
+    mut std::vector<uint8_t> bytes{};
+    rx_append_utf8(bytes, point);
+    mut rx_node node = rx_node(rx_kind::concat, 0, 0, false);
+    for (uint8_t byte : bytes) { node.children.push_back(rx_byte_node(p, byte)); }
+    return p.add(std::move(node));
+  }
+  return rx_byte_node(p, uint8_t(code));
+}
+
+// Parses `{n}`, `{n,}` or `{n,m}` at '{'. Returns false after reporting.
+bool rx_parse_braces(mut rx_parser& p, std::string_view pattern, mut std::size_t& minimum,
+                     mut std::size_t& maximum) {
+  std::size_t start = p.position;
+  p.position = p.position + std::size_t(1);
+  if (rx_at_end(p, pattern) || !rx_is_digit(rx_peek(p, pattern))) {
+    p.fail(regex_errc::badbrace, start);
+    return false;
+  }
+  minimum = rx_parse_count(p, pattern);
+  maximum = minimum;
+  if (rx_peek_is(p, pattern, ',')) {
+    p.position = p.position + std::size_t(1);
+    if (rx_peek_is(p, pattern, '}')) {
+      maximum = rx_none;
+    } else if (!rx_at_end(p, pattern) && rx_is_digit(rx_peek(p, pattern))) {
+      maximum = rx_parse_count(p, pattern);
+    } else {
+      p.fail(rx_at_end(p, pattern) ? regex_errc::brace : regex_errc::badbrace, start);
+      return false;
+    }
+  }
+  if (!rx_peek_is(p, pattern, '}')) {
+    p.fail(rx_at_end(p, pattern) ? regex_errc::brace : regex_errc::badbrace, start);
+    return false;
+  }
+  p.position = p.position + std::size_t(1);
+  if (minimum > rx_max_count || (maximum != rx_none && (maximum > rx_max_count || maximum < minimum))) {
+    p.fail(regex_errc::badbrace, start);
+    return false;
+  }
+  return true;
+}
+
+bool rx_is_quantifier(rx_parser& p, std::string_view pattern) {
+  return rx_peek_is(p, pattern, '*') || rx_peek_is(p, pattern, '+') || rx_peek_is(p, pattern, '?') ||
+         rx_peek_is(p, pattern, '{');
+}
+
+// An atom other than a group, or an assertion. `quantifiable` reports
+// whether a quantifier may follow it.
+std::size_t rx_parse_atom(mut rx_parser& p, std::string_view pattern, mut bool& quantifiable) {
+  std::size_t start = p.position;
+  uint8_t value = rx_peek(p, pattern);
+  quantifiable = true;
+  if (value == uint8_t(94)) {                       // ^
+    p.position = p.position + std::size_t(1);
+    quantifiable = false;
+    return p.add(rx_node(rx_kind::assertion, 0, 0, false));
+  }
+  if (value == uint8_t(36)) {                       // $
+    p.position = p.position + std::size_t(1);
+    quantifiable = false;
+    return p.add(rx_node(rx_kind::assertion, 1, 0, false));
+  }
+  if (value == uint8_t(46)) {                       // .
+    p.position = p.position + std::size_t(1);
+    return p.add(rx_node(rx_kind::any, 0, 0, false));
+  }
+  if (value == uint8_t(91)) { return rx_parse_class(p, pattern); }   // [
+  if (value == uint8_t(92)) {                       // backslash
+    std::size_t atom = rx_parse_atom_escape(p, pattern);
+    if (!p.failed && p.nodes[atom].kind == rx_kind::assertion) { quantifiable = false; }
+    return atom;
+  }
+  if (value == uint8_t(42) || value == uint8_t(43) || value == uint8_t(63) || value == uint8_t(123)) {
+    return p.fail(regex_errc::badrepeat, start);    // * + ? { with nothing to repeat
+  }
+  p.position = p.position + std::size_t(1);
+  return rx_byte_node(p, value);
+}
+
+// Applies a quantifier at the cursor, if any, to `atom`.
+std::size_t rx_parse_quantifier(mut rx_parser& p, std::string_view pattern, std::size_t atom, bool quantifiable) {
+  if (!rx_is_quantifier(p, pattern)) { return atom; }
+  if (!quantifiable) { return p.fail(regex_errc::badrepeat, p.position); }
+  mut std::size_t minimum = 0;
+  mut std::size_t maximum = rx_none;
+  if (rx_peek_is(p, pattern, '*')) {
+    p.position = p.position + std::size_t(1);
+  } else if (rx_peek_is(p, pattern, '+')) {
+    minimum = 1;
+    p.position = p.position + std::size_t(1);
+  } else if (rx_peek_is(p, pattern, '?')) {
+    maximum = 1;
+    p.position = p.position + std::size_t(1);
+  } else if (!rx_parse_braces(p, pattern, minimum, maximum)) {
+    return rx_none;
+  }
+  mut bool greedy = true;
+  if (rx_peek_is(p, pattern, '?')) {
+    greedy = false;
+    p.position = p.position + std::size_t(1);
+  }
+  if (rx_is_quantifier(p, pattern)) { return p.fail(regex_errc::badrepeat, p.position); }
+  mut rx_node node = rx_node(rx_kind::repeat, minimum, maximum, greedy);
+  node.children.push_back(atom);
+  return p.add(std::move(node));
+}
+
+// Parses the whole pattern without recursion: open groups live on an
+// explicit stack, so nesting depth costs heap memory, not native stack.
+std::size_t rx_parse_pattern(mut rx_parser& p, std::string_view pattern) {
+  mut std::vector<rx_open_group> open{};
+  open.push_back(rx_open_group(0, rx_none, true, false, false));
+  mut std::size_t look_depth = 0;
+  while (!rx_at_end(p, pattern)) {
+    std::size_t top = open.size() - std::size_t(1);
+    if (rx_peek_is(p, pattern, '|')) {
+      p.position = p.position + std::size_t(1);
+      rx_end_alternative(p, open[top]);
+      continue;
+    }
+    if (rx_peek_is(p, pattern, '(')) {
+      rx_open_group group = rx_open(p, pattern);
+      if (p.failed) { return rx_none; }
+      if (open.size() > rx_max_depth) { return p.fail(regex_errc::stack, group.start); }
+      if (group.lookahead) {
+        look_depth = look_depth + std::size_t(1);
+        if (look_depth > rx_max_look_depth) { return p.fail(regex_errc::stack, group.start); }
+      }
+      open.push_back(std::move(group));
+      continue;
+    }
+    if (rx_peek_is(p, pattern, ')')) {
+      if (open.size() == std::size_t(1)) { return p.fail(regex_errc::paren, p.position); }
+      p.position = p.position + std::size_t(1);
+      bool lookahead = open[top].lookahead;
+      std::size_t closed = rx_close(p, open[top]);
+      open.pop_back();
+      if (lookahead) { look_depth = look_depth - std::size_t(1); }
+      std::size_t term = rx_parse_quantifier(p, pattern, closed, !lookahead);
+      if (p.failed) { return rx_none; }
+      open[top - std::size_t(1)].terms.push_back(term);
+      continue;
+    }
+    mut bool quantifiable = true;
+    std::size_t atom = rx_parse_atom(p, pattern, quantifiable);
+    if (p.failed) { return rx_none; }
+    std::size_t term = rx_parse_quantifier(p, pattern, atom, quantifiable);
+    if (p.failed) { return rx_none; }
+    open[top].terms.push_back(term);
+  }
+  if (open.size() > std::size_t(1)) {
+    return p.fail(regex_errc::paren, open[open.size() - std::size_t(1)].start);
+  }
+  return rx_close(p, open[std::size_t(0)]);
+}
+
+// ---------------------------------------------------------------- program
+
+enum class rx_op {
+  byte,        // value
+  any,         // any byte but a line terminator
+  any_byte,    // any byte
+  set,         // x: set index
+  split,       // try x, then y
+  jump,        // x
+  save,        // x: slot
+  line_start,  // ^ (flag: multiline)
+  line_end,    // $ (flag: multiline)
+  word_boundary,
+  not_word_boundary,
+  backref,     // x: group
+  loop_enter,  // x: loop register
+  loop_check,  // x: loop register; fails when the iteration matched empty
+  look,        // x: continuation after look_end; flag: negative
+  look_end,
+  accept,
+};
+
+struct rx_inst {
+  rx_op op;
+  mut {
+    std::size_t x;
+    std::size_t y;
+  }
+  uint8_t value;
+  bool flag;
+  rx_inst(rx_op op, std::size_t x, std::size_t y, uint8_t value, bool flag)
+      : op(op), x(x), y(y), value(value), flag(flag) {}
+};
+
+struct rx_program {
+  mut {
+    std::vector<rx_inst> code;
+    std::vector<uint64_t> set_bits;
+    std::size_t groups;
+    std::size_t loops;
+    bool linear;
+    bool overflow;
+    // Dense index of each split instruction, for the visited-state memo.
+    std::vector<std::size_t> split_index;
+    std::size_t split_count;
+    // Bytes that can begin a match; meaningful only when `first_known`.
+    std::vector<uint64_t> first_bytes;
+    bool first_known;
+    // Every match begins at subject offset 0 (a leading `^` without
+    // multiline).
+    bool anchored;
+  }
+  rx_program()
+      : code(std::vector<rx_inst>()), set_bits(std::vector<uint64_t>()), groups(0), loops(0),
+        linear(true), overflow(false), split_index(std::vector<std::size_t>()), split_count(0),
+        first_bytes(std::vector<uint64_t>()), first_known(false), anchored(false) {}
+  rx_program(rx_program& other) = delete;
+  rx_program(rx_program&& other) = default;
+
+  [[discardable]] std::size_t emit(rx_op op, std::size_t x, std::size_t y, uint8_t value, bool flag) mut {
+    if (this.code.size() >= rx_max_program) {
+      this.overflow = true;
+      return this.code.size();
+    }
+    this.code.push_back(rx_inst(op, x, y, value, flag));
+    return this.code.size() - std::size_t(1);
+  }
+
+  void patch_x(std::size_t at, std::size_t target) mut {
+    if (at < this.code.size()) { this.code[at].x = target; }
+  }
+  void patch_y(std::size_t at, std::size_t target) mut {
+    if (at < this.code.size()) { this.code[at].y = target; }
+  }
+
+  rx_program clone() {
+    mut rx_program copy = rx_program();
+    for (rx_inst& inst : this.code) { copy.code.push_back(rx_inst(inst.op, inst.x, inst.y, inst.value, inst.flag)); }
+    for (uint64_t word : this.set_bits) { copy.set_bits.push_back(word); }
+    for (std::size_t index : this.split_index) { copy.split_index.push_back(index); }
+    copy.groups = this.groups;
+    copy.loops = this.loops;
+    copy.linear = this.linear;
+    copy.overflow = this.overflow;
+    copy.split_count = this.split_count;
+    for (uint64_t word : this.first_bytes) { copy.first_bytes.push_back(word); }
+    copy.first_known = this.first_known;
+    copy.anchored = this.anchored;
+    return copy;
+  }
+};
+
+// A node being emitted: `step` counts the children already emitted (twice
+// per child for alternations). `a` and `b` hold an instruction or loop
+// register the node patches later; `mark` is where its pending patches
+// start in the shared patch list.
+struct rx_emit_frame {
+  std::size_t node;
+  mut {
+    std::size_t step;
+    std::size_t a;
+    std::size_t b;
+  }
+  std::size_t mark;
+  rx_emit_frame(std::size_t node, std::size_t mark) : node(node), step(0), a(0), b(0), mark(mark) {}
+};
+
+void rx_patch_all(mut rx_program& prog, mut std::vector<std::size_t>& patches, std::size_t mark,
+                  std::size_t target, bool x) {
+  while (patches.size() > mark) {
+    if (x) { prog.patch_x(patches.back(), target); } else { prog.patch_y(patches.back(), target); }
+    patches.pop_back();
+  }
+}
+
+// Emits the program for the tree rooted at `root` without recursion.
+void rx_emit(mut rx_program& prog, mut rx_parser& p, std::size_t root) {
+  mut std::vector<rx_emit_frame> stack{};
+  mut std::vector<std::size_t> patches{};
+  stack.push_back(rx_emit_frame(root, 0));
+  while (!stack.empty() && !prog.overflow) {
+    std::size_t top = stack.size() - std::size_t(1);
+    rx_emit_frame f = stack[top];
+    rx_kind kind = p.nodes[f.node].kind;
+    if (kind == rx_kind::concat) {
+      if (f.step < p.nodes[f.node].children.size()) {
+        stack[top].step = f.step + std::size_t(1);
+        stack.push_back(rx_emit_frame(p.nodes[f.node].children[f.step], patches.size()));
+      } else {
+        stack.pop_back();
+      }
+      continue;
+    }
+    if (kind == rx_kind::alternation) {
+      std::size_t count = p.nodes[f.node].children.size();
+      std::size_t child = f.step / std::size_t(2);
+      bool last = child + std::size_t(1) == count;
+      if (f.step % std::size_t(2) == std::size_t(0)) {
+        if (!last) {
+          std::size_t split = prog.emit(rx_op::split, 0, 0, 0, false);
+          prog.patch_x(split, prog.code.size());
+          stack[top].a = split;
+        }
+        stack[top].step = f.step + std::size_t(1);
+        stack.push_back(rx_emit_frame(p.nodes[f.node].children[child], patches.size()));
+      } else if (!last) {
+        patches.push_back(prog.emit(rx_op::jump, 0, 0, 0, false));
+        prog.patch_y(f.a, prog.code.size());
+        stack[top].step = f.step + std::size_t(1);
+      } else {
+        rx_patch_all(prog, patches, f.mark, prog.code.size(), true);
+        stack.pop_back();
+      }
+      continue;
+    }
+    if (kind == rx_kind::group) {
+      std::size_t capture = p.nodes[f.node].a;
+      if (f.step == std::size_t(0)) {
+        if (capture != rx_none) { prog.emit(rx_op::save, capture * std::size_t(2), 0, 0, false); }
+        stack[top].step = 1;
+        stack.push_back(rx_emit_frame(p.nodes[f.node].children[std::size_t(0)], patches.size()));
+      } else {
+        if (capture != rx_none) {
+          prog.emit(rx_op::save, capture * std::size_t(2) + std::size_t(1), 0, 0, false);
+        }
+        stack.pop_back();
+      }
+      continue;
+    }
+    if (kind == rx_kind::lookahead) {
+      if (f.step == std::size_t(0)) {
+        stack[top].a = prog.emit(rx_op::look, 0, 0, 0, p.nodes[f.node].flag);
+        stack[top].step = 1;
+        stack.push_back(rx_emit_frame(p.nodes[f.node].children[std::size_t(0)], patches.size()));
+      } else {
+        prog.emit(rx_op::look_end, 0, 0, 0, false);
+        prog.patch_x(f.a, prog.code.size());
+        stack.pop_back();
+      }
+      continue;
+    }
+    if (kind == rx_kind::repeat) {
+      std::size_t body = p.nodes[f.node].children[std::size_t(0)];
+      std::size_t minimum = p.nodes[f.node].a;
+      std::size_t maximum = p.nodes[f.node].b;
+      bool greedy = p.nodes[f.node].flag;
+      if (f.step < minimum) {
+        // The required copies.
+        stack[top].step = f.step + std::size_t(1);
+        stack.push_back(rx_emit_frame(body, patches.size()));
+      } else if (maximum == rx_none) {
+        bool guard = p.nodes[body].nullable;
+        if (f.step == minimum) {
+          // split -> [loop_enter] body [loop_check] jump split
+          std::size_t loop = prog.loops;
+          if (guard) { prog.loops = prog.loops + std::size_t(1); }
+          std::size_t split = prog.emit(rx_op::split, 0, 0, 0, false);
+          std::size_t enter = prog.code.size();
+          if (guard) { prog.emit(rx_op::loop_enter, loop, 0, 0, false); }
+          if (greedy) { prog.patch_x(split, enter); } else { prog.patch_y(split, enter); }
+          stack[top].a = split;
+          stack[top].b = loop;
+          stack[top].step = f.step + std::size_t(1);
+          stack.push_back(rx_emit_frame(body, patches.size()));
+        } else {
+          if (guard) { prog.emit(rx_op::loop_check, f.b, 0, 0, false); }
+          prog.emit(rx_op::jump, f.a, 0, 0, false);
+          if (greedy) { prog.patch_y(f.a, prog.code.size()); } else { prog.patch_x(f.a, prog.code.size()); }
+          stack.pop_back();
+        }
+      } else if (f.step < maximum) {
+        // x{n,m}: m - n nested optional copies, (x(x(x)?)?)?, sharing one exit.
+        std::size_t split = prog.emit(rx_op::split, 0, 0, 0, false);
+        patches.push_back(split);
+        if (greedy) { prog.patch_x(split, prog.code.size()); } else { prog.patch_y(split, prog.code.size()); }
+        stack[top].step = f.step + std::size_t(1);
+        stack.push_back(rx_emit_frame(body, patches.size()));
+      } else {
+        rx_patch_all(prog, patches, f.mark, prog.code.size(), !greedy);
+        stack.pop_back();
+      }
+      continue;
+    }
+    // Leaves.
+    if (kind == rx_kind::byte) {
+      prog.emit(rx_op::byte, 0, 0, uint8_t(p.nodes[f.node].a), false);
+    } else if (kind == rx_kind::any) {
+      prog.emit(p.dotall ? rx_op::any_byte : rx_op::any, 0, 0, 0, false);
+    } else if (kind == rx_kind::set) {
+      prog.emit(rx_op::set, p.nodes[f.node].a, 0, 0, false);
+    } else if (kind == rx_kind::assertion) {
+      std::size_t which = p.nodes[f.node].a;
+      if (which == std::size_t(0)) { prog.emit(rx_op::line_start, 0, 0, 0, p.multiline); }
+      else if (which == std::size_t(1)) { prog.emit(rx_op::line_end, 0, 0, 0, p.multiline); }
+      else if (which == std::size_t(2)) { prog.emit(rx_op::word_boundary, 0, 0, 0, false); }
+      else { prog.emit(rx_op::not_word_boundary, 0, 0, 0, false); }
+    } else if (kind == rx_kind::backref) {
+      prog.emit(rx_op::backref, p.nodes[f.node].a, 0, 0, p.icase);
+    }
+    stack.pop_back();
+  }
+}
+
+// Finds the bytes that can begin a match, so a search can skip start
+// positions that cannot match. A program that can match the empty string,
+// or whose start depends on a backreference or lookahead, keeps no set.
+void rx_analyze_start(mut rx_program& prog) {
+  prog.first_bytes.clear();
+  prog.first_bytes.resize(4, uint64_t(0));
+  prog.first_known = true;
+  std::size_t first = std::size_t(1);
+  prog.anchored = prog.code.size() > first && prog.code[first].op == rx_op::line_start && !prog.code[first].flag;
+  mut std::vector<bool> seen{};
+  seen.resize(prog.code.size(), false);
+  mut std::vector<std::size_t> work{};
+  work.push_back(0);
+  while (!work.empty() && prog.first_known) {
+    std::size_t pc = work.back();
+    work.pop_back();
+    if (seen[pc]) { continue; }
+    seen[pc] = true;
+    rx_op op = prog.code[pc].op;
+    if (op == rx_op::byte) {
+      rx_set_add(prog.first_bytes, 0, prog.code[pc].value);
+    } else if (op == rx_op::set) {
+      std::size_t set = prog.code[pc].x;
+      mut std::size_t word = 0;
+      while (word < std::size_t(4)) {
+        prog.first_bytes[word] = prog.first_bytes[word] | prog.set_bits[set * std::size_t(4) + word];
+        word = word + std::size_t(1);
+      }
+    } else if (op == rx_op::any || op == rx_op::any_byte) {
+      rx_set_add_range(prog.first_bytes, 0, uint8_t(0), uint8_t(255));
+    } else if (op == rx_op::split) {
+      work.push_back(prog.code[pc].y);
+      work.push_back(prog.code[pc].x);
+    } else if (op == rx_op::jump) {
+      work.push_back(prog.code[pc].x);
+    } else if (op == rx_op::backref || op == rx_op::look || op == rx_op::look_end || op == rx_op::accept) {
+      prog.first_known = false;
+    } else {
+      // Saves, loop bookkeeping and assertions consume nothing.
+      work.push_back(pc + std::size_t(1));
+    }
+  }
+}
+
+// Compiles a pattern into `prog`, or returns the failure.
+expected<void, regex_error> rx_compile(std::string_view pattern, regex_options& options,
+                                       mut rx_program& prog, mut std::vector<std::string>& names) {
+  mut rx_parser p = rx_parser(options);
+  std::size_t root = rx_parse_pattern(p, pattern);
+  if (!p.failed && p.max_backref > p.groups && !p.nosubs) {
+    p.fail(regex_errc::backref, p.max_backref_position);
+  }
+  if (!p.failed && p.nosubs && p.has_backref) {
+    p.fail(regex_errc::backref, p.max_backref_position);
+  }
+  if (!p.failed) {
+    mut std::size_t index = 0;
+    while (index < p.pending_names.size()) {
+      mut std::size_t group = 0;
+      mut std::size_t candidate = 0;
+      while (candidate < p.names.size()) {
+        if (p.names[candidate] == p.pending_names[index].name) { group = candidate + std::size_t(1); }
+        candidate = candidate + std::size_t(1);
+      }
+      if (group == std::size_t(0)) {
+        p.fail(regex_errc::backref, p.pending_names[index].position);
+        break;
+      }
+      std::size_t node = p.pending_names[index].node;
+      p.nodes[node] = rx_node(rx_kind::backref, group, 0, false);   // nullable: an unset group is empty
+      index = index + std::size_t(1);
+    }
+  }
+  if (p.failed) { return unexpected(regex_error(p.code, p.failure_position)); }
+
+  prog.groups = p.nosubs ? std::size_t(0) : p.groups;
+  prog.emit(rx_op::save, 0, 0, 0, false);
+  rx_emit(prog, p, root);
+  prog.emit(rx_op::save, 1, 0, 0, false);
+  prog.emit(rx_op::accept, 0, 0, 0, false);
+  if (prog.overflow) { return unexpected(regex_error(regex_errc::complexity, 0)); }
+  prog.set_bits = std::move(p.set_bits);
+  prog.linear = !p.has_backref && !p.has_lookahead;
+  for (rx_inst& inst : prog.code) {
+    if (inst.op == rx_op::split) {
+      prog.split_index.push_back(prog.split_count);
+      prog.split_count = prog.split_count + std::size_t(1);
+    } else {
+      prog.split_index.push_back(rx_none);
+    }
+  }
+  rx_analyze_start(prog);
+  if (!p.nosubs) {
+    while (p.names.size() < p.groups) { p.names.push_back(std::string("")); }
+    names = std::move(p.names);
+  }
+  return expected<void, regex_error>();
+}
+
+// ---------------------------------------------------------------- matching
+
+// Backtracking frames: resume a branch, or undo a slot or loop register.
+enum class rx_frame_kind { branch, slot, loop };
+
+struct rx_frame {
+  rx_frame_kind kind;
+  std::size_t a;
+  std::size_t b;
+  rx_frame(rx_frame_kind kind, std::size_t a, std::size_t b) : kind(kind), a(a), b(b) {}
+};
+
+struct rx_state {
+  mut {
+    std::vector<std::size_t> slots;
+    std::vector<std::size_t> loops;
+    std::vector<rx_frame> stack;
+    // Visited (position, split) states, position-major so the table grows
+    // only as far as a search reaches. `dirty` lists the nonzero words so
+    // the next search clears only what this one set.
+    std::vector<uint64_t> visited;
+    std::vector<std::size_t> dirty;
+    bool memo;
+    bool full;
+  }
+  rx_state()
+      : slots(std::vector<std::size_t>()), loops(std::vector<std::size_t>()),
+        stack(std::vector<rx_frame>()), visited(std::vector<uint64_t>()),
+        dirty(std::vector<std::size_t>()), memo(false), full(false) {}
+  rx_state(rx_state& other) = delete;
+  rx_state(rx_state&& other) = default;
+};
+
+bool rx_word_at(std::string_view subject, std::size_t position) {
+  return position < subject.size() && rx_is_word(rx_byte(subject, position));
+}
+
+bool rx_at_line_start(std::string_view subject, std::size_t position, bool multiline) {
+  if (position == std::size_t(0)) { return true; }
+  return multiline && rx_is_line_terminator(rx_byte(subject, position - std::size_t(1)));
+}
+
+bool rx_at_line_end(std::string_view subject, std::size_t position, bool multiline) {
+  if (position == subject.size()) { return true; }
+  return multiline && rx_is_line_terminator(rx_byte(subject, position));
+}
+
+// Compares the text of `group` with the subject at `position`; on success
+// stores the position after it in `end`.
+bool rx_backref_matches(std::string_view subject, mut rx_state& st, std::size_t group, std::size_t position,
+                        bool icase, mut std::size_t& end) {
+  std::size_t first = st.slots[group * std::size_t(2)];
+  std::size_t last = st.slots[group * std::size_t(2) + std::size_t(1)];
+  if (first == rx_none || last == rx_none || last < first) {
+    end = position;   // an unset group matches the empty string
+    return true;
+  }
+  std::size_t length = last - first;
+  if (length > subject.size() - position) { return false; }
+  mut std::size_t index = 0;
+  while (index < length) {
+    uint8_t expected_byte = rx_byte(subject, first + index);
+    uint8_t actual = rx_byte(subject, position + index);
+    if (icase) {
+      if (rx_fold(expected_byte) != rx_fold(actual)) { return false; }
+    } else if (expected_byte != actual) {
+      return false;
+    }
+    index = index + std::size_t(1);
+  }
+  end = position + length;
+  return true;
+}
+
+// Drops the branch frames above `base`, keeping undo records so an outer
+// backtrack still restores what a successful lookahead captured.
+void rx_commit_frames(mut rx_state& st, std::size_t base) {
+  mut std::vector<rx_frame> kept{};
+  while (st.stack.size() > base) {
+    rx_frame frame = st.stack.back();
+    st.stack.pop_back();
+    if (frame.kind != rx_frame_kind::branch) { kept.push_back(frame); }
+  }
+  while (!kept.empty()) {
+    st.stack.push_back(kept.back());
+    kept.pop_back();
+  }
+}
+
+// Undoes every frame above `base`.
+void rx_unwind_frames(mut rx_state& st, std::size_t base) {
+  while (st.stack.size() > base) {
+    rx_frame frame = st.stack.back();
+    st.stack.pop_back();
+    if (frame.kind == rx_frame_kind::slot) { st.slots[frame.a] = frame.b; }
+    else if (frame.kind == rx_frame_kind::loop) { st.loops[frame.a] = frame.b; }
+  }
+}
+
+// Runs the program from `start_pc` at `start`. Returns true at `accept`
+// (or at `look_end` inside a lookahead), leaving its frames on the stack.
+bool rx_run(rx_program& prog, std::string_view subject, mut rx_state& st, std::size_t start_pc,
+            std::size_t start) {
+  std::size_t base = st.stack.size();
+  st.stack.push_back(rx_frame(rx_frame_kind::branch, start_pc, start));
+  while (st.stack.size() > base) {
+    rx_frame frame = st.stack.back();
+    st.stack.pop_back();
+    if (frame.kind == rx_frame_kind::slot) {
+      st.slots[frame.a] = frame.b;
+      continue;
+    }
+    if (frame.kind == rx_frame_kind::loop) {
+      st.loops[frame.a] = frame.b;
+      continue;
+    }
+    mut std::size_t pc = frame.a;
+    mut std::size_t pos = frame.b;
+    mut bool running = true;
+    while (running) {
+      rx_op op = prog.code[pc].op;
+      if (op == rx_op::byte) {
+        if (pos < subject.size() && rx_byte(subject, pos) == prog.code[pc].value) {
+          pos = pos + std::size_t(1);
+          pc = pc + std::size_t(1);
+        } else {
+          running = false;
+        }
+      } else if (op == rx_op::set) {
+        if (pos < subject.size() && rx_set_has(prog.set_bits, prog.code[pc].x, rx_byte(subject, pos))) {
+          pos = pos + std::size_t(1);
+          pc = pc + std::size_t(1);
+        } else {
+          running = false;
+        }
+      } else if (op == rx_op::any) {
+        if (pos < subject.size() && !rx_is_line_terminator(rx_byte(subject, pos))) {
+          pos = pos + std::size_t(1);
+          pc = pc + std::size_t(1);
+        } else {
+          running = false;
+        }
+      } else if (op == rx_op::any_byte) {
+        if (pos < subject.size()) {
+          pos = pos + std::size_t(1);
+          pc = pc + std::size_t(1);
+        } else {
+          running = false;
+        }
+      } else if (op == rx_op::split) {
+        if (st.memo) {
+          std::size_t state = pos * prog.split_count + prog.split_index[pc];
+          std::size_t word = state / std::size_t(64);
+          uint64_t mask = uint64_t(1) << uint64_t(state % std::size_t(64));
+          if (word >= st.visited.size()) {
+            mut std::size_t grown = st.visited.size() * std::size_t(2);
+            if (grown <= word) { grown = word + std::size_t(1); }
+            st.visited.resize(grown, uint64_t(0));
+          }
+          uint64_t bits = st.visited[word];
+          if ((bits & mask) != uint64_t(0)) {
+            running = false;
+            continue;
+          }
+          if (bits == uint64_t(0)) { st.dirty.push_back(word); }
+          st.visited[word] = bits | mask;
+        }
+        st.stack.push_back(rx_frame(rx_frame_kind::branch, prog.code[pc].y, pos));
+        pc = prog.code[pc].x;
+      } else if (op == rx_op::jump) {
+        pc = prog.code[pc].x;
+      } else if (op == rx_op::save) {
+        std::size_t slot = prog.code[pc].x;
+        st.stack.push_back(rx_frame(rx_frame_kind::slot, slot, st.slots[slot]));
+        st.slots[slot] = pos;
+        pc = pc + std::size_t(1);
+      } else if (op == rx_op::line_start) {
+        if (rx_at_line_start(subject, pos, prog.code[pc].flag)) { pc = pc + std::size_t(1); }
+        else { running = false; }
+      } else if (op == rx_op::line_end) {
+        if (rx_at_line_end(subject, pos, prog.code[pc].flag)) { pc = pc + std::size_t(1); }
+        else { running = false; }
+      } else if (op == rx_op::word_boundary || op == rx_op::not_word_boundary) {
+        bool before = pos > std::size_t(0) && rx_word_at(subject, pos - std::size_t(1));
+        bool boundary = before != rx_word_at(subject, pos);
+        if (boundary == (op == rx_op::word_boundary)) { pc = pc + std::size_t(1); }
+        else { running = false; }
+      } else if (op == rx_op::backref) {
+        mut std::size_t end = pos;
+        if (rx_backref_matches(subject, st, prog.code[pc].x, pos, prog.code[pc].flag, end)) {
+          pos = end;
+          pc = pc + std::size_t(1);
+        } else {
+          running = false;
+        }
+      } else if (op == rx_op::loop_enter && st.memo) {
+        // Under the memo, returning to a loop's split at the same position
+        // is a revisit, which already rejects an empty iteration.
+        pc = pc + std::size_t(1);
+      } else if (op == rx_op::loop_check && st.memo) {
+        pc = pc + std::size_t(1);
+      } else if (op == rx_op::loop_enter) {
+        std::size_t loop = prog.code[pc].x;
+        st.stack.push_back(rx_frame(rx_frame_kind::loop, loop, st.loops[loop]));
+        st.loops[loop] = pos;
+        pc = pc + std::size_t(1);
+      } else if (op == rx_op::loop_check) {
+        if (st.loops[prog.code[pc].x] == pos) { running = false; }
+        else { pc = pc + std::size_t(1); }
+      } else if (op == rx_op::look) {
+        std::size_t inner = st.stack.size();
+        bool negative = prog.code[pc].flag;
+        bool found = rx_run(prog, subject, st, pc + std::size_t(1), pos);
+        if (found) {
+          if (negative) {
+            rx_unwind_frames(st, inner);
+            running = false;
+          } else {
+            rx_commit_frames(st, inner);
+            pc = prog.code[pc].x;
+          }
+        } else if (negative) {
+          pc = prog.code[pc].x;
+        } else {
+          running = false;
+        }
+      } else if (op == rx_op::look_end) {
+        return true;
+      } else {   // accept
+        if (st.full && pos != subject.size()) {
+          running = false;
+        } else {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// Prepares reusable state for a run over `subject`. Marks the previous run
+// left are cleared word by word, so a loop of searches over one subject
+// costs only the work each search does.
+void rx_prepare(rx_program& prog, std::string_view subject, mut rx_state& st, bool full) {
+  std::size_t slot_count = (prog.groups + std::size_t(1)) * std::size_t(2);
+  st.slots.clear();
+  st.slots.resize(slot_count, rx_none);
+  st.loops.clear();
+  st.loops.resize(prog.loops, rx_none);
+  st.stack.clear();
+  st.full = full;
+  mut std::size_t index = 0;
+  while (index < st.dirty.size()) {
+    std::size_t word = st.dirty[index];
+    st.visited[word] = uint64_t(0);
+    index = index + std::size_t(1);
+  }
+  st.dirty.clear();
+  st.memo = prog.linear && prog.split_count > std::size_t(0) &&
+            subject.size() < rx_max_memo_bits / prog.split_count;
+}
+
+// Whole-subject match. On success `st.slots` holds the captures.
+bool rx_match(rx_program& prog, std::string_view subject, mut rx_state& st) {
+  rx_prepare(prog, subject, st, true);
+  if (prog.first_known && (subject.empty() || !rx_set_has(prog.first_bytes, 0, rx_byte(subject, 0)))) {
+    return false;
+  }
+  return rx_run(prog, subject, st, 0, 0);
+}
+
+// Leftmost match starting at or after `from`. A visited state failed for
+// every earlier start too (no backreferences or lookaheads can see where
+// the attempt began), so the memo stays valid across start positions.
+bool rx_search(rx_program& prog, std::string_view subject, mut rx_state& st, std::size_t from) {
+  rx_prepare(prog, subject, st, false);
+  mut std::size_t start = from;
+  while (start <= subject.size()) {
+    if (prog.anchored && start > std::size_t(0)) { return false; }
+    if (prog.first_known) {
+      // No empty match is possible: skip to a byte that can begin one.
+      while (start < subject.size() && !rx_set_has(prog.first_bytes, 0, rx_byte(subject, start))) {
+        start = start + std::size_t(1);
+      }
+      if (start >= subject.size()) { return false; }
+    }
+    std::size_t slot_count = st.slots.size();
+    mut std::size_t index = 0;
+    while (index < slot_count) {
+      st.slots[index] = rx_none;
+      index = index + std::size_t(1);
+    }
+    st.stack.clear();
+    if (rx_run(prog, subject, st, 0, start)) { return true; }
+    start = start + std::size_t(1);
+  }
+  return false;
+}
+
+// Slots of the leftmost match at or after `from` (whole-subject when
+// `full`), or an empty vector when there is none. `st` is reused across
+// calls by the iterating operations.
+std::vector<std::size_t> rx_find_with(rx_program& program, std::string_view subject, mut rx_state& st,
+                                      std::size_t from, bool full) {
+  bool found = full ? rx_match(program, subject, st) : rx_search(program, subject, st, from);
+  mut std::vector<std::size_t> slots{};
+  if (found) {
+    for (std::size_t slot : st.slots) { slots.push_back(slot); }
+  }
+  return slots;
+}
+
+std::vector<std::size_t> rx_find(rx_program& program, std::string_view subject, std::size_t from, bool full) {
+  mut rx_state st = rx_state();
+  return rx_find_with(program, subject, st, from, full);
+}
+
+// The compiled form a regex owns.
+using rx_names = std::shared_ptr<std::vector<std::string>>;
+
+struct rx_compiled {
+  mut {
+    rx_program program;
+    rx_names names;
+  }
+  regex_options options;
+  rx_compiled(rx_program program, rx_names names, regex_options options)
+      : program(std::move(program)), names(std::move(names)), options(options) {}
+  rx_compiled(rx_compiled& other) = delete;
+  rx_compiled(rx_compiled&& other) = default;
+};
+
+expected<rx_compiled, regex_error> rx_build(std::string_view pattern, regex_options options) {
+  mut rx_program program = rx_program();
+  mut std::vector<std::string> names{};
+  expected<void, regex_error> compiled = rx_compile(pattern, options, program, names);
+  if (!compiled) { return unexpected(compiled.error()); }
+  return rx_compiled(std::move(program), std::make_shared<std::vector<std::string>>(std::move(names)), options);
+}
+
+rx_compiled rx_build_or_panic(std::string_view pattern, regex_options options) {
+  expected<rx_compiled, regex_error> built = rx_build(pattern, options);
+  if (!built) {
+    std::panic(built.error().description());
+  }
+  return std::move(built).value();
+}
+
+
+// Appends `subject[first, last)` to `out`.
+void rx_append_range(mut std::string& out, std::string_view subject, std::size_t first, std::size_t last) {
+  mut std::size_t index = first;
+  while (index < last) {
+    out.push_back(subject[index]);
+    index = index + std::size_t(1);
+  }
+}
+
+// Appends one ECMAScript replacement: `$$`, `$&`, `` $` ``, `$'`, `$n`,
+// `$nn` and `$<name>`; anything else is copied literally.
+void rx_append_format(mut std::string& out, std::string_view subject, std::vector<std::size_t>& slots,
+                      std::vector<std::string>& names, std::string_view format) {
+  std::size_t groups = slots.size() / std::size_t(2);
+  mut std::size_t index = 0;
+  while (index < format.size()) {
+    char value = format[index];
+    if (value != '$' || index + std::size_t(1) >= format.size()) {
+      out.push_back(value);
+      index = index + std::size_t(1);
+      continue;
+    }
+    char next = format[index + std::size_t(1)];
+    if (next == '$') {
+      out.push_back('$');
+      index = index + std::size_t(2);
+    } else if (next == '&') {
+      rx_append_range(out, subject, slots[std::size_t(0)], slots[std::size_t(1)]);
+      index = index + std::size_t(2);
+    } else if (next == '`') {
+      rx_append_range(out, subject, std::size_t(0), slots[std::size_t(0)]);
+      index = index + std::size_t(2);
+    } else if (next == '\'') {
+      rx_append_range(out, subject, slots[std::size_t(1)], subject.size());
+      index = index + std::size_t(2);
+    } else if (rx_is_digit(uint8_t(next))) {
+      mut std::size_t group = std::size_t(uint8_t(next) - uint8_t(48));
+      mut std::size_t used = 2;
+      if (index + std::size_t(2) < format.size() && rx_is_digit(uint8_t(format[index + std::size_t(2)]))) {
+        std::size_t wide = group * std::size_t(10) + std::size_t(uint8_t(format[index + std::size_t(2)]) - uint8_t(48));
+        if (wide > std::size_t(0) && wide < groups) {
+          group = wide;
+          used = 3;
+        }
+      }
+      if (group == std::size_t(0) || group >= groups) {
+        out.push_back('$');
+        index = index + std::size_t(1);
+        continue;
+      }
+      std::size_t first = slots[group * std::size_t(2)];
+      std::size_t last = slots[group * std::size_t(2) + std::size_t(1)];
+      if (first != rx_none && last != rx_none) { rx_append_range(out, subject, first, last); }
+      index = index + used;
+    } else if (next == '<') {
+      mut std::size_t close = index + std::size_t(2);
+      while (close < format.size() && format[close] != '>') { close = close + std::size_t(1); }
+      if (close >= format.size()) {
+        out.push_back('$');
+        index = index + std::size_t(1);
+        continue;
+      }
+      mut std::string name = std::string("");
+      rx_append_range(name, format, index + std::size_t(2), close);
+      std::size_t group = rx_group_named(names, name.view());
+      if (group != rx_none && group < groups) {
+        std::size_t first = slots[group * std::size_t(2)];
+        std::size_t last = slots[group * std::size_t(2) + std::size_t(1)];
+        if (first != rx_none && last != rx_none) { rx_append_range(out, subject, first, last); }
+      }
+      index = close + std::size_t(1);
+    } else {
+      out.push_back('$');
+      index = index + std::size_t(1);
+    }
+  }
+}
+
+// The group number of `name`, or rx_none.
+std::size_t rx_group_named(std::vector<std::string>& names, std::string_view name) {
+  mut std::size_t index = 0;
+  while (index < names.size()) {
+    if (names[index] == name) { return index + std::size_t(1); }
+    index = index + std::size_t(1);
+  }
+  return rx_none;
+}
+
+// The next search position after a match: past an empty match, so that
+// iteration always advances.
+std::size_t rx_next_from(std::vector<std::size_t>& slots) {
+  if (slots[std::size_t(1)] == slots[std::size_t(0)]) { return slots[std::size_t(1)] + std::size_t(1); }
+  return slots[std::size_t(1)];
+}
+
+}  // namespace detail
+
+/// Where one capture group matched, as byte offsets into the subject:
+/// `[first, second)`. An unmatched group has `matched == false` and both
+/// offsets equal to `std::string::npos`.
+export struct sub_match {
+  bool matched = false;
+  std::size_t first = 0;
+  std::size_t second = 0;
+
+  sub_match(bool matched, std::size_t first, std::size_t second)
+      : matched(matched), first(first), second(second) {}
+
+  std::size_t length() {
+    if (!this.matched) { return 0; }
+    return this.second - this.first;
+  }
+};
+
+/// The outcome of one match attempt over a subject. It is empty, and tests
+/// false, when nothing matched. Otherwise group 0 is the whole match and
+/// groups 1 through `size() - 1` are the capture groups; a named group is
+/// also reachable by its name.
+///
+/// A result reads the subject it was matched against. It keeps that text
+/// borrowed, so the borrow checker rejects changing or destroying the text
+/// while the result is still used, and rejects returning a result that
+/// outlives its text.
+export class match_results {
+  std::string_view subject;
+  std::vector<std::size_t> slots;
+  detail::rx_names names;
+
+  std::size_t first_in_slot(std::size_t n) {
+    if (n >= this.size()) { return detail::rx_none; }
+    return this.slots[n * std::size_t(2)];
+  }
+  std::size_t last_in_slot(std::size_t n) {
+    if (n >= this.size()) { return detail::rx_none; }
+    return this.slots[n * std::size_t(2) + std::size_t(1)];
+  }
+  std::size_t named(std::string_view name) { return detail::rx_group_named(*this.names, name); }
+  sub_match group(std::size_t n) {
+    if (!this.matched(n)) { return sub_match(false, std::string::npos, std::string::npos); }
+    return sub_match(true, this.first_in_slot(n), this.last_in_slot(n));
+  }
+public:
+  match_results(std::string_view subject, std::vector<std::size_t> slots, detail::rx_names names)
+      : subject(subject), slots(std::move(slots)), names(std::move(names)) {}
+  match_results(match_results& other) = delete;
+  match_results(match_results&& other) = default;
+
+  /// True when nothing matched.
+  bool empty() { return this.slots.empty(); }
+  /// True when the attempt matched, so `if (m)` tests a result.
+  operator bool() { return !this.slots.empty(); }
+  /// The number of groups including group 0, or 0 when nothing matched.
+  std::size_t size() { return this.slots.size() / std::size_t(2); }
+
+  /// Whether group `n` (or the group called `name`) took part in the match.
+  bool matched(std::size_t n) {
+    return this.first_in_slot(n) != detail::rx_none && this.last_in_slot(n) != detail::rx_none;
+  }
+  bool matched(std::string_view name) { return this.matched(this.named(name)); }
+
+  /// The byte offset of a group in the subject, or `std::string::npos` when
+  /// it did not take part.
+  std::size_t position(std::size_t n) {
+    if (!this.matched(n)) { return std::string::npos; }
+    return this.first_in_slot(n);
+  }
+  std::size_t position(std::string_view name) { return this.position(this.named(name)); }
+  std::size_t position() { return this.position(std::size_t(0)); }
+
+  /// The byte length of a group, or 0 when it did not take part.
+  std::size_t length(std::size_t n) {
+    if (!this.matched(n)) { return 0; }
+    return this.last_in_slot(n) - this.first_in_slot(n);
+  }
+  std::size_t length(std::string_view name) { return this.length(this.named(name)); }
+  std::size_t length() { return this.length(std::size_t(0)); }
+
+  /// Where a group matched. Groups that do not exist are unmatched.
+  sub_match operator[](std::size_t n) { return this.group(n); }
+  sub_match operator[](std::string_view name) { return this.group(this.named(name)); }
+
+  /// A copy of a group's text, empty when it did not take part.
+  std::string str(std::size_t n) {
+    mut std::string out = std::string("");
+    if (this.matched(n)) {
+      detail::rx_append_range(out, this.subject, this.first_in_slot(n), this.last_in_slot(n));
+    }
+    return out;
+  }
+  std::string str(std::string_view name) { return this.str(this.named(name)); }
+  std::string str() { return this.str(std::size_t(0)); }
+
+  /// Whether a group matched exactly `text`, without copying it.
+  bool equals(std::size_t n, std::string_view text) {
+    if (!this.matched(n) || this.length(n) != text.size()) { return false; }
+    std::size_t first = this.first_in_slot(n);
+    mut std::size_t index = 0;
+    while (index < text.size()) {
+      if (this.subject[first + index] != text[index]) { return false; }
+      index = index + std::size_t(1);
+    }
+    return true;
+  }
+  bool equals(std::string_view name, std::string_view text) { return this.equals(this.named(name), text); }
+
+  /// A copy of the subject text before the match.
+  std::string prefix() {
+    mut std::string out = std::string("");
+    if (!this.empty()) { detail::rx_append_range(out, this.subject, std::size_t(0), this.slots[std::size_t(0)]); }
+    return out;
+  }
+  /// A copy of the subject text after the match.
+  std::string suffix() {
+    mut std::string out = std::string("");
+    if (!this.empty()) {
+      detail::rx_append_range(out, this.subject, this.slots[std::size_t(1)], this.subject.size());
+    }
+    return out;
+  }
+
+  /// The search position that follows this match. It steps past an empty
+  /// match, so `regex_search(subject, re, m.next_position())` in a loop
+  /// visits every match and always advances.
+  std::size_t next_position() {
+    if (this.empty()) { return this.subject.size() + std::size_t(1); }
+    return detail::rx_next_from(this.slots);
+  }
+
+  /// Expands an ECMAScript replacement string against this match: `$&`,
+  /// `` $` ``, `$'`, `$1`..`$99`, `$<name>` and `$$`.
+  std::string format(std::string_view replacement) {
+    mut std::string out = std::string("");
+    if (!this.empty()) { detail::rx_append_format(out, this.subject, this.slots, *this.names, replacement); }
+    return out;
+  }
+};
+
+/// An owned copy of one match: each group's text, offsets and names. It holds
+/// no borrow of the subject, so a callable may receive, keep or return it.
+/// `regex_replace_with` passes one to its callable for every match.
+export class match_groups {
+  std::vector<std::string> texts;
+  std::vector<std::size_t> slots;
+  detail::rx_names names;
+
+  std::size_t named(std::string_view name) { return detail::rx_group_named(*this.names, name); }
+public:
+  match_groups(std::vector<std::string> texts, std::vector<std::size_t> slots, detail::rx_names names)
+      : texts(std::move(texts)), slots(std::move(slots)), names(std::move(names)) {}
+  match_groups(match_groups& other) = delete;
+  match_groups(match_groups&& other) = default;
+
+  /// The number of groups including group 0.
+  std::size_t size() { return this.texts.size(); }
+  bool matched(std::size_t n) {
+    return n < this.size() && this.slots[n * std::size_t(2)] != detail::rx_none;
+  }
+  bool matched(std::string_view name) { return this.matched(this.named(name)); }
+  std::size_t position(std::size_t n) {
+    if (!this.matched(n)) { return std::string::npos; }
+    return this.slots[n * std::size_t(2)];
+  }
+  std::size_t position(std::string_view name) { return this.position(this.named(name)); }
+  /// A view of the copied text of a group, empty when it did not take part.
+  std::string_view str(std::size_t n) {
+    if (n >= this.size()) { return ""; }
+    return this.texts[n].view();
+  }
+  std::string_view str(std::string_view name) {
+    std::size_t n = this.named(name);
+    if (n >= this.size()) { return ""; }
+    return this.texts[n].view();
+  }
+  std::string_view str() { return this.texts[std::size_t(0)].view(); }
+};
+
+namespace detail {
+
+match_groups rx_groups(std::string_view subject, std::vector<std::size_t> slots, rx_names names) {
+  mut std::vector<std::string> texts{};
+  std::size_t count = slots.size() / std::size_t(2);
+  mut std::size_t index = 0;
+  while (index < count) {
+    mut std::string text = std::string("");
+    std::size_t first = slots[index * std::size_t(2)];
+    std::size_t last = slots[index * std::size_t(2) + std::size_t(1)];
+    if (first != rx_none && last != rx_none) { rx_append_range(text, subject, first, last); }
+    texts.push_back(std::move(text));
+    index = index + std::size_t(1);
+  }
+  return match_groups(std::move(texts), std::move(slots), std::move(names));
+}
+
+}  // namespace detail
+
+/// Formatting choices for replacement, the C++ format_first_only and
+/// format_no_copy flags as named fields.
+export struct regex_format_options {
+  bool first_only = false;
+  bool no_copy = false;
+
+  regex_format_options() = default;
+};
+
+/// A compiled ECMAScript regular expression. It owns its compiled program,
+/// is move-only, and `clone()` copies it. Matching never changes it, so one
+/// regex may serve any number of matches.
+export class regex {
+  mut detail::rx_compiled data;
+  regex(detail::rx_compiled data) : data(std::move(data)) {}
+
+public:
+  /// Compiles a pattern known to be valid, such as a literal. An invalid
+  /// pattern panics; `compile` reports the failure as a value instead.
+  regex(std::string_view pattern) : data(detail::rx_build_or_panic(pattern, regex_options())) {}
+  regex(std::string_view pattern, regex_options options)
+      : data(detail::rx_build_or_panic(pattern, options)) {}
+  regex(regex& other) = delete;
+  regex(regex&& other) = default;
+
+  /// Compiles a pattern, returning why it is invalid instead of panicking.
+  static expected<regex, regex_error> compile(std::string_view pattern, regex_options options) {
+    expected<detail::rx_compiled, regex_error> built = detail::rx_build(pattern, options);
+    if (!built) { return unexpected(built.error()); }
+    return regex(std::move(built).value());
+  }
+  static expected<regex, regex_error> compile(std::string_view pattern) {
+    return regex::compile(pattern, regex_options());
+  }
+
+  /// The number of capture groups (0 under `nosubs`).
+  std::size_t mark_count() { return this.data.program.groups; }
+  /// The options the pattern was compiled with.
+  regex_options flags() { return this.data.options; }
+  /// The group number of a named group.
+  std::optional<std::size_t> group_index(std::string_view name) {
+    std::size_t group = detail::rx_group_named(*this.data.names, name);
+    if (group == detail::rx_none) { return std::nullopt; }
+    return group;
+  }
+  /// An independent copy of this regex.
+  regex clone() {
+    return regex(detail::rx_compiled(this.data.program.clone(), this.data.names.clone(), this.data.options));
+  }
+
+  /// Matches the whole subject (C++ regex_match).
+  match_results match(std::string_view subject) {
+    return match_results(subject, detail::rx_find(this.data.program, subject, std::size_t(0), true),
+                         this.data.names.clone());
+  }
+  /// Finds the leftmost match in the subject (C++ regex_search).
+  match_results search(std::string_view subject) {
+    return match_results(subject, detail::rx_find(this.data.program, subject, std::size_t(0), false),
+                         this.data.names.clone());
+  }
+  /// Finds the leftmost match starting at or after byte offset `from`.
+  /// `^`, `$` and `\b` still see the text before `from`, as with C++
+  /// match_prev_avail.
+  match_results search(std::string_view subject, std::size_t from) {
+    return match_results(subject, detail::rx_find(this.data.program, subject, from, false),
+                         this.data.names.clone());
+  }
+  /// Whether the whole subject matches.
+  bool matches(std::string_view subject) {
+    return !detail::rx_find(this.data.program, subject, std::size_t(0), true).empty();
+  }
+  /// Whether some part of the subject matches.
+  bool contains(std::string_view subject) {
+    return !detail::rx_find(this.data.program, subject, std::size_t(0), false).empty();
+  }
+  /// The number of non-overlapping matches in the subject.
+  std::size_t count(std::string_view subject) {
+    mut detail::rx_state st = detail::rx_state();
+    mut std::size_t total = 0;
+    mut std::size_t from = 0;
+    while (from <= subject.size()) {
+      std::vector<std::size_t> slots = detail::rx_find_with(this.data.program, subject, st, from, false);
+      if (slots.empty()) { break; }
+      total = total + std::size_t(1);
+      from = detail::rx_next_from(slots);
+    }
+    return total;
+  }
+
+  /// Replaces matches in `subject` with an ECMAScript replacement string.
+  std::string replace(std::string_view subject, std::string_view replacement, regex_format_options options) {
+    mut detail::rx_state st = detail::rx_state();
+    mut std::string out = std::string("");
+    mut std::size_t copied = 0;
+    mut std::size_t from = 0;
+    while (from <= subject.size()) {
+      std::vector<std::size_t> slots = detail::rx_find_with(this.data.program, subject, st, from, false);
+      if (slots.empty()) { break; }
+      if (!options.no_copy) { detail::rx_append_range(out, subject, copied, slots[std::size_t(0)]); }
+      detail::rx_append_format(out, subject, slots, *this.data.names, replacement);
+      copied = slots[std::size_t(1)];
+      from = detail::rx_next_from(slots);
+      if (options.first_only) { break; }
+    }
+    if (!options.no_copy) { detail::rx_append_range(out, subject, copied, subject.size()); }
+    return out;
+  }
+  std::string replace(std::string_view subject, std::string_view replacement) {
+    return this.replace(subject, replacement, regex_format_options());
+  }
+
+  /// Replaces every match with what `replacement(groups)` returns, where
+  /// `groups` is the match's `match_groups`.
+  std::string replace_with<F>(std::string_view subject, F& replacement) {
+    mut detail::rx_state st = detail::rx_state();
+    mut std::string out = std::string("");
+    mut std::size_t copied = 0;
+    mut std::size_t from = 0;
+    while (from <= subject.size()) {
+      std::vector<std::size_t> slots = detail::rx_find_with(this.data.program, subject, st, from, false);
+      if (slots.empty()) { break; }
+      std::size_t first = slots[std::size_t(0)];
+      std::size_t last = slots[std::size_t(1)];
+      from = detail::rx_next_from(slots);
+      detail::rx_append_range(out, subject, copied, first);
+      match_groups groups = detail::rx_groups(subject, std::move(slots), this.data.names.clone());
+      std::string replaced = replacement(groups);
+      out.append(replaced.view());
+      copied = last;
+    }
+    detail::rx_append_range(out, subject, copied, subject.size());
+    return out;
+  }
+
+  /// Splits `subject` around its matches, like a C++ regex_token_iterator
+  /// over submatch -1. Each piece is an owned copy; an empty match at either
+  /// end of the subject does not split.
+  std::vector<std::string> split(std::string_view subject) {
+    mut detail::rx_state st = detail::rx_state();
+    mut std::vector<std::string> pieces{};
+    mut std::size_t copied = 0;
+    mut std::size_t from = 0;
+    while (from <= subject.size()) {
+      std::vector<std::size_t> slots = detail::rx_find_with(this.data.program, subject, st, from, false);
+      if (slots.empty()) { break; }
+      from = detail::rx_next_from(slots);
+      if (slots[std::size_t(1)] == slots[std::size_t(0)] &&
+          (slots[std::size_t(0)] == std::size_t(0) || slots[std::size_t(0)] >= subject.size())) {
+        continue;
+      }
+      mut std::string piece = std::string("");
+      detail::rx_append_range(piece, subject, copied, slots[std::size_t(0)]);
+      pieces.push_back(std::move(piece));
+      copied = slots[std::size_t(1)];
+    }
+    mut std::string last = std::string("");
+    detail::rx_append_range(last, subject, copied, subject.size());
+    pieces.push_back(std::move(last));
+    return pieces;
+  }
+
+  /// An owned copy of every non-overlapping match, in order.
+  std::vector<match_groups> find_all(std::string_view subject) {
+    mut detail::rx_state st = detail::rx_state();
+    mut std::vector<match_groups> found{};
+    mut std::size_t from = 0;
+    while (from <= subject.size()) {
+      std::vector<std::size_t> slots = detail::rx_find_with(this.data.program, subject, st, from, false);
+      if (slots.empty()) { break; }
+      from = detail::rx_next_from(slots);
+      found.push_back(detail::rx_groups(subject, std::move(slots), this.data.names.clone()));
+    }
+    return found;
+  }
+};
+
+/// Whether the whole subject matches; the result tests false when it does
+/// not. Replaces C++ regex_match(subject, results, re) and
+/// regex_match(subject, re).
+export match_results regex_match(std::string_view subject, regex& re) { return re.match(subject); }
+
+/// The leftmost match in the subject; the result tests false when there is
+/// none. Replaces C++ regex_search(subject, results, re).
+export match_results regex_search(std::string_view subject, regex& re) { return re.search(subject); }
+
+/// The leftmost match at or after byte offset `from`.
+export match_results regex_search(std::string_view subject, regex& re, std::size_t from) {
+  return re.search(subject, from);
+}
+
+/// Replaces every match, or only the first with `.first_only`.
+export std::string regex_replace(std::string_view subject, regex& re, std::string_view replacement,
+                                 regex_format_options options) {
+  return re.replace(subject, replacement, options);
+}
+export std::string regex_replace(std::string_view subject, regex& re, std::string_view replacement) {
+  return re.replace(subject, replacement);
+}
+
+/// Replaces every match with what `replacement(groups)` returns.
+export std::string regex_replace_with<F>(std::string_view subject, regex& re, F& replacement) {
+  return re.replace_with(subject, replacement);
+}
+
+}  // namespace std

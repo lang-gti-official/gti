@@ -36,6 +36,7 @@
     "process": "std/process.gti",
     "queue": "std/queue.gti",
     "random": "std/random.gti",
+    "regex": "std/regex.gti",
     "resource": "std/resource.gti",
     "resource_vector": "std/resource_vector.gti",
     "set": "std/set.gti",

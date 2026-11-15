@@ -690,6 +690,12 @@ The current implemented foundation includes:
   declared defaults, `read_file`/`write_file`, and `error` failures with
   `errc`, offset, line/column and a JSON Pointer path;
   see [JSON](json.md); and
+- `std.regex` ECMAScript regular expressions with C++ `std::regex` names:
+  `regex::compile` returning `expected<regex, regex_error>`, `regex_match`,
+  `regex_search` and `regex_replace` returning borrow-checked `match_results`,
+  named groups, `regex_replace_with` callables, `split` and `find_all`, and
+  linear-time matching for patterns without backreferences or lookaheads;
+  see [regular expressions](regex.md); and
 - `std.source_location` immutable, owned call-site snapshots containing the
   source file, qualified function name, one-based line, and a column value.
   `std::source_location::current()` and defaults that call it are expanded at
