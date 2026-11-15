@@ -792,6 +792,11 @@ public:
   isCharacterCodeConversion(const SemanticType &source,
                             const SemanticType &target);
 
+  bool analyzeConstantCharacterConversion(const Expr &source,
+                                          const ExprPtr &operand,
+                                          const SemanticType &valueType,
+                                          const SemanticType &targetType);
+
   void analyzeTypeParameterCall(const Call &expr,
                                 const SemanticType &targetType);
 
