@@ -1383,17 +1383,34 @@ reads use one fixed internal array and return an owned string; application code
 never receives the mutable runtime buffer or native descriptor.
 
 `std.http` follows the same public-policy boundary for owned URL construction
-and a synchronous, buffered HTTP/HTTPS client. Absolute parsing, component
-percent-encoding, URL cloning and rendering, request construction, header
-validation, stable error categories, owned response copying, and RAII live in
-ordinary GTI. A versioned `gti_rt_http_*_v1` C ABI accepts only counted views,
-scalar limits,
-stable method ordinals, and opaque integer handles. Its host implementation
-dynamically loads libcurl, enforces certificate and hostname verification,
-disables redirects, bounds buffered response data, and retains no caller
-views. No libcurl type, option, callback, or pointer crosses into public GTI.
-The response handle owns bytes that have already been received; it is not a
-public streaming or socket abstraction.
+and synchronous buffered or streaming HTTP/HTTPS. Request scheme policy
+restricts initial and redirected URLs in ordinary GTI before transport, including
+an opt-in HTTPS-only mode. Absolute parsing, component
+encoding, URL cloning/rendering, request construction, header validation,
+redirect policy and method changes, stable errors, response copying, and RAII
+live in ordinary GTI. Its versioned `gti_rt_http_*_v1` C ABI accepts counted
+views, scalar limits, method ordinals, and opaque handles. The host transport
+dynamically loads libcurl, enforces certificate/hostname verification, disables
+native redirect following, and retains no caller views. No libcurl type, option,
+callback or pointer crosses the public API.
+
+Buffered `send` retains complete-body ownership. `send_stream` instead returns
+an independent move-only `streaming_response` after final headers; it implements
+`std::io::reader` over caller storage and preserves detailed HTTP failures beside
+the generic I/O error. Generic `std::io::copy` provides transfer to any writer.
+Progress is observed through delivered-byte counts, and cancellation is explicit
+between synchronous reads. A total deadline spans redirect hops and consumer
+pauses. Stream-owned easy/multi sessions use bounded body staging and pull-driven
+progress without worker threads. The current native streaming profile is
+HTTP/1.1 with raw content-encoded bytes, avoiding decompression or HTTP/2 pause
+buffers that could defeat the memory bound. This profile is distinct from the
+existing buffered decoded-body contract. A completed session may return to the
+client's bounded idle pool; abandoning an unread body closes its connection.
+The response can outlive its client because no public borrow ties their owners.
+See [HTTP/HTTPS](../language/http.md) for redirect security, errors and lifetime
+contracts. Building HTTP over the general TCP transport additionally requires a
+TLS stream and HTTP framing implementation; the public reader boundary does not
+expose the current native transport choice.
 
 `std.tcp` applies the same split to stream sockets. Address values, strict
 IPv4/IPv6 parsing, RFC 5952 formatting, error categories, timeouts expressed

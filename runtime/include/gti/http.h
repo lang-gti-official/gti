@@ -34,6 +34,7 @@ enum {
   GTI_HTTP_RESPONSE_TOO_LARGE_V1 = 9,
   GTI_HTTP_BACKEND_UNAVAILABLE_V1 = 10,
   GTI_HTTP_CLIENT_CREATION_FAILED_V1 = 11,
+  GTI_HTTP_CANCELLED_V1 = 12,
 };
 
 // All handles are process-local, positive pointer identities encoded as
@@ -52,6 +53,31 @@ gti_http_error_v1 gti_rt_http_client_send_v1(
     uint64_t request_timeout_ms, uint64_t max_response_bytes,
     gti_c_string_view ca_bundle_path, int64_t *output_response,
     int32_t *output_native_code);
+
+// Pull-based transfer: copies request data and returns after final headers.
+// The stream owns its transport independently of the client. Metadata is
+// borrowed from that stream and must never be destroyed separately.
+// Reads fill at most capacity bytes. Zero count is EOF (or a zero-size
+// request). Transport errors are sticky, and their count output is always zero;
+// any prefix delivered by earlier calls remains committed. Cancel is sticky
+// except after successful EOF. No callback or output pointer escapes a runtime
+// call.
+gti_http_error_v1 gti_rt_http_client_stream_v1(
+    int64_t client, gti_http_method_v1 method, gti_c_string_view url,
+    gti_c_string_view encoded_headers, uint64_t header_count,
+    gti_c_string_view body, uint64_t connect_timeout_ms,
+    uint64_t request_timeout_ms, uint64_t max_response_bytes,
+    gti_c_string_view ca_bundle_path, int64_t *output_stream,
+    int32_t *output_native_code);
+void gti_rt_http_stream_destroy_v1(int64_t stream);
+int64_t gti_rt_http_stream_metadata_v1(int64_t stream);
+gti_http_error_v1 gti_rt_http_stream_read_v1(int64_t stream, uint8_t *output,
+                                             uint64_t capacity,
+                                             uint64_t *count);
+void gti_rt_http_stream_cancel_v1(int64_t stream);
+uint64_t gti_rt_http_stream_bytes_read_v1(int64_t stream);
+gti_http_error_v1 gti_rt_http_stream_error_v1(int64_t stream);
+int32_t gti_rt_http_stream_native_code_v1(int64_t stream);
 
 uint64_t gti_rt_http_client_error_size_v1(int64_t client);
 int64_t gti_rt_http_client_error_read_v1(int64_t client, uint64_t offset,
