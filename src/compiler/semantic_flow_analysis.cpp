@@ -13251,8 +13251,9 @@ auto SemanticVisitor::Impl::requireNumeric(SemanticType left,
       (!isNumeric(left) || !isNumeric(right))) {
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2004", DiagnosticPhase::Semantics, token,
-        "Operator '" + token.lexeme + "' requires numeric operands but found '" +
-            typeSpelling(left) + "' and '" + typeSpelling(right) + "'.");
+        "Operator '" + token.lexeme +
+            "' requires numeric operands but found '" + typeSpelling(left) +
+            "' and '" + typeSpelling(right) + "'.");
     // A text view has no members of its own to host '+', and GTI operators
     // belong to their left operand.
     if (token.kind == TokenKind::PLUS && left == SemanticType::StringView)

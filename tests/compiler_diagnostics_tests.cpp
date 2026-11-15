@@ -3999,8 +3999,8 @@ int main() {
   expect(concatenation != nullptr &&
              concatenation->primary.start == source.find("+ std::to_string") &&
              concatenation->hints.size() == 1 &&
-             concatenation->hints.front().find("std::string(\"text\") + value") !=
-                 std::string::npos,
+             concatenation->hints.front().find(
+                 "std::string(\"text\") + value") != std::string::npos,
          "a literal on the left of '+' should suggest an owned string, while "
          "owned-string concatenation is accepted");
 }

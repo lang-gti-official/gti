@@ -1003,8 +1003,11 @@ int main() {
          auto c = "\u00e9\u20AC\U0001F600\u0041"; auto d = "it\'s";)");
   expect(lexer.errors().empty() && escaped.size() == 4 &&
              escaped[0] == "\a\b\x1b\f\v" &&
-             escaped[1] == std::string("A~\0\xff" "A42", 7) &&
-             escaped[2] == "\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80" "A" &&
+             escaped[1] == std::string("A~\0\xff"
+                                       "A42",
+                                       7) &&
+             escaped[2] == "\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80"
+                           "A" &&
              escaped[3] == "it's",
          "control, two-digit hexadecimal and Unicode escapes should decode "
          "to the exact code units");
@@ -1013,11 +1016,12 @@ int main() {
   for (const lang::Token &token :
        lexer.scan(R"(char a = '\b'; char b = '\x41'; char c = '\e';
                      char d = '\''; char e = '\\'; char f = '\u0041';)"))
-    if (const auto *character = std::get_if<lang::CharacterLiteral>(&token.literal))
+    if (const auto *character =
+            std::get_if<lang::CharacterLiteral>(&token.literal))
       characterValues.push_back(character->value);
   expect(lexer.errors().empty() &&
-             characterValues == std::vector<std::uint8_t>{8, 0x41, 0x1b, 0x27,
-                                                          0x5c, 0x41},
+             characterValues ==
+                 std::vector<std::uint8_t>{8, 0x41, 0x1b, 0x27, 0x5c, 0x41},
          "character literals should accept escapes that decode to one code "
          "unit");
 
@@ -1032,15 +1036,13 @@ int main() {
   const std::vector<std::pair<std::size_t, std::size_t>> expectedSpans{
       spanOf("\\x4\"", 3), spanOf("\\xZZ", 2), spanOf("\\u12", 4),
       spanOf("\\uD800", 6), spanOf("\\U00110000", 10)};
-  bool spansMatch =
-      countDiagnosticCode(lexer.errors(), "GTI-L0005") == 5 &&
-      countDiagnosticCode(lexer.errors(), "GTI-L0010") == 1;
+  bool spansMatch = countDiagnosticCode(lexer.errors(), "GTI-L0005") == 5 &&
+                    countDiagnosticCode(lexer.errors(), "GTI-L0010") == 1;
   for (std::size_t index = 0; spansMatch && index < expectedSpans.size();
        ++index)
-    spansMatch = lexer.errors()[index].primary.start ==
-                     expectedSpans[index].first &&
-                 lexer.errors()[index].primary.end ==
-                     expectedSpans[index].second;
+    spansMatch =
+        lexer.errors()[index].primary.start == expectedSpans[index].first &&
+        lexer.errors()[index].primary.end == expectedSpans[index].second;
   expect(spansMatch,
          "short hexadecimal escapes, surrogates and out-of-range scalars "
          "should report the exact escape, and a multi-byte \\u character "

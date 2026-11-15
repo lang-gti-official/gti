@@ -607,12 +607,14 @@ void Lexer::decodeEscape(std::string_view body, std::size_t &index,
   const char escaped = body[++index];
   // Fixed-width hexadecimal escapes. Unlike C++, `\x` takes exactly two
   // digits, so a following hexadecimal letter is never absorbed.
-  const auto hexadecimal = [&](std::size_t width) -> std::optional<std::uint32_t> {
+  const auto hexadecimal =
+      [&](std::size_t width) -> std::optional<std::uint32_t> {
     std::uint32_t result = 0;
     std::size_t taken = 0;
     while (taken < width && index + 1 < body.size() &&
            hexDigitValue(body[index + 1]) >= 0) {
-      result = result * 16 + static_cast<std::uint32_t>(hexDigitValue(body[++index]));
+      result = result * 16 +
+               static_cast<std::uint32_t>(hexDigitValue(body[++index]));
       ++taken;
     }
     if (taken == width)
