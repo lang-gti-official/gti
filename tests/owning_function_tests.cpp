@@ -53,6 +53,16 @@ void checkBorrowedTargetRejection() {
     expect(
         std::any_of(
             diagnostic->related.begin(), diagnostic->related.end(),
+            [&](const auto &note) {
+              return note.span.source.ends_with("borrowed-owning-target.gti") &&
+                     note.span.start == source.find("&value") + 1 &&
+                     note.span.end == source.find("&value") + 6 &&
+                     note.message.find("Capture 'value'") != std::string::npos;
+            }),
+        label + " identifies the original borrowing capture through erasure");
+    expect(
+        std::any_of(
+            diagnostic->related.begin(), diagnostic->related.end(),
             [&](const auto &related) {
               if (!related.span.source.ends_with("std/detail/memory_core.gti"))
                 return false;
@@ -94,6 +104,20 @@ int main() {
               "Unique allocation cannot retain checked borrowed state") &&
           !hasDiagnosticCode(aggregate.diagnostics, "GTI-B0001"),
       "unique allocation applies the same rule to an unrelated borrowed class");
+  const auto *aggregateError =
+      findDiagnosticByCode(aggregate.diagnostics, "GTI-S2018");
+  expect(
+      aggregateError &&
+          std::any_of(
+              aggregateError->related.begin(), aggregateError->related.end(),
+              [&](const auto &note) {
+                const auto field = prefix.size() + borrowedClass.find("value;");
+                return note.span.source.ends_with("borrowed-allocation.gti") &&
+                       note.span.start == field && note.span.end == field + 5 &&
+                       note.message.find("Field 'value'") != std::string::npos;
+              }),
+      "an unrelated borrowed record identifies its reference field "
+      "declaration");
 
   const auto ownedAggregate = analyze("owned-allocation.gti", prefix + R"gti(
 class Reading {

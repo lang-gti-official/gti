@@ -397,12 +397,217 @@ void testOwnershipAndMissingIncludeDiagnostics() {
                                     {standardLibraryRoot()});
   };
   const std::string prefix = "import std.string;\n";
+  const std::string localReturn = R"(
+int& invalid() {
+  int value = 1;
+  return value;
+}
+)";
+  const auto localReturnResult = analyze(localReturn);
+  const auto *localReturnError =
+      findDiagnosticByCode(localReturnResult.diagnostics, "GTI-S2017");
+  expect(!localReturnResult.canGenerateCode() && localReturnError &&
+             localReturnError->primary.start == localReturn.rfind("value") &&
+             localReturnError->message.find("local value 'value'") !=
+                 std::string::npos &&
+             localReturnError->related.size() == 1 &&
+             localReturnError->related[0].span.start ==
+                 localReturn.find("value") &&
+             localReturnError->related[0].span.end ==
+                 localReturn.find("value") + 5 &&
+             hasDiagnosticHint(localReturnResult.diagnostics,
+                               "does not keep a local value alive"),
+         "a returned local reference identifies the escaping expression and "
+         "the local whose storage ends at return");
+  auto ownedReturn = localReturn;
+  ownedReturn.erase(ownedReturn.find('&'), 1);
+  expect(analyze(ownedReturn).canGenerateCode(),
+         "returning the owned value preserves the valid nearby program");
+  auto threadLocalReturn = localReturn;
+  threadLocalReturn.insert(threadLocalReturn.find("int value"),
+                           "thread_local ");
+  const auto threadLocalResult = analyze(threadLocalReturn);
+  expect(threadLocalResult.syntaxValid &&
+             !hasDiagnostic(threadLocalResult.diagnostics,
+                            "Cannot return a reference to local value") &&
+             !hasRelatedDiagnostic(threadLocalResult.diagnostics,
+                                   "storage ends when the function returns"),
+         "thread-local storage is not described as dying at function return");
+  const std::string closureEscape = R"(
+import std.functional;
+std::function_ref<int()> invalid() {
+  int value = 1;
+  auto callback = [&value]() -> int { return value; };
+  std::function_ref<int()> result{callback};
+  return result;
+}
+int main() { auto call = invalid(); return call(); }
+)";
+  const auto closureEscapeResult = analyze(closureEscape);
+  const auto *closureEscapeError =
+      findDiagnosticByCode(closureEscapeResult.diagnostics, "GTI-S2127");
+  expect(!closureEscapeResult.canGenerateCode() && closureEscapeError &&
+             closureEscapeError->primary.start ==
+                 closureEscape.find("result;",
+                                    closureEscape.find("return result")) &&
+             std::any_of(closureEscapeError->related.begin(),
+                         closureEscapeError->related.end(),
+                         [&](const auto &note) {
+                           return note.span.start ==
+                                      closureEscape.find("value") &&
+                                  note.span.end ==
+                                      closureEscape.find("value") + 5 &&
+                                  note.message.find(
+                                      "destroyed when the function returns") !=
+                                      std::string::npos;
+                         }) &&
+             hasDiagnosticHint(closureEscapeResult.diagnostics,
+                               "cannot extend local storage"),
+         "an escaping borrowed callable identifies the captured local storage "
+         "that the returned view cannot outlive");
+  const std::string ownedErasure = R"(
+import std.functional;
+std::function<int()> invalid() {
+  int value = 1;
+  std::function<int()> callback{[&value]() -> int { return value; }};
+  return callback;
+}
+int main() { auto call = invalid(); return call(); }
+)";
+  const auto ownedErasureResult = analyze(ownedErasure);
+  const auto *ownedErasureError =
+      findDiagnosticByCode(ownedErasureResult.diagnostics, "GTI-S2018");
+  expect(
+      !ownedErasureResult.canGenerateCode() && ownedErasureError &&
+          std::any_of(ownedErasureError->related.begin(),
+                      ownedErasureError->related.end(),
+                      [&](const auto &note) {
+                        return note.span.start ==
+                                   ownedErasure.find("&value") + 1 &&
+                               note.span.end ==
+                                   ownedErasure.find("&value") + 6 &&
+                               note.message.find("Capture 'value'") !=
+                                   std::string::npos;
+                      }),
+      "owning erasure explains the source capture that retains borrowed state");
+  auto ownedCapture = ownedErasure;
+  ownedCapture.erase(ownedCapture.find("&value"), 1);
+  expect(analyze(ownedCapture).canGenerateCode(),
+         "copying the scalar into the closure gives the erased callable owned "
+         "state");
+  const std::string ambiguous = R"(
+int& choose(int& first, int& second, bool condition) {
+  if (condition) { return first; }
+  return second;
+}
+)";
+  const auto ambiguousResult = analyze(ambiguous);
+  const auto *ambiguousError =
+      findDiagnosticByCode(ambiguousResult.diagnostics, "GTI-S2017");
+  expect(
+      !ambiguousResult.canGenerateCode() && ambiguousError &&
+          ambiguousError->primary.start == ambiguous.find("choose") &&
+          ambiguousError->related.size() == 2 &&
+          ambiguousError->related[0].span.start == ambiguous.find("first") &&
+          ambiguousError->related[0].span.end == ambiguous.find("first") + 5 &&
+          ambiguousError->related[1].span.start == ambiguous.find("second") &&
+          ambiguousError->related[1].span.end == ambiguous.find("second") + 6 &&
+          ambiguousError->related[0].message.find("first") !=
+              std::string::npos &&
+          ambiguousError->related[1].message.find("second") !=
+              std::string::npos &&
+          ambiguousError->fixes.empty(),
+      "ambiguous return explains both possible suppliers, excluding the "
+      "non-borrowing condition, without guessing a lifetime fix");
+  expect(hasDiagnosticHint(ambiguousResult.diagnostics,
+                           "intended input supplier or suppliers"),
+         "ambiguous return explains the signature relationship to declare");
+  expect(analyze(R"(
+int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool condition) {
+  if (condition) { return first; }
+  return second;
+}
+)")
+             .canGenerateCode(),
+         "an explicit shared result lifetime resolves the ambiguity");
+  const std::string mismatched = R"(
+int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  return second;
+}
+)";
+  const auto mismatchResult = analyze(mismatched);
+  const auto *mismatchError =
+      findDiagnosticByCode(mismatchResult.diagnostics, "GTI-S2127");
+  expect(
+      !mismatchResult.canGenerateCode() && mismatchError &&
+          mismatchError->primary.start == mismatched.rfind("second") &&
+          mismatchError->related.size() == 2 &&
+          mismatchError->related[0].span.start == mismatched.find("<b>") + 1 &&
+          mismatchError->related[0].span.end == mismatched.find("<b>") + 2 &&
+          mismatchError->related[1].span.start == mismatched.find("<a>") + 1 &&
+          mismatchError->related[1].span.end == mismatched.find("<a>") + 2 &&
+          mismatchError->fixes.empty(),
+      "a return lifetime mismatch relates the supplied and required regions "
+      "at their exact written locations");
+  expect(hasDiagnosticHint(mismatchResult.diagnostics, "outlives<b, a>") &&
+             hasDiagnosticHint(mismatchResult.diagnostics,
+                               "does not extend the input's lifetime"),
+         "lifetime advice explains the obligation added for callers");
+  expect(!hasDiagnosticCode(mismatchResult.diagnostics, "GTI-S2017"),
+         "a rejected declared region must not also demand the inferred "
+         "parameter supplier as though the lifetime contract were absent");
+  expect(hasDiagnostic(analyze(R"(
+int&<a> invalid<lifetime a, lifetime b>(int&<a> first, bool&<b> second) {
+  return second;
+}
+)")
+                           .diagnostics,
+                       "Reference return requires an exact"),
+         "region diagnostic precedence must preserve independent return type "
+         "checking");
+  expect(analyze(R"(
+int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second)
+  requires outlives<b, a> { return second; }
+)")
+             .canGenerateCode(),
+         "a declared input-outlives-result relationship permits the return");
   const std::string moved = prefix + R"(
 int main() {
   std::string original = std::string("hello");
   std::string destination = std::move(original);
   return int(original.size());
 })";
+  const std::string partial = prefix + R"(
+struct Pair {
+  mut std::string first;
+  mut std::string second;
+  Pair(std::string a, std::string b)
+    : first(std::move(a)), second(std::move(b)) {}
+};
+void consume(Pair input) {}
+int main() {
+  mut Pair value{std::string("a"), std::string("b")};
+  auto first = std::move(value.first);
+  consume(std::move(value));
+  return int(first.size());
+}
+)";
+  const auto partialResult = analyze(partial);
+  const auto *partialError =
+      findDiagnosticByCode(partialResult.diagnostics, "GTI-S2018");
+  expect(partialError &&
+             partialError->message.find("first") != std::string::npos &&
+             partialError->primary.start == partial.find("value));") &&
+             partialError->related.size() == 1 &&
+             partialError->related[0].span.start == partial.find("first);") &&
+             partialError->related[0].span.end == partial.find("first);") + 5,
+         "a whole-value transfer after a field move names the missing field "
+         "and identifies its transfer site");
+  auto restoredPartial = partial;
+  restoredPartial.insert(restoredPartial.find("  consume"),
+                         "  value.first = std::string(\"replacement\");\n");
+  expect(analyze(restoredPartial).canGenerateCode(),
+         "restoring a moved field permits the whole-value transfer");
   const auto movedResult = analyze(moved);
   const auto *movedError =
       findDiagnosticByCode(movedResult.diagnostics, "GTI-S2018");
@@ -457,10 +662,92 @@ int main() {
   owner.clear();
   return int(view.size());
 })";
+  const std::string escapingScope = R"(
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+int main() {
+  int outer = 1;
+  mut View view{outer};
+  {
+    int inner = 2;
+    view = View(inner);
+  }
+  return view.value;
+}
+)";
+  const auto escapingScopeResult = analyze(escapingScope);
+  const auto *escapingScopeError =
+      findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-S2003");
+  expect(!escapingScopeResult.canGenerateCode() && escapingScopeError &&
+             escapingScopeError->message.find(
+                 "assignment is unavailable for type 'View'") !=
+                 std::string::npos &&
+             hasDiagnosticHint(escapingScopeResult.diagnostics,
+                               "Initialize a new binding"),
+         "a nonassignable borrowed carrier explains unavailable assignment "
+         "instead of identical-type mismatch");
+  auto scopedBinding = escapingScope;
+  scopedBinding.replace(scopedBinding.find("view = View(inner);"),
+                        std::string("view = View(inner);").size(),
+                        "View inside{inner};");
+  expect(analyze(scopedBinding).canGenerateCode(),
+         "a fresh inner carrier keeps its borrow inside the owner's scope");
+  const std::string temporary = prefix + R"(
+int main() {
+  auto borrowed = std::string("hello").view();
+  return int(borrowed.size());
+}
+)";
+  const auto temporaryResult = analyze(temporary);
+  const auto *temporaryError =
+      findDiagnosticByCode(temporaryResult.diagnostics, "GTI-S2045");
+  expect(
+      temporaryError && temporaryError->related.size() == 1 &&
+          temporaryError->related[0].span.start == temporary.find(").view") &&
+          temporaryError->related[0].span.end == temporary.find(").view") + 1 &&
+          temporaryError->related[0].message.find(
+              "end of this full expression") != std::string::npos &&
+          hasDiagnosticHint(temporaryResult.diagnostics,
+                            "naming only the borrowed result"),
+      "a temporary-owner rejection locates the owner and explains its "
+      "destruction boundary and the required named owner");
+  auto namedOwner = temporary;
+  namedOwner.replace(
+      namedOwner.find("  auto borrowed"),
+      std::string("  auto borrowed = std::string(\"hello\").view();").size(),
+      "  std::string owner = std::string(\"hello\"); auto borrowed = "
+      "owner.view();");
+  expect(analyze(namedOwner).canGenerateCode(),
+         "a named owner that outlives the borrowed result fixes the rejection");
+  const std::string reborrowed = R"(
+int main() {
+  mut int value = 1;
+  mut int& parent = value;
+  { mut int& ended = parent; ended = 2; }
+  mut int& child = parent;
+  parent = 3;
+  return child;
+}
+)";
+  const auto reborrowResult = analyze(reborrowed);
+  const auto *reborrowError =
+      findDiagnosticByCode(reborrowResult.diagnostics, "GTI-S2017");
+  expect(reborrowError && reborrowError->related.size() == 2 &&
+             reborrowError->primary.start == reborrowed.find("parent = 3") &&
+             reborrowError->related[0].span.start ==
+                 reborrowed.find("parent;", reborrowed.find("child =")) &&
+             reborrowError->related[1].span.start ==
+                 reborrowed.find("return child"),
+         "a parent access identifies the still-live child reborrow, not the "
+         "parent's origin or an already-ended sibling");
   const auto borrowResult = analyze(borrowed);
   expect(hasDiagnosticCode(borrowResult.diagnostics, "GTI-S2017") &&
              hasRelatedDiagnostic(borrowResult.diagnostics,
                                   "borrow originates here") &&
+             hasRelatedDiagnostic(borrowResult.diagnostics,
+                                  "This borrows 'owner'.") &&
              hasRelatedDiagnostic(borrowResult.diagnostics, "used later") &&
              hasDiagnosticHint(borrowResult.diagnostics, "Finish using"),
          "retained-borrow conflicts identify their origin and later use");
@@ -484,6 +771,53 @@ int main() {
 })");
   expect(endedBorrow.canGenerateCode(),
          "diagnostic provenance must not extend a borrow beyond its last use");
+  const std::string loopBorrow = R"(
+int main() {
+  mut int value = 1;
+  int& borrowed = value;
+  for (mut int i = 0; i < 2; i += 1) {
+    int copy = borrowed;
+    value = copy + 1;
+  }
+  return 0;
+}
+)";
+  const auto loopResult = analyze(loopBorrow);
+  const auto *loopError =
+      findDiagnosticByCode(loopResult.diagnostics, "GTI-S2017");
+  expect(loopError && loopError->related.size() == 2 &&
+             loopError->related[1].span.start == loopBorrow.find("int copy") &&
+             loopError->related[1].span.end ==
+                 loopBorrow.find("borrowed;", loopBorrow.find("int copy")) +
+                     9 &&
+             loopError->related[1].message.find("later loop iteration") !=
+                 std::string::npos,
+         "loop-carried conflicts explain the next-iteration use even when "
+         "that use precedes the conflicting access in source order");
+  const auto disjointResult = analyze(R"(
+int run(bool condition) {
+  mut int value = 1;
+  int& borrowed = value;
+  if (condition) { value = 2; return value; }
+  return borrowed;
+}
+)");
+  if (!disjointResult.canGenerateCode())
+    for (const auto &diagnostic : disjointResult.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+  expect(disjointResult.canGenerateCode(),
+         "a use in a disjoint branch does not keep a borrow live at an access");
+  const auto returningUse = analyze(R"(
+int run(bool condition) {
+  mut int value = 1;
+  int& borrowed = value;
+  if (condition) { value = 2; return borrowed; }
+  return borrowed;
+}
+)");
+  expect(!returningUse.canGenerateCode() &&
+             hasDiagnosticCode(returningUse.diagnostics, "GTI-S2017"),
+         "an early return still retains a borrow that its own arm uses");
 
   const std::string records = R"(
 struct Ticket {
