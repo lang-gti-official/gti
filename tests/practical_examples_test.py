@@ -16,7 +16,7 @@ from backend_modes import is_cpp_mode, native_modes, optimization_level
 OUTPUTS = {
     "091-json-documents.gti": 'tea\n42\n{"title":"Improve examples","open":true,"labels":["documentation","good first issue"]}\ndocumentation\ngood first issue\n{\n  "title": "Improve examples",\n  "open": true,\n  "labels": [\n    "documentation",\n    "good first issue"\n  ]\n}\n',
     "092-json-codecs.gti": 'alice\n{"id":7,"login":"alice"}\none\ntwo\n/members/0/login\n',
-    "093-http-json-client.gti": "https://example.com/api/users?name=Alice%20Smith\nUsage: http-json URL [post]\n",
+    "093-http-json-client.gti": "https://example.com/api/users?name=Alice%20Smith\nUsage: http-json URL [post | stream FILE]\n",
     "094-binary-text-encoding.gti": "QQBC\n410042\n",
     "095-explicit-cloning.gti": "build\nbuild!\n",
     "096-error-mapping.gti": "8\nconfiguration error handled\n",
@@ -53,9 +53,11 @@ def main():
                         cases = [([], 0, output)]
                         if name == "093-http-json-client.gti":
                             base = f"http://127.0.0.1:{server.server_port}"
+                            download = Path(temp) / "http-streamed.json"
                             cases += [
                                 ([base + "/user"], 0, "local demo\n"),
                                 ([base + "/user", "post"], 0, "tea\n"),
+                                ([base + "/user", "stream", str(download)], 0, "21\n"),
                                 ([base + "/not-found"], 6, "HTTP status rejected\n404\n"),
                                 ([base + "/invalid-json"], 7, "Invalid JSON response\n"),
                                 ([base + "/missing-name"], 8, "Missing or invalid name\n"),
@@ -67,6 +69,8 @@ def main():
                                                     text=True, timeout=15, env=environment)
                             assert (result.returncode, result.stdout, result.stderr) == (status, expected, ""), (
                                 name, mode, args, result.returncode, result.stdout, result.stderr)
+                        if name == "093-http-json-client.gti":
+                            assert download.read_bytes() == b'{"name":"local demo"}'
                         print(f"PASS {name} {mode}", flush=True)
         finally:
             server.shutdown()
