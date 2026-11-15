@@ -211,6 +211,8 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       copy->cachedRoots.push_back(clone(entry));
     for (const auto &entry : queries->familyEntries)
       copy->familyEntries.push_back(clone(entry));
+    for (const auto &entry : queries->independentEntries)
+      copy->independentEntries.push_back(clone(entry));
     if (requestSession.collectingRawResult)
       worker->requestSession.collectingRawResult =
           clone(requestSession.collectingRawResult);

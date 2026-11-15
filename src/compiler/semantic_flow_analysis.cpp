@@ -10676,14 +10676,22 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
                                ? owner.valueArguments
                                : std::vector<CompileTimeValue>{};
   const bool topLevel = state->depth == 0;
+  const auto sameDemand = [&](const std::shared_ptr<RawResultQuery> &entry) {
+    return entry->function == resolved.function && entry->constructor == 0 &&
+           entry->ownerTypes == ownerTypes &&
+           entry->ownerValues == ownerValues &&
+           entry->types == resolved.typeArguments &&
+           entry->values == resolved.valueArguments;
+  };
+  for (const auto &entry : state->independentEntries)
+    if (sameDemand(entry))
+      return entry;
   const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
   for (const auto &entry : candidates)
-    if ((!topLevel || entry->topLevel) &&
-        entry->function == resolved.function &&
-        entry->ownerTypes == ownerTypes && entry->ownerValues == ownerValues &&
-        entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments)
+    if ((!topLevel || entry->topLevel) && sameDemand(entry)) {
+      noteRawResultDependency(entry);
       return entry;
+    }
   if (topLevel)
     state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
@@ -10698,10 +10706,13 @@ auto SemanticVisitor::Impl::rawResultQuery(const ResolvedCallInfo &resolved,
   entry->topLevel = topLevel;
   if (state->familyEntries.size() >= 2048 || state->depth >= 32) {
     entry->complete = true;
+    entry->truncated = true;
+    noteRawResultDependency(entry);
     return entry;
   }
   state->familyEntries.push_back(entry);
   runRawResultQuery(entry);
+  noteRawResultDependency(entry);
   // The current projected-input contract has one slot per ordinary formal.
   // An expanded pack needs a per-element substitution before it can claim a
   // complete raw-output summary. Keep any proved origins, but not an empty
@@ -10729,18 +10740,25 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
     requestSession.rawResultQueries = std::make_shared<RawResultQueryState>();
   auto state = requestSession.rawResultQueries;
   const bool topLevel = state->depth == 0;
+  const auto sameDemand = [&](const std::shared_ptr<RawResultQuery> &entry) {
+    return entry->constructor == resolved.constructor && entry->function == 0 &&
+           entry->defaultOwner == (resolved.generatedDefault
+                                       ? resolved.constructedType.classId
+                                       : 0) &&
+           entry->ownerTypes == resolved.constructedType.arguments &&
+           entry->ownerValues == resolved.constructedType.valueArguments &&
+           entry->types == resolved.typeArguments &&
+           entry->values == resolved.valueArguments;
+  };
+  for (const auto &entry : state->independentEntries)
+    if (sameDemand(entry))
+      return entry;
   const auto &candidates = topLevel ? state->cachedRoots : state->familyEntries;
   for (const auto &entry : candidates)
-    if ((!topLevel || entry->topLevel) &&
-        entry->constructor == resolved.constructor && entry->function == 0 &&
-        entry->defaultOwner == (resolved.generatedDefault
-                                    ? resolved.constructedType.classId
-                                    : 0) &&
-        entry->ownerTypes == resolved.constructedType.arguments &&
-        entry->ownerValues == resolved.constructedType.valueArguments &&
-        entry->types == resolved.typeArguments &&
-        entry->values == resolved.valueArguments)
+    if ((!topLevel || entry->topLevel) && sameDemand(entry)) {
+      noteRawResultDependency(entry);
       return entry;
+    }
   if (topLevel)
     state->familyEntries.clear();
   auto entry = std::make_shared<RawResultQuery>();
@@ -10757,10 +10775,13 @@ auto SemanticVisitor::Impl::rawConstructorResultQuery(
   entry->topLevel = topLevel;
   if (state->familyEntries.size() >= 2048 || state->depth >= 32) {
     entry->complete = true;
+    entry->truncated = true;
+    noteRawResultDependency(entry);
     return entry;
   }
   state->familyEntries.push_back(entry);
   runRawResultQuery(entry);
+  noteRawResultDependency(entry);
   if (resolved.declaration &&
       std::any_of(
           resolved.declaration->parameters().begin(),
@@ -10898,8 +10919,23 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   }
   if (entry->topLevel && state->cachedRoots.size() < 2048)
     state->cachedRoots.push_back(entry);
+  else if (!entry->topLevel && !entry->familyDependent &&
+           state->independentEntries.size() < 8192)
+    state->independentEntries.push_back(entry);
   if (entry->topLevel)
     state->familyEntries.clear();
+}
+
+auto SemanticVisitor::Impl::noteRawResultDependency(
+    const std::shared_ptr<RawResultQuery> &dependency) -> void {
+  // The demanding query (the worker's own result) inherits family dependence
+  // from a cycle member still running, a budget-truncated entry, or a callee
+  // that is itself dependent. Top-level demands have no collecting query.
+  const auto &requester = requestSession.collectingRawResult;
+  if (requester && requester != dependency &&
+      (!dependency->complete || dependency->truncated ||
+       dependency->familyDependent))
+    requester->familyDependent = true;
 }
 
 auto SemanticVisitor::Impl::rawProducedFields(

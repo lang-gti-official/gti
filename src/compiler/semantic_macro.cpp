@@ -867,6 +867,8 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
       fork->cachedRoots.push_back(copy(entry));
     for (const auto &entry : queries->familyEntries)
       fork->familyEntries.push_back(copy(entry));
+    for (const auto &entry : queries->independentEntries)
+      fork->independentEntries.push_back(copy(entry));
     if (requestSession.collectingRawResult)
       probe.requestSession.collectingRawResult =
           copy(requestSession.collectingRawResult);

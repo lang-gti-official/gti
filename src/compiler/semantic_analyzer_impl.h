@@ -1289,6 +1289,13 @@ private:
     bool topLevel = false;
     bool complete = false;
     bool valid = false;
+    // Cut short by the family's entry or depth budget; its facts are not a
+    // summary of the body and depend on where in the family it was demanded.
+    bool truncated = false;
+    // This result observed family state: a cycle member still in progress, a
+    // truncated entry, or another dependent result. An independent nested
+    // result is a function of its inputs alone, like a root, and is reusable.
+    bool familyDependent = false;
     std::optional<Diagnostic> failure;
   };
 
@@ -1300,6 +1307,10 @@ private:
     std::vector<std::shared_ptr<RawResultQuery>> entries;
     std::vector<std::shared_ptr<RawResultQuery>> cachedRoots;
     std::vector<std::shared_ptr<RawResultQuery>> familyEntries;
+    // Completed nested results that did not depend on their family, reusable
+    // by any later demand at any depth. Without this, every root re-analyses
+    // the same shared callee graph up to the family budget.
+    std::vector<std::shared_ptr<RawResultQuery>> independentEntries;
     std::size_t nextIdentity = 1;
     std::size_t depth = 0;
     std::optional<bool> hasRawGlobals;
@@ -4925,6 +4936,7 @@ private:
   void registerConformances(const StmtList &statements,
                             std::vector<std::string> scope);
   void bindConformanceOperations();
+  void noteRawResultDependency(const std::shared_ptr<RawResultQuery> &dependency);
   void validateConformanceTypes(const ConformanceDecl &declaration);
   [[nodiscard]] std::optional<ConformanceMatch>
   matchConformance(ConceptId id,
