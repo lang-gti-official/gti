@@ -994,19 +994,6 @@ namespace std {
       unsafe { this.data.append(value); }
     }
 
-    /// Appends at most `count` bytes of `value` starting at `position`,
-    /// clamped to the bytes available, as `substr` clamps. A position beyond
-    /// `value.size()` raises `GTI-R0007`.
-    void append(string_view value, size_t position, size_t count) mut {
-      if (position > value.size()) {
-        gti_internal::index_bounds_check(position, value.size());
-      }
-      mut size_t copied = value.size() - position;
-      if (count < copied) { copied = count; }
-      this.grow_for(copied);
-      unsafe { this.data.append(value, position, copied); }
-    }
-
     /// Replaces the contents with a copy of `value`, retaining capacity.
     /// Ordinary exclusive-receiver rules forbid a view of this string.
     void operator=(string_view value) mut {

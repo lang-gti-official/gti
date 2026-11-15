@@ -7515,7 +7515,6 @@
         "std::hash<std::string>",
         "std::hashing<std::string>",
         "std::string::append",
-        "std::string::append(string_view,size_t,size_t)",
         "std::string::as_span",
         "std::string::at",
         "std::string::back",

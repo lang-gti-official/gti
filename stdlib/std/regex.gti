@@ -1598,7 +1598,11 @@ rx_compiled rx_build_or_panic(std::string_view pattern, regex_options options) {
 
 // Appends `subject[first, last)` to `out`.
 void rx_append_range(mut std::string& out, std::string_view subject, std::size_t first, std::size_t last) {
-  if (last > first) { out.append(subject, first, last - first); }
+  mut std::size_t index = first;
+  while (index < last) {
+    out.push_back(subject[index]);
+    index = index + std::size_t(1);
+  }
 }
 
 // Appends one ECMAScript replacement: `$$`, `$&`, `` $` ``, `$'`, `$n`,
@@ -1655,7 +1659,7 @@ void rx_append_format(mut std::string& out, std::string_view subject, std::vecto
         continue;
       }
       mut std::string name = std::string("");
-      name.append(format, index + std::size_t(2), close - index - std::size_t(2));
+      rx_append_range(name, format, index + std::size_t(2), close);
       std::size_t group = rx_group_named(names, name.view());
       if (group != rx_none && group < groups) {
         std::size_t first = slots[group * std::size_t(2)];

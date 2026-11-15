@@ -61,13 +61,5 @@ int main() {
       std::to_string(-0.0) != "-0.000000") {
     return 5;
   }
-  // append(view, position, count) copies a clamped range of the view.
-  mut std::string clamped{"<"};
-  clamped.append("abcdef", 2, 3);
-  clamped.append("xy", 1, 10);
-  clamped.append("z", 1, 4);
-  if (clamped != "<cdey") {
-    return 6;
-  }
   return 0;
 }
