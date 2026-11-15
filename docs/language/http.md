@@ -145,7 +145,8 @@ has the same two forms. A request is move-only and provides:
 - `set_connect_timeout_ms` and `set_timeout_ms`, whose defaults are 10 and 30
   seconds respectively;
 - `set_max_response_bytes`, whose default is 16 MiB;
-- `set_redirect_policy` and `set_redirect_limit`, described below; and
+- `set_redirect_policy` and `set_redirect_limit`, described below;
+- `set_scheme_policy(scheme_policy)` to restrict initial and redirected URLs; and
 - `set_ca_bundle(path)` for a PEM trust bundle used by this request.
 
 Header mutators and `set_ca_bundle` return `expected<void, errc>`. Header names
@@ -320,6 +321,24 @@ hops. `streaming_response::effective_url()` reports the final URL as an owned
 copy, so it remains valid independently of the response.
 
 ## HTTPS Policy
+
+Requests default to `scheme_policy::http_and_https`. Opt into HTTPS-only
+transport independently of redirect following:
+
+```gti
+request.set_scheme_policy(std::http::scheme_policy::https_only);
+request.set_redirect_policy(std::http::redirect_policy::secure);
+```
+
+`schemes_policy()` observes the setting. Both `send` and `send_stream` reject
+an initial HTTP URL with `errc::unsupported_scheme` before sending any request,
+even if that server would redirect to HTTPS. Malformed URLs report
+`errc::invalid_url`. Scheme matching is case-insensitive. Every followed
+redirect preserves this policy; an HTTP destination reports
+`errc::redirect_rejected` before contacting it. Changing the URL does not reset
+the policy. Select `http_and_https` explicitly for HTTP test servers.
+This policy restricts origin URLs, not the scheme of a transport proxy.
+
 
 HTTPS always enables peer-certificate and host-name verification. There is no
 public insecure switch. By default libcurl selects its configured platform

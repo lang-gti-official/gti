@@ -53,6 +53,10 @@ int main(int argc, std::vector<std::string> argv) {
   auto endpoint = std::move(parsed_url).value();
   mut std::http::request request{
       argc == 3 ? std::http::method::post : std::http::method::get, endpoint};
+  // Require HTTPS for HTTPS endpoints; local HTTP demos retain the default.
+  if (endpoint.scheme() == "https") {
+    request.set_scheme_policy(std::http::scheme_policy::https_only);
+  }
   request.set_connect_timeout_ms(uint64_t(2000));
   request.set_timeout_ms(uint64_t(5000));
   request.set_max_response_bytes(uint64_t(65536));

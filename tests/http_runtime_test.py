@@ -20,6 +20,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     gate = threading.Event()
     cross_url = ""
     http_url = ""
+    forbidden_hits = 0
     protocol_version = "HTTP/1.1"
 
     def handle(self) -> None:
@@ -50,6 +51,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_bytes(200, b"ignored")
 
     def do_GET(self) -> None:
+        if self.path == "/policy-forbidden":
+            Handler.forbidden_hits += 1
+            self.send_bytes(302, b"", (("Location", "/empty"),))
+            return
+        if self.path == "/policy-hop":
+            self.send_bytes(302, b"", (("Location", "/policy-hop2"),))
+            return
+        if self.path == "/policy-hop2":
+            self.send_bytes(302, b"", (("Location", "/empty"),))
+            return
+        if self.path == "/policy-downgrade":
+            self.send_bytes(302, b"", (("Location", self.http_url + "policy-forbidden"),))
+            return
         if self.path == "/trailers":
             self.wfile.write(b"HTTP/1.1 103 Early Hints\r\nLink: </early>\r\n\r\n")
             self.send_response(200)
@@ -362,6 +376,7 @@ def streaming_source_text(http_url: str, https_url: str, certificate: pathlib.Pa
     values = {
         "HTTP": json.dumps(http_url),
         "HTTPS": json.dumps(https_url),
+        "HTTPS_UPPER": json.dumps(https_url.replace("https://", "HTTPS://")),
         "CA": json.dumps(str(certificate)),
         "ENCODED_SIZE": str(len(gzip.compress(b"encoded-body", mtime=0))),
         "ENCODED_SUM": str(sum(gzip.compress(b"encoded-body", mtime=0))),
@@ -418,6 +433,51 @@ int main() {
   auto made = std::http::client::create();
   if (!made) { return 1; }
   mut auto client = std::move(made).value();
+
+  // Scheme restriction is independent of redirect policy and precedes I/O.
+  for (mut int mode = 0; mode < 3; mode++) {
+    auto address = endpoint("policy-forbidden");
+    mut auto request = std::http::request(std::http::method::get, address.view());
+    if (request.schemes_policy() != std::http::scheme_policy::http_and_https) { return 80; }
+    request.set_scheme_policy(std::http::scheme_policy::https_only);
+    if (request.schemes_policy() != std::http::scheme_policy::https_only) { return 81; }
+    if (mode == 1) { request.set_redirect_policy(std::http::redirect_policy::same_origin); }
+    if (mode == 2) { request.set_redirect_policy(std::http::redirect_policy::secure); }
+    auto buffered = client.send(request);
+    if (buffered || buffered.error() != std::http::errc::unsupported_scheme || client.last_native_code() != 0) { return 82; }
+    auto streamed = client.send_stream(request);
+    if (streamed || streamed.error() != std::http::errc::unsupported_scheme || client.last_native_code() != 0) { return 83; }
+
+    // Uppercase HTTPS and multiple relative hops retain policy and CA trust.
+    mut auto secure = std::string(@HTTPS_UPPER@);
+    secure.append(mode == 0 ? "empty" : "policy-hop");
+    request.set_url(secure.view());
+    if (!request.set_ca_bundle(@CA@)) { return 84; }
+    auto accepted = client.send(request);
+    if (!accepted || accepted.value().status() != uint32_t(204)) { return 85; }
+    auto accepted_stream = client.send_stream(request);
+    if (!accepted_stream || accepted_stream.value().status() != uint32_t(204)) { return 86; }
+    if (mode != 0) {
+      mut auto down = std::string(@HTTPS_UPPER@);
+      down.append("policy-downgrade");
+      request.set_url(down.view());
+      auto denied = client.send(request);
+      if (denied || denied.error() != std::http::errc::redirect_rejected) { return 87; }
+      auto denied_stream = client.send_stream(request);
+      if (denied_stream || denied_stream.error() != std::http::errc::redirect_rejected) { return 88; }
+    }
+    request.set_url("HTTPS://");
+    auto invalid = client.send(request);
+    if (invalid || invalid.error() != std::http::errc::invalid_url) { return 89; }
+    auto invalid_stream = client.send_stream(request);
+    if (invalid_stream || invalid_stream.error() != std::http::errc::invalid_url) { return 90; }
+    // Explicit opt-out permits the local HTTP server again.
+    auto ordinary = endpoint("empty");
+    request.set_url(ordinary.view());
+    request.set_scheme_policy(std::http::scheme_policy::http_and_https);
+    auto reset = client.send(request);
+    if (!reset || reset.value().status() != uint32_t(204)) { return 91; }
+  }
 
   // This endpoint cannot send a body until another request releases it.
   // send_stream must return headers without waiting for the whole body.
@@ -713,6 +773,8 @@ def main() -> None:
                 stream_binary = output / f"http-stream-{optimization}"
                 run([str(compiler), str(streaming), f"-{optimization}", "-o", str(stream_binary)], timeout=180)
                 streamed = run([str(stream_binary)], timeout=60)
+                if Handler.forbidden_hits != 0:
+                    raise AssertionError("HTTPS-only request contacted an HTTP endpoint")
                 if streamed.stdout or streamed.stderr:
                     raise AssertionError(f"unexpected streaming fixture output: {streamed!r}")
     finally:

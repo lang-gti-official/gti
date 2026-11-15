@@ -1383,7 +1383,9 @@ reads use one fixed internal array and return an owned string; application code
 never receives the mutable runtime buffer or native descriptor.
 
 `std.http` follows the same public-policy boundary for owned URL construction
-and synchronous buffered or streaming HTTP/HTTPS. Absolute parsing, component
+and synchronous buffered or streaming HTTP/HTTPS. Request scheme policy
+restricts initial and redirected URLs in ordinary GTI before transport, including
+an opt-in HTTPS-only mode. Absolute parsing, component
 encoding, URL cloning/rendering, request construction, header validation,
 redirect policy and method changes, stable errors, response copying, and RAII
 live in ordinary GTI. Its versioned `gti_rt_http_*_v1` C ABI accepts counted

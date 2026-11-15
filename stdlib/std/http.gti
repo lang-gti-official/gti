@@ -618,6 +618,9 @@ namespace std {
     /// explicit headers; neither following policy permits an HTTPS downgrade.
     export enum class redirect_policy { none, same_origin, secure };
 
+    /// Allowed URL schemes for the initial request and every redirect.
+    export enum class scheme_policy { http_and_https, https_only };
+
     /// Recoverable absolute-URL parsing and construction outcomes.
     export enum class url_errc {
       invalid_scheme,
@@ -886,6 +889,7 @@ namespace std {
       mut uint64_t response_limit = uint64_t(16 * 1024 * 1024);
       mut uint32_t redirects = uint32_t(5);
       mut redirect_policy redirect_mode = redirect_policy::none;
+      mut scheme_policy scheme_mode = scheme_policy::http_and_https;
 
     public:
       request(method verb, string_view url) : request_method(verb), request_url(std::string(url)), request_headers(vector<header>()), request_body(string()), ca_bundle_path(string()) {}
@@ -926,6 +930,9 @@ namespace std {
       uint64_t max_response_bytes() {
         return this.response_limit;
       }
+
+      scheme_policy schemes_policy() { return this.scheme_mode; }
+      void set_scheme_policy(scheme_policy policy) mut { this.scheme_mode = policy; }
 
       uint32_t redirect_limit() { return this.redirects; }
       redirect_policy redirects_policy() { return this.redirect_mode; }
@@ -1186,6 +1193,14 @@ namespace gti_internal {
       return std::move(result);
     }
 
+    expected<void, std::http::errc> check_scheme_policy(std::http::request& input) {
+      if (input.schemes_policy() == std::http::scheme_policy::http_and_https) { return expected<void, std::http::errc>(); }
+      auto parsed = std::http::url::parse(input.url().view());
+      if (!parsed) { return unexpected(std::http::errc::invalid_url); }
+      if (parsed.value().scheme() != "https") { return unexpected(std::http::errc::unsupported_scheme); }
+      return expected<void, std::http::errc>();
+    }
+
     std::http::request copy_request(std::http::request& input) {
       mut std::http::request result{input.verb(), input.url().view()};
       result.set_body(input.body().view());
@@ -1194,6 +1209,7 @@ namespace gti_internal {
       result.set_max_response_bytes(input.max_response_bytes());
       result.set_redirect_limit(input.redirect_limit());
       result.set_redirect_policy(input.redirects_policy());
+      result.set_scheme_policy(input.schemes_policy());
       [[discard]] result.set_ca_bundle(input.ca_bundle().view());
       for (auto& field : input.headers()) { [[discard]] result.add_header(field.name().view(), field.value().view()); }
       return std::move(result);
@@ -1207,6 +1223,7 @@ namespace gti_internal {
       auto before = std::move(before_result).value();
       auto after = std::move(after_result).value();
       bool same_origin = equal_header_name(before.scheme(), after.scheme()) && equal_header_name(before.host(), after.host()) && before.port() == after.port();
+      if (input.schemes_policy() == std::http::scheme_policy::https_only && after.scheme() != "https") { return unexpected(std::http::errc::redirect_rejected); }
       if (before.scheme() == "https" && after.scheme() != "https") { return unexpected(std::http::errc::redirect_rejected); }
       if (!same_origin && input.redirects_policy() == std::http::redirect_policy::same_origin) { return unexpected(std::http::errc::redirect_rejected); }
       mut auto verb = input.verb();
@@ -1222,6 +1239,7 @@ namespace gti_internal {
       result.set_max_response_bytes(input.max_response_bytes());
       result.set_redirect_limit(input.redirect_limit());
       result.set_redirect_policy(input.redirects_policy());
+      result.set_scheme_policy(input.schemes_policy());
       ?result.set_ca_bundle(input.ca_bundle().view());
       if (same_origin) {
         for (auto& field : input.headers()) {
@@ -1477,6 +1495,7 @@ namespace std {
     public:
       expected<response, errc> send(request& input) mut {
         this.backend_code = 0;
+        ?gti_internal::http_detail::check_scheme_policy(input);
         if (input.redirects_policy() == redirect_policy::none) { return this.send_once(input); }
         auto initial_url = std::http::url::parse(input.url().view());
         if (!initial_url) { return unexpected(errc::invalid_url); }
@@ -1521,6 +1540,7 @@ namespace std {
 
       expected<streaming_response, errc> send_stream(request& input) mut {
         this.backend_code = 0;
+        ?gti_internal::http_detail::check_scheme_policy(input);
         if (input.redirects_policy() == redirect_policy::none) { return this.send_stream_once(input); }
         auto initial_url = std::http::url::parse(input.url().view());
         if (!initial_url) { return unexpected(errc::invalid_url); }

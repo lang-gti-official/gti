@@ -1,7 +1,7 @@
 {
   "lowered": {
     "arm64-apple-macos": {
-      "bodies": 1044,
+      "bodies": 1047,
       "generated_items": 539,
       "generated_kinds": {
         "program_initialization": 1,
@@ -16,7 +16,7 @@
       }
     },
     "x86_64-unknown-linux": {
-      "bodies": 1044,
+      "bodies": 1047,
       "generated_items": 539,
       "generated_kinds": {
         "program_initialization": 1,
@@ -32,7 +32,7 @@
     }
   },
   "mir": {
-    "arm64-apple-macos": 1044,
-    "x86_64-unknown-linux": 1044
+    "arm64-apple-macos": 1047,
+    "x86_64-unknown-linux": 1047
   }
 }

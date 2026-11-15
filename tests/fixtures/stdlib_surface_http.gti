@@ -10,6 +10,9 @@ bool rejects_url(std::string_view source, std::http::url_errc expected_error) {
 }
 
 int main() {
+  mut std::http::request restricted{std::http::method::get, "https://example.com"};
+  restricted.set_scheme_policy(std::http::scheme_policy::https_only);
+  if (restricted.schemes_policy() != std::http::scheme_policy::https_only) { return 99; }
   mut auto parsed = std::http::url::parse(
       "HTTPS://Example.COM:0443/a%20b?x=1&na%6De=old&name=older");
   if (!parsed) {

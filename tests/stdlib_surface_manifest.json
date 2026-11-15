@@ -4930,6 +4930,8 @@
         "std::http::request::set_max_response_bytes",
         "std::http::request::set_redirect_limit",
         "std::http::request::set_redirect_policy",
+        "std::http::request::set_scheme_policy",
+        "std::http::request::schemes_policy",
         "std::http::request::set_timeout_ms",
         "std::http::request::set_url",
         "std::http::request::timeout_ms",
