@@ -5675,7 +5675,8 @@ private:
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] std::optional<CallableCandidate>
-  textViewMemberFactory(std::string_view member) const;
+  textViewMemberFactory(std::string_view member,
+                        std::optional<std::size_t> inputs = {}) const;
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isPolymorphicLibraryUnit(SourceUnitId sourceUnit) const;
 

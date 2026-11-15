@@ -1237,8 +1237,17 @@ unsigned-integer-type  = "uint" | "uint8_t" | "uint16_t" | "uint32_t"
    constraints. Explicit `uint8_t(character)` extraction and `char(uint8_t)`
    construction preserve the same eight code-unit bits and cannot fail. Neither
    is implicit, makes `char` numeric or performs Unicode conversion. A
-   CHARACTER_LITERAL must decode to exactly one code unit and supports `\\`,
-   `\'`, `\"`, `\n`, `\r`, `\t`, and `\0` escapes.
+   CHARACTER_LITERAL must decode to exactly one code unit.
+
+   Character and string literals share one escape set: `\\`, `\'`, `\"`,
+   `\n`, `\r`, `\t`, `\0`, `\a` (7), `\b` (8), `\e` (27), `\f` (12) and
+   `\v` (11); `\xHH` with exactly two hexadecimal digits, denoting that one
+   code unit; and `\uHHHH` or `\UHHHHHHHH` with exactly four or eight
+   hexadecimal digits, denoting a Unicode scalar value encoded as UTF-8.
+   Unlike C++, `\x` never absorbs further hexadecimal digits, so `"\x4142"`
+   is `A` followed by `42`. A surrogate or a value above U+10FFFF is a lexical
+   error, as is any other escape. A `\u` escape in a character literal is
+   valid only when its UTF-8 encoding is one code unit (U+0000 to U+007F).
 
    A STRING_LITERAL has type `std::string_view`. It is an immutable counted
    view over static literal storage, so embedded zero bytes are preserved and

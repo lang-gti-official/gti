@@ -470,6 +470,9 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
     MirEffectTraits{.readsUnknownMemory = true,
                     .writesUnknownMemory = true,
                     .mayTrap = true}, // ConstantRelease
+    // TextViewNarrow: rewrites the referenced view's address and count; its
+    // owner dependency is unchanged and the unsafe caller proves the extent.
+    MirEffectTraits{.readsPlace = true, .writesPlace = true},
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -792,6 +795,7 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "constant-evaluation",
     "constant-allocate",
     "constant-release",
+    "text-view-narrow",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({

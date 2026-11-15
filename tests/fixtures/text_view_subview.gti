@@ -1,0 +1,57 @@
+import std.string;
+
+// A sub-view relays its source's owner: a literal-backed source stays
+// ownerless, and an owner-backed one keeps that owner borrowed.
+std::string_view inner(std::string_view text) {
+  return text.substr(std::size_t(1), text.size() - std::size_t(2));
+}
+
+class Token {
+  std::string_view text;
+public:
+  Token(std::string_view text) : text(text) {}
+  std::string_view head() { return this.text.substr(std::size_t(0), std::size_t(1)); }
+};
+
+bool same(std::string_view left, std::string_view right) {
+  if (left.size() != right.size()) { return false; }
+  for (mut std::size_t index = 0; index < left.size(); index++) {
+    if (left[index] != right[index]) { return false; }
+  }
+  return true;
+}
+
+int main() {
+  std::string owner{"hello, world"};
+  std::string_view whole = owner.view();
+  if (!same(whole.substr(std::size_t(7), std::size_t(5)), "world")) { return 1; }
+  // The count clamps to the remainder, and substr(position) takes the rest.
+  if (!same(whole.substr(std::size_t(7), std::size_t(100)), "world")) { return 2; }
+  if (!same(whole.substr(std::size_t(7)), "world")) { return 3; }
+  // A position equal to size() is valid and yields an empty view.
+  if (!whole.substr(whole.size()).empty() ||
+      !whole.substr(std::size_t(3), std::size_t(0)).empty()) { return 4; }
+  // Sub-views of sub-views, of temporaries and of literals.
+  std::string_view middle = owner.view().substr(std::size_t(1)).substr(std::size_t(0), std::size_t(4));
+  if (!same(middle, "ello")) { return 5; }
+  if (!same(inner("[abc]"), "abc") || !same(inner(inner("((x))")), "x")) { return 6; }
+  std::string_view relayed = inner(owner.view());
+  if (!same(relayed, "ello, worl")) { return 7; }
+  Token token{"xyz"};
+  if (!same(token.head(), "x")) { return 8; }
+  // Embedded zero bytes are ordinary counted characters.
+  std::string_view zero = "a\0b";
+  if (zero.substr(std::size_t(1)).size() != std::size_t(2) ||
+      zero.substr(std::size_t(1))[0] != '\0') { return 9; }
+  // In-place shrinking keeps a writable view's owner.
+  mut std::string_view rest = owner.view();
+  rest.remove_prefix(std::size_t(7));
+  rest.remove_suffix(std::size_t(1));
+  if (!same(rest, "worl")) { return 10; }
+  rest.remove_prefix(rest.size());
+  if (!rest.empty()) { return 11; }
+  mut std::string_view literal = "abc";
+  literal.remove_suffix(std::size_t(3));
+  if (!literal.empty()) { return 12; }
+  return 0;
+}

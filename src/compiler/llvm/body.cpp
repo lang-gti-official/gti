@@ -1398,6 +1398,20 @@ private:
       }
       case IntrinsicKind::CStringFromAddress:
         return operand(instruction.operands.at(0));
+      case IntrinsicKind::TextViewNarrow: {
+        // Offset zero is valid for the null address of an empty view, and
+        // the source precondition keeps every other offset in its extent.
+        auto *place = operand(instruction.operands.at(0));
+        llvm::Value *view = load(place, SemanticType::StringView);
+        auto *address =
+            ir.CreateInBoundsGEP(ir.getInt8Ty(), ir.CreateExtractValue(view, 0),
+                                 operand(instruction.operands.at(1)));
+        view = ir.CreateInsertValue(view, address, 0);
+        view =
+            ir.CreateInsertValue(view, operand(instruction.operands.at(2)), 1);
+        store(view, place, SemanticType::StringView);
+        return nullptr;
+      }
       default:
         break;
       }

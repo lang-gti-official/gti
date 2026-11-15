@@ -3022,8 +3022,10 @@ is provided by the separate `resource_vector` described under
 `std::string_view` is a counted read-only view. A literal-backed view is an
 independent trivial value over static storage. `std::string::view()` produces
 a dynamic view carrying one compiler-tracked read-only dependency on that
-string's character storage. Both forms support `size()`, `empty()`, and checked
-read-only indexing. These apply equally to a named view and to a view produced
+string's character storage. Both forms support `size()`, `empty()`, checked
+read-only indexing, and the sub-view operations `substr`, `remove_prefix` and
+`remove_suffix`, whose results keep the source's owner dependency (see the
+[standard library](standard-library.md)). These apply equally to a named view and to a view produced
 by a call in the same expression, as in `text.view().size()`,
 `record.name().empty()` or `entry.first.view().size()` over a range element;
 the call's owner dependency stays live for the whole expression, including a

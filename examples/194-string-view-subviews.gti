@@ -1,0 +1,43 @@
+// Counted sub-views: `substr` selects part of a view without copying, and
+// `remove_prefix`/`remove_suffix` shrink a writable view in place. Each result
+// keeps the source's owner: a literal-backed view stays ownerless, and a view
+// of a std::string keeps that string borrowed while the sub-view is used.
+import std.string;
+
+// Shrinks its by-value parameter in place and returns it, so the result
+// relays the argument's owner and callers may keep it. (Returning a mutable
+// local copy instead is rejected: its owner is not a body-provable fact.)
+std::string_view trim(mut std::string_view text) {
+  while (!text.empty() && text[0] == ' ') { text.remove_prefix(std::size_t(1)); }
+  while (!text.empty() && text[text.size() - std::size_t(1)] == ' ') {
+    text.remove_suffix(std::size_t(1));
+  }
+  return text;
+}
+
+std::size_t position_of(std::string_view text, char wanted) {
+  for (mut std::size_t index = 0; index < text.size(); index++) {
+    if (text[index] == wanted) { return index; }
+  }
+  return text.size();
+}
+
+int main() {
+  std::string line{"  name = gti  "};
+  std::string_view entry = trim(line.view());
+  std::size_t equals = position_of(entry, '=');
+  // substr(position, count) clamps count to the remainder;
+  // substr(position) takes everything after position.
+  std::string_view key = trim(entry.substr(std::size_t(0), equals));
+  std::string_view value = trim(entry.substr(equals + std::size_t(1)));
+  std::println(key);
+  std::println(value);
+  std::println("literal".substr(std::size_t(3), std::size_t(100)));
+  // A position equal to size() yields an empty view; a larger one raises
+  // GTI-R0007 (index_out_of_bounds), even when the count is zero.
+  if (!value.substr(value.size()).empty()) { return 1; }
+  // While key and value are live, `line` cannot be changed or moved
+  // (GTI-S2017), and a view of a local string cannot be returned (GTI-S2045).
+  // A dynamic view cannot be reassigned, so loops shrink it in place.
+  return key.size() == std::size_t(4) && value.size() == std::size_t(3) ? 0 : 2;
+}

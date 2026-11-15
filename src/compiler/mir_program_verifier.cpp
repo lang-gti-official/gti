@@ -12988,6 +12988,56 @@ exactUniqueOwnerSwapContract(const MirBody &body,
   return ownerType != SemanticType::Unknown;
 }
 
+// Narrowing rewrites one writable counted-view place from two counts. It has
+// no result, loan, failure or owner effect: the place keeps the dependency it
+// already carries, which is why it needs no publication of its own.
+[[nodiscard]] bool
+exactTextViewNarrowContract(const MirBody &body,
+                            const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::TextViewNarrow)
+    return true;
+  const SemanticType view =
+      SemanticType::referenceTo(SemanticType::StringView, AccessMode::Mutable);
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.callableInvocation ||
+      !instruction.callableArguments.empty() || instruction.result ||
+      instruction.info.type != SemanticType::Void || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      instruction.unsafeOperation != UnsafeOperationKind::PointerArithmetic ||
+      instruction.operands.size() != 3 ||
+      instruction.parameterTypes !=
+          std::vector<SemanticType>{view, SemanticType::UInt64,
+                                    SemanticType::UInt64} ||
+      instruction.operands[0].type != view ||
+      instruction.operands[1].type != SemanticType::UInt64 ||
+      instruction.operands[2].type != SemanticType::UInt64 ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() || !instruction.lifecycle.empty())
+    return false;
+  // The view is either borrowed for writing here or reached through an
+  // exclusive loan, such as the referent of a mutable reference formal. A
+  // loan operand may also retain the exact place it addresses.
+  const MirOperand &operand = instruction.operands[0];
+  MirPlaceId source = 0;
+  if (operand.kind == MirOperandKind::BorrowWrite && operand.place != 0 &&
+      operand.loan == 0) {
+    source = operand.place;
+  } else if (operand.kind == MirOperandKind::Loan && operand.value == 0) {
+    const MirLoan *loan = body.findLoan(operand.loan);
+    if (loan == nullptr || loan->access != AccessMode::Mutable)
+      return false;
+    source = operand.place != 0 ? operand.place : loan->source;
+  } else {
+    return false;
+  }
+  const MirPlace *place = body.findPlace(source);
+  return place != nullptr && place->type == SemanticType::StringView;
+}
+
 // This indivisible operation has no user-code/failure point between taking
 // the old value and restoring its place. Ordinary call-input/lifecycle and
 // loan verification still prove staging, exclusive access and result cleanup.
@@ -19332,6 +19382,15 @@ verifyMirProgramContracts(const MirProgram &program) {
                .instruction = instruction.id,
                .message = "unique-owner swap does not retain its exact "
                           "matching mutable-owner contract"});
+        }
+        if (!exactTextViewNarrowContract(body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "text-view narrowing does not retain its exact "
+                          "writable-view, two-count, failure-free contract"});
         }
         if (!exactRestoringTransferContract(program, body, instruction)) {
           result.errors.push_back(

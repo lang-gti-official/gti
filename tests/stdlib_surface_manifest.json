@@ -3004,6 +3004,20 @@
       }
     },
     {
+      "id": "string-view-subview",
+      "mode": "run",
+      "source": "tests/fixtures/text_view_subview.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
       "id": "structural-relocation",
       "mode": "run",
       "source": "tests/fixtures/structural_relocation.gti",
@@ -7538,6 +7552,32 @@
         "tests/text_view_iterator_runtime_test.py",
         "tests/text_view_iterator_compiler_tests.cpp",
         "examples/146-counted-text-view-iteration.gti"
+      ]
+    },
+    {
+      "id": "string-view.sub-views",
+      "source": "stdlib/std/string_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::string_view::remove_prefix",
+        "std::string_view::remove_suffix",
+        "std::string_view::substr"
+      ],
+      "case_ids": [
+        "string-view-subview"
+      ],
+      "required_instantiations": [
+        "literal-backed and owner-backed sources",
+        "clamped count, empty result and position equal to size",
+        "owner relay through by-value view parameters and view fields",
+        "in-place shrinking of a writable view"
+      ],
+      "evidence": [
+        "tests/fixtures/text_view_subview.gti",
+        "tests/fixtures/text_view_subview_failure.gti",
+        "stdlib/std/string_view.gti",
+        "tests/text_view_iterator_runtime_test.py",
+        "examples/194-string-view-subviews.gti"
       ]
     },
     {

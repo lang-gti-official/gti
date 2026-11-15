@@ -512,6 +512,9 @@ enum class IntrinsicKind {
   ConstantEvaluation,
   ConstantAllocate,
   ConstantRelease,
+  // Narrows a counted text view in place to [offset, offset + count). The
+  // unsafe caller proves that extent; the view keeps its owner dependency.
+  TextViewNarrow,
   Count,
 };
 

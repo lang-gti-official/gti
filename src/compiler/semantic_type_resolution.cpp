@@ -3307,39 +3307,63 @@ auto SemanticVisitor::Impl::analyzeArrayMemberCall(
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
 
-auto SemanticVisitor::Impl::textViewMemberFactory(std::string_view member) const
+auto SemanticVisitor::Impl::textViewMemberFactory(
+    std::string_view member, std::optional<std::size_t> inputs) const
     -> std::optional<CallableCandidate> {
-  // A builtin counted view has no source class body. Its cursor operations
-  // are ordinary source functions selected only from this trusted unit.
+  // A builtin counted view has no source class body. Its members are
+  // ordinary source functions selected only from this trusted unit, whose
+  // first formal receives the view by read-only reference (a cursor that
+  // retains the view itself), by value (a result that relays only the view's
+  // owner dependency) or by mutable reference (an in-place update of a
+  // writable view place). Overloads differ by arity alone; `inputs`
+  // counts the receiver, and without it any valid overload answers.
   // The public alias spelling is deliberately absent from this binding.
   const auto &symbols = activeNamespaceSymbols();
   const auto found =
       symbols.find("gti_internal::text_view_" + std::string(member));
-  if (found == symbols.end() || found->second.overloads.size() != 1 ||
+  if (found == symbols.end() || found->second.overloads.empty() ||
       sourceGraph == nullptr)
     return std::nullopt;
-  const auto &candidate = found->second.overloads.front();
-  const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
-  if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
-      unit->standardLibraryName != "std/string_view" ||
-      candidate.ownerClass != 0 || candidate.declaration == nullptr ||
-      candidate.bodyDeclaration()->body() == nullptr ||
-      candidate.record().intrinsic != IntrinsicKind::None ||
-      candidate.record().requiresUnsafe || candidate.parameterPack ||
-      !candidate.record().genericParameters.empty() ||
-      candidate.parameterTypes.empty() ||
-      candidate.parameterTypes.front() !=
-          SemanticType::referenceTo(SemanticType::StringView,
-                                    AccessMode::ReadOnly))
-    return std::nullopt;
-  return candidate;
+  std::optional<CallableCandidate> selected;
+  for (const auto &candidate : found->second.overloads) {
+    const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
+    if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
+        unit->standardLibraryName != "std/string_view" ||
+        candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+        candidate.bodyDeclaration()->body() == nullptr ||
+        candidate.record().intrinsic != IntrinsicKind::None ||
+        candidate.record().requiresUnsafe || candidate.parameterPack ||
+        !candidate.record().genericParameters.empty() ||
+        candidate.parameterTypes.empty() ||
+        (candidate.parameterTypes.front() !=
+             SemanticType::referenceTo(SemanticType::StringView,
+                                       AccessMode::ReadOnly) &&
+         candidate.parameterTypes.front() !=
+             SemanticType::referenceTo(SemanticType::StringView,
+                                       AccessMode::Mutable) &&
+         candidate.parameterTypes.front() != SemanticType::StringView))
+      return std::nullopt;
+    if (inputs && candidate.parameterTypes.size() != *inputs)
+      continue;
+    // Two overloads of one arity would need ordinary overload ranking.
+    if (inputs && selected)
+      return std::nullopt;
+    if (!selected)
+      selected = candidate;
+  }
+  return selected;
 }
 
 auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     const Call &call, const Get &member,
     const std::vector<SemanticType> &argumentTypes, const Token &paren)
     -> void {
-  if (const auto factory = textViewMemberFactory(member.name().lexeme)) {
+  // A wrong arity still selects a member, reported as such below.
+  auto factory =
+      textViewMemberFactory(member.name().lexeme, call.arguments().size() + 1);
+  if (!factory)
+    factory = textViewMemberFactory(member.name().lexeme);
+  if (factory) {
     std::vector<const ExprPtr *> inputs{&member.object()};
     for (const auto &argument : call.arguments())
       inputs.push_back(&argument);
@@ -3363,6 +3387,11 @@ auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
       }
     }
     validateCallPlaceExclusivityImpl(factory->parameterTypes, inputs, paren);
+    // A writable receiver or argument is a mutable use of its binding.
+    for (std::size_t index = 0; index < inputs.size(); ++index)
+      if (factory->parameterTypes[index].kind == SemanticType::Reference &&
+          factory->parameterTypes[index].referenceAccess == AccessMode::Mutable)
+        recordMutableBindingUse(*inputs[index]);
     recordResolvedCall(call, *factory, {}, {}, {}, {}, CallReceiverMode::None,
                        &member.object());
     currentType = callExpressionType(factory->returnType);

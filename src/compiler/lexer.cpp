@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdint>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <utility>
@@ -512,32 +514,17 @@ void Lexer::string() {
     completionExclusions.emplace_back(start + 1, current);
   std::string value;
   value.reserve(encoded.size());
-  for (std::size_t index = 0; index < encoded.size(); ++index) {
-    if (encoded[index] != '\\' || index + 1 >= encoded.size()) {
-      value += encoded[index];
-      continue;
-    }
-
-    const char escaped = encoded[++index];
-    const std::size_t escapeStart = start + index;
-    value += decodeEscape(escaped, escapeStart, false);
-  }
+  decodeLiteralBody(encoded, start + 1, value);
   addToken(TokenKind::STRING_LITERAL, value);
 }
 
 void Lexer::character() {
-  std::string value;
+  // Find the closing quote first; an escape always covers its next byte, so
+  // `'\''` and `'\\'` stay one literal. Decoding happens on the whole body.
   while (peek() != '\'' && peek() != '\n' && !isAtEnd()) {
-    const std::size_t characterStart = current;
-    const char currentCharacter = advance();
-    if (currentCharacter != '\\') {
-      value += currentCharacter;
-      continue;
+    if (advance() == '\\' && !isAtEnd() && peek() != '\n') {
+      advance();
     }
-    if (isAtEnd() || peek() == '\n') {
-      break;
-    }
-    value += decodeEscape(advance(), characterStart, true);
   }
 
   if (isAtEnd() || peek() == '\n') {
@@ -552,6 +539,10 @@ void Lexer::character() {
   advance();
   if (collectCompletionExclusions)
     completionExclusions.emplace_back(start + 1, current);
+  std::string value;
+  decodeLiteralBody(
+      std::string_view(source.data() + start + 1, current - start - 2),
+      start + 1, value);
   if (value.size() != 1) {
     report("GTI-L0010",
            "A character literal must contain exactly one 8-bit code unit.",
@@ -564,33 +555,137 @@ void Lexer::character() {
   addToken(TokenKind::CHARACTER_LITERAL, CharacterLiteral{decoded});
 }
 
-char Lexer::decodeEscape(char escaped, std::size_t escapeStart,
-                         bool characterLiteral) {
+void Lexer::decodeLiteralBody(std::string_view body, std::size_t bodyStart,
+                              std::string &value) {
+  value.reserve(value.size() + body.size());
+  for (std::size_t index = 0; index < body.size(); ++index) {
+    if (body[index] != '\\' || index + 1 >= body.size()) {
+      value += body[index];
+      continue;
+    }
+    decodeEscape(body, index, bodyStart, value);
+  }
+}
+
+namespace {
+
+[[nodiscard]] int hexDigitValue(char value) {
+  if (value >= '0' && value <= '9')
+    return value - '0';
+  if (value >= 'a' && value <= 'f')
+    return value - 'a' + 10;
+  if (value >= 'A' && value <= 'F')
+    return value - 'A' + 10;
+  return -1;
+}
+
+void appendUtf8(std::uint32_t scalar, std::string &value) {
+  if (scalar < 0x80) {
+    value += static_cast<char>(scalar);
+  } else if (scalar < 0x800) {
+    value += static_cast<char>(0xC0 | (scalar >> 6));
+    value += static_cast<char>(0x80 | (scalar & 0x3F));
+  } else if (scalar < 0x10000) {
+    value += static_cast<char>(0xE0 | (scalar >> 12));
+    value += static_cast<char>(0x80 | ((scalar >> 6) & 0x3F));
+    value += static_cast<char>(0x80 | (scalar & 0x3F));
+  } else {
+    value += static_cast<char>(0xF0 | (scalar >> 18));
+    value += static_cast<char>(0x80 | ((scalar >> 12) & 0x3F));
+    value += static_cast<char>(0x80 | ((scalar >> 6) & 0x3F));
+    value += static_cast<char>(0x80 | (scalar & 0x3F));
+  }
+}
+
+} // namespace
+
+// `body[index]` is a backslash with at least one byte after it. Appends the
+// decoded code units and leaves `index` on the escape's final byte.
+void Lexer::decodeEscape(std::string_view body, std::size_t &index,
+                         std::size_t bodyStart, std::string &value) {
+  const std::size_t escapeStart = bodyStart + index;
+  const char escaped = body[++index];
+  // Fixed-width hexadecimal escapes. Unlike C++, `\x` takes exactly two
+  // digits, so a following hexadecimal letter is never absorbed.
+  const auto hexadecimal =
+      [&](std::size_t width) -> std::optional<std::uint32_t> {
+    std::uint32_t result = 0;
+    std::size_t taken = 0;
+    while (taken < width && index + 1 < body.size() &&
+           hexDigitValue(body[index + 1]) >= 0) {
+      result = result * 16 +
+               static_cast<std::uint32_t>(hexDigitValue(body[++index]));
+      ++taken;
+    }
+    if (taken == width)
+      return result;
+    report("GTI-L0005",
+           std::string("Escape '\\") + escaped + "' requires exactly " +
+               std::to_string(width) + " hexadecimal digits.",
+           escapeStart, std::min(bodyStart + index + 1, source.size()));
+    return std::nullopt;
+  };
   switch (escaped) {
   case '\\':
-    return '\\';
+    value += '\\';
+    return;
   case '"':
-    return '"';
-  case 'n':
-    return '\n';
-  case 'r':
-    return '\r';
-  case 't':
-    return '\t';
-  case '0':
-    return '\0';
+    value += '"';
+    return;
   case '\'':
-    if (characterLiteral) {
-      return '\'';
+    value += '\'';
+    return;
+  case 'n':
+    value += '\n';
+    return;
+  case 'r':
+    value += '\r';
+    return;
+  case 't':
+    value += '\t';
+    return;
+  case '0':
+    value += '\0';
+    return;
+  case 'a':
+    value += '\a';
+    return;
+  case 'b':
+    value += '\b';
+    return;
+  case 'e':
+    value += static_cast<char>(0x1B);
+    return;
+  case 'f':
+    value += '\f';
+    return;
+  case 'v':
+    value += '\v';
+    return;
+  case 'x':
+    if (const auto byte = hexadecimal(2))
+      value += static_cast<char>(*byte);
+    return;
+  case 'u':
+  case 'U':
+    if (const auto scalar = hexadecimal(escaped == 'u' ? 4 : 8)) {
+      if (*scalar > 0x10FFFF || (*scalar >= 0xD800 && *scalar <= 0xDFFF)) {
+        report("GTI-L0005",
+               "Escape '\\" + std::string(1, escaped) +
+                   "' does not name a Unicode scalar value.",
+               escapeStart, std::min(bodyStart + index + 1, source.size()));
+        return;
+      }
+      appendUtf8(*scalar, value);
     }
-    break;
+    return;
   default:
     break;
   }
   report("GTI-L0005",
          std::string("Unknown escape sequence '\\") + escaped + "'.",
          escapeStart, std::min(escapeStart + 2, source.size()));
-  return escaped;
+  value += escaped;
 }
 
 bool Lexer::isNumber(char value) { return value >= '0' && value <= '9'; }

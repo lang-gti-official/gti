@@ -4306,6 +4306,20 @@ public:
            stage.info.type == pointer.arguments.front();
   }
 
+  // In-place narrowing rewrites one writable view's address/count pair from
+  // two counts. Its unsafe marker is the caller's extent proof, nothing more.
+  static bool textViewNarrowing(const MirInstruction &stage) {
+    return stage.intrinsic == IntrinsicKind::TextViewNarrow &&
+           stage.kind == MirInstructionKind::Call && !stage.receiver &&
+           !stage.result && !stage.functionTarget && !stage.rawMemoryAccess &&
+           stage.operands.size() == 3 && stage.parameterTypes.size() == 3 &&
+           stage.parameterTypes[0] ==
+               SemanticType::referenceTo(SemanticType::StringView,
+                                         AccessMode::Mutable) &&
+           stage.parameterTypes[1] == SemanticType::UInt64 &&
+           stage.parameterTypes[2] == SemanticType::UInt64;
+  }
+
   bool representedTextAddress(const MirBody &body,
                               const MirInstruction &stage) const {
     if (!mir_detail::textAddressResultLoan(body, stage, &program))
@@ -5658,6 +5672,7 @@ public:
               stage.operands.empty() &&
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
+          const bool textNarrowing = textViewNarrowing(stage);
           std::optional<Shape> callableIntrinsic;
           if (stage.intrinsic == IntrinsicKind::FunctionPointerFromItem)
             callableIntrinsic = classShape(stage.info.type);
@@ -5694,7 +5709,7 @@ public:
               // type; a payload enum has no underlying value to read.
               : sealedIntegralUnderlyingValue(stage)
                   ? std::optional(Shape::NativeIntegralEnumValue)
-              : textQuery ? std::optional(Shape::CountedText)
+              : textQuery || textNarrowing ? std::optional(Shape::CountedText)
               : stage.receiver &&
                       stage.receiver->type.kind == SemanticType::Array &&
                       passiveArrayElement(stage.receiver->type) &&
@@ -5945,6 +5960,9 @@ public:
                     (erasedReference(stage) ||
                      restoredLoanTransport(mir, stage))
                 ? std::optional(Shape::ErasedReference)
+            : stage.unsafeOperation == UnsafeOperationKind::PointerArithmetic &&
+                    textViewNarrowing(stage)
+                ? std::optional(Shape::CountedText)
             : ((stage.unsafeOperation == UnsafeOperationKind::RawDereference &&
                 (representedTextAddress(mir, stage) ||
                  rawTextResultReturn(mir, mirBlock, stage))) ||
