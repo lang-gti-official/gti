@@ -1,0 +1,73 @@
+// Regular expressions with <std/regex>: ECMAScript patterns, as in C++
+// std::regex, with errors as values, results that cannot dangle, and
+// matching that cannot hang on a hostile pattern.
+import std.regex;
+import std.string;
+import std.vector;
+
+int main() {
+  // An invalid pattern is a value to handle, not an exception.
+  expected<std::regex, std::regex_error> broken = std::regex::compile("(\\d+");
+  if (!broken) {
+    std::print("rejected pattern at offset ");
+    std::print(std::to_string(broken.error().position));
+    std::print(": ");
+    std::println(broken.error().description());
+  }
+
+  // A literal pattern known to be valid can be constructed directly.
+  std::regex entry = std::regex("(?<level>[A-Z]+) (?<time>\\d\\d:\\d\\d) (?<text>.*)");
+  std::string log{"WARN 09:14 disk at 91%\nINFO 09:15 rotated logs\nERROR 09:16 write failed"};
+
+  // Walk every line; each result borrows `log`, which therefore cannot
+  // change while a result is in use.
+  std::regex line = std::regex("[^\\n]+");
+  mut std::size_t from = 0;
+  while (true) {
+    std::match_results m = std::regex_search(log.view(), line, from);
+    if (!m) { break; }
+    std::string text = m.str();
+    std::match_results fields = std::regex_match(text.view(), entry);
+    if (fields && !fields.equals("level", "INFO")) {
+      std::print(fields.str("time"));
+      std::print(" ");
+      std::print(fields.str("level"));
+      std::print(": ");
+      std::println(fields.str("text"));
+    }
+    from = m.next_position();
+  }
+
+  // Replacement strings use ECMAScript's $1 and $<name>.
+  std::regex time = std::regex("(?<h>\\d\\d):(?<m>\\d\\d)");
+  std::println(time.replace("09:14 and 17:05", "$<h>h$<m>"));
+
+  // A callable can compute each replacement from an owned copy of the match.
+  std::regex number = std::regex("\\d+");
+  auto doubled = [](std::match_groups& groups) -> std::string {
+    mut std::string out = std::string(groups.str());
+    out.append(groups.str());
+    return out;
+  };
+  std::println(std::regex_replace_with("1 22 333", number, doubled));
+
+  // Splitting returns owned pieces.
+  std::vector<std::string> fields = std::regex("\\s*;\\s*").split("a; b ;c");
+  for (std::string& field : fields) {
+    std::print("[");
+    std::print(field);
+    std::print("]");
+  }
+  std::println("");
+
+  // A pattern that makes backtracking engines run for minutes answers at once.
+  mut std::string many = std::string("");
+  mut std::size_t count = 0;
+  while (count < std::size_t(10000)) {
+    many.push_back('a');
+    count = count + std::size_t(1);
+  }
+  std::regex nested = std::regex("(a*)*b");
+  std::println(nested.contains(many.view()) ? "found" : "no match, quickly");
+  return 0;
+}

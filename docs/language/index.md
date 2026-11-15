@@ -29,7 +29,8 @@ Focused current contracts add detail for
 [native C interoperation](native-c-interop.md),
 [concurrency and atomics](concurrency.md), [I/O](io.md),
 [clocks](chrono.md), [processes](process.md), [filesystem](filesystem.md),
-[HTTP and URLs](http.md), [JSON](json.md), [binary-to-text encoding](encoding.md), and
+[HTTP and URLs](http.md), [JSON](json.md), [regular expressions](regex.md),
+[binary-to-text encoding](encoding.md), and
 [TCP ownership](tcp.md).
 
 ## Authority

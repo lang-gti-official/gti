@@ -1,0 +1,344 @@
+// std::regex: ECMAScript grammar and semantics, compile errors, replacement,
+// splitting, owned groups, and linear-time matching. Exits with the number of
+// the first failing check.
+import std.regex;
+import std.string;
+import std.vector;
+
+mut int failures = 0;
+mut int first_failure = 0;
+
+void check(bool condition, int id) {
+  if (!condition) {
+    failures = failures + 1;
+    if (first_failure == 0) { first_failure = id; }
+    std::print("regex check failed: ");
+    std::println(std::to_string(id));
+  }
+}
+
+// The whole-match text of the leftmost match, or "<none>".
+std::string found(std::string_view pattern, std::string_view subject) {
+  std::regex re = std::regex(pattern);
+  std::match_results m = re.search(subject);
+  if (!m) { return std::string("<none>"); }
+  return m.str();
+}
+
+struct regex_options_holder {
+  std::regex_options options;
+  regex_options_holder(std::regex_options options) : options(options) {}
+};
+
+std::string found_with(std::string_view pattern, regex_options_holder holder, std::string_view subject) {
+  std::regex re = std::regex(pattern, holder.options);
+  std::match_results m = re.search(subject);
+  if (!m) { return std::string("<none>"); }
+  return m.str();
+}
+
+bool full(std::string_view pattern, std::string_view subject) {
+  return std::regex(pattern).matches(subject);
+}
+
+bool fails_with(std::string_view pattern, std::regex_errc code, std::size_t position) {
+  expected<std::regex, std::regex_error> compiled = std::regex::compile(pattern);
+  if (compiled) { return false; }
+  return compiled.error().code == code && compiled.error().position == position;
+}
+
+bool fails_as(std::string_view pattern, std::regex_errc code) {
+  expected<std::regex, std::regex_error> compiled = std::regex::compile(pattern);
+  if (compiled) { return false; }
+  return compiled.error().code == code;
+}
+
+std::string repeated(char value, std::size_t count) {
+  mut std::string text = std::string("");
+  mut std::size_t index = 0;
+  while (index < count) {
+    text.push_back(value);
+    index = index + std::size_t(1);
+  }
+  return text;
+}
+
+void literals_and_alternation() {
+  check(found("abc", "xxabcxx") == "abc", 1);
+  check(found("abd", "xxabcxx") == "<none>", 2);
+  check(found("a|ab", "ab") == "a", 3);          // leftmost-first priority
+  check(full("a|ab", "ab"), 4);                    // a full match backtracks
+  check(found("cat|dog", "hotdog") == "dog", 5);
+  check(found("", "abc") == "", 6);
+  check(full("", ""), 7);
+  check(!full("a", ""), 8);
+}
+
+void quantifiers() {
+  check(found("a+", "baaab") == "aaa", 10);
+  check(found("a+?", "baaab") == "a", 11);
+  check(found("<.+>", "<a><b>") == "<a><b>", 12);
+  check(found("<.+?>", "<a><b>") == "<a>", 13);
+  check(found("a{2,3}", "aaaa") == "aaa", 14);
+  check(found("a{2,3}?", "aaaa") == "aa", 15);
+  check(full("a{2}", "aa") && !full("a{2}", "aaa"), 16);
+  check(found("a{2,}", "aaaaa") == "aaaaa", 17);
+  check(found("ba?c", "bc") == "bc", 18);
+  check(found("x*", "aaa") == "", 19);
+  check(full("(ab)*", "ababab"), 20);
+  check(full("(a|b)*c", "abbac"), 21);
+  check(full("(?:a*)*", "aaa"), 22);             // empty iterations terminate
+  check(full("(a*)+b", "aaab"), 23);
+  check(found("(a?)*?b", "aab") == "aab", 24);
+}
+
+void classes_and_escapes() {
+  check(found("[a-c]+", "xxbcaz") == "bca", 30);
+  check(found("[^0-9]+", "12ab34") == "ab", 31);
+  check(found("[\\d.]+", "v1.25!") == "1.25", 32);
+  check(found("[[:alpha:]]+", "12Abc3") == "Abc", 33);
+  check(found("[[:digit:][:upper:]]+", "abC9Dz") == "C9D", 34);
+  check(found("\\d+", "ab123c") == "123", 35);
+  check(found("\\D+", "12ab3") == "ab", 36);
+  check(found("\\w+", "  foo_1 ") == "foo_1", 37);
+  check(found("\\W+", "ab, cd") == ", ", 38);
+  check(found("\\s+", "a \t\nb") == " \t\n", 39);
+  check(found("\\S+", "  ab ") == "ab", 40);
+  check(found("\\x41\\u0042", "zABz") == "AB", 41);
+  check(found("\\u00e9", "café") == "é", 42);   // expands to UTF-8 bytes
+  check(found("a\\.b", "axb a.b") == "a.b", 43);
+  check(found("\\t", "a\tb") == "\t", 44);
+  check(found("[\\]]", "a]b") == "]", 45);
+  check(found("[a\\-z]+", "b-az") == "-az", 46);
+  check(found("[-a]+", "b-a") == "-a", 47);
+  check(found("[]", "abc") == "<none>", 48);       // an empty class matches nothing
+  check(found("[^]", "abc") == "a", 49);
+  mut std::string backspace{"a"};
+  backspace.push_back(char(uint8_t(8)));
+  std::regex class_backspace = std::regex("[\\b]");   // a class \b is backspace
+  std::match_results backspace_match = class_backspace.search(backspace.view());
+  check(backspace_match.position() == std::size_t(1), 50);
+  check(found("\\cJ", "a\nb") == "\n", 51);
+  check(found(".", "\nx") == "x", 52);
+  check(found("[[=a=]]", "bab") == "a", 53);
+}
+
+void anchors_and_boundaries() {
+  check(found("^b", "a\nb") == "<none>", 60);
+  std::regex_options multiline{.multiline = true};
+  check(found_with("^b", regex_options_holder(multiline), "a\nb") == "b", 61);
+  check(found_with("a$", regex_options_holder(multiline), "a\nb") == "a", 62);
+  check(found("a$", "a\nb") == "<none>", 63);
+  check(found("\\bcat\\b", "concat cat") == "cat", 64);
+  std::regex word = std::regex("\\bcat\\b");
+  std::match_results m = word.search("concat cat");
+  check(m.position() == std::size_t(7), 65);
+  check(found("\\Bcat", "concat cat") == "cat", 66);
+  check(std::regex("\\Bcat").search("concat cat").position() == std::size_t(3), 67);
+  check(full("^abc$", "abc"), 68);
+}
+
+void groups_and_backreferences() {
+  std::regex re = std::regex("((a)(b))|(c)");
+  std::match_results m = re.search("xc");
+  check(m.size() == std::size_t(5), 70);
+  check(m.matched(4) && !m.matched(1) && !m.matched(2), 71);
+  check(m.position(1) == std::string::npos && m.length(1) == std::size_t(0), 72);
+  check(m.str(1) == "" && m.str(4) == "c", 73);
+  check(!m[1].matched && m[4].matched && m[4].first == std::size_t(1) && m[4].second == std::size_t(2), 74);
+  check(full("(\\w+) \\1", "hello hello"), 75);
+  check(!full("(\\w+) \\1", "hello world"), 76);
+  std::regex_options icase{.icase = true};
+  check(found_with("(a)\\1", regex_options_holder(icase), "xaAx") == "aA", 77);
+  check(found("(?<w>o+)\\k<w>", "fooooo") == "oooo", 78);
+  check(found("(a)|\\1b", "b") == "b", 79);       // an unset group matches empty
+  check(re.mark_count() == std::size_t(4), 80);
+  check(found("(?:ab)+", "ababx") == "abab", 81);
+}
+
+void lookahead() {
+  check(found("\\w+(?=!)", "hi yo!") == "yo", 90);
+  check(found("foo(?!bar)", "foobar foobaz") == "foo", 91);
+  check(std::regex("foo(?!bar)").search("foobar foobaz").position() == std::size_t(7), 92);
+  check(found("(?=(\\w+))\\1:", "ab:") == "ab:", 93);   // lookahead captures are kept
+  check(found("(?!a)\\w", "ab") == "b", 94);
+}
+
+void options() {
+  std::regex_options icase{.icase = true};
+  check(found_with("HeLLo", regex_options_holder(icase), "say hello") == "hello", 100);
+  check(found_with("[a-c]+", regex_options_holder(icase), "xABCx") == "ABC", 101);
+  check(found_with("[[:lower:]]+", regex_options_holder(icase), "1AbC2") == "AbC", 102);
+  check(found("a.b", "a\nb") == "<none>", 103);
+  std::regex_options dotall{.dotall = true};
+  check(found_with("a.b", regex_options_holder(dotall), "a\nb") == "a\nb", 104);
+  std::regex_options nosubs{.nosubs = true};
+  std::regex plain = std::regex("(a)(b)", nosubs);
+  check(plain.mark_count() == std::size_t(0), 105);
+  std::match_results m = plain.search("ab");
+  check(m.size() == std::size_t(1) && m.str() == "ab", 106);
+  check(plain.flags().nosubs && !plain.flags().icase, 107);
+}
+
+void errors() {
+  check(fails_with("(a", std::regex_errc::paren, 0), 110);
+  check(fails_with("a)", std::regex_errc::paren, 1), 111);
+  check(fails_with("[ab", std::regex_errc::brack, 0), 112);
+  check(fails_with("a{2", std::regex_errc::brace, 1), 113);
+  check(fails_with("a{3,1}", std::regex_errc::badbrace, 1), 114);
+  check(fails_with("a{x}", std::regex_errc::badbrace, 1), 115);
+  check(fails_with("*a", std::regex_errc::badrepeat, 0), 116);
+  check(fails_with("a**", std::regex_errc::badrepeat, 2), 117);
+  check(fails_with("^*", std::regex_errc::badrepeat, 1), 118);
+  check(fails_with("\\q", std::regex_errc::escape, 0), 119);
+  check(fails_with("ab\\", std::regex_errc::escape, 2), 120);
+  check(fails_with("[b-a]", std::regex_errc::range, 1), 121);
+  check(fails_with("[\\d-z]", std::regex_errc::range, 1), 122);
+  check(fails_with("(a)\\2", std::regex_errc::backref, 3), 123);
+  check(fails_with("\\k<nope>(a)", std::regex_errc::backref, 0), 124);
+  check(fails_with("[[:nope:]]", std::regex_errc::ctype, 1), 125);
+  check(fails_with("[[.ab.]]", std::regex_errc::collate, 1), 126);
+  check(fails_as("(?<n>a)(?<n>b)", std::regex_errc::escape), 127);
+  check(fails_as("(?x)", std::regex_errc::paren), 128);
+  check(fails_as("\\x4", std::regex_errc::escape), 129);
+  check(fails_as("(a{1000}){1000}", std::regex_errc::complexity), 130);
+  std::string deep = repeated('(', 1100);
+  check(fails_as(deep.view(), std::regex_errc::stack), 131);
+  // Nesting costs heap, not native stack: 900 nested groups compile and
+  // match even in an unoptimized build.
+  mut std::string nested = repeated('(', 900);
+  nested.push_back('a');
+  nested.append(repeated(')', 900).view());
+  expected<std::regex, std::regex_error> nested_re = std::regex::compile(nested.view());
+  check(nested_re.has_value() && nested_re.value().matches("a"), 135);
+  check(nested_re.has_value() && nested_re.value().mark_count() == std::size_t(900), 136);
+  mut std::string looks = std::string("");
+  mut std::size_t look = 0;
+  while (look < std::size_t(33)) {
+    looks.append("(?=");
+    look = look + std::size_t(1);
+  }
+  check(fails_as(looks.view(), std::regex_errc::stack), 137);
+  check(fails_as("a{10001}", std::regex_errc::badbrace), 132);
+  expected<std::regex, std::regex_error> bad = std::regex::compile("(a");
+  check(!bad && bad.error().description() == "unmatched '(' or ')'", 133);
+  check(std::regex::compile("a|b").has_value(), 134);
+}
+
+void replacement() {
+  std::regex re = std::regex("(\\w)(\\d)");
+  check(std::regex_replace("a1 b2", re, "$2$1") == "1a 2b", 140);
+  check(std::regex_replace("a1 b2", re, "[$&]") == "[a1] [b2]", 141);
+  check(std::regex_replace("xa1y", re, "<$`|$'>") == "x<x|y>y", 142);
+  check(std::regex_replace("a1", re, "$$1") == "$1", 143);
+  check(std::regex_replace("a1", re, "$3$x") == "$3$x", 144);
+  std::regex_format_options first{.first_only = true};
+  check(std::regex_replace("a1 b2", re, "_", first) == "_ b2", 145);
+  std::regex_format_options no_copy{.no_copy = true};
+  check(std::regex_replace("a1 b2", re, "$1", no_copy) == "ab", 146);
+  check(std::regex_replace("abc", std::regex("x*"), "-") == "-a-b-c-", 147);
+  check(std::regex_replace("baaa", std::regex("a*"), "<$&>") == "<>b<aaa><>", 148);
+  std::regex dates = std::regex("(?<y>\\d{4})-(?<m>\\d\\d)");
+  check(dates.replace("1999-12", "$<m>/$<y>") == "12/1999", 149);
+  auto upper = [](std::match_groups& groups) -> std::string {
+    mut std::string out = std::string("");
+    out.append(groups.str("m"));
+    out.append(".");
+    out.append(groups.str(1));
+    return out;
+  };
+  check(std::regex_replace_with("from 2024-03 to 1999-12", dates, upper) == "from 03.2024 to 12.1999", 150);
+}
+
+void splitting_and_finding() {
+  std::regex comma = std::regex("\\s*,\\s*");
+  std::vector<std::string> parts = comma.split("a , b,c");
+  check(parts.size() == std::size_t(3) && parts[0] == "a" && parts[1] == "b" && parts[2] == "c", 160);
+  std::vector<std::string> trailing = comma.split("a,b,");
+  check(trailing.size() == std::size_t(3) && trailing[2] == "", 161);
+  std::vector<std::string> chars = std::regex("").split("abc");
+  check(chars.size() == std::size_t(3) && chars[1] == "b", 162);
+  std::vector<std::string> whole = std::regex("x").split("abc");
+  check(whole.size() == std::size_t(1) && whole[0] == "abc", 163);
+  check(std::regex("a*").count("baaa") == std::size_t(3), 164);
+  check(std::regex("o").count("foo boo") == std::size_t(4), 165);
+  std::vector<std::match_groups> all = std::regex("(\\d)(x)?").find_all("1x 2 3x");
+  check(all.size() == std::size_t(3), 166);
+  check(all[1].str() == "2" && !all[1].matched(2) && all[2].matched(2), 167);
+  check(all[2].position(0) == std::size_t(5), 168);
+  check(std::regex("b+").contains("abbbc") && !std::regex("x").contains("abc"), 169);
+}
+
+void results() {
+  std::regex re = std::regex("b+");
+  std::string text{"aabbbcc"};
+  std::match_results m = std::regex_search(text.view(), re);
+  check(m && !m.empty(), 170);
+  check(m.prefix() == "aa" && m.suffix() == "cc", 171);
+  check(m.position() == std::size_t(2) && m.length() == std::size_t(3), 172);
+  check(m.equals(0, "bbb") && !m.equals(0, "bb"), 173);
+  std::regex absent = std::regex("z");
+  std::match_results none = std::regex_search(text.view(), absent);
+  check(!none && none.empty() && none.size() == std::size_t(0), 174);
+  check(none.str() == "" && none.prefix() == "", 175);
+  check(!std::regex_match(text.view(), re), 176);
+  std::regex runs = std::regex("a+b+c+");
+  check(!std::regex_match(text.view(), runs).empty(), 177);
+  // Search from an offset still sees the text before it for anchors.
+  check(!std::regex_search("ab", std::regex("^b"), 1), 178);
+  check(std::regex_search("ab cd", std::regex("\\b\\w"), 1).position() == std::size_t(3), 179);
+  // Walking every match.
+  mut std::size_t from = 0;
+  mut std::string seen = std::string("");
+  std::regex digits = std::regex("\\d+");
+  std::string numbers{"10, 200, 3"};
+  while (true) {
+    std::match_results next = std::regex_search(numbers.view(), digits, from);
+    if (!next) { break; }
+    seen.append(next.str().view());
+    seen.append(";");
+    from = next.next_position();
+  }
+  check(seen == "10;200;3;", 180);
+  std::regex copy = re.clone();
+  check(copy.search("xbbx").str() == "bb", 181);
+  std::regex named = std::regex("(?<first>a)(b)(?<third>c)");
+  check(named.group_index("third").has_value() && *named.group_index("third") == std::size_t(3), 182);
+  check(!named.group_index("second").has_value(), 183);
+  std::match_results nm = named.search("abc");
+  check(nm.str("first") == "a" && nm.position("third") == std::size_t(2) && nm.matched("third"), 184);
+  check(!nm.matched("missing") && nm.str("missing") == "", 185);
+  check(nm["third"].first == std::size_t(2), 186);
+}
+
+// Patterns that make a classic backtracking matcher take exponential time or
+// overflow its stack finish quickly here.
+void linear_time() {
+  std::string many = repeated('a', 20000);
+  check(!std::regex("(a*)*b").contains(many.view()), 190);
+  check(std::regex("(a|aa)+$").matches(many.view()), 191);
+  std::string xs = repeated('x', 5000);
+  check(!std::regex("(x+x+)+y").contains(xs.view()), 192);
+  check(!std::regex("(a|a)*c").contains(many.view()), 193);
+  std::string long_text = repeated('b', 200000);
+  check(std::regex("(a|b)*").matches(long_text.view()), 194);
+  std::regex letters = std::regex("[ab]+");
+  std::match_results all_letters = letters.search(long_text.view());
+  check(all_letters.length() == std::size_t(200000), 195);
+}
+
+int main() {
+  literals_and_alternation();
+  quantifiers();
+  classes_and_escapes();
+  anchors_and_boundaries();
+  groups_and_backreferences();
+  lookahead();
+  options();
+  errors();
+  replacement();
+  splitting_and_finding();
+  results();
+  linear_time();
+  return first_failure;
+}

@@ -2401,6 +2401,58 @@
       }
     },
     {
+      "id": "regex",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_regex.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "regex-example",
+      "mode": "run",
+      "source": "examples/194-regular-expressions.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "rejected pattern at offset 0: unmatched '(' or ')'\n09:14 WARN: disk at 91%\n09:16 ERROR: write failed\n09h14 and 17h05\n11 2222 333333\n[a][b][c]\nno match, quickly\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "regex-result-escape",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/regex_result_escape.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2045"
+        ]
+      }
+    },
+    {
+      "id": "regex-subject-mutation",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/regex_subject_mutation.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2017"
+        ]
+      }
+    },
+    {
       "id": "removal-algorithms",
       "mode": "run",
       "source": "tests/fixtures/removal_algorithms.gti",
@@ -6741,6 +6793,100 @@
       ]
     },
     {
+      "id": "regex.dangling-results",
+      "source": "stdlib/std/regex.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::match_results<returned past its subject>",
+        "std::match_results<subject changed while used>"
+      ],
+      "case_ids": [
+        "regex-result-escape",
+        "regex-subject-mutation"
+      ],
+      "reason": "A match result borrows the subject it read, so the borrow checker rejects changing the subject while the result is used and returning a result over local text.",
+      "required_instantiations": [
+        "subject mutation while a result is live",
+        "result returned over a local owner"
+      ],
+      "evidence": [
+        "tests/fixtures/regex_result_escape.gti",
+        "tests/fixtures/regex_subject_mutation.gti"
+      ]
+    },
+    {
+      "id": "regex.executable",
+      "source": "stdlib/std/regex.gti",
+      "status": "executable",
+      "operations": [
+        "std::describe(regex_errc)",
+        "std::match_groups",
+        "std::match_groups::matched",
+        "std::match_groups::position",
+        "std::match_groups::size",
+        "std::match_groups::str",
+        "std::match_results",
+        "std::match_results::empty",
+        "std::match_results::equals",
+        "std::match_results::format",
+        "std::match_results::length",
+        "std::match_results::matched",
+        "std::match_results::next_position",
+        "std::match_results::operator bool",
+        "std::match_results::operator[]",
+        "std::match_results::position",
+        "std::match_results::prefix",
+        "std::match_results::size",
+        "std::match_results::str",
+        "std::match_results::suffix",
+        "std::regex",
+        "std::regex::clone",
+        "std::regex::compile",
+        "std::regex::contains",
+        "std::regex::count",
+        "std::regex::find_all",
+        "std::regex::flags",
+        "std::regex::group_index",
+        "std::regex::mark_count",
+        "std::regex::match",
+        "std::regex::matches",
+        "std::regex::replace",
+        "std::regex::replace_with",
+        "std::regex::search",
+        "std::regex::split",
+        "std::regex_errc",
+        "std::regex_error",
+        "std::regex_error::description",
+        "std::regex_format_options",
+        "std::regex_match",
+        "std::regex_options",
+        "std::regex_replace",
+        "std::regex_replace_with",
+        "std::regex_search",
+        "std::sub_match",
+        "std::sub_match::length"
+      ],
+      "case_ids": [
+        "regex",
+        "regex-example"
+      ],
+      "required_instantiations": [
+        "ECMAScript grammar: alternation, greedy and lazy quantifiers, counted repetition, classes with ranges, escapes and POSIX names, anchors, word boundaries, capturing, non-capturing and named groups, backreferences and lookaheads",
+        "icase, nosubs, multiline and dotall options",
+        "every regex_errc reachable from compile with its byte offset, including nesting and program-size limits",
+        "linear-time matching of patterns without backreferences or lookaheads, and compilation without native recursion",
+        "replacement strings ($&, $`, $', $n, $<name>, $$), first_only and no_copy, callable replacement, split, count and find_all",
+        "borrow checking of match results against their subject"
+      ],
+      "evidence": [
+        "docs/language/regex.md",
+        "examples/194-regular-expressions.gti",
+        "stdlib/std/regex.gti",
+        "tests/fixtures/stdlib_surface_regex.gti",
+        "tests/stdlib_surface_test.py"
+      ]
+    },
+    {
       "id": "resource-vector.checked-iteration",
       "source": "stdlib/std/resource_vector.gti",
       "status": "executable",
@@ -7243,6 +7389,9 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_aggregate.gti",
         "stdlib/module-map.json"
+      ],
+      "required_instantiations": [
+        "portable modules through one import, including std.charconv and std.regex"
       ]
     },
     {
@@ -7366,6 +7515,7 @@
         "std::hash<std::string>",
         "std::hashing<std::string>",
         "std::string::append",
+        "std::string::append(string_view,size_t,size_t)",
         "std::string::as_span",
         "std::string::at",
         "std::string::back",
