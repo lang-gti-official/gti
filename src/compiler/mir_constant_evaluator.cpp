@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstdlib>
 #include "gti/mir_constant_evaluator.h"
 #include "gti/failure.h"
 #include "gti/mir_procedural.h"
@@ -417,6 +419,16 @@ private:
   MirConstantEvaluation fail(const Frame &frame,
                              ConstantEvaluationFailure failure,
                              std::string detail = {}) const {
+    if (std::getenv("GTI_TRACE_CEVAL")) {
+      const MirInstruction *inst = nullptr;
+      for (const auto &block : frame.body.blocks)
+        for (const auto &candidate : block.instructions)
+          if (block.id == frame.block && candidate.id == frame.instruction)
+            inst = &candidate;
+      std::fprintf(stderr, "ceval-fail failure=%d kind=%d op=%d intrinsic=%d detail=%s\n",
+                   (int)failure, inst ? (int)inst->kind : -1, inst ? (int)inst->operation : -1,
+                   inst ? (int)inst->intrinsic : -1, detail.c_str());
+    }
     if (procedural && detail.empty() &&
         failure == ConstantEvaluationFailure::UnsupportedExpression)
       detail = "This operation is outside the procedural constant-execution "
@@ -1567,6 +1579,16 @@ private:
         values.size() == 2) {
       const auto pointer = decodePointer(values[0]);
       auto delta = signedOffset(values[1]);
+      if (std::getenv("GTI_TRACE_CEVAL")) {
+        std::fprintf(stderr, "ptradd decoded=%d base=%zu offset=%lld delta=%d\n", (int)pointer.has_value(),
+                     pointer ? pointer->base : 0, pointer ? (long long)pointer->offset : 0, (int)delta.has_value());
+        if (pointer && pointer->base) {
+          const auto &b = pointerBases[pointer->base - 1];
+          std::fprintf(stderr, "  base alloc=%zu untyped=%d regionEpoch=%zu", b.location.allocation, (int)b.untyped, b.regionEpoch);
+          if (b.location.allocation) { auto &r = *heap[b.location.allocation-1]; std::fprintf(stderr, " live=%d epoch=%zu raw=%d typed=%d slots=%zu", (int)r.live, r.epoch, (int)r.raw, (int)r.typed, r.slots.size()); }
+          std::fprintf(stderr, "\n");
+        }
+      }
       if (!pointer || !delta || pointer->base == 0)
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       if (instruction.operation == MirOperation::PointerSubtract)
@@ -1740,6 +1762,8 @@ private:
           destructor->definitionKind != MirDefinitionKind::Source || !value)
         return fail(caller, ConstantEvaluationFailure::UnsupportedExpression,
                     "Constant destruction requires an available source body.");
+      if (std::getenv("GTI_TRACE_CEVAL"))
+        std::fprintf(stderr, "ceval destructor %zu class %zu\n", (std::size_t)destructor->id, (std::size_t)recipe.classInstance.value_or(0));
       auto result = executeBody(destructor->body,
                                 {MirBodyKind::Destructor, destructor->id},
                                 SemanticType::Void, {}, {}, {}, depth + 1,
@@ -1766,9 +1790,20 @@ private:
 
   void applyLifecycle(Frame &frame, std::span<const MirLifecycleEvent> events) {
     for (const auto &event : events) {
+      if (std::getenv("GTI_TRACE_CEVAL"))
+        std::fprintf(stderr, "  lifecycle kind=%d source=%zu target=%zu (body %d/%zu)\n", (int)event.kind,
+                     (std::size_t)event.source, (std::size_t)event.target, (int)frame.address.kind, (std::size_t)frame.address.owner);
       switch (event.kind) {
       case MirLifecycleEventKind::Initialize:
+        if (event.target)
+          frame.liveDrops[event.target] = true;
+        break;
       case MirLifecycleEventKind::Replace:
+        // As in canonical MIR liveness (advanceLifecycleState), the
+        // replacing value moves into the assigned place: its own obligation
+        // no longer owns it, whether or not the place has an obligation.
+        if (event.source)
+          frame.liveDrops[event.source] = false;
         if (event.target)
           frame.liveDrops[event.target] = true;
         break;
@@ -1859,6 +1894,10 @@ private:
         const auto *obligation = frame.body.findDropObligation(event.source);
         if (!obligation)
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        if (std::getenv("GTI_TRACE_CEVAL"))
+          std::fprintf(stderr, "  drop obligation=%zu live=%d active=%d (body %d/%zu)\n", (std::size_t)event.source,
+                       (int)frame.liveDrops[event.source], (int)obligation->dropType.requiresActiveCleanup,
+                       (int)frame.address.kind, (std::size_t)frame.address.owner);
         if (obligation->dropType.requiresActiveCleanup &&
             !frame.liveDrops[event.source]) {
           // Normal MIR may retire the shell of a moved parameter as well as
@@ -2368,6 +2407,48 @@ private:
           return throughCall(std::move(result), frame);
         evaluated.value = std::move(result.value);
         voidResult = result.voidResult;
+      } else if (instruction.intrinsic == IntrinsicKind::RawBorrow ||
+                 instruction.intrinsic == IntrinsicKind::RawBorrowMut) {
+        // A checked borrow of the object a constant pointer designates; the
+        // owner witness is a verifier fact, the pointee's validity is ours.
+        if (arguments.empty())
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        Location target;
+        const auto resolved = resolvePointer(arguments[0], 0, target, true);
+        if (resolved.failure != ConstantEvaluationFailure::None)
+          return fail(frame, resolved.failure);
+        target.access = instruction.intrinsic == IntrinsicKind::RawBorrowMut
+                            ? AccessMode::Mutable
+                            : AccessMode::ReadOnly;
+        evaluated = readLocation(target);
+        if (evaluated)
+          reference = std::move(target);
+      } else if (instruction.intrinsic == IntrinsicKind::ConstantEvaluation) {
+        // The evaluator is the one context where this query is true.
+        evaluated.value = true;
+      } else if (instruction.intrinsic == IntrinsicKind::ConstantAllocate) {
+        const auto *bytes =
+            arguments.size() == 2 ? std::get_if<ConstantInteger>(&arguments[0])
+                                  : nullptr;
+        const auto *alignment =
+            arguments.size() == 2 ? std::get_if<ConstantInteger>(&arguments[1])
+                                  : nullptr;
+        if (!bytes || !alignment || bytes->negative || alignment->negative ||
+            instruction.info.type.kind != SemanticType::RawPointer)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        evaluated = allocateRaw(bytes->magnitude, alignment->magnitude,
+                                instruction.info.type);
+        if (std::getenv("GTI_TRACE_CEVAL")) std::fprintf(stderr, "ceval allocate bytes=%llu -> region %zu\n", (unsigned long long)bytes->magnitude, heap.size());
+      } else if (instruction.intrinsic == IntrinsicKind::ConstantRelease) {
+        if (arguments.size() != 1)
+          return fail(frame, ConstantEvaluationFailure::InvalidOperands);
+        if (std::getenv("GTI_TRACE_CEVAL")) { auto d = decodePointer(arguments[0]); std::fprintf(stderr, "ceval release base=%zu in body kind=%d owner=%zu\n", d ? d->base : 0, (int)frame.address.kind, (std::size_t)frame.address.owner); }
+        const auto released = releaseRaw(arguments[0]);
+        if (!released)
+          return fail(frame, released.failure,
+                      "Constant storage was released while it still held live "
+                      "objects, or was not a live constant allocation.");
+        voidResult = true;
       } else if (instruction.intrinsic == IntrinsicKind::ObjectSize ||
                  instruction.intrinsic == IntrinsicKind::ObjectAlignment) {
         const auto layout = instruction.objectLayoutType
@@ -2641,11 +2722,12 @@ private:
     const auto *function = program.findFunctionInstance(id);
     // A constant view holds its own text, so a by-value view's runtime
     // borrow summary, such as a relayed text field (L-OWN-02), does not
-    // constrain its evaluation.
+    // constrain its evaluation. An unsafe callee runs too: every raw access
+    // it performs is checked against the executor's own allocations.
     if (function == nullptr ||
         (!function->constexprFunction &&
          !(procedural && function->proceduralFunction)) ||
-        function->requiresUnsafe || function->virtualMethod ||
+        function->virtualMethod ||
         function->definitionKind != MirDefinitionKind::Source ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
          function->returnType.kind != SemanticType::Reference &&

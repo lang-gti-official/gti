@@ -51,6 +51,16 @@ constexpr void fail_allocation(std::alloc_errc error) {
   gti_internal::panic("Invalid allocation request or resource region");
 }
 
+// The target's native size limit. Compile-time evaluation derives it from the
+// target layout of c_size_t, the bound the runtime reports as SIZE_MAX.
+export constexpr uint64_t native_size_limit() {
+  if (gti_internal::constant_evaluation()) {
+    uint64_t size_bytes = std::layout_of<c_size_t>().bytes;
+    return uint64_t(18446744073709551615) >> ((uint64_t(8) - size_bytes) * uint64_t(8));
+  }
+  return runtime::gti_rt_native_size_max_v1();
+}
+
 export class process_resource {
 public:
   constexpr process_resource() {}
@@ -58,18 +68,6 @@ public:
     if (request.alignment == uint64_t(0) or
         (request.alignment & (request.alignment - uint64_t(1))) != uint64_t(0)) {
       return unexpected(std::alloc_errc::invalid_alignment);
-    }
-    // Constant evaluation owns its storage and bounds, ahead of any target
-    // layout query; native code never takes this path.
-    if (gti_internal::constant_evaluation()) {
-      if (request.bytes == uint64_t(0)) {
-        return std::detail::raw_allocation(nullptr, request.bytes, request.alignment, uint64_t(0));
-      }
-      unsafe {
-        return std::detail::raw_allocation(
-            gti_internal::constant_allocate(request.bytes, request.alignment),
-            request.bytes, request.alignment, uint64_t(0));
-      }
     }
     // The byte-provider ABI carries at most 64 bits; c_size_t retains the
     // target C size type's exact layout. These bounds fold with target layout.
@@ -81,6 +79,15 @@ public:
     }
     if (request.bytes == uint64_t(0)) {
       return std::detail::raw_allocation(nullptr, request.bytes, request.alignment, uint64_t(0));
+    }
+    // Compile-time evaluation obtains the same validated request from the
+    // constant evaluator's byte provider; native code never takes this path.
+    if (gti_internal::constant_evaluation()) {
+      unsafe {
+        return std::detail::raw_allocation(
+            gti_internal::constant_allocate(request.bytes, request.alignment),
+            request.bytes, request.alignment, uint64_t(0));
+      }
     }
     unsafe {
 #if target.os == "windows"
@@ -610,7 +617,9 @@ export constexpr expected<void, std::alloc_errc> validate_region(
   unsafe {
     // Non-null byte addresses always satisfy unit alignment. Wider reported
     // alignments still require the actual address observation.
-    if (allocation.alignment != uint64_t(1) &&
+    // Constant-evaluation regions are aligned by construction and have no
+    // native address to observe.
+    if (allocation.alignment != uint64_t(1) && !gti_internal::constant_evaluation() &&
         runtime::gti_rt_address_is_aligned_v1(allocation.address, allocation.alignment) == 0) {
       return unexpected(std::alloc_errc::invalid_alignment);
     }
@@ -642,7 +651,7 @@ export constexpr expected<std::detail::raw_allocation, std::alloc_errc> try_allo
   std::layout object = std::layout_of<T>();
   mut uint64_t selected = object.alignment;
   if (minimum > selected) { selected = minimum; }
-  uint64_t maximum = runtime::gti_rt_native_size_max_v1();
+  uint64_t maximum = gti_internal::native_size_limit();
   if (selected > maximum || count > maximum / object.bytes) {
     return unexpected(std::alloc_errc::size_overflow);
   }
@@ -676,7 +685,7 @@ export constexpr expected<void, std::alloc_errc> try_allocate_sparse<T, Lease>(
   std::layout object = std::layout_of<T>();
   mut uint64_t selected = object.alignment;
   if (minimum > selected) { selected = minimum; }
-  uint64_t maximum = runtime::gti_rt_native_size_max_v1();
+  uint64_t maximum = gti_internal::native_size_limit();
   if (selected > maximum || count > maximum / object.bytes) {
     return unexpected(std::alloc_errc::size_overflow);
   }
