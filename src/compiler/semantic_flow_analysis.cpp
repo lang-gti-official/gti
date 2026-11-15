@@ -10471,10 +10471,21 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
   for (auto &scope : scopes)
     if (auto *symbol = find(scope))
       return symbol;
+  // The namespace indexes below are searched only by membership. A miss for
+  // this root is reused while every index keeps its recorded generation.
+  auto *currentBindings = currentNamespaceSymbolsMutable();
+  auto &generations = rawRootGenerationScratch;
+  namespaceIndexGenerations(generations, currentBindings);
+  if (generations != rawRootMissGenerations) {
+    rawRootMisses.clear();
+    rawRootMissGenerations = generations;
+  } else if (rawRootMisses.contains(place.root)) {
+    return nullptr;
+  }
   // A source-unit view owns the current flow facts when source loading is
   // active. Its declaration-index copy may still contain the initializer.
-  if (auto *bindings = currentNamespaceSymbolsMutable())
-    if (auto *symbol = find(*bindings))
+  if (currentBindings)
+    if (auto *symbol = find(*currentBindings))
       return symbol;
   if (auto *symbol = find(valueFlow.namespaceSymbols))
     return symbol;
@@ -10484,6 +10495,7 @@ auto SemanticVisitor::Impl::rawPointerRoot(const PlaceKey &place) -> Symbol * {
   for (auto &[_, bindings] : valueFlow.visibleNamespaceSymbols)
     if (auto *symbol = find(bindings))
       return symbol;
+  rawRootMisses.insert(place.root);
   return nullptr;
 }
 
@@ -11187,25 +11199,60 @@ auto SemanticVisitor::Impl::rawCallPointerOrigins(const Expr &expression,
   return result;
 }
 
+auto SemanticVisitor::Impl::namespaceIndexGenerations(
+    std::vector<std::uint64_t> &generations,
+    const DeclarationIndex<Symbol> *current) -> void {
+  generations.clear();
+  generations.push_back(reinterpret_cast<std::uintptr_t>(current));
+  generations.push_back(current ? current->generation() : 0);
+  generations.push_back(valueFlow.namespaceSymbols.generation());
+  for (const auto &[unit, bindings] : valueFlow.internalNamespaceSymbols) {
+    generations.push_back(unit);
+    generations.push_back(bindings.generation());
+  }
+  generations.push_back(std::numeric_limits<std::uint64_t>::max());
+  for (const auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols) {
+    generations.push_back(unit);
+    generations.push_back(bindings.generation());
+  }
+}
+
 auto SemanticVisitor::Impl::saveRawProgramStorage()
     -> std::vector<RawProgramStorageState> {
   if (!rawAuditEnabled())
     return {};
+  // Only globals and static fields are program storage, and they are a small
+  // fraction of each index. Index membership is fixed for one generation, so
+  // collect them once per generation instead of rescanning every unit.
+  auto &generations = rawRootGenerationScratch;
+  namespaceIndexGenerations(generations, nullptr);
+  if (generations != rawStorageBindingGenerations) {
+    rawStorageBindings.clear();
+    const auto collect = [&](auto &bindings,
+                             RawProgramStorageState::Namespace space,
+                             SourceUnitId unit = 0) {
+      for (auto &[name, symbol] : bindings)
+        if (symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+            symbol.bindingKind == SemanticBindingKind::StaticField)
+          rawStorageBindings.push_back({&symbol, space, unit, name});
+    };
+    collect(valueFlow.namespaceSymbols,
+            RawProgramStorageState::Namespace::Global);
+    for (auto &[unit, bindings] : valueFlow.internalNamespaceSymbols)
+      collect(bindings, RawProgramStorageState::Namespace::Internal, unit);
+    for (auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols)
+      collect(bindings, RawProgramStorageState::Namespace::Visible, unit);
+    rawStorageBindingGenerations = generations;
+  }
   std::vector<RawProgramStorageState> result;
-  const auto save = [&](auto &bindings, RawProgramStorageState::Namespace space,
-                        SourceUnitId unit = 0) {
-    for (auto &[name, symbol] : bindings)
-      if ((symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
-           symbol.bindingKind == SemanticBindingKind::StaticField) &&
-          !rawPointerFieldPaths(symbol.type).empty())
-        result.push_back({&symbol, space, unit, name, symbol.rawPointerOrigins,
-                          symbol.rawPointerFields});
-  };
-  save(valueFlow.namespaceSymbols, RawProgramStorageState::Namespace::Global);
-  for (auto &[unit, bindings] : valueFlow.internalNamespaceSymbols)
-    save(bindings, RawProgramStorageState::Namespace::Internal, unit);
-  for (auto &[unit, bindings] : valueFlow.visibleNamespaceSymbols)
-    save(bindings, RawProgramStorageState::Namespace::Visible, unit);
+  for (const auto &binding : rawStorageBindings) {
+    Symbol &symbol = *binding.symbol;
+    if ((symbol.bindingKind == SemanticBindingKind::GlobalVariable ||
+         symbol.bindingKind == SemanticBindingKind::StaticField) &&
+        !rawPointerFieldPaths(symbol.type).empty())
+      result.push_back({&symbol, binding.space, binding.unit, binding.name,
+                        symbol.rawPointerOrigins, symbol.rawPointerFields});
+  }
   for (auto &[declaration, symbol] : valueFlow.staticFieldSymbols)
     if (!rawPointerFieldPaths(symbol.type).empty())
       result.push_back({.symbol = &symbol,
