@@ -1,5 +1,12 @@
 # Diagnostics
 
+`GTI-P0001` diagnoses a built-in type keyword after `::` at that keyword,
+with a hint to use its unqualified spelling. Declaration look-ahead retains
+this malformed type shape so leading specifiers such as `constexpr` do not
+receive an unrelated declaration error. Recovery consumes the invalid keyword
+before resynchronizing, and invalid source remains ineligible for generation.
+CLI and LSP share the diagnostic; no automatic edit guesses the intended type.
+
 `GTI-I0015` rejects compiler directives/imports inside explicit
 macro input before the loader commits effects. `GTI-S2124` reports procedural
 selection, input-category, syntax-capability and execution failures;

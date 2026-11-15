@@ -111,6 +111,20 @@ def main():
             errors = change(hosted.replace("return 0;", "return 0"), 11)
             assert [error["code"] for error in errors] == ["GTI-P0001"], errors
             assert change(hosted, 12) == []
+
+            qualified = ("/* 😀 */ constexpr std::uint64_t download_limit = 1024 * 1024 * 1024;\n"
+                         "int main() { return 0; }\n")
+            errors = change(qualified, 13)
+            assert len(errors) == 1 and errors[0]["code"] == "GTI-P0001", errors
+            offset = qualified.index("uint64_t")
+            assert errors[0]["range"] == {
+                "start": lsp_position(qualified, offset),
+                "end": lsp_position(qualified, offset + 8)}, errors
+            assert "Built-in type 'uint64_t' cannot be qualified" in errors[0]["message"], errors
+            assert "without a namespace or type qualifier" in errors[0]["message"], errors
+            fixed = qualified.replace("std::uint64_t", "uint64_t").replace(
+                "= 1024", "= uint64_t(1024)")
+            assert change(fixed, 14) == []
         finally:
             session.close()
 
