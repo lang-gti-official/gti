@@ -462,6 +462,27 @@ constexpr auto intrinsicEffects = std::to_array<MirEffectTraits>({
                     .maySynchronize = true},   // ThreadScope
     MirEffectTraits{.initializesValue = true}, // AtomicFetchAddWrapping
     MirEffectTraits{.initializesValue = true}, // AtomicFetchSubWrapping
+    MirEffectTraits{.readsPlace = true,
+                    .writesPlace = true,
+                    .writesUnknownMemory = true,
+                    .dependsOnLoan = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectInitializeOwned
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .startsLoan = true,
+                    .dependsOnLoan = true}, // ObjectBorrowOwned
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .writesUnknownMemory = true,
+                    .dependsOnLoan = true,
+                    .movesValue = true,
+                    .initializesValue = true}, // ObjectRelocateOwned
+    MirEffectTraits{.writesUnknownMemory = true,
+                    .mayTrap = true,
+                    .initializesValue = true,
+                    .invokesUserCode = true}, // ObjectConstructOwned
+    MirEffectTraits{.readsUnknownMemory = true,
+                    .startsLoan = true,
+                    .dependsOnLoan = true}, // ObjectBorrowOwnedMut
 });
 
 constexpr auto synchronizationEffects = std::to_array<MirEffectTraits>({
@@ -781,6 +802,11 @@ constexpr auto intrinsicNames = std::to_array<std::string_view>({
     "thread-scope",
     "atomic-fetch-add-wrapping",
     "atomic-fetch-sub-wrapping",
+    "object-initialize-owned",
+    "object-borrow-owned",
+    "object-relocate-owned",
+    "object-construct-owned",
+    "object-borrow-owned-mut",
 });
 
 constexpr auto synchronizationNames = std::to_array<std::string_view>({
@@ -2389,16 +2415,23 @@ RelocationKind relocationKind(const MirProgram &program,
                    : RelocationKind::Unavailable;
     } else if (owner->compilerCapability ==
                CompilerCapabilityTypeKind::UninitializedStorage) {
-      result = candidate.arguments.size() == 1 &&
-                       self(self, candidate.arguments.front()) ==
-                           RelocationKind::Bitwise
-                   ? RelocationKind::Bitwise
-                   : RelocationKind::Unavailable;
+      // These bytes do not themselves carry the payload's checked loans.
+      // Keep their movement tied to raw payload relocation even while
+      // deriving generated value moves for enclosing ordinary records.
+      result =
+          candidate.arguments.size() == 1 &&
+                  mirTypeRelocationKind(program, candidate.arguments.front()) ==
+                      RelocationKind::Bitwise
+              ? RelocationKind::Bitwise
+              : RelocationKind::Unavailable;
     } else if (owner->compilerCapability != CompilerCapabilityTypeKind::None ||
                owner->moveConstructor != SpecialMemberStatus::Generated ||
                owner->abstract || owner->cOpaqueHandle ||
-               (!carriers && (owner->lifecycleBoundBorrowCarrier ||
-                              owner->traits.containsBorrowedState)) ||
+               // Cleanup can observe value-specific text dependencies even
+               // when the layout has no declared reference fields. That
+               // determines loan endpoints, not structural relocatability;
+               // actual dependency transfers remain checked at their uses.
+               (!carriers && owner->traits.containsBorrowedState) ||
                (carriers && !owner->traits.movable)) {
       result = RelocationKind::Unavailable;
     } else {

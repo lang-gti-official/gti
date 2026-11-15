@@ -250,6 +250,14 @@ void testPlacementPlan() {
              placement.target(1)->element == 0 && placement.target(3) &&
              placement.target(3)->place == 1,
          "fresh argument staging preserves exact aggregate destination paths");
+  auto staged = body;
+  staged.blocks[0].instructions[1].destination = 2;
+  staged.blocks[0].instructions[1].callInputKind = HirCallInputKind::MoveValue;
+  const Placement prepared(staged);
+  expect(prepared.target(1) && prepared.target(1)->place == 2 &&
+             !prepared.fresh(2) && !prepared.target(2) && prepared.target(3) &&
+             prepared.target(3)->place == 1,
+         "a materialized argument retains its slot before aggregate transfer");
   expect(placement.target(6) && placement.target(6)->returned,
          "fresh returns use the caller's result destination");
   expect(!placement.fresh(5) && !placement.target(5),

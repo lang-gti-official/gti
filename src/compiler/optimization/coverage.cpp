@@ -150,15 +150,20 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectDestroy:
     return barrier("unsafe object lifetime end and typed cleanup");
   case IntrinsicKind::ObjectConstruct:
+  case IntrinsicKind::ObjectConstructOwned:
     return barrier("unsafe final-address construction and ownership handoff");
   case IntrinsicKind::ObjectRelocate:
   case IntrinsicKind::ObjectRelocateRange:
   case IntrinsicKind::ObjectTake:
+  case IntrinsicKind::ObjectInitializeOwned:
+  case IntrinsicKind::ObjectRelocateOwned:
     return barrier("unsafe destructive relocation and raw ownership transfer");
   case IntrinsicKind::ObjectSize:
   case IntrinsicKind::ObjectAlignment:
     return supported("pure target-dependent representation query; scalar "
                      "interpretation overdefined");
+  case IntrinsicKind::ObjectBorrowOwned:
+  case IntrinsicKind::ObjectBorrowOwnedMut:
   case IntrinsicKind::RawBorrow:
   case IntrinsicKind::RawBorrowMut:
   case IntrinsicKind::EraseReference:

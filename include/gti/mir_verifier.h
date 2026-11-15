@@ -19,6 +19,8 @@ enum class MirBorrowRejectionKind {
   Conflict,
   // A returned or stored borrow outlives the storage it depends on.
   Escape,
+  // A stored value is used after a dependency becomes unavailable.
+  ExpiredDependency,
   // A parent loan is used while a child reborrow of it is still live.
   ParentUse,
   // A returned borrow comes from a formal parameter its signature does not
@@ -30,6 +32,12 @@ enum class MirBorrowRejectionKind {
   // A consuming switch moves a borrowed carrier whose dependency group
   // another live binding still carries.
   SharedConsumedGroup,
+  // A retaining call cannot represent the lifetime of an input it stores.
+  UnrepresentedRetention,
+  // Callable conversion loses a target's retaining-input relation.
+  ErasedRetention,
+  // A stored value has an external owner where a boundary requires none.
+  OwnerlessRequirement,
 };
 
 struct MirBorrowRejection {
@@ -61,8 +69,19 @@ struct MirVerificationResult {
   [[nodiscard]] bool valid() const { return errors.empty(); }
 };
 
+// A program permits reconstructing source-call storage effects from callee
+// bodies. Without it, call retention stays unknown; carrier annotations alone
+// never establish conditional cleanup or permission to use a stored value.
+[[nodiscard]] MirVerificationResult
+verifyMirBody(const MirBody &body, std::size_t owner = 0,
+              const MirProgram *program = nullptr);
+
+// Whole-program verification can share converged helper summaries across its
+// body checks. The session supplies the immutable program it was created for.
+class MirCarrierAnalysis;
 [[nodiscard]] MirVerificationResult verifyMirBody(const MirBody &body,
-                                                  std::size_t owner = 0);
+                                                  std::size_t owner,
+                                                  MirCarrierAnalysis &analysis);
 
 enum class MirDebugReadability { Unknown, Unavailable, DefinitelyReadable };
 enum class MirDebugAvailabilityReason {

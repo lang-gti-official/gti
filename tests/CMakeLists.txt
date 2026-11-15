@@ -2032,6 +2032,12 @@ add_test(NAME ownerless_text_contracts COMMAND gti_ownerless_text_contracts_test
 add_test(NAME borrowed_dependency_updates
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowed_dependency_updates_test.py"
     $<TARGET_FILE:gti> --output-dir "${CMAKE_BINARY_DIR}/Testing/borrowed-dependency-updates")
+# The retaining-storage inventory now includes 97 semantic/forgery cases and
+# over 300 native cases (each at O0 and O3), up from 31 and 21 respectively. Keep
+# complete-suite budgets distinct from per-case compiler-cost measurements;
+# native subprocesses retain their own bounded timeout.
+set_tests_properties(ownerless_text_contracts PROPERTIES TIMEOUT 1800)
+set_tests_properties(borrowed_dependency_updates PROPERTIES TIMEOUT 1200)
 add_executable(gti_view_field_tests view_field_tests.cpp)
 target_link_libraries(gti_view_field_tests PRIVATE gti_compiler)
 add_test(NAME view_fields COMMAND gti_view_field_tests)

@@ -535,6 +535,11 @@ LLVM_COVERAGE_ENTRY(RequireAllocation, 8, Pending, None, "all represented shapes
 LLVM_COVERAGE_ENTRY(ThreadScope, 13, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(AtomicFetchAddWrapping, 13, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_ENTRY(AtomicFetchSubWrapping, 13, Pending, None, "all represented shapes remain pending native lowering")
+LLVM_COVERAGE_ENTRY(ObjectBorrowOwnedMut, 5, Pending, None, "exclusive owner-tracked access requires dependency validation")
+LLVM_COVERAGE_ENTRY(ObjectBorrowOwned, 5, Pending, None, "owner-tracked read requires dependency validation")
+LLVM_COVERAGE_ENTRY(ObjectInitializeOwned, 8, Pending, None, "owner-aware initialized-value transfer requires native lowering")
+LLVM_COVERAGE_ENTRY(ObjectRelocateOwned, 8, Pending, None, "owner-aware raw storage transfer requires native lowering")
+LLVM_COVERAGE_ENTRY(ObjectConstructOwned, 8, Pending, None, "owner-aware final-address construction requires checked constructor lowering")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 

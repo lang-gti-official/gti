@@ -1893,7 +1893,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
               ? &program.classInstances()[target->owner - 1]
               : nullptr;
       const bool inPlace =
-          value.intrinsic == IntrinsicKind::ObjectConstruct ||
+          (value.intrinsic == IntrinsicKind::ObjectConstruct ||
+           value.intrinsic == IntrinsicKind::ObjectConstructOwned) ||
           value.intrinsic == IntrinsicKind::OptionalStorageConstruct;
       bool exactResult = owner != nullptr && value.info.type == owner->type &&
                          value.intrinsic == IntrinsicKind::None;
@@ -1907,7 +1908,8 @@ verifyHirProgramPlans(const SemanticModel &semantics,
             value.info.type == SemanticType::Void &&
             storage.arguments.size() == 1 &&
             storage.arguments.front() == owner->type &&
-            (value.intrinsic == IntrinsicKind::ObjectConstruct
+            ((value.intrinsic == IntrinsicKind::ObjectConstruct ||
+              value.intrinsic == IntrinsicKind::ObjectConstructOwned)
                  ? storage.kind == SemanticType::RawPointer
                  : storageOwner != nullptr &&
                        storageOwner->compilerCapability ==

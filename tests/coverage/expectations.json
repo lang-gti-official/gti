@@ -1616,7 +1616,7 @@
       "outcome": "rejected"
     },
     "own-x12-view-in-vector": {
-      "code": "GTI-S2045",
+      "code": "GTI-S2017",
       "outcome": "rejected"
     },
     "own-x13-optional-of-view-param": {

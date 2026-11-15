@@ -545,6 +545,8 @@ bool nativeObjectConstructionShape(const MirProgram &program,
                                    const MirInstruction &instruction) {
   if (!mir_detail::objectConstruct(program, instruction))
     return false;
+  const std::size_t argumentOffset =
+      instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2 : 1;
   const auto &type = instruction.parameterTypes[0].arguments[0];
   if (instruction.constructorTarget) {
     const auto *target =
@@ -553,8 +555,9 @@ bool nativeObjectConstructionShape(const MirProgram &program,
         target ? program.findClassInstance(target->owner) : nullptr;
     return owner && owner->type == type &&
            instruction.parameterTypes.size() ==
-               target->parameterTypes.size() + 1 &&
-           std::equal(instruction.parameterTypes.begin() + 1,
+               target->parameterTypes.size() + argumentOffset &&
+           std::equal(instruction.parameterTypes.begin() +
+                          static_cast<std::ptrdiff_t>(argumentOffset),
                       instruction.parameterTypes.end(),
                       target->parameterTypes.begin());
   }
@@ -565,18 +568,18 @@ bool nativeObjectConstructionShape(const MirProgram &program,
     if (found == program.classInstances().end())
       return false;
     if (instruction.constructorKind == ConstructorKind::Ordinary)
-      return instruction.operands.size() == 1 &&
+      return instruction.operands.size() == argumentOffset &&
              found->declaredFields.empty() && found->bases.empty() &&
              found->defaultConstructor == SpecialMemberStatus::Generated &&
              !found->generatedDefaultRequiresSchedule;
-    return instruction.operands.size() == 2 &&
+    return instruction.operands.size() == argumentOffset + 1 &&
            (instruction.constructorKind == ConstructorKind::Move
                 ? found->moveConstructor == SpecialMemberStatus::Generated
                 : found->copyConstructor == SpecialMemberStatus::Generated);
   }
   // Exact completed values already carry their source-owned initialization.
   // A targetless default may not invent constructors for nested class values.
-  if (instruction.operands.size() == 2)
+  if (instruction.operands.size() == argumentOffset + 1)
     return true;
   const auto passive = [&](const auto &self,
                            const SemanticType &selected) -> bool {

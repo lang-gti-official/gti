@@ -16,7 +16,7 @@ public:
   }
 };
 
-class span_iterator<std::storage_element T, uint64_t Reverse = 0> {
+class span_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
   std::detail::prefix_owner<T>& data;
   mut size_t current_position;
   size_t first_position;
@@ -107,7 +107,7 @@ public:
   }
 };
 
-class mutable_span_iterator<std::storage_element T, uint64_t Reverse = 0> {
+class mutable_span_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
   mut std::detail::prefix_owner<T>& data;
   mut size_t current_position;
   size_t first_position;
@@ -206,7 +206,7 @@ public:
 }
 
 /// A checked read-only view over one source-defined contiguous owner.
-export class span<std::storage_element T, lifetime source> {
+export class span<std::layout_queryable T, lifetime source> {
   std::detail::prefix_owner<T>&<source> data;
   size_t first_position;
   size_t element_count;
@@ -318,7 +318,7 @@ public:
 
 /// An exclusive, move-only view of initialized contiguous elements.
 /// Reborrowing a subspan suspends access through its parent until the child ends.
-export class mutable_span<std::storage_element T> {
+export class mutable_span<std::layout_queryable T> {
   mut std::detail::prefix_owner<T>& data;
   size_t first_position;
   size_t element_count;

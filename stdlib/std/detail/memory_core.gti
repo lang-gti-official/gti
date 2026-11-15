@@ -29,6 +29,14 @@ concept layout_queryable<T> = std::meta::has_object_layout<T>();
 export [[unsatisfied("The element must be a complete object type without checked borrowed state. Raw pointers retain their unsafe validity obligations; copying or moving is not required.")]]
 concept storage_element<T> = layout_queryable<T> && std::meta::is_borrow_free<T>();
 
+namespace detail {
+// Constraint atoms are constexpr calls; keep negation inside the predicate.
+export constexpr bool has_borrowed_payload<T>() {
+  return !std::meta::is_borrow_free<T>();
+}
+}
+
+
 /// End one live object's lifetime without releasing its storage.
 /// The caller guarantees a live, writable, correctly aligned complete object,
 /// exclusive access, and that no later cleanup will destroy that object again.
@@ -46,6 +54,18 @@ export [[discardable]]
 unsafe T* construct_at<T, Args...>(T* address, Args... args)
     requires layout_queryable<T> {
   unsafe { gti_internal::object_construct(address, args...); }
+  return address;
+}
+
+/// Construct at a vacant final address covered by a checked storage owner.
+/// The unsafe caller proves extent, alignment and exclusive destination access.
+/// Successful construction retains its external dependencies in owner; failure
+/// uses the selected constructor's ordinary partial-object cleanup.
+export [[discardable]]
+unsafe T* construct_owned_at<T, Owner, Args...>(T* address, mut Owner& owner,
+                                               Args... args)
+    requires layout_queryable<T> {
+  unsafe { gti_internal::object_construct_owned(address, owner, args...); }
   return address;
 }
 
@@ -97,6 +117,17 @@ export const T* typed_address<T>(const void* address) {
   return detail::convert_address<const T*, void>(address);
 }
 
+/// Transfers an already-constructed value into vacant storage owned by owner.
+/// The caller proves writable alignment/extent, nonoverlap, and that owner
+/// controls this object's lifetime. Checked value dependencies are retained by
+/// owner; a raw destination pointer alone does not establish this relation.
+/// Only failure-free generated relocation is used, never a user move body.
+export unsafe void initialize_owned_at<T, Owner>(T* destination,
+                                                 mut Owner& owner, T value)
+    requires layout_queryable<T> && move_constructible<T> {
+  unsafe { gti_internal::object_initialize_owned(destination, owner, std::move(value)); }
+}
+
 /// Inline bytes with T's size/alignment, but no initial live T. Destruction
 /// never destroys a payload. Ordinary movement is available only for bitwise
 /// relocatable T; copying additionally requires copyable T. Other carriers
@@ -125,6 +156,20 @@ export unsafe void relocate_at<T>(T* destination, T* source)
   unsafe { gti_internal::object_relocate(destination, source); }
 }
 
+/// Moves one live object between explicitly witnessed storage owners. The
+/// caller proves exclusive access, alignment, nonoverlap and a vacant target,
+/// and removes the source from its owner's initialized set after this call.
+/// The destination retains all external dependencies of the source storage.
+/// Source dependency retention is conservative until its owner ends; this
+/// operation neither releases storage nor invokes user-defined movement.
+export unsafe void relocate_owned_at<T, Destination, Source>(
+    T* destination, mut Destination& destination_owner,
+    T* source, mut Source& source_owner)
+    requires layout_queryable<T> && move_constructible<T> {
+  unsafe { gti_internal::object_relocate_owned(destination, destination_owner,
+                                               source, source_owner); }
+}
+
 /// Bulk transfer of count live bitwise-relocatable objects into vacant storage.
 /// The caller guarantees nonoverlapping regions of at least count complete T
 /// objects, valid alignment, exclusive access and a representable byte extent.
@@ -143,6 +188,23 @@ export unsafe void relocate_range_at<T>(T* destination, T* source, size_t count)
 export unsafe T take_at<T>(T* source)
     requires layout_queryable<T> && relocatable<T> {
   unsafe { return gti_internal::object_take(source); }
+}
+
+/// Reads an initialized object in owner-tracked storage. The unsafe caller
+/// proves address validity and that owner retains every external dependency
+/// of the stored value (for example through initialize_owned_at). The returned
+/// reference borrows storage; copies of its contents retain their own owners.
+export unsafe T&<a> borrow_owned_at<T, Owner, lifetime a>(const T* address,
+                                                        Owner&<a> owner) {
+  unsafe { return gti_internal::object_borrow_owned(address, owner); }
+}
+
+/// Exclusively borrows a live object in owner-tracked storage. The caller
+/// proves a writable aligned address, exclusive access and that owner retains
+/// every external dependency of the stored contents.
+export unsafe mut T&<a> borrow_owned_mut_at<T, Owner, lifetime a>(T* address,
+                                                               mut Owner&<a> owner) {
+  unsafe { return gti_internal::object_borrow_owned_mut(address, owner); }
 }
 
 /// Asserts that address denotes a live T whose lifetime is covered by owner.

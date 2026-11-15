@@ -1158,9 +1158,16 @@ parameters. Each dependency keeps its original parameter, nested field path and
 access mode even when constructors reorder arguments. Factories, default
 arguments, argument packs and arbitrary expressions do not acquire a guessed
 constructor-origin summary. An exclusive dependency uses explicit movement
-when transporting an existing carrier. Neither form supports
-copy or move assignment because assignment would reseat an established
-dependency.
+when transporting an existing carrier. A carrier whose reference paths are
+all shared supports whole-value copy or move assignment when its other fields
+support that operation. This replaces the carrier value; it does not permit
+reseating an individual reference field. An exact local replacement releases
+the previous dependencies after their last use, while independent copies keep
+their own dependencies. A live reference to the replaced carrier still prevents
+the write. Stores through a container accessor conservatively retain the union
+of its element dependencies. Carriers with exclusive reference paths remain
+non-assignable. This revises the earlier blanket restriction on assignment of
+reference-bearing carriers.
 
 A read-only carrier permits copy construction when its ordinary fields are
 copy-constructible, and move construction when they are movable. A copy
@@ -2887,6 +2894,15 @@ length:
 int values[4] = {1, 2, 3, 4};
 ```
 
+Local array literals may initialize shared borrowed elements from different
+owners, for example `std::string_view views[2] = {first.view(), second.view()}`.
+Their actual dependency set protects both owners. Nested literals, copies and
+by-value element reads retain that set; the array's static element type does
+not establish ownerless contents. See `examples/194-borrowed-containers.gti`.
+This also applies to ordinary records containing shared references: copying a
+record element out of its local array preserves the external referent's
+dependency without requiring the array itself to remain alive.
+
 They are ordinary bounded values, not owning pointers or allocation handles.
 They never decay to pointers, and their copy, move, and destruction traits
 follow the element type. Initial publication from exact brace elements does
@@ -2957,19 +2973,42 @@ profiles have separate obligations, not an unfinished private-storage cutover.
 
 `std::vector<T>`, imported with `import std.vector;`, is now an ordinary GTI
 class over the source-defined process-backed prefix owner. Its element type
-satisfies `std::storage_element` and failure-free `std::relocatable`, not
-assignment-bearing `std::movable`: growth, insertion and erasure transfer
-objects into vacant slots rather than assigning over live elements.
+satisfies `std::vector_element`: a layout-queryable type with either
+failure-free relocation or an admitted move-constructible borrowed payload.
+Growth, insertion and erasure transfer objects into vacant slots rather than
+requiring assignment over live elements.
 Construction-only owners such as an owning
 record containing an optional string may therefore be vector elements and may
-be cloned when their explicit clone contract permits it. Borrowed-state and
-deleted-move elements remain rejected. The storage field makes the vector
+be cloned when their explicit clone contract permits it. Shared borrowed
+payloads, including dynamic `std::string_view` values and records containing
+shared references, retain their external owners through checked storage.
+Deleted-move elements remain rejected. The storage field makes the vector
 itself move-only, so transfer uses `std::move` and an ordinary copy is rejected.
 No frontend or backend phase
 recognizes the public `std::vector` name to supply container behavior. The
 separate hosted-entry rule validates the canonical
 `std::vector<std::string>` nominal identity only as an accepted `main`
 parameter and retains the exact source-defined startup append callable.
+
+Borrowed elements may depend on several distinct owners. Keeping the container
+alive does not extend those owners' lifetimes: a later element use prevents
+incompatible owner mutation or destruction. A direct by-value indexed copy
+retains the external owners independently of the container's allocation.
+An element reference instead keeps the container storage borrowed.
+
+This stage has two explicit restrictions. Copies obtained through a borrowing
+adapter, including a span or iterator, conservatively retain the physical
+source loan as well as the external owners; they cannot yet survive growth or
+ending the source container's scope. Use a direct indexed copy when that
+independence is required. Also, a class with a user-defined destructor cannot
+receive dynamic borrowed text in a by-value text field through constructor
+publication. Ordinary construction from ownerless text is allowed, but a
+forwarded generic text pack has no ownerless guarantee and is rejected even
+when its caller passes a literal (`GTI-S2045`). Records with
+ordinary shared reference fields retain their existing checked cleanup support.
+Removing these restrictions requires, respectively, independently proved
+adapter-to-element content projection and destructor receiver-field escape
+contracts. Exclusive borrowed elements are outside this shared-element stage.
 
 The initial surface provides default and size construction, `size`, `capacity`,
 `empty`, `reserve`, `clear`, `push_back`, `emplace_back`, `pop_back`, indexed
@@ -2987,7 +3026,7 @@ exclusive accessor. A string's hidden NUL is outside the allowed index range;
 an empty sequence or zero-length fixed array has no valid unchecked index.
 
 `emplace_back(arguments...)` forwards one final by-value pack through source
-prefix policy to `std::construct_at`, which executes the selected constructor
+prefix policy to owner-aware construction, which executes the selected constructor
 in its final slot. It returns a writable receiver-tied reference to
 that element. The reference prevents reserve, push, clear, movement, or another
 mutable vector operation until its loan ends. This API avoids an intermediate
@@ -3078,18 +3117,30 @@ that owner borrowed while the result is used, so `holder(line.view())`
 prevents mutating `line` until its last use, and a literal-backed argument
 relays nothing.
 
-A recursion that permutes its parameters, returning `s` beside
-`pick(t, s, n - 1)`, may return either one and relays neither: `return s`
-reports `GTI-S2045`. A dynamic view cannot escape a
-local owner, originate from temporary storage, be assigned into existing
-storage, or be nested in a global, static, array, or dynamic container. An
-array therefore holds only ownerless views: a view copied out of an array
-element, including one of a by-value array parameter, is ownerless and may be
-returned or stored like a literal-backed view. A dynamic view
-reaches a field only through the owner-tracked view fields described below.
-Mutable, multiple-origin, nested, and reassignable view graphs remain
-deliberately unsupported. These restrictions are semantic and survive through
-HIR and verified MIR; emitted C++ does not decide the lifetime.
+Dynamic text views retain the dependencies of their actual values. Direct local
+replacement, shared container elements, and local fixed-array literals can
+retain several possible external owners. Copying an element preserves those
+owners; it does not turn the view into an ownerless value. A direct indexed
+copy may outlive the array or container when every external owner remains
+live. Copies through adapters conservatively retain the adapter's physical
+storage borrow as well.
+
+Consuming iteration with `std::move(values).into_range()` currently requires
+`std::relocatable<T>` and an independent owned result from `take_next()`.
+A relocatable representation alone does not satisfy that second requirement:
+a borrowed text view is rejected by the consuming-range check.
+Shared borrowed elements support ordinary iteration and indexed reads, but
+consuming them needs a future owner-aware value-extraction operation that
+transfers external dependencies and retires the source element exactly once.
+The shared-container support does not relax the raw `std::take_at` contract.
+
+An indexed array parameter can therefore supply a returned view's dependency.
+Nested arrays and array copies preserve the same dependency set. Neither a
+helper call nor a copy permits a reference to outlive its external owner.
+Globals, statics, escaping captures and native boundaries still require an
+ownerless value. Indexed replacement of a text element retains its existing
+ownerless-input restriction; admitting borrowed array initializers does not
+relax every indirect write. These rules are checked before LLVM emission.
 
 Constructor field initializers obey the same storage rule. A constructor that
 directly stores a by-value text parameter in a text field requires an ownerless
@@ -3645,23 +3696,19 @@ need no escaping loan inside the function; the dynamic alternatives still
 require the declared owner. Callers conservatively retain the summarized owner
 dependency for the whole result, even when a literal/null branch executes.
 
-A `std::string_view` or `c_string` field, or a fixed-array element of either
-type, holds only an ownerless view wherever a method, parameter or return can
-reach it: a dynamic view is stored there, including through a constructor
-initializer, only by an owner-tracked value that stays in its creating body.
-Returning such storage,
-as in `return this.name;`, `return name;`, `return this.label.text;`,
-`return this.aliases[index];` or
-`return label.text;` through a parameter, copies that independent value. It
-does not borrow the receiver or parameter, so a method returning only stored
-views has no owner dependency and its caller may mutate, move or destroy the
-receiver while the result remains live. Concrete generic instances apply the
-same rule after substitution. A stored view may also be a lifetime-independent
-alternative beside a dependent relay, like a literal. Only a direct field or
-element read qualifies: a checked `std::string_view&` or `c_string&` reference
-field, a local copy or a call result keeps its ordinary origin rules. A
-shadowing local remains a local, and a dependent value it holds still needs an
-exact owner dependency.
+A stored text value is independent only when its actual contents are proved
+ownerless. Literal-only fields and arrays can yield independent views, but a
+declared text type alone is not that proof. Owner-tracked fields and array
+elements preserve their external dependencies when read, copied or returned.
+A function selecting from an array parameter exposes that parameter as a
+supplier; its callers retain the actual owners of the supplied elements.
+Destroying the array's physical storage does not invalidate a direct copied
+view when those external owners remain live.
+
+A checked `std::string_view&` or `c_string&` also borrows the view's physical
+storage. Its storage lifetime is separate from the lifetime of the characters
+that the view designates. A shadowing local remains a local; its name cannot
+substitute for a parameter's supplier identity.
 
 The receiver path may include indexing, including an overloaded subscript:
 `return records[index].text();` can relay the enclosing receiver's dependency

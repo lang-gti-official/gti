@@ -4,6 +4,10 @@
 
 #include <span>
 
+namespace lang {
+struct MirCarrierFlow;
+}
+
 namespace lang::mir_detail {
 [[nodiscard]] MirVerificationResult
 verifyOwnerlessTextContracts(const MirProgram &program);
@@ -11,9 +15,10 @@ verifyOwnerlessTextContracts(const MirProgram &program);
 // checked ownerless text write (L-OWN-02). Shape query used only after the
 // complete program's text-storage invariants have been independently
 // verified. This does not establish shell lifetime.
-[[nodiscard]] bool isOwnerlessTextStorageProjection(const MirProgram &program,
-                                                    const MirBody &body,
-                                                    const MirPlace &place);
+[[nodiscard]] bool
+isOwnerlessTextStorageProjection(const MirProgram &program, const MirBody &body,
+                                 const MirPlace &place,
+                                 const MirCarrierFlow *flow = nullptr);
 // A direct text field of a class whose type has no borrowed state. A value of
 // that class may still carry the field's read-only text owner dependency in a
 // Stored loan designating the field (L-OWN-02).

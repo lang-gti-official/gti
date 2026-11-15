@@ -1,4 +1,5 @@
 #include "mir_text_contracts.h"
+#include "mir_carrier_flow.h"
 
 #include "mir_verification_queries.h"
 
@@ -17,6 +18,118 @@ namespace {
 bool textType(const SemanticType &type) {
   return type.kind == SemanticType::StringView ||
          type.kind == SemanticType::CString;
+}
+
+// An inline array stores view objects without owning their external text.
+// Keep this distinct from scalar text operations and raw-pointer storage.
+bool inlineTextType(const SemanticType &type) {
+  const SemanticType *element = &type;
+  while (element->kind == SemanticType::Array && element->arguments.size() == 1)
+    element = &element->arguments.front();
+  return textType(*element);
+}
+
+// Structural capacity to store a text view, including nested and indirect
+// storage. Owning bytes alone do not create this capability. Unknown layouts
+// and recursive limits stay conservative; no declaration spelling is special.
+bool mayStoreText(const MirProgram &program, const SemanticType &type,
+                  std::size_t depth = 0) {
+  if (depth > 32 || textType(type) || type.kind == SemanticType::Unknown ||
+      type.kind == SemanticType::TypeParameter ||
+      type.kind == SemanticType::TypePack || type.kind == SemanticType::Lambda)
+    return true;
+  if (type.kind == SemanticType::Array ||
+      type.kind == SemanticType::Reference ||
+      type.kind == SemanticType::RawPointer ||
+      type.kind == SemanticType::UniqueOwner ||
+      type.kind == SemanticType::SharedPointer)
+    return type.arguments.size() != 1 ||
+           mayStoreText(program, type.arguments.front(), depth + 1);
+  if (type.kind == SemanticType::Class) {
+    const auto found = std::find_if(
+        program.classInstances().begin(), program.classInstances().end(),
+        [&](const auto &record) { return record.type == type; });
+    if (found == program.classInstances().end())
+      return true;
+    // Raw slots have no ordinary fields, but an owned initialization can
+    // publish their payload's checked dependencies into the containing owner.
+    // This is only possible retention, never proof that a slot is live.
+    if (found->compilerCapability ==
+        CompilerCapabilityTypeKind::UninitializedStorage)
+      return type.arguments.size() != 1 ||
+             mayStoreText(program, type.arguments.front(), depth + 1);
+    for (const auto &field : found->declaredFields)
+      if (mayStoreText(program, field.type, depth + 1))
+        return true;
+    for (const auto &base : found->bases) {
+      const auto *record = program.findClassInstance(base.instance);
+      if (!record || mayStoreText(program, record->type, depth + 1))
+        return true;
+    }
+  }
+  if (const auto *enumeration = program.findPayloadEnum(type))
+    for (const auto &variant : enumeration->variants)
+      for (const auto &payload : variant.payloadTypes)
+        if (mayStoreText(program, payload, depth + 1))
+          return true;
+  return false;
+}
+
+// A possible destination demands a proof; it is not evidence of a write.
+bool hasMutableRetainingDestination(const MirProgram &program,
+                                    const MirFunctionInstance &function) {
+  if (function.owner && !function.staticMember &&
+      function.receiverMutability == ReceiverMutability::Mutable) {
+    const auto *record = program.findClassInstance(*function.owner);
+    if (!record || mayStoreText(program, record->type))
+      return true;
+  }
+  if (std::any_of(function.parameterTypes.begin(),
+                  function.parameterTypes.end(), [&](const SemanticType &type) {
+                    return type.kind == SemanticType::Reference &&
+                           type.referenceAccess == AccessMode::Mutable &&
+                           type.arguments.size() == 1 &&
+                           mayStoreText(program, type.arguments.front());
+                  }))
+    return true;
+  // An explicit owner need not expose typed slots in its representation.
+  // Follow source helpers to owned publication before concluding that an
+  // incomplete summary cannot retain text merely because its layout is opaque.
+  const bool mutableBoundary =
+      (function.owner && !function.staticMember &&
+       function.receiverMutability == ReceiverMutability::Mutable) ||
+      std::any_of(function.parameterTypes.begin(),
+                  function.parameterTypes.end(), [](const auto &type) {
+                    return type.kind == SemanticType::Reference &&
+                           type.referenceAccess == AccessMode::Mutable;
+                  });
+  if (!mutableBoundary)
+    return false;
+  std::set<HirFunctionInstanceId> visited;
+  std::vector<const MirFunctionInstance *> pending{&function};
+  while (!pending.empty()) {
+    const auto *candidate = pending.back();
+    pending.pop_back();
+    if (!visited.insert(candidate->id).second ||
+        candidate->definitionKind != MirDefinitionKind::Source)
+      continue;
+    for (const auto &block : candidate->body.blocks)
+      for (const auto &instruction : block.instructions) {
+        if (instruction.tombstone)
+          continue;
+        if (instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned &&
+            instruction.parameterTypes.size() == 3 &&
+            mayStoreText(program, instruction.parameterTypes[2]))
+          return true;
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.dispatch == CallDispatch::Static &&
+            instruction.functionTarget)
+          if (const auto *callee =
+                  program.findFunctionInstance(*instruction.functionTarget))
+            pending.push_back(callee);
+      }
+  }
+  return false;
 }
 
 // Text that `place` reads from raw memory: below a raw dereference or raw
@@ -78,13 +191,15 @@ using HeldTexts = std::set<HeldText>;
 bool sharedGroupDesignates(const MirLoan &loan, const TextFieldPath &path) {
   if (loan.kind != MirLoanKind::Stored || loan.access != AccessMode::ReadOnly ||
       std::any_of(loan.additionalDependencies.begin(),
-                  loan.additionalDependencies.end(), [](const auto &dependency) {
+                  loan.additionalDependencies.end(),
+                  [](const auto &dependency) {
                     return dependency.access != AccessMode::ReadOnly;
                   }))
     return false;
   return loan.designatedFields == path ||
          std::any_of(loan.additionalDependencies.begin(),
-                     loan.additionalDependencies.end(), [&](const auto &dependency) {
+                     loan.additionalDependencies.end(),
+                     [&](const auto &dependency) {
                        return dependency.designatedFields == path;
                      });
 }
@@ -190,7 +305,8 @@ bool fieldContractFunction(const MirProgram &program,
 class TextContracts {
 public:
   explicit TextContracts(const MirProgram &program)
-      : program(program), returnSummaries(program.functionInstances().size()) {}
+      : program(program), carrierAnalysis(program),
+        returnSummaries(program.functionInstances().size()) {}
 
   MirVerificationResult verify();
 
@@ -213,6 +329,7 @@ public:
 
 private:
   const MirProgram &program;
+  MirCarrierAnalysis carrierAnalysis;
   MirVerificationResult result;
   // The program is read-only throughout this verifier. Retain every Stored
   // dependency in inventory order, including duplicates; filtering this
@@ -229,6 +346,8 @@ private:
           entry->second.push_back(&loan);
     return entry->second;
   }
+  std::map<HirFunctionInstanceId, MirRetainingStoreEffects> retainingWrites;
+  std::map<const MirBody *, MirCarrierFlow> retainingInputFlows;
   std::vector<std::set<std::size_t>> requirements;
   // Derived per function: the formal and receiver text fields it lets
   // outlive the call (L-OWN-02).
@@ -491,6 +610,37 @@ private:
       formal.field = place.projections[offset].field;
       return formal;
     }
+    // A checked element read from one direct inline text-array field
+    // retains that field's conservative owner set. Validate every projection
+    // against the declared layout; no raw or user-defined indexing qualifies.
+    if (!payloadField && place.projections.size() > offset + 1 &&
+        place.projections[offset].kind == MirProjectionKind::Field) {
+      const auto instance = std::find_if(
+          program.classInstances().begin(), program.classInstances().end(),
+          [&](const auto &candidate) { return candidate.type == type; });
+      if (instance == program.classInstances().end())
+        return std::nullopt;
+      const auto field = std::find_if(
+          instance->declaredFields.begin(), instance->declaredFields.end(),
+          [&](const auto &candidate) {
+            return candidate.symbol == place.projections[offset].field;
+          });
+      if (field == instance->declaredFields.end())
+        return std::nullopt;
+      const SemanticType *element = &field->type;
+      for (std::size_t index = offset + 1; index < place.projections.size();
+           ++index) {
+        if (place.projections[index].kind != MirProjectionKind::Index ||
+            element->kind != SemanticType::Array ||
+            element->arguments.size() != 1)
+          return std::nullopt;
+        element = &element->arguments.front();
+      }
+      if (*element == place.type && inlineTextType(*element)) {
+        formal.field = field->symbol;
+        return formal;
+      }
+    }
     return std::nullopt;
   }
 
@@ -559,18 +709,7 @@ private:
   std::vector<OwnerlessTextField>
   formalTextFields(const TextBody &context,
                    const OwnerlessTextField &formal) const {
-    SemanticType type = SemanticType::Unknown;
-    if (formal.receiver) {
-      const auto &owner = context.fieldContracts->owner;
-      const auto *instance =
-          owner ? program.findClassInstance(*owner) : nullptr;
-      if (instance)
-        type = instance->type;
-    } else if (formal.parameter < context.types.size()) {
-      type = context.types[formal.parameter];
-      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
-        type = SemanticType(type.arguments.front());
-    }
+    const SemanticType type = fieldOwnerType(context, formal);
     std::vector<OwnerlessTextField> fields;
     const auto instance = std::find_if(
         program.classInstances().begin(), program.classInstances().end(),
@@ -578,7 +717,7 @@ private:
     if (instance == program.classInstances().end())
       return fields;
     for (const auto &field : instance->declaredFields) {
-      if (textType(field.type))
+      if (inlineTextType(field.type))
         fields.push_back({.receiver = formal.receiver,
                           .parameter = formal.parameter,
                           .field = field.symbol});
@@ -738,6 +877,21 @@ private:
                              .message = std::move(message)});
   }
 
+  bool ownerlessProjection(const TextBody &context, const MirPlace &place) {
+    if (std::none_of(place.projections.begin(), place.projections.end(),
+                     [](const auto &part) {
+                       return part.kind == MirProjectionKind::Index;
+                     }))
+      return isOwnerlessTextStorageProjection(program, context.body, place);
+    // Share the immutable body's flow with the other retaining proofs in this
+    // contract pass; never cache by body address across verification calls.
+    auto [cached, fresh] = retainingInputFlows.try_emplace(&context.body);
+    if (fresh)
+      cached->second = carrierAnalysis.flow(context.body);
+    return isOwnerlessTextStorageProjection(program, context.body, place,
+                                            &cached->second);
+  }
+
   TextSources sources(const TextBody &context, const MirOperand &operand,
                       std::set<std::pair<bool, std::size_t>> &active) {
     if (operand.kind == MirOperandKind::Constant && operand.literal &&
@@ -760,7 +914,7 @@ private:
       }
       const auto *place =
           context.body.findPlace(loan ? loan->source : operand.place);
-      if (!place || !textType(place->type))
+      if (!place || !inlineTextType(place->type))
         return {};
       if (rawMemoryText(*place))
         return {.known = true};
@@ -794,8 +948,49 @@ private:
       if (const auto formal = contractPlace(context, *place);
           formal && formal->field != 0)
         return {.known = true, .fields = {*formal}};
-      if (isOwnerlessTextStorageProjection(program, context.body, *place))
+      if (ownerlessProjection(context, *place))
         return {.known = true};
+      if (place->root == MirPlaceRootKind::Binding &&
+          !place->projections.empty() &&
+          std::all_of(place->projections.begin(), place->projections.end(),
+                      [](const auto &part) {
+                        return part.kind == MirProjectionKind::Index;
+                      })) {
+        for (const auto &root : context.body.places) {
+          if (root.root != MirPlaceRootKind::Binding ||
+              root.binding != place->binding || !root.projections.empty() ||
+              root.type.kind != SemanticType::Array ||
+              !inlineTextType(root.type))
+            continue;
+          const auto &flow = retainingInputFlows.at(&context.body);
+          const MirCarrierRoot key{MirPlaceRootKind::Binding, root.binding};
+          for (const auto &[site, writes] : flow.storeInputsByTarget) {
+            if (!writes.contains(key))
+              continue;
+            const MirInstruction *writer = nullptr;
+            for (const auto &block : context.body.blocks)
+              for (const auto &candidate : block.instructions)
+                if (candidate.id == site)
+                  writer = &candidate;
+            const auto *destination =
+                writer && writer->destination
+                    ? context.body.findPlace(*writer->destination)
+                    : nullptr;
+            if (!writer ||
+                (writer->kind != MirInstructionKind::Initialize &&
+                 writer->kind != MirInstructionKind::Assign) ||
+                !destination ||
+                destination->root != MirPlaceRootKind::Binding ||
+                destination->binding != root.binding)
+              return {};
+          }
+          return sources(context,
+                         {.kind = MirOperandKind::Copy,
+                          .place = root.id,
+                          .type = root.type},
+                         active);
+        }
+      }
       // Static storage of text holds only ownerless text: semantics admits
       // only ownerless initializers and stores, and every MIR assignment to it
       // is a checked text write.
@@ -845,7 +1040,13 @@ private:
                             instruction.kind == MirInstructionKind::Initialize;
               if ((instruction.kind == MirInstructionKind::Initialize ||
                    instruction.kind == MirInstructionKind::Assign) &&
-                  destination->projections.empty() &&
+                  (destination->projections.empty() ||
+                   (place->type.kind == SemanticType::Array &&
+                    std::all_of(destination->projections.begin(),
+                                destination->projections.end(),
+                                [](const auto &part) {
+                                  return part.kind == MirProjectionKind::Index;
+                                }))) &&
                   instruction.operands.size() == 1)
                 join(sources(context, instruction.operands.front(), active));
               else
@@ -887,6 +1088,19 @@ private:
                       }) &&
           (instruction->intrinsic == IntrinsicKind::SyntaxText ||
            instruction->operands[1].type == SemanticType::UInt64);
+    } else if (instruction &&
+               instruction->kind == MirInstructionKind::Compute &&
+               instruction->operation == MirOperation::Aggregate &&
+               instruction->info.type.kind == SemanticType::Array &&
+               inlineTextType(instruction->info.type)) {
+      answer.known = true;
+      for (const auto &element : instruction->operands) {
+        const auto part = sources(context, element, active);
+        answer.known = answer.known && part.known;
+        answer.parameters.insert(part.parameters.begin(),
+                                 part.parameters.end());
+        answer.fields.insert(part.fields.begin(), part.fields.end());
+      }
     } else if (instruction &&
                instruction->kind == MirInstructionKind::Compute &&
                instruction->operation == MirOperation::PayloadExtract &&
@@ -1966,13 +2180,14 @@ private:
         return held;
       }
       const auto *own = call.loan ? body.findLoan(*call.loan) : nullptr;
-      if (!own || own->kind != MirLoanKind::Stored ||
-          !own->designatedFields.empty())
+      if (!own || own->kind != MirLoanKind::Stored)
         return held;
       HeldTexts relayed;
       for (auto text : held) {
         if (const auto *loan = body.findLoan(text.loan);
-            loan && sameOwner(*own, *loan))
+            loan && sameOwner(*own, *loan) &&
+            (own->designatedFields.empty() ||
+             own->designatedFields == loan->designatedFields))
           text.substitutes.insert(own->id);
         relayed.insert(std::move(text));
       }
@@ -1991,8 +2206,8 @@ private:
               if (dependency.access == AccessMode::ReadOnly &&
                   directTextPath(program, instruction.info.type,
                                  dependency.designatedFields))
-                produced.insert({.loan = loan->id,
-                                 .path = dependency.designatedFields});
+                produced.insert(
+                    {.loan = loan->id, .path = dependency.designatedFields});
           }
           const bool single = instruction.operands.size() == 1;
           const auto forward = [&] {
@@ -2383,6 +2598,160 @@ private:
     return true;
   }
 
+  // A checked accessor can store dependent text in a local owned container.
+  // This discharges the ownerless-text obligation only: ordinary MIR borrow
+  // verification still proves access, loan validity and destination lifetime.
+  bool retainedLocalAccessorWrite(const TextBody &context,
+                                  const MirInstruction &instruction) {
+    const auto &body = context.body;
+    const auto *destination = instruction.destination
+                                  ? body.findPlace(*instruction.destination)
+                                  : nullptr;
+    if (!destination || destination->root != MirPlaceRootKind::Loan ||
+        !destination->projections.empty())
+      return false;
+    const auto *loan = body.findLoan(destination->loan);
+    const auto *owner = loan ? body.findPlace(loan->source) : nullptr;
+    if (!loan || loan->kind != MirLoanKind::CallResult ||
+        loan->access != AccessMode::Mutable || !owner ||
+        owner->root != MirPlaceRootKind::Binding ||
+        !owner->projections.empty() ||
+        owner->type.kind == SemanticType::Reference ||
+        std::find(context.bindings.begin(), context.bindings.end(),
+                  owner->binding) != context.bindings.end())
+      return false;
+    const MirInstruction *producer = nullptr;
+    for (const auto &block : body.blocks)
+      for (const auto &candidate : block.instructions)
+        if (candidate.loan == loan->id &&
+            candidate.hirValue == loan->producedBy &&
+            candidate.kind == MirInstructionKind::Call) {
+          if (producer)
+            return false;
+          producer = &candidate;
+        }
+    if (!producer || producer->dispatch != CallDispatch::Static ||
+        !producer->functionTarget || !producer->receiver ||
+        producer->borrowOrigin != BorrowOriginKind::Receiver ||
+        !producer->borrowFields.empty() || !producer->borrowArguments.empty() ||
+        borrowSourceForOperand(body, *producer->receiver, 0) != owner->id)
+      return false;
+    const auto *callee =
+        program.findFunctionInstance(*producer->functionTarget);
+    if (!callee || callee->definitionKind != MirDefinitionKind::Source ||
+        !std::any_of(callee->body.loans.begin(), callee->body.loans.end(),
+                     [&](const auto &entry) {
+                       const auto *formal =
+                           callee->body.findPlace(entry.source);
+                       return formal &&
+                              formal->root == MirPlaceRootKind::This &&
+                              ownedContentEntry(callee->body, entry, &program);
+                     }))
+      return false;
+    auto [cached, fresh] = retainingInputFlows.try_emplace(&body);
+    if (fresh)
+      cached->second = carrierAnalysis.flow(body);
+    const auto &flow = cached->second;
+    const auto inputs = flow.storeInputs.find(instruction.id);
+    const auto targets = flow.storeTargets.find(instruction.id);
+    if (!flow.effectsComplete || inputs == flow.storeInputs.end() ||
+        !inputs->second || inputs->second->empty() ||
+        targets == flow.storeTargets.end() || targets->second.size() != 1 ||
+        targets->second.front() !=
+            MirCarrierRoot{MirPlaceRootKind::Binding, owner->binding})
+      return false;
+    return std::all_of(inputs->second->begin(), inputs->second->end(),
+                       [&](MirLoanId id) {
+                         const auto *held = body.findLoan(id);
+                         return held && held->kind == MirLoanKind::Stored &&
+                                held->access == AccessMode::ReadOnly &&
+                                !held->parent && !held->storedDependency &&
+                                !held->lifecycleBound && !held->escapes;
+                       });
+  }
+
+  // Array construction carries its operands' owners by value. Discharge the
+  // ownerless-only storage rule only when independent flow reconstructs live
+  // shared groups for this exact aggregate. Subsequent stores, indexed reads
+  // and return publication still undergo ordinary lifetime verification.
+  bool retainedInlineTextAggregate(const TextBody &context,
+                                   const MirInstruction &instruction) {
+    if (!context.function || instruction.kind != MirInstructionKind::Compute ||
+        instruction.operation != MirOperation::Aggregate ||
+        !instruction.result || instruction.loan ||
+        instruction.info.type.kind != SemanticType::Array ||
+        !inlineTextType(instruction.info.type))
+      return false;
+    auto [cached, fresh] = retainingInputFlows.try_emplace(&context.body);
+    if (fresh)
+      cached->second = carrierAnalysis.flow(context.body);
+    const auto &flow = cached->second;
+    const auto inputs = flow.reads.find(instruction.id);
+    const auto expired = flow.unavailableReads.find(instruction.id);
+    if (!flow.effectsComplete || inputs == flow.reads.end() ||
+        !inputs->second || inputs->second->empty() ||
+        expired == flow.unavailableReads.end() || !expired->second ||
+        !expired->second->empty())
+      return false;
+    return std::all_of(
+        inputs->second->begin(), inputs->second->end(), [&](MirLoanId id) {
+          const auto *held = context.body.findLoan(id);
+          return held && held->kind == MirLoanKind::Stored &&
+                 held->access == AccessMode::ReadOnly && !held->parent &&
+                 !held->storedDependency && !held->lifecycleBound &&
+                 !held->escapes && !held->twoPhase &&
+                 std::all_of(held->additionalDependencies.begin(),
+                             held->additionalDependencies.end(),
+                             [](const auto &part) {
+                               return !part.parent &&
+                                      part.access == AccessMode::ReadOnly;
+                             });
+        });
+  }
+
+  bool retainedTextWrite(const TextBody &context,
+                         const MirInstruction &instruction) {
+    const auto *function = context.function;
+    if (!function || instruction.kind != MirInstructionKind::Assign ||
+        instruction.operands.size() != 1)
+      return false;
+    if (retainedLocalAccessorWrite(context, instruction))
+      return true;
+    const auto source = sources(context, instruction.operands.front());
+    if (!source.known || source.parameters.empty() || !source.fields.empty())
+      return false;
+    // Preserve explicitly declared ownerless obligations. A modeled write
+    // only discharges its own use; a different escape in this body still
+    // contributes to the independently derived requirement set.
+    for (const auto parameter : source.parameters)
+      if (parameter >= function->parameterTypes.size() ||
+          !textType(function->parameterTypes[parameter]) ||
+          std::find(function->ownerlessTextParameters.begin(),
+                    function->ownerlessTextParameters.end(),
+                    parameter) != function->ownerlessTextParameters.end())
+        return false;
+    auto [cached, fresh] = retainingWrites.try_emplace(function->id);
+    if (fresh)
+      cached->second = carrierAnalysis.retainingStores(function->id);
+    if (!cached->second.complete)
+      return false;
+    const auto write = cached->second.writeEffects.find(instruction.id);
+    if (write == cached->second.writeEffects.end())
+      return false;
+    return std::all_of(source.parameters.begin(), source.parameters.end(),
+                       [&](std::size_t parameter) {
+                         return std::any_of(
+                             write->second.begin(), write->second.end(),
+                             [&](const auto &effect) {
+                               return mirRetainingParameterIndex(
+                                          function->body,
+                                          function->parameterTypes,
+                                          function->parameterBindings,
+                                          effect.source) == parameter;
+                             });
+                       });
+  }
+
   std::set<std::size_t> scan(const TextBody &context, std::size_t owner,
                              bool diagnose,
                              std::set<OwnerlessTextField> *fieldNeeds = nullptr,
@@ -2395,9 +2764,63 @@ private:
     const auto require = [&](const MirInstruction &instruction,
                              const MirOperand &operand) {
       const auto source = sources(context, operand);
-      if (!source.known && diagnose)
-        fail(context, owner, &instruction,
-             "ownerless text storage or call lacks exact producer evidence");
+      if (!source.known && diagnose) {
+        // Distinguish a represented external dependency from a broken or
+        // missing producer proof. The former is an invalid source escape;
+        // the latter remains an internal verification failure. Read the
+        // operand's own producer, never all the other arguments of this call.
+        MirLoanId dependent = 0;
+        const auto *producer = operand.kind == MirOperandKind::Value
+                                   ? definition(context.body, operand.value)
+                                   : nullptr;
+        const auto retained = operand.kind == MirOperandKind::Loan
+                                  ? operand.loan
+                              : producer && producer->loan ? *producer->loan
+                                                           : 0;
+        const auto external = [&](MirLoanId id) {
+          const auto *loan = context.body.findLoan(id);
+          return loan && loan->kind == MirLoanKind::Stored && loan->source != 0;
+        };
+        if (external(retained))
+          dependent = retained;
+        if (!dependent && producer) {
+          auto [cached, fresh] = retainingInputFlows.try_emplace(&context.body);
+          if (fresh)
+            cached->second = carrierAnalysis.flow(context.body);
+          const auto &flow = cached->second;
+          const auto read = flow.reads.find(producer->id);
+          // A known retained input is enough to explain rejection. This does
+          // not use an incomplete effect summary to grant any permission or
+          // shorten a dependency; unknown input provenance still fails closed.
+          if (read != flow.reads.end() && read->second &&
+              !read->second->empty() &&
+              std::all_of(read->second->begin(), read->second->end(), external))
+            dependent = *read->second->begin();
+        }
+        if (dependent) {
+          MirBlockId site = 0;
+          for (const auto &block : context.body.blocks)
+            if (std::any_of(block.instructions.begin(),
+                            block.instructions.end(), [&](const auto &entry) {
+                              return entry.id == instruction.id;
+                            })) {
+              site = block.id;
+              break;
+            }
+          result.errors.push_back(
+              {.bodyKind = context.body.kind,
+               .owner = owner,
+               .block = site,
+               .instruction = instruction.id,
+               .message = "borrowed text cannot satisfy an ownerless storage "
+                          "or call requirement",
+               .borrow = {.kind = MirBorrowRejectionKind::OwnerlessRequirement,
+                          .loan = dependent,
+                          .instruction = instruction.kind}});
+        } else
+          fail(context, owner, &instruction,
+               "ownerless text storage or call lacks exact producer evidence");
+      }
       needed.insert(source.parameters.begin(), source.parameters.end());
       neededFields.insert(source.fields.begin(), source.fields.end());
     };
@@ -2530,18 +2953,7 @@ private:
       return formal == type ? target : nullptr;
     };
     const auto formalType = [&](const OwnerlessTextField &formal) {
-      if (formal.receiver) {
-        const auto &owner = context.fieldContracts->owner;
-        const auto *instance =
-            owner ? program.findClassInstance(*owner) : nullptr;
-        return instance ? instance->type : SemanticType(SemanticType::Unknown);
-      }
-      SemanticType type = formal.parameter < context.types.size()
-                              ? context.types[formal.parameter]
-                              : SemanticType(SemanticType::Unknown);
-      if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
-        type = SemanticType(type.arguments.front());
-      return type;
+      return fieldOwnerType(context, formal);
     };
     for (const auto &block : context.body.blocks) {
       for (const auto &instruction : block.instructions) {
@@ -2725,6 +3137,110 @@ private:
                    "dependent text value is relayed where its text field may "
                    "outlive the call");
           }
+        // A retained text input needs either an independently reconstructed
+        // text origin or represented caller loans. An empty flow fact alone
+        // is not proof of ownerlessness: an unrepresented captured result can
+        // also lack a group. Check each formal separately, before unioning
+        // several retained inputs into the receiver.
+        if (diagnose && instruction.kind == MirInstructionKind::Call &&
+            instruction.dispatch == CallDispatch::Static &&
+            instruction.functionTarget) {
+          const auto *target =
+              program.findFunctionInstance(*instruction.functionTarget);
+          bool unknownTextInput = false;
+          if (target)
+            for (std::size_t index = 0; index < target->parameterTypes.size() &&
+                                        index < instruction.operands.size();
+                 ++index)
+              if (textType(target->parameterTypes[index])) {
+                const auto input =
+                    sources(context, instruction.operands[index]);
+                if (!input.known || (context.body.kind == MirBodyKind::Lambda &&
+                                     !input.parameters.empty()))
+                  unknownTextInput = true;
+              }
+          if (target && unknownTextInput) {
+            auto [effect, fresh] = retainingWrites.try_emplace(target->id);
+            if (fresh)
+              effect->second = carrierAnalysis.retainingStores(target->id);
+            // An unresolved helper cannot erase a potentially retained input,
+            // whether it is called directly or from a lambda. The structural
+            // destination check distinguishes borrowed text storage from owned
+            // byte storage; literal inputs already have an ownerless proof.
+            if (!effect->second.complete &&
+                hasMutableRetainingDestination(program, *target))
+              result.errors.push_back(
+                  {.bodyKind = context.body.kind,
+                   .owner = owner,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .message = "text input crosses unresolved retaining effects",
+                   .borrow = {
+                       .kind =
+                           MirBorrowRejectionKind::UnrepresentedRetention}});
+            if (effect->second.complete)
+              for (const auto &retained : effect->second.effects) {
+                if (retained.source.kind != MirPlaceRootKind::Binding)
+                  continue;
+                const auto index = mirRetainingParameterIndex(
+                    target->body, target->parameterTypes,
+                    target->parameterBindings, retained.source);
+                if (!index || *index >= instruction.operands.size() ||
+                    !textType(target->parameterTypes[*index]))
+                  continue;
+                const auto origin =
+                    sources(context, instruction.operands[*index]);
+                const bool lambdaFormal =
+                    context.body.kind == MirBodyKind::Lambda &&
+                    !origin.parameters.empty();
+                if (origin.known && !lambdaFormal)
+                  continue;
+                auto [flow, newFlow] =
+                    retainingInputFlows.try_emplace(&context.body);
+                if (newFlow)
+                  flow->second = carrierAnalysis.flow(context.body);
+                const auto call =
+                    flow->second.retainingInputs.find(instruction.id);
+                bool represented = false;
+                if (call != flow->second.retainingInputs.end()) {
+                  const auto input = call->second.find(retained.source);
+                  represented = input != call->second.end() && input->second &&
+                                !input->second->empty();
+                }
+                // Lambda signatures do not publish retaining-input relations.
+                // A formal may feed local storage, whose lifetime ends with
+                // this invocation, but cannot silently escape through another
+                // reference formal or the captured environment.
+                if (lambdaFormal) {
+                  const auto destinations =
+                      flow->second.storeTargets.find(instruction.id);
+                  represented =
+                      destinations != flow->second.storeTargets.end() &&
+                      !destinations->second.empty() &&
+                      std::all_of(destinations->second.begin(),
+                                  destinations->second.end(),
+                                  [&](const MirCarrierRoot &root) {
+                                    return root.kind ==
+                                               MirPlaceRootKind::Binding &&
+                                           std::find(context.bindings.begin(),
+                                                     context.bindings.end(),
+                                                     root.identity) ==
+                                               context.bindings.end();
+                                  });
+                }
+                if (!represented)
+                  result.errors.push_back(
+                      {.bodyKind = context.body.kind,
+                       .owner = owner,
+                       .block = block.id,
+                       .instruction = instruction.id,
+                       .message = "retaining text call lacks an exact owner or "
+                                  "ownerless producer proof",
+                       .borrow = {.kind = MirBorrowRejectionKind::
+                                      UnrepresentedRetention}});
+              }
+          }
+        }
         const std::set<std::size_t> *required = nullptr;
         if (instruction.kind == MirInstructionKind::Call &&
             instruction.functionTarget && *instruction.functionTarget != 0 &&
@@ -2739,8 +3255,44 @@ private:
             *instruction.constructorTarget <= constructorRequirements.size())
           required =
               &constructorRequirements[*instruction.constructorTarget - 1];
+        const bool ownedConstruction =
+            instruction.intrinsic == IntrinsicKind::ObjectConstructOwned &&
+            objectConstruct(program, instruction);
+        if (ownedConstruction && instruction.constructorTarget &&
+            *instruction.constructorTarget != 0 &&
+            *instruction.constructorTarget <= constructorRequirements.size())
+          required =
+              &constructorRequirements[*instruction.constructorTarget - 1];
         if (required)
           for (const auto index : *required) {
+            if (ownedConstruction) {
+              // Constructor initializer provenance identifies the retained
+              // formal; independent flow must also model its transfer into
+              // the actual destination owner. Other constructor obligations
+              // still propagate as ownerless requirements.
+              auto [cached, fresh] =
+                  retainingInputFlows.try_emplace(&context.body);
+              if (fresh)
+                cached->second = carrierAnalysis.flow(context.body);
+              const auto &flow = cached->second;
+              const auto inputs = flow.storeInputs.find(instruction.id);
+              const auto targets = flow.storeTargets.find(instruction.id);
+              const auto &fields =
+                  constructorTextFields[*instruction.constructorTarget - 1];
+              if (fields.contains(index) && flow.effectsComplete &&
+                  inputs != flow.storeInputs.end() && inputs->second &&
+                  targets != flow.storeTargets.end() &&
+                  !targets->second.empty()) {
+                publishedFormals.emplace(*instruction.constructorTarget, index);
+                continue;
+              }
+              if (index + 2 < instruction.operands.size())
+                require(instruction, instruction.operands[index + 2]);
+              else if (diagnose)
+                fail(context, owner, &instruction,
+                     "owner-tracked constructor text argument is missing");
+              continue;
+            }
             if (instruction.kind == MirInstructionKind::Construct &&
                 publishesText(context, instruction, index))
               continue;
@@ -2782,9 +3334,10 @@ private:
             if (key.second == 0 && path.size() == 1 &&
                 key.first < instruction.operands.size())
               if (const auto formal = exactClassFormal(
-                      context, instruction.operands[key.first]))
+                      context, instruction.operands[key.first])) {
                 relayedFormals.insert(
                     {.parameter = *formal, .field = path.front()});
+              }
         // A callee that returns an argument in a text field of its fresh
         // result (L-OWN-02): a dynamic argument is published under the call's
         // own loan, a returned call relays this function's formal, and any
@@ -2851,10 +3404,11 @@ private:
                   require(instruction, instruction.operands[index]);
           }
         }
-        // An array literal stores each text element in array storage, whose
-        // element reads are ownerless (`isOwnerlessTextStorageProjection`).
+        // Tracked array values retain the complete set of element owners.
+        // Unrepresented inputs still require an ownerless producer proof.
         if (instruction.kind == MirInstructionKind::Compute &&
-            instruction.operation == MirOperation::Aggregate)
+            instruction.operation == MirOperation::Aggregate &&
+            !retainedInlineTextAggregate(context, instruction))
           for (const auto &element : instruction.operands)
             if (textType(element.type))
               require(instruction, element);
@@ -2883,14 +3437,47 @@ private:
         const bool checkedTextAssignment =
             destination && textType(destination->type) && !uncheckedWrite &&
             !localTextStorage && instruction.kind == MirInstructionKind::Assign;
-        if (destination && (isOwnerlessTextStorageProjection(
-                                program, context.body, *destination) ||
+        if (destination && (ownerlessProjection(context, *destination) ||
                             checkedTextAssignment)) {
-          if (instruction.operands.size() == 1)
-            require(instruction, instruction.operands.front());
-          else if (diagnose)
+          if (instruction.operands.size() == 1) {
+            if (!retainedTextWrite(context, instruction))
+              require(instruction, instruction.operands.front());
+          } else if (diagnose)
             fail(context, owner, &instruction,
                  "text storage write lacks one exact source operand");
+        }
+        // An invocation pointer's current signature carries no input-store
+        // relation. A proven retaining target must not lose that obligation
+        // when converted, even if this particular invocation uses literals.
+        if (diagnose &&
+            instruction.intrinsic == IntrinsicKind::FunctionPointerFromItem &&
+            instruction.functionPointerFunctionTarget) {
+          const auto *target = program.findFunctionInstance(
+              *instruction.functionPointerFunctionTarget);
+          if (target) {
+            auto [effect, fresh] = retainingWrites.try_emplace(target->id);
+            if (fresh)
+              effect->second = carrierAnalysis.retainingStores(target->id);
+            const bool textInput =
+                std::any_of(target->parameterTypes.begin(),
+                            target->parameterTypes.end(), textType);
+            const bool mutableCarrier =
+                hasMutableRetainingDestination(program, *target);
+            // Unknown effects are not evidence of non-retention. For a
+            // signature that can move text into mutable caller storage, the
+            // target needs a complete no-retention proof before erasure.
+            if (!effect->second.effects.empty() ||
+                (!effect->second.complete && textInput && mutableCarrier))
+              result.errors.push_back(
+                  {.bodyKind = context.body.kind,
+                   .owner = owner,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .message =
+                       "callable conversion erases a retaining-input contract",
+                   .borrow = {.kind =
+                                  MirBorrowRejectionKind::ErasedRetention}});
+          }
         }
         if (diagnose && instruction.operation == MirOperation::FunctionItem &&
             instruction.functionTarget && *instruction.functionTarget != 0 &&
@@ -3168,7 +3755,7 @@ MirVerificationResult TextContracts::verify() {
              "ownerless text contract has an invalid formal index");
         continue;
       }
-      if (textType(function.parameterTypes[index]))
+      if (inlineTextType(function.parameterTypes[index]))
         declared.insert(index);
     }
     if (declared != requirements[function.id - 1])
@@ -3187,7 +3774,10 @@ MirVerificationResult TextContracts::verify() {
         if (block.terminator.kind == MirTerminatorKind::Return &&
             block.terminator.value) {
           const auto returned = sources(context, *block.terminator.value);
-          if (!returned.known || !returned.parameters.empty())
+          if (!returned.known ||
+              !std::all_of(
+                  returned.parameters.begin(), returned.parameters.end(),
+                  [&](std::size_t index) { return declared.contains(index); }))
             fail(context, function.id, nullptr,
                  "ownerless text return has no independent result proof");
         }
@@ -3292,13 +3882,14 @@ MirVerificationResult TextContracts::verify() {
            constructor, nullptr,
            "re-rooted text field also reaches ownerless text storage");
     }
-  for (const auto &[constructor, index] : publishedFormals)
+  for (const auto &[constructor, index] : publishedFormals) {
     if (constructorBodyNeeds[constructor - 1].contains(index)) {
       const auto &instance = program.constructorInstances()[constructor - 1];
       fail({instance.body, instance.parameterTypes, instance.parameterBindings},
            constructor, nullptr,
            "dependent text argument also reaches ownerless text storage");
     }
+  }
   if (program.embeddingPlan())
     for (const auto &entry : program.embeddingPlan()->exports)
       if (entry.function && entry.function <= requirements.size() &&
@@ -3373,13 +3964,13 @@ std::optional<SemanticType> inheritedFieldType(const MirProgram &program,
 
 bool isOwnerlessTextStorageProjection(const MirProgram &program,
                                       const MirBody &body,
-                                      const MirPlace &place) {
-  // A text field, or an element of a text array wherever the array lives,
-  // holds only text its checked writers proved ownerless. Semantics never
-  // nests dynamic text in an array (L-OWN-02): an array's elements, its
-  // literal's included, are checked text writes, so a by-value array formal
-  // holds what its caller's ownerless array did. Raw and foreign storage
-  // keep their explicit unsafe obligations instead.
+                                      const MirPlace &place,
+                                      const MirCarrierFlow *flow) {
+  // Legacy text storage can be classified ownerless only when neither its
+  // represented carrier nor a checked retaining method supplies dependencies.
+  // Receiver fields and inline-array elements may now retain borrowed text;
+  // their declared element type alone is not an ownerless proof. Raw and
+  // foreign storage keep their explicit unsafe obligations instead.
   if (!textType(place.type) || place.foreignStorage ||
       place.projections.empty() ||
       (place.projections.back().kind != MirProjectionKind::Field &&
@@ -3387,6 +3978,7 @@ bool isOwnerlessTextStorageProjection(const MirProgram &program,
       dependentTextCarrierField(body, place))
     return false;
   std::optional<SemanticType> current;
+  const MirPlace *rootPlace = nullptr;
   for (const auto &root : body.places) {
     if (!root.projections.empty() || root.root != place.root ||
         root.binding != place.binding || root.symbol != place.symbol ||
@@ -3396,6 +3988,7 @@ bool isOwnerlessTextStorageProjection(const MirProgram &program,
     if (current && *current != root.type)
       return false;
     current = root.type;
+    rootPlace = &root;
   }
   // A temporary's field view may be its value's only place; the value then
   // names the record type.
@@ -3404,8 +3997,106 @@ bool isOwnerlessTextStorageProjection(const MirProgram &program,
       current = value->info.type;
   if (!current)
     return false;
+  // A reference binding stores its physical access capability, not the
+  // array's element dependencies. Follow an unambiguous whole-array alias
+  // before inspecting writes to the storage. Entry references and unresolved
+  // aliases remain unproved; a reference type alone never grants static text.
+  if (rootPlace && current->kind == SemanticType::Reference &&
+      current->arguments.size() == 1 &&
+      current->arguments.front().kind == SemanticType::Array &&
+      place.projections.front().kind == MirProjectionKind::Dereference) {
+    const MirPlace *storage = rootPlace;
+    std::set<MirPlaceId> visited;
+    while (storage && visited.insert(storage->id).second) {
+      if (storage->root == MirPlaceRootKind::Binding &&
+          storage->projections.empty() &&
+          storage->type == current->arguments.front()) {
+        MirPlace selected = *storage;
+        selected.projections.assign(place.projections.begin() + 1,
+                                    place.projections.end());
+        selected.type = place.type;
+        selected.traits = place.traits;
+        return isOwnerlessTextStorageProjection(program, body, selected, flow);
+      }
+      const auto source = borrowSourceForPlace(body, storage->id, 0);
+      if (!source || *source == storage->id)
+        break;
+      storage = body.findPlace(*source);
+    }
+    return false;
+  }
+  const SemanticType *rootElement = &*current;
+  if (rootElement->kind == SemanticType::Reference &&
+      rootElement->arguments.size() == 1)
+    rootElement = &rootElement->arguments.front();
+  if (place.root == MirPlaceRootKind::Binding &&
+      rootElement->kind == SemanticType::Array &&
+      inlineTextType(*rootElement)) {
+    // Array element type is not an ownerless guarantee. Entry dependencies
+    // and actual writes can carry external owners even without a designated
+    // field or a carrier-list annotation on the local array.
+    for (const auto &loan : body.loans) {
+      const auto *source = body.findPlace(loan.source);
+      if (loan.entry && loan.kind == MirLoanKind::Stored && source &&
+          source->root == MirPlaceRootKind::Binding &&
+          source->binding == place.binding)
+        return false;
+    }
+    std::optional<MirCarrierFlow> derived;
+    if (!flow) {
+      derived = deriveMirCarrierFlow(body, &program);
+      flow = &*derived;
+    }
+    if (!flow->effectsComplete)
+      return false;
+    const MirCarrierRoot root{MirPlaceRootKind::Binding, place.binding};
+    for (const auto &[site, writes] : flow->storeInputsByTarget) {
+      (void)site;
+      const auto found = writes.find(root);
+      if (found != writes.end() && (!found->second || !found->second->empty()))
+        return false;
+    }
+  }
   for (const auto &projection : place.projections) {
     if (projection.kind == MirProjectionKind::Field) {
+      for (const auto &record : program.classInstances()) {
+        if (record.type != *current)
+          continue;
+        for (const auto &function : program.functionInstances()) {
+          if (function.owner != record.id || function.staticMember)
+            continue;
+          bool dependentInput = false;
+          for (std::size_t parameter = 0;
+               parameter < function.parameterTypes.size(); ++parameter)
+            if (textType(function.parameterTypes[parameter]) &&
+                std::find(function.ownerlessTextParameters.begin(),
+                          function.ownerlessTextParameters.end(),
+                          parameter) == function.ownerlessTextParameters.end())
+              dependentInput = true;
+          if (!dependentInput)
+            continue;
+          const auto retained =
+              deriveMirRetainingStoreEffects(function, &program);
+          if (!retained.complete)
+            continue;
+          for (const auto &effect : retained.effects) {
+            if (effect.destination.kind != MirPlaceRootKind::This ||
+                effect.source.kind != MirPlaceRootKind::Binding)
+              continue;
+            const auto binding = std::find(function.parameterBindings.begin(),
+                                           function.parameterBindings.end(),
+                                           effect.source.identity);
+            if (binding == function.parameterBindings.end())
+              return false;
+            const auto parameter = static_cast<std::size_t>(
+                binding - function.parameterBindings.begin());
+            if (std::find(function.ownerlessTextParameters.begin(),
+                          function.ownerlessTextParameters.end(),
+                          parameter) == function.ownerlessTextParameters.end())
+              return false;
+          }
+        }
+      }
       std::optional<SemanticType> fieldType;
       const auto accept = [&](const SemanticType &type) {
         if (fieldType && *fieldType != type)
@@ -3468,7 +4159,8 @@ bool directTextField(const MirProgram &program, const SemanticType &type,
          !instance->traits.containsBorrowedState &&
          std::any_of(instance->declaredFields.begin(),
                      instance->declaredFields.end(), [&](const auto &entry) {
-                       return entry.symbol == field && textType(entry.type);
+                       return entry.symbol == field &&
+                              inlineTextType(entry.type);
                      });
 }
 
@@ -3520,7 +4212,7 @@ bool directTextPath(const MirProgram &program, const SemanticType &type,
   }
   if (!next)
     return false;
-  return path.size() == 1 ? textType(*next)
+  return path.size() == 1 ? inlineTextType(*next)
                           : directTextPath(program, *next, path.subspan(1));
 }
 

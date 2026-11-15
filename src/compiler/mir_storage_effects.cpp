@@ -2,6 +2,7 @@
 
 #include "gti/mir_effects.h"
 #include "mir_borrow_audits.h"
+#include "mir_carrier_flow.h"
 #include "mir_verification_support.h"
 
 #include <algorithm>
@@ -285,6 +286,7 @@ analyzePersistentStorageEffects(const MirProgram &program,
                    persistent.end());
   if (persistent.empty())
     return {};
+  MirCarrierAnalysis carrierAnalysis(program);
   const auto isPersistent = [&](SymbolId symbol) {
     return std::binary_search(persistent.begin(), persistent.end(), symbol);
   };
@@ -309,7 +311,8 @@ analyzePersistentStorageEffects(const MirProgram &program,
                     })) {
       std::vector<MirPersistentStorageAccess> direct;
       auto proof = verifyMirPersistentStorageLoanFlow(
-          *node.body, node.address.owner, {}, &direct);
+          *node.body, node.address.owner, {}, &direct, nullptr, {}, &program,
+          &carrierAnalysis);
       if (!proof.valid()) {
         if (findings == nullptr)
           return proof;
@@ -511,7 +514,8 @@ analyzePersistentStorageEffects(const MirProgram &program,
         };
     if (findings == nullptr) {
       auto proof = verifyMirPersistentStorageLoanFlow(
-          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent,
+          &program, &carrierAnalysis);
       if (!proof.valid())
         return proof;
       continue;
@@ -563,7 +567,8 @@ analyzePersistentStorageEffects(const MirProgram &program,
     // an invocation's.
     for (std::size_t attempt = 0; attempt <= hidden.size() + 1; ++attempt) {
       auto proof = verifyMirPersistentStorageLoanFlow(
-          *node.body, node.address.owner, hidden, nullptr, &query, persistent);
+          *node.body, node.address.owner, hidden, nullptr, &query, persistent,
+          &program, &carrierAnalysis);
       if (proof.valid())
         break;
       const auto &error = proof.errors.front();

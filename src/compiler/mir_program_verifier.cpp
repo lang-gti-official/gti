@@ -6,6 +6,7 @@
 #include "gti/optimization/dataflow.h"
 #include "gti/optimization/safety.h"
 #include "gti/optimization/sccp.h"
+#include "mir_carrier_flow.h"
 #include "mir_storage_effects.h"
 #include "mir_text_contracts.h"
 #include "mir_thread_local.h"
@@ -244,7 +245,8 @@ dependentTextPublication(const MirProgram &program,
       instruction.borrowFields.empty() ||
       instruction.borrowArgument != instruction.borrowFields.front().parameter)
     return false;
-  for (std::size_t index = 0; index < instruction.borrowFields.size(); ++index) {
+  for (std::size_t index = 0; index < instruction.borrowFields.size();
+       ++index) {
     const auto &mapping = instruction.borrowFields[index];
     if (mapping.origin != BorrowOriginKind::Argument ||
         mapping.parameter >= instruction.operands.size() ||
@@ -253,19 +255,20 @@ dependentTextPublication(const MirProgram &program,
       return false;
     // A constructor cannot publish two unrelated sources into one field.
     for (std::size_t previous = 0; previous < index; ++previous)
-      if (instruction.borrowFields[previous].resultFields == mapping.resultFields)
+      if (instruction.borrowFields[previous].resultFields ==
+          mapping.resultFields)
         return false;
     if (!mapping.sourceFields.empty()) {
       if (mir_detail::dependentTextRelayPath(
               program, constructor, mapping.parameter, mapping.sourceFields) !=
               mapping.resultFields ||
           !mir_detail::directTextPath(program, instruction.info.type,
-                                     mapping.resultFields))
+                                      mapping.resultFields))
         return false;
     } else if ((mapping.resultFields.size() != 1 &&
                 mapping.resultFields.size() != 2) ||
-               mir_detail::dependentTextFieldFormal(
-                   program, constructor, mapping.resultFields) !=
+               mir_detail::dependentTextFieldFormal(program, constructor,
+                                                    mapping.resultFields) !=
                    mapping.parameter) {
       return false;
     }
@@ -290,30 +293,43 @@ dependentTextCallPublication(const MirInstruction &instruction,
       !instruction.borrowArguments.empty() || instruction.borrowPlace ||
       instruction.restoresReferenceResult ||
       !instruction.restoredBorrowFields.empty() ||
-      instruction.borrowFields.size() != 1)
+      instruction.borrowFields.empty() ||
+      instruction.borrowArgument != instruction.borrowFields.front().parameter)
     return false;
-  const auto &mapping = instruction.borrowFields.front();
-  // A class formal returned whole nests the argument's path under the field
-  // (L-OWN-02 phase 3); a text formal fills the field itself.
-  const bool whole =
-      !mapping.sourceFields.empty() &&
-      mapping.parameter < target.parameterTypes.size() &&
-      target.parameterTypes[mapping.parameter].kind == SemanticType::Class &&
-      mapping.resultFields.size() == mapping.sourceFields.size() + 1 &&
-      std::equal(mapping.sourceFields.begin(), mapping.sourceFields.end(),
-                 mapping.resultFields.begin() + 1);
-  return mapping.origin == BorrowOriginKind::Argument &&
-         mapping.parameter == instruction.borrowArgument &&
-         mapping.globalRoot == 0 &&
-         (whole ||
-          (mapping.sourceFields.empty() && mapping.resultFields.size() == 1)) &&
-         mapping.access == AccessMode::ReadOnly &&
-         mapping.resultConditions.empty() && mapping.sourceConditions.empty() &&
-         std::binary_search(
-             target.publishedTextFields.begin(),
-             target.publishedTextFields.end(),
-             PublishedTextField{.parameter = mapping.parameter,
-                                .field = mapping.resultFields.front()});
+  for (std::size_t index = 0; index < instruction.borrowFields.size();
+       ++index) {
+    const auto &mapping = instruction.borrowFields[index];
+    if (mapping.parameter >= target.parameterTypes.size() ||
+        mapping.parameter >= instruction.operands.size())
+      return false;
+    // Each result field has one independently verified source. Further fields
+    // may come from other arguments, retained by the same shared loan group.
+    for (std::size_t previous = 0; previous < index; ++previous)
+      if (instruction.borrowFields[previous].resultFields ==
+          mapping.resultFields)
+        return false;
+    // A class formal returned whole nests its source path below the field.
+    const bool whole =
+        !mapping.sourceFields.empty() &&
+        target.parameterTypes[mapping.parameter].kind == SemanticType::Class &&
+        mapping.resultFields.size() == mapping.sourceFields.size() + 1 &&
+        std::equal(mapping.sourceFields.begin(), mapping.sourceFields.end(),
+                   mapping.resultFields.begin() + 1);
+    if (mapping.origin != BorrowOriginKind::Argument ||
+        mapping.globalRoot != 0 ||
+        !(whole ||
+          (mapping.sourceFields.empty() && mapping.resultFields.size() == 1)) ||
+        mapping.access != AccessMode::ReadOnly ||
+        !mapping.resultConditions.empty() ||
+        !mapping.sourceConditions.empty() ||
+        !std::binary_search(
+            target.publishedTextFields.begin(),
+            target.publishedTextFields.end(),
+            PublishedTextField{.parameter = mapping.parameter,
+                               .field = mapping.resultFields.front()}))
+      return false;
+  }
+  return true;
 }
 
 // A payload construction that publishes one dynamic text argument at a text
@@ -495,30 +511,6 @@ bool exactCThreadRuntimeFunction(const MirFunctionInstance &function) {
     return false;
   }
   return false;
-}
-
-// Re-establishes the declared process-allocator runtime contract from the
-// declaration itself, so a forged classification cannot lend its precise
-// effect summary to an unrelated native declaration.
-bool exactProcessMemoryRuntimeFunction(const MirProgram &program,
-                                       const MirFunctionInstance &function) {
-  const auto operation = function.processMemoryOperation;
-  if (operation == ProcessMemoryRuntimeOperation::None) {
-    return true;
-  }
-  return operation < ProcessMemoryRuntimeOperation::Count && !function.owner &&
-         !function.staticMember &&
-         function.cThreadOperation == CThreadRuntimeOperation::None &&
-         function.linkage == LanguageLinkage::C &&
-         function.definitionKind == MirDefinitionKind::Declaration &&
-         function.typeArguments.empty() && function.valueArguments.empty() &&
-         !function.cArrayCountParameter && !function.requiresUnsafe &&
-         !function.neverReturns && !function.tracksCaller &&
-         !function.virtualMethod && !function.pureVirtual &&
-         exactProcessMemoryRuntimeOperation(
-             function.externalSymbol, function.returnType,
-             function.parameterTypes) == operation &&
-         processMemoryRuntimeSelectedForTarget(operation, program.target().os);
 }
 
 SynchronizationOperationKind
@@ -2792,6 +2784,92 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
 verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
                                std::size_t owner);
 
+// Reconstruct the contents observed by an opaque owner-aware accessor at
+// this invocation, rather than unioning every historical carrier attachment.
+// The primitive contract proves the source relation; flow proves its contents.
+[[nodiscard]] MirCarriedLoans
+ownedCallResultContents(const MirProgram &program, const MirBody &body,
+                        const MirInstruction &call,
+                        const MirCarrierFlow &flow) {
+  const auto *loan = call.loan ? body.findLoan(*call.loan) : nullptr;
+  const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+  const bool receiver = call.borrowOrigin == BorrowOriginKind::Receiver;
+  if (!flow.effectsComplete || call.kind != MirInstructionKind::Call ||
+      call.intrinsic != IntrinsicKind::None ||
+      call.dispatch != CallDispatch::Static || !call.functionTarget ||
+      !call.result || !loan || loan->kind != MirLoanKind::CallResult ||
+      loan->producedBy != call.hirValue || loan->entry || loan->escapes ||
+      loan->lifecycleBound || !loan->additionalDependencies.empty() ||
+      !source || source->root != MirPlaceRootKind::Binding ||
+      !source->projections.empty() ||
+      source->type.kind == SemanticType::Reference ||
+      call.info.category != ValueCategory::Place ||
+      call.info.access != loan->access || call.borrowAccess != loan->access ||
+      (!receiver && call.borrowOrigin != BorrowOriginKind::Argument) ||
+      !call.borrowArguments.empty() || !call.borrowFields.empty())
+    return std::nullopt;
+  const auto *callee = program.findFunctionInstance(*call.functionTarget);
+  if (!callee || callee->definitionKind != MirDefinitionKind::Source ||
+      callee->returnType !=
+          SemanticType::referenceTo(call.info.type, loan->access) ||
+      callee->returnBorrowOrigin != call.borrowOrigin ||
+      !callee->returnBorrowParameters.empty() ||
+      !callee->returnBorrowFields.empty() ||
+      callee->parameterTypes != call.parameterTypes)
+    return std::nullopt;
+  const MirOperand *actual = nullptr;
+  if (receiver) {
+    const auto *owner =
+        callee->owner ? program.findClassInstance(*callee->owner) : nullptr;
+    if (!call.receiver || !owner || owner->type != source->type ||
+        callee->staticMember ||
+        (receiverAllowsMutation(callee->receiverMutability) &&
+         source->access != AccessMode::Mutable))
+      return std::nullopt;
+    actual = &*call.receiver;
+  } else {
+    if (call.borrowArgument != callee->returnBorrowParameter ||
+        call.borrowArgument >= call.operands.size() ||
+        call.borrowArgument >= callee->parameterBindings.size())
+      return std::nullopt;
+    actual = &call.operands[call.borrowArgument];
+  }
+  if (borrowSourceForOperand(body, *actual) != source->id)
+    return std::nullopt;
+  const bool contract = std::any_of(
+      callee->body.loans.begin(), callee->body.loans.end(),
+      [&](const auto &entry) {
+        const auto *formal = callee->body.findPlace(entry.source);
+        return formal &&
+               (receiver
+                    ? formal->root == MirPlaceRootKind::This
+                    : formal->root == MirPlaceRootKind::Binding &&
+                          formal->binding ==
+                              callee->parameterBindings[call.borrowArgument]) &&
+               mir_detail::ownedContentEntry(callee->body, entry, &program);
+      });
+  const auto contents = flow.resultSourceContents.find(call.id);
+  const auto expired = flow.unavailableResultSourceContents.find(call.id);
+  if (!contract || contents == flow.resultSourceContents.end() ||
+      !contents->second ||
+      expired == flow.unavailableResultSourceContents.end() ||
+      !expired->second || !expired->second->empty())
+    return std::nullopt;
+  for (const auto id : *contents->second) {
+    const auto *held = body.findLoan(id);
+    if (!held || held->kind != MirLoanKind::Stored ||
+        held->access != AccessMode::ReadOnly || held->parent ||
+        held->storedDependency || held->lifecycleBound || held->escapes ||
+        !std::all_of(held->additionalDependencies.begin(),
+                     held->additionalDependencies.end(), [](const auto &part) {
+                       return !part.parent &&
+                              part.access == AccessMode::ReadOnly;
+                     }))
+      return std::nullopt;
+  }
+  return contents->second;
+}
+
 [[nodiscard]] bool
 independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                                const MirPlace &source,
@@ -2940,7 +3018,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
     const std::function<bool(HirConstructorInstanceId)>
         &completeConstructorProof,
     const std::function<bool(const MirBody &, std::size_t, MirInstructionId)>
-        &noNormalResultProof) {
+        &noNormalResultProof,
+    MirCarrierAnalysis &carrierAnalysis) {
   if (auto entries = verifyStoredEntryPaths(program, body, owner);
       !entries.valid()) {
     return entries;
@@ -2949,6 +3028,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       !shells.valid()) {
     return shells;
   }
+  std::optional<MirCarrierFlow> carriedValues;
   std::unordered_map<HirBindingId, std::vector<MirLoanId>> bindingLoans;
   for (const MirLoan &loan : body.loans) {
     for (const HirBindingId carrier : loan.carriers) {
@@ -4116,6 +4196,10 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       SemanticType::Kind inPlaceStorageKind = SemanticType::Unknown;
       if (instruction.kind == MirInstructionKind::Call) {
         switch (instruction.intrinsic) {
+        case IntrinsicKind::ObjectConstructOwned:
+          inPlaceArgumentOffset = 2;
+          inPlaceStorageKind = SemanticType::RawPointer;
+          break;
         case IntrinsicKind::ObjectConstruct:
           inPlaceArgumentOffset = 1;
           inPlaceStorageKind = SemanticType::RawPointer;
@@ -4129,7 +4213,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
       }
       const bool rawConstruction =
-          instruction.intrinsic == IntrinsicKind::ObjectConstruct;
+          (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+           instruction.intrinsic == IntrinsicKind::ObjectConstructOwned);
       const std::size_t storageArgumentCount =
           inPlaceArgumentOffset.value_or(0);
       if (inPlaceArgumentOffset &&
@@ -4147,8 +4232,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             });
         const bool generatedRawTransfer =
             rawConstruction && elementOwner != program.classInstances().end() &&
-            instruction.parameterTypes.size() == 2 &&
-            instruction.parameterTypes[1] == element &&
+            instruction.parameterTypes.size() == storageArgumentCount + 1 &&
+            instruction.parameterTypes[storageArgumentCount] == element &&
             ((instruction.constructorKind == ConstructorKind::Move &&
               elementOwner->traits.movable) ||
              (instruction.constructorKind == ConstructorKind::Copy &&
@@ -4416,7 +4501,82 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
         continue;
       }
+      const MirOperand *inlineFieldInput = [&]() -> const MirOperand * {
+        if (!mir_detail::textFieldResult(
+                instruction.info.type, instruction.borrowOrigin,
+                instruction.borrowArgument, instruction.borrowFields))
+          return nullptr;
+        const auto &mapping = instruction.borrowFields.front();
+        const MirOperand *input =
+            mapping.origin == BorrowOriginKind::Receiver && instruction.receiver
+                ? &*instruction.receiver
+            : mapping.origin == BorrowOriginKind::Argument &&
+                    mapping.parameter < instruction.operands.size()
+                ? &instruction.operands[mapping.parameter]
+                : nullptr;
+        if (!input)
+          return nullptr;
+        auto type = input->type;
+        if (type.kind == SemanticType::Reference && type.arguments.size() == 1)
+          type = SemanticType(type.arguments.front());
+        const auto instance = std::find_if(
+            program.classInstances().begin(), program.classInstances().end(),
+            [&](const auto &candidate) { return candidate.type == type; });
+        if (instance == program.classInstances().end())
+          return nullptr;
+        for (const auto &field : instance->declaredFields)
+          if (field.symbol == mapping.sourceFields.front() &&
+              field.type.kind == SemanticType::Array) {
+            const SemanticType *leaf = &field.type;
+            while (leaf->kind == SemanticType::Array &&
+                   leaf->arguments.size() == 1)
+              leaf = &leaf->arguments.front();
+            if (leaf->kind == SemanticType::StringView ||
+                leaf->kind == SemanticType::CString)
+              return input;
+          }
+        return nullptr;
+      }();
+      MirCarriedLoans inlineFieldGroups;
+      if (inlineFieldInput && inlineFieldInput->kind == MirOperandKind::Value) {
+        const auto *input = definitionFor(body, inlineFieldInput->value);
+        const auto expectedRole =
+            instruction.borrowOrigin == BorrowOriginKind::Receiver
+                ? MirCallInputRole::Receiver
+                : MirCallInputRole::Argument;
+        if (input && input->kind == MirInstructionKind::CallInput &&
+            input->callInputRole == expectedRole &&
+            (expectedRole == MirCallInputRole::Receiver ||
+             input->callInputIndex == instruction.borrowArgument)) {
+          if (!carriedValues)
+            carriedValues = carrierAnalysis.flow(body);
+          const auto read = carriedValues->reads.find(input->id);
+          const auto expired = carriedValues->unavailableReads.find(input->id);
+          if (read != carriedValues->reads.end() && read->second &&
+              expired != carriedValues->unavailableReads.end() &&
+              expired->second && expired->second->empty())
+            inlineFieldGroups = read->second;
+        }
+      }
       if (!instruction.loan) {
+        if (target && instruction.kind == MirInstructionKind::Call &&
+            instruction.dispatch == CallDispatch::Static &&
+            instruction.info.category == ValueCategory::Value &&
+            instruction.info.type == target->returnType &&
+            instruction.borrowAccess == AccessMode::ReadOnly &&
+            mir_detail::copiedReferenceParameter(*target)) {
+          if (!carriedValues)
+            carriedValues = carrierAnalysis.flow(body);
+          const auto contents =
+              carriedValues->copiedCallResults.find(instruction.id);
+          const auto expired =
+              carriedValues->unavailableCopiedCallResults.find(instruction.id);
+          if (contents != carriedValues->copiedCallResults.end() &&
+              contents->second &&
+              expired != carriedValues->unavailableCopiedCallResults.end() &&
+              expired->second && expired->second->empty())
+            continue;
+        }
         const MirInstruction *argumentInput =
             instruction.kind == MirInstructionKind::Call &&
                     instruction.borrowOrigin == BorrowOriginKind::Argument &&
@@ -4558,9 +4718,71 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             instruction.borrowFields.front().resultFields.empty();
         const bool ownerlessFieldResult =
             fieldResult && !instruction.info.traits.containsBorrowedState &&
-            originInput(ownerlessInput);
+            (inlineFieldInput ? inlineFieldGroups && inlineFieldGroups->empty()
+                              : originInput(ownerlessInput));
         const bool formalFieldResult = fieldResult && originInput(formalInput);
-        if (ownerlessTextResult || ownerlessFieldResult || formalFieldResult) {
+        const bool ownerlessArrayResult = [&] {
+          if (instruction.kind != MirInstructionKind::Call ||
+              (instruction.info.type.kind != SemanticType::Array &&
+               std::none_of(instruction.parameterTypes.begin(),
+                            instruction.parameterTypes.end(),
+                            [](const auto &type) {
+                              return type.kind == SemanticType::Array ||
+                                     (type.kind == SemanticType::Reference &&
+                                      type.arguments.size() == 1 &&
+                                      type.arguments.front().kind ==
+                                          SemanticType::Array);
+                            })) ||
+              instruction.borrowOrigin != BorrowOriginKind::Argument ||
+              instruction.borrowAccess != AccessMode::ReadOnly ||
+              instruction.borrowPlace || !instruction.borrowFields.empty() ||
+              instruction.dispatch != CallDispatch::Static ||
+              !instruction.functionTarget)
+            return false;
+          const auto *target =
+              program.findFunctionInstance(*instruction.functionTarget);
+          if (!target || target->definitionKind != MirDefinitionKind::Source)
+            return false;
+          const SemanticType *leaf = &instruction.info.type;
+          while (leaf->kind == SemanticType::Array &&
+                 leaf->arguments.size() == 1)
+            leaf = &leaf->arguments.front();
+          if (leaf->kind != SemanticType::StringView &&
+              leaf->kind != SemanticType::CString)
+            return false;
+          if (!carriedValues)
+            carriedValues = carrierAnalysis.flow(body);
+          const auto suppliers =
+              instruction.borrowArguments.empty()
+                  ? std::vector<std::size_t>{instruction.borrowArgument}
+                  : instruction.borrowArguments;
+          // Each selected actual must be independently dependency-free at
+          // its checked input evaluation. Earlier expression traits are not
+          // evidence after replacement, nor is one ownerless primary input
+          // evidence about any of the other declared suppliers.
+          for (const auto index : suppliers) {
+            if (index >= instruction.operands.size() ||
+                instruction.operands[index].kind != MirOperandKind::Value)
+              return false;
+            const auto *input =
+                definitionFor(body, instruction.operands[index].value);
+            if (!input || input->kind != MirInstructionKind::CallInput ||
+                input->callInputRole != MirCallInputRole::Argument ||
+                input->callInputIndex != index)
+              return false;
+            const auto read = carriedValues->reads.find(input->id);
+            const auto expired =
+                carriedValues->unavailableReads.find(input->id);
+            if (read == carriedValues->reads.end() || !read->second ||
+                !read->second->empty() ||
+                expired == carriedValues->unavailableReads.end() ||
+                !expired->second || !expired->second->empty())
+              return false;
+          }
+          return true;
+        }();
+        if (ownerlessTextResult || ownerlessFieldResult || formalFieldResult ||
+            ownerlessArrayResult) {
           continue;
         }
         return verificationFailure(
@@ -4620,6 +4842,34 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         if (carrierType.kind == SemanticType::Reference &&
             carrierType.arguments.size() == 1)
           carrierType = SemanticType(carrierType.arguments.front());
+        if (inlineFieldInput == input && inlineFieldGroups &&
+            !inlineFieldGroups->empty()) {
+          std::vector<MirLoanDependency> sources;
+          bool supported = true;
+          for (const auto id : *inlineFieldGroups) {
+            const auto *held = body.findLoan(id);
+            if (!held || held->kind != MirLoanKind::Stored || held->parent ||
+                held->storedDependency || held->lifecycleBound ||
+                held->access != AccessMode::ReadOnly ||
+                !held->designatedFields.empty()) {
+              supported = false;
+              break;
+            }
+            const auto dependencies = concreteDependencies(*held);
+            for (const auto &dependency : dependencies)
+              if (dependency.parent ||
+                  dependency.access != AccessMode::ReadOnly ||
+                  !dependency.designatedFields.empty())
+                supported = false;
+            sources.insert(sources.end(), dependencies.begin(),
+                           dependencies.end());
+          }
+          if (supported) {
+            mappedCallSources.insert(mappedCallSources.end(), sources.begin(),
+                                     sources.end());
+            continue;
+          }
+        }
         const auto inputPaths =
             findStoredCarrierReferences(program, carrierType);
         const auto abstractSources =
@@ -4766,6 +5016,91 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         mappedAlternatives.insert(mappedAlternatives.end(),
                                   alternatives.begin(), alternatives.end());
       }
+      // Reconstruct inline value dependencies at each checked argument
+      // evaluation. Binding inventories and the primary input alone cannot
+      // prove the owner set after replacement or aggregate construction.
+      std::optional<std::vector<MirLoanDependency>> inlineSources;
+      const auto inlineText = [](const SemanticType &type) {
+        const SemanticType *leaf = &type;
+        while (leaf->kind == SemanticType::Array && leaf->arguments.size() == 1)
+          leaf = &leaf->arguments.front();
+        return leaf->kind == SemanticType::StringView ||
+               leaf->kind == SemanticType::CString;
+      };
+      if (instruction.borrowOrigin == BorrowOriginKind::Argument &&
+          instruction.borrowAccess == AccessMode::ReadOnly &&
+          instruction.info.category == ValueCategory::Value &&
+          instruction.borrowFields.empty() &&
+          inlineText(instruction.info.type) &&
+          (instruction.info.type.kind == SemanticType::Array ||
+           std::any_of(
+               instruction.parameterTypes.begin(),
+               instruction.parameterTypes.end(), [](const SemanticType &type) {
+                 return type.kind == SemanticType::Array ||
+                        (type.kind == SemanticType::Reference &&
+                         type.arguments.size() == 1 &&
+                         type.arguments.front().kind == SemanticType::Array);
+               }))) {
+        const auto suppliers =
+            instruction.borrowArguments.empty()
+                ? std::vector<std::size_t>{instruction.borrowArgument}
+                : instruction.borrowArguments;
+        bool supported = true;
+        std::vector<MirLoanDependency> sources;
+        if (!carriedValues)
+          carriedValues = carrierAnalysis.flow(body);
+        for (const auto index : suppliers) {
+          if (index >= instruction.operands.size() ||
+              index >= instruction.parameterTypes.size() ||
+              !inlineText(
+                  instruction.parameterTypes[index].kind ==
+                              SemanticType::Reference &&
+                          instruction.parameterTypes[index].arguments.size() ==
+                              1
+                      ? instruction.parameterTypes[index].arguments.front()
+                      : instruction.parameterTypes[index]) ||
+              instruction.operands[index].kind != MirOperandKind::Value) {
+            supported = false;
+            break;
+          }
+          const auto *input =
+              definitionFor(body, instruction.operands[index].value);
+          if (!input || input->kind != MirInstructionKind::CallInput ||
+              input->callInputRole != MirCallInputRole::Argument ||
+              input->callInputIndex != index) {
+            supported = false;
+            break;
+          }
+          const auto read = carriedValues->reads.find(input->id);
+          const auto expired = carriedValues->unavailableReads.find(input->id);
+          if (read == carriedValues->reads.end() || !read->second ||
+              expired == carriedValues->unavailableReads.end() ||
+              !expired->second || !expired->second->empty()) {
+            supported = false;
+            break;
+          }
+          for (const auto id : *read->second) {
+            const auto *held = body.findLoan(id);
+            if (!held || held->kind != MirLoanKind::Stored || held->parent ||
+                held->storedDependency || held->lifecycleBound ||
+                held->access != AccessMode::ReadOnly ||
+                !held->designatedFields.empty()) {
+              supported = false;
+              break;
+            }
+            auto dependencies = concreteDependencies(*held);
+            for (const auto &dependency : dependencies)
+              if (dependency.parent ||
+                  dependency.access != AccessMode::ReadOnly ||
+                  !dependency.designatedFields.empty())
+                supported = false;
+            sources.insert(sources.end(), dependencies.begin(),
+                           dependencies.end());
+          }
+        }
+        if (supported)
+          inlineSources = std::move(sources);
+      }
       std::optional<MirPlaceId> expectedSource;
       if (instruction.borrowOrigin == BorrowOriginKind::Receiver) {
         if (instruction.kind != MirInstructionKind::Call ||
@@ -4785,6 +5120,13 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         }
         expectedSource =
             selectedSource(instruction.operands[instruction.borrowArgument]);
+      }
+      if (inlineSources && !inlineSources->empty()) {
+        const auto selected = std::find_if(
+            inlineSources->begin(), inlineSources->end(),
+            [&](const auto &source) { return source.source == loan->source; });
+        if (selected != inlineSources->end())
+          expectedSource = selected->source;
       }
       if (!mappedCallSources.empty())
         expectedSource = mappedCallSources.front().source;
@@ -5163,7 +5505,134 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         const bool independentText =
             source && (independentlyStaticTextBinding(program, body, *source) ||
                        ownerlessTextField || ownerlessAccessorText);
-        if ((loan->storedDependency == 0 && !independentText) ||
+        const bool completeOwnedContents = [&] {
+          if (!carriedValues)
+            carriedValues = carrierAnalysis.flow(body);
+          if (const auto contents = ownedCallResultContents(
+                  program, body, instruction, *carriedValues);
+              contents && !contents->empty() &&
+              loan->storedDependency ==
+                  (contents->size() == 1 ? contents->front() : MirLoanId{0}))
+            return true;
+          const bool receiverOrigin =
+              instruction.borrowOrigin == BorrowOriginKind::Receiver;
+          if (loan->storedDependency || !source ||
+              source->root != MirPlaceRootKind::Binding ||
+              source->type.kind == SemanticType::Reference ||
+              !source->projections.empty() ||
+              instruction.kind != MirInstructionKind::Call ||
+              instruction.dispatch != CallDispatch::Static ||
+              !instruction.functionTarget ||
+              (!receiverOrigin &&
+               instruction.borrowOrigin != BorrowOriginKind::Argument) ||
+              !instruction.borrowFields.empty() ||
+              (receiverOrigin
+                   ? !instruction.receiver
+                   : instruction.borrowArgument >= instruction.operands.size()))
+            return false;
+          const auto *callee =
+              program.findFunctionInstance(*instruction.functionTarget);
+          if (!callee || callee->definitionKind != MirDefinitionKind::Source ||
+              (!receiverOrigin &&
+               instruction.borrowArgument >= callee->parameterBindings.size()))
+            return false;
+          if (receiverOrigin) {
+            const auto *owner = callee->owner
+                                    ? program.findClassInstance(*callee->owner)
+                                    : nullptr;
+            if (!owner || owner->type != source->type || callee->staticMember ||
+                receiverAllowsMutation(callee->receiverMutability))
+              return false;
+          }
+          const bool contentContract = std::any_of(
+              callee->body.loans.begin(), callee->body.loans.end(),
+              [&](const auto &entry) {
+                const auto *formal = callee->body.findPlace(entry.source);
+                return formal &&
+                       (receiverOrigin
+                            ? formal->root == MirPlaceRootKind::This
+                            : formal->root == MirPlaceRootKind::Binding &&
+                                  formal->binding ==
+                                      callee->parameterBindings
+                                          [instruction.borrowArgument]) &&
+                       mir_detail::ownedContentEntry(callee->body, entry,
+                                                     &program);
+              });
+          const auto &argument =
+              receiverOrigin ? *instruction.receiver
+                             : instruction.operands[instruction.borrowArgument];
+          const auto *stage = argument.kind == MirOperandKind::Value
+                                  ? definitionFor(body, argument.value)
+                                  : nullptr;
+          const bool staged =
+              stage && stage->kind == MirInstructionKind::CallInput &&
+              stage->callSite == instruction.callSite &&
+              stage->callInputRole == (receiverOrigin
+                                           ? MirCallInputRole::Receiver
+                                           : MirCallInputRole::Argument) &&
+              stage->callInputIndex ==
+                  (receiverOrigin ? 0 : instruction.borrowArgument) &&
+              stage->operands.size() == 1 &&
+              stage->operands.front().kind == MirOperandKind::BorrowRead &&
+              stage->operands.front().place == source->id;
+          // Operators may carry their physical receiver directly. Resolve its
+          // actual alias origin rather than requiring a fabricated input stage.
+          const bool direct =
+              receiverOrigin && !stage &&
+              argument.kind == MirOperandKind::BorrowRead &&
+              borrowSourceForOperand(body, argument) == source->id;
+          if (!contentContract || (!staged && !direct))
+            return false;
+          if (!carriedValues)
+            carriedValues = carrierAnalysis.flow(body);
+          const auto &reads =
+              direct ? carriedValues->receiverReads : carriedValues->reads;
+          const auto &expiredReads =
+              direct ? carriedValues->unavailableReceiverReads
+                     : carriedValues->unavailableReads;
+          const auto site = direct ? instruction.id : stage->id;
+          const auto read = reads.find(site);
+          const auto expired = expiredReads.find(site);
+          if (read == reads.end() || !read->second ||
+              expired == expiredReads.end() || !expired->second ||
+              !expired->second->empty())
+            return false;
+          std::size_t contents = 0;
+          for (const auto id : *read->second) {
+            const auto *held = body.findLoan(id);
+            if (!held)
+              return false;
+            // A shared alias keeps the physical container alive. It is not
+            // one of the external element-owner groups. Require the exact
+            // parent and source; unrelated loans cannot be filtered away.
+            if (direct && id == loan->parent &&
+                (held->kind == MirLoanKind::Local ||
+                 held->kind == MirLoanKind::CallResult) &&
+                held->source == source->id &&
+                held->access == AccessMode::ReadOnly &&
+                !held->storedDependency && !held->lifecycleBound &&
+                held->additionalDependencies.empty())
+              continue;
+            if (held->kind != MirLoanKind::Stored ||
+                held->access != AccessMode::ReadOnly || held->parent ||
+                held->storedDependency || held->lifecycleBound ||
+                held->escapes ||
+                !std::all_of(held->additionalDependencies.begin(),
+                             held->additionalDependencies.end(),
+                             [](const auto &dependency) {
+                               return !dependency.parent &&
+                                      dependency.access == AccessMode::ReadOnly;
+                             }))
+              return false;
+            ++contents;
+          }
+          return contents >= 2;
+        }();
+        // The physical shell is still borrowed. For opaque local storage,
+        // executable carrier flow can prove multiple retained groups without
+        // inventing one representative owner or weakening a single-group edge.
+        if ((loan->storedDependency == 0 && !independentText &&
+             !completeOwnedContents) ||
             !loan->additionalSources().empty() ||
             !instruction.borrowArguments.empty())
           return verificationFailure(
@@ -5212,6 +5681,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                               : nullptr);
           }
         }
+        if (inlineSources)
+          expectedSources = *inlineSources;
         const auto actualSources = concreteDependencies(*loan);
         if (!mappedCallSources.empty()) {
           expectedSources = mappedCallSources;
@@ -5219,8 +5690,8 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
                                  mappedAlternatives.begin(),
                                  mappedAlternatives.end());
         }
-        if (expectedSources.size() <= 1 && actualSources.size() <= 1 &&
-            instruction.borrowArguments.empty()) {
+        if (!inlineSources && expectedSources.size() <= 1 &&
+            actualSources.size() <= 1 && instruction.borrowArguments.empty()) {
           // A compact sole-origin loan may omit its destination path, but an
           // explicitly published path must still describe the result, never
           // a field from the selected input's different carrier layout.
@@ -6091,6 +6562,37 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
     return false;
   std::unordered_set<HirBindingId> proven;
   std::unordered_set<HirBindingId> visiting;
+  std::optional<MirCarrierFlow> retainingFlow;
+  const auto retainedByCall = [&](HirBindingId carrier) {
+    if (!mir_detail::ownedContentEntry(body, entry, &program))
+      return false;
+    if (!retainingFlow)
+      retainingFlow = deriveMirCarrierFlow(body, &program);
+    for (const auto &[call, destinations] :
+         retainingFlow->storeInputsByTarget) {
+      bool sourceCall = false;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.id == call && !instruction.tombstone &&
+              instruction.kind == MirInstructionKind::Call &&
+              instruction.dispatch == CallDispatch::Static &&
+              instruction.functionTarget)
+            sourceCall = true;
+      if (!sourceCall)
+        continue;
+      const auto destination =
+          destinations.find({MirPlaceRootKind::Binding, carrier});
+      if (destination == destinations.end() || !destination->second ||
+          std::find(destination->second->begin(), destination->second->end(),
+                    entry.id) == destination->second->end())
+        continue;
+      const auto expired = retainingFlow->unavailableReads.find(call);
+      if (expired != retainingFlow->unavailableReads.end() && expired->second &&
+          expired->second->empty())
+        return true;
+    }
+    return false;
+  };
   const auto prove = [&](const auto &self, HirBindingId carrier) -> bool {
     if (proven.contains(carrier))
       return true;
@@ -6120,6 +6622,14 @@ storedCarrierValueOrigin(const MirProgram &program, const MirBody &body,
                                      publication.block->id)) ||
         producer->result != value->id || producer->info.type != publishedType)
       return false;
+    // An opaque owner can be initialized empty and acquire external contents
+    // later through a checked retaining call. Its local publication remains
+    // ordinary storage; the source-derived write relation proves retention.
+    if (retainedByCall(carrier)) {
+      visiting.erase(carrier);
+      proven.insert(carrier);
+      return true;
+    }
     // A carrier of another type that stores a reference to the entry
     // formal's shell retains the entry's external owners through that
     // shell. Its producer's own fresh Stored loan names the entry as its
@@ -6290,10 +6800,35 @@ verifyCarrierShellDependencies(const MirProgram &program, const MirBody &body,
     // from the child's claimed parent or its storedDependency annotation.
     return carrier;
   };
+  std::optional<MirCarrierFlow> resultContents;
   for (const auto &loan : body.loans) {
     const auto *source = body.findPlace(loan.source);
     if (source == nullptr)
       continue; // The body verifier owns malformed place identities.
+    bool checkedResultContents = false;
+    if (loan.kind == MirLoanKind::CallResult)
+      for (const auto &block : body.blocks)
+        for (const auto &call : block.instructions) {
+          if (call.tombstone || call.kind != MirInstructionKind::Call ||
+              call.loan != loan.id)
+            continue;
+          if (!resultContents)
+            resultContents = deriveMirCarrierFlow(body, &program);
+          if (const auto contents =
+                  ownedCallResultContents(program, body, call, *resultContents);
+              contents && !contents->empty()) {
+            const auto expected =
+                contents->size() == 1 ? contents->front() : MirLoanId{0};
+            if (loan.storedDependency != expected)
+              return verificationFailure(body, owner,
+                                         "owner-aware result dependency "
+                                         "differs from its post-call contents",
+                                         block.id, call.id);
+            checkedResultContents = true;
+          }
+        }
+    if (checkedResultContents)
+      continue;
     const SemanticType &sourceType =
         source->type.kind == SemanticType::Reference &&
                 source->type.arguments.size() == 1
@@ -6707,8 +7242,12 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
     }
     const auto paths = findStoredCarrierReferences(program, carrierType);
     if (paths.empty()) {
-      if (abstractEntry && (carrierType.kind == SemanticType::StringView ||
-                            carrierType.kind == SemanticType::CString)) {
+      const SemanticType *textLeaf = &carrierType;
+      while (textLeaf->kind == SemanticType::Array &&
+             textLeaf->arguments.size() == 1)
+        textLeaf = &textLeaf->arguments.front();
+      if (abstractEntry && (textLeaf->kind == SemanticType::StringView ||
+                            textLeaf->kind == SemanticType::CString)) {
         // The exact reference-formal identity was checked above. Unlike a
         // nominal carrier, text's external owner has no source-visible field
         // path. Retain a separate read-only entry witness, never an invented
@@ -6724,6 +7263,17 @@ verifyStoredEntryPaths(const MirProgram &program, const MirBody &body,
               "text reference entry has an invalid owner dependency");
         continue;
       }
+      // An owner-aware read explicitly asserts that its typed object's
+      // external dependencies are retained by this owner. Reconstruct that
+      // contract from the exact primitive, never from an owner type's name
+      // or from a generic unsafe marker. The physical owner loan remains
+      // separate and must point to this same abstract contents group.
+      const bool ownedContents =
+          abstractEntry && mir_detail::ownedContentEntry(body, loan, &program);
+      if (ownedContents && parameterBindings &&
+          exactAbstractStoredCarrierPublications(
+              program, body, *parameterBindings, loan, carrierType))
+        continue;
       if (abstractEntry || loan.carriers.empty())
         return verificationFailure(
             body, owner,
@@ -7222,6 +7772,203 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
         return invalidSummary("returned field summary has an invalid result "
                               "path, permission, or input");
     }
+  }
+  // A copied record may carry several independently retained owner groups.
+  // Its actual returned SSA value, not carrier annotations or the signature
+  // alone, must prove that every group is an admitted caller-owned referent.
+  const auto copiedRecordPaths =
+      findStoredCarrierReferenceInventory(program, instance.returnType);
+  // An undifferentiated owner set cannot prove which owner belongs to which
+  // field. Until that relation is reconstructed, do not use this proof for
+  // multiple borrowed fields or guarded alternatives with distinct contracts.
+  const bool copiedRecordReturns =
+      instance.returnType.kind == SemanticType::Class && copiedRecordPaths &&
+      copiedRecordPaths->size() == 1 &&
+      copiedRecordPaths->front().conditions.empty() &&
+      copiedRecordPaths->front().reference.referenceAccess ==
+          AccessMode::ReadOnly &&
+      instance.explicitReturnBorrowOrigin &&
+      instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+      instance.returnBorrowAccess == AccessMode::ReadOnly &&
+      !instance.returnBorrowPlace &&
+      std::any_of(body.blocks.begin(), body.blocks.end(),
+                  [](const auto &block) {
+                    return block.reachable &&
+                           block.terminator.kind == MirTerminatorKind::Return;
+                  }) &&
+      std::all_of(body.blocks.begin(), body.blocks.end(),
+                  [](const auto &block) {
+                    return !block.reachable ||
+                           block.terminator.kind != MirTerminatorKind::Return ||
+                           !block.terminator.returnLoan;
+                  });
+  if (copiedRecordReturns) {
+    const auto suppliers =
+        instance.returnBorrowParameters.empty()
+            ? std::vector<std::size_t>{instance.returnBorrowParameter}
+            : instance.returnBorrowParameters;
+    std::unordered_set<HirBindingId> admitted;
+    for (const auto index : suppliers) {
+      if (index >= instance.parameterTypes.size() ||
+          index >= instance.parameterBindings.size() ||
+          instance.parameterTypes[index].kind != SemanticType::Reference ||
+          instance.parameterTypes[index].referenceAccess !=
+              AccessMode::ReadOnly)
+        return invalidSummary("copied record return has an invalid supplier");
+      admitted.insert(instance.parameterBindings[index]);
+    }
+    const auto carried = deriveMirCarrierFlow(body, &program);
+    for (const auto &block : body.blocks) {
+      if (!block.reachable ||
+          block.terminator.kind != MirTerminatorKind::Return)
+        continue;
+      const auto &operand = block.terminator.value;
+      const auto *copy = operand && operand->kind == MirOperandKind::Value
+                             ? mir_detail::definitionFor(body, operand->value)
+                             : nullptr;
+      const auto returned = carried.returned.find(block.id);
+      if (!operand || operand->type != instance.returnType || !copy ||
+          copy->kind != MirInstructionKind::Load ||
+          !copy->info.traits.copyable ||
+          copy->info.type != instance.returnType ||
+          copy->operands.size() != 1 ||
+          copy->operands.front().kind != MirOperandKind::Copy ||
+          returned == carried.returned.end() || !returned->second ||
+          returned->second->empty())
+        return verificationFailure(
+            body, instance.id,
+            "copied record return lacks complete value provenance", block.id);
+      for (const auto id : *returned->second) {
+        const auto *loan = body.findLoan(id);
+        const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+        if (!loan || !source ||
+            !mir_detail::callerOwnedSharedContents(body, *loan) ||
+            !admitted.contains(source->binding)) {
+          auto rejected = verificationFailure(
+              body, instance.id,
+              "copied record return uses an undeclared or local supplier",
+              block.id);
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Supplier, .loan = id};
+          return rejected;
+        }
+      }
+    }
+    return {};
+  }
+
+  // Inline text arrays export their value's complete dependency set, not a
+  // reference to the callee's array storage. Reconstruct that set from actual
+  // MIR operations. The declared supplier list alone is never a publication
+  // proof, and unknown provenance is not an empty set.
+  const SemanticType *arrayLeaf = &instance.returnType;
+  while (arrayLeaf->kind == SemanticType::Array &&
+         arrayLeaf->arguments.size() == 1)
+    arrayLeaf = &arrayLeaf->arguments.front();
+  const bool arrayInput =
+      std::any_of(instance.parameterTypes.begin(),
+                  instance.parameterTypes.end(), [](const SemanticType &type) {
+                    return type.kind == SemanticType::Array ||
+                           (type.kind == SemanticType::Reference &&
+                            type.arguments.size() == 1 &&
+                            type.arguments.front().kind == SemanticType::Array);
+                  });
+  if ((instance.returnType.kind == SemanticType::Array || arrayInput) &&
+      (arrayLeaf->kind == SemanticType::StringView ||
+       arrayLeaf->kind == SemanticType::CString) &&
+      instance.returnBorrowOrigin == BorrowOriginKind::Argument) {
+    if (instance.returnBorrowAccess != AccessMode::ReadOnly ||
+        instance.returnBorrowPlace || !instance.returnBorrowFields.empty() ||
+        instance.completeReturnBorrow || instance.dependentTextReturn)
+      return invalidSummary(
+          "inline text array return has an incompatible contract");
+    const auto suppliers =
+        instance.returnBorrowParameters.empty()
+            ? std::vector<std::size_t>{instance.returnBorrowParameter}
+            : instance.returnBorrowParameters;
+    if (suppliers.empty() ||
+        suppliers.front() != instance.returnBorrowParameter)
+      return invalidSummary(
+          "inline text array return has an inconsistent primary supplier");
+    std::unordered_map<HirBindingId, SemanticType> bindings;
+    for (const auto index : suppliers) {
+      if (index >= instance.parameterTypes.size() ||
+          index >= instance.parameterBindings.size() ||
+          instance.parameterBindings[index] == 0 ||
+          !bindings
+               .emplace(instance.parameterBindings[index],
+                        instance.parameterTypes[index])
+               .second)
+        return invalidSummary(
+            "inline text array return has an invalid supplier");
+      const SemanticType *input = &instance.parameterTypes[index];
+      if (input->kind == SemanticType::Reference &&
+          input->arguments.size() == 1)
+        input = &input->arguments.front();
+      while (input->kind == SemanticType::Array && input->arguments.size() == 1)
+        input = &input->arguments.front();
+      if (input->kind != arrayLeaf->kind)
+        return invalidSummary("inline text array return supplier has an "
+                              "incompatible element type");
+    }
+    const auto carried = deriveMirCarrierFlow(body, &program);
+    for (const auto &block : body.blocks) {
+      if (!block.reachable ||
+          block.terminator.kind != MirTerminatorKind::Return)
+        continue;
+      const auto returned = carried.exits.find(block.id);
+      if (!block.terminator.value || block.terminator.returnLoan ||
+          returned == carried.exits.end() || !returned->second)
+        return verificationFailure(body, instance.id,
+                                   "inline text array return lacks complete "
+                                   "value dependency provenance",
+                                   block.id);
+      for (const auto id : *returned->second) {
+        const auto *loan = body.findLoan(id);
+        const auto *source = loan ? body.findPlace(loan->source) : nullptr;
+        const auto formal =
+            source ? bindings.find(source->binding) : bindings.end();
+        // The caller owns these external text referents throughout the call.
+        // Retiring the callee's local entry capability does not retire those
+        // referents. Only exact read-only formal entries may cross here;
+        // local producers, physical array shells and unknown relays may not.
+        const bool supplied =
+            loan && source && loan->entry &&
+            loan->kind == MirLoanKind::Stored && !loan->escapes &&
+            loan->access == AccessMode::ReadOnly && !loan->parent &&
+            !loan->storedDependency && !loan->lifecycleBound &&
+            !loan->twoPhase && loan->additionalDependencies.empty() &&
+            loan->designatedFields.empty() && loan->conditions.empty() &&
+            source->root == MirPlaceRootKind::Binding &&
+            source->projections.empty() && formal != bindings.end() &&
+            source->type == formal->second && loan->storedField == 0 &&
+            (std::find(loan->carriers.begin(), loan->carriers.end(),
+                       source->binding) != loan->carriers.end() ||
+             (formal->second.kind == SemanticType::Reference &&
+              std::any_of(body.loans.begin(), body.loans.end(),
+                          [&](const MirLoan &shell) {
+                            return shell.entry &&
+                                   shell.kind == MirLoanKind::Parameter &&
+                                   shell.source == loan->source &&
+                                   shell.storedDependency == loan->id &&
+                                   std::find(shell.carriers.begin(),
+                                             shell.carriers.end(),
+                                             source->binding) !=
+                                       shell.carriers.end();
+                          })));
+        if (!supplied) {
+          auto rejected =
+              verificationFailure(body, instance.id,
+                                  "inline text array returns a dependency "
+                                  "outside its declared suppliers",
+                                  block.id);
+          rejected.errors.back().borrow = {
+              .kind = MirBorrowRejectionKind::Supplier, .loan = id};
+          return rejected;
+        }
+      }
+    }
+    return {};
   }
   std::optional<MirStoredCarrierReference> storedCarrierReference;
   const MirLoan *storedCarrierEntryLoan = nullptr;
@@ -8606,7 +9353,7 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
 }
 
 [[nodiscard]] MirVerificationResult verifyMirProgramBorrowContracts(
-    const MirProgram &program,
+    const MirProgram &program, MirCarrierAnalysis &carrierAnalysis,
     const std::function<bool(HirFunctionInstanceId)> &completeReturnProof,
     const std::function<bool(HirConstructorInstanceId)>
         &completeConstructorProof,
@@ -8623,10 +9370,10 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
   appendVerification(result,
                      verifyMirCallableMetadata(program, program.module(), 0,
                                                nullptr, completeReturnProof));
-  appendVerification(result, verifyMirBorrowProducers(program, program.module(),
-                                                      0, completeReturnProof,
-                                                      completeConstructorProof,
-                                                      noNormalResultProof));
+  appendVerification(result, verifyMirBorrowProducers(
+                                 program, program.module(), 0,
+                                 completeReturnProof, completeConstructorProof,
+                                 noNormalResultProof, carrierAnalysis));
   for (const MirClassInstance &instance : program.classInstances()) {
     appendVerification(result, verifyMirCallableMetadata(
                                    program, instance.fieldInitializers,
@@ -8635,24 +9382,25 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
         result, verifyMirBorrowProducers(program, instance.fieldInitializers,
                                          instance.id, completeReturnProof,
                                          completeConstructorProof,
-                                         noNormalResultProof));
+                                         noNormalResultProof, carrierAnalysis));
     appendVerification(result, verifyMirCallableMetadata(
                                    program, instance.staticFieldInitializers,
                                    instance.id, nullptr, completeReturnProof));
-    appendVerification(result,
-                       verifyMirBorrowProducers(
-                           program, instance.staticFieldInitializers,
-                           instance.id, completeReturnProof,
-                           completeConstructorProof, noNormalResultProof));
+    appendVerification(result, verifyMirBorrowProducers(
+                                   program, instance.staticFieldInitializers,
+                                   instance.id, completeReturnProof,
+                                   completeConstructorProof,
+                                   noNormalResultProof, carrierAnalysis));
   }
   for (const MirFunctionInstance &instance : program.functionInstances()) {
     appendVerification(result, verifyMirCallableMetadata(program, instance.body,
                                                          instance.id, &instance,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(
-                    program, instance.body, instance.id, completeReturnProof,
-                    completeConstructorProof, noNormalResultProof));
+        result,
+        verifyMirBorrowProducers(program, instance.body, instance.id,
+                                 completeReturnProof, completeConstructorProof,
+                                 noNormalResultProof, carrierAnalysis));
     appendVerification(
         result,
         verifyMirFunctionBorrowSummary(
@@ -8665,9 +9413,10 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
                                                          instance.id, nullptr,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(
-                    program, instance.body, instance.id, completeReturnProof,
-                    completeConstructorProof, noNormalResultProof));
+        result,
+        verifyMirBorrowProducers(program, instance.body, instance.id,
+                                 completeReturnProof, completeConstructorProof,
+                                 noNormalResultProof, carrierAnalysis));
     appendVerification(
         result, verifyMirConstructorBorrowSummary(
                     program, instance, completeConstructorProof(instance.id)));
@@ -8677,18 +9426,20 @@ verifyMirConstructorBorrowSummary(const MirProgram &program,
                                                          instance.id, nullptr,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(
-                    program, instance.body, instance.id, completeReturnProof,
-                    completeConstructorProof, noNormalResultProof));
+        result,
+        verifyMirBorrowProducers(program, instance.body, instance.id,
+                                 completeReturnProof, completeConstructorProof,
+                                 noNormalResultProof, carrierAnalysis));
   }
   for (const MirLambdaInstance &instance : program.lambdaInstances()) {
     appendVerification(result, verifyMirCallableMetadata(program, instance.body,
                                                          instance.id, nullptr,
                                                          completeReturnProof));
     appendVerification(
-        result, verifyMirBorrowProducers(
-                    program, instance.body, instance.id, completeReturnProof,
-                    completeConstructorProof, noNormalResultProof));
+        result,
+        verifyMirBorrowProducers(program, instance.body, instance.id,
+                                 completeReturnProof, completeConstructorProof,
+                                 noNormalResultProof, carrierAnalysis));
   }
   return result;
 }
@@ -17512,12 +18263,76 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
             if (event.kind == MirLifecycleEventKind::Move ||
                 event.kind == MirLifecycleEventKind::Reparent ||
                 event.kind == MirLifecycleEventKind::Replace) {
-              obligationTransfers[event.source].push_back(event.target);
+              const auto *from = body.findDropObligation(event.source);
+              const auto *to = body.findDropObligation(event.target);
+              if (from && to && from->dropType.type == to->dropType.type)
+                obligationTransfers[event.source].push_back(event.target);
             }
           }
         };
     for (const MirInstruction &instruction : block.instructions) {
       addTransfers(instruction.lifecycle);
+      // An array literal transfers each fresh element's cleanup into the
+      // aggregate's cleanup. Reconstruct that containment from exact SSA
+      // operands and lifecycle events; matching element types alone cannot
+      // establish that a particular borrowed carrier is inside this array.
+      if (instruction.kind != MirInstructionKind::Compute ||
+          instruction.operation != MirOperation::Aggregate ||
+          !instruction.result ||
+          instruction.info.type.kind != SemanticType::Array ||
+          instruction.info.type.arguments.size() != 1 ||
+          instruction.operands.size() != instruction.info.type.arrayLength)
+        continue;
+      const MirDropObligation *aggregate = nullptr;
+      bool exact = true;
+      std::vector<MirDropObligationId> elements;
+      std::unordered_set<MirValueId> transferredValues;
+      for (const auto &event : instruction.lifecycle) {
+        if (event.conditional || event.failureCleanup) {
+          exact = false;
+          break;
+        }
+        if (event.kind == MirLifecycleEventKind::Initialize &&
+            event.source == 0 && !aggregate) {
+          aggregate = body.findDropObligation(event.target);
+          const auto *place =
+              aggregate ? body.findPlace(aggregate->place) : nullptr;
+          exact = aggregate && !aggregate->initiallyActive &&
+                  aggregate->kind == MirDropObligationKind::Value &&
+                  aggregate->dropType.type == instruction.info.type && place &&
+                  place->root == MirPlaceRootKind::Value &&
+                  place->value == *instruction.result &&
+                  place->projections.empty();
+        } else if (event.kind == MirLifecycleEventKind::TransferOut &&
+                   event.target == 0) {
+          const auto *element = body.findDropObligation(event.source);
+          const auto *place =
+              element ? body.findPlace(element->place) : nullptr;
+          exact =
+              element && place && !element->initiallyActive &&
+              element->kind == MirDropObligationKind::Value &&
+              element->dropType.type == instruction.info.type.arguments[0] &&
+              place->root == MirPlaceRootKind::Value &&
+              place->projections.empty() &&
+              transferredValues.insert(place->value).second &&
+              std::count_if(instruction.operands.begin(),
+                            instruction.operands.end(),
+                            [&](const auto &operand) {
+                              return operand.kind == MirOperandKind::Value &&
+                                     operand.value == place->value &&
+                                     operand.type == element->dropType.type;
+                            }) == 1;
+          if (exact)
+            elements.push_back(element->id);
+        } else {
+          exact = false;
+        }
+        if (!exact)
+          break;
+      }
+      if (exact && aggregate && elements.size() == instruction.operands.size())
+        for (const auto element : elements)
+          obligationTransfers[element].push_back(aggregate->id);
     }
     addTransfers(block.terminator.successLifecycle);
   }
@@ -17919,7 +18734,7 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
         }
       }
     }
-    // Close the carrier obligations under Move, Reparent and Replace.
+    // Close exact transfers, including proven array-element containment.
     std::vector<MirDropObligationId> pendingObligations(
         carrierObligations.begin(), carrierObligations.end());
     while (!pendingObligations.empty()) {
@@ -17931,7 +18746,7 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
       }
       for (const MirDropObligationId target : targets->second) {
         const std::size_t before = carrierObligations.size();
-        seed(target);
+        carrierObligations.insert(target);
         if (carrierObligations.size() != before) {
           pendingObligations.push_back(target);
         }
@@ -17979,7 +18794,8 @@ equalCompleteBorrowSetsInBody(const MirBody &body,
       for (const MirDropObligationId obligation : carrierObligations) {
         for (const InstructionLocation &location :
              listed(dropsBySource, obligation)) {
-          if (location.instruction->info.type == carrierType &&
+          const auto *drop = body.findDropObligation(obligation);
+          if (drop && location.instruction->info.type == drop->dropType.type &&
               seenDrops.insert(location.instruction).second) {
             carrierDrops.push_back(location);
           }
@@ -18497,7 +19313,8 @@ verifyOwnedPointeeProjection(const MirProgram &program,
 } // namespace
 
 static MirVerificationResult
-verifyMirProgramContracts(const MirProgram &program) {
+verifyMirProgramContracts(const MirProgram &program,
+                          MirCarrierAnalysis &carrierAnalysis) {
   MirVerificationResult result;
   if (!program.valid()) {
     result.errors.push_back({.bodyKind = MirBodyKind::Module,
@@ -18986,16 +19803,9 @@ verifyMirProgramContracts(const MirProgram &program) {
                suppliedElements.contains(element)) &&
               type.kind == SemanticType::Reference &&
               type.referenceAccess == AccessMode::ReadOnly;
-          const bool mutableReference =
-              type.kind == SemanticType::Reference &&
-              type.referenceAccess == AccessMode::Mutable;
-          // An opaque checked reference carries its hidden owners even when
-          // read-only. Preserve the exact semantic per-element entry witness.
-          const bool erasedReference =
-              type.kind == SemanticType::Reference &&
-              type.arguments.size() == 1 &&
-              exactMirCapabilityClass(program, type.arguments.front(),
-                                      CompilerCapabilityTypeKind::ErasedObject);
+          const bool referenceElement = type.kind == SemanticType::Reference;
+          const bool textElement = type.kind == SemanticType::StringView ||
+                                   type.kind == SemanticType::CString;
           const auto storedPaths = findStoredCarrierReferences(program, type);
           const bool storedCarrier =
               type.kind == SemanticType::Class && !storedPaths.empty();
@@ -19034,11 +19844,16 @@ verifyMirProgramContracts(const MirProgram &program) {
               continue;
             ++entryLoans;
             const bool exactAccess =
-                ((mutableReference || erasedReference || summarizedOrigin) &&
-                 loan.kind == MirLoanKind::Parameter &&
+                (referenceElement && loan.kind == MirLoanKind::Parameter &&
                  loan.access == type.referenceAccess) ||
                 (storedCarrier && loan.kind == MirLoanKind::Stored &&
-                 loan.access == storedPaths.front().reference.referenceAccess);
+                 loan.access ==
+                     storedPaths.front().reference.referenceAccess) ||
+                (textElement && loan.kind == MirLoanKind::Stored &&
+                 loan.access == AccessMode::ReadOnly &&
+                 loan.designatedFields.empty() &&
+                 loan.additionalDependencies.empty() &&
+                 loan.storedDependency == 0 && !loan.lifecycleBound);
             if (!exactAccess || loan.escapes || loan.parent != 0 ||
                 loan.carriers != std::vector<HirBindingId>{binding} ||
                 source->type != type || !source->initiallyAvailable) {
@@ -19049,10 +19864,8 @@ verifyMirProgramContracts(const MirProgram &program) {
                        "borrowed pack element has invalid entry capability"});
             }
           }
-          if (entryLoans != (mutableReference || erasedReference ||
-                                     storedCarrier || summarizedOrigin
-                                 ? 1u
-                                 : 0u)) {
+          if (entryLoans !=
+              (referenceElement || textElement || storedCarrier ? 1u : 0u)) {
             result.errors.push_back(
                 {.bodyKind = body.kind,
                  .owner = owner,
@@ -19152,7 +19965,10 @@ verifyMirProgramContracts(const MirProgram &program) {
              instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
              instruction.intrinsic == IntrinsicKind::ObjectRelocateRange ||
              instruction.intrinsic == IntrinsicKind::ObjectTake ||
-             instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+             instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned ||
+             instruction.intrinsic == IntrinsicKind::ObjectRelocateOwned ||
+             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+              instruction.intrinsic == IntrinsicKind::ObjectConstructOwned) ||
              instruction.unsafeOperation ==
                  UnsafeOperationKind::ObjectLifetime) &&
             !((instruction.intrinsic == IntrinsicKind::ObjectRelocate ||
@@ -19160,7 +19976,12 @@ verifyMirProgramContracts(const MirProgram &program) {
                   ? mir_detail::objectRelocate(program, instruction)
               : instruction.intrinsic == IntrinsicKind::ObjectTake
                   ? mir_detail::objectTake(program, instruction)
-              : instruction.intrinsic == IntrinsicKind::ObjectConstruct
+              : instruction.intrinsic == IntrinsicKind::ObjectRelocateOwned
+                  ? mir_detail::objectRelocateOwned(program, instruction)
+              : instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned
+                  ? mir_detail::objectInitializeOwned(program, instruction)
+              : (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+                 instruction.intrinsic == IntrinsicKind::ObjectConstructOwned)
                   ? mir_detail::objectConstruct(program, instruction)
                   : mir_detail::objectDestroy(program, instruction))) {
           result.errors.push_back(
@@ -19232,7 +20053,9 @@ verifyMirProgramContracts(const MirProgram &program) {
                .instruction = instruction.id,
                .message = "restored reference loses its verified type, fields, "
                           "access or opaque witness"});
-        if ((instruction.intrinsic == IntrinsicKind::RawBorrow ||
+        if ((instruction.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
+             instruction.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut ||
+             instruction.intrinsic == IntrinsicKind::RawBorrow ||
              instruction.intrinsic == IntrinsicKind::RawBorrowMut) &&
             mir_detail::rawBorrowResultLoan(body, instruction) == nullptr) {
           result.errors.push_back(
@@ -19676,7 +20499,7 @@ verifyMirProgramContracts(const MirProgram &program) {
            .owner = function.id,
            .message = "C-thread runtime declaration contract is invalid"});
     }
-    if (!exactProcessMemoryRuntimeFunction(program, function)) {
+    if (!mir_detail::exactProcessMemoryRuntimeFunction(program, function)) {
       result.errors.push_back(
           {.bodyKind = MirBodyKind::Function,
            .owner = function.id,
@@ -19852,23 +20675,69 @@ verifyMirProgramContracts(const MirProgram &program) {
     }
   };
   const auto lifecycleBoundDependency = [&](const SemanticType &type) {
+    // Recompute dynamic dependency capacity from concrete MIR fields; do not
+    // trust the producer's cleanup-bound flag or static reference traits alone.
+    std::vector<SemanticType> capacityVisiting;
+    const auto mayCarry = [&](const auto &self,
+                              const SemanticType &current) -> bool {
+      const auto traits = concreteMirTypeTraits(program, current, 0)
+                              .value_or(semanticTraits(current));
+      if (traits.containsBorrowedState ||
+          current.kind == SemanticType::StringView ||
+          current.kind == SemanticType::CString)
+        return true;
+      if (std::find(capacityVisiting.begin(), capacityVisiting.end(),
+                    current) != capacityVisiting.end())
+        return true;
+      capacityVisiting.push_back(current);
+      bool carries = false;
+      if (current.kind == SemanticType::Array &&
+          current.arguments.size() == 1) {
+        carries = self(self, current.arguments.front());
+      } else if (current.kind == SemanticType::Lambda &&
+                 current.hasLambdaShape()) {
+        for (const auto &capture : current.lambdaCaptureTypes())
+          carries = carries || self(self, capture);
+      } else if (current.kind == SemanticType::Enum) {
+        if (const auto *enumeration = program.findPayloadEnum(current))
+          for (const auto &variant : enumeration->variants)
+            for (const auto &field : variant.payloadTypes)
+              carries = carries || self(self, field);
+      } else if (const auto *owner =
+                     uniqueMirClassInstanceForType(program, current)) {
+        for (const auto &base : owner->structuralBases)
+          carries = carries || (!base.interface && self(self, base.type));
+        for (const auto &field : owner->declaredFields)
+          carries = carries || self(self, field.type);
+      }
+      capacityVisiting.pop_back();
+      return carries;
+    };
     std::vector<SemanticType> visiting;
     const auto visit = [&](const auto &self,
                            const SemanticType &current) -> bool {
       const auto *owner = uniqueMirClassInstanceForType(program, current);
       if (current.kind == SemanticType::Class && owner == nullptr)
         return true;
-      // A closure's traits are its captures'; the semantic type alone does
-      // not record them.
-      const auto traits = owner != nullptr ? owner->traits
-                          : current.kind == SemanticType::Lambda
-                              ? concreteMirTypeTraits(program, current, 0)
-                                    .value_or(semanticTraits(current))
-                              : semanticTraits(current);
       const auto active =
           typeRequiresActiveCleanup(current, typeRequiresActiveCleanup);
-      if (!traits.containsBorrowedState || (active && !*active))
+      if (!mayCarry(mayCarry, current) || (active && !*active))
         return false;
+      if (current.kind == SemanticType::Enum) {
+        const auto *enumeration = program.findPayloadEnum(current);
+        if (!enumeration || !active ||
+            std::find(visiting.begin(), visiting.end(), current) !=
+                visiting.end())
+          return true;
+        visiting.push_back(current);
+        bool bound = false;
+        for (const auto &variant : enumeration->variants)
+          for (const auto &field : variant.payloadTypes)
+            bound = bound || field.kind == SemanticType::Unknown ||
+                    self(self, field);
+        visiting.pop_back();
+        return bound;
+      }
       // A closure environment is an aggregate of its captures with no source
       // destructor: it is bound exactly when a capture is.
       if (current.kind == SemanticType::Lambda) {
@@ -20212,7 +21081,6 @@ verifyMirProgramContracts(const MirProgram &program) {
           payload &&
           mir_detail::completeObjectType(program,
                                          instance.type.arguments.front()) &&
-          !payload->containsBorrowedState &&
           instance.kind == ClassKind::Class &&
           instance.type.kind == SemanticType::Class &&
           instance.type.classId == instance.declaration &&
@@ -21502,6 +22370,8 @@ verifyMirProgramContracts(const MirProgram &program) {
       case SemanticType::Bool:
       case SemanticType::Char:
       case SemanticType::RawPointer:
+      case SemanticType::StringView:
+      case SemanticType::CString:
         return true;
       case SemanticType::Array: {
         const auto traits = concreteMirTypeTraits(program, type);
@@ -22665,7 +23535,7 @@ verifyMirProgramContracts(const MirProgram &program) {
   appendVerification(
       result,
       verifyMirProgramBorrowContracts(
-          program,
+          program, carrierAnalysis,
           [&](HirFunctionInstanceId id) {
             return completeBorrowSummaries.query(id) != nullptr;
           },
@@ -23108,6 +23978,7 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
   }
 
+  MirCarrierAnalysis carrierAnalysis(program);
   for (const MirBodyAddress address : enumerateMirBodyAddresses(program)) {
     const MirBody *body = findMirBody(program, address);
     if (body == nullptr) {
@@ -23117,7 +23988,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
            .message = "MIR body inventory contains an unresolved address"});
       continue;
     }
-    appendVerification(result, verifyMirBody(*body, address.owner));
+    appendVerification(result,
+                       verifyMirBody(*body, address.owner, carrierAnalysis));
     std::unordered_map<HirValueId, const ConstantValue *> publishedConstants;
     for (const auto &entry : body->programConstantSubstitutions)
       publishedConstants.emplace(entry.hirValue, &entry.constant);
@@ -23369,7 +24241,8 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
       }
     }
   }
-  appendVerification(result, verifyMirProgramContracts(program));
+  appendVerification(result,
+                     verifyMirProgramContracts(program, carrierAnalysis));
   appendVerification(result, verifyMirThreadLocalStorage(program));
   if (result.valid())
     appendVerification(result, verifyMirPersistentStorageEffects(program));

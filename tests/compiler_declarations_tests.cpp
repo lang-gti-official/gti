@@ -772,21 +772,16 @@ import std.string;
 import std.memory;
 
 int main() {
-  mut std::string text = std::string("abc");
+  std::string text = std::string("abc");
   mut std::detail::prefix_owner<std::string_view> stored =
       std::detail::prefix_owner<std::string_view>(uint64_t(1));
   stored.append_value(text.view());
   return 0;
 }
 )");
-  expect(!nestedTextView.canGenerateCode() &&
-             hasDiagnosticCode(nestedTextView.diagnostics, "GTI-S2045") &&
-             hasDiagnostic(nestedTextView.diagnostics,
-                           "cannot be nested in raw storage"),
-         "a dynamic string_view must not be hidden in source-defined "
-         "storage without a nested dependency representation");
-  if (!hasDiagnostic(nestedTextView.diagnostics,
-                     "cannot be nested in raw storage"))
+  expect(nestedTextView.canGenerateCode(),
+         "owner-tracked storage retains a dynamic view's external dependency");
+  if (!nestedTextView.canGenerateCode())
     for (const auto &diagnostic : nestedTextView.diagnostics)
       std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
 
@@ -4848,12 +4843,6 @@ public:
   DeletedMove(DeletedMove&& other) = delete;
 };
 
-class CopyConstructOnly {
-  int& value;
-public:
-  CopyConstructOnly(int& source) : value(source) {}
-};
-
 class NoDefault {
   int stored;
 
@@ -4892,9 +4881,7 @@ int use() {
   bool invalid_equality = needs_equality(EqualOnly(), EqualOnly());
   AlmostOrdered invalid_total = needs_total_order(AlmostOrdered());
   DeletedCopy invalid_construction = needs_copy_construction(DeletedCopy());
-  mut int copy_source = 1;
-  CopyConstructOnly copy_only = CopyConstructOnly(copy_source);
-  CopyConstructOnly invalid_copy = needs_copy(std::move(copy_only));
+  DeletedCopy invalid_copy = needs_copy(DeletedCopy());
   DeletedMove invalid_move = needs_move(DeletedMove());
   NoDefault invalid_default = needs_default<NoDefault>();
   return 0;
@@ -4936,8 +4923,21 @@ int use() {
                  "public, read-only bool <, <=, > and >= operators") &&
              hasDiagnosticHint(invalid.diagnostics,
                                "available copy constructor") &&
-             hasDiagnosticHint(invalid.diagnostics,
-                               "available copy construction and assignment") &&
+             std::any_of(
+                 invalid.diagnostics.begin(), invalid.diagnostics.end(),
+                 [](const auto &diagnostic) {
+                   // DeletedCopy fails copyable's copy-construction
+                   // prerequisite before assignment is considered.
+                   return diagnostic.message.find("std::copyable") !=
+                              std::string::npos &&
+                          std::any_of(
+                              diagnostic.hints.begin(), diagnostic.hints.end(),
+                              [](const auto &hint) {
+                                return hint.find(
+                                           "available copy constructor") !=
+                                       std::string::npos;
+                              });
+                 }) &&
              hasDiagnosticHint(invalid.diagnostics,
                                "available move construction and assignment") &&
              hasDiagnosticHint(invalid.diagnostics,

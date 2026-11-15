@@ -1157,19 +1157,21 @@ private:
       return nullptr;
     }
     std::size_t argumentOffset = 0;
-    if (instruction.intrinsic == IntrinsicKind::ObjectConstruct) {
+    if ((instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+         instruction.intrinsic == IntrinsicKind::ObjectConstructOwned)) {
       if (!nativeObjectConstructionShape(session.program().mir(), instruction))
         throw BackendUnsupportedError("LLVM object construction requires its "
                                       "exact selected/generated plan");
       constructed = operand(instruction.operands[0]);
-      argumentOffset = 1;
+      argumentOffset =
+          instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2 : 1;
       if (!instruction.constructorTarget) {
         const auto &type = instruction.parameterTypes[0].arguments[0];
-        if (instruction.operands.size() == 2 &&
+        if (instruction.operands.size() == argumentOffset + 1 &&
             containsHierarchyStorage(session.program().mir(), type)) {
           // A moved owned argument relocates with its exact cleanup state; a
           // copy writes logical fields and installs its own dispatch state.
-          auto *value = operand(instruction.operands[1]);
+          auto *value = operand(instruction.operands[argumentOffset]);
           if (instruction.constructorKind == ConstructorKind::Move)
             ir.CreateCall(lifetimes.generatedRelocation(type),
                           {constructed, value});
@@ -1177,8 +1179,8 @@ private:
             lifetimes.generatedCopy(ir, constructed, value, type);
           return nullptr;
         }
-        if (instruction.operands.size() == 2) {
-          auto *value = operand(instruction.operands[1]);
+        if (instruction.operands.size() == argumentOffset + 1) {
+          auto *value = operand(instruction.operands[argumentOffset]);
           store(value, constructed, type);
           if (instruction.constructorKind == ConstructorKind::Move &&
               addressValue(session.program().mir(), type))
@@ -1327,6 +1329,43 @@ private:
       }
       if (instruction.intrinsic == IntrinsicKind::RestoringExchange)
         return restoringExchange(instruction);
+      if (instruction.intrinsic == IntrinsicKind::ObjectRelocateOwned) {
+        if (!mir_detail::objectRelocateOwned(session.program().mir(),
+                                             instruction))
+          throw std::logic_error(
+              "LLVM owned relocation lost its storage witnesses");
+        const auto &type = instruction.parameterTypes[0].arguments[0];
+        auto *target = operand(instruction.operands[0]);
+        auto *source = operand(instruction.operands[2]);
+        if (containsHierarchyStorage(session.program().mir(), type)) {
+          ir.CreateCall(lifetimes.generatedRelocation(type), {target, source});
+        } else {
+          store(load(source, type), target, type);
+          lifetimes.moved(ir, source, type);
+          lifetimes.active(ir, target, type, true);
+        }
+        return nullptr;
+      }
+      if (instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned) {
+        if (!mir_detail::objectInitializeOwned(session.program().mir(),
+                                               instruction))
+          throw std::logic_error(
+              "LLVM owned initialization lost its storage witness");
+        const auto &type = instruction.parameterTypes[2];
+        auto *target = operand(instruction.operands[0]);
+        auto *value = operand(instruction.operands[2]);
+        // The owner operand is evaluated/staged normally, but carries only
+        // checked lifetime authority; it is not an extra runtime allocation.
+        if (containsHierarchyStorage(session.program().mir(), type)) {
+          ir.CreateCall(lifetimes.generatedRelocation(type), {target, value});
+        } else {
+          store(value, target, type);
+          if (addressValue(session.program().mir(), type))
+            lifetimes.moved(ir, value, type);
+          lifetimes.active(ir, target, type, true);
+        }
+        return nullptr;
+      }
       if (instruction.intrinsic == IntrinsicKind::ObjectTake) {
         if (!mir_detail::objectTake(session.program().mir(), instruction))
           throw std::logic_error(
@@ -1385,6 +1424,8 @@ private:
       case IntrinsicKind::RestoreReferenceMut:
         return memory.selected(instruction.operands.at(0));
       case IntrinsicKind::RawPointerConversion:
+      case IntrinsicKind::ObjectBorrowOwned:
+      case IntrinsicKind::ObjectBorrowOwnedMut:
       case IntrinsicKind::RawBorrow:
       case IntrinsicKind::RawBorrowMut:
         return operand(instruction.operands.at(0));

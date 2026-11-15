@@ -186,6 +186,15 @@ int main() {
 }
 
 void testConfinement() {
+  const auto multipleOwners = analyzeText(kDeclarations + R"gti(
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  Pair pair = Pair(first.view(), second.view());
+  return pair.first.size() == 5 && pair.second.size() == 6 ? 0 : 1;
+}
+)gti");
+  expect(multipleOwners.canGenerateCode(),
+         "a shared borrowed value can retain more than one external owner");
   struct Case {
     const char *body;
     const char *code;
@@ -215,8 +224,6 @@ void testConfinement() {
       {"Token token = Token(input.view(), 3); auto read = [token]() -> "
        "uint64_t { return token.text.size(); }; uint64_t n = read();",
        "GTI-S2045", "a closure cannot capture a dependent value"},
-      {"Pair pair = Pair(input.view(), other.view());", "GTI-S2045",
-       "a value holds dynamic text from one owner"},
       {"Logged logged = Logged(input.view());", "GTI-S2045",
        "a class with a destructor keeps ownerless text fields"},
       {"Token token = Token(std::string(\"x\").view(), 3);", "GTI-S2045",
@@ -857,14 +864,18 @@ int main() {
             instance.declaredFields[1].symbol};
   }
   const auto rejected = lang::verifyMirProgram(retargeted);
-  expect(!rejected.valid() &&
-             std::any_of(rejected.errors.begin(), rejected.errors.end(),
-                         [](const auto &error) {
-                           return error.message.find("ownerless text") !=
-                                  std::string::npos;
-                         }),
-         "a temporary's field relabeled as dependent is rejected where it is "
-         "stored");
+  expect(!rejected.valid(),
+         "a temporary's dependency cannot be retargeted to another field");
+  const auto reassigned = analyzeText(kDeclarations + R"gti(
+int main() {
+  std::string input{"token text"};
+  mut std::string_view value = "initial";
+  value = Token(input.view(), 1).text;
+  return value.size() == 10 ? 0 : 1;
+}
+)gti");
+  expect(reassigned.canGenerateCode(),
+         "a temporary's field can be copied into existing local storage");
 
   struct Case {
     const char *body;
@@ -886,10 +897,6 @@ int main() {
        "a class with a destructor keeps its text fields ownerless"},
       {"std::string_view v = Token(std::string(\"x\").view(), 1).text;",
        "GTI-S2045", "a temporary owner cannot outlive the field read"},
-      {"mut std::string_view v = \"x\"; v = Token(input.view(), 1).text;",
-       "GTI-S2045",
-       "a temporary's field cannot be assigned to existing "
-       "storage"},
       {"std::string_view v = first(Token(owner.view(), 1)); "
        "owner.append(\"!\"); uint64_t n = v.size();",
        "GTI-S2017", "the owner stays borrowed while a relayed view is live"},
@@ -1033,14 +1040,37 @@ int main() {
           target->publishedTextFields.back().field};
   }
   const auto stored = lang::verifyMirProgram(retargeted);
-  expect(!stored.valid() &&
-             std::any_of(stored.errors.begin(), stored.errors.end(),
-                         [](const auto &error) {
-                           return error.message.find("ownerless text") !=
-                                  std::string::npos;
-                         }),
-         "a published field relabeled as dependent is rejected where it is "
-         "stored");
+  expect(!stored.valid(),
+         "a published dependency cannot be retargeted to another field");
+  const auto twoOwners =
+      analyzeText(kDeclarations + kPublishedDeclarations + R"gti(
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  Pair pair = makePair(first.view(), second.view());
+  return pair.first.size() + pair.second.size() == 11 ? 0 : 1;
+}
+)gti");
+  expect(twoOwners.canGenerateCode(),
+         "a published record preserves two independent text owners");
+  if (!twoOwners.canGenerateCode())
+    printDiagnostics(twoOwners);
+  for (const auto &location : publications(twoOwners.mir)) {
+    auto wrongSource = twoOwners.mir;
+    auto &instruction = instructionAt(wrongSource, location);
+    if (instruction.kind != lang::MirInstructionKind::Call ||
+        instruction.borrowFields.size() != 2)
+      continue;
+    instruction.borrowFields.back().parameter =
+        instruction.borrowFields.front().parameter;
+    expect(!lang::verifyMirProgram(wrongSource).valid(),
+           "each published result field must retain its own verified source");
+    auto duplicateField = twoOwners.mir;
+    auto &duplicate = instructionAt(duplicateField, location);
+    duplicate.borrowFields.back().resultFields =
+        duplicate.borrowFields.front().resultFields;
+    expect(!lang::verifyMirProgram(duplicateField).valid(),
+           "two independent sources cannot publish into the same result field");
+  }
   // A call semantics marks provisional requires its text arguments to be
   // ownerless, so the helper's forwarded formal would need a requirement.
   auto provisional = result.mir;
@@ -1066,8 +1096,6 @@ int main() {
        "a published value's field is not ownerless text"},
       {"Token t = makeToken(std::string(\"x\").view());", "GTI-S2045",
        "a temporary owner cannot be published"},
-      {"Pair p = makePair(input.view(), owner.view());", "GTI-S2045",
-       "a published value holds dynamic text from one owner"},
       {"Token t = keepsLocal(input.view());", "GTI-S2045",
        "a formal published into a local requires ownerless text"},
       {"Token t = makeToken(owner.view()); owner.append(\"!\"); "

@@ -1440,7 +1440,8 @@ function-local names: identities visible outside the entry document's
   Across the test fixtures the share is higher (542 of 1637). Removing that
   fallback needs the MIR rules listed there to take their facts from the
   signature contract.
-- Omitting a library-only body also leaves undiscovered the instances only
+- In the earlier restricted-container implementation, omitting a library-only
+  body also left undiscovered the instances only
   that body requests, and their instance diagnostics with them, even when a
   library-only argument causes the error: `std::vector<std::string_view>`'s
   `push_back` requests the storage helper whose analysis reports
@@ -1450,6 +1451,9 @@ function-local names: identities visible outside the entry document's
   test fixtures. Reporting them needs the closure of an omitted instance to
   be discovered, or remembered as diagnostic-free from an earlier complete
   lowering.
+  The cited fixture now checks an escaping owner lifetime rather than rejecting
+  borrowed container elements. The historical measurements above do not verify
+  editor parity for the new borrowed-storage implementation.
 - Project analysis follows the package containing the opened document and the
   driver's default or explicitly selected profile on the host platform. Unique entry roots and
   single-target packages infer their target defines; shared/ambiguous sources

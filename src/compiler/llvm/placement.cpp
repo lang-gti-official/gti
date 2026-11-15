@@ -2539,7 +2539,10 @@ bool Placement::fresh(MirValueId value) const {
   if (hierarchyTransfers.contains(value))
     return true;
   const auto &stage = *found->second;
-  if (stage.kind == MirInstructionKind::CallInput &&
+  // A prepared argument with its own destination is already materialized.
+  // Its consumer transfers from that slot; forwarding freshness would also
+  // bind the original producer to the consumer's distinct destination.
+  if (stage.kind == MirInstructionKind::CallInput && !stage.destination &&
       stage.operands.size() == 1 &&
       stage.operands[0].kind == MirOperandKind::Value)
     return fresh(stage.operands[0].value);

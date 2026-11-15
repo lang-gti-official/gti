@@ -5107,6 +5107,8 @@ auto SemanticVisitor::Impl::recordRawBorrowCall(
     return;
   if (resolved.declaration == nullptr ||
       (resolved.intrinsic != IntrinsicKind::None &&
+       resolved.intrinsic != IntrinsicKind::ObjectBorrowOwned &&
+       resolved.intrinsic != IntrinsicKind::ObjectBorrowOwnedMut &&
        resolved.intrinsic != IntrinsicKind::RawBorrow &&
        resolved.intrinsic != IntrinsicKind::RawBorrowMut &&
        resolved.intrinsic != IntrinsicKind::TextViewFromAddress &&
@@ -5244,12 +5246,15 @@ auto SemanticVisitor::Impl::finalizeRawBorrowContracts() -> void {
       // evidence through ordinary helpers, exactly as other raw assertions do.
       return std::vector<RawBorrowContract>{
           {.pointerParameter = 0, .access = AccessMode::ReadOnly}};
-    if (use.intrinsic == IntrinsicKind::RawBorrow ||
+    if (use.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
+        use.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut ||
+        use.intrinsic == IntrinsicKind::RawBorrow ||
         use.intrinsic == IntrinsicKind::RawBorrowMut)
       return std::vector<RawBorrowContract>{
           {.pointerParameter = 0,
            .ownerParameter = 1,
-           .access = use.intrinsic == IntrinsicKind::RawBorrowMut
+           .access = (use.intrinsic == IntrinsicKind::RawBorrowMut ||
+                      use.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut)
                          ? AccessMode::Mutable
                          : AccessMode::ReadOnly}};
     const auto *callee = semanticModel.findFunction(*use.callee);
