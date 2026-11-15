@@ -1024,6 +1024,22 @@ private:
     return {};
   }
 
+  // A type whose objects end without running any cleanup.
+  bool passiveType(const SemanticType &type, std::size_t depth = 0) const {
+    if (depth >= limits.callDepth)
+      return false;
+    if (scalarType(type) || type.kind == SemanticType::RawPointer)
+      return true;
+    if (type.kind == SemanticType::Array)
+      return type.arguments.size() == 1 && passiveType(type.arguments[0], depth + 1);
+    if (type.kind == SemanticType::Enum) {
+      const auto *payload = program.findPayloadEnum(type);
+      return payload == nullptr || !payload->requiresActiveCleanup;
+    }
+    const auto *instance = record(type);
+    return instance && !instance->requiresActiveCleanup && !instance->destructor;
+  }
+
   // A fresh raw region from the constant byte provider.
   ConstantEvaluation allocateRaw(std::uint64_t bytes, std::uint64_t alignment,
                                  const SemanticType &type) {
@@ -1051,9 +1067,11 @@ private:
     auto &region = *heap[base.location.allocation - 1];
     if (!region.raw || !region.live || region.epoch != base.regionEpoch)
       return {.failure = ConstantEvaluationFailure::NonConstantReference};
-    // Releasing storage that still holds objects would end their lifetimes
-    // without cleanup; the source sequence must destroy them first.
-    if (std::any_of(region.slots.begin(), region.slots.end(),
+    // Releasing storage that still holds objects needing cleanup would end
+    // their lifetimes without it; the source sequence must destroy them
+    // first. Passive objects (bytes, integers, plain records) may simply end.
+    if (!passiveType(region.type) &&
+        std::any_of(region.slots.begin(), region.slots.end(),
                     [](const auto &slot) { return slot.has_value(); }))
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
     region.live = false;
@@ -1269,6 +1287,10 @@ private:
       return {.failure = ConstantEvaluationFailure::ResourceLimit};
     const auto converted = convertValue(value, type);
     if (!converted)
+      return converted;
+    // A raw pointer's pointee access (const T* / T*) may differ; it still
+    // designates the same element.
+    if (type.kind == SemanticType::RawPointer)
       return converted;
     if (*converted.value != value)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
