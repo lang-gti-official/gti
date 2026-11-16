@@ -4067,7 +4067,11 @@ void testConstexprResults() {
         "constexpr P bad = P();",
         "struct P { int x; constexpr P(mut int& value) : x(value) { value += "
         "1; } }; constexpr P bad = P(3);",
-        "struct P { int& x; constexpr P(int& value) : x(value) {} };",
+        // A stored-reference carrier may run at compile time, but it is
+        // execution-local and never becomes a published constant.
+        "constexpr int seed = 1; "
+        "struct P { int& x; constexpr P(int& value) : x(value) {} }; "
+        "constexpr P bad = P(seed);",
         "struct P { int x = 1; ~P() {}  public: P() = default; }; constexpr P "
         "bad = P();"}) {
     const auto invalid = lang::Frontend().analyze(
