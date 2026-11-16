@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "base": "5a02ee27b07e7bec2c4ede361e0d35bb5175163c",
+  "members": [
+    {
+      "pr": 446,
+      "head": "bb3088444b393f0dccf8a32625d22f08a243981a",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #446: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "procedural_syntax"
+        ],
+        "owning": [
+          "procedural_execution_example",
+          "macro_expansion_queries",
+          "stdlib_module_boundaries",
+          "procedural_html_lsp",
+          "string_operations_runtime",
+          "compiler_pipeline"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #446; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "procedural_execution_example",
+          "macro_expansion_queries",
+          "stdlib_module_boundaries",
+          "procedural_html_lsp",
+          "string_operations_runtime",
+          "compiler_pipeline"
+        ]
+      }
+    },
+    {
+      "pr": 438,
+      "head": "b4527274e4dfe82e8ca567e55b7f0f5bbccefba4",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #438: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "http_url_operators",
+          "stdlib_adoption_runtime",
+          "stdlib_surface_manifest"
+        ],
+        "owning": [
+          "http_runtime",
+          "practical_examples",
+          "stdlib_modules",
+          "mir_cutover_corpus_oracle",
+          "compiler_pipeline"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #438; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "http_runtime",
+          "practical_examples",
+          "stdlib_modules",
+          "mir_cutover_corpus_oracle",
+          "compiler_pipeline"
+        ]
+      }
+    }
+  ]
+}
