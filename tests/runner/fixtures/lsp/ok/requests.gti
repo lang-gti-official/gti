@@ -1,0 +1,22 @@
+// Every LSP expectation kind against one document.
+//@ hover @call: int32_t twice(int32_t value)
+//@ definition @call: @twice
+//@ references @call: @twice @call
+//@ token @call: function
+//@ rename @local total: @local @local_use
+//@ completion @member: level !hidden
+//@ symbols: twice Settings main !value
+//@ formatting: int twice(int value) {
+int /*@twice*/twice(int value) { return value * 2; }
+class Settings {
+public:
+  int level = 1;
+  Settings() = default;
+private:
+  int hidden = 0;
+};
+int main() {
+  Settings settings{};
+  int /*@local*/sum = /*@call*/twice(settings./*@member*/level);
+  return /*@local_use*/sum - 2;
+}

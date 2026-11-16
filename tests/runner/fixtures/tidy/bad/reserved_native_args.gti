@@ -1,0 +1,4 @@
+// native-args cannot take over the driver's output.
+//@ build-pass
+//@ native-args: -o elsewhere
+int main() { return 0; }

@@ -1,0 +1,15 @@
+// A protected member read from outside the hierarchy is an access error at
+// the use, and hover still works at the use. (From
+// protected_member_lsp_test.py.)
+//@ hover @use: int32_t
+//@ definition @use: @secret
+class Base {
+protected:
+  int /*@secret*/secret = 7;
+  int helper() { return secret; }
+public:
+  Base() {}
+  int read() { return secret; }
+};
+struct Sibling : public Base {};
+int read(Base& value) { /* 😀 */ return value./*@use*/secret; }  //~ ERROR GTI-S2007 protected
