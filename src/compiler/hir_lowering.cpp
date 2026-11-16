@@ -1692,7 +1692,8 @@ private:
         processDestructor(processedDestructors++);
       }
     }
-    if (!discoveryLimitReached)
+    if (!discoveryLimitReached &&
+        !errorLimitReached(output.diagnostics, errorLimit))
       publishVirtualDispatch();
   }
 
@@ -7742,6 +7743,7 @@ private:
   }
 
   TargetInfo target;
+  std::size_t errorLimit = 0;
   bool reachablePrefixRequested = false;
   // Top-level declaration range of the entry unit when lowering is scoped to
   // it; see `HirLoweringScope`.
@@ -7762,7 +7764,6 @@ private:
   std::unordered_set<std::string> trustedSources;
   SemanticInstanceProvider *instanceProvider = nullptr;
   const SemanticModel *baseModel = nullptr;
-  std::size_t errorLimit = 0;
   HirLoweringResult output;
   HirValueId nextValueId = 1;
   HirValueId activeResultRegion = 0;

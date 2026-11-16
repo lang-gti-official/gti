@@ -4826,6 +4826,25 @@ void testAnalysisErrorLimit() {
                result.diagnostics.back().code == "GTI-D0002",
            "lexical and parser recovery stop at the same default limit");
   }
+  auto cache = std::make_shared<lang::FrontendCache>();
+  std::string imports;
+  for (int index = 0; index < 40; ++index)
+    imports += "#include <unused>\n";
+  for (const auto &input : {parseErrors, std::string(40, '`'), imports}) {
+    lang::FrontendOptions limited;
+    limited.cache = cache;
+    limited.limits.errorLimit = 3;
+    const auto first =
+        lang::Frontend(limited).analyze("cache-limit.gti", input);
+    expect(first.diagnostics.back().code == "GTI-D0002",
+           "cache seed is limited");
+    limited.limits.errorLimit = 0;
+    const auto all = lang::Frontend(limited).analyze("cache-limit.gti", input);
+    expect(
+        lang::errorDiagnosticCount(all.diagnostics) >= 40 &&
+            all.diagnostics.back().code != "GTI-D0002",
+        "an unlimited request never reuses truncated source or parse caches");
+  }
   std::vector<lang::Diagnostic> warnings(40);
   for (auto &diagnostic : warnings)
     diagnostic.severity = lang::DiagnosticSeverity::Warning;

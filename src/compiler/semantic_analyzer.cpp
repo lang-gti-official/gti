@@ -55,6 +55,7 @@ bool SemanticVisitor::check(const Program &program) {
     impl->enforceErrorLimit = false;
     return false;
   } catch (const Impl::AnalysisCancelled &) {
+    impl->enforceErrorLimit = false;
     impl->analysisCancelled = true;
     return false;
   }

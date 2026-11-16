@@ -1134,6 +1134,7 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   SourceUnit *loadedUnit = graph.findUnit(unitId);
   const std::uint64_t selectedSyntax = syntaxDigest(output);
   if (configurationFree && !tokenDiagnostic &&
+      !errorLimitReached(diagnostics, errorLimit) &&
       std::none_of(output.begin(), output.end(), [](const Token &token) {
         return token.configurationFlagReference;
       })) {

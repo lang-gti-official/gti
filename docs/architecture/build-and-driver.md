@@ -1404,6 +1404,9 @@ macro nesting and expansion, `constexpr for` elements and copies) are
 implementation quantities with guaranteed minimums; their language contract,
 defaults and largest settings are in
 [static semantics](../language/static-semantics.md#3112-implementation-limits).
+The same configuration table also carries `error-limit` (default 20, zero
+means unlimited), which bounds errors per frontend analysis rather than work
+per constant evaluation. See [diagnostics](diagnostics.md#analysis-error-budget).
 `CompileLimits` (`include/gti/compile_limits.h`) holds one value per limit, and
 one table there names each limit's manifest key, flag, minimum and maximum, so
 the command line, the manifest, help text, identities and reports cannot drift.
@@ -1427,7 +1430,8 @@ dependency sources and compiled-library dependency plans. Like the consumer-owne
 with its manifest, so the package stays valid as a root, but is never applied
 to a consumer and produces no diagnostic when valid. Direct mode remains
 manifest-independent and approved `build.gti` host programs keep their fixed
-default compilation policy. A value is a decimal integer from 1 to the limit's
+default compilation policy. Except for `error-limit`, which also accepts zero,
+a value is a decimal integer from 1 to the limit's
 largest setting; anything else is rejected rather than clamped. A repeated
 flag, a missing count or an invalid count is a usage error (exit 64). In a
 manifest, an unknown key is `GTI-B1001` with a nearest-name hint, a non-integer

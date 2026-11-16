@@ -66,7 +66,7 @@ constexpr std::array<CompileLimitInfo, 11> limits{{
      .field = &CompileLimits::errorLimit,
      .guaranteedMinimum = 0,
      .maximum = 4294967295ULL,
-     .summary = "Errors per analysis (default 20; 0 means unlimited)"},
+     .summary = "Errors per analysis (0 means unlimited)"},
 }};
 
 } // namespace

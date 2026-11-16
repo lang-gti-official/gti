@@ -100,6 +100,8 @@ public:
       return result;
     } catch (const ParseError &) {
       return nullptr;
+    } catch (const ErrorLimitReached &) {
+      return nullptr;
     }
   }
 
