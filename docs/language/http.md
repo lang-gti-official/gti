@@ -20,18 +20,16 @@ int main() {
   mut auto client = std::move(created).value();
 
   mut std::http::request request = std::http::request(
-      std::http::method::get, "https://gitea.example/api/v1/version");
-  mut auto token = request.set_header("Authorization", "token secret");
-  if (!token) {
-    return 2;
-  }
+      std::http::method::get,
+      std::http::url::checked("https://gitea.example/api/v1/version"));
+  request.set_header("Authorization", "token secret");
 
   mut auto received = client.send(request);
   if (!received) {
-    return 3;
+    return 2;
   }
   mut auto response = std::move(received).value();
-  mut std::string body = response.body();
+  std::string body = response.body();
   return response.status() == uint32_t(200) ? 0 : 4;
 }
 ```
@@ -176,12 +174,18 @@ has the same two forms. A request is move-only and provides:
 - `set_max_response_bytes`, whose default is 16 MiB;
 - `set_redirect_policy` and `set_redirect_limit`, described below;
 - `set_scheme_policy(scheme_policy)` to restrict initial and redirected URLs; and
-- `set_ca_bundle(path)` for a PEM trust bundle used by this request.
+- `set_ca_bundle(path)` for a PEM trust bundle used by this request; and
+- `rejection()`, the first builder input the request refused, if any.
 
-Header mutators and `set_ca_bundle` return `expected<void, errc>`. Header names
-must be non-empty RFC token text. NUL, carriage return, and line feed are
-rejected in values, so these APIs cannot be used for request smuggling by line
-injection. A CA path containing NUL is rejected.
+Builders return nothing. Header names must be non-empty RFC token text, and
+NUL, carriage return, and line feed are refused in values, so these APIs
+cannot be used for request smuggling by line injection. A CA path containing
+NUL is refused. A refused input is not applied; the request records the first
+refusal, and `send`, `send_stream` and every client verb return it
+(`errc::invalid_header` for a header, `errc::request_failed` for a CA path)
+before contacting anything. One check of the send result therefore covers both
+invalid input and transport failure, and `rejection()` reports the same refusal
+earlier for a caller who wants it.
 
 `std::http::client::create()` returns `expected<client, errc>`. A client is
 move-only, is neither transferable nor shareable, and admits one request at a

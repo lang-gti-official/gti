@@ -170,21 +170,23 @@ namespace gti_internal {
       }
     }
 
-    int32_t header_validation(std::string_view name, std::string_view value) {
+    // A request header: an RFC 9110 token name and a value with no CR, LF or
+    // NUL, which would let the value inject another header line.
+    bool valid_header(std::string_view name, std::string_view value) {
       if (name.empty()) {
-        return int32_t(1);
+        return false;
       }
       for (mut std::size_t index = std::size_t(0); index < name.size(); index++) {
         if (!valid_header_name_character(name[index])) {
-          return int32_t(1);
+          return false;
         }
       }
       for (mut std::size_t index = std::size_t(0); index < value.size(); index++) {
         if (value[index] == '\0' || value[index] == '\r' || value[index] == '\n') {
-          return int32_t(2);
+          return false;
         }
       }
-      return int32_t(0);
+      return true;
     }
 
     constexpr int32_t hex_digit_value(char value) {
@@ -819,6 +821,15 @@ namespace std {
       mut uint32_t redirects = uint32_t(5);
       mut redirect_policy redirect_mode = redirect_policy::none;
       mut scheme_policy scheme_mode = scheme_policy::http_and_https;
+      // The first builder input this request refused. Sending reports it before
+      // any connection is made.
+      mut optional<errc> refused = optional<errc>();
+
+      void refuse(errc reason) mut {
+        if (!this.refused.has_value()) {
+          this.refused = optional<errc>(reason);
+        }
+      }
 
     public:
       request(method verb, string_view url) : request_method(verb), request_url(std::string(url)), request_headers(vector<header>()), request_body(string()), ca_bundle_path(string()) {}
@@ -900,38 +911,47 @@ namespace std {
         this.response_limit = maximum;
       }
 
-      expected<void, errc> set_ca_bundle(string_view path) mut {
+      /// The first builder input this request refused, if any. `send`,
+      /// `send_stream` and the client verbs return it without contacting the
+      /// server; inspecting it earlier is optional.
+      optional<errc> rejection() {
+        if (!this.refused.has_value()) {
+          return optional<errc>();
+        }
+        return optional<errc>(this.refused.value());
+      }
+
+      /// Uses a PEM trust bundle for this request. A path containing NUL is
+      /// refused and reported as `errc::request_failed` when sent.
+      void set_ca_bundle(string_view path) mut {
         for (mut size_t index = size_t(0); index < path.size(); index++) {
           if (path[index] == '\0') {
-            return unexpected(errc::request_failed);
+            this.refuse(errc::request_failed);
+            return;
           }
         }
         mut string replacement = string(path);
         this.ca_bundle_path.swap(replacement);
-        return;
       }
 
-      expected<void, errc> add_header(string_view name, string_view value) mut {
-        int32_t validation = gti_internal::http_detail::header_validation(name, value);
-        if (validation == int32_t(1)) {
-          return unexpected(errc::invalid_header);
-        }
-        if (validation != int32_t(0)) {
-          return unexpected(errc::invalid_header);
+      /// Appends a field, keeping any existing field of the same name. A name
+      /// that is not an RFC 9110 token, or a value containing CR, LF or NUL,
+      /// is not added; sending reports `errc::invalid_header`.
+      void add_header(string_view name, string_view value) mut {
+        if (!gti_internal::http_detail::valid_header(name, value)) {
+          this.refuse(errc::invalid_header);
+          return;
         }
         this.request_headers.push_back(header(name, value));
-        return;
       }
 
-      expected<void, errc> set_header(string_view name, string_view value) mut {
-        int32_t validation = gti_internal::http_detail::header_validation(name, value);
-        if (validation == int32_t(1)) {
-          return unexpected(errc::invalid_header);
+      /// Replaces every case-insensitive match with one field, or appends it.
+      /// Invalid input is refused exactly as by `add_header`.
+      void set_header(string_view name, string_view value) mut {
+        if (!gti_internal::http_detail::valid_header(name, value)) {
+          this.refuse(errc::invalid_header);
+          return;
         }
-        if (validation != int32_t(0)) {
-          return unexpected(errc::invalid_header);
-        }
-
         mut bool replaced = false;
         mut size_t index = size_t(0);
         while (index < this.request_headers.size()) {
@@ -950,7 +970,6 @@ namespace std {
         if (!replaced) {
           this.request_headers.push_back(header(name, value));
         }
-        return;
       }
     };
 
@@ -1138,8 +1157,8 @@ namespace gti_internal {
       result.set_redirect_limit(input.redirect_limit());
       result.set_redirect_policy(input.redirects_policy());
       result.set_scheme_policy(input.schemes_policy());
-      [[discard]] result.set_ca_bundle(input.ca_bundle().view());
-      for (auto& field : input.headers()) { [[discard]] result.add_header(field.name().view(), field.value().view()); }
+      result.set_ca_bundle(input.ca_bundle().view());
+      for (auto& field : input.headers()) { result.add_header(field.name().view(), field.value().view()); }
       return std::move(result);
     }
 
@@ -1168,11 +1187,11 @@ namespace gti_internal {
       result.set_redirect_limit(input.redirect_limit());
       result.set_redirect_policy(input.redirects_policy());
       result.set_scheme_policy(input.schemes_policy());
-      ?result.set_ca_bundle(input.ca_bundle().view());
+      result.set_ca_bundle(input.ca_bundle().view());
       if (same_origin) {
         for (auto& field : input.headers()) {
           bool body_header = equal_header_name(field.name().view(), "Content-Length") || equal_header_name(field.name().view(), "Content-Type") || equal_header_name(field.name().view(), "Transfer-Encoding") || equal_header_name(field.name().view(), "Content-Encoding") || equal_header_name(field.name().view(), "Expect");
-          if (!discard_body || !body_header) { ?result.add_header(field.name().view(), field.value().view()); }
+          if (!discard_body || !body_header) { result.add_header(field.name().view(), field.value().view()); }
         }
       }
       return std::move(result);
@@ -1423,6 +1442,8 @@ namespace std {
     public:
       expected<response, errc> send(request& input) mut {
         this.backend_code = 0;
+        auto refused = input.rejection();
+        if (refused.has_value()) { return unexpected(refused.value()); }
         ?gti_internal::http_detail::check_scheme_policy(input);
         if (input.redirects_policy() == redirect_policy::none) { return this.send_once(input); }
         auto initial_url = std::http::url::parse(input.url().view());
@@ -1468,6 +1489,8 @@ namespace std {
 
       expected<streaming_response, errc> send_stream(request& input) mut {
         this.backend_code = 0;
+        auto refused = input.rejection();
+        if (refused.has_value()) { return unexpected(refused.value()); }
         ?gti_internal::http_detail::check_scheme_policy(input);
         if (input.redirects_policy() == redirect_policy::none) { return this.send_stream_once(input); }
         auto initial_url = std::http::url::parse(input.url().view());

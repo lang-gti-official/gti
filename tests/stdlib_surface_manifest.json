@@ -5026,6 +5026,7 @@
         "std::http::request::max_response_bytes",
         "std::http::request::redirect_limit",
         "std::http::request::redirects_policy",
+        "std::http::request::rejection",
         "std::http::request::request",
         "std::http::request::schemes_policy",
         "std::http::request::set_body",
@@ -5086,7 +5087,8 @@
         "read-only named URL cloning, consuming operator chains, mutable path append and borrow rejection",
         "bounded streaming std::io::reader with independent request/client lifetime, generic short writer, cancellation, limits and late transport errors",
         "same-origin and secure redirects with method conversion, header stripping and a shared deadline",
-        "compile-time checked URL literals, single-buffer component views, in-place builders and URL formatting"
+        "compile-time checked URL literals, single-buffer component views, in-place builders and URL formatting",
+        "infallible request builders whose refused headers or CA paths surface from send before any connection"
       ],
       "evidence": [
         "docs/language/http.md",
