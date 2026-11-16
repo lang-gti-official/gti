@@ -6,7 +6,9 @@ usage: check.py <gti-test> [--jobs N] [--self-test-only]
 The self-test drives gti-test over tests/runner/fixtures and checks every
 outcome class it reports: pass, wrong/missing/unmatched annotations, stdout
 mismatch, internal compiler error, crash, CPU and wall-clock limits, bless
-(including its refusals), tidy, sharding, JSON and --isolate.
+(including its refusals), tidy, sharding, JSON and --isolate; and the other
+test kinds: parse-only modes, analysis options, and the mir, llvm-ir,
+diagnostics and format snapshots with their failure and bless paths.
 """
 
 import json
@@ -121,10 +123,20 @@ def self_test(runner):
         expect("//@ stdout: actual" in stdout and "expected" not in stdout,
                "bless rewrote the inline stdout", stdout)
 
+    kinds_self_test(runner)
+    if (runner.parent / "gti_lsp").exists():
+        lsp_self_test(runner)
+
     code, out = run(runner, "--tidy", "--root", FIXTURES / "tidy")
     for problem in ("unknown directive 'check-pas'", "no_purpose.gti: the first line",
                     "orphan.stdout: expected output without a test",
-                    "top_level.gti: tests live in a subdirectory"):
+                    "top_level.gti: tests live in a subdirectory",
+                    "orphan_snapshot.mir: expected file without `//@ snapshot: mir`",
+                    "unblessed.gti: no unblessed.stderr",
+                    "oversized.formatted: snapshot is 450 lines, over the 400-line "
+                    "limit; narrow it",
+                    "bad_check.gti: line 0: CHECK patterns need",
+                    "bad_check_kind.gti: line 3: patterns are"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -145,6 +157,95 @@ def self_test(runner):
                "the JSON report has one row per test", report.read_text())
 
 
+def kinds_self_test(runner):
+    """Parse-only modes, analysis options and snapshot kinds."""
+    for isolate in ((), ("--isolate",)):
+        code, out = run(runner, FIXTURES / "kinds", "--jobs", "4", *isolate)
+        expect(code == 0 and "RESULT ok: 11 passed, 0 failed" in out,
+               f"the other test kinds pass {isolate}", out)
+    code, out = run(runner, "--tidy", "--root", FIXTURES / "kinds")
+    expect(code == 0, "tidy accepts the kind fixtures", out)
+
+    code, out = run(runner, FIXTURES / "snapshot", "--jobs", "4")
+    expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
+           "drifted snapshots fail", out)
+    mir = block(out, "FAIL", "mir_drift.gti")
+    expect("snapshot mir differs from mir_drift.mir (-expected +actual)" in mir
+           and "-stale" in mir and "+body kind=3" in mir,
+           "a MIR snapshot mismatch shows a diff", out)
+    expect("no function 'nosuch' has a MIR body" in
+           block(out, "FAIL", "mir_unknown_function.gti"),
+           "an unknown mir-function fails", out)
+    expect("+main.gti:4:10: error[GTI-S2001]: Undefined name 'missing'." in
+           block(out, "FAIL", "diagnostics_drift.gti"),
+           "a rendered-diagnostics mismatch shows a diff", out)
+    expect("no format_new.formatted yet; bless" in
+           block(out, "FAIL", "format_new.gti"),
+           "a missing snapshot file asks for a bless", out)
+    expect("CHECK at line 4: `@llvm.smul.with.overflow` not found" in
+           block(out, "FAIL", "llvm_missing.gti"),
+           "a missing CHECK pattern fails", out)
+    expect(re.search(r"CHECK-NOT at line 4: `@llvm.sadd.with.overflow` matched "
+                     r"output line \d+", block(out, "FAIL", "llvm_not.gti")),
+           "a matching CHECK-NOT fails", out)
+
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory) / "snapshot"
+        shutil.copytree(FIXTURES / "snapshot", work)
+        code, out = run(runner, work, "--bless", "--jobs", "4")
+        expect(code == 1 and out.count("BLESSED") == 3,
+               "bless writes snapshot files but not CHECK patterns", out)
+        expect((work / "drift/format_new.formatted").read_text() ==
+               "// A format snapshot not blessed yet.\n//@ snapshot: format\n"
+               "int main() {\n  return 0;\n}\n",
+               "the format snapshot is the formatter's output",
+               (work / "drift/format_new.formatted").read_text())
+        code, out = run(runner, work, "--jobs", "4")
+        expect("RESULT fail: 3 passed, 3 failed" in out,
+               "blessed snapshots pass", out)
+
+
+def lsp_self_test(runner):
+    """LSP marker tests and transcripts against a per-worker gti_lsp."""
+    code, out = run(runner, FIXTURES / "lsp/ok", "--jobs", "2")
+    expect(code == 0 and "RESULT ok: 3 passed, 0 failed" in out,
+           "LSP fixtures pass", out)
+    code, out = run(runner, FIXTURES / "lsp/fail", "--jobs", "2")
+    expect(code == 1 and "RESULT fail: 0 passed, 4 failed" in out,
+           "failing LSP fixtures fail without timing out", out)
+    wrong = block(out, "FAIL", "wrong_answers.gti")
+    for problem in ('line 2 (hover): hover does not contain "no such text"',
+                    "line 3 (definition): expected @local; got @twice",
+                    "line 4 (references): expected @twice; got @twice @call",
+                    "line 5 (token): expected token variable, got function",
+                    "line 6 (rename): expected edits at @local; got @local "
+                    "@local_use",
+                    "line 7 (completion): completion lacks 'absent'",
+                    "line 7 (completion): completion offers 'level'",
+                    "line 8 (symbols): document symbols lack 'missing_symbol'",
+                    "line 9 (formatting): formatting changes the file"):
+        expect(problem in wrong, f"LSP failure reported: {problem}", out)
+    expect("actual:   ERROR GTI-S2001 at line 4" in
+           block(out, "FAIL", "unannotated.gti"),
+           "an unannotated published diagnostic fails", out)
+    expect("no marker /*@nowhere*/" in block(out, "FAIL", "bad_marker.gti"),
+           "an unknown marker is an invalid test", out)
+    expect("line 3: expected a message matching" in
+           block(out, "FAIL", "wrong_transcript.jsonl") and "seen: " in out,
+           "a transcript mismatch shows what was seen", out)
+    code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp",
+                    "/usr/bin/true")
+    expect(code == 1 and "could not start /usr/bin/true" in out,
+           "a server that does not initialize fails the test", out)
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory) / "lsp"
+        shutil.copytree(FIXTURES / "lsp/fail", work)
+        code, out = run(runner, work / "unannotated.gti", "--bless")
+        expect(code == 0 and "BLESSED" in out and "//~ ERROR GTI-S2001" in
+               (work / "unannotated.gti").read_text(),
+               "bless annotates published diagnostics", out)
+
+
 def main():
     runner = Path(sys.argv[1]).resolve()
     jobs = "4"
@@ -154,13 +255,20 @@ def main():
     print("gti-test self-test: ok", flush=True)
     if "--self-test-only" in sys.argv:
         return 0
-    code, out = run(runner, "--tidy", "--root", ROOT / "tests/ui",
-                    fixtures=False)
-    sys.stdout.write(out)
-    if code != 0:
-        return code
-    code, out = run(runner, "--root", ROOT / "tests/ui", "--jobs", jobs,
-                    fixtures=False)
+    # Trees built without the language server (GTI_BUILD_LSP=OFF) skip it.
+    roots = ["tests/ui"]
+    if (runner.parent / "gti_lsp").exists():
+        roots.append("tests/lsp")
+    else:
+        print("gti-test: no gti_lsp beside the runner; tests/lsp skipped")
+    for root in roots:
+        code, out = run(runner, "--tidy", "--root", ROOT / root,
+                        fixtures=False)
+        sys.stdout.write(out)
+        if code != 0:
+            return code
+    code, out = run(runner, *(ROOT / root for root in roots), "--jobs",
+                    jobs, fixtures=False)
     sys.stdout.write(out)
     return code
 

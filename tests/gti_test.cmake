@@ -4,11 +4,17 @@
 add_executable(gti-test
   "${PROJECT_SOURCE_DIR}/tests/runner/main.cpp"
   "${PROJECT_SOURCE_DIR}/tests/runner/execute.cpp"
+  "${PROJECT_SOURCE_DIR}/tests/runner/snapshot.cpp"
+  "${PROJECT_SOURCE_DIR}/tests/runner/lsp.cpp"
   "${PROJECT_SOURCE_DIR}/tests/runner/test_file.cpp")
 target_link_libraries(gti-test PRIVATE gti_driver)
 target_include_directories(gti-test SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 # --isolate runs the sibling `gti`.
 add_dependencies(gti-test gti)
+# LSP tests drive the sibling `gti_lsp`.
+if(TARGET gti_lsp)
+  add_dependencies(gti-test gti_lsp)
+endif()
 
 # The runner's own behaviour, then `--tidy` and every test under tests/ui.
 add_test(NAME gti_test_ui

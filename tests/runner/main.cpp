@@ -4,6 +4,7 @@
 // tests/ui/README.md and docs/plans/test-suite-redesign.md.
 
 #include "execute.h"
+#include "snapshot.h"
 #include "test_file.h"
 
 #include <poll.h>
@@ -84,15 +85,30 @@ struct Options {
   unsigned shardCount = 0;
   std::optional<fs::path> json;
   std::optional<fs::path> gti;
+  std::optional<fs::path> lsp;
 };
 
 void usage(std::ostream &out) {
   out << "usage: gti-test [paths or substrings...] [--root DIR] [--jobs N]\n"
-         "                [--shard I/N] [--bless] [--isolate] [--gti PATH]\n"
+         "                [--shard I/N] [--bless] [--isolate] [--gti PATH] "
+         "[--lsp PATH]\n"
          "                [--json FILE] [--list] [--tidy]\n"
          "Runs every .gti test under --root (default tests/ui). A positional\n"
          "argument that names a file or directory selects it; any other\n"
          "selects tests whose path contains it. See tests/ui/README.md.\n";
+}
+
+bool underLsp(const fs::path &path) {
+  for (const auto &part : path.parent_path())
+    if (part == "lsp")
+      return true;
+  return false;
+}
+
+// A `.gti` test, or a `.jsonl` LSP transcript under an `lsp` directory.
+bool isTestFile(const fs::path &path) {
+  return path.extension() == ".gti" ||
+         (path.extension() == ".jsonl" && underLsp(path));
 }
 
 // Every file a test root holds: test files, expected-output companions and
@@ -138,6 +154,46 @@ int tidy(const fs::path &root) {
         problems.push_back(display + ": empty expected file");
       continue;
     }
+    if (extension == ".mir" || extension == ".stderr" ||
+        extension == ".formatted") {
+      fs::path testPath = file;
+      testPath.replace_extension(".gti");
+      const Snapshot kind = extension == ".mir"      ? Snapshot::Mir
+                            : extension == ".stderr" ? Snapshot::Diagnostics
+                                                     : Snapshot::Format;
+      if (!fs::exists(testPath)) {
+        problems.push_back(display + ": expected output without a test");
+        continue;
+      }
+      const TestFile owner = parseTestFile(testPath, display);
+      if (!hasSnapshot(owner, kind) ||
+          (kind == Snapshot::Mir && !owner.checks.empty() &&
+           !hasSnapshot(owner, Snapshot::LlvmIr)))
+        problems.push_back(display + ": expected file without `//@ snapshot: " +
+                           snapshotName(kind) + "` in its test");
+      const std::optional<std::string> text = readFile(file);
+      const std::size_t lineCount =
+          text ? static_cast<std::size_t>(
+                     std::count(text->begin(), text->end(), '\n'))
+               : 0;
+      if (text && text->empty())
+        problems.push_back(display + ": empty expected file");
+      else if (text && (lineCount > snapshotLineLimit ||
+                        text->size() > snapshotByteLimit))
+        problems.push_back(
+            display + ": snapshot is " + std::to_string(lineCount) +
+            " lines, over the " + std::to_string(snapshotLineLimit) +
+            "-line limit; narrow it (`//@ mir-function:`, `// CHECK:` "
+            "patterns, or a smaller test)");
+      continue;
+    }
+    if (extension == ".jsonl" && underLsp(file)) {
+      const std::optional<std::string> text = readFile(file);
+      if (!text || text->rfind("// ", 0) != 0)
+        problems.push_back(display + ": the first line must be a `// ` comment "
+                                     "saying what the transcript checks");
+      continue;
+    }
     if (extension != ".gti") {
       problems.push_back(display + ": not a test or expected-output file");
       continue;
@@ -147,6 +203,16 @@ int tidy(const fs::path &root) {
       problems.push_back(display + ": " + error);
     if (!test.runnerFault.empty())
       problems.push_back(display + ": runner-fault is not allowed in tests");
+    for (const Snapshot kind : test.snapshots) {
+      const bool patterns = kind == Snapshot::LlvmIr ||
+                            (kind == Snapshot::Mir && !test.checks.empty() &&
+                             !hasSnapshot(test, Snapshot::LlvmIr));
+      if (!patterns && !fs::exists(snapshotPath(test, kind)))
+        problems.push_back(display + ": no " +
+                           snapshotPath(test, kind).filename().string() +
+                           " for `//@ snapshot: " + snapshotName(kind) +
+                           "`; run with --bless");
+    }
     const std::optional<std::string> text = readFile(file);
     if (!text || text->rfind("// ", 0) != 0 || text->rfind("//@", 0) == 0 ||
         text->rfind("// ---", 0) == 0)
@@ -326,6 +392,8 @@ int main(int argc, char **argv) {
       options.rootGiven = true;
     } else if (argument == "--gti") {
       options.gti = value();
+    } else if (argument == "--lsp") {
+      options.lsp = value();
     } else if (argument == "--json") {
       options.json = value();
     } else if (argument == "--jobs" || argument == "-j") {
@@ -381,7 +449,7 @@ int main(int argc, char **argv) {
       return 2;
     }
     for (const fs::path &file : walk(root)) {
-      if (file.extension() != ".gti")
+      if (!isTestFile(file))
         continue;
       const fs::path absolute = fs::absolute(file).lexically_normal();
       if (!seen.insert(absolute).second)
@@ -411,12 +479,16 @@ int main(int argc, char **argv) {
   engineOptions.gti = options.gti.value_or(
       std::getenv("GTI_TEST_GTI") ? fs::path(std::getenv("GTI_TEST_GTI"))
                                   : self.parent_path() / "gti");
+  engineOptions.lsp = options.lsp.value_or(
+      std::getenv("GTI_TEST_LSP") ? fs::path(std::getenv("GTI_TEST_LSP"))
+                                  : self.parent_path() / "gti_lsp");
   engineOptions.isolate = options.isolate;
   engineOptions.bless = options.bless;
   const double scale = timeScale();
   engineOptions.limits.check *= scale;
   engineOptions.limits.run *= scale;
   engineOptions.limits.slow *= scale;
+  engineOptions.limits.lsp *= scale;
   engineOptions.limits.coldAllowance *= scale;
   if (options.isolate && !fs::exists(engineOptions.gti)) {
     std::cerr << "gti-test: --isolate needs gti; not found at "
@@ -521,7 +593,8 @@ int main(int argc, char **argv) {
       for (std::string line; std::getline(detail, line);)
         std::cout << "  " << line << '\n';
       std::cout << "  rerun: " << rerun << ' ' << test.display << '\n';
-      if (outcome.status == Status::Fail)
+      // Transcripts have nothing to bless.
+      if (outcome.status == Status::Fail && test.mode != Mode::LspTranscript)
         std::cout << "  bless: " << rerun << ' ' << test.display
                   << " --bless\n";
       std::cout.flush();
