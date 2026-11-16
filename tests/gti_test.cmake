@@ -59,3 +59,13 @@ add_test(NAME gti_test_examples
 math(EXPR gti_examples_time_scale "8 * ${gti_test_timeout_scale}")
 set_tests_properties(gti_test_examples PROPERTIES PROCESSORS 4
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale}")
+
+# gti-corpus: one walk of the example corpus checking the whole-program
+# analysis invariants (body-analysis order, trusted-body parity, instance
+# reuse) per entry, with a JSON report. Slow tier only.
+add_executable(gti-corpus "${PROJECT_SOURCE_DIR}/tests/corpus/gti_corpus.cpp")
+target_link_libraries(gti-corpus PRIVATE gti_compiler)
+add_test(NAME gti_corpus
+  COMMAND gti-corpus --root "${PROJECT_SOURCE_DIR}" --jobs 4
+          --json "${CMAKE_CURRENT_BINARY_DIR}/gti-corpus.json")
+set_tests_properties(gti_corpus PROPERTIES TIMEOUT 7200 PROCESSORS 4)
