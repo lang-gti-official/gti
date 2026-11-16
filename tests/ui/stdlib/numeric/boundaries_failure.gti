@@ -15,12 +15,12 @@
 //@[argc4] args: x x x
 //@[argc4] stdout: cleaned
 //@[argc4] stderr-contains: <std/numeric>:
-//@[argc4] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc4] stderr-contains: GTI-R0001]: integer_overflow in
 //@[argc5] exit-code: 70
 //@[argc5] args: x x x x
 //@[argc5] stdout: cleaned
 //@[argc5] stderr-contains: <std/numeric>:
-//@[argc5] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc5] stderr-contains: GTI-R0001]: integer_overflow in
 //@[argc6] exit-code: 70
 //@[argc6] args: x x x x x
 //@[argc6] stdout: cleaned
@@ -35,12 +35,12 @@
 //@[argc8] args: x x x x x x x
 //@[argc8] stdout: cleaned
 //@[argc8] stderr-contains: <std/numeric>:
-//@[argc8] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc8] stderr-contains: GTI-R0001]: integer_overflow in
 //@[argc9] exit-code: 70
 //@[argc9] args: x x x x x x x x
 //@[argc9] stdout: cleaned
 //@[argc9] stderr-contains: <std/numeric>:
-//@[argc9] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc9] stderr-contains: GTI-R0001]: integer_overflow in
 //@[argc10] exit-code: 70
 //@[argc10] args: x x x x x x x x x
 //@[argc10] stdout: cleaned
@@ -55,22 +55,22 @@
 //@[argc12] args: x x x x x x x x x x x
 //@[argc12] stdout: cleaned
 //@[argc12] stderr-contains: <std/numeric>:
-//@[argc12] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc12] stderr-contains: GTI-R0001]: integer_overflow in
 //@[argc13] exit-code: 70
 //@[argc13] args: x x x x x x x x x x x x
 //@[argc13] stdout: cleaned
 //@[argc13] stderr-contains: <std/numeric>:
-//@[argc13] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc13] stderr-contains: GTI-R0001]: integer_overflow in
 //@[argc14] exit-code: 70
 //@[argc14] args: x x x x x x x x x x x x x
 //@[argc14] stdout: cleaned
 //@[argc14] stderr-contains: <std/numeric>:
-//@[argc14] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc14] stderr-contains: GTI-R0001]: integer_overflow in
 //@[argc15] exit-code: 70
 //@[argc15] args: x x x x x x x x x x x x x x
 //@[argc15] stdout: cleaned
 //@[argc15] stderr-contains: <std/numeric>:
-//@[argc15] stderr-contains: GTI-R0001]: integer_overflow in 
+//@[argc15] stderr-contains: GTI-R0001]: integer_overflow in
 import std.numeric;
 import std.string;
 import std.vector;
