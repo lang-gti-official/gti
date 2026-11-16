@@ -1,0 +1,3 @@
+// Chrono adoption preserves the shared constant-evaluation step limit (the default budget, exceeded by a chrono loop).
+import std.chrono;
+constexpr int budget() { mut int total = 0; for (mut int i = 0; i < 200000; i++) { std::chrono::nanoseconds n{int64_t(i)}; total += int(n.count() % 2); } return total; } constexpr int value = budget();  //~ ERROR GTI-S2057 execution-step limit

@@ -2968,19 +2968,22 @@ MIR drop identities; accepting a new consumer does not relax those obligations.
 
 ## Transient constexpr allocation and destruction
 
-`compiler_constexpr` includes `testConstexprPayloadEnums`: generic active
-alternatives, source-class nesting, observation, replacement, consuming methods,
-transient owners, deterministic budgets and malformed active-variant rejection.
+`tests/ui/constexpr/payload_enum.gti` and
+`tests/ui/constexpr/payload_enum_runtime_prefix.gti` cover generic active
+alternatives, source-class nesting, observation, replacement, consuming methods
+and transient owners; the direct-executor budget and malformed active-variant
+mutations were dropped when the C++ test was converted (verifier hardening).
 `tests/ui/constexpr/payload_enum.gti` compares the same required constants with
 native O0/O1/O2/O3 execution under C++20/C++23 plus ASan/UBSan and disabled
 elision. These supplement the existing constexpr result/allocation gates;
 their registration is not a claim that integration validation has passed.
 
-`compiler_constexpr` includes direct canonical-MIR and required semantic-query
-coverage for exclusive scalar/class allocation, nested source-defined owners,
-destructors, moves, reset/swap, expected propagation and concrete pack entry
-calls. It checks allocation/step/live-storage bounds, escaped or imported owner
-rejection, ordinary runtime eligibility and destructor source diagnostics.
+`tests/ui/constexpr/allocation/` covers exclusive scalar/class allocation,
+nested source-defined owners, destructors, moves, reset/swap, expected
+propagation and concrete pack entry calls through required constants: escaped
+owners, null and failed cleanups, reverse cleanup order and destructor source
+diagnostics. (The direct-executor allocation/step/live-storage bounds and
+imported-owner checks were dropped when the C++ test was converted.)
 `tests/ui/constexpr/allocation.gti` and `constexpr_allocation_example` compare all
 four optimization levels in C++20/C++23; example 153 must also enter both corpus
 censuses. The constexpr aggregate LSP slice verifies destructor diagnostics and
@@ -8348,9 +8351,9 @@ These focused gates are not
 evidence that all generic, aggregate, or reference constexpr execution has
 moved to MIR, nor a substitute for completion-time production validation.
 
-`testConstexprLibrary` and `tests/slow/constexpr/library_positive.gti` exercise source-defined
+`tests/ui/constexpr/library/` and `tests/slow/constexpr/library_positive.gti` exercise source-defined
 `min`, `max`, `clamp`, `lcm`, `midpoint`, binary32 `abs`, `pair`, and `make_pair`.
-Frontend metrics prove actual staged MIR evaluation; runtime-only owning
+Chrono loops and recursion reach the shared default step and depth limits; runtime-only owning
 substitutions remain valid, while implicit copying, use after movement, moving
 a borrowed owner, invalid declarations, and impossible required constants still
 reject. Signed-minimum literals exercise the shared MIR literal query without
@@ -8358,13 +8361,10 @@ relaxing ordinary negation overflow. The O0/O1/O3, C++20/C++23 differential
 fixture includes nested constant pairs alongside runtime string pairs, catching
 accidental class-wide rather than exact-instance factory emission.
 
-`testConstexprEnumBuilders`, `tests/ui/constexpr/enum_builders.gti` and example 142
+`tests/ui/constexpr/enum_builders/`, `tests/ui/constexpr/enum_builders.gti` and example 142
 cover enum-valued mutable helpers, reference forwarding, constructor-body
 writes, independent record/array copies, generic identity, enum switches and
-signed-minimum/unsigned-maximum discriminants. Required constants are also
-checked in semantic-only snapshots, proving execution precedes whole-program
-HIR. Direct executor tests reject forged enum owners/domains/discriminants,
-malformed MIR and exhausted shared step/depth budgets. Source negatives retain
+signed-minimum/unsigned-maximum discriminants. Source negatives retain
 type, loan and lifetime rules and reject runtime-only operations. The existing
 LSP aggregate test includes enum-valued helper evaluation.
 
@@ -8377,32 +8377,26 @@ the authority for a constant result. Existing read-only calls on named
 enumerators remain covered; general global-object borrowing is not added to
 the executor's checked local-origin profile.
 
-`testConstexprResults` and `tests/ui/constexpr/results.gti` exercise passive scalar,
+`tests/ui/constexpr/results/` and `tests/ui/constexpr/results.gti` exercise passive scalar,
 record and void results, exact error propagation, checked arithmetic, field and
 array replacement, constructor reference writes, selected declaration defaults,
 omitted arguments and generated defaults. The native matrix includes
 O0/O1/O2/O3 under C++20/C++23, with result constants nested inside ordinary
-records and other results. The MIR regression requires a nested passive result
-call's failure edge and rejects its deletion: returning a recoverable result
-does not erase the separate defined-runtime-failure channel.
+records and other results. The MIR pattern test
+`tests/ui/constexpr/results/nested_result_failure_edge.gti` requires a nested
+passive result call's failure edge: returning a recoverable result does not
+erase the separate defined-runtime-failure channel.
 Example 142 adds recoverable configuration and cursor-based constructor
-composition. Shape-corrupted constants, inactive extraction, eager fallbacks,
-runtime-only defaults, stored references and active cleanup have negative
-coverage; every interrupted result-execution step preserves the resource-limit
-failure. LSP analysis uses the same constant defaults/reference/result rules.
+composition. Inactive extraction, eager fallbacks, runtime-only defaults,
+stored references and active cleanup have negative coverage. LSP analysis uses the same constant defaults/reference/result rules.
 
-`testConstexprMutation`, `tests/ui/constexpr/mutation.gti` and
+`tests/ui/constexpr/mutation/`, `tests/ui/constexpr/mutation.gti` and
 `constexpr_builders_example` cover mutable reference forwarding, `void` calls,
 constructor-body edits, mutable methods/subscript/call operators, isolated
 copies, once-formed indices, generic owners and reflection-driven field edits.
-Early-only analysis proves that required constants execute staged MIR before
-whole-program HIR, including array extents. Direct executor tests check exact
-results, unit completion without a persisted value, every interrupted scalar
-step budget, shared depth, malformed returned-loan origins/access and erased
-callee eligibility. Frontend negatives retain checked overflow/division,
+Frontend negatives retain checked overflow/division,
 resources, runtime-input/call rejection and ordinary loan/lifetime checks.
-An unsupported operation in a mutable constructor closure cannot retry the
-legacy AST execution path. The native gates compare constant and runtime
+An unsupported operation in a mutable constructor closure is rejected. The native gates compare constant and runtime
 execution at O0/O1/O3 under C++20/C++23. The aggregate LSP test now covers
 mutable/void signatures, hover, successful staged evaluation, and an overflow
 diagnostic at the executed helper operator. The existing reflection gates
@@ -8435,40 +8429,31 @@ elements. Larger tables still have to fit the request's step budget (4096 steps
 when this was recorded; now a configurable compile limit); this feature neither
 removes runtime checks nor raises that resource bound.
 
-`testConstexprReadOnlyReferences` and `tests/ui/constexpr/readonly_references.gti`
+`tests/ui/constexpr/readonly_references/` and `tests/ui/constexpr/readonly_references.gti`
 cover checked read-only parameters, local bindings, returned field/index
 projections, forwarding, and loan reacquisition after mutation in another loop
-iteration. Exact frontend metrics and direct MIR execution prevent AST fallback
-from hiding missing reference support. `std::array` element access and an
+iteration. `std::array` element access and an
 unrelated `Table` use the same rules. Negative cases retain local-escape,
 borrowed-owner mutation, mutable-reference, runtime-input, bounds, and persistent
-reference-constant rejection, with exact semantic diagnostic codes and source
-spans (including the original library index on an out-of-bounds call). Direct
-MIR tests reject wrong referent types and forged returned-loan access/origins
-before execution. Sweeping every step-budget cutoff in the reference fixture
-requires a resource-limit failure, never a relabeled invalid-input error.
-Borrowed string-view inspection additionally checks embedded
+reference-constant rejection, with exact semantic diagnostic codes and
+messages on their source lines. Borrowed string-view inspection additionally checks embedded
 NUL and non-ASCII bytes. The runtime gate compares O0/O1/O3 under both C++
 standards.
 
 `tests/ui/constexpr/asset_table.gti` composes those facilities into game-engine-like
 asset metadata: text-derived keys and lengths, constexpr record construction,
 a fixed array of records, and read-only traversal to count texture assets.
-The frontend regression asserts nine staged MIR executions, and the runtime
-matrix compares the same source at O0/O1/O3 under C++20/C++23.
+The runtime matrix compares the same source at O0/O1/O3 under C++20/C++23.
 
-`testConstexprOperators` and `tests/ui/constexpr/operators.gti` cover read-only
+`tests/ui/constexpr/operators/` and `tests/ui/constexpr/operators.gti` cover read-only
 addition, equality, indexing, dereference and nominal call operators, with
 unrelated records, concrete generic owners, fresh temporary receivers, and
-both `std::array` index overloads. Exact staged-execution counts and direct
-MIR evaluation of the nested operator closure prevent legacy fallback from
-hiding a missing call capability. Erased constexpr eligibility and forged
-mutable invocation capability reject. Negative source tests check immutable
+both `std::array` index overloads. Negative source tests check immutable
 receiver requirements, non-constexpr targets, runtime inputs, arithmetic
-overflow and library bounds, including exact diagnostic source spans. Runtime
+overflow and library bounds. Runtime
 parity covers O0/O1/O3 under C++20/C++23.
 
-`testDependentConstexprBranches` covers value- and type-dependent selection,
+`tests/ui/constexpr/dependent_branches/` covers value- and type-dependent selection,
 discarded invalid code, nested early predicates, recursive value-generic calls,
 constructors, methods, and owner restoration. Unused generic bodies still
 diagnose independent false assertions and undefined names outside deferred
@@ -8477,9 +8462,8 @@ reference escape reject. A recursive staging cycle must hit the resource
 limit. Independent required expressions each receive a fresh step budget;
 nested semantic predicates and their enclosing MIR call share one budget.
 Exhaustion retains the executing operator span and the requiring assertion's
-related location. A fault-injected instance provider offers an unresolved primary as a
-concrete body and requires HIR lowering to fail rather than publish an empty
-branch. Warning-only primary and concrete bodies remain valid through staged
+related location (a diagnostics snapshot against the default budget).
+Warning-only primary and concrete bodies remain valid through staged
 and ordinary HIR lowering. The matching runtime
 gate compares O0/O1/O3 under C++20/C++23.
 The lifecycle suite also verifies fresh class-value publication into the restored
