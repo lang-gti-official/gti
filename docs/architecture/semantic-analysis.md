@@ -2863,6 +2863,17 @@ work budget across its isolated workers. It is charged before copying query
 arguments or identities, bounding recursively expanding generic operator
 requirements even when every nested query has a distinct type.
 
+Forking a query worker copies the request session, whose bulk is the sealed
+declaration catalog. Body analysis never edits a sealed catalog, so a worker's
+copy is still identical to its creator's when the query ends: it returns to a
+small idle pool on the creating analyzer, and the next query's worker takes it
+instead of copying the catalog again. The creator's catalog is only moved
+aside, never copied, while the rest of the session is copied. This changes no
+query input, and every query is still evaluated: requirement results are not
+cached, because distinct queries dominate (an unused `import std.json` forks
+about 40 workers, none of them repeated). `FrontendWorkMetrics` reports
+`semanticQueryWorkers` and `semanticQueryCatalogReuses`.
+
 The nullary consuming-use concept is now a source expression query over an
 owned synthetic binding and `std::move(binding)()`. Its compound shape remains
 an opaque filter (not a fabricated borrowed `operator()` proof). Ordinary
