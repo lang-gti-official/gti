@@ -1,0 +1,8 @@
+// Logical operator spellings: recursive analysis of an assignment operand should preserve its resolved symbol and produce the owning type diagnostic.
+int main() {
+  mut int value = 0;
+  if (value = 3 and value == 3) {  //~ ERROR GTI-S2003 Logical operands must be bool //~ ERROR GTI-S2003 //~ ERROR GTI-S2003
+    return 0;
+  }
+  return 1;
+}

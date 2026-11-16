@@ -1,0 +1,6 @@
+// Comparison operator formatting stability: formatted comparison chains should remain valid GTI source.
+//@ check-pass
+//@ format-stable
+bool compare(uint64_t left, uint64_t right, uint64_t limit) {
+  return left < right && right >= limit && limit > (0);
+}

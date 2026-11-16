@@ -1,0 +1,2 @@
+// Characters and string views: string-view traversal should reject mutation, invalid literal indexes, non-integer indexes, and unknown members in semantics.
+int main() { mut std::string_view view = "abc"; view[0] = 'x'; char outside = "abc"[3]; char wrong = view[false]; view.missing(); return 0; }  //~ ERROR GTI-S2035 character access is read-only //~ ERROR GTI-S2035 outside the valid range [0, 3) //~ ERROR GTI-S2035 index must have an integer type //~ ERROR GTI-S2035 Unknown std::string_view member

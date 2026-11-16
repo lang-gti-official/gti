@@ -1624,6 +1624,7 @@ paths = [
   "scripts/llvm_pin.py",
   "scripts/named_test_shards.py",
   "tests/named_test_shards_test.py",
+  "scripts/gti_test_budget.py",
 ]
 owners = [
   "agent_workflow",

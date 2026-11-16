@@ -163,11 +163,13 @@ expansion gates live in the [Spot contract](agent-workflow.md#opt-in-google-spot
 ## Checked immediate arguments (#169)
 
 The final call tier changes semantic selection and constant publication (T2).
-`testConsteval` in `compiler_pipeline` covers exact input types, trailing defaults,
+`tests/ui/constexpr/consteval/` covers exact input types, trailing defaults,
 read-only references, ordinary/temporary-borrow precedence, constructor and
 function ambiguity, non-inference, operator/assignment fences, function items,
-forwarding and request-local reuse. Its repeated-call fixture requires at least
-49 cache reuses and fewer than five MIR executions for 50 identical validations;
+forwarding and request-local reuse (`checked_fence_*`, `effects_invalid_*`).
+The `constant_evaluation_api` case of `gti_unit_tests` keeps the reuse metrics
+(at least 19 replays of 20 identical immediate calls, identical diagnostics
+with reuse disabled); `consteval_2` runs 50 identical validations;
 cache hits retain deterministic work charges. An infinite validator is rejected.
 
 `tests/ui/constexpr/consteval/` runs the user-defined duration and checked formatting clients
@@ -2250,14 +2252,14 @@ instance, on a class whose assertion reflects back, or, in a destructor, on
 their own class pass, and a false self-reflecting assertion reports its message
 once. Instances formed only by constant evaluation or by a global initializer
 are checked in their workers: `Tag<void>` formed inside a `constexpr` call is
-rejected. `testStaticAssertions` adds class and function assertions that call
+rejected. `tests/ui/constexpr/static_assertions/` adds class and function assertions that call
 a constexpr helper declared after them; class and function instances, reached
 from a constant evaluation and from global initializers, that read a namespace
 constant, call a constexpr helper and select an `if constexpr` arm; and a
 function whose assertion evaluates its own instance. `reflection_runtime`
 compiles and runs `reflection_class_assertions.gti` at O0/O1/O3 in C++20/C++23.
 Main `6d502f02` crashes the reflection test (SIGBUS) and fails all four
-`testStaticAssertions` additions; a genuine `if constexpr` cycle still reports
+`static_assertions` additions; a genuine `if constexpr` cycle still reports
 the same staging-depth diagnostics as main. Examples 091, 092, 093 and 141 still create one staged worker per
 compile, and interleaved compile times stay within 2.5% of main.
 
@@ -7305,7 +7307,7 @@ compiler on macOS arm64; it does not claim Linux or Windows execution.
 
 ## Ownership diagnostic explanations
 
-`testMirConstantEvaluation` checks bounded executed-call identities, recursive
+The `constant_evaluation_api` case of `gti_unit_tests` checks bounded executed-call identities, recursive
 omission counts, no successful-result trace, and source-linked failures and
 repairs in bindings, compile-time branches and static assertions.
 `diagnostic_explanations` checks terminal/LSP call-trace agreement across an
@@ -8322,7 +8324,7 @@ arrays, indexed mutation, multidimensional copies, by-value array arguments,
 and generic extents at O0/O1/O3 under both standards. The compiler suite also
 asserts early MIR execution, independent copies, read/write bounds failures,
 and rejection before oversized default-array allocation.
-`testMirConstantRecords` proves staged execution for passive record parameters,
+The same unit case proves staged execution for passive record parameters,
 nested field/array mutation, independent copies, generic record identity, and
 returned aggregates. Direct MIR evaluation rejects incomplete, mistyped, and
 duplicate-field input records. Explicit constructors (including nested/generic
@@ -9514,7 +9516,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `tests/ui/callables/stored/` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `tests/lsp/signatures` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, and bounded end-to-end executables (the former frontend and diagnostics/formatting/queries suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
+| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics, ownership/lifecycle/ranges/callables, and bounded end-to-end executables (the former frontend, diagnostics/formatting/queries and constexpr/configuration/numerics/static-initialization suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |
@@ -9921,14 +9923,34 @@ into the tiers of the redesign's §7:
 | Tier | Entries | How |
 | --- | --- | --- |
 | Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_4` (`gti-test --shard i/4`), `gti_test_examples`, `gti_unit_tests`; Linux also `compiler_pipeline` until it drains | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
-| Pull request budget (Linux) | cases the PR adds or changes | `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`: a case whose warm CPU time exceeds half its scaled limit fails the PR with the runner's "over budget" message |
+| Pull request budget (Linux, advisory) | cases the PR adds or changes | `scripts/gti_test_budget.py` runs `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`; a case whose warm CPU time exceeds half its scaled limit becomes a warning annotation and a job-summary row, not a failure, until the rule is calibrated (below); other failures of changed cases still fail |
 | Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
 | Daily sanitizers (`sanitizers.yml`) | the `gti_test_ui` entries' cases, in one run | the library partition runs `tests/runner/check.py` with the ASan/UBSan `gti-test`, `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, under a 120-minute step bound, inside the `Sanitizer verdict` |
 
-The over-budget rule's scale assumes a hosted Linux runner is about twice as
-slow as the development machine the limits were measured on, as the
-`gti_test_ui` entries do. Measured on that machine (Apple M4 Pro) on
+**The budget rule is advisory pending calibration.** Its scale assumes a
+hosted Linux runner is about twice as slow as the development machine the
+limits were measured on, as the `gti_test_ui` entries do. The first hosted
+measurement (umbrella #479, run 43968800547, 2026-11-16) put 25 of about
+1,100 changed cases over half their scaled limit: 15 `check-fail`/`check-pass`
+cases at 2.02–2.53 s of 4 s and 10 LSP cases at 3.1–5.4 s (wall) of 6 s.
+Against the same cases' local warm times the hosted ratio was 2.0–2.3x for
+CPU (median 2.1, so the cases sit at 47–57% of their limit locally, right at
+the line) and 1.1–2.6x for LSP wall time, whose server start-up and polling
+dominate. A fixed 2x scale therefore flags cases that are at the threshold
+everywhere and turns runner noise into failures. It becomes enforceable when
+the scale stops being a constant: for example each run times a fixed
+reference case on the same runner and holds changed cases to half the limit
+times that measured ratio, with a tolerance band, and LSP cases are judged on
+the server's CPU rather than wall time. Until then a case over half its
+limit locally (`gti-test --changed` at scale 1) moves to `tests/slow/` by
+hand; on the same head all 1,094 changed cases stayed under half locally, so
+none moved. The gate entries' hosted times on that run (Linux, 4 vCPU, ctest
+`-j` with `PROCESSORS 4`): `gti_test_ui` 93 s, `gti_test_ui_1`..`_4` 152, 146,
+144 and 143 s, `gti_test_examples` 113 s, `gti_unit_tests` 27 s,
+`compiler_pipeline` 281 s, each against its 600 s bound (1800 s for
+`compiler_pipeline`); macOS arm64: `gti_test_ui` 97 s, the shards 147, 150,
+127 and 134 s, `gti_test_examples` 115 s, `gti_unit_tests` 34 s. Measured on that machine (Apple M4 Pro) on
 2026-11-17, the most expensive warm case of `tests/ui` used 47% of its limit
 and five used 40% or more; a pull request that edits one of those can be
 flagged if its hosted runner is more than about 2.1 to 2.5 times slower. LSP
