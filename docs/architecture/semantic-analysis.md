@@ -2325,6 +2325,18 @@ disjoint fields stay independent. A capture list still resolves its
 initializers in the enclosing scope, where an enclosing closure's capture is
 not a place; capturing it by reference therefore remains rejected.
 
+Explicit `&this` and `mut &this` captures borrow the instance receiver's ordinary
+place. Their environment fields use the same reference types, retained
+origins, access modes and loan endpoints as named reference captures. Inside
+the lambda, semantics records an expression alias from `This` to the resolved
+capture binding. Classification, retained-dependency analysis and HIR lowering
+follow that alias, so the backend receives an ordinary checked-reference
+capture rather than rediscovering receiver semantics. The existing
+`lambdaDepth` guard keeps captured receiver text outside the enclosing method's
+formal text contracts. Static contexts and missing receiver captures report
+`GTI-S2027`; bare `[this]` is rejected by the parser. Tooling presents the
+capture's type and members but never renames the `this` keyword.
+
 ## Confined Callable Contracts
 
 Checked reference erasure is a declaration-bound capability over the existing
