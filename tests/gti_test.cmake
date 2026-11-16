@@ -40,7 +40,8 @@ set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
 # slow tier's corpus tool. Each exclusion names what keeps the example out.
 file(GLOB gti_examples CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.gti")
 set(gti_examples_excluded
-  # The runner has no execution-profile directive; these need `concurrent`.
+  # These need `//@ execution-profile: concurrent`, which the examples do not
+  # carry yet.
   066-managed-threads 076-scalar-atomics 175-thread-local-storage
   # They import modules from sibling directories, which the runner does not
   # copy beside the case.

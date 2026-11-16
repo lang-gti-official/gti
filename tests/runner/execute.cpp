@@ -617,6 +617,10 @@ std::string normalizeRendered(std::string text, const fs::path &directory,
 void Engine::checkFormatting(const TestFile &test, Outcome &outcome) {
   TestFile formatted = test;
   formatted.formatStable = false;
+  // Snapshots and CHECK patterns describe the original text; the formatted
+  // copy only has to check.
+  formatted.snapshots.clear();
+  formatted.checks.clear();
   std::string problems;
   try {
     const lang::Formatter formatter;
