@@ -1,0 +1,3 @@
+// An exception escaping the compiler is an internal compiler error.
+//@ runner-fault: throw
+int main() { return 0; }

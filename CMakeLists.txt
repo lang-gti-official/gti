@@ -11,10 +11,10 @@ endif()
 project("gti" VERSION "${GTI_PROJECT_VERSION}" LANGUAGES C CXX)
 
 option(GTI_BUILD_LSP "Build the GTI language server" ON)
-# The C++ backend is frozen and separated from default builds, tests, CI and
-# releases (docs/decisions/031-native-llvm-backend-foundation.md). Only the
-# hand-dispatched cpp-backend.yml workflow builds it.
-option(GTI_ENABLE_CPP_BACKEND "Build the frozen C++ backend and its tests" OFF)
+# The C++ backend is frozen and separated from default builds, CI and releases
+# (docs/decisions/031-native-llvm-backend-foundation.md); its tests were removed
+# (docs/plans/test-suite-redesign.md) and no workflow builds it.
+option(GTI_ENABLE_CPP_BACKEND "Build the frozen C++ backend library" OFF)
 option(GTI_BUNDLE_LLVM "Download and build pinned LLVM support libraries" OFF)
 option(GTI_RELEASE_BUILD "Require a self-contained, release-ready toolchain" OFF)
 option(GTI_BUILD_FUZZERS

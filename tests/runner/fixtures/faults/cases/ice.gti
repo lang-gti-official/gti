@@ -1,0 +1,3 @@
+// An internal compiler error is a failure and is never blessed.
+//@ runner-fault: ice
+int main() { return 0; }

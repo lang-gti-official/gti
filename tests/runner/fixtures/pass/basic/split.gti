@@ -1,0 +1,14 @@
+// A test may hold several files; the first section is the entry.
+//@ run-pass
+//@ stdout: 9
+// --- main.gti
+import "shape.gti";
+int main() {
+  if (area(3) == 9) {
+    std::println("9");
+  }
+  return 0;
+}
+// --- shape.gti
+export module shape;
+export int32_t area(int32_t side) { return side * side; }

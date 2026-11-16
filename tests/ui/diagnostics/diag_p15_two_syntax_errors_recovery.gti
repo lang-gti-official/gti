@@ -1,0 +1,18 @@
+// Rejection probe diag-p15-two-syntax-errors-recovery (from tests/coverage/rejections).
+int first() {
+  int a = (1 + 2; //!ERR  //~ ERROR GTI-P0001
+  return a;
+}
+
+int second() {
+  int b = 4 + ; //!ERR  //~ ERROR GTI-P0001
+  return b;
+}
+
+int third() {
+  return 3 //!ERR
+}  //~ ERROR GTI-P0001
+
+int main() {
+  return first() + second() + third();
+}

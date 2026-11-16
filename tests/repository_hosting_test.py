@@ -28,7 +28,7 @@ CI = ".github/workflows/ci.yml"
 FULL_VALIDATION = ".github/workflows/full-validation.yml"
 SANITIZERS = ".github/workflows/sanitizers.yml"
 LLVM_PREBUILT = ".github/workflows/llvm-prebuilt.yml"
-CPP_BACKEND = ".github/workflows/cpp-backend.yml"
+SLOW = ".github/workflows/slow.yml"
 NIGHTLY = ".github/workflows/nightly.yml"
 ROLLUP = ".github/workflows/rollup.yml"
 CACHE = ".github/workflows/cache.yml"
@@ -69,7 +69,7 @@ def main():
     workflows = sorted(p for p in tracked if p.startswith((".github/workflows/", ".gitea/workflows/")))
     # CI, nightly toolchain releases and the rollup bot run on GitHub. The frozen
     # Gitea release workflow stays as the record of the contract it replaces.
-    expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, LLVM_PREBUILT, CPP_BACKEND, LSP, NIGHTLY, RELEASE,
+    expect(set(workflows) == {CI, FULL_VALIDATION, SANITIZERS, SLOW, LLVM_PREBUILT, LSP, NIGHTLY, RELEASE,
                               ROLLUP, CACHE, SUITE_MEASURES, *RELEASE_TRAIN},
            f"unexpected live workflows: {workflows}")
     for relative in (CI, NIGHTLY, RELEASE, ROLLUP, CACHE, *RELEASE_TRAIN, ".github/README.md", ".gitea/README.md",
@@ -146,7 +146,7 @@ def main():
     expect("permissions:\n  contents: read" in ci and "pull_request_target" not in ci
            and "secrets." not in ci,
            "CI must run untrusted pull requests with a read-only token and no secrets")
-    for workflow, contents in ((FULL_VALIDATION, full), (SANITIZERS, sanitizers)):
+    for workflow, contents in ((FULL_VALIDATION, full), (SANITIZERS, sanitizers), (SLOW, text(root, SLOW))):
         expect("permissions:\n  contents: read" in contents and "pull_request_target" not in contents
                and "secrets." not in contents and contents.count("issues: write") == 1
                and "main-broken" in contents,

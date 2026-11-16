@@ -160,7 +160,7 @@ integration is complete contributor work; report it as deferred, never as passed
    - tier: T2 (MIR cleanup publication for a new borrow shape)
    - T0: mir_borrow_carrier_cleanup_regression
    - T1: mir_full_expression, optimizer_conformance, compiler_pipeline
-   - T2: llvm_place_execution, cpp_mir_body_emitter_lifecycle
+   - T2: llvm_cleanup_context_execution, mir_census_profile_controls
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
    - T3: deferred to post-integration full validation
    ```

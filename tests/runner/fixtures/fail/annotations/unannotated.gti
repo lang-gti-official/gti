@@ -1,0 +1,5 @@
+// An error with no annotation fails the test.
+//@ check-pass
+int main() {
+  return missing_name;
+}

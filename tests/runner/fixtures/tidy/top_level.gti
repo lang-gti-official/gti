@@ -1,0 +1,2 @@
+// Directly under the root.
+int main() { return 0; }

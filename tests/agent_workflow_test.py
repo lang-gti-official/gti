@@ -1435,37 +1435,88 @@ class ValidationChecks(unittest.TestCase):
             validation.admission("draft", lint, "merge_group")
 
     def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
-        cpp_only = {"cpp_mir_body_emitter_text", "cpp_debug_artifacts", "lowered_program_corpus_census"}
+        slow = {"failure_metadata", "llvm_dispatch_execution", "instance_reuse", "instance_reuse_0"}
+        sensitive = {"other_runtime", "llvm_backend_scalar", "llvm_dispatch_execution"}
         registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
-                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "llvm_backend_scalar",
-                      *validation.GATE_EXCLUDED, *cpp_only}
+                      "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "other_runtime",
+                      "llvm_backend_scalar", "failure_metadata", "llvm_dispatch_execution",
+                      *validation.GATE_EXCLUDED}
         aggregates = {"compiler_pipeline", "instance_reuse"}
-        full = validation.shard_inventory(registered, "full")
-        # The aggregates are replaced by their registered parts; the C++-only tests leave for the weekly job.
+
+        def inventory(test_set, names=registered, darwin=None):
+            return validation.shard_inventory(names, test_set, darwin, slow, sensitive)
+
+        full = inventory("full")
+        # The aggregates are replaced by their registered parts; slow-labelled
+        # tests leave for the daily slow tier.
         self.assertNotIn("compiler_pipeline", full)
         self.assertNotIn("instance_reuse", full)
-        self.assertEqual(full, registered - aggregates - cpp_only)
-        # Only the hand-dispatched C++ set runs the frozen backend's own tests.
-        self.assertEqual(validation.shard_inventory(registered, "cpp"), registered - aggregates)
+        self.assertEqual(full, registered - aggregates - slow)
+        # The slow tier runs exactly the slow-labelled tests (O0 and O3) and
+        # re-runs the per-commit level-sensitive harnesses at O3.
+        self.assertEqual(inventory("slow"), (registered - aggregates) & slow)
+        self.assertEqual(inventory("o3"), {"other_runtime", "llvm_backend_scalar"})
+        self.assertFalse(inventory("slow") & full)
+        self.assertEqual(validation.TEST_SET_LEVELS["full"], "O0")
+        self.assertEqual(validation.TEST_SET_LEVELS["slow"], "O0,O3")
+        self.assertEqual(validation.TEST_SET_LEVELS["o3"], "O3")
         # Without the parts, an aggregate stays (no coverage loss on an older tree).
         alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
         self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
-        gate = validation.shard_inventory(registered, "gate")
+        gate = inventory("gate")
         self.assertEqual(gate, full - validation.GATE_EXCLUDED)
         self.assertTrue(gate < full)
         self.assertNotIn("generic_algorithm_breadth", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
-        self.assertFalse(validation.cpp_only("generic_algorithm_breadth"))
         self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
         # macOS runs only the platform-specific inventory: listed names and prefixed families.
-        darwin = validation.shard_inventory(registered, "darwin", (("llvm_",), {"other"}))
+        listed = (("llvm_",), {"other"})
+        darwin = inventory("darwin", darwin=listed)
         self.assertEqual(darwin, {"other", "llvm_backend_scalar"})
         self.assertTrue(darwin < full)
+        self.assertEqual(inventory("darwin-slow", darwin=listed), {"llvm_dispatch_execution"})
+        self.assertEqual(inventory("darwin-o3", darwin=listed), {"llvm_backend_scalar"})
         with self.assertRaises(ValueError):
-            validation.shard_inventory(registered, "darwin", ((), {"missing"}))  # stale names fail the shard
+            inventory("darwin", darwin=((), {"missing"}))  # stale names fail the shard
         with self.assertRaises(ValueError):
             validation.shard_inventory({"smoke", "other"}, "gate")  # exclusions must name registered tests
+        for retired in ("nightly", "cpp"):
+            with self.assertRaises(ValueError):
+                inventory(retired)
+
+    def test_slow_label_and_level_sensitive_harnesses_come_from_the_inventory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "tests").mkdir()
+            (root / "tests/backend_modes.py").write_text("LEVELS = ()\n")
+            (root / "tests/shared_runtime.py").write_text("from backend_modes import native_modes\n")
+            (root / "tests/wrapper_test.py").write_text("from shared_runtime import main\n")
+            (root / "tests/direct_test.py").write_text("import backend_modes\n")
+            (root / "tests/plain_test.py").write_text("import json\n")
+            document = {"tests": [
+                {"name": "wrapper", "command": ["python3", str(root / "tests/wrapper_test.py"), "gti"],
+                 "properties": [{"name": "LABELS", "value": ["end-to-end", "slow"]}]},
+                {"name": "direct", "command": ["python3", str(root / "tests/direct_test.py")]},
+                {"name": "plain", "command": ["python3", str(root / "tests/plain_test.py")]},
+                {"name": "binary", "command": [str(root / "gti_tests")]},
+            ]}
+            self.assertEqual(validation.labelled(document, "slow"), {"wrapper"})
+            self.assertEqual(validation.level_sensitive(document, root), {"wrapper", "direct"})
+
+    def test_merge_shards_proves_each_selected_test_set(self):
+        def report(test_set, index, tests, inventory):
+            return {"head": "a" * 40, "tree": "b" * 40, "platform": "linux", "build_type": "Release",
+                    "scope": "shard", "shards": 2, "index": index, "inventory": inventory,
+                    "tests": tests, "test_set": test_set, "skipped": [], "smoke": ["scalar-O0"]}
+
+        reports = [report("slow", 0, ["a"], ["a", "b"]), report("slow", 1, ["b"], ["a", "b"]),
+                   report("o3", 0, ["c"], ["c"]), report("o3", 1, [], ["c"])]
+        summary = validation.merge_shards(reports, ["linux:slow", "linux:o3"])
+        self.assertEqual(summary["linux:slow"]["tests"], 2)
+        self.assertEqual(summary["linux:o3"]["tests"], 1)
         with self.assertRaises(ValueError):
-            validation.shard_inventory(registered, "nightly")
+            validation.merge_shards(reports[:1] + reports[2:], ["linux:slow", "linux:o3"])
+        with self.assertRaises(ValueError):
+            validation.merge_shards(reports, ["linux"])  # one platform key cannot mix test sets
 
     def test_durations_refresh_averages_each_run_and_ignores_unknown_names(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -419,20 +419,17 @@ def nightly_contract(root):
     assert "needs: [plan, package, integration]\n" in verdict
     assert "advisories --reports" in verdict and "continue-on-error: true" in verdict, \
         "advisory census drift is reported, never part of the verdict"
-    cpp = (root / ".github/workflows/cpp-backend.yml").read_text()
-    assert "GTI_TEST_BACKENDS: cpp" in cpp and "--test-set cpp" in cpp and "cpp_mir_body_emitter" in cpp
-    # CTest's per-test ENVIRONMENT property (from the configure-time cache
-    # default) overrides a job's environment, so the policy must be configured.
-    assert cpp.count("-DGTI_TEST_BACKENDS=cpp") == 2, "every C++ job configure selects the C++ backend policy"
-    assert cpp.count("-DGTI_ENABLE_CPP_BACKEND=ON") == 2, "the frozen C++ backend is built only where it is tested"
-    assert "merge_group" not in cpp and "pull_request" not in cpp, "the C++ backend never gates"
-    triggers = cpp.split("\njobs:\n", 1)[0]
-    assert "schedule:" not in triggers and "workflow_dispatch:" in triggers, "the C++ backend runs only by hand"
-    assert "issues: write" not in cpp and "full_validation_report.py" not in cpp, "the C++ backend opens no issue"
+    # The C++ backend's tests and CI were removed; nothing builds or selects it.
+    assert not (root / ".github/workflows/cpp-backend.yml").exists()
+    for workflow in sorted((root / ".github/workflows").glob("*.yml")):
+        body = workflow.read_text()
+        assert "GTI_TEST_BACKENDS" not in body and "GTI_ENABLE_CPP_BACKEND" not in body, workflow.name
+        assert "--test-set cpp" not in body and "-LE cpp-backend" not in body, workflow.name
+    # Per-commit full validation runs the per-commit sets; the slow tier is daily.
+    assert '--test-set "${GTI_SHARD_TEST_SET}"' in suite and "'darwin' || 'full'" in suite
+    assert "slow" not in re.sub(r"(?m)^\s*#.*$", "", suite), "full validation never runs the slow tier"
     assert "validation_checks.py ci-gate" in verdict and "--event full_validation" in verdict
     assert "--shard-reports" in verdict
-    cpp_jobs = jobs((root / ".github/workflows/cpp-backend.yml").read_text())
-    assert "named_test_shards.py verify" in cpp_jobs["verdict"], "the C++ emitter lifecycle proof lives in the C++ job"
     report = integration["report"]
     assert "issues: write" in report and "full_validation_report.py" in report
     assert "needs.verdict.result != 'cancelled'" in report
@@ -555,8 +552,9 @@ def sanitizer_contract(root):
     assert "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in compiler and \
         "-DCMAKE_JOB_POOLS=link=1 -DCMAKE_JOB_POOL_LINK=link" in llvm
     assert "check_ci_sanitizers.py" in compiler and "check_ci_sanitizers.py" in llvm
-    assert "cpp_mir" not in compiler, "the C++ emitter is sanitized only in cpp-backend.yml"
-    assert "GTI_TEST_BACKENDS: llvm" in llvm and "GTI_TEST_BACKENDS: llvm" in tsan
+    assert "cpp_mir" not in compiler, "the C++ emitter is not sanitized"
+    assert "GTI_TEST_LLVM_LEVELS: O0,O3" in llvm and "GTI_TEST_LLVM_LEVELS: O0,O3" in tsan, \
+        "the sanitized LLVM harnesses keep both levels"
     assert "GTI_ENABLE_THREAD_SANITIZER_TESTS=ON" in tsan, "TSan is real in the sanitizer run"
     assert 'suite.get("skipped"' in tsan, "a skipped _tsan test is a missing runtime, never evidence"
     assert '"libclang-rt-${llvm_major}-dev"' in (root / "scripts/configure_ci_toolchain.sh").read_text(), \
@@ -585,6 +583,58 @@ def sanitizer_contract(root):
     # The release train reads the verdicts, so both of its API jobs may read Actions.
     train_jobs = jobs(train_text)
     assert "actions: read" in train_jobs["plan"] and "actions: read" in train_jobs["promote"]
+
+
+def slow_tier_contract(root):
+    """The daily slow tier mirrors the sanitizers: it runs on the nightly commit,
+    never gates main, proves each test set ran its whole inventory, names the
+    commit its verdict covers and reports to its own broken-main issue."""
+    text = (root / ".github/workflows/slow.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  schedule:\n    - cron: " in header and "  workflow_dispatch:\n" in header
+    assert "push:" not in header and "pull_request" not in text and "merge_group" not in text
+    assert "\npermissions:\n  contents: read\n  actions: read\n" in header
+    assert "cancel-in-progress: false" in header
+    assert not re.search(r"secrets\.[A-Za-z]", text) and text.count("issues: write") == 1
+    sections = jobs(text)
+    assert list(sections) == ["source", "shards", "verdict", "report"], list(sections)
+    for name, body in sections.items():
+        writes = re.findall(r"^      ([a-z-]+): write$", body, re.MULTILINE)
+        assert writes == (["issues"] if name == "report" else []), (name, writes)
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest")):
+                assert "${{" not in line, line
+    assert text.count("${{ inputs.") == 1 and "GTI_REQUESTED_COMMIT: ${{ inputs.commit }}" in sections["source"]
+    assert "release_train.py sanitizer-source --tier slow" in sections["source"]
+    shards = sections["shards"]
+    assert "ref: ${{ needs.source.outputs.sha }}" in shards and "if: needs.source.outputs.selected == 'true'" in shards
+    assert "validation_checks.py shard --build build" in shards and '--test-set "${GTI_SHARD_TEST_SET}"' in shards
+    rows = re.findall(r"platform: (linux|darwin), set: ([a-z0-9-]+), shards: (\d+), index: (\d+)", shards)
+    sets = {}
+    for platform, test_set, count, index in rows:
+        sets.setdefault((platform, test_set), []).append((int(count), int(index)))
+    assert set(sets) == {("linux", "slow"), ("linux", "o3"), ("darwin", "darwin-slow"), ("darwin", "darwin-o3")}
+    for key, members in sets.items():
+        assert sorted(index for _, index in members) == list(range(members[0][0])), key
+        assert all(count == members[0][0] for count, _ in members), key
+    sys.path.insert(0, str(root / "scripts"))
+    train = load_module(root / "scripts/release_train.py", "release_train_slow_contract")
+    checks = load_module(root / "scripts/validation_checks.py", "validation_checks_slow_contract")
+    report_script = load_module(root / "scripts/full_validation_report.py", "full_validation_report_slow")
+    assert {test_set for _, test_set in sets} <= set(checks.TEST_SET_LEVELS)
+    assert checks.TEST_SET_LEVELS["full"] == checks.TEST_SET_LEVELS["darwin"] == "O0"
+    assert "O3" in checks.TEST_SET_LEVELS["slow"] and checks.TEST_SET_LEVELS["o3"] == "O3"
+    verdict = sections["verdict"]
+    assert train.SLOW_WORKFLOW == ".github/workflows/slow.yml"
+    assert f"name: {train.SLOW_VERDICT} (${{{{ needs.source.outputs.sha }}}})" in verdict
+    assert "release_train.py require-success" in verdict and "needs: [source, shards]" in verdict
+    assert "validation_checks.py merge-shards" in verdict and \
+        "--platforms linux:slow,linux:o3,darwin:darwin-slow,darwin:darwin-o3" in verdict
+    report = sections["report"]
+    assert f'--title "{report_script.SLOW_TITLE}"' in report and "--label main-broken" in report
+    assert "needs.source.outputs.nightly == 'true'" in report
+    # The release requirement reads both daily verdicts.
+    assert set(train.DAILY_TIERS) == {"sanitizers", "slow"}
 
 
 def ordered(body, items, message):
@@ -776,9 +826,9 @@ def workflow_contract(root):
     # CI, nightly packaging and the rollup bot run on GitHub; the frozen Gitea
     # release workflow stays as written.
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
-        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
+        "backport.yml", "beta.yml", "cache.yml", "ci.yml", "full-validation.yml",
         "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
-        "sanitizers.yml", "suite-measures.yml", "train.yml"]
+        "sanitizers.yml", "slow.yml", "suite-measures.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())
@@ -1380,6 +1430,7 @@ def main():
     nightly_contract(root)
     llvm_pin_contract(root)
     sanitizer_contract(root)
+    slow_tier_contract(root)
     train_contract(root)
     source_contract(root)
     suite_contract(root)
