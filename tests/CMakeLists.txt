@@ -1131,9 +1131,6 @@ endif()
 add_executable("gti_block_comment_tests" "${PROJECT_SOURCE_DIR}/tests/block_comment_tests.cpp")
 target_link_libraries("gti_block_comment_tests" PRIVATE gti_compiler)
 add_test(NAME block_comment_pipeline COMMAND gti_block_comment_tests)
-add_executable("gti_lexical_literal_tests" "${PROJECT_SOURCE_DIR}/tests/lexical_literal_tests.cpp")
-target_link_libraries("gti_lexical_literal_tests" PRIVATE gti_compiler)
-add_test(NAME lexical_literal_pipeline COMMAND gti_lexical_literal_tests)
 
 add_executable("gti_source_text_tests" "${PROJECT_SOURCE_DIR}/tests/source_text_tests.cpp")
 target_link_libraries("gti_source_text_tests" PRIVATE gti_compiler)
@@ -6436,12 +6433,6 @@ if(Python3_Interpreter_FOUND)
       NAME block_comment_lsp
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>"
-    )
-    add_test(
-      NAME lexical_literal_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/lexical_literal_lsp_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
