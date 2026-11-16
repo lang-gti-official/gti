@@ -1,0 +1,12 @@
+// Under the concurrent profile a C-thread call needs unsafe; inside it the
+// call hovers as unsafe and navigates into std/cthread.gti.
+// (cthread_lsp_test.py, concurrent thrd_join.)
+//@ execution-profile: concurrent
+import std.cthread;
+int main() { std::thrd_t handle = 0; mut int32_t result = 0; return std::thrd_join(handle, result); }  //~ ERROR GTI-S2055
+// --- step 2
+//@ hover @join: unsafe
+//@ hover @join: thrd_join
+//@ definition @join: @std:std/cthread.gti#thrd_join
+import std.cthread;
+int main() { std::thrd_t handle = 0; mut int32_t result = 0; unsafe { return std::/*@join*/thrd_join(handle, result); } }

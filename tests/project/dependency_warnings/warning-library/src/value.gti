@@ -1,0 +1,3 @@
+export module value;
+import leaf.value;
+namespace library { export int value() { mut int value = 0; return leaf::value() + value; } }

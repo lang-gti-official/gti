@@ -45,7 +45,7 @@ def main():
                  "-Wall", "-Wextra", "-Werror", "-pthread",
                  "-I", root / "runtime/include", "-I", root / "runtime/src",
                  root / "runtime/src/cthread_sleep.cpp",
-                 root / "tests/runtime_cthread_sleep_tests.cpp", "-o", native])
+                 root / "tests/unit/runtime_cthread_sleep_tests.cpp", "-o", native])
             run([native])
             for fixture in ("cthread_sleep", "cthread_sleep_oracle", "cthread_sleep_concurrent"):
                 binary = output / f"{fixture}-{mode}"

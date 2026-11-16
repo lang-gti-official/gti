@@ -1,0 +1,12 @@
+manifest-version = 1
+[package]
+name = "warning_library"
+version = "1.0.0"
+[dependencies]
+leaf = { path = "../warning-leaf" }
+[profiles.dev]
+dependency-warnings = false
+disabled-warnings = ["unused-mut"]
+
+[modules]
+value = "src/value.gti"

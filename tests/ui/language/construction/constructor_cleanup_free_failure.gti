@@ -1,0 +1,47 @@
+// Constructor field placement/replacement preserves success and failure cleanup.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 12
+//@[default] stdout: 2
+//@[default] stdout: 1
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 1
+//@[fail] stderr-contains: constructor_cleanup_free_failure.gti:6: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- constructor_cleanup_free_failure.gti
+import std.string;
+import std.vector;
+
+struct CheckedNumber {
+  int value;
+  CheckedNumber(int divisor) : value(12 / divisor) {}
+};
+
+struct Envelope {
+  CheckedNumber number;
+  Envelope(int divisor) : number(CheckedNumber(divisor)) {}
+};
+
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  ~Marker() { std::println(value); }
+};
+
+struct Message {
+  Marker first;
+  Envelope envelope;
+  Marker last;
+  Message(int divisor)
+      : first(Marker(1)), envelope(Envelope(divisor)), last(Marker(2)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  // No active result cleanup is required, but the nested constructor still
+  // needs its own failure edge before publishing the field.
+  Message message{2 - argc};
+  std::println(message.envelope.number.value);
+  return 0;
+}

@@ -1,0 +1,4 @@
+// A retained or aliased string view excludes editing: insert_self.
+//@ check-fail
+import std.string;
+int main() { mut std::string text{"abc"}; text.insert(std::size_t(0), text); return 0;}  //~ ERROR GTI-S2017
