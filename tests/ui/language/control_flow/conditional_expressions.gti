@@ -1,0 +1,43 @@
+// Conditional expressions evaluate one arm: scalar results, side effects, void arms and moved owners.
+//@ run-pass
+import std.memory;
+
+int choose(bool condition, int left, int right) {
+  return condition ? left : right;
+}
+
+int branch_effect(bool condition) {
+  mut int value = 0;
+  int selected = condition ? (value = 7) : (value = 3);
+  return selected + value;
+}
+
+void set_value(mut int& target, int value) { target = value; }
+
+void choose_void(bool condition, mut int& target) {
+  condition ? set_value(target, 1) : set_value(target, 2);
+}
+
+struct Item {
+  int value;
+  Item(int initial) : value(initial) {}
+};
+
+std::unique_ptr<Item> choose_owner(
+    bool condition,
+    std::unique_ptr<Item> left,
+    std::unique_ptr<Item> right) {
+  return condition ? std::move(left) : std::move(right);
+}
+
+int main() {
+  mut int result = choose(true, 4, 9);
+  result += choose(false, 1, 3);
+  result += branch_effect(false);
+  mut int side_effect = 0;
+  choose_void(true, side_effect);
+  result += side_effect;
+  auto owner = choose_owner(
+      true, std::make_unique<Item>(8), std::make_unique<Item>(9));
+  return result == 14 && owner->value == 8 ? 0 : 1;
+}

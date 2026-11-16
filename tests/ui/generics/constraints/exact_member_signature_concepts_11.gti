@@ -1,0 +1,3 @@
+// Exact member signature concepts: general expression requirements allow unused synthetic parameters and using the receiver as an argument.
+//@ check-pass
+concept valid<T> = requires(T& r, int& a) { { r.f(r) } -> int; };

@@ -1,0 +1,2 @@
+// [[test]] rejects internal linkage, reported at the attribute.
+[[test]] static void invalid() {}  //~ ERROR GTI-S2099

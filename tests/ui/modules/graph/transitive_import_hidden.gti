@@ -1,0 +1,11 @@
+// An importer does not inherit a dependency's private imports.
+// --- main.gti
+import "branch.gti";
+int main() { return leaf_value(); }  //~ ERROR GTI-S2024
+// --- branch.gti
+export module branch;
+import "leaf.gti";
+export int branch_value() { return leaf_value(); }
+// --- leaf.gti
+export module leaf;
+export int leaf_value() { return 1; }

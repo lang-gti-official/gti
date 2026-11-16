@@ -1,0 +1,9 @@
+// --- main.gti
+import "api.gti";
+int main() {
+  return 0;
+}
+// --- api.gti
+export module api;
+// The public surface.
+export int answer();

@@ -1,0 +1,4 @@
+// Constexpr bindings: the formatter preserves constexpr constructors, idempotently.
+//@ parse-pass
+//@ snapshot: format
+struct Point{constexpr Point(int32_t value):coordinate(value){}int32_t coordinate;};

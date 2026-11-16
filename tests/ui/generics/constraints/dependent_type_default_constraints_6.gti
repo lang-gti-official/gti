@@ -1,0 +1,7 @@
+// Dependent type default constraints: selected dependent defaults and invalid closed defaults must retain frontend constraint diagnostics:.
+class Ordered<std::totally_ordered T> { public: Ordered() = default; };
+class NotOrdered { public: NotOrdered() = default; };
+class Holder<T, Compare = Ordered<T>> { public: Holder() = default; };
+class Nested<T, Compare = Holder<T>> { public: Nested() = default; };
+class Constrained<T, std::integral U = T> { public: Constrained() = default; };
+class Bad<T, Compare = Ordered<double*>> { public: Bad() = default; };  //~ ERROR GTI-S2029

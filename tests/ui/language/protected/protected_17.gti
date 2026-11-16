@@ -1,0 +1,2 @@
+// Protected members: rejected with GTI-S2007.
+class Base { protected: Base() {} }; int main() { Base value{}; return 0; }  //~ ERROR GTI-S2007

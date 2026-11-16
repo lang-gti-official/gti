@@ -1,0 +1,14 @@
+// Applying the associative and sequence container include fixes resolves every type.
+//@ check-pass
+import std.map;
+import std.unordered_map;
+import std.set;
+import std.unordered_set;
+import std.deque;
+import std.queue;
+using a = std::map<int, int>;
+using b = std::unordered_map<int, int>;
+using c = std::set<int>;
+using d = std::unordered_set<int>;
+using e = std::deque<int>;
+using f = std::queue<int>;

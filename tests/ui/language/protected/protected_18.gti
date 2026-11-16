@@ -1,0 +1,5 @@
+// Protected members: the program is accepted.
+//@ check-pass
+class Converted { protected: implicit Converted(int value) {}
+public: static int make() { Converted value = 1; return 0; }  public: Converted() = default; };
+int main() { return Converted::make(); }

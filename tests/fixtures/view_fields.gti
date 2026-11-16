@@ -59,7 +59,7 @@ Label<T> makeLabel<T>(T text) { return Label<T>(text); }
 
 int main() {
   std::string input{"token text"};
-  Token token = Token(input.view(), 3);
+  auto token = Token(input.view(), 3);
   std::println(token.text);
   std::println(token.kind);
 
@@ -67,8 +67,8 @@ int main() {
   std::println(diag.text);
   std::println(diag.line);
 
-  Token copy = token;
-  Token moved = std::move(copy);
+  auto copy = token;
+  auto moved = std::move(copy);
   std::println(moved.text);
 
   std::string_view head = token.text;

@@ -1,0 +1,16 @@
+// A selected mutable-reference constructor parameter keeps the argument owner's mut for every construction spelling.
+//@ check-pass
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+};
+class View {
+  mut Counter& owner;
+public:
+  View(mut Counter& source) : owner(source) {}
+  void advance() mut { this.owner.value += 1; }
+};
+void braced() { mut Counter owner{4}; mut View view{owner}; view.advance(); }
+void called() { mut Counter owner{4}; mut View view = View(owner); view.advance(); }
+void parenthesized() { mut Counter owner{4}; mut View view = (View(owner)); view.advance(); }
+int main() { return 0; }

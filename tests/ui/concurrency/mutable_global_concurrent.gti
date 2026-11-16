@@ -1,0 +1,21 @@
+// The concurrent execution profile requires namespace globals and static
+// fields to be immutable; thread_local storage stays mutable.
+// (From thread_local_semantic_tests.cpp, which analyses concurrently.)
+//@ execution-profile: concurrent
+thread_local mut int counter = 0;
+mut int shared = 0;  //~ ERROR GTI-S2060
+class Registry {
+public:
+  static thread_local mut int value = 1;
+  Registry() = default;
+};
+int next() {
+  thread_local mut int local = 3;
+  local += 1;
+  return local;
+}
+int main() {
+  counter += 1;
+  Registry::value += 1;
+  return next() + shared;
+}

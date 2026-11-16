@@ -1,0 +1,2 @@
+// Definite return analysis: the frontend should reject return, parameter, and definition shapes outside the two supported main entry contracts.
+void main() {}  //~ ERROR GTI-S2032

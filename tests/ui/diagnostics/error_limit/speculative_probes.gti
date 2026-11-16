@@ -1,0 +1,44 @@
+// Errors discarded by speculative requirement probes do not consume the error budget.
+//@ check-pass
+struct Sample {}; int main() {
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+return 0; }

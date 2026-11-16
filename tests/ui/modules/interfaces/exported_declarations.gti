@@ -1,0 +1,22 @@
+// An imported interface exposes its exported declarations, which may use private helpers and generic bodies.
+//@ check-pass
+// --- main.gti
+import "leaf.gti";
+int main() {
+  api::Record record{2};
+  api::Count count = api::identity(record.value);
+  api::State state = api::State::ready;
+  return api::answer() == count && state == api::State::ready ? 0 : 1;
+}
+// --- leaf.gti
+export module leaf;
+namespace api {
+  int helper() { return 40; }
+  export int answer() { return helper() + 2; }
+  int answer(int value) { return value; }
+  struct Secret { int value; };
+  export struct Record { int value; Record(int input) : value(input) {} };
+  export using Count = int;
+  export enum class State { ready };
+  export int identity<T>(T value) { return helper() + 2; }
+}

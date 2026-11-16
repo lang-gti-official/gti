@@ -1,0 +1,1 @@
+Compiler and LSP analysis now defaults to a 20-error budget. Configure it with `--error-limit N` or the root package’s `[limits]` `error-limit` setting; `0` disables the limit. Exhaustion stops frontend work at safe boundaries and reports one terminal diagnostic.

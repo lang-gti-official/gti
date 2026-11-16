@@ -1,0 +1,24 @@
+// Public policy: shared-owner source policy must concretize.
+//@ check-pass
+import std.memory;
+
+struct Value {
+  mut int value = 7;
+  int read() { return value; }
+  void change() mut { value++; }
+public:
+  Value() = default;
+};
+int main() {
+  mut std::shared_ptr<Value> first = std::make_shared<Value>();
+  auto second = first.clone();
+  Value& read = *second;
+  first.reset();
+  int result = read.read();
+  mut std::shared_ptr<Value> empty{};
+  mut std::shared_ptr<Value> other = std::move(first);
+  empty.swap(other);
+  other = nullptr;
+  auto moved = std::move(second);
+  return result + int(moved.use_count()) - 8;
+}

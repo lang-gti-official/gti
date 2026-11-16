@@ -2,110 +2,6 @@
   "schema_version": 1,
   "tests": [
     {
-      "name": "testConcreteCallableSemanticFailure",
-      "suite": "frontend"
-    },
-    {
-      "name": "testAnnotatedFunctionContracts",
-      "suite": "frontend"
-    },
-    {
-      "name": "testAnnotatedSuiteAnalysis",
-      "suite": "frontend"
-    },
-    {
-      "name": "testDefiniteReturnAnalysis",
-      "suite": "frontend"
-    },
-    {
-      "name": "testSourceUnitDependencyGraph",
-      "suite": "frontend"
-    },
-    {
-      "name": "testSourceModuleInterfaces",
-      "suite": "frontend"
-    },
-    {
-      "name": "testExportPlacement",
-      "suite": "frontend"
-    },
-    {
-      "name": "testOwnLineCommentPlacement",
-      "suite": "frontend"
-    },
-    {
-      "name": "testSourceModuleResolution",
-      "suite": "frontend"
-    },
-    {
-      "name": "testSourceModuleConfigurationDomains",
-      "suite": "frontend"
-    },
-    {
-      "name": "testStandardLibraryImports",
-      "suite": "frontend"
-    },
-    {
-      "name": "testStandardLibraryModules",
-      "suite": "frontend"
-    },
-    {
-      "name": "testReachableExecutableLowering",
-      "suite": "frontend"
-    },
-    {
-      "name": "testPackageImports",
-      "suite": "frontend"
-    },
-    {
-      "name": "testLoopControlStatements",
-      "suite": "frontend"
-    },
-    {
-      "name": "testDoWhileStatements",
-      "suite": "frontend"
-    },
-    {
-      "name": "testConditionalExpressions",
-      "suite": "frontend"
-    },
-    {
-      "name": "testSwitchStatements",
-      "suite": "frontend"
-    },
-    {
-      "name": "testParserRecovery",
-      "suite": "frontend"
-    },
-    {
-      "name": "testParserNestingLimit",
-      "suite": "frontend"
-    },
-    {
-      "name": "testExecutablePathDiscovery",
-      "suite": "frontend"
-    },
-    {
-      "name": "testFrontendStopPhase",
-      "suite": "frontend"
-    },
-    {
-      "name": "testTargetTripleParsing",
-      "suite": "frontend"
-    },
-    {
-      "name": "testSupportFacilities",
-      "suite": "frontend"
-    },
-    {
-      "name": "testDependentRequiresArgumentAdmission",
-      "suite": "declarations"
-    },
-    {
-      "name": "testStructuralClassConstraints",
-      "suite": "declarations"
-    },
-    {
       "name": "testFunctionContracts",
       "suite": "declarations"
     },
@@ -119,10 +15,6 @@
     },
     {
       "name": "testMovedLoopLocalRedeclarations",
-      "suite": "declarations"
-    },
-    {
-      "name": "testInferredVoidGenericArguments",
       "suite": "declarations"
     },
     {
@@ -155,10 +47,6 @@
     },
     {
       "name": "testInterfaceStaticMethods",
-      "suite": "declarations"
-    },
-    {
-      "name": "testInterfaceStaticAmbiguity",
       "suite": "declarations"
     },
     {
@@ -218,15 +106,7 @@
       "suite": "declarations"
     },
     {
-      "name": "testMemberRequirementConcepts",
-      "suite": "declarations"
-    },
-    {
       "name": "testCompilerPrivateMemberRequirements",
-      "suite": "declarations"
-    },
-    {
-      "name": "testExactMemberSignatureConcepts",
       "suite": "declarations"
     },
     {
@@ -263,10 +143,6 @@
     },
     {
       "name": "testValueGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testDependentTypeDefaultConstraints",
       "suite": "declarations"
     },
     {
@@ -422,14 +298,6 @@
       "suite": "ownership"
     },
     {
-      "name": "testStoredReferenceLoopInvalidation3",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceLoopInvalidation4",
-      "suite": "ownership"
-    },
-    {
       "name": "testStoredReferenceScopedStorage",
       "suite": "ownership"
     },
@@ -467,10 +335,6 @@
     },
     {
       "name": "testForwardIteratorContractsAndBinarySearch",
-      "suite": "ownership"
-    },
-    {
-      "name": "testWritableAndMovementIteratorCapabilities",
       "suite": "ownership"
     },
     {
@@ -676,250 +540,6 @@
     {
       "name": "testMoveOnlyAssignmentResultUse",
       "suite": "ownership"
-    },
-    {
-      "name": "testCompileLimits",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstantEvaluationReuse",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConsteval",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstevalStatementCompletion",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testFixedWidthIntegers",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testContextualSignedIntegerLiterals",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testBinaryFloatSemantics",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testCharactersAndStringViews",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testStandardString",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testLogicalOperatorSpellings",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testComparisonOperatorFormattingStability",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testIntegerBitwiseAndModuloOperators",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testCheckedArithmeticAndCompoundAssignments",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprBindings",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprStringViewInspection",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testMirConstantEvaluation",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testStagedIntrinsicContracts",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testMirConstantRecords",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprConditionalTemporaries",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprLibrary",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprOperators",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testDependentConstexprBranches",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprReadOnlyReferences",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprMutation",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprEnumBuilders",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprResults",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprTryable",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprPayloadEnums",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprAllocation",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testStaticAssertions",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testStaticStorageAndMembers",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConcurrentGlobalPolicy",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testCompileTimeConditionals",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConfigurableCompileTimeDepth",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testNativeStackSegmentsAreInvisible",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testLazyStagingAndCompileTimePanic",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testMissingSwitchCasesFix",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testPayloadPatternVisibilityDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testGenericAdvisorySoundness",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testSemanticVisitorRequestReuse",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testUnknownFunctionAttributeClassification",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testUnknownTypeCascadeSuppression",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDuplicateDiagnosticsMerge",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testRejectedInstanceCascades",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testRecoveryFindingDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testGenericArgumentDiagnosticGuidance",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testConversionDiagnosticGuidance",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testOverloadFailureGuidance",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testRawAuditDiagnosticPublication",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testSemanticDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testOwnershipAndMissingIncludeDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDiagnosticFoundation",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testCppReservedIdentifiers",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDefaultImmutability",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDefaultNodiscard",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testAdvisoryDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testPrintIsAnIdentifier",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testFormatting",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testLanguageQueries",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testToolingOccurrenceOptOut",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testReadOnlyReceiverDiagnostics",
-      "suite": "diagnostics"
     },
     {
       "name": "testFrontendBackendAndOptimizationPipeline",

@@ -1,0 +1,10 @@
+// Ownership and missing include diagnostics: a parent access identifies the still-live child reborrow, not the parent's origin or an already-ended sibling.
+//@ snapshot: diagnostics
+int main() {
+  mut int value = 1;
+  mut int& parent = value;
+  { mut int& ended = parent; ended = 2; }
+  mut int& child = parent;
+  parent = 3;  //~ ERROR GTI-S2017
+  return child;
+}

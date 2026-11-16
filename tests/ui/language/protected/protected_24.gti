@@ -1,0 +1,2 @@
+// Protected members: rejected with GTI-S2064.
+[[c_abi]] struct Bad { protected: int value; };  //~ ERROR GTI-S2064 //~ ERROR GTI-S2064

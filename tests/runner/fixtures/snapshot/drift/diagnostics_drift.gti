@@ -1,0 +1,5 @@
+// A rendered-diagnostics snapshot that no longer matches.
+//@ snapshot: diagnostics
+int main() {
+  return missing;  //~ ERROR GTI-S2001
+}

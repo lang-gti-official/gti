@@ -1,0 +1,4 @@
+main.gti:5:45: error[GTI-S2003]: Argument 1 has type 'Number' but the parameter requires 'int32_t'.
+ 5 | int main() { Number value{}; return consume(value); }  //~ ERROR GTI-S2003
+   |                                             ^~~~~
+help: Calls require exact argument types; pass the required type or use a supported explicit conversion when intentional.

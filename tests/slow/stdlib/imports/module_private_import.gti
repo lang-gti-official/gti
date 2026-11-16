@@ -1,0 +1,4 @@
+// A standard module does not republish its private imports (std.vector's std.span).
+//@ slow
+import std.vector;
+int main() { std::span<int32_t> view = std::span<int32_t>(); return int32_t(view.size()); }  //~ ERROR GTI-S2024 //~ ERROR GTI-S2024

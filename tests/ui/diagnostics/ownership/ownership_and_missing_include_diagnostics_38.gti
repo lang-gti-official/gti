@@ -1,0 +1,8 @@
+// Ownership and missing include diagnostics: wrapping a named success payload must diagnose its attempted copy before backend admission, as the return's copy.
+import std.string;
+enum class error { failed };
+expected<std::string, error> value() {
+  std::string text = std::string("tea");
+  return text;  //~ ERROR GTI-S2003
+}
+int main() { return 0; }

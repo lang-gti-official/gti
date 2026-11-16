@@ -1,0 +1,10 @@
+main.gti:8:3: error[GTI-S2017]: Cannot use a parent loan while an overlapping child reborrow may still be live.
+ 8 |   parent = 3;  //~ ERROR GTI-S2017
+   |   ^~~~~~
+main.gti:7:20: note: Retained borrow originates here.
+ 7 |   mut int& child = parent;
+   |                    ^~~~~~
+main.gti:9:3: note: The borrowed value is used later here.
+ 9 |   return child;
+   |   ^~~~~~~~~~~~~
+help: Finish using the borrowed value before changing or moving its owner, or perform the owner operation before creating the borrow. Choose an order that preserves the intended effects.

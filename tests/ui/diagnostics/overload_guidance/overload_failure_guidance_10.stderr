@@ -1,0 +1,13 @@
+main.gti:24:3: error[GTI-S2012]: No overload of 'sink' exactly matches argument types (bool, Ticket).
+ 24 |   sink(true, t);  //~ ERROR GTI-S2012
+    |   ^~~~
+main.gti:16:6: note: Candidate: sink(int)
+ 16 | void sink(int value) {}
+    |      ^~~~
+main.gti:17:6: note: Candidate: sink(char)
+ 17 | void sink(char value) {}
+    |      ^~~~
+main.gti:18:6: note: Candidate: sink<Args...>(std::string_view, Args...)
+ 18 | void sink<Args...>(std::string_view label, Args... args) {}
+    |      ^~~~
+help: Match the exact parameter types and reference/ownership requirements of an available overload.

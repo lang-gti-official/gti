@@ -1,0 +1,2 @@
+// Consteval: invalid immediate declaration, invocation or escape rejects.
+consteval int f(int x) { return x; } constexpr int g(int x) { return f(x); }  //~ ERROR GTI-S2057

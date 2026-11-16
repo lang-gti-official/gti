@@ -1,0 +1,35 @@
+// Writable and movement iterator capabilities: writable, bidirectional, random-access, and sized-sentinel capabilities should drive copy/fill/transform/sort/reverse and iterator movement to valid MIR.
+//@ check-pass
+import std.algorithm;
+import std.iterator;
+import std.vector;
+
+int main() {
+  mut std::vector<int32_t> source = std::vector<int32_t>();
+  source.push_back(5);
+  source.push_back(1);
+  source.push_back(4);
+  mut std::vector<int32_t> destination = std::vector<int32_t>(std::size_t(3));
+  std::copy(source.begin(), source.end(), destination.begin_mut());
+  int32_t nine = 9;
+  std::fill(destination, nine);
+  mut std::vector<int32_t> doubled = std::vector<int32_t>(std::size_t(3));
+  std::transform(source, doubled,
+                 [](int32_t& value) -> int32_t { return value * 2; });
+  std::sort(source);
+  std::reverse(source);
+  int32_t head = source[std::size_t(0)];
+  mut auto cursor = source.begin();
+  ++cursor;
+  --cursor;
+  cursor += std::ptrdiff_t(2);
+  cursor -= std::ptrdiff_t(1);
+  auto last = source.end();
+  std::ptrdiff_t left = cursor - last;
+  auto stepped = std::prev(std::next(source.begin(), std::ptrdiff_t(2)));
+  return (*cursor == 4 && left == std::ptrdiff_t(2) && *stepped == 4 &&
+          destination[std::size_t(0)] == 9 &&
+          doubled[std::size_t(0)] == 10 && head == 5)
+             ? 0
+             : 1;
+}

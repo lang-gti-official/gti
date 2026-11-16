@@ -1,0 +1,14 @@
+// Compile time conditionals: the formatter preserves and normalises configuration directives, boolean conditions and #error.
+//@ check-pass
+//@ snapshot: format
+#define DEBUG
+#if defined(DEBUG) && !(target.os == "never")
+int value = 1;
+#undef DEBUG
+#endif
+#if target.os == "never"
+#error "unsupported"
+#endif
+int main() {
+  return 0;
+}

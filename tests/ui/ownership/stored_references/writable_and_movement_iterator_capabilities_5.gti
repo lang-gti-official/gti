@@ -1,0 +1,14 @@
+// Writable and movement iterator capabilities: writes_to should reject a destination whose element type differs from the required referent.
+import std.iterator;
+import std.vector;
+
+void stamp<Iterator>(mut Iterator iterator, int16_t value)
+  requires std::writes_to<Iterator, int16_t> {
+  *iterator = value;
+}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(1));
+  stamp(values.begin_mut(), int16_t(3));  //~ ERROR GTI-S2029 satisfy concept 'std::writes_to
+  return 0;
+}

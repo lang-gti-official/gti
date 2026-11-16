@@ -1,0 +1,2 @@
+// Exact member signature concepts: requirement parameters still reject duplicate bindings and invalid owned mutability syntax.
+concept invalid<T> = requires(T& r, mut int a) { { r.f(a) } -> int; };  //~ ERROR GTI-P0001

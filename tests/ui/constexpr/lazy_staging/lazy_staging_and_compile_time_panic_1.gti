@@ -1,0 +1,10 @@
+// Lazy staging and compile time panic: an unexecuted runtime-only operation does not reject constexpr bindings, static_assert, if constexpr or immediate calls.
+//@ check-pass
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+constexpr int c = clamp_positive(5);
+consteval int immediate_clamp(int v) { return clamp_positive(v); }
+int main() { return c + immediate_clamp(3) == 8 ? 0 : 1; }

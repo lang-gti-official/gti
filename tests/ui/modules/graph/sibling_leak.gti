@@ -1,0 +1,11 @@
+// A module does not see a dependency that only its importer imports.
+// --- main.gti
+import "branch.gti";
+import "leaf.gti";
+int main() { return branch_value(); }
+// --- branch.gti
+export module branch;
+export int branch_value() { return leaf_value(); }  //~ ERROR GTI-S2024
+// --- leaf.gti
+export module leaf;
+export int leaf_value() { return 1; }

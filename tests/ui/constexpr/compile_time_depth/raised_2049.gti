@@ -1,0 +1,8 @@
+// Compile-time depth: A raised limit is still a limit.
+//@ constexpr-depth: 2048
+constexpr int32_t descend(int32_t n) {
+  if (n == 0) { return 0; }
+  return descend(n - 1) + 1;
+}
+static_assert(descend(2048) == 2048);  //~ ERROR GTI-S2057 call depth exceeded
+int main() { return 0; }

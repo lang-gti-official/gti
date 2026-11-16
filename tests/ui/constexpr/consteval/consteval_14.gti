@@ -1,0 +1,2 @@
+// Consteval: invalid immediate declaration, invocation or escape rejects.
+consteval uint64_t f(uint64_t x) { return 10 / x; } uint64_t g<uint64_t N>() { return f(N); } int main() { return int(g<0>()); }  //~ ERROR GTI-S2057

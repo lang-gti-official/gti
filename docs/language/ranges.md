@@ -821,7 +821,7 @@ Retaining a search result keeps that owner borrowed: mutation, movement, and
 destruction cannot invalidate it. Array/list/deque mutable cursors can also be
 bound locally under the existing nominal stored-reference rules, retaining an
 exclusive owner borrow; they cannot escape a local owner. Vector cursors also
-support this local and by-value algorithm transport (`mut_cursor_runtime`),
+support this local and by-value algorithm transport (`tests/ui/borrow/mut_cursor/`),
 preserving the caller's exclusive storage loan rather than borrowing the
 parameter shell. Copying an exclusive cursor and overlapping owner access
 remain rejected. This slice adds neither

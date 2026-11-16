@@ -1,0 +1,6 @@
+// static_assert on a parameter stays rejected and hints at the compile-time panic pattern.
+//@ snapshot: diagnostics
+consteval void require_small(int value) {
+  static_assert(value <= 10, "too large");  //~ ERROR GTI-S2057
+}
+int main() { return 0; }

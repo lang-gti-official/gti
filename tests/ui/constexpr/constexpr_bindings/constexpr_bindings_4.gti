@@ -1,0 +1,5 @@
+// Constexpr bindings: constexpr recursion should stop at a deterministic frontend resource limit.
+constexpr uint64_t recurse(uint64_t value) {
+  return recurse(value);
+}
+constexpr uint64_t result = recurse(uint64_t(0));  //~ ERROR GTI-S2057 constexpr call depth exceeded

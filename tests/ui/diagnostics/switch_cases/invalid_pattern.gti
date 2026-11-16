@@ -1,0 +1,4 @@
+// A switch with an invalid case pattern reports the pattern, not missing cases.
+enum Message { idle, item(int value), done };
+void handle(Message& value) { switch (value) { case Message::unknown: break; } }  //~ ERROR GTI-S2067 Switch case must name a variant
+int main() { return 0; }

@@ -1,0 +1,3 @@
+// Consteval: immediate recursion preserves the bounded evaluator and reports its call-depth limit, its value and how to raise it.
+consteval int recurse(int value) { return recurse(value + 1); }
+int main() { return recurse(0); }  //~ ERROR GTI-S2057

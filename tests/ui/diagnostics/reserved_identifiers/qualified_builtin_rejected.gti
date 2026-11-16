@@ -1,0 +1,3 @@
+// Recovery never admits a qualified primitive for code generation.
+constexpr std::uint64_t limit = 1024 * 1024 * 1024;  //~ ERROR GTI-P0001 cannot be qualified
+int main() { return 0; }

@@ -1,0 +1,24 @@
+// Writable and movement iterator capabilities: a step-only cursor should fail std::random_access_iterator.
+import std.iterator;
+
+class StepOnly {
+  mut int32_t value = 0;
+
+public:
+  StepOnly() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  void operator--() mut {}
+  bool operator!=(StepOnly& other) { return false; }
+};
+
+void jump<Iterator>(mut Iterator iterator)
+  requires std::random_access_iterator<Iterator> {
+  iterator += std::ptrdiff_t(2);
+}
+
+int use() {
+  mut StepOnly cursor = StepOnly();
+  jump(std::move(cursor));  //~ ERROR GTI-S2029 satisfy concept 'std::random_access_iterator
+  return 0;
+}

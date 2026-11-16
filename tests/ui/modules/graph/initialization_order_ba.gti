@@ -1,0 +1,33 @@
+// Program initialization is dependency-first in lexical import order (here b before a), visits a shared dependency once and skips the inactive target branch.
+//@ run-pass
+// --- main.gti
+import "ordered-b.gti";
+import "ordered-a.gti";
+import "log.gti";
+#if target.os == "never"
+mut int32_t inactive_target_storage = mark(9);
+#else
+mut int32_t active_target_storage = mark(4);
+#endif
+int main() { return sequence == 1324 ? 0 : 1; }
+// --- log.gti
+export module log;
+export mut int32_t sequence = 0;
+export int32_t mark(int32_t id) {
+  sequence = sequence * 10 + id;
+  return id;
+}
+// --- ordered-a.gti
+export module ordered_a;
+import "ordered-shared.gti";
+import "log.gti";
+export mut int32_t include_a = mark(2);
+// --- ordered-b.gti
+export module ordered_b;
+import "ordered-shared.gti";
+import "log.gti";
+export mut int32_t include_b = mark(3);
+// --- ordered-shared.gti
+export module ordered_shared;
+import "log.gti";
+export mut int32_t shared_dependency = mark(1);

@@ -13,7 +13,7 @@ namespace lang {
 class HirLowerer::Impl {
 public:
   explicit Impl(TargetInfo target, HirLoweringScope scope)
-      : target(std::move(target)),
+      : target(std::move(target)), errorLimit(scope.errorLimit),
         reachablePrefixRequested(scope.reachablePrefix),
         entryDeclarations(scope.entryDeclarations),
         completeDeclarations(std::move(scope.completeDeclarations)),
@@ -332,7 +332,8 @@ private:
   [[nodiscard]] bool admitInstance(const Token &declaration,
                                    const std::optional<SourceSpan> &site,
                                    bool generic) {
-    if (discoveryLimitReached) {
+    if (discoveryLimitReached ||
+        errorLimitReached(output.diagnostics, errorLimit)) {
       return false;
     }
     if (discoveryDepth < maximumDiscoveryDepth &&
@@ -1629,11 +1630,13 @@ private:
 
   void processPendingInstances() {
     while (!discoveryLimitReached &&
+           !errorLimitReached(output.diagnostics, errorLimit) &&
            (processedClasses < output.program.classes.size() ||
             processedFunctions < output.program.functions.size() ||
             processedConstructors < output.program.constructors.size() ||
             processedDestructors < output.program.destructors.size())) {
       while (!discoveryLimitReached &&
+             !errorLimitReached(output.diagnostics, errorLimit) &&
              processedClasses < output.program.classes.size()) {
         DiscoveryScope scope(
             discoveryDepth, discoverySite, discoveryOrigin,
@@ -1643,6 +1646,7 @@ private:
       }
       enqueueVirtualContractRoots();
       while (!discoveryLimitReached &&
+             !errorLimitReached(output.diagnostics, errorLimit) &&
              processedFunctions < output.program.functions.size()) {
         DiscoveryScope scope(
             discoveryDepth, discoverySite, discoveryOrigin,
@@ -1651,11 +1655,13 @@ private:
         processFunction(processedFunctions++);
       }
       while (!discoveryLimitReached &&
+             !errorLimitReached(output.diagnostics, errorLimit) &&
              processedConstructors < output.program.constructors.size()) {
         // Function bodies and earlier constructors can discover concrete
         // generic owners. Their field/default catalogs must be complete
         // before the next constructor selects its initialization schedule.
         while (!discoveryLimitReached &&
+               !errorLimitReached(output.diagnostics, errorLimit) &&
                processedClasses < output.program.classes.size()) {
           DiscoveryScope scope(
               discoveryDepth, discoverySite, discoveryOrigin,
@@ -1663,7 +1669,8 @@ private:
               output.program.classes[processedClasses].instantiationSite);
           processClass(processedClasses++);
         }
-        if (discoveryLimitReached) {
+        if (discoveryLimitReached ||
+            errorLimitReached(output.diagnostics, errorLimit)) {
           break;
         }
         DiscoveryScope scope(discoveryDepth, discoverySite, discoveryOrigin,
@@ -1673,6 +1680,7 @@ private:
         processConstructor(processedConstructors++);
       }
       while (!discoveryLimitReached &&
+             !errorLimitReached(output.diagnostics, errorLimit) &&
              processedDestructors < output.program.destructors.size()) {
         DiscoveryScope scope(
             discoveryDepth, discoverySite, discoveryOrigin,
@@ -1684,7 +1692,8 @@ private:
         processDestructor(processedDestructors++);
       }
     }
-    if (!discoveryLimitReached)
+    if (!discoveryLimitReached &&
+        !errorLimitReached(output.diagnostics, errorLimit))
       publishVirtualDispatch();
   }
 
@@ -7748,6 +7757,7 @@ private:
   }
 
   TargetInfo target;
+  std::size_t errorLimit = 0;
   bool reachablePrefixRequested = false;
   // Top-level declaration range of the entry unit when lowering is scoped to
   // it; see `HirLoweringScope`.

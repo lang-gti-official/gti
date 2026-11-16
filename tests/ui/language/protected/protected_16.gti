@@ -1,0 +1,3 @@
+// Protected members: rejected with GTI-S2007.
+class Base { protected: Base(int x) {}  public: Base() = default; };
+struct Derived : public Base { Derived() : Base(1) {} Base make() { return Base(2); } };  //~ ERROR GTI-S2007

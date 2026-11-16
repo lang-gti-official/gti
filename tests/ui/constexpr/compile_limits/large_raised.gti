@@ -1,0 +1,20 @@
+// Compile limits: raising the step limit admits a request beyond the default.
+//@ check-pass
+//@ constexpr-steps: 2000000
+struct Tally {
+  uint64_t count;
+  uint64_t sum;
+  constexpr Tally(uint64_t c, uint64_t s) : count(c), sum(s) {}
+};
+constexpr Tally accumulate(uint64_t n, uint64_t seed) {
+  mut uint64_t count = 0;
+  mut uint64_t sum = seed;
+  while (count < n) {
+    count = count + 1;
+    sum = sum + count;
+  }
+  return Tally(count, sum);
+}
+constexpr uint64_t spin(uint64_t n) { return accumulate(n, uint64_t(0)).count; }
+static_assert(spin(uint64_t(70000)) == uint64_t(70000));
+int main() { return 0; }

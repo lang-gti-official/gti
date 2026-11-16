@@ -641,8 +641,10 @@ class Workflow:
                    "headRefOid merged isInMergeQueue autoMergeRequest { enabledAt } } } }")
     CANCEL_AUTO = ("mutation($id: ID!) { disablePullRequestAutoMerge(input: "
                    "{pullRequestId: $id}) { clientMutationId } }")
+    # DequeuePullRequestInput names the pull request `id`, unlike the
+    # `pullRequestId` of the enqueue/auto-merge inputs.
     DEQUEUE = ("mutation($id: ID!) { dequeuePullRequest(input: "
-               "{pullRequestId: $id}) { clientMutationId } }")
+               "{id: $id}) { clientMutationId } }")
 
     def integration(self, pr):
         result = self.api.graphql(self.INTEGRATION, {"id": pr["node_id"]}).get("node")

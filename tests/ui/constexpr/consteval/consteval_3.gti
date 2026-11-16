@@ -1,0 +1,7 @@
+// Consteval: immediate construction stays bounded by the request's step limit.
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) { while (true) {} }
+};
+int consume(Checked checked) { return checked.value; }
+int main() { return consume(7); }  //~ ERROR GTI-S2057

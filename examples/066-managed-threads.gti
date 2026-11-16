@@ -47,7 +47,7 @@ int main() {
   if (!first_started.has_value()) {
     return 1;
   }
-  mut std::thread first = std::move(first_started).value();
+  std::thread first = std::move(first_started).value();
   mut std::thread moved = std::move(first);
   auto first_joined = moved.join();
   if (!first_joined.has_value() || moved.joinable()) {
@@ -77,7 +77,7 @@ int main() {
   if (!third_started.has_value()) {
     return 5;
   }
-  mut std::thread third = std::move(third_started).value();
+  std::thread third = std::move(third_started).value();
 
   // Dynamic shared state does not require a global. The mutex serializes
   // payload access; the shared owner keeps it alive until all workers finish.

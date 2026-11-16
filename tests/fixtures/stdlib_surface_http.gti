@@ -96,8 +96,8 @@ int main() {
   if (request.url() != changed.view()) {
     return 13;
   }
-  mut auto header_result = request.set_header("Content-Type", "text/plain");
-  if (!header_result) {
+  request.set_header("Content-Type", "text/plain");
+  if (request.rejection().has_value()) {
     return 14;
   }
   request.set_body("hello");

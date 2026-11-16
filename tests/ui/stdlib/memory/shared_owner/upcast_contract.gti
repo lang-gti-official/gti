@@ -1,0 +1,17 @@
+// Upcast contract: shared-owner polymorphic upcasts must lower to verified MIR.
+//@ check-pass
+import std.memory;
+
+[[transfer, share]] interface Sink { int read(); };
+class Concrete : public Sink {
+public:
+  int read() override { return 7; }
+public:
+  Concrete() = default;
+};
+int main() {
+  mut auto concrete = std::make_shared<Concrete>();
+  auto alias = concrete.clone();
+  auto sink = std::upcast_shared<Sink, Concrete>(std::move(concrete));
+  return sink->read() + int(alias.use_count()) - 9;
+}

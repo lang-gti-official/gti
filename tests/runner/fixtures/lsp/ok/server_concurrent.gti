@@ -1,0 +1,6 @@
+// Server options: under the concurrent profile a C thread call needs unsafe.
+//@ execution-profile: concurrent
+//@ hover @join: unsafe
+//@ definition @join: @std:std/cthread.gti#thrd_join
+import std.cthread;
+int main() { std::thrd_t handle = 0; mut int32_t result = 0; return std::/*@join*/thrd_join(handle, result); }  //~ ERROR GTI-S2055
