@@ -6,7 +6,6 @@
     "macos_"
   ],
   "tests": [
-    "atomic_end_to_end",
     "atomic_lsp",
     "atomic_semantic_ir",
     "atomic_tsan",
@@ -113,9 +112,7 @@
     "managed_thread_tsan",
     "mir_thread_local",
     "mutex_cleanup_failure_runtime",
-    "mutex_end_to_end",
     "mutex_lsp",
-    "mutex_move_cleanup_runtime",
     "mutex_semantic_ir",
     "mutex_shell_recipes",
     "mutex_tsan",

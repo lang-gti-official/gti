@@ -5707,7 +5707,7 @@
         "tests/ui/stdlib/memory/allocator_storage",
         "tests/fixtures/storage_final_address.gti",
         "tests/fixtures/storage_release.gti",
-        "tests/arena_pool_runtime_test.py",
+        "tests/ui/stdlib/memory/arena_pool",
         "tests/ui/stdlib/memory/allocator_storage/success.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
@@ -5796,7 +5796,7 @@
         "tests/ui/stdlib/memory/allocator_storage",
         "tests/fixtures/storage_final_address.gti",
         "tests/fixtures/storage_release.gti",
-        "tests/arena_pool_runtime_test.py",
+        "tests/ui/stdlib/memory/arena_pool",
         "tests/ui/stdlib/memory/allocator_storage/success.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
@@ -6401,7 +6401,7 @@
         "tests/fixtures/mutex_basic.gti",
         "tests/fixtures/mutex_concurrent.gti",
         "tests/fixtures/mutex_move_only.gti",
-        "tests/mutex_runtime_test.py",
+        "tests/ui/stdlib/mutex",
         "tests/mutex_tests.cpp",
         "tests/mutex_tsan_test.py"
       ]
@@ -6474,7 +6474,7 @@
         "tests/fixtures/stdlib_surface_numeric.gti",
         "tests/fixtures/generic_callable_concepts.gti",
         "tests/ui/callables/concepts",
-        "tests/defined_integer_runtime_test.py",
+        "tests/ui/stdlib/numeric/defined_integer_boundaries.gti",
         "tests/ui/stdlib/numeric",
         "tests/ui/stdlib/numeric/boundaries.gti",
         "tests/ui/stdlib/numeric/boundaries_failure.gti",
@@ -7779,7 +7779,7 @@
         "tests/ui/stdlib/string/operations_errors",
         "tests/compiler_declarations_tests.cpp",
         "tests/fixtures/string_view_assignment.gti",
-        "tests/declaration_construction_runtime_test.py"
+        "tests/ui/classes/declaration_construction.gti"
       ]
     },
     {
@@ -8346,7 +8346,7 @@
       "evidence": [
         "tests/fixtures/generic_clone.gti",
         "tests/ui/generics/clone",
-        "tests/concept_conditions_test.py"
+        "tests/ui/generics/concept_conditions"
       ]
     },
     {

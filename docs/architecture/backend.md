@@ -767,7 +767,7 @@ template is defined. The complete definitions and their native headers
 (`<atomic>`, `<mutex>`) require a concrete MIR capability instance or a
 verified capability operation. The managed-thread handle representation is
 not a template, so a retained thread-handle declaration selects its complete
-support. `dormant_capability_runtime` builds and runs each family's
+support. `tests/ui/modules/dormant_capability` builds and runs each family's
 import-only program natively.
 
 Scoped groups select the same managed-thread support from the verified
