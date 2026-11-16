@@ -69,6 +69,11 @@ enum class ConstantAggregateKind {
   // index (zero for null) and elements[0] the signed element offset from that
   // base. Never a host or target address and never a persistent constant.
   TransientPointer,
+  // Executor-local checked reference held by a stored-reference field.
+  // identity is a request-local reference-base index designating the
+  // referent it was bound to. Never a host or target address and never a
+  // persistent constant.
+  TransientReference,
 };
 
 struct ConstantAggregateField {

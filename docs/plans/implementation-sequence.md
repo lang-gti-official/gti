@@ -662,7 +662,7 @@ workflow determine task scope and integration.
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B/C`, `B-LIB-02`, `T-EMBED-01`, `Q-EMBED-01` | infallible LLVM context/wrapper/project-library workflow implemented; full campaign partial | Complete fallible closure containment, editor integration and installed load/call/fail/unload/reload/platform acceptance. Preserve the existing generated header, immutable generations, cache/report/clean and C/C++ host fixtures; see [embedding delivery](#engine-embedding-delivery-campaign). |
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
-| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; one lazy rule and compile-time panics implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Call closures stage lazily for every constant context, and an executed panic reports its message. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
+| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; one lazy rule and compile-time panics implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Call closures stage lazily for every constant context, and an executed panic reports its message. Stored-reference cursors and range-based `for` execute (2026-11-16). Select remaining cleanup-bound carrier, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse, staged constant-call memoization and unchanged-source replay delivered through 0.486.1 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
 | `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
@@ -10191,8 +10191,29 @@ follow-ups:
   O0/O1/O2/O3 differential execution and sanitizer/no-elide checks. Complete
   production-cutover compatibility and release gates remain pending. No AST
   payload interpreter is introduced.
-- **Remaining scope:** Stored references, shared/virtual/recursive owning
-  cleanup, other allocation providers (arenas and pools over raw storage),
+- **Stored-reference cursors and range-for (2026-11-16):** the MIR evaluator
+  executes classes with checked reference fields. A stored reference is a
+  request-local designator of its referent, bound by the constructor's Stored
+  loan (the same field-publication contract native lowering uses), resolved
+  and re-validated on every access, and never published. Verified stored and
+  alternative loan dependencies execute as provenance; a range element loan
+  that re-parents a dereference result designates that place; fixed-array
+  element pointers support in-array arithmetic. Range-based `for` therefore
+  runs through its ordinary verified MIR plan: fixed arrays (`ArrayRangeBegin`
+  and `ArraySize` endpoints) and nominal cursors, including `break`,
+  `continue`, early `return`, nested and mutable traversal, and owned range
+  temporaries. Semantics admits stored-reference classes in transient
+  `constexpr` signatures only. `std::vector`, `std::span`/`mutable_span`,
+  `std::array` and the checked cursor helpers declare their cursor protocol
+  `constexpr`; an unrelated application range and cursor cover the same rule
+  (`tests/ui/language/constexpr_range_for*.gti`,
+  `tests/ui/stdlib/vector/constexpr_*.gti`, example 196). Remaining: the
+  consuming `into_range()` cursor (declaration-default fields and a draining
+  destructor), carriers whose cleanup uses a stored borrow, and `constexpr`
+  coverage of the generic algorithms (`std::sort` uses restoring swaps,
+  comparator callables and radix scratch storage).
+- **Remaining scope:** Carriers whose cleanup uses a stored borrow,
+  shared/virtual/recursive owning cleanup, other allocation providers (arenas and pools over raw storage),
   in-place constructor targets without an explicit canonical field-write schedule,
   unions, inherited aggregates,
   and polymorphism remain
