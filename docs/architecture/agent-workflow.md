@@ -247,7 +247,7 @@ one-minute test to seventeen minutes and made timing-sensitive LSP tests
 flake, so every worktree and session of a repository shares one window:
 
 ```sh
-python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend
+python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE slow
 python3 scripts/build_window.py --kind build -- cmake --build build-release -j 8
 python3 scripts/build_window.py --status
 ```
@@ -507,7 +507,7 @@ use the **same directory and counts**; for the Mini:
 
 ```sh
 GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind build -- cmake --build build-release -j 6
-GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE cpp-backend
+GTI_BUILD_WINDOW_DIR=/private/tmp/gti-remote-runner/window python3 scripts/build_window.py --kind suite -- ctest --test-dir build-release -j 12 --test-load 12 -LE slow
 ```
 
 On Ubuntu, set `GTI_BUILD_WINDOW_DIR=/tmp/gti-remote-runner/window` and
@@ -655,11 +655,8 @@ workflow-only automation does not change the packaged compiler version.
 
 The sanitizer jobs below run in `sanitizers.yml`, daily on the nightly commit,
 not in full validation (see "Primary Targets" in `verification.md`). The
-library sanitizer jobs partition `cpp_mir_body_emitter_lifecycle` through
-its existing `--list` / `--test NAME` protocol. Each job runs half of the sorted
-named-case inventory serially under the unchanged 5,400-second aggregate bound;
-native integration still runs the ordinary aggregate CTest. The sanitizer jobs
-retain per-case outcomes and durations. Missing, stale, failed or timed-out case evidence fails the gate.
+sanitizer jobs retain per-case outcomes and durations. Missing, stale, failed
+or timed-out case evidence fails the gate.
 Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
 jobs retain the library subset targets. This avoids filling runner disks with
 unexecuted sanitizer library binaries in compiler jobs.
@@ -752,8 +749,8 @@ optimized CMake tree. Write a temporary JSON plan, for example:
   "regressions": ["owning_regression"],
   "owning": ["owning_suite"],
   "cross_phase": ["related_runtime"],
-  "broader": ["cpp_mir_body_emitter_lifecycle"],
-  "targets": ["gti_owning_tests", "gti_cpp_mir_body_emitter_lifecycle_tests"],
+  "broader": ["optimizer_conformance"],
+  "targets": ["gti_owning_tests", "gti_optimizer_conformance_tests"],
   "platforms": ["darwin"],
   "reproduction": {
     "revision": "0123456789012345678901234567890123456789",
@@ -882,8 +879,9 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
 | `workflow_dispatch` on main | full | the same bounded gate, for recovery |
-| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, bundled-release `integration` shards (Linux over the complete inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`), with `GTI_TEST_BACKENDS=llvm`; its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
-| `schedule` daily, or `workflow_dispatch` (`sanitizers.yml`) | sanitizers | the compiler `sanitizers`, the LLVM-backend sanitizers and the thread sanitizer on the commit the `nightly` tag names (or a dispatched commit on main or a `beta/*` line), with `GTI_TEST_BACKENDS=llvm`; its `Sanitizer verdict (<commit>)` is the release train's sanitizer evidence for cuts and promotions, and a failure on the nightly commit opens its own `main-broken` issue. It never blocks the queue or nightly |
+| `push` to main, or `workflow_dispatch` (`full-validation.yml`) | full | post-integration full validation: production packaging and installed checks, bundled-release `integration` shards (Linux over the per-commit inventory, `--test-set full`; macOS over the `darwin` set, `--test-set darwin`; both leave out tests labelled `slow` and run runtime harnesses at `-O0`); its `Full validation verdict` and retained packages are the nightly/beta/train evidence, a failure opens the `main-broken` issue, and the run refreshes `tests/ci_test_durations.json` (artifact `ci-test-durations`) for shard balancing |
+| `schedule` daily, or `workflow_dispatch` (`sanitizers.yml`) | sanitizers | the compiler `sanitizers`, the LLVM-backend sanitizers and the thread sanitizer on the commit the `nightly` tag names (or a dispatched commit on main or a `beta/*` line); its `Sanitizer verdict (<commit>)` is release-train evidence for cuts and promotions, and a failure on the nightly commit opens its own `main-broken` issue. It never blocks the queue or nightly |
+| `schedule` daily, or `workflow_dispatch` (`slow.yml`) | slow tier | on the same commit: the `slow`-labelled tests at `-O0` and `-O3` (`--test-set slow`, `darwin-slow`) and an `-O3` re-run of every per-commit runtime harness that follows `tests/backend_modes.py` (`--test-set o3`, `darwin-o3`); its `Slow tier verdict (<commit>)` is the other half of the release train's daily evidence, and a failure on the nightly commit opens its own `main-broken` issue. It never blocks the queue, nightly or `tip` |
 | PR or merge group | source-stdlib | lint, workflow regressions, source-library owners and consumers, declared PR regressions and native smoke on both platforms using an admitted full-CI compiler; merge groups also package the new source library |
 | PR or merge group | lsp | lint, workflow regressions and the `lsp` lane on both platforms: the adapter rebuilt against an admitted full-CI compiler SDK, registered LSP/editor consumers, declared PR regressions, native smoke and installed checks; merge groups also package the complete toolchain with the reused compiler's provenance |
 | PR or merge group | automation | lint and workflow regressions only |
@@ -891,21 +889,18 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 `validation_checks.py shard` executes one cost-balanced shard of a test set.
 The frozen C++ backend is separated from default builds, tests and CI
-([ADR 031](../decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10)):
-it is built only with `-DGTI_ENABLE_CPP_BACKEND=ON`, and only the
-hand-dispatched `cpp-backend.yml` builds and tests it (`--test-set cpp` over
-the full inventory with `GTI_TEST_BACKENDS=cpp`, plus the C++ emitter's own
-tests under ASan/UBSan). It never runs on a schedule, opens an issue, or blocks
-the queue, full validation or a channel. Harness mode tables come from
-`tests/backend_modes.py`: `llvm-O0` and `llvm-O3` by default, `c++23 -O3` under
-`GTI_TEST_BACKENDS=cpp`, which configuration rejects unless the C++ backend is
-enabled. The C++-only CTest entries (`cpp_mir_*`, `cpp_debug_artifacts`,
-`lowered_program_corpus_census`) exist only in such a build; they carry the
-CTest label `cpp-backend`, which `test_throughput_registration` keeps equal to
-`CPP_ONLY_PREFIXES`. No general test may build or run the C++ backend. Local
-C++ backend work configures `-DGTI_ENABLE_CPP_BACKEND=ON
--DGTI_TEST_BACKENDS=cpp`, runs `-L cpp-backend`, and dispatches the workflow
-on its branch (`gh workflow run cpp-backend.yml --ref <branch>`).
+([ADR 031](../decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10));
+its tests and `cpp-backend.yml` were removed on 2026-11-16
+([test-suite redesign](../plans/test-suite-redesign.md)), and no test builds
+or runs it. Harness mode tables come from `tests/backend_modes.py`: LLVM at
+the levels `GTI_TEST_LLVM_LEVELS` selects, `O0` by default. The shard runner
+sets it per test set (`TEST_SET_LEVELS`): `O0` for `gate`, `full` and
+`darwin`, `O0,O3` for the slow sets and `O3` for the re-run sets. The `slow`
+CTest label is assigned in one place, `gti_slow_test_patterns` in
+`tests/TestThroughput.cmake`; the per-commit sets exclude it, and
+`merge-shards`/`ci-gate` still prove each platform ran its per-commit
+inventory exactly once. `slow.yml` proves its own sets the same way with
+`platform:test-set` keys.
 Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
 `body_analysis_order`, `instance_reuse`) are also registered as per-suite,
 per-source or corpus-partition entries; a sharded run executes the parts and

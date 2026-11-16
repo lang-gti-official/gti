@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """No fixture loses its last execution mode: every runtime harness runs on LLVM.
 
-The shipped backend gets the execution coverage (AGENTS.md, "Backend
-Development Policy"). A harness that hard-codes a C++ mode table is how a
-fixture silently stops executing on LLVM, so this check inventories every
-registered Python harness that receives the `gti` executable and requires one
-of these:
+LLVM is the only tested backend (AGENTS.md, "Backend Development Policy").
+Per commit a runtime harness runs at -O0; the daily slow tier adds -O3
+(tests/backend_modes.py, GTI_TEST_LLVM_LEVELS). A harness that hard-codes a
+mode table is how a fixture silently stops executing on LLVM at either level,
+so this check inventories every registered Python harness that receives the
+`gti` executable and requires one of these:
 
-* it shares `lambda_pack_invocation_runtime_test.main`: `--list-modes` must
-  plan an LLVM execution for every fixture under the default policy, or
+* it shares `lambda_pack_invocation_runtime_test.main`: under the slow-tier
+  policy (`GTI_TEST_LLVM_LEVELS=O0,O3`) `--list-modes` must plan an LLVM
+  execution at both -O0 (the per-commit level) and -O3 for every fixture, or
   declare the fixture `llvm_unsupported` (an exact rejection or a filed bug
   symptom that the harness asserts still reproduces);
 * it builds its modes from `tests/backend_modes.py` and spells no backend
   itself: no `--std`, no `--backend cpp`, no bare `--keep-cpp` (the LLVM
   backend rejects it; `keep_cpp(flags)` is empty there);
 * it selects no backend at all, so the compiler's default, LLVM, executes it;
-* or it is a C++-only entry by name (`scripts/validation_checks.py`
-  `CPP_ONLY_PREFIXES`), which only the hand-dispatched C++ job runs;
 * or it is listed in ALLOWED_SPELLINGS with the reason the spelling is the
   contract under test (a CLI option check, say) rather than a mode table.
 
@@ -99,13 +99,9 @@ def spells_a_backend(text):
     return False
 
 
-def cpp_only(repository, name):
-    sys.path.insert(0, str(repository / "scripts"))
-    import validation_checks  # noqa: E402  (the shared CI policy module)
-    return validation_checks.cpp_only(name)
-
-
 SELF = pathlib.Path(__file__).resolve()
+# The per-commit level and the slow tier's addition (tests/backend_modes.py).
+REQUIRED_LEVELS = ("O0", "O3")
 
 
 def harness_of(test):
@@ -126,11 +122,12 @@ def harness_of(test):
 
 
 def list_modes(harness, command):
-    """Rows (fixture, label, plan) a shared-main harness plans under the default policy."""
+    """Rows (fixture, label, plan) a shared-main harness plans under the slow-tier policy."""
     index = command.index(str(harness))
     argv = [sys.executable, str(harness), *command[index + 1:], "--list-modes"]
     result = subprocess.run(argv, capture_output=True, text=True, timeout=120,
-                            env={**dict(__import__("os").environ), "GTI_TEST_BACKENDS": "llvm"})
+                            env={**dict(__import__("os").environ), "GTI_TEST_BACKENDS": "llvm",
+                                 "GTI_TEST_LLVM_LEVELS": ",".join(REQUIRED_LEVELS)})
     if result.returncode != 0:
         raise AssertionError(f"{harness.name}: --list-modes failed\n{result.stdout}{result.stderr}")
     rows = []
@@ -168,14 +165,11 @@ def main():
         raise AssertionError(f"ALLOWED_SPELLINGS names harnesses that no longer spell a backend: {stale}")
     violations = []
     declared = []
-    counts = {"shared": 0, "policy": 0, "default-backend": 0, "cpp-only": 0, "allowed": 0}
+    counts = {"shared": 0, "policy": 0, "default-backend": 0, "allowed": 0}
     seen = set()
     for test in sorted(tests, key=lambda test: test["name"]):
         harness, compiler, command = harness_of(test)
         if harness is None or not compiler or not harness.is_relative_to(repository / "tests"):
-            continue
-        if cpp_only(repository, test["name"]):
-            counts["cpp-only"] += 1
             continue
         text = harness.read_text(errors="replace")
         if re.search(r"^from lambda_pack_invocation_runtime_test import", text, re.M):
@@ -189,12 +183,14 @@ def main():
             if not fixtures:
                 violations.append(f"{test['name']}: plans no fixture")
             for name, plans in fixtures.items():
-                executes = any(label.startswith("llvm-") and plan == "execute" for label, plan in plans)
+                executes = {label for label, plan in plans if label.startswith("llvm-") and plan == "execute"}
                 limitation = [plan for label, plan in plans if plan.startswith("unsupported:")]
+                missing = [f"llvm-{level}" for level in REQUIRED_LEVELS if f"llvm-{level}" not in executes]
                 if limitation:
                     declared.append(f"{test['name']}/{name}: {limitation[0]}")
-                elif not executes:
-                    violations.append(f"{test['name']}/{name}: no LLVM execution mode and no llvm_unsupported declaration")
+                elif missing:
+                    violations.append(f"{test['name']}/{name}: no {', '.join(missing)} execution mode "
+                                      "and no llvm_unsupported declaration")
             continue
         if harness.name != "lambda_pack_invocation_runtime_test.py" and (
                 "LLVM_UNSUPPORTED" in text or "llvm_unsupported=" in text):
@@ -215,7 +211,8 @@ def main():
         print("declared limitation:", line)
     if violations:
         raise AssertionError("fixtures without LLVM execution coverage:\n" + "\n".join(violations))
-    print(f"every runtime harness executes on LLVM under the default policy; {len(declared)} declared limitations")
+    print(f"every runtime harness executes on LLVM at -O0 (per commit) and -O3 (slow tier); "
+          f"{len(declared)} declared limitations")
 
 
 if __name__ == "__main__":

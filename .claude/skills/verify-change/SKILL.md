@@ -11,10 +11,9 @@ risk-based focused and platform coverage, preservation, exact-source evidence,
 bounded output and waiting. Run focused checks only: the merge queue runs the
 bounded gate on the exact candidate and full validation runs the complete suite
 after integration, so never run it locally to finish a task. Local runs
-follow the CI test policy: harnesses take the configured tree's
-`GTI_TEST_BACKENDS` (`llvm`), and the frozen C++ backend is not built unless
-deliberate C++ work configures `-DGTI_ENABLE_CPP_BACKEND=ON
--DGTI_TEST_BACKENDS=cpp`; `-LE cpp-backend` stays harmless.
+follow the CI test policy: runtime harnesses run on LLVM at `-O0` unless
+`GTI_TEST_LLVM_LEVELS` selects more, the frozen C++ backend is not built and
+has no tests, and broad local runs leave out the daily tier with `-LE slow`.
 
 Use the canonical planner to avoid a stale client-specific selection policy:
 

@@ -482,12 +482,13 @@ arbitrary PR pass or merge exception still does not.
    `cmake/PackageRelease.cmake` refuses a macOS stage without it. The stage
    becomes `gti-nightly-<platform>.tar.gz` with a `.sha256` sidecar and
    `share/gti/BUILD_ID` naming the exact source commit. Full integration also
-   runs the complete suite in cost-balanced shards on the same bundled-release
+   runs the per-commit suite (runtime harnesses at `-O0`, tests labelled
+   `slow` excluded) in cost-balanced shards on the same bundled-release
    configuration, reusing the packaging job's object cache, and retains the
    system-LLVM fast checks, including the Linux system-LLVM installed
-   consumers. The sanitizer gates run daily on the published nightly commit
-   instead (`sanitizers.yml`); the release train requires them, nightly does
-   not. The coverage gate proves each platform's inventory
+   consumers. The sanitizer gates (`sanitizers.yml`) and the slow tier
+   (`slow.yml`) run daily on the published nightly commit instead; the
+   release train requires both, nightly does not. The coverage gate proves each platform's inventory
    ran exactly once. Packaging is a required part of the `Full validation
    verdict`; the merge gate (`CI gate`) proves only build and fast checks.
 2. **Select validated artifacts.** Nightly runs only from main's own definition
@@ -570,8 +571,9 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    takes the current validated nightly and the 48-hour beta soak is the
    safety margin. It must also
    have a passing `Sanitizer verdict (<commit>)` from a scheduled or
-   main-dispatched `sanitizers.yml` run; until the daily sanitizers pass on
-   that nightly the train skips with a notice. A dispatch's optional
+   main-dispatched `sanitizers.yml` run and a passing
+   `Slow tier verdict (<commit>)` from `slow.yml`; until both daily tiers pass
+   on that nightly the train skips with a notice. A dispatch's optional
    `min_age_hours` can require a minimum age (measured from the commit's
    committer time, which the queue sets when it lands); nothing lowers the
    full CI evidence requirement. The train skips with a notice when a cut already landed
@@ -651,10 +653,10 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    since publication, and no open issue labelled `release-blocker` may name
    the version in its title or body (`0.494.0`, `v0.494.0` or any
    `0.494.0-beta.K`; `10.494.0` or `0.494.0.1` do not count). The beta's code
-   must have a passing sanitizer verdict: a release cut that changes only
-   release metadata is covered by its nightly parent's verdict, and any other
-   beta commit (a backported line) needs its own, from a `sanitizers.yml`
-   dispatch naming that commit. A dispatch's
+   must have passing sanitizer and slow-tier verdicts: a release cut that
+   changes only release metadata is covered by its nightly parent's verdicts,
+   and any other beta commit (a backported line) needs its own, from
+   `sanitizers.yml` and `slow.yml` dispatches naming that commit. A dispatch's
    `soak_hours` may lower the soak; the stable notes record it. The job waits
    for the protected `stable` environment's approval and then re-admits the
    beta. That recheck rejects the selected beta if a newer stable release or
