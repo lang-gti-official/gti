@@ -52,6 +52,7 @@ LoadedLexicalUnitLoader::load(const LexicalUnitRequest &request) const {
     workMetrics->lexedUnits.push_back(request.canonicalPath);
   }
   Lexer lexer;
+  lexer.setErrorLimit(request.errorLimit);
   const auto lexStart = std::chrono::steady_clock::now();
   std::vector<Token> scanned;
   if (request.exactSource) {
@@ -81,7 +82,8 @@ LoadedLexicalUnitLoader::load(const LexicalUnitRequest &request) const {
     workMetrics->sourceBytes += source.size();
   }
   cacheKey.sourceDigest = loadedDigest;
-  if (cache != nullptr) {
+  if (cache != nullptr &&
+      !errorLimitReached(lexer.errors(), request.errorLimit)) {
     cache->storeLexed(cacheKey, {.source = source,
                                  .sourceDigest = loadedDigest,
                                  .tokens = tokens,

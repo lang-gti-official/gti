@@ -1,0 +1,39 @@
+// Public source-defined owning callback wrappers use the shared native matrix.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 7
+//@[default] stdout: 1
+//@[default] stdout: 9
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 7
+//@[fail] stdout: 1
+//@[fail] stdout: 9
+//@[fail] stderr-contains: owning_function_mutable_arguments_failure.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- owning_function_mutable_arguments_failure.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  Token token{1};
+  auto target = [token = std::move(token)](mut int& value, int divisor) -> void {
+    value += token.read();
+    std::println(value);
+    int result = value / divisor;
+  };
+  std::move_only_function<void(mut int&, int)> callback{std::move(target)};
+  mut int value = 6;
+  callback(value, argc == 1 ? 1 : 0);
+  return value - 7;
+}

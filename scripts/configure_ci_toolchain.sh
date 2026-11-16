@@ -69,6 +69,28 @@ case "$(uname -s)" in
       "libclang-rt-${llvm_major}-dev"
     cc=gcc-14
     cxx=g++-14
+    if [[ "${GTI_CI_COVERAGE:-}" == 1 ]]; then
+      # Clang source-based coverage (suite-measures.yml) needs a Clang host
+      # compiler, and the runtime's raw atomic lanes admit on Linux x86_64 only
+      # the Clang major runtime/src/atomic_lane.h names, which can differ from
+      # the pinned LLVM. That Clang, its profile runtime and its
+      # llvm-profdata/llvm-cov come from the same repository and key, on that
+      # major's release line. The compiler still links the pinned LLVM.
+      coverage_major="$(sed -n '/defined(__linux__) && defined(__x86_64__)/,/#else/s/.*__clang_major__ != \([0-9][0-9]*\).*/\1/p' \
+        "${repository}/runtime/src/atomic_lane.h" | head -n 1)"
+      : "${coverage_major:?runtime/src/atomic_lane.h names no reviewed Linux Clang}"
+      if [[ "${coverage_major}" != "${llvm_major}" ]]; then
+        echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${coverage_major} main" |
+          sudo tee /etc/apt/sources.list.d/apt.llvm.org-coverage.list >/dev/null
+        apt_get update
+      fi
+      apt_get install -y --no-install-recommends \
+        "clang-${coverage_major}" "llvm-${coverage_major}" "libclang-rt-${coverage_major}-dev"
+      coverage_bin="/usr/lib/llvm-${coverage_major}/bin"
+      cc="${coverage_bin}/clang"
+      cxx="${coverage_bin}/clang++"
+      echo "GTI_COVERAGE_LLVM_BIN=${coverage_bin}" >> "${GTI_CI_ENV_FILE}"
+    fi
     llvm_dir="/usr/lib/llvm-${llvm_major}/lib/cmake/llvm"
     ;;
   Darwin)

@@ -1,0 +1,72 @@
+// An activated Unexpected remains local until fallible cleanup succeeds.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 1
+//@[run1] stdout: 2
+//@[run1] stdout: 4
+//@[run1] stdout: 3
+//@[run2] run-fail
+//@[run2] args: guard-fails
+//@[run2] exit-code: 70
+//@[run2] stdout: 1
+//@[run2] stdout: 2
+//@[run2] stdout: 3
+//@[run2] stderr-contains: owned_unexpected_pending_cleanup.gti:22: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: guard-fails error-fails
+//@[run3] exit-code: 70
+//@[run3] stdout: 1
+//@[run3] stdout: 2
+//@[run3] stdout: 3
+//@[run3] stderr-contains: owned_unexpected_pending_cleanup.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at owned_unexpected_pending_cleanup.gti:22; secondary [GTI-R0002]
+//@[run4] run-fail
+//@[run4] args: published error fails
+//@[run4] exit-code: 70
+//@[run4] stdout: 1
+//@[run4] stdout: 2
+//@[run4] stdout: 4
+//@[run4] stdout: 3
+//@[run4] stderr-contains: owned_unexpected_pending_cleanup.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] args: passive success skips error
+//@[run5] stdout: 8
+// --- owned_unexpected_pending_cleanup.gti
+import std.string;
+import std.vector;
+
+class Error {
+  int divisor;
+  std::string message;
+public:
+  Error(int divisor, std::string message)
+      : divisor(divisor), message(std::move(message)) { std::println(1); }
+  ~Error() {
+    std::println(3);
+    int value = 1 / this.divisor;
+  }
+};
+
+class Guard {
+  int divisor;
+public:
+  Guard(int divisor) : divisor(divisor) {}
+  ~Guard() {
+    std::println(2);
+    int value = 2 / this.divisor;
+  }
+};
+
+expected<int, Error> make(int guard_divisor, int error_divisor) {
+  Guard local{guard_divisor};
+  return unexpected(Error(error_divisor, std::string("owning error")));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 5) {
+    expected<int, Error> success = 7;
+    std::println(8);
+    return 0;
+  }
+  auto result = make(argc == 1 || argc == 4 ? 1 : 0, argc < 3 ? 1 : 0);
+  std::println(4);
+  return 0;
+}

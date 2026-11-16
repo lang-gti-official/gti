@@ -1,0 +1,6 @@
+// The formatter preserves lifetime contracts while normalising layout.
+// (From borrow_origin_syntax_tests.cpp testFormatting.)
+//@ parse-pass
+//@ snapshot: format
+[[track_caller]] int&<a> borrow<lifetime a>(int&<a> owner){return owner;}
+struct Holder{int value;int&<this> get(){return this.value;}};

@@ -7,7 +7,9 @@ description: Plan, run, and report proportionate validation for a GTI working-tr
 
 Validate the behavior owned by the change and report concrete evidence. Keep
 source code, tests, and canonical documentation authoritative; this workflow is
-not a second semantic or test-selection authority.
+not a second semantic or test-selection authority. How to write a new test,
+its proof level and budgets are [Writing Tests](../../../AGENTS.md#writing-tests);
+this skill does not restate them.
 
 ## Establish The Scope
 
@@ -46,7 +48,9 @@ tooling that consume them. For the changed paths the planner prints:
   and the native O0/O3 smoke
   (`python3 scripts/validation_checks.py smoke --build build`);
 - **T0**, the registered tests whose CMake registration names a changed test,
-  fixture or harness file;
+  fixture or harness file (a changed `tests/ui/`, `tests/lsp/` or
+  `tests/project/` file selects `gti_test_ui`; for a quick loop run
+  `build-release/gti-test <path>` on just those files);
 - **T1**, the owning tests, and **T2**, the consumer tests, each as one
   runnable `ctest ... -R '<anchored regex>'` command, followed by a
   per-test list of the areas that selected it;
@@ -92,11 +96,13 @@ negative cases so an ICE cannot silently become a miscompile.
 - Trace changed behavior through its owning layer. Do not infer GTI semantics
   from emitted C++ or documentation examples.
 - For syntax or language meaning, cover applicable parser/AST, semantics, HIR,
-  MIR, optimizer/backend, runtime/stdlib, formatter, Tree-sitter, LSP, examples,
-  and specification surfaces. Document an intentionally unaffected layer
-  instead of adding a placeholder test.
-- For diagnostics, verify the stable code, message fragment, exact source/span,
-  related information, recovery, and fix-it. Include LSP protocol checks when
+  MIR, optimizer/backend, runtime/stdlib, formatter, Tree-sitter, LSP and
+  specification surfaces, each at the cheapest proof level that would catch
+  the bug. Document an intentionally unaffected layer instead of adding a
+  placeholder test.
+- For diagnostics, verify the stable code and line with `//~` annotations,
+  plus the message fragment, related information, recovery and fix-it where
+  they changed (`//@ snapshot: diagnostics` only when rendering is the point). Include LSP protocol checks when
   publication or code actions change.
 - For driver or project changes, preserve direct-mode compatibility and verify
   immutable plans, exact arguments, path/symlink containment, caching or
@@ -110,11 +116,9 @@ negative cases so an ICE cannot silently become a miscompile.
   version policy to shipped behavior.
 - For documentation-only changes, do not build by default unless examples,
   commands, generated material, or claimed behavior require execution.
-- Apply [the backend development policy](../../../docs/decisions/031-native-llvm-backend-foundation.md#backend-development-policy-2026-10-25):
-  C++ is bug-fix-only through v1.0, not a feature-parity gate for LLVM. Preserve
-  its supported regressions/differential checks; record comparator gaps and
-  require independent GTI/native execution, rejection, cleanup and applicable
-  platform/performance evidence instead of silent skips or new C++ features.
+- The C++ backend is frozen and has no tests
+  ([ADR 031](../../../docs/decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10));
+  never select or add a C++-backend check.
 - For changes affecting runtime execution, apply
   [ADR 012's performance acceptance](../../../docs/decisions/012-outcome-first-systems-readiness.md#runtime-performance-requirement-2026-10-09).
   Verify representative optimized execution and report runtime, allocations,
@@ -144,11 +148,8 @@ invalid setup cheaply; they do not replace required broad coverage.
    `python3 scripts/build_window.py --kind build|suite -- <command>`, so
    concurrent sessions share the host; focused `-R` selections and
    single-file compiles run directly. Local runs follow the CI test policy:
-   runtime harnesses run on LLVM, the shipped backend, at `-O0` unless
-   `GTI_TEST_LLVM_LEVELS` (for example `O0,O3`) selects more. The frozen C++
-   backend is not built (`GTI_ENABLE_CPP_BACKEND` is off) and has no tests.
-   Tests labelled `slow` belong to the daily slow tier; leave them out of broad
-   local runs with `-LE slow`.
+   everything runs on LLVM at `-O0`; `-O3`, `tests/slow/` and tests labelled
+   `slow` belong to the daily slow tier, so leave them out (`-LE slow`).
 3. Select completion coverage from the changed invariant and affected consumer
    graph, as described in the canonical verification document. An independent
    isolated subsystem change can complete with owning, cross-phase and required
@@ -160,14 +161,18 @@ invalid setup cheaply; they do not replace required broad coverage.
    `scripts/local_language_audit.py --full` non-gating; turn any bug it finds
    into a minimal deterministic regression in the owning suite.
    The complete suite is never a contributor gate: post-integration full
-   validation runs it on each main head on every required platform. Platform, runtime and
+   validation runs it on each main head on every required platform. Until the
+   test-suite migration completes, that includes the old harnesses, and
+   `compiler_pipeline` remains a focused check. Platform, runtime and
    performance obligations that the queue does not cover (for example a
    benchmark comparison under ADR 012) remain yours to run and record.
 4. Run `git diff --check` and inspect the complete scoped diff for unintended
    generated, vendored, user, or semantic changes.
 5. If a check fails, preserve its raw command and output, identify the owning
    failure, and fix only when the task authorizes implementation. Never hide a
-   failure by weakening, deleting, or skipping the test.
+   failure by weakening, deleting, or skipping the test. A broken case in a
+   frozen old harness is fixed there or converted to a new-style test, never
+   extended.
 
 Use the [execution contract](../../../docs/architecture/agent-workflow.md#bounded-output-analysis-and-waiting)
 for bounded log display and waiting on the same live operation. A tail is not
@@ -222,5 +227,5 @@ local focused checks use an existing optimized compiler. CI additionally require
 a compatible retained full-CI compiler, verifies its native inputs, and runs the
 owning/consumer checks against the candidate stdlib on both platforms. Unknown
 paths, native/build/test-routing changes and missing artifacts fall back to full
-CI. This does not waive runtime, rejection, performance or example evidence.
+CI. This does not waive runtime, rejection or performance evidence.
 See `docs/architecture/agent-workflow.md#required-ci-and-the-merge-queue`.

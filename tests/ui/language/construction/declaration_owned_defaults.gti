@@ -1,0 +1,67 @@
+// Out-of-line bodies retain declaration-owned default execution and cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3
+//@[run1] stdout: 1
+//@[run1] stdout: 2
+//@[run1] stdout: 3
+//@[run1] stdout: 5
+//@[run1] stdout: 9
+//@[run2] run-fail
+//@[run2] args: default
+//@[run2] exit-code: 70
+//@[run2] stdout: 1
+//@[run2] stdout: 2
+//@[run2] stdout: 5
+//@[run2] stdout: 9
+//@[run2] stderr-contains: declaration_owned_defaults.gti:8: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: body failure
+//@[run3] exit-code: 70
+//@[run3] stdout: 1
+//@[run3] stdout: 2
+//@[run3] stdout: 3
+//@[run3] stdout: 5
+//@[run3] stdout: 9
+//@[run3] stderr-contains: declaration_owned_defaults.gti:27: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- declaration_owned_defaults.gti
+import std.string;
+import std.vector;
+
+mut int stage = 0;
+int first() { std::println(1); return 4; }
+int later() {
+  int divisor = stage == 1 ? 0 : 1;
+  return 7 / divisor;
+}
+class Payload {
+public:
+  Payload() { std::println(2); }
+  Payload(Payload&) = delete;
+  Payload(Payload&&) = default;
+  ~Payload() { std::println(5); }
+};
+class Factory {
+public:
+  static int Create(int initial = first(), Payload input = Payload(), int last = later());
+  int Read(int value = 7);
+public:
+  Factory() = default;
+};
+int Factory::Create(int renamed, Payload owned, int tail) {
+  std::println(3);
+  int divisor = stage == 2 ? 0 : 1;
+  return renamed + tail + 1 / divisor;
+}
+int Factory::Read(int renamed) { return renamed; }
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() { std::println(9); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Guard guard{};
+  Factory factory{};
+  if (factory.Read() != 7) { return 1; }
+  return Factory::Create() == 12 ? 0 : 1;
+}

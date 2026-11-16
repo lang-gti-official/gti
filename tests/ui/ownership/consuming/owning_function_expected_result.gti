@@ -1,0 +1,77 @@
+// Public erased callbacks publish owned results and clean failures exactly once.
+//@ run-pass
+//@ revisions: default producer later-failure
+//@[default] stdout: 6
+//@[default] stdout: 6
+//@[default] stdout: 6
+//@[default] stdout: 6
+//@[default] stdout: 6
+//@[default] stdout: 6
+//@[default] stdout: 9
+//@[producer] run-fail
+//@[producer] args: producer
+//@[producer] exit-code: 70
+//@[producer] stdout: 9
+//@[producer] stderr-contains: owning_function_expected_result.gti:14: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-failure] run-fail
+//@[later-failure] args: later failure
+//@[later-failure] exit-code: 70
+//@[later-failure] stdout: 6
+//@[later-failure] stdout: 6
+//@[later-failure] stdout: 6
+//@[later-failure] stdout: 6
+//@[later-failure] stdout: 6
+//@[later-failure] stdout: 6
+//@[later-failure] stdout: 9
+//@[later-failure] stderr-contains: owning_function_expected_result.gti:48: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- owning_function_expected_result.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+class Result {
+  int identity;
+public:
+  Result(int identity) : identity(identity) {}
+  ~Result() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+expected<Result, int> produce(int divisor) {
+  int checked = 12 / divisor;
+  return Result(6);
+}
+
+struct MutableProducer {
+  expected<Result, int> operator()(int divisor) mut { return produce(divisor); }
+public:
+  MutableProducer() = default;
+};
+
+struct ConsumingProducer {
+  expected<Result, int> operator()(int divisor) && { return produce(divisor); }
+public:
+  ConsumingProducer() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Result caller{9};
+  int divisor = argc == 2 ? 0 : 2;
+  {
+    std::function<expected<Result, int>(int)> callback{produce};
+    auto result = callback(divisor);
+    std::println(result.value().read());
+  }
+  {
+    mut std::function<expected<Result, int>(int) mut> callback{MutableProducer()};
+    auto result = callback(2);
+    std::println(result.value().read());
+  }
+  {
+    std::move_only_function<expected<Result, int>(int) &&> callback{ConsumingProducer()};
+    auto result = std::move(callback)(2);
+    std::println(result.value().read());
+  }
+  int later = 6 / (argc == 3 ? 0 : 1);
+  return later - 6;
+}

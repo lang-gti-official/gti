@@ -1,0 +1,71 @@
+// Constructor field placement/replacement preserves success and failure cleanup.
+//@ run-pass
+//@ revisions: default prefix postfix-overflow compound-overflow-here
+//@[prefix] run-fail
+//@[prefix] args: prefix
+//@[prefix] exit-code: 70
+//@[prefix] stdout: 100
+//@[prefix] stdout: 2147483647
+//@[prefix] stdout: 900
+//@[prefix] stdout: 2147483647
+//@[prefix] stderr-contains: constructor_scalar_side_effects.gti:25: runtime error[GTI-R0001]: integer_overflow in addition
+//@[postfix-overflow] run-fail
+//@[postfix-overflow] args: postfix overflow
+//@[postfix-overflow] exit-code: 70
+//@[postfix-overflow] stdout: 100
+//@[postfix-overflow] stdout: 2147483647
+//@[postfix-overflow] stdout: 900
+//@[postfix-overflow] stdout: 2147483647
+//@[postfix-overflow] stderr-contains: constructor_scalar_side_effects.gti:25: runtime error[GTI-R0001]: integer_overflow in addition
+//@[compound-overflow-here] run-fail
+//@[compound-overflow-here] args: compound overflow here
+//@[compound-overflow-here] exit-code: 70
+//@[compound-overflow-here] stdout: 100
+//@[compound-overflow-here] stdout: 2147483647
+//@[compound-overflow-here] stdout: 900
+//@[compound-overflow-here] stdout: 2147483647
+//@[compound-overflow-here] stderr-contains: constructor_scalar_side_effects.gti:26: runtime error[GTI-R0001]: integer_overflow in addition
+// --- constructor_scalar_side_effects.gti
+import std.string;
+import std.vector;
+
+mut int counter = 0;
+
+class Marker {
+  int number;
+public:
+  Marker(int value) : number(value) {}
+  ~Marker() {
+    std::println(this.number);
+    std::println(counter);
+  }
+};
+
+class Snapshot {
+  Marker first;
+  int prefix;
+  int postfix;
+  int compound;
+  int assigned;
+  int observed;
+  Marker last;
+public:
+  Snapshot() : first(Marker(100)), prefix(++counter), postfix(counter++),
+               compound(counter += 2), assigned(counter = 40),
+               observed(counter), last(Marker(200)) {
+    std::println(this.prefix);
+    std::println(this.postfix);
+    std::println(this.compound);
+    std::println(this.assigned);
+    std::println(this.observed);
+  }
+  ~Snapshot() { std::println(300); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  counter = argc == 1 ? 10 : (argc == 2 ? 2147483647 :
+                             (argc == 3 ? 2147483646 : 2147483645));
+  Marker caller = Marker(900);
+  Snapshot value{};
+  return 0;
+}

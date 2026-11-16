@@ -25,11 +25,21 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
                                       sourceDebugProfile, compileLimits);
   fresh->cancellation = cancellation;
   fresh->reuseConstantEvaluations = reuseConstantEvaluations;
+  fresh->deferConstexprBodies = deferConstexprBodies;
   fresh->requiredFunctionBodies = requiredFunctionBodies;
   return fresh;
 }
 
+void SemanticVisitor::Impl::finishLimitedAnalysis() {
+  for (auto &held : heldDiagnostics)
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(held.begin()),
+                       std::make_move_iterator(held.end()));
+  heldDiagnostics.clear();
+  enforceErrorLimit = false;
+}
+
 bool SemanticVisitor::check(const Program &program) {
+  impl->enforceErrorLimit = true;
   try {
     const bool resuming = impl->adoptedPreamble != nullptr;
     const bool valid = impl->check(program);
@@ -38,10 +48,18 @@ bool SemanticVisitor::check(const Program &program) {
       // Discard every partial semantic/value/effect fact and request journal;
       // the immutable cached prefix itself remains available to later edits.
       impl = impl->freshRequest();
-      return impl->check(program);
+      impl->enforceErrorLimit = true;
+      const bool valid = impl->check(program);
+      impl->enforceErrorLimit = false;
+      return valid;
     }
+    impl->enforceErrorLimit = false;
     return valid;
+  } catch (const Impl::ErrorLimitReached &) {
+    impl->finishLimitedAnalysis();
+    return false;
   } catch (const Impl::AnalysisCancelled &) {
+    impl->enforceErrorLimit = false;
     impl->analysisCancelled = true;
     return false;
   }
@@ -53,6 +71,10 @@ void SemanticVisitor::setCancellation(const std::atomic<bool> *cancellation) {
 
 void SemanticVisitor::setConstantEvaluationReuse(bool reuse) {
   impl->reuseConstantEvaluations = reuse;
+}
+
+void SemanticVisitor::setConstexprBodyDeferral(bool defer) {
+  impl->deferConstexprBodies = defer;
 }
 
 bool SemanticVisitor::cancelled() const { return impl->analysisCancelled; }
@@ -71,6 +93,10 @@ bool SemanticVisitor::analyzeDemandedPrimaryBody(const FunctionDecl &body) {
 
 bool SemanticVisitor::lateDemandFailed() const {
   return impl->lateDemandFailed;
+}
+
+std::vector<const FunctionDecl *> SemanticVisitor::unmetBodyDemands() const {
+  return impl->unmetBodyDemandList();
 }
 
 std::vector<const FunctionDecl *> SemanticVisitor::lateDemandedBodies() const {

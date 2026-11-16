@@ -29,6 +29,10 @@ analyze(const std::string &source,
   lang::FrontendOptions options;
   options.rawPointerAudit = mode;
   options.reportLibraryAuditFindings = reportLibraryAuditFindings;
+  // The library-wide opt-in report is compared finding by finding between
+  // Warn and Strict, so it must not stop at the default error budget.
+  if (reportLibraryAuditFindings)
+    options.limits.errorLimit = 0;
   return lang::Frontend(options).analyze(root / "raw-borrow-test.gti", source,
                                          {root / "stdlib/prelude.gti"}, {},
                                          {root / "stdlib"});

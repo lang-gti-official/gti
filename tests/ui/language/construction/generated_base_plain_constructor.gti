@@ -1,0 +1,14 @@
+// Generated derived construction preserves base failure and caller cleanup.
+//@ run-pass
+class Seed {
+public:
+    int32_t value;
+    Seed() : value(7) {}
+};
+
+class Crop : public Seed { public: Crop() = default; };
+
+int main() {
+    Crop crop = Crop();
+    return crop.value == 7 ? 0 : 1;
+}
