@@ -604,7 +604,7 @@ int main() {
     const auto result =
         lang::Frontend().analyze(std::string(name), std::string(source));
     const std::string_view expectedCode =
-        name == "shared-write" ? "GTI-S2002"
+        name == "shared-write" ? "GTI-S2000"
         : name == "shared-conflict" || name == "exclusive-conflict"
             ? "GTI-S2017"
         : name == "static-receiver" || name == "no-receiver" ||
