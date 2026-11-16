@@ -1,6 +1,7 @@
 // A temporary passed in a call whose result is returned publishes the
 // frontend's S2017 for a mutable parameter, never a backend error, and is
-// clean otherwise. (scalar_temporary_borrow_lsp_test.py, third part)
+// clean otherwise. (scalar_temporary_borrow_lsp_test.py, third part; slow
+// tier: `std.string` analysis takes ~1.3 s here.)
 import std.string;
 class Pattern { public: Pattern() = default; };
 class Result { std::string_view text; public:
