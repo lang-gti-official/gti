@@ -11105,10 +11105,10 @@ int& escape(Item& fallback) {
                     "Structured bindings are immutable");
   expectSyntaxError("int main() { auto& [left, right] = values; return 0; }",
                     "Reference structured bindings are not supported");
-  expectSyntaxError(
-      "int main() { for (auto [left, right] = values; true; left++) {} "
-      "return 0; }",
-      "Structured for bindings require a range");
+  // A classic for init may declare a structured binding (C++17 init
+  // statement); a structured range binding still needs its range.
+  expectSyntaxError("int main() { for (auto [left, right]) {} return 0; }",
+                    "Structured for bindings require a range");
   lang::Parser autoArrayParser(
       lexer.scan("int main() { auto[2] values = {1, 2}; return 0; }"));
   (void)autoArrayParser.parse();
