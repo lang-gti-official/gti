@@ -485,7 +485,7 @@ Formatting allocates once per result in the common case:
   prefix, zero padding and digits straight into the output.
 - Text and `char` values are padded in place, with no temporary string.
 
-Results, spec validation and errors are unchanged. `format_output_matrix_runtime`
+Results, spec validation and errors are unchanged. `tests/slow/stdlib/format/`
 compares a broad spec matrix with the output recorded before this layout, and
 it passes at O0 and O3. A `format("{}:{}", i, j)` result previously cost about
 five allocations: a digits string per integer, an exact-size output regrowth

@@ -77,9 +77,7 @@ endforeach()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
-    borrow_origin_publication_runtime
     semantic_call_regressions_runtime
-    consteval_runtime
     callable_return_type_runtime
     borrowed_enum_field_cleanup_runtime
     borrowed_enum_scalar_sibling_runtime
@@ -254,14 +252,11 @@ if(Python3_Interpreter_FOUND)
     operator_relay_pipeline 285
     filesystem_operations_runtime 220
     language_coverage_corpus 170
-    complete_containers_collection 165
-    class_expression_consumers_runtime 155
     aggregate_projection_runtime 140
     panic_runtime 140
     container_contract_failure 115
     cli_workflow 95
     mir_cutover_corpus_oracle 85
-    constructor_pack_field_runtime 85
     expected_transform_error_runtime 85
     simd_runtime 85)
   list(LENGTH gti_long_gate_costs gti_long_gate_count)

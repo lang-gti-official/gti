@@ -1,0 +1,1466 @@
+// std::format output stays byte-identical across a broad spec matrix (widths, signs, bases, fill,
+// alignment, chars, text precision, bool, floats, positional/escaped fields, long output, rejected specs).
+//@ run-pass
+//@ slow
+import std.format;
+import std.string;
+void show(expected<std::string, std::format_errc> result) {
+  if (result.has_value()) { std::println(result.value().view()); }
+  else { std::println("error"); }
+}
+void group_0() {
+  show(std::try_runtime_format("[{}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:5}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:<6}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:^7}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:>8}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:05}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:+}]", int8_t(-128)));
+  show(std::try_runtime_format("[{: }]", int8_t(-128)));
+  show(std::try_runtime_format("[{:x}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:#x}]", int8_t(-128)));
+}
+void group_1() {
+  show(std::try_runtime_format("[{:#X}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:o}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:#o}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:b}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:#b}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:#B}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:*^9}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:+08x}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:-^11}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:#010b}]", int8_t(-128)));
+}
+void group_2() {
+  show(std::try_runtime_format("[{:_<4}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:=>12}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:#12o}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:X}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:d}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:+d}]", int8_t(-128)));
+  show(std::try_runtime_format("[{: 6}]", int8_t(-128)));
+  show(std::try_runtime_format("[{:0}]", int8_t(-128)));
+  show(std::try_runtime_format("[{}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:5}]", int8_t(-1)));
+}
+void group_3() {
+  show(std::try_runtime_format("[{:<6}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:^7}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:>8}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:05}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:+}]", int8_t(-1)));
+  show(std::try_runtime_format("[{: }]", int8_t(-1)));
+  show(std::try_runtime_format("[{:x}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:#x}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:#X}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:o}]", int8_t(-1)));
+}
+void group_4() {
+  show(std::try_runtime_format("[{:#o}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:b}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:#b}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:#B}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:*^9}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:+08x}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:-^11}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:#010b}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:_<4}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:=>12}]", int8_t(-1)));
+}
+void group_5() {
+  show(std::try_runtime_format("[{:#12o}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:X}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:d}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:+d}]", int8_t(-1)));
+  show(std::try_runtime_format("[{: 6}]", int8_t(-1)));
+  show(std::try_runtime_format("[{:0}]", int8_t(-1)));
+  show(std::try_runtime_format("[{}]", int8_t(0)));
+  show(std::try_runtime_format("[{:5}]", int8_t(0)));
+  show(std::try_runtime_format("[{:<6}]", int8_t(0)));
+  show(std::try_runtime_format("[{:^7}]", int8_t(0)));
+}
+void group_6() {
+  show(std::try_runtime_format("[{:>8}]", int8_t(0)));
+  show(std::try_runtime_format("[{:05}]", int8_t(0)));
+  show(std::try_runtime_format("[{:+}]", int8_t(0)));
+  show(std::try_runtime_format("[{: }]", int8_t(0)));
+  show(std::try_runtime_format("[{:x}]", int8_t(0)));
+  show(std::try_runtime_format("[{:#x}]", int8_t(0)));
+  show(std::try_runtime_format("[{:#X}]", int8_t(0)));
+  show(std::try_runtime_format("[{:o}]", int8_t(0)));
+  show(std::try_runtime_format("[{:#o}]", int8_t(0)));
+  show(std::try_runtime_format("[{:b}]", int8_t(0)));
+}
+void group_7() {
+  show(std::try_runtime_format("[{:#b}]", int8_t(0)));
+  show(std::try_runtime_format("[{:#B}]", int8_t(0)));
+  show(std::try_runtime_format("[{:*^9}]", int8_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", int8_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", int8_t(0)));
+  show(std::try_runtime_format("[{:#010b}]", int8_t(0)));
+  show(std::try_runtime_format("[{:_<4}]", int8_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", int8_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", int8_t(0)));
+  show(std::try_runtime_format("[{:X}]", int8_t(0)));
+}
+void group_8() {
+  show(std::try_runtime_format("[{:d}]", int8_t(0)));
+  show(std::try_runtime_format("[{:+d}]", int8_t(0)));
+  show(std::try_runtime_format("[{: 6}]", int8_t(0)));
+  show(std::try_runtime_format("[{:0}]", int8_t(0)));
+  show(std::try_runtime_format("[{}]", int8_t(7)));
+  show(std::try_runtime_format("[{:5}]", int8_t(7)));
+  show(std::try_runtime_format("[{:<6}]", int8_t(7)));
+  show(std::try_runtime_format("[{:^7}]", int8_t(7)));
+  show(std::try_runtime_format("[{:>8}]", int8_t(7)));
+  show(std::try_runtime_format("[{:05}]", int8_t(7)));
+}
+void group_9() {
+  show(std::try_runtime_format("[{:+}]", int8_t(7)));
+  show(std::try_runtime_format("[{: }]", int8_t(7)));
+  show(std::try_runtime_format("[{:x}]", int8_t(7)));
+  show(std::try_runtime_format("[{:#x}]", int8_t(7)));
+  show(std::try_runtime_format("[{:#X}]", int8_t(7)));
+  show(std::try_runtime_format("[{:o}]", int8_t(7)));
+  show(std::try_runtime_format("[{:#o}]", int8_t(7)));
+  show(std::try_runtime_format("[{:b}]", int8_t(7)));
+  show(std::try_runtime_format("[{:#b}]", int8_t(7)));
+  show(std::try_runtime_format("[{:#B}]", int8_t(7)));
+}
+void group_10() {
+  show(std::try_runtime_format("[{:*^9}]", int8_t(7)));
+  show(std::try_runtime_format("[{:+08x}]", int8_t(7)));
+  show(std::try_runtime_format("[{:-^11}]", int8_t(7)));
+  show(std::try_runtime_format("[{:#010b}]", int8_t(7)));
+  show(std::try_runtime_format("[{:_<4}]", int8_t(7)));
+  show(std::try_runtime_format("[{:=>12}]", int8_t(7)));
+  show(std::try_runtime_format("[{:#12o}]", int8_t(7)));
+  show(std::try_runtime_format("[{:X}]", int8_t(7)));
+  show(std::try_runtime_format("[{:d}]", int8_t(7)));
+  show(std::try_runtime_format("[{:+d}]", int8_t(7)));
+}
+void group_11() {
+  show(std::try_runtime_format("[{: 6}]", int8_t(7)));
+  show(std::try_runtime_format("[{:0}]", int8_t(7)));
+  show(std::try_runtime_format("[{}]", int8_t(127)));
+  show(std::try_runtime_format("[{:5}]", int8_t(127)));
+  show(std::try_runtime_format("[{:<6}]", int8_t(127)));
+  show(std::try_runtime_format("[{:^7}]", int8_t(127)));
+  show(std::try_runtime_format("[{:>8}]", int8_t(127)));
+  show(std::try_runtime_format("[{:05}]", int8_t(127)));
+  show(std::try_runtime_format("[{:+}]", int8_t(127)));
+  show(std::try_runtime_format("[{: }]", int8_t(127)));
+}
+void group_12() {
+  show(std::try_runtime_format("[{:x}]", int8_t(127)));
+  show(std::try_runtime_format("[{:#x}]", int8_t(127)));
+  show(std::try_runtime_format("[{:#X}]", int8_t(127)));
+  show(std::try_runtime_format("[{:o}]", int8_t(127)));
+  show(std::try_runtime_format("[{:#o}]", int8_t(127)));
+  show(std::try_runtime_format("[{:b}]", int8_t(127)));
+  show(std::try_runtime_format("[{:#b}]", int8_t(127)));
+  show(std::try_runtime_format("[{:#B}]", int8_t(127)));
+  show(std::try_runtime_format("[{:*^9}]", int8_t(127)));
+  show(std::try_runtime_format("[{:+08x}]", int8_t(127)));
+}
+void group_13() {
+  show(std::try_runtime_format("[{:-^11}]", int8_t(127)));
+  show(std::try_runtime_format("[{:#010b}]", int8_t(127)));
+  show(std::try_runtime_format("[{:_<4}]", int8_t(127)));
+  show(std::try_runtime_format("[{:=>12}]", int8_t(127)));
+  show(std::try_runtime_format("[{:#12o}]", int8_t(127)));
+  show(std::try_runtime_format("[{:X}]", int8_t(127)));
+  show(std::try_runtime_format("[{:d}]", int8_t(127)));
+  show(std::try_runtime_format("[{:+d}]", int8_t(127)));
+  show(std::try_runtime_format("[{: 6}]", int8_t(127)));
+  show(std::try_runtime_format("[{:0}]", int8_t(127)));
+}
+void group_14() {
+  show(std::try_runtime_format("[{}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:5}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:<6}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:^7}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:>8}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:05}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:+}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{: }]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:x}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:#x}]", int16_t(-32768)));
+}
+void group_15() {
+  show(std::try_runtime_format("[{:#X}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:o}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:#o}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:b}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:#b}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:#B}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:*^9}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:+08x}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:-^11}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:#010b}]", int16_t(-32768)));
+}
+void group_16() {
+  show(std::try_runtime_format("[{:_<4}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:=>12}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:#12o}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:X}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:d}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:+d}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{: 6}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{:0}]", int16_t(-32768)));
+  show(std::try_runtime_format("[{}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:5}]", int16_t(-42)));
+}
+void group_17() {
+  show(std::try_runtime_format("[{:<6}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:^7}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:>8}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:05}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:+}]", int16_t(-42)));
+  show(std::try_runtime_format("[{: }]", int16_t(-42)));
+  show(std::try_runtime_format("[{:x}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:#x}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:#X}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:o}]", int16_t(-42)));
+}
+void group_18() {
+  show(std::try_runtime_format("[{:#o}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:b}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:#b}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:#B}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:*^9}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:+08x}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:-^11}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:#010b}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:_<4}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:=>12}]", int16_t(-42)));
+}
+void group_19() {
+  show(std::try_runtime_format("[{:#12o}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:X}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:d}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:+d}]", int16_t(-42)));
+  show(std::try_runtime_format("[{: 6}]", int16_t(-42)));
+  show(std::try_runtime_format("[{:0}]", int16_t(-42)));
+  show(std::try_runtime_format("[{}]", int16_t(0)));
+  show(std::try_runtime_format("[{:5}]", int16_t(0)));
+  show(std::try_runtime_format("[{:<6}]", int16_t(0)));
+  show(std::try_runtime_format("[{:^7}]", int16_t(0)));
+}
+void group_20() {
+  show(std::try_runtime_format("[{:>8}]", int16_t(0)));
+  show(std::try_runtime_format("[{:05}]", int16_t(0)));
+  show(std::try_runtime_format("[{:+}]", int16_t(0)));
+  show(std::try_runtime_format("[{: }]", int16_t(0)));
+  show(std::try_runtime_format("[{:x}]", int16_t(0)));
+  show(std::try_runtime_format("[{:#x}]", int16_t(0)));
+  show(std::try_runtime_format("[{:#X}]", int16_t(0)));
+  show(std::try_runtime_format("[{:o}]", int16_t(0)));
+  show(std::try_runtime_format("[{:#o}]", int16_t(0)));
+  show(std::try_runtime_format("[{:b}]", int16_t(0)));
+}
+void group_21() {
+  show(std::try_runtime_format("[{:#b}]", int16_t(0)));
+  show(std::try_runtime_format("[{:#B}]", int16_t(0)));
+  show(std::try_runtime_format("[{:*^9}]", int16_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", int16_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", int16_t(0)));
+  show(std::try_runtime_format("[{:#010b}]", int16_t(0)));
+  show(std::try_runtime_format("[{:_<4}]", int16_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", int16_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", int16_t(0)));
+  show(std::try_runtime_format("[{:X}]", int16_t(0)));
+}
+void group_22() {
+  show(std::try_runtime_format("[{:d}]", int16_t(0)));
+  show(std::try_runtime_format("[{:+d}]", int16_t(0)));
+  show(std::try_runtime_format("[{: 6}]", int16_t(0)));
+  show(std::try_runtime_format("[{:0}]", int16_t(0)));
+  show(std::try_runtime_format("[{}]", int16_t(255)));
+  show(std::try_runtime_format("[{:5}]", int16_t(255)));
+  show(std::try_runtime_format("[{:<6}]", int16_t(255)));
+  show(std::try_runtime_format("[{:^7}]", int16_t(255)));
+  show(std::try_runtime_format("[{:>8}]", int16_t(255)));
+  show(std::try_runtime_format("[{:05}]", int16_t(255)));
+}
+void group_23() {
+  show(std::try_runtime_format("[{:+}]", int16_t(255)));
+  show(std::try_runtime_format("[{: }]", int16_t(255)));
+  show(std::try_runtime_format("[{:x}]", int16_t(255)));
+  show(std::try_runtime_format("[{:#x}]", int16_t(255)));
+  show(std::try_runtime_format("[{:#X}]", int16_t(255)));
+  show(std::try_runtime_format("[{:o}]", int16_t(255)));
+  show(std::try_runtime_format("[{:#o}]", int16_t(255)));
+  show(std::try_runtime_format("[{:b}]", int16_t(255)));
+  show(std::try_runtime_format("[{:#b}]", int16_t(255)));
+  show(std::try_runtime_format("[{:#B}]", int16_t(255)));
+}
+void group_24() {
+  show(std::try_runtime_format("[{:*^9}]", int16_t(255)));
+  show(std::try_runtime_format("[{:+08x}]", int16_t(255)));
+  show(std::try_runtime_format("[{:-^11}]", int16_t(255)));
+  show(std::try_runtime_format("[{:#010b}]", int16_t(255)));
+  show(std::try_runtime_format("[{:_<4}]", int16_t(255)));
+  show(std::try_runtime_format("[{:=>12}]", int16_t(255)));
+  show(std::try_runtime_format("[{:#12o}]", int16_t(255)));
+  show(std::try_runtime_format("[{:X}]", int16_t(255)));
+  show(std::try_runtime_format("[{:d}]", int16_t(255)));
+  show(std::try_runtime_format("[{:+d}]", int16_t(255)));
+}
+void group_25() {
+  show(std::try_runtime_format("[{: 6}]", int16_t(255)));
+  show(std::try_runtime_format("[{:0}]", int16_t(255)));
+  show(std::try_runtime_format("[{}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:5}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:<6}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:^7}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:>8}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:05}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:+}]", int16_t(32767)));
+  show(std::try_runtime_format("[{: }]", int16_t(32767)));
+}
+void group_26() {
+  show(std::try_runtime_format("[{:x}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:#x}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:#X}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:o}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:#o}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:b}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:#b}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:#B}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:*^9}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:+08x}]", int16_t(32767)));
+}
+void group_27() {
+  show(std::try_runtime_format("[{:-^11}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:#010b}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:_<4}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:=>12}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:#12o}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:X}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:d}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:+d}]", int16_t(32767)));
+  show(std::try_runtime_format("[{: 6}]", int16_t(32767)));
+  show(std::try_runtime_format("[{:0}]", int16_t(32767)));
+}
+void group_28() {
+  show(std::try_runtime_format("[{}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:5}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:<6}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:^7}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:>8}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:05}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:+}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{: }]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:x}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:#x}]", int32_t(-2147483648)));
+}
+void group_29() {
+  show(std::try_runtime_format("[{:#X}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:o}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:#o}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:b}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:#b}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:#B}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:*^9}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:+08x}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:-^11}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:#010b}]", int32_t(-2147483648)));
+}
+void group_30() {
+  show(std::try_runtime_format("[{:_<4}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:=>12}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:#12o}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:X}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:d}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:+d}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{: 6}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{:0}]", int32_t(-2147483648)));
+  show(std::try_runtime_format("[{}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:5}]", int32_t(-12345)));
+}
+void group_31() {
+  show(std::try_runtime_format("[{:<6}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:^7}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:>8}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:05}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:+}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{: }]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:x}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:#x}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:#X}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:o}]", int32_t(-12345)));
+}
+void group_32() {
+  show(std::try_runtime_format("[{:#o}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:b}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:#b}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:#B}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:*^9}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:+08x}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:-^11}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:#010b}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:_<4}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:=>12}]", int32_t(-12345)));
+}
+void group_33() {
+  show(std::try_runtime_format("[{:#12o}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:X}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:d}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:+d}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{: 6}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{:0}]", int32_t(-12345)));
+  show(std::try_runtime_format("[{}]", int32_t(0)));
+  show(std::try_runtime_format("[{:5}]", int32_t(0)));
+  show(std::try_runtime_format("[{:<6}]", int32_t(0)));
+  show(std::try_runtime_format("[{:^7}]", int32_t(0)));
+}
+void group_34() {
+  show(std::try_runtime_format("[{:>8}]", int32_t(0)));
+  show(std::try_runtime_format("[{:05}]", int32_t(0)));
+  show(std::try_runtime_format("[{:+}]", int32_t(0)));
+  show(std::try_runtime_format("[{: }]", int32_t(0)));
+  show(std::try_runtime_format("[{:x}]", int32_t(0)));
+  show(std::try_runtime_format("[{:#x}]", int32_t(0)));
+  show(std::try_runtime_format("[{:#X}]", int32_t(0)));
+  show(std::try_runtime_format("[{:o}]", int32_t(0)));
+  show(std::try_runtime_format("[{:#o}]", int32_t(0)));
+  show(std::try_runtime_format("[{:b}]", int32_t(0)));
+}
+void group_35() {
+  show(std::try_runtime_format("[{:#b}]", int32_t(0)));
+  show(std::try_runtime_format("[{:#B}]", int32_t(0)));
+  show(std::try_runtime_format("[{:*^9}]", int32_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", int32_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", int32_t(0)));
+  show(std::try_runtime_format("[{:#010b}]", int32_t(0)));
+  show(std::try_runtime_format("[{:_<4}]", int32_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", int32_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", int32_t(0)));
+  show(std::try_runtime_format("[{:X}]", int32_t(0)));
+}
+void group_36() {
+  show(std::try_runtime_format("[{:d}]", int32_t(0)));
+  show(std::try_runtime_format("[{:+d}]", int32_t(0)));
+  show(std::try_runtime_format("[{: 6}]", int32_t(0)));
+  show(std::try_runtime_format("[{:0}]", int32_t(0)));
+  show(std::try_runtime_format("[{}]", int32_t(65)));
+  show(std::try_runtime_format("[{:5}]", int32_t(65)));
+  show(std::try_runtime_format("[{:<6}]", int32_t(65)));
+  show(std::try_runtime_format("[{:^7}]", int32_t(65)));
+  show(std::try_runtime_format("[{:>8}]", int32_t(65)));
+  show(std::try_runtime_format("[{:05}]", int32_t(65)));
+}
+void group_37() {
+  show(std::try_runtime_format("[{:+}]", int32_t(65)));
+  show(std::try_runtime_format("[{: }]", int32_t(65)));
+  show(std::try_runtime_format("[{:x}]", int32_t(65)));
+  show(std::try_runtime_format("[{:#x}]", int32_t(65)));
+  show(std::try_runtime_format("[{:#X}]", int32_t(65)));
+  show(std::try_runtime_format("[{:o}]", int32_t(65)));
+  show(std::try_runtime_format("[{:#o}]", int32_t(65)));
+  show(std::try_runtime_format("[{:b}]", int32_t(65)));
+  show(std::try_runtime_format("[{:#b}]", int32_t(65)));
+  show(std::try_runtime_format("[{:#B}]", int32_t(65)));
+}
+void group_38() {
+  show(std::try_runtime_format("[{:*^9}]", int32_t(65)));
+  show(std::try_runtime_format("[{:+08x}]", int32_t(65)));
+  show(std::try_runtime_format("[{:-^11}]", int32_t(65)));
+  show(std::try_runtime_format("[{:#010b}]", int32_t(65)));
+  show(std::try_runtime_format("[{:_<4}]", int32_t(65)));
+  show(std::try_runtime_format("[{:=>12}]", int32_t(65)));
+  show(std::try_runtime_format("[{:#12o}]", int32_t(65)));
+  show(std::try_runtime_format("[{:X}]", int32_t(65)));
+  show(std::try_runtime_format("[{:d}]", int32_t(65)));
+  show(std::try_runtime_format("[{:+d}]", int32_t(65)));
+}
+void group_39() {
+  show(std::try_runtime_format("[{: 6}]", int32_t(65)));
+  show(std::try_runtime_format("[{:0}]", int32_t(65)));
+  show(std::try_runtime_format("[{:c}]", int32_t(65)));
+  show(std::try_runtime_format("[{}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:5}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:<6}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:^7}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:>8}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:05}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:+}]", int32_t(2147483647)));
+}
+void group_40() {
+  show(std::try_runtime_format("[{: }]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:x}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:#x}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:#X}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:o}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:#o}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:b}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:#b}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:#B}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:*^9}]", int32_t(2147483647)));
+}
+void group_41() {
+  show(std::try_runtime_format("[{:+08x}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:-^11}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:#010b}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:_<4}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:=>12}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:#12o}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:X}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:d}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{:+d}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{: 6}]", int32_t(2147483647)));
+}
+void group_42() {
+  show(std::try_runtime_format("[{:0}]", int32_t(2147483647)));
+  show(std::try_runtime_format("[{}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:5}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:<6}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:^7}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:>8}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:05}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:+}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{: }]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:x}]", int64_t(-9223372036854775808)));
+}
+void group_43() {
+  show(std::try_runtime_format("[{:#x}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:#X}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:o}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:#o}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:b}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:#b}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:#B}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:*^9}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:+08x}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:-^11}]", int64_t(-9223372036854775808)));
+}
+void group_44() {
+  show(std::try_runtime_format("[{:#010b}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:_<4}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:=>12}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:#12o}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:X}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:d}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:+d}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{: 6}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{:0}]", int64_t(-9223372036854775808)));
+  show(std::try_runtime_format("[{}]", int64_t(-1)));
+}
+void group_45() {
+  show(std::try_runtime_format("[{:5}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:<6}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:^7}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:>8}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:05}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:+}]", int64_t(-1)));
+  show(std::try_runtime_format("[{: }]", int64_t(-1)));
+  show(std::try_runtime_format("[{:x}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:#x}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:#X}]", int64_t(-1)));
+}
+void group_46() {
+  show(std::try_runtime_format("[{:o}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:#o}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:b}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:#b}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:#B}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:*^9}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:+08x}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:-^11}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:#010b}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:_<4}]", int64_t(-1)));
+}
+void group_47() {
+  show(std::try_runtime_format("[{:=>12}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:#12o}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:X}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:d}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:+d}]", int64_t(-1)));
+  show(std::try_runtime_format("[{: 6}]", int64_t(-1)));
+  show(std::try_runtime_format("[{:0}]", int64_t(-1)));
+  show(std::try_runtime_format("[{}]", int64_t(0)));
+  show(std::try_runtime_format("[{:5}]", int64_t(0)));
+  show(std::try_runtime_format("[{:<6}]", int64_t(0)));
+}
+void group_48() {
+  show(std::try_runtime_format("[{:^7}]", int64_t(0)));
+  show(std::try_runtime_format("[{:>8}]", int64_t(0)));
+  show(std::try_runtime_format("[{:05}]", int64_t(0)));
+  show(std::try_runtime_format("[{:+}]", int64_t(0)));
+  show(std::try_runtime_format("[{: }]", int64_t(0)));
+  show(std::try_runtime_format("[{:x}]", int64_t(0)));
+  show(std::try_runtime_format("[{:#x}]", int64_t(0)));
+  show(std::try_runtime_format("[{:#X}]", int64_t(0)));
+  show(std::try_runtime_format("[{:o}]", int64_t(0)));
+  show(std::try_runtime_format("[{:#o}]", int64_t(0)));
+}
+void group_49() {
+  show(std::try_runtime_format("[{:b}]", int64_t(0)));
+  show(std::try_runtime_format("[{:#b}]", int64_t(0)));
+  show(std::try_runtime_format("[{:#B}]", int64_t(0)));
+  show(std::try_runtime_format("[{:*^9}]", int64_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", int64_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", int64_t(0)));
+  show(std::try_runtime_format("[{:#010b}]", int64_t(0)));
+  show(std::try_runtime_format("[{:_<4}]", int64_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", int64_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", int64_t(0)));
+}
+void group_50() {
+  show(std::try_runtime_format("[{:X}]", int64_t(0)));
+  show(std::try_runtime_format("[{:d}]", int64_t(0)));
+  show(std::try_runtime_format("[{:+d}]", int64_t(0)));
+  show(std::try_runtime_format("[{: 6}]", int64_t(0)));
+  show(std::try_runtime_format("[{:0}]", int64_t(0)));
+  show(std::try_runtime_format("[{}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:5}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:<6}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:^7}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:>8}]", int64_t(4096)));
+}
+void group_51() {
+  show(std::try_runtime_format("[{:05}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:+}]", int64_t(4096)));
+  show(std::try_runtime_format("[{: }]", int64_t(4096)));
+  show(std::try_runtime_format("[{:x}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:#x}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:#X}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:o}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:#o}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:b}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:#b}]", int64_t(4096)));
+}
+void group_52() {
+  show(std::try_runtime_format("[{:#B}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:*^9}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:+08x}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:-^11}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:#010b}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:_<4}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:=>12}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:#12o}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:X}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:d}]", int64_t(4096)));
+}
+void group_53() {
+  show(std::try_runtime_format("[{:+d}]", int64_t(4096)));
+  show(std::try_runtime_format("[{: 6}]", int64_t(4096)));
+  show(std::try_runtime_format("[{:0}]", int64_t(4096)));
+  show(std::try_runtime_format("[{}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:5}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:<6}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:^7}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:>8}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:05}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:+}]", int64_t(9223372036854775807)));
+}
+void group_54() {
+  show(std::try_runtime_format("[{: }]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:x}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:#x}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:#X}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:o}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:#o}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:b}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:#b}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:#B}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:*^9}]", int64_t(9223372036854775807)));
+}
+void group_55() {
+  show(std::try_runtime_format("[{:+08x}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:-^11}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:#010b}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:_<4}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:=>12}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:#12o}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:X}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:d}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{:+d}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{: 6}]", int64_t(9223372036854775807)));
+}
+void group_56() {
+  show(std::try_runtime_format("[{:0}]", int64_t(9223372036854775807)));
+  show(std::try_runtime_format("[{}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:5}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:<6}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:^7}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:>8}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:05}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:+}]", uint8_t(0)));
+  show(std::try_runtime_format("[{: }]", uint8_t(0)));
+  show(std::try_runtime_format("[{:x}]", uint8_t(0)));
+}
+void group_57() {
+  show(std::try_runtime_format("[{:#x}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:#X}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:o}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:#o}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:b}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:#b}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:#B}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:*^9}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", uint8_t(0)));
+}
+void group_58() {
+  show(std::try_runtime_format("[{:#010b}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:_<4}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:X}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:d}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:+d}]", uint8_t(0)));
+  show(std::try_runtime_format("[{: 6}]", uint8_t(0)));
+  show(std::try_runtime_format("[{:0}]", uint8_t(0)));
+  show(std::try_runtime_format("[{}]", uint8_t(65)));
+}
+void group_59() {
+  show(std::try_runtime_format("[{:5}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:<6}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:^7}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:>8}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:05}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:+}]", uint8_t(65)));
+  show(std::try_runtime_format("[{: }]", uint8_t(65)));
+  show(std::try_runtime_format("[{:x}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:#x}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:#X}]", uint8_t(65)));
+}
+void group_60() {
+  show(std::try_runtime_format("[{:o}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:#o}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:b}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:#b}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:#B}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:*^9}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:+08x}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:-^11}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:#010b}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:_<4}]", uint8_t(65)));
+}
+void group_61() {
+  show(std::try_runtime_format("[{:=>12}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:#12o}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:X}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:d}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:+d}]", uint8_t(65)));
+  show(std::try_runtime_format("[{: 6}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:0}]", uint8_t(65)));
+  show(std::try_runtime_format("[{:c}]", uint8_t(65)));
+  show(std::try_runtime_format("[{}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:5}]", uint8_t(255)));
+}
+void group_62() {
+  show(std::try_runtime_format("[{:<6}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:^7}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:>8}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:05}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:+}]", uint8_t(255)));
+  show(std::try_runtime_format("[{: }]", uint8_t(255)));
+  show(std::try_runtime_format("[{:x}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:#x}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:#X}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:o}]", uint8_t(255)));
+}
+void group_63() {
+  show(std::try_runtime_format("[{:#o}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:b}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:#b}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:#B}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:*^9}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:+08x}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:-^11}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:#010b}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:_<4}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:=>12}]", uint8_t(255)));
+}
+void group_64() {
+  show(std::try_runtime_format("[{:#12o}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:X}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:d}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:+d}]", uint8_t(255)));
+  show(std::try_runtime_format("[{: 6}]", uint8_t(255)));
+  show(std::try_runtime_format("[{:0}]", uint8_t(255)));
+  show(std::try_runtime_format("[{}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:5}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:<6}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:^7}]", uint16_t(0)));
+}
+void group_65() {
+  show(std::try_runtime_format("[{:>8}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:05}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:+}]", uint16_t(0)));
+  show(std::try_runtime_format("[{: }]", uint16_t(0)));
+  show(std::try_runtime_format("[{:x}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:#x}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:#X}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:o}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:#o}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:b}]", uint16_t(0)));
+}
+void group_66() {
+  show(std::try_runtime_format("[{:#b}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:#B}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:*^9}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:#010b}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:_<4}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:X}]", uint16_t(0)));
+}
+void group_67() {
+  show(std::try_runtime_format("[{:d}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:+d}]", uint16_t(0)));
+  show(std::try_runtime_format("[{: 6}]", uint16_t(0)));
+  show(std::try_runtime_format("[{:0}]", uint16_t(0)));
+  show(std::try_runtime_format("[{}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:5}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:<6}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:^7}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:>8}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:05}]", uint16_t(10)));
+}
+void group_68() {
+  show(std::try_runtime_format("[{:+}]", uint16_t(10)));
+  show(std::try_runtime_format("[{: }]", uint16_t(10)));
+  show(std::try_runtime_format("[{:x}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:#x}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:#X}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:o}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:#o}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:b}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:#b}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:#B}]", uint16_t(10)));
+}
+void group_69() {
+  show(std::try_runtime_format("[{:*^9}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:+08x}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:-^11}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:#010b}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:_<4}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:=>12}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:#12o}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:X}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:d}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:+d}]", uint16_t(10)));
+}
+void group_70() {
+  show(std::try_runtime_format("[{: 6}]", uint16_t(10)));
+  show(std::try_runtime_format("[{:0}]", uint16_t(10)));
+  show(std::try_runtime_format("[{}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:5}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:<6}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:^7}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:>8}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:05}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:+}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{: }]", uint16_t(65535)));
+}
+void group_71() {
+  show(std::try_runtime_format("[{:x}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:#x}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:#X}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:o}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:#o}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:b}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:#b}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:#B}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:*^9}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:+08x}]", uint16_t(65535)));
+}
+void group_72() {
+  show(std::try_runtime_format("[{:-^11}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:#010b}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:_<4}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:=>12}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:#12o}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:X}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:d}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:+d}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{: 6}]", uint16_t(65535)));
+  show(std::try_runtime_format("[{:0}]", uint16_t(65535)));
+}
+void group_73() {
+  show(std::try_runtime_format("[{}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:5}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:<6}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:^7}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:>8}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:05}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:+}]", uint32_t(0)));
+  show(std::try_runtime_format("[{: }]", uint32_t(0)));
+  show(std::try_runtime_format("[{:x}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:#x}]", uint32_t(0)));
+}
+void group_74() {
+  show(std::try_runtime_format("[{:#X}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:o}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:#o}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:b}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:#b}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:#B}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:*^9}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:#010b}]", uint32_t(0)));
+}
+void group_75() {
+  show(std::try_runtime_format("[{:_<4}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:X}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:d}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:+d}]", uint32_t(0)));
+  show(std::try_runtime_format("[{: 6}]", uint32_t(0)));
+  show(std::try_runtime_format("[{:0}]", uint32_t(0)));
+  show(std::try_runtime_format("[{}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:5}]", uint32_t(48879)));
+}
+void group_76() {
+  show(std::try_runtime_format("[{:<6}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:^7}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:>8}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:05}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:+}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{: }]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:x}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:#x}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:#X}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:o}]", uint32_t(48879)));
+}
+void group_77() {
+  show(std::try_runtime_format("[{:#o}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:b}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:#b}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:#B}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:*^9}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:+08x}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:-^11}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:#010b}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:_<4}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:=>12}]", uint32_t(48879)));
+}
+void group_78() {
+  show(std::try_runtime_format("[{:#12o}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:X}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:d}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:+d}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{: 6}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{:0}]", uint32_t(48879)));
+  show(std::try_runtime_format("[{}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:5}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:<6}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:^7}]", uint32_t(4294967295)));
+}
+void group_79() {
+  show(std::try_runtime_format("[{:>8}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:05}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:+}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{: }]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:x}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:#x}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:#X}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:o}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:#o}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:b}]", uint32_t(4294967295)));
+}
+void group_80() {
+  show(std::try_runtime_format("[{:#b}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:#B}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:*^9}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:+08x}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:-^11}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:#010b}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:_<4}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:=>12}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:#12o}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:X}]", uint32_t(4294967295)));
+}
+void group_81() {
+  show(std::try_runtime_format("[{:d}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:+d}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{: 6}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{:0}]", uint32_t(4294967295)));
+  show(std::try_runtime_format("[{}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:5}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:<6}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:^7}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:>8}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:05}]", uint64_t(0)));
+}
+void group_82() {
+  show(std::try_runtime_format("[{:+}]", uint64_t(0)));
+  show(std::try_runtime_format("[{: }]", uint64_t(0)));
+  show(std::try_runtime_format("[{:x}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:#x}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:#X}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:o}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:#o}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:b}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:#b}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:#B}]", uint64_t(0)));
+}
+void group_83() {
+  show(std::try_runtime_format("[{:*^9}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:+08x}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:-^11}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:#010b}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:_<4}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:=>12}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:#12o}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:X}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:d}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:+d}]", uint64_t(0)));
+}
+void group_84() {
+  show(std::try_runtime_format("[{: 6}]", uint64_t(0)));
+  show(std::try_runtime_format("[{:0}]", uint64_t(0)));
+  show(std::try_runtime_format("[{}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:5}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:<6}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:^7}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:>8}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:05}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:+}]", uint64_t(3)));
+  show(std::try_runtime_format("[{: }]", uint64_t(3)));
+}
+void group_85() {
+  show(std::try_runtime_format("[{:x}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:#x}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:#X}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:o}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:#o}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:b}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:#b}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:#B}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:*^9}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:+08x}]", uint64_t(3)));
+}
+void group_86() {
+  show(std::try_runtime_format("[{:-^11}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:#010b}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:_<4}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:=>12}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:#12o}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:X}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:d}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:+d}]", uint64_t(3)));
+  show(std::try_runtime_format("[{: 6}]", uint64_t(3)));
+  show(std::try_runtime_format("[{:0}]", uint64_t(3)));
+}
+void group_87() {
+  show(std::try_runtime_format("[{}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:5}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:<6}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:^7}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:>8}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:05}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:+}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{: }]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:x}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:#x}]", uint64_t(18446744073709551615)));
+}
+void group_88() {
+  show(std::try_runtime_format("[{:#X}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:o}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:#o}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:b}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:#b}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:#B}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:*^9}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:+08x}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:-^11}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:#010b}]", uint64_t(18446744073709551615)));
+}
+void group_89() {
+  show(std::try_runtime_format("[{:_<4}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:=>12}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:#12o}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:X}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:d}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:+d}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{: 6}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{:0}]", uint64_t(18446744073709551615)));
+  show(std::try_runtime_format("[{}]", 'a'));
+  show(std::try_runtime_format("[{:5}]", 'a'));
+}
+void group_90() {
+  show(std::try_runtime_format("[{:^5}]", 'a'));
+  show(std::try_runtime_format("[{:>3}]", 'a'));
+  show(std::try_runtime_format("[{:c}]", 'a'));
+  show(std::try_runtime_format("[{:x}]", 'a'));
+  show(std::try_runtime_format("[{:d}]", 'a'));
+  show(std::try_runtime_format("[{:#x}]", 'a'));
+  show(std::try_runtime_format("[{:*<4}]", 'a'));
+  show(std::try_runtime_format("[{:.0}]", 'a'));
+  show(std::try_runtime_format("[{:.1}]", 'a'));
+  show(std::try_runtime_format("[{}]", 'Z'));
+}
+void group_91() {
+  show(std::try_runtime_format("[{:5}]", 'Z'));
+  show(std::try_runtime_format("[{:^5}]", 'Z'));
+  show(std::try_runtime_format("[{:>3}]", 'Z'));
+  show(std::try_runtime_format("[{:c}]", 'Z'));
+  show(std::try_runtime_format("[{:x}]", 'Z'));
+  show(std::try_runtime_format("[{:d}]", 'Z'));
+  show(std::try_runtime_format("[{:#x}]", 'Z'));
+  show(std::try_runtime_format("[{:*<4}]", 'Z'));
+  show(std::try_runtime_format("[{:.0}]", 'Z'));
+  show(std::try_runtime_format("[{:.1}]", 'Z'));
+}
+void group_92() {
+  show(std::try_runtime_format("[{}]", '0'));
+  show(std::try_runtime_format("[{:5}]", '0'));
+  show(std::try_runtime_format("[{:^5}]", '0'));
+  show(std::try_runtime_format("[{:>3}]", '0'));
+  show(std::try_runtime_format("[{:c}]", '0'));
+  show(std::try_runtime_format("[{:x}]", '0'));
+  show(std::try_runtime_format("[{:d}]", '0'));
+  show(std::try_runtime_format("[{:#x}]", '0'));
+  show(std::try_runtime_format("[{:*<4}]", '0'));
+  show(std::try_runtime_format("[{:.0}]", '0'));
+}
+void group_93() {
+  show(std::try_runtime_format("[{:.1}]", '0'));
+  show(std::try_runtime_format("[{}]", ' '));
+  show(std::try_runtime_format("[{:5}]", ' '));
+  show(std::try_runtime_format("[{:^5}]", ' '));
+  show(std::try_runtime_format("[{:>3}]", ' '));
+  show(std::try_runtime_format("[{:c}]", ' '));
+  show(std::try_runtime_format("[{:x}]", ' '));
+  show(std::try_runtime_format("[{:d}]", ' '));
+  show(std::try_runtime_format("[{:#x}]", ' '));
+  show(std::try_runtime_format("[{:*<4}]", ' '));
+}
+void group_94() {
+  show(std::try_runtime_format("[{:.0}]", ' '));
+  show(std::try_runtime_format("[{:.1}]", ' '));
+  show(std::try_runtime_format("[{}]", "gti"));
+  show(std::try_runtime_format("[{}]", std::string("gti")));
+  show(std::try_runtime_format("[{:8}]", "gti"));
+  show(std::try_runtime_format("[{:8}]", std::string("gti")));
+  show(std::try_runtime_format("[{:<8}]", "gti"));
+  show(std::try_runtime_format("[{:<8}]", std::string("gti")));
+  show(std::try_runtime_format("[{:^9}]", "gti"));
+  show(std::try_runtime_format("[{:^9}]", std::string("gti")));
+}
+void group_95() {
+  show(std::try_runtime_format("[{:>10}]", "gti"));
+  show(std::try_runtime_format("[{:>10}]", std::string("gti")));
+  show(std::try_runtime_format("[{:.2}]", "gti"));
+  show(std::try_runtime_format("[{:.2}]", std::string("gti")));
+  show(std::try_runtime_format("[{:>8.3}]", "gti"));
+  show(std::try_runtime_format("[{:>8.3}]", std::string("gti")));
+  show(std::try_runtime_format("[{:*^12.5}]", "gti"));
+  show(std::try_runtime_format("[{:*^12.5}]", std::string("gti")));
+  show(std::try_runtime_format("[{:.0}]", "gti"));
+  show(std::try_runtime_format("[{:.0}]", std::string("gti")));
+}
+void group_96() {
+  show(std::try_runtime_format("[{:3}]", "gti"));
+  show(std::try_runtime_format("[{:3}]", std::string("gti")));
+  show(std::try_runtime_format("[{}]", ""));
+  show(std::try_runtime_format("[{}]", std::string("")));
+  show(std::try_runtime_format("[{:8}]", ""));
+  show(std::try_runtime_format("[{:8}]", std::string("")));
+  show(std::try_runtime_format("[{:<8}]", ""));
+  show(std::try_runtime_format("[{:<8}]", std::string("")));
+  show(std::try_runtime_format("[{:^9}]", ""));
+  show(std::try_runtime_format("[{:^9}]", std::string("")));
+}
+void group_97() {
+  show(std::try_runtime_format("[{:>10}]", ""));
+  show(std::try_runtime_format("[{:>10}]", std::string("")));
+  show(std::try_runtime_format("[{:.2}]", ""));
+  show(std::try_runtime_format("[{:.2}]", std::string("")));
+  show(std::try_runtime_format("[{:>8.3}]", ""));
+  show(std::try_runtime_format("[{:>8.3}]", std::string("")));
+  show(std::try_runtime_format("[{:*^12.5}]", ""));
+  show(std::try_runtime_format("[{:*^12.5}]", std::string("")));
+  show(std::try_runtime_format("[{:.0}]", ""));
+  show(std::try_runtime_format("[{:.0}]", std::string("")));
+}
+void group_98() {
+  show(std::try_runtime_format("[{:3}]", ""));
+  show(std::try_runtime_format("[{:3}]", std::string("")));
+  show(std::try_runtime_format("[{}]", "formatting"));
+  show(std::try_runtime_format("[{}]", std::string("formatting")));
+  show(std::try_runtime_format("[{:8}]", "formatting"));
+  show(std::try_runtime_format("[{:8}]", std::string("formatting")));
+  show(std::try_runtime_format("[{:<8}]", "formatting"));
+  show(std::try_runtime_format("[{:<8}]", std::string("formatting")));
+  show(std::try_runtime_format("[{:^9}]", "formatting"));
+  show(std::try_runtime_format("[{:^9}]", std::string("formatting")));
+}
+void group_99() {
+  show(std::try_runtime_format("[{:>10}]", "formatting"));
+  show(std::try_runtime_format("[{:>10}]", std::string("formatting")));
+  show(std::try_runtime_format("[{:.2}]", "formatting"));
+  show(std::try_runtime_format("[{:.2}]", std::string("formatting")));
+  show(std::try_runtime_format("[{:>8.3}]", "formatting"));
+  show(std::try_runtime_format("[{:>8.3}]", std::string("formatting")));
+  show(std::try_runtime_format("[{:*^12.5}]", "formatting"));
+  show(std::try_runtime_format("[{:*^12.5}]", std::string("formatting")));
+  show(std::try_runtime_format("[{:.0}]", "formatting"));
+  show(std::try_runtime_format("[{:.0}]", std::string("formatting")));
+}
+void group_100() {
+  show(std::try_runtime_format("[{:3}]", "formatting"));
+  show(std::try_runtime_format("[{:3}]", std::string("formatting")));
+  show(std::try_runtime_format("[{}]", true));
+  show(std::try_runtime_format("[{:6}]", true));
+  show(std::try_runtime_format("[{:^7}]", true));
+  show(std::try_runtime_format("[{:>8}]", true));
+  show(std::try_runtime_format("[{:.2}]", true));
+  show(std::try_runtime_format("[{}]", false));
+  show(std::try_runtime_format("[{:6}]", false));
+  show(std::try_runtime_format("[{:^7}]", false));
+}
+void group_101() {
+  show(std::try_runtime_format("[{:>8}]", false));
+  show(std::try_runtime_format("[{:.2}]", false));
+  show(std::try_runtime_format("[{}]", double(0.0)));
+  show(std::try_runtime_format("[{}]", float(0.0)));
+  show(std::try_runtime_format("[{:.3f}]", double(0.0)));
+  show(std::try_runtime_format("[{:.3f}]", float(0.0)));
+  show(std::try_runtime_format("[{:e}]", double(0.0)));
+  show(std::try_runtime_format("[{:e}]", float(0.0)));
+  show(std::try_runtime_format("[{:10.2f}]", double(0.0)));
+  show(std::try_runtime_format("[{:10.2f}]", float(0.0)));
+}
+void group_102() {
+  show(std::try_runtime_format("[{:<12g}]", double(0.0)));
+  show(std::try_runtime_format("[{:<12g}]", float(0.0)));
+  show(std::try_runtime_format("[{:+.1e}]", double(0.0)));
+  show(std::try_runtime_format("[{:+.1e}]", float(0.0)));
+  show(std::try_runtime_format("[{:08.3f}]", double(0.0)));
+  show(std::try_runtime_format("[{:08.3f}]", float(0.0)));
+  show(std::try_runtime_format("[{:^14.4E}]", double(0.0)));
+  show(std::try_runtime_format("[{:^14.4E}]", float(0.0)));
+  show(std::try_runtime_format("[{:G}]", double(0.0)));
+  show(std::try_runtime_format("[{:G}]", float(0.0)));
+}
+void group_103() {
+  show(std::try_runtime_format("[{}]", double(-1.5)));
+  show(std::try_runtime_format("[{}]", float(-1.5)));
+  show(std::try_runtime_format("[{:.3f}]", double(-1.5)));
+  show(std::try_runtime_format("[{:.3f}]", float(-1.5)));
+  show(std::try_runtime_format("[{:e}]", double(-1.5)));
+  show(std::try_runtime_format("[{:e}]", float(-1.5)));
+  show(std::try_runtime_format("[{:10.2f}]", double(-1.5)));
+  show(std::try_runtime_format("[{:10.2f}]", float(-1.5)));
+  show(std::try_runtime_format("[{:<12g}]", double(-1.5)));
+  show(std::try_runtime_format("[{:<12g}]", float(-1.5)));
+}
+void group_104() {
+  show(std::try_runtime_format("[{:+.1e}]", double(-1.5)));
+  show(std::try_runtime_format("[{:+.1e}]", float(-1.5)));
+  show(std::try_runtime_format("[{:08.3f}]", double(-1.5)));
+  show(std::try_runtime_format("[{:08.3f}]", float(-1.5)));
+  show(std::try_runtime_format("[{:^14.4E}]", double(-1.5)));
+  show(std::try_runtime_format("[{:^14.4E}]", float(-1.5)));
+  show(std::try_runtime_format("[{:G}]", double(-1.5)));
+  show(std::try_runtime_format("[{:G}]", float(-1.5)));
+  show(std::try_runtime_format("[{}]", double(3.14159265)));
+  show(std::try_runtime_format("[{}]", float(3.14159265)));
+}
+void group_105() {
+  show(std::try_runtime_format("[{:.3f}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:.3f}]", float(3.14159265)));
+  show(std::try_runtime_format("[{:e}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:e}]", float(3.14159265)));
+  show(std::try_runtime_format("[{:10.2f}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:10.2f}]", float(3.14159265)));
+  show(std::try_runtime_format("[{:<12g}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:<12g}]", float(3.14159265)));
+  show(std::try_runtime_format("[{:+.1e}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:+.1e}]", float(3.14159265)));
+}
+void group_106() {
+  show(std::try_runtime_format("[{:08.3f}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:08.3f}]", float(3.14159265)));
+  show(std::try_runtime_format("[{:^14.4E}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:^14.4E}]", float(3.14159265)));
+  show(std::try_runtime_format("[{:G}]", double(3.14159265)));
+  show(std::try_runtime_format("[{:G}]", float(3.14159265)));
+  show(std::try_runtime_format("[{}]", double(0.0000001)));
+  show(std::try_runtime_format("[{}]", float(0.0000001)));
+  show(std::try_runtime_format("[{:.3f}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:.3f}]", float(0.0000001)));
+}
+void group_107() {
+  show(std::try_runtime_format("[{:e}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:e}]", float(0.0000001)));
+  show(std::try_runtime_format("[{:10.2f}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:10.2f}]", float(0.0000001)));
+  show(std::try_runtime_format("[{:<12g}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:<12g}]", float(0.0000001)));
+  show(std::try_runtime_format("[{:+.1e}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:+.1e}]", float(0.0000001)));
+  show(std::try_runtime_format("[{:08.3f}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:08.3f}]", float(0.0000001)));
+}
+void group_108() {
+  show(std::try_runtime_format("[{:^14.4E}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:^14.4E}]", float(0.0000001)));
+  show(std::try_runtime_format("[{:G}]", double(0.0000001)));
+  show(std::try_runtime_format("[{:G}]", float(0.0000001)));
+  show(std::try_runtime_format("[{}]", double(12345678.9)));
+  show(std::try_runtime_format("[{}]", float(12345678.9)));
+  show(std::try_runtime_format("[{:.3f}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:.3f}]", float(12345678.9)));
+  show(std::try_runtime_format("[{:e}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:e}]", float(12345678.9)));
+}
+void group_109() {
+  show(std::try_runtime_format("[{:10.2f}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:10.2f}]", float(12345678.9)));
+  show(std::try_runtime_format("[{:<12g}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:<12g}]", float(12345678.9)));
+  show(std::try_runtime_format("[{:+.1e}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:+.1e}]", float(12345678.9)));
+  show(std::try_runtime_format("[{:08.3f}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:08.3f}]", float(12345678.9)));
+  show(std::try_runtime_format("[{:^14.4E}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:^14.4E}]", float(12345678.9)));
+}
+void group_110() {
+  show(std::try_runtime_format("[{:G}]", double(12345678.9)));
+  show(std::try_runtime_format("[{:G}]", float(12345678.9)));
+}
+void group_111() {
+  show(std::try_runtime_format("{}:{}|{{}}|{:>4}", int32_t(1), int64_t(-2), uint8_t(3)));
+  show(std::try_runtime_format("{1}-{0}-{1}", int32_t(10), "x"));
+  show(std::try_runtime_format("{:#x}{:#o}{:#b}", uint32_t(255), uint32_t(8), uint32_t(5)));
+  show(std::try_runtime_format("{{{}}}", int32_t(9)));
+  mut std::string long_text = std::string();
+  for (mut int32_t index = 0; index < 200; index++) {
+    long_text.append(std::runtime_format("{:04}|", index).view());
+  }
+  std::println(long_text.view());
+  mut std::string target = std::string("prefix:");
+  [[discard]] std::try_runtime_format_to(target, "{}+{}", int32_t(4), int32_t(5));
+  std::println(target.view());
+  std::println(std::runtime_format("{}", std::try_runtime_format("{:q}", int32_t(1)).has_value()));
+  std::println(std::runtime_format("{}", std::try_runtime_format("{} {}", int32_t(1)).has_value()));
+}
+int main() {
+  group_0();
+  group_1();
+  group_2();
+  group_3();
+  group_4();
+  group_5();
+  group_6();
+  group_7();
+  group_8();
+  group_9();
+  group_10();
+  group_11();
+  group_12();
+  group_13();
+  group_14();
+  group_15();
+  group_16();
+  group_17();
+  group_18();
+  group_19();
+  group_20();
+  group_21();
+  group_22();
+  group_23();
+  group_24();
+  group_25();
+  group_26();
+  group_27();
+  group_28();
+  group_29();
+  group_30();
+  group_31();
+  group_32();
+  group_33();
+  group_34();
+  group_35();
+  group_36();
+  group_37();
+  group_38();
+  group_39();
+  group_40();
+  group_41();
+  group_42();
+  group_43();
+  group_44();
+  group_45();
+  group_46();
+  group_47();
+  group_48();
+  group_49();
+  group_50();
+  group_51();
+  group_52();
+  group_53();
+  group_54();
+  group_55();
+  group_56();
+  group_57();
+  group_58();
+  group_59();
+  group_60();
+  group_61();
+  group_62();
+  group_63();
+  group_64();
+  group_65();
+  group_66();
+  group_67();
+  group_68();
+  group_69();
+  group_70();
+  group_71();
+  group_72();
+  group_73();
+  group_74();
+  group_75();
+  group_76();
+  group_77();
+  group_78();
+  group_79();
+  group_80();
+  group_81();
+  group_82();
+  group_83();
+  group_84();
+  group_85();
+  group_86();
+  group_87();
+  group_88();
+  group_89();
+  group_90();
+  group_91();
+  group_92();
+  group_93();
+  group_94();
+  group_95();
+  group_96();
+  group_97();
+  group_98();
+  group_99();
+  group_100();
+  group_101();
+  group_102();
+  group_103();
+  group_104();
+  group_105();
+  group_106();
+  group_107();
+  group_108();
+  group_109();
+  group_110();
+  group_111();
+  return 0;
+}
+

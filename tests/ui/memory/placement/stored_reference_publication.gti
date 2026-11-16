@@ -1,0 +1,41 @@
+// A returned class storing a reference publishes in place.
+//@ run-pass
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+mut int order = 0;
+mut int& select(mut int& value) { order = order * 10 + 1; return value; }
+int finish() { order = order * 10 + 2; return 42; }
+class View {
+  mut int& value;
+  int stamp;
+public:
+  View(mut int& value) : value(select(value)), stamp(finish()) {}
+  void update() mut { this.value += this.stamp; }
+};
+int main() {
+  mut int value = 3;
+  { mut View view = View(value); view.update(); }
+  return value == 45 && order == 12 ? 0 : 1;
+}
+

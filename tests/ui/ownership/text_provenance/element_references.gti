@@ -1,0 +1,16 @@
+// A view read through an array element reference is ownerless text.
+//@ run-pass
+//@ stdout: zz
+import std.string_view;
+void setTo(mut std::string_view& out, std::string_view value) { out = value; }
+std::string_view throughReferences() {
+  mut std::string_view words[2] = {"a", "bc"};
+  for (mut std::string_view& word : words) { word = "q"; }
+  setTo(words[0], "zz");
+  std::string_view& last = words[1];
+  return last == "q" ? words[0] : "missed";
+}
+int main() {
+  std::println(throughReferences());
+  return throughReferences() == "zz" ? 0 : 1;
+}

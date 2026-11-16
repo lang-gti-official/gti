@@ -1,0 +1,3 @@
+// A public type inside a private nested type cannot be named through it.
+//@ check-fail
+class C { struct N { struct Leaf { int value; };  public: N() = default; };  public: C() = default; }; int main() { C::N::Leaf n{}; return 0; }  //~ ERROR GTI-S2007 Nested type 'N' //~ ERROR GTI-S2012

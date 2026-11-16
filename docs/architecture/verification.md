@@ -162,7 +162,7 @@ forwarding and request-local reuse. Its repeated-call fixture requires at least
 49 cache reuses and fewer than five MIR executions for 50 identical validations;
 cache hits retain deterministic work charges. An infinite validator is rejected.
 
-`consteval_runtime` runs the user-defined duration and checked formatting clients
+`tests/ui/constexpr/consteval/` runs the user-defined duration and checked formatting clients
 on LLVM at O0/O1/O3, verifies the C++ GTI-B0003 boundary, and checks rejected
 literals without replacing existing outputs. It includes a 300-character/16-field
 pattern, a custom formatter validator, owning arguments with exactly-once cleanup,
@@ -2059,7 +2059,7 @@ changed. The new fixture went from `GTI-B0001` to success.
 base's computed arguments ran `++initial`. That copy read the prepared
 snapshot `__gti_prepared.parameter_0` in the member-initializer list; it now
 runs in body order from the restored formal and stores the same value, which
-`base_constructor_stage_runtime` checks. Every other program emits
+`tests/ui/classes/base_construction/` checks. Every other program emits
 byte-identical C++, and pairs that fail with both compilers report identical
 diagnostics. The summed emission time was 2779.4 s before and 2789.1 s after.
 An earlier run against `b0a1f524` changed the same two programs. Locally,
@@ -2319,7 +2319,7 @@ predicate makes C++ emission fail with the reported "scalar-CFG operand is
 not a proven value". The emitted C++ calls `mir_checked_array_bound_v1`, then
 switches on and reads payload fields from the element subscription.
 
-`borrowed_payload_pattern_runtime` adds the `borrowed_payload_element` fixture
+`tests/ui/borrow/payload_patterns/` adds the `borrowed_payload_element` fixture
 with the same shapes and checks their values in each of its native modes. Run
 with an argument, the fixture indexes past the end of an array: it reports
 `GTI-R0007` at that switch before any arm runs, exits with status 70 and
@@ -2718,7 +2718,7 @@ but receives no carrier, because its `concreteGenericClass` fact is clear.
 
 ## Generic base arguments (0.431.1)
 
-`base_constructor_stage_runtime` adds `generic_base_arguments.gti`. In it, two
+`tests/ui/classes/base_construction/` adds `generic_base_arguments.gti`. In it, two
 concrete instances of a generic derived class compute their generic base's
 arguments through a checked call and a temporary receiver. In C++20/C++23 at
 O0/O1/O3, no-elide and ASan/UBSan it checks the temporary's drop after each
@@ -2804,7 +2804,7 @@ temporary to use its owned slot rather than the cleanup-free value slot.
 destructor, to reference parameters in an explicit member initializer, field
 defaults and a generated default constructor. Its C++20/C++23 O0/O3 builds
 check that each temporary ends before the next initializer observes the drop
-count. `base_constructor_stage_runtime` adds `base_initializer_temporaries.gti`:
+count. `tests/ui/classes/base_construction/` adds `base_initializer_temporaries.gti`:
 a destructor-bearing base built from a temporary receiver, a reference argument
 and field reads of a returned and a constructed value. In C++20/C++23 at
 O0/O1/O3, no-elide and ASan/UBSan it checks that both probes end in reverse
@@ -6005,7 +6005,7 @@ integration run.
 
 ## Class expression publication regression gate
 
-`class_expression_publication_runtime` covers the grouped-construction and
+`tests/ui/classes/expression_publication/` covers the grouped-construction and
 conditional-binding failures tracked by coverage findings S01/S02 in issue #103.
 The passive fixtures delete copying and omit default constructors. Both branch
 outcomes and repeated execution of the same binding exercise exact storage
@@ -6108,7 +6108,7 @@ source attribution, and exact argument-before-outer-guard cleanup. The structura
 gate passes (5.59 seconds) with six malformed schedules at each of seven argument
 stages. The initial tests exposed both a duplicate native construction and a
 fallback that admitted malformed prepared-argument schedules; both are repaired.
-`class_expression_consumers_runtime` now gates the 48-case matrix with two workers
+`tests/ui/classes/expression_consumers/` now gates the 48-case matrix with two workers
 and a matching CTest PROCESSORS reservation. This is focused evidence, not yet
 full-suite or current-main integration acceptance.
 
@@ -6118,7 +6118,7 @@ Release/Ninja compiler on the Mac mini (macOS arm64, AppleClang 21, LLVM 22.1.8)
 `cpp_mir_body_emitter_text`, `cpp_mir_body_emitter_lifecycle`,
 `conditional_class_publication`, `constructor_argument_staging_runtime`,
 `temporary_constructor_argument_runtime`, `diagnostic_recovery_lsp`,
-`class_expression_consumers_runtime`, and `class_expression_publication_runtime`.
+`tests/ui/classes/expression_consumers/`, and `tests/ui/classes/expression_publication/`.
 The combined focused run takes 158.53 seconds; the consumer matrix passes all
 48 cases in six native modes, and all ten publication fixtures pass six native
 modes plus ASan/UBSan. The final source boundary admits only primitive scalar
@@ -7933,7 +7933,7 @@ after an all-target Release/Ninja build with AppleClang 21 and LLVM 22.1.8
 not a claim of one uninterrupted timeout-free invocation: the initial run
 completed 102 passes before three unrelated runtime matrices timed out.
 `void_return_runtime`, `string_ordering_runtime`, and
-`borrowed_payload_pattern_runtime` all passed unchanged on retry in 19.67
+`tests/ui/borrow/payload_patterns/` all passed unchanged on retry in 19.67
 seconds. The remaining 274 tests then passed in 246.89 seconds. No production
 source or compiler binary changed between those runs; the combined pass
 inventory matches every registered test, with none omitted.
@@ -8059,7 +8059,7 @@ actual source-generated copy-return MIR also loses its required retirement and
 must be rejected by both the independent verifier and production lowered
 boundary. `optimizer_foundation` separately forges access, formal identity,
 copy provenance, return SSA identity, and cleanup ordering.
-`carrier_reference_runtime` covers normal execution, mutation overflow,
+`tests/ui/borrow/carrier_references/` covers normal execution, mutation overflow,
 destructor failure after provisional reference return, and destructor failure
 after provisional value-copy return in C++20/C++23 at O0/O1/O3, no-elide, and
 ASan/UBSan modes (32 outcomes). The LSP composition test checks accessor hover
@@ -8534,7 +8534,7 @@ through three, checking first-match, first-extremum, empty, duplicate, absent,
 and unequal-length behavior independently by indexed reference calculations.
 Move-only searchable elements are observed without cloning. The owning suite
 also tests explicit move and fresh-owner assignment through a nominal cursor.
-`generic_algorithm_errors` rejects type, predicate, implicit-copy, owner-loan,
+`tests/ui/stdlib/algorithm/` rejects type, predicate, implicit-copy, owner-loan,
 and escaping-local-owner cases, then checks failure propagation and cleanup at
 O0/O3. These tests supplement `generic_algorithm_cluster`, container tests,
 and the reviewed standard-library surface matrix.
@@ -9532,7 +9532,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/function_signatures.gti` | concrete signature tags, class packs, ordinary/operator()/interface calls, empty forwarding, and exactly-once move-only argument cleanup under C++20/C++23 at O0/O1/O3; does not establish owning callback storage |
 | `tests/ui/generics/signatures/signature_pack_deduction.gti` | exact empty, multi-argument, reference, explicit, repeated, prefixed and value-pack deductions; symbolic forwarding and returned nominal metadata under C++20/C++23 at O0/O1/O3; separated from the ownership/dispatch fixture to keep focused native matrices bounded |
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
-| `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
+| `stored_callable_types` / `tests/ui/callables/stored/` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
 | `compiler_pipeline` | manifest-backed aggregate across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
@@ -9558,7 +9558,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `defined_integer_arithmetic` | APInt boundary behavior, public overload validity, exact integer and checked-result constexpr constants, HIR/MIR intrinsic identity, effects, diagnostics, and backend helper selection |
 | `defined_integer_runtime` | example 46 at O0/O3 under C++20/C++23 with exact wrapping, saturation, checked success, and checked error results |
 | `checked_integer_overflow_runtime` | Native overflow builtins and the portable `GTI_PORTABLE_OVERFLOW_CHECKS` path at O0/O3 against an exact oracle. Every ordered boundary pair for all eight widths goes through `checked_*`/`saturating_*`, and runtime-supplied operands go through `+`, `-`, `*` and `+=` success and overflow failures, including the failure detail and exit 70. |
-| `format_output_matrix_runtime` | A generated matrix of 1,110 formatted results compared byte-for-byte with output recorded before the allocation-lean formatter, at O0 and O3. It covers every integer width with sign, base, alternate, zero-padding, fill and alignment specs; `char` and `c` presentations; strings, views and `bool` with precision; float and double presentations; positional and escaped fields; long output; `try_format_to`; and rejected specs. |
+| `tests/slow/stdlib/format/` | A generated matrix of 1,110 formatted results compared byte-for-byte with output recorded before the allocation-lean formatter, at O0 and O3. It covers every integer width with sign, base, alternate, zero-padding, fill and alignment specs; `char` and `c` presentations; strings, views and `bool` with precision; float and double presentations; positional and escaped fields; long output; `try_format_to`; and rejected specs. |
 | `binary64_pipeline` | exact binary64 parsing/evaluation, promotion, conversions, diagnostics, constexpr, generic numeric use, HIR/MIR, formatting, and backend bits |
 | `binary64_runtime` | example 47 at O0/O3 under C++20/C++23 plus emitted strict-IEEE policy evidence |
 | `mir_shared_failure_cleanup` | shared failure-cleanup structure and contract: failure-cleanup drops stay at one per live owner and blocks grow linearly for 10/20/40/80 owners with failure-capable construction, calls and early returns. Mutations reject a continuation edge naming a producer, a `Goto` into a continuation, a secondary that continues, a continuation forged as a producer, duplicated and missing shared drops, a loan ended before its shared endpoint, continuations that form a cycle, and a secondary under the wrong primary. A lone failure edge stays unshared, a moved-shell drop never enters a shared suffix, and both the parity fixture and `stdlib_surface_json` share cleanup. Shared normal exits: an early return after each of 10/20/40/80 owners keeps one normal drop per owner and one `Return` (unshared, N(N+3)/2 drops); the runtime fixture's void, scalar, `?` and `unexpected` exits share separate success and error ladders, and so do program-constant returns; owning and borrowed results and single-exit bodies stay private. Mutations reject an exit that skips a rung, an exit entering a rung it does not match, a missing carrier store and a missing shared loan end, and no body or program falls back |
@@ -9635,7 +9635,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `mir_backend_class_default_cleanup_runtime` | selected class-default construction and reverse cleanup at O0/O1/O3 under C++20/C++23, including return-before-cleanup behavior, repeat-call state, exact function/destructor markers, explicit slot construction/destruction, and the engaged-slot guard |
 | `defaulted_lifecycle_runtime` | explicit structural default construction/destruction, declaration-initialized scalar and nested-class fields, state-bearing base construction, absent source lifecycle bodies, and explicit MIR lifetime slots at O0/O3 under C++20/C++23 |
 | `inline_lambda_argument_runtime` | inline capturing lambda literals as deduced callable algorithm arguments - copy capture, move-only move capture, and repeated invocation - remain fused across may-raise block splits at O0/O3 only when dominance and natural-loop analysis prove their capture initialization is single-shot |
-| `generic_callable_concepts_runtime` | public read/mut/once unary and binary callable relations, predicates, operations, comparator sort, complete-vector clients, numeric reducers, and `invoke_once`; early invalid-argument/result/capability diagnostics; verified callable MIR contracts; direct borrowed lambda arguments through the transformed C++ text path; and C++20/C++23 O0/O1/O3 execution |
+| `tests/ui/callables/concepts/` | public read/mut/once unary and binary callable relations, predicates, operations, comparator sort, complete-vector clients, numeric reducers, and `invoke_once`; early invalid-argument/result/capability diagnostics; verified callable MIR contracts; direct borrowed lambda arguments through the transformed C++ text path; and C++20/C++23 O0/O1/O3 execution |
 | `mir_backend_owned_lifecycle` | exact function/constructor/destructor general emission; scalar-field initializer binding and destructor source coherence; constructed/moved/prepared/transferred/dropped schedule authority; checked cleanup; strict lifetime slots; and fail-closed graph, stage, operation, literal, place, CFG, call, transfer, and drop mutations |
 | `mir_backend_owned_lifecycle_runtime` | exact nested-scope construction, move-by-value, first-close ordering, and explicit cleanup at O0/O1/O3 under C++20/C++23, including emitted family markers and lifetime-slot schedule evidence |
 | `mir_backend_scalar_failure_callgraph` | atomic hosted `scalar-failure-callgraph-v1` selection; exact hidden bool/out-result/record ABI; local-site creation and unchanged call propagation; Return-only publication; reverse failure drops; unique terminal/firewall shape; complete HIR-body reverse-edge and selected-class representation closure; native/virtual/lambda/dynamic-initializer/checked-lifecycle/normal-ABI/cycle near misses; and fail-closed metadata, target, record, cleanup, and source-MIR mutations |
@@ -10303,7 +10303,7 @@ special treatment of a result-library type.
 
 Recursive owning sums additionally use `recursive_payload_sum_runtime` for
 finite generic containment, reverse sibling cleanup, partially constructed
-owners/alternatives, and destructor failure. `borrowed_payload_pattern_runtime`
+owners/alternatives, and destructor failure. `tests/ui/borrow/payload_patterns/`
 covers shared/exclusive active-payload references, mixed copied and borrowed
 bindings, projected fields, checked receiver returns, and owning enum field
 exchange. Both include C++20/C++23, optimized/unoptimized, disabled-elision,
@@ -10816,7 +10816,7 @@ Its count and content fingerprint remain enforced. This
 inventory reconciliation does not mark those cases executed, remove frozen
 baseline obligations, or satisfy any target, sanitizer, cost or promotion gate.
 
-`llvm_cleanup_context_execution` compiles ordinary user classes through C++23 O3
+`tests/ui/runtime/cleanup_context/` compiles ordinary user classes through C++23 O3
 and LLVM O0-O3, checking normal cleanup, a first failure inside a destructor,
 an inherited secondary failure before callee-local destruction, and scope
 restoration before a later ordinary failure. `llvm_hosted_cleanup_execution`
@@ -10895,11 +10895,11 @@ fields after either the containing destructor or one child fails, and terminal
 failure during that drain. Owning parameters check exactly-once cleanup both
 before call entry (a later argument fails) and after transfer to the callee.
 Fresh owning results check both ordinary publication and rollback after a
-remaining local destructor fails. Production `llvm_placement_execution` also
+remaining local destructor fails. Production `tests/ui/memory/placement/` also
 checks returned borrowed carriers, their referent identity and rollback order;
 its fresh-return chain has an explicit C++ vocabulary comparator gap, while
 the failure-cleanup case retains C++20/23 comparison.
-`llvm_cleanup_context_execution` additionally propagates a long panic message
+`tests/ui/runtime/cleanup_context/` additionally propagates a long panic message
 with an embedded zero through three source frames, checking every reported byte,
 the original location and deterministic cleanup order against C++23 and LLVM
 O0-O3. A second case preserves two distinct long messages and their original
@@ -11135,7 +11135,7 @@ passing skips. Existing known failures remain visible and attributed. The
 frozen LLVM baseline, reconciled-main coverage and production-promotion gates
 are unchanged; C++ feature parity is not an additional gate.
 
-`llvm_placement_execution` extends the class profile with fresh-result final
+`tests/ui/memory/placement/` extends the class profile with fresh-result final
 addresses: immovable return chains and fields/defaults/TLS, fresh immovable
 direct/nested/default/field/TLS arrays (including passive and low-alignment
 elements), copy-only element initialization, array copy snapshots/movement, evaluated

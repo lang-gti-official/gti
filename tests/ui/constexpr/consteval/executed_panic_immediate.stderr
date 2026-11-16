@@ -1,0 +1,15 @@
+main.gti:19:29: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 19 | int main() { return third(10); }  //~ ERROR GTI-S2057
+    |                             ^
+main.gti:6:57: note: Compile-time evaluation panicked: "not a multiple of three"
+ 6 |   if (v % 3 != 0) { std::panic("not a multiple of three"); }
+   |                                                         ^
+main.gti:18:15: note: Immediate declaration is here.
+ 18 | consteval int third(int v) { return checked_third(v); }
+    |               ^~~~~
+main.gti:19:29: note: Constant evaluation requested here.
+ 19 | int main() { return third(10); }  //~ ERROR GTI-S2057
+    |                             ^
+main.gti:18:52: note: Constant evaluation requested here.
+ 18 | consteval int third(int v) { return checked_third(v); }
+    |                                                    ^

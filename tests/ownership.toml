@@ -110,7 +110,6 @@ paths = [
 ]
 owners = [
   "concept_conditions",
-  "conditional_member_operators",
   "reference_parameter_packs",
   "parser_conditional_recovery",
   "source_text_pipeline",
@@ -289,7 +288,6 @@ paths = [
 ]
 owners = [
   "concept_conditions",
-  "conditional_member_operators",
   "protocol_requirements_runtime",
   "protocol_format_hash_runtime",
   "reference_parameter_packs",
@@ -341,7 +339,6 @@ consumers = [
   "lsp_protocol",
   "diagnostic_recovery_lsp",
   "semantic_call_regressions_lsp",
-  "generic_algorithm_errors",
   "generic_algorithm_breadth",
 ]
 
@@ -478,7 +475,6 @@ area = "mir"
 risk = "shared"
 paths = [
   "tests/borrow_origin_publication_tests.cpp",
-  "tests/borrow_origin_publication_runtime_test.py",
   "tests/fixtures/borrowed_text_field_reborrow.gti",
   "tests/fixtures/temporary_cursor_cleanup_provider.gti",
   "tests/fixtures/receiver_field_carriers*.gti",
@@ -490,7 +486,6 @@ owners = [
   "reference_parameter_pack_mir",
   "^mir_",
   "borrow_origin_publication",
-  "borrow_origin_publication_runtime",
   "ephemeral_carrier_mir",
   "borrowing_callbacks_mir",
   "storage_adoption_contract",
@@ -508,7 +503,6 @@ owners = [
 ]
 consumers = [
   "concept_conditions",
-  "conditional_member_operators",
   "protocol_requirements_runtime",
   "reference_parameter_packs",
   "lowered_program_contract",
@@ -531,7 +525,6 @@ owners = [
   "mir_thread_local",
   "^thread_local_",
   "llvm_tls_contracts",
-  "llvm_tls_cleanup_context",
 ]
 consumers = []
 
@@ -737,7 +730,6 @@ owners = [
   "llvm_thread_lifecycle_contracts",
   "llvm_cthread_startup_execution",
   "llvm_tls_contracts",
-  "llvm_tls_cleanup_context",
   "llvm_mutex_contracts",
   "llvm_mutex_hierarchy_contracts",
   "llvm_mutex_service",
@@ -987,7 +979,6 @@ owners = [
   "cmath_runtime",
 ]
 consumers = [
-  "format_output_matrix_runtime",
 ]
 
 [[area]]
@@ -1045,7 +1036,6 @@ owners = [
   "stdlib_modules",
   "stdlib_module_boundaries",
   "stdlib_include_sweep",
-  "stdlib_discardable",
   "stdlib_adoption_runtime",
 ]
 consumers = [
@@ -1146,10 +1136,8 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
-  "conditional_member_operators",
   "protocol_format_hash_runtime",
   "complete_containers",
-  "complete_containers_collection",
   "container_contract_failure",
   "container_iterator_movement",
   "container_swap_runtime",
@@ -1172,7 +1160,6 @@ owners = [
   "generic_algorithm_breadth",
   "generic_algorithm_cluster",
   "removal_algorithms",
-  "generic_algorithm_errors",
 ]
 consumers = [
   "collection_initialization_runtime",
@@ -1201,7 +1188,6 @@ owners = [
   "text_view_iterator_runtime",
   "encoding_runtime",
   "extensible_formatting_runtime",
-  "format_output_matrix_runtime",
   "charconv_runtime",
 ]
 consumers = [
@@ -1252,7 +1238,6 @@ paths = [
 ]
 owners = [
   "concept_conditions",
-  "conditional_member_operators",
   "protocol_format_hash_runtime",
   "shared_ownership_runtime",
   "shared_ownership_failure",
