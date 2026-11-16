@@ -778,7 +778,7 @@ def workflow_contract(root):
     assert sorted(p.name for p in (root / ".github/workflows").glob("*.yml")) == [
         "backport.yml", "beta.yml", "cache.yml", "ci.yml", "cpp-backend.yml", "full-validation.yml",
         "llvm-prebuilt.yml", "lsp.yml", "nightly.yml", "rollback.yml", "rollup.yml",
-        "sanitizers.yml", "train.yml"]
+        "sanitizers.yml", "suite-measures.yml", "train.yml"]
     assert not (root / ".gitea/workflows/ci.yml").exists()
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
         duplicates = duplicate_mapping_keys(workflow.read_text())
@@ -1338,6 +1338,32 @@ def suite_contract(root):
         gate(False)  # another source
 
 
+def suite_measures_contract(root):
+    """The suite yardsticks (coverage and seeded bugs) only measure: dispatch or
+    weekly, read-only, no issue, no cache save, never a channel or release input;
+    and their scripts pass their own self-tests."""
+    text = (root / ".github/workflows/suite-measures.yml").read_text()
+    header = text.split("\njobs:\n", 1)[0]
+    assert "  schedule:\n    - cron: " in header and "  workflow_dispatch:\n" in header
+    assert "push:" not in header and "pull_request" not in text and "merge_group" not in text
+    assert "\npermissions:\n  contents: read\n\n" in header and ": write" not in text
+    assert "secrets." not in text and "actions/cache/save@" not in text and "full_validation_report" not in text
+    assert "GTI_ENABLE_SOURCE_COVERAGE=ON" in text and "GTI_CI_COVERAGE: 1" in text
+    assert "%m.profraw" in text and "coverage_report.py collect" in text and "coverage_report.py summarize" in text
+    assert "seeded_bugs.py run" in text and "seeded_bugs.py merge" in text
+    assert "name: suite-coverage" in text and "name: seeded-bugs" in text
+    for name, body in jobs(text).items():
+        for line in body.splitlines():
+            if line.lstrip().startswith(("run:", "python3", "cmake", "ctest")):
+                assert "${{" not in line, (name, line)
+    for action, revision in re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)@(\S+)", text, re.MULTILINE):
+        assert action.startswith("actions/") and re.fullmatch(r"[0-9a-f]{40}", revision), (action, revision)
+    train = (root / "scripts/release_train.py").read_text()
+    assert "suite-measures" not in train, "the release train never reads the suite yardsticks"
+    for script in ("coverage_report.py", "coverage_compare.py", "seeded_bugs.py"):
+        run([sys.executable, str(root / "scripts" / script), "--self-test"], root, True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=pathlib.Path)
@@ -1345,6 +1371,7 @@ def main():
     args = parser.parse_args()
     root = args.root.resolve()
     workflow_contract(root)
+    suite_measures_contract(root)
     installed_system_command_contract(root)
     change_review_contract(root)
     freeze_contract(root)

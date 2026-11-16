@@ -75,7 +75,7 @@ Owner decisions (2026-11-16):
 | Phase | Outcome | Prerequisites | Status |
 | --- | --- | --- | --- |
 | 0. Stop the bleeding | Per-commit runtime harnesses at `-O0` only (`GTI_TEST_LLVM_LEVELS` selects more); slow families carry the CTest label `slow` and run in the daily slow tier, whose `Slow tier verdict (<sha>)` the release train requires; C++-backend tests and CI removed; a diff-based PR lint freezes the old suite (no new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`; `tests/ui/`, `tests/unit/`, `tests/runner/` and `tests/gti_test.cmake` are exempt) | none | in progress |
-| 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts | none | not started |
+| 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts: `.github/workflows/suite-measures.yml` (dispatch/weekly, never a gate), `GTI_ENABLE_SOURCE_COVERAGE`, `scripts/coverage_report.py`, `scripts/coverage_compare.py`, `scripts/seeded_bugs.py`; see [verification](../architecture/verification.md#suite-yardsticks-source-coverage-and-seeded-bugs) | none | tooling in review; baseline run not yet recorded |
 | 2. Runner MVP | `gti-test` under `tests/runner/`, cases under `tests/ui/`, one CTest entry registered in `tests/gti_test.cmake`; preamble-cache spike settles plan scenario A or B | none | in progress |
 | 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | not started |
 
