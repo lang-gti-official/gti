@@ -1,0 +1,9 @@
+// Confined callable results: nested result inference must still check the outer exact parameter type.
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));  //~ ERROR GTI-S2003
+}
+int main() {
+  auto inner = [](int value) -> double { return 0.5; };
+  auto outer = [](bool value) -> int { return 1; };
+  return compose(outer, inner, 4);
+}

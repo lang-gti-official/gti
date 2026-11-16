@@ -1,0 +1,13 @@
+// Temporary argument borrows: a fresh carrier with a proved stable dependency now supplies a nonescaping readonly argument.
+//@ check-pass
+class View {
+  int& value;
+public:
+  View(int& value) : value(value) {}
+};
+void inspect(View& view) {}
+int main() {
+  mut int value = 1;  //~ WARN GTI-S2096
+  inspect(View(value));
+  return 0;
+}

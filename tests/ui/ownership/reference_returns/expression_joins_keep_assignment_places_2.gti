@@ -1,0 +1,15 @@
+// Expression joins keep assignment places: a field assignment whose value is a logical expression should still report the live borrow of its root after the join.
+struct Counter {
+  mut int value = 0;
+  mut bool seen = false;
+public:
+  Counter() = default;
+};
+int main() {
+  mut Counter counter{};
+  bool armed = true;
+  bool ready = true;
+  Counter& view = counter;
+  counter.seen = armed && ready;  //~ ERROR GTI-S2017
+  return view.value;
+}

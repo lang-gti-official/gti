@@ -1,0 +1,25 @@
+// Nested member reference return forwarding: a member returning another class's borrowed subscript result should lower and verify.
+//@ check-pass
+class Inner {
+  mut int elements[2] = {2, 3};
+
+public:
+  mut int& operator[](uint64_t index) mut { return this.elements[index]; }
+public:
+  Inner() = default;
+};
+
+class Outer {
+  mut Inner data = Inner();
+
+public:
+  mut int& operator[](uint64_t index) mut { return this.data[index]; }
+public:
+  Outer() = default;
+};
+
+int main() {
+  mut Outer outer = Outer();
+  outer[uint64_t(1)] = 11;
+  return outer[uint64_t(1)] - 11;
+}

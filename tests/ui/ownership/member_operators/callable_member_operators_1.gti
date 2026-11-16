@@ -1,0 +1,48 @@
+// Callable member operators: operator() should support exact arbitrary-arity member overloads.
+//@ check-pass
+class Accumulator {
+  mut int total;
+
+public:
+  Accumulator(int initial) : total(initial) {}
+
+  int operator()() { return this.total; }
+  int operator()(int value) { return this.total + value; }
+  int operator()(int value) mut {
+    this.total += value;
+    return this.total;
+  }
+  int operator()(int left, int right) { return this.total + left + right; }
+};
+
+class Identity<T> {
+public:
+  T operator()(T value) { return value; }
+public:
+  Identity() = default;
+};
+
+class Slot {
+  mut int value = 1;
+
+public:
+  int& operator()() { return this.value; }
+  mut int& operator()() mut { return this.value; }
+public:
+  Slot() = default;
+};
+
+int main() {
+  Accumulator fixed = Accumulator(1);
+  mut Accumulator changing = Accumulator(2);
+  Identity<int> identity = Identity<int>();
+  int first = fixed();
+  int second = fixed(3);
+  int third = changing(4);
+  int fourth = fixed(5, 6);
+  int generic = identity(7);
+  mut Slot slot = Slot();
+  mut int& slot_value = slot();
+  slot_value = first + second + third + fourth + generic;
+  return slot() - 25;
+}

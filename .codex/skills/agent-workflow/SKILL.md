@@ -113,7 +113,7 @@ for VERSION decisions.
 **You validate the change; the merge queue validates integration.** Run the
 exact reproducer or new regression (failing on the parent revision for a fix),
 the owning subsystem's tests and the affected cross-phase and tooling
-consumers, plus `compiler_pipeline` and the native smoke. Never run the
+consumers, plus `gti_test_ui` and the native smoke. Never run the
 complete suite to finish a task: the queue runs it on the exact candidate that
 becomes `main`, sharded across macOS arm64 and Linux x64, and its `CI gate`
 proves every registered test ran. Full integration also builds the bundled
@@ -163,7 +163,7 @@ integration is complete contributor work; report it as deferred, never as passed
    Validation:
    - tier: T2 (MIR cleanup publication for a new borrow shape)
    - T0: gti_test_ui
-   - T1: gti_test_ui, mir_full_expression, compiler_pipeline
+   - T1: gti_test_ui, mir_full_expression, optimizer_conformance
    - T2: llvm_place_execution, mir_census_profile_controls
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
    - expectations: tests/ui/borrow/carrier.gti now accepted; the rule changed

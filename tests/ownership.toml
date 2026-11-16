@@ -19,7 +19,7 @@
 #              never combined with other changes)
 #
 # Every changed implementation path also gets the baseline that the policy
-# requires of every change: `compiler_pipeline` and the native O0/O3 smoke.
+# requires of every change: `gti_test_ui` and the native O0/O3 smoke.
 # The planner adds that baseline; entries do not repeat it.
 
 schema = 1
@@ -1688,15 +1688,12 @@ paths = [
   "tests/CMakeLists.txt",
   "tests/TestThroughput.cmake",
   "tests/ownership.toml",
-  "tests/compiler_test_aggregate.py",
-  "tests/named_test_census.py",
   "tests/case_jobs.py",
 ]
 owners = [
   "cmake_test_ownership",
   "test_throughput_registration",
   "test_case_jobs",
-  "partitioned_test_protocol",
   "test_ownership_map",
   "plan_checks",
   "optimized_test_compiler_policy",
