@@ -4338,8 +4338,10 @@ auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
     return false;
   }
   // The language requires a constexpr definition to be analysed before a
-  // constant-evaluated call to it; deferral would break that rule.
-  if (stmt.isConstexpr()) {
+  // constant-evaluated call to it; deferral would break that rule. The
+  // test-only deferConstexprBodies option defers them anyway, to compare
+  // eager and deferred constexpr bodies on one binary (#398).
+  if (stmt.isConstexpr() && !deferConstexprBodies) {
     return false;
   }
   return true;

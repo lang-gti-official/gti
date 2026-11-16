@@ -962,6 +962,7 @@ struct SemanticPreambleBuild::State {
   SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
   CompileLimits limits;
   bool reuseConstantEvaluations = true;
+  bool deferConstexprBodies = false;
   std::shared_ptr<SemanticPreambleCache> cache;
   // A deferred build first looks for a preamble another build stored since
   // the analysis that deferred it missed the cache.
@@ -999,6 +1000,7 @@ SemanticPreambleBuild::run(const std::atomic<bool> *cancellation,
       &state->sources, RawPointerAuditMode::Off, state->requireDefinitions,
       TrustedBodyAnalysis::Complete, state->sourceDebugProfile, state->limits);
   builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
+  builder.setConstexprBodyDeferral(state->deferConstexprBodies);
   builder.setCancellation(cancellation);
   // The preamble owns the prefix program; this build no longer needs it.
   std::shared_ptr<const SemanticPreamble> preamble =
@@ -1116,6 +1118,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       semanticCacheContext(options) +
       "\nlimits:" + compileLimitsIdentity(options.limits) +
       (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
+      (options.deferConstexprBodies ? "\nconstexpr-bodies:deferred" : "") +
       "\nsource-owners:" +
       (result.sourceGraph.sourceOwners()
            ? result.sourceGraph.sourceOwners()->resolutionIdentity()
@@ -1319,6 +1322,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                     .limits = options.limits,
                     .reuseConstantEvaluations =
                         options.reuseConstantEvaluations,
+                    .deferConstexprBodies = options.deferConstexprBodies,
                     .cache = options.preambleCache,
                     .deferred = options.deferPreambleBuild}));
         if (options.deferPreambleBuild) {
@@ -1359,6 +1363,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
+    semantic.setConstexprBodyDeferral(options.deferConstexprBodies);
     if (preamble != nullptr) {
       semantic.adoptPreamble(preamble, preambleDeclarations);
       if (options.workMetrics != nullptr)

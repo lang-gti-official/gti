@@ -592,6 +592,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                 target, sourceGraph, false, workMetrics, sources,
                 rawPointerAudit, requireFunctionDefinitions, trustedBodies,
                 sourceDebugProfile, compileLimits);
+            worker->deferConstexprBodies = deferConstexprBodies;
             worker->catalog = catalog.snapshotForInstanceAnalysis();
             worker->semanticModel = semanticModel;
             worker->macroLookup = macroLookup;

@@ -1474,6 +1474,12 @@ foreach(gti_trusted_partition RANGE 0 3)
   set_tests_properties(trusted_body_analysis_${gti_trusted_partition}
     PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
 endforeach()
+# The fixtures plus compile-limit boundary parity inside trusted constexpr
+# bodies, which the partitions skip.
+add_test(NAME trusted_body_budget_parity
+  COMMAND $<TARGET_FILE:gti_trusted_body_analysis_tests>
+          "${PROJECT_SOURCE_DIR}" --fixtures)
+set_tests_properties(trusted_body_budget_parity PROPERTIES TIMEOUT 300)
 add_test(NAME stdlib_package_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/stdlib_package_runtime_test.py" $<TARGET_FILE:gti>)

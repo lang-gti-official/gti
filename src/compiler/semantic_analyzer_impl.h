@@ -282,6 +282,9 @@ public:
   // FrontendOptions::reuseConstantEvaluations; workers share the request's
   // StagedConstantResults, which carries it.
   bool reuseConstantEvaluations = true;
+  // FrontendOptions::deferConstexprBodies (test-only): reachableDeferrable
+  // accepts trusted constexpr definitions too.
+  bool deferConstexprBodies = false;
   bool analysisCancelled = false;
   void throwIfCancelled() const {
     if (cancellation != nullptr &&

@@ -8,10 +8,14 @@
 #include "gti/semantic_analyzer.h"
 #include "gti/semantic_preamble.h"
 #include "gti/source_graph.h"
+#include "gti/support.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -1005,6 +1009,411 @@ void measureEntry(const std::filesystem::path &root,
               << " fallback=" << metrics.semanticDemandFallbacks << '\n';
   }
 }
+
+// FrontendOptions::deferConstexprBodies is a test-only switch that lets one
+// binary compare eager and deferred trusted constexpr definitions (#398).
+// Its default keeps today's rule: bounded analysis still analyses every
+// trusted constexpr definition, so an unused broken one is reported.
+void checkConstexprDeferralOption(const std::filesystem::path &root) {
+  expect(!lang::FrontendOptions{}.deferConstexprBodies,
+         "constexpr bodies are not deferred by default");
+  const auto entry = root / "tests/defer-option-entry.gti";
+  const auto library = root / "stdlib/std/cmath.gti";
+  const auto run = [&](bool defer, lang::FrontendWorkMetrics &metrics) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+    options.workMetrics = &metrics;
+    if (defer)
+      options.deferConstexprBodies = true;
+    return lang::Frontend(options).analyze(
+        entry, "import std.cmath;\nint main() { return 0; }\n",
+        {root / "stdlib/prelude.gti"},
+        {{library.string(),
+          "export module cmath;\n"
+          "constexpr int broken_constant() { return missing_constant; }\n"}},
+        {root / "stdlib"});
+  };
+  lang::FrontendWorkMetrics eagerWork;
+  lang::FrontendWorkMetrics deferredWork;
+  const auto eager = run(false, eagerWork);
+  const auto deferred = run(true, deferredWork);
+  expect(!eager.semanticValid,
+         "by default an unused trusted constexpr definition is analysed");
+  expect(deferred.semanticValid && deferredWork.semanticDeferredBodies >
+                                       eagerWork.semanticDeferredBodies,
+         "deferConstexprBodies defers an unused trusted constexpr definition");
+}
+
+// Compile-time limits reached inside trusted, deferrable constexpr bodies
+// (#398; budget and sticky-flag drift after a discarded demand attempt).
+// Bounded analysis must report exactly what complete analysis reports at
+// each limit's boundary, with and without a trusted prefix preamble: a demand
+// attempt that is discarded and repeated may neither leak nor refund
+// constant-evaluation steps, call depth, staging nesting or requirement-query
+// work, nor move a recorded limit exhaustion. Each case compares codes, spans,
+// messages, notes and hints. With `deferConstexpr` the bounded runs also defer
+// trusted constexpr definitions (FrontendOptions::deferConstexprBodies).
+void checkDemandBudgetParity(const std::filesystem::path &root,
+                             bool deferConstexpr) {
+  const auto entry = root / "tests/budget-entry.gti";
+  const auto library = root / "stdlib/std/cmath.gti";
+  // User-defined declarations only: the limits are language rules.
+  const std::string libraryText = R"GTI(export module cmath;
+export struct Tally {
+  uint64_t count;
+  constexpr Tally(uint64_t c) : count(c) {}
+};
+constexpr uint64_t spin_inner(uint64_t n) {
+  mut uint64_t i = 0;
+  while (i < n) { i = i + 1; }
+  return i;
+}
+export constexpr Tally spin(uint64_t n) { return Tally(spin_inner(n)); }
+export constexpr uint64_t descend(uint64_t n) {
+  if (n == uint64_t(0)) { return uint64_t(0); }
+  return descend(n - uint64_t(1)) + uint64_t(1);
+}
+export constexpr uint64_t level<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else {
+    if constexpr (level<N - 1>() == N - 1) { return N; }
+    else { return 0; }
+  }
+}
+export constexpr bool cycle<uint64_t N>() {
+  if constexpr (cycle<N>()) { return true; }
+  else { return false; }
+}
+export constexpr uint64_t nested_spin<uint64_t N>() {
+  if constexpr (spin_inner(N) == N) { return N; }
+  else { return 0; }
+}
+export struct Pair<A, B> { Pair() = default; };
+constexpr bool accept<T>() { return true; }
+concept accepted<T> = accept<T>();
+export constexpr bool probe<T>() { return accepted<T>; }
+)GTI";
+  const std::string prefix = "import std.cmath;\n";
+  enum class Mode { Complete, Reachable, Preamble };
+  struct Outcome {
+    std::vector<std::string> keys;
+    // Primary start offsets of diagnostics located in the entry.
+    std::vector<std::size_t> entryStarts;
+    bool semanticValid = false;
+    bool hirValid = false;
+    lang::FrontendWorkMetrics work;
+  };
+  const auto analyzeMode =
+      [&](const std::string &text, const lang::CompileLimits &limits, Mode mode,
+          std::shared_ptr<lang::SemanticPreambleCache> preambles = nullptr,
+          std::shared_ptr<lang::FrontendCache> parses = nullptr) {
+        Outcome outcome;
+        lang::FrontendOptions options;
+        options.stopAfter = lang::FrontendPhase::Hir;
+        options.analyzeRecoveredProgram = true;
+        options.limits = limits;
+        options.workMetrics = &outcome.work;
+        options.trustedBodies = mode == Mode::Complete
+                                    ? lang::TrustedBodyAnalysis::Complete
+                                    : lang::TrustedBodyAnalysis::Reachable;
+        options.deferConstexprBodies = deferConstexpr && mode != Mode::Complete;
+        options.preambleCache = std::move(preambles);
+        options.cache = std::move(parses);
+        const auto result = lang::Frontend(options).analyze(
+            entry, prefix + text, {root / "stdlib/prelude.gti"},
+            {{library.string(), libraryText}}, {root / "stdlib"});
+        for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+          outcome.keys.push_back(key(diagnostic));
+          if (std::filesystem::path(diagnostic.primary.source).filename() ==
+              entry.filename())
+            outcome.entryStarts.push_back(diagnostic.primary.start);
+        }
+        std::sort(outcome.keys.begin(), outcome.keys.end());
+        outcome.semanticValid = result.semanticValid;
+        outcome.hirValid = result.hirValid;
+        return outcome;
+      };
+  const auto completeValid = [&](const std::string &text,
+                                 const lang::CompileLimits &limits) {
+    const Outcome outcome = analyzeMode(text, limits, Mode::Complete);
+    return outcome.semanticValid && outcome.hirValid;
+  };
+  const std::string suffix = deferConstexpr ? " [constexpr deferred]" : "";
+  // Compares each bounded configuration with the complete check: reachable,
+  // then two rounds over one preamble cache (the first builds it, the second
+  // adopts it). Returns the complete check's outcome.
+  const auto compare = [&](const std::string &label, const std::string &text,
+                           const lang::CompileLimits &limits) {
+    const Outcome complete = analyzeMode(text, limits, Mode::Complete);
+    const auto against = [&](const std::string &modeLabel,
+                             const Outcome &bounded) {
+      const std::string where = label + " (" + modeLabel + ")" + suffix;
+      if (bounded.keys != complete.keys)
+        report("budget parity " + where, entry, complete.keys, bounded.keys);
+      expect(bounded.semanticValid == complete.semanticValid &&
+                 bounded.hirValid == complete.hirValid,
+             where + ": validity equals the complete check");
+      expect(bounded.work.semanticDemandFallbacks == 0,
+             where + ": no complete fallback");
+    };
+    against("reachable", analyzeMode(text, limits, Mode::Reachable));
+    auto preambles = std::make_shared<lang::SemanticPreambleCache>();
+    auto parses =
+        std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
+            .maximumEntries = 1024,
+            .maximumEstimatedBytes = 512U * 1024U * 1024U});
+    for (int round = 0; round < 2; ++round) {
+      const Outcome resumed =
+          analyzeMode(text, limits, Mode::Preamble, preambles, parses);
+      expect(resumed.work.semanticPreambleBuilds == (round == 0 ? 1U : 0U) &&
+                 resumed.work.semanticPreambleAdoptions != 0,
+             label + suffix + ": preamble round " + std::to_string(round) +
+                 " builds the preamble once and adopts it");
+      against("preamble round " + std::to_string(round), resumed);
+    }
+    return complete;
+  };
+  const auto hasMessage = [](const Outcome &outcome, const std::string &code,
+                             const std::string &fragment) {
+    const bool found = std::any_of(
+        outcome.keys.begin(), outcome.keys.end(), [&](const std::string &item) {
+          return item.starts_with(code + '\t') &&
+                 item.find(fragment) != std::string::npos;
+        });
+    if (!found) {
+      std::cerr << "no " << code << " diagnostic containing '" << fragment
+                << "' among:\n";
+      for (const std::string &item : outcome.keys)
+        std::cerr << "  " << item << '\n';
+    }
+    return found;
+  };
+  // The smallest value of `field` in (low, high] for which the complete
+  // check accepts `text`; it must reject `low` and accept `high`.
+  const auto boundary = [&](const std::string &label, const std::string &text,
+                            std::size_t lang::CompileLimits::*field,
+                            std::size_t low, std::size_t high) {
+    lang::CompileLimits limits;
+    limits.*field = high;
+    expect(completeValid(text, limits), label + ": accepted at the bound");
+    limits.*field = low;
+    expect(!completeValid(text, limits), label + ": rejected at the floor");
+    while (high - low > 1) {
+      const std::size_t middle = low + (high - low) / 2;
+      limits.*field = middle;
+      (completeValid(text, limits) ? high : low) = middle;
+    }
+    return high;
+  };
+
+  // The step limit, exhausted in a trusted helper that the entry reaches
+  // through another trusted constexpr definition. Exactly at the limit the
+  // request succeeds and one step fewer fails; well below it, the recorded
+  // exhaustion names the helper executing when the limit tripped.
+  {
+    const std::string text =
+        "static_assert(spin(uint64_t(300)).count == uint64_t(300));\n"
+        "int main() { return 0; }\n";
+    const std::size_t steps =
+        boundary("step limit", text, &lang::CompileLimits::constexprSteps, 1,
+                 std::size_t{1} << 13);
+    lang::CompileLimits limits;
+    limits.constexprSteps = steps;
+    compare("step limit at " + std::to_string(steps), text, limits);
+    limits.constexprSteps = steps - 1;
+    const Outcome failed =
+        compare("step limit at " + std::to_string(steps - 1), text, limits);
+    expect(hasMessage(failed, "GTI-S2057",
+                      "used all " + std::to_string(steps - 1) + " steps"),
+           "one step short exhausts the step limit");
+    limits.constexprSteps = steps / 2;
+    const Outcome inside =
+        compare("step limit at " + std::to_string(steps / 2), text, limits);
+    expect(hasMessage(inside, "GTI-S2057", "while executing 'spin_inner'"),
+           "the recorded exhaustion names the trusted helper");
+  }
+  // The call-depth limit, through trusted recursion.
+  {
+    const std::string text =
+        "static_assert(descend(uint64_t(30)) == uint64_t(30));\n"
+        "int main() { return 0; }\n";
+    const std::size_t depth = boundary(
+        "depth limit", text, &lang::CompileLimits::constexprDepth, 1, 256);
+    lang::CompileLimits limits;
+    limits.constexprDepth = depth;
+    compare("depth limit at " + std::to_string(depth), text, limits);
+    limits.constexprDepth = depth - 1;
+    const Outcome failed =
+        compare("depth limit at " + std::to_string(depth - 1), text, limits);
+    expect(hasMessage(failed, "GTI-S2057", "while executing 'descend'"),
+           "one call short exhausts the depth limit in the trusted body");
+  }
+  // The fixed 64-level staging nesting limit: 63 nested stagings of a
+  // trusted constexpr definition succeed and 64 fail; so does a cycle.
+  {
+    const Outcome inside = compare(
+        "staging nesting 63",
+        "static_assert(level<63>() == 63);\nint main() { return 0; }\n", {});
+    expect(inside.semanticValid && inside.hirValid,
+           "63 nested stagings are within the limit");
+    const Outcome beyond = compare(
+        "staging nesting 64",
+        "static_assert(level<64>() == 64);\nint main() { return 0; }\n", {});
+    expect(hasMessage(beyond, "GTI-S2057",
+                      "Nested constexpr staging depth (64) exceeded"),
+           "64 nested stagings exceed the staging limit");
+    const Outcome cyclic =
+        compare("cyclic staging",
+                "static_assert(cycle<0>());\nint main() { return 0; }\n", {});
+    expect(hasMessage(cyclic, "GTI-S2057", "is staged again while its own"),
+           "a cyclic staging reports the staging limit");
+  }
+  // The 16384-node requirement-query budget, charged by a concept applied
+  // inside a trusted constexpr body. Pair-doubling aliases give 8191 and
+  // 16383 type nodes: the first query fits, the second exceeds the budget,
+  // so only its assertion fails. (The aliases make this the costly case.)
+  {
+    std::string text = "using P0 = Pair<int, int>;\n";
+    for (int index = 1; index <= 13; ++index)
+      text += "using P" + std::to_string(index) + " = Pair<P" +
+              std::to_string(index - 1) + ", P" + std::to_string(index - 1) +
+              ">;\n";
+    text += "static_assert(probe<P12>());\n"
+            "static_assert(probe<P13>());\n"
+            "int main() { return 0; }\n";
+    const Outcome outcome = compare("requirement-query budget", text, {});
+    const std::size_t secondAssertion =
+        prefix.size() + text.find("static_assert(probe<P13>");
+    expect(outcome.entryStarts.size() == 1 &&
+               outcome.entryStarts.front() >= secondAssertion &&
+               hasMessage(outcome, "GTI-S2079", "Static assertion failed"),
+           "only the query beyond the 16384-node budget fails");
+  }
+  // A recorded exhaustion stays with its request. A compile-time branch
+  // condition inside a trusted constexpr instance exhausts the step limit:
+  // the diagnostic names the helper that tripped it, the request that needed
+  // the instance fails, and the next request in the same analysis (with a
+  // fresh budget) is unaffected.
+  {
+    const std::string text = "static_assert(nested_spin<300>() == 300);\n"
+                             "static_assert(spin(uint64_t(20)).count == "
+                             "uint64_t(20));\n"
+                             "int main() { return 0; }\n";
+    const std::size_t steps =
+        boundary("nested step limit", text,
+                 &lang::CompileLimits::constexprSteps, 1, std::size_t{1} << 13);
+    lang::CompileLimits limits;
+    limits.constexprSteps = steps;
+    compare("nested step limit at " + std::to_string(steps), text, limits);
+    limits.constexprSteps = steps - 1;
+    const Outcome edge = compare(
+        "nested step limit at " + std::to_string(steps - 1), text, limits);
+    expect(hasMessage(edge, "GTI-S2057",
+                      "used all " + std::to_string(steps - 1) + " steps"),
+           "one step short exhausts the shared request budget");
+    limits.constexprSteps = steps / 2;
+    const Outcome failed = compare(
+        "nested step limit at " + std::to_string(steps / 2), text, limits);
+    expect(hasMessage(failed, "GTI-S2057", "while executing 'spin_inner'"),
+           "the nested exhaustion names the trusted helper");
+    const std::size_t nextRequest =
+        prefix.size() + text.find("static_assert(spin(");
+    expect(!failed.entryStarts.empty() &&
+               std::none_of(
+                   failed.entryStarts.begin(), failed.entryStarts.end(),
+                   [&](std::size_t start) { return start >= nextRequest; }),
+           "the exhaustion fails its own request and does not leak into "
+           "the next");
+  }
+}
+// Deferred trusted constexpr bodies must not cost compile-time staging work
+// that complete analysis does not (#398, cache discipline). For a few corpus
+// entries, the artifact configuration with trusted constexpr definitions
+// deferred lowers no more staged call closures and builds no more staged
+// workers than complete analysis, and needs no repeated analysis round or
+// complete fallback. FrontendWorkMetrics has no counter for either staging
+// quantity, so they are counted from the compile-time trace: one
+// "constexpr-staged-hir" region per closure lowering and one
+// "constexpr-staged-worker" region per worker build.
+void checkDeferredStagingMetrics(const std::filesystem::path &root) {
+  if (!lang::timeTraceAvailable()) {
+    std::cout << "staging metrics skipped: no compile-time trace\n";
+    return;
+  }
+  struct Work {
+    std::size_t closureLowerings = 0;
+    std::size_t workerBuilds = 0;
+    lang::FrontendWorkMetrics metrics;
+    bool valid = false;
+  };
+  const auto trace =
+      std::filesystem::temp_directory_path() /
+      ("gti-staging-metrics-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()) +
+       ".json");
+  const auto count = [](const std::string &text, const std::string &name) {
+    const std::string needle = "\"name\":\"" + name + "\"";
+    std::size_t found = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size()))
+      ++found;
+    return found;
+  };
+  const auto run = [&](const std::filesystem::path &entry, bool deferred) {
+    Work work;
+    lang::FrontendOptions options;
+    options.trustedBodies = deferred ? lang::TrustedBodyAnalysis::Reachable
+                                     : lang::TrustedBodyAnalysis::Complete;
+    options.deferConstexprBodies = deferred;
+    options.lowerReachableOnly = true;
+    options.lowerLibraryReachableOnly = true;
+    options.workMetrics = &work.metrics;
+    lang::beginTimeTrace("gti_trusted_body_analysis_tests");
+    const auto result = lang::Frontend(options).analyze(
+        entry, std::nullopt, {root / "stdlib/prelude.gti"}, {},
+        {root / "stdlib"});
+    work.valid = result.canGenerateCode();
+    if (!lang::endTimeTrace(trace.string())) {
+      expect(false, "the compile-time trace is written");
+      return work;
+    }
+    std::ifstream input(trace);
+    const std::string text((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+    work.closureLowerings = count(text, "constexpr-staged-hir");
+    work.workerBuilds = count(text, "constexpr-staged-worker");
+    return work;
+  };
+  for (const char *name :
+       {"044-bounded-requires.gti", "104-move-only-ordering.gti",
+        "141-reflected-json.gti", "146-counted-text-view-iteration.gti"}) {
+    const auto entry = root / "examples" / name;
+    const Work complete = run(entry, false);
+    const Work deferred = run(entry, true);
+    std::cout << name << " closure lowerings " << complete.closureLowerings
+              << " -> " << deferred.closureLowerings << ", worker builds "
+              << complete.workerBuilds << " -> " << deferred.workerBuilds
+              << ", staged executions "
+              << complete.metrics.constexprMirExecutions << " -> "
+              << deferred.metrics.constexprMirExecutions << ", rounds "
+              << deferred.metrics.semanticDemandRounds << ", fallbacks "
+              << deferred.metrics.semanticDemandFallbacks << '\n';
+    const std::string label = std::string(name) + " [constexpr deferred]";
+    expect(complete.valid && deferred.valid,
+           label + ": both analyses can generate code");
+    expect(deferred.closureLowerings <= complete.closureLowerings,
+           label + ": no more staged closure lowerings than complete");
+    expect(deferred.workerBuilds <= complete.workerBuilds,
+           label + ": no more staged worker builds than complete");
+    expect(deferred.metrics.semanticDemandRounds == 0 &&
+               deferred.metrics.semanticDemandFallbacks == 0,
+           label + ": no repeated analysis round or complete fallback");
+  }
+  std::error_code ignored;
+  std::filesystem::remove(trace, ignored);
+}
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -1015,13 +1424,24 @@ int main(int argc, char *argv[]) {
   checkConstantDemandParity(root);
   checkLibraryOnlyOmission(root);
   checkPreambleGraphs(root);
+  checkConstexprDeferralOption(root);
   std::vector<std::filesystem::path> entries;
   bool measure = false;
+  // The budget cases are costly, so the corpus partitions leave them to the
+  // `--fixtures` run (trusted_body_budget_parity). `--defer-constexpr-bodies`
+  // repeats them with trusted constexpr definitions deferred too, and checks
+  // that deferral adds no staging work (expected to fail until #398 lands).
+  bool budget = false;
+  bool deferredBudget = false;
   if (argc > 2) {
     for (int index = 2; index < argc; ++index)
       if (std::string(argv[index]) == "--measure")
         measure = true;
-      else if (std::string(argv[index]) != "--fixtures")
+      else if (std::string(argv[index]) == "--fixtures")
+        budget = true;
+      else if (std::string(argv[index]) == "--defer-constexpr-bodies")
+        deferredBudget = true;
+      else
         entries.push_back(root / argv[index]);
   } else {
     for (const char *directory : {"examples", "stdlib/tests"}) {
@@ -1033,6 +1453,12 @@ int main(int argc, char *argv[]) {
           entries.push_back(item.path());
       }
     }
+  }
+  if (budget)
+    checkDemandBudgetParity(root, false);
+  if (deferredBudget) {
+    checkDemandBudgetParity(root, true);
+    checkDeferredStagingMetrics(root);
   }
   std::sort(entries.begin(), entries.end());
   for (const std::filesystem::path &entry : entries) {

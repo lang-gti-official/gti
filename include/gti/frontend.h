@@ -130,6 +130,13 @@ struct FrontendOptions {
   // TrustedBodyAnalysis. `Deferred` is a test mode; artifacts and editor
   // snapshots may use `Reachable`. Full checks retain `Complete`.
   TrustedBodyAnalysis trustedBodies = TrustedBodyAnalysis::Complete;
+  // Test-only: bounded (`Reachable`) analysis, and the bucketing of a trusted
+  // prefix preamble, also defer trusted constexpr definitions. Off, they stay
+  // complete, as the definition-before-use rule for constant evaluation
+  // requires until compile-time paths demand the bodies they execute (#398).
+  // Tests set it to compare eager and deferred constexpr bodies in one
+  // binary; no driver, project or editor configuration does.
+  bool deferConstexprBodies = false;
   // Concrete instance analyses of compiler-trusted declarations shared
   // across snapshots (see InstanceAnalysisCache). Consulted only by
   // `Reachable` analysis; editor snapshots set it, builds and checks do not.
