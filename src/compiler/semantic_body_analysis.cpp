@@ -5157,7 +5157,11 @@ auto SemanticVisitor::Impl::attemptOutstandingNeeds(
       if (const FunctionDecl *body = function->bodyDeclaration();
           body != nullptr &&
           (body->isConstexpr() || body->isProceduralMacro()) &&
-          context.pending(body))
+          // Pending now, or completed while the attempt was open (by a nested
+          // attempt): either way a lookup during it may have read the body's
+          // facts before they were final.
+          (context.pending(body) ||
+           context.completedSince(needs.startRevision, body)))
         outstanding.push_back(body);
   if (recorder != nullptr)
     recorder->active = paused;
