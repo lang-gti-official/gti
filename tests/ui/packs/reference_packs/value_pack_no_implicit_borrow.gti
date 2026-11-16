@@ -1,0 +1,11 @@
+// A value pack copies or moves its arguments; it never borrows implicitly.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+void consume<Args...>(Args... args) {}
+int main() { Ticket value{}; consume(value); return 0; }  //~ ERROR GTI-S2018

@@ -1,0 +1,16 @@
+// A consuming (`&&`) call operator overrides with the same mode; overriding
+// it with `mut` is rejected at `override`. (From function_signature_lsp_test.py.)
+//@ hover @operator: &&
+import std.memory;
+interface Operation { int operator()(int value) &&; };
+class Increment : public Operation { public:
+  int operator/*@operator*/()(int value) && override { return value + 1; }
+ public: Increment() = default; };
+int main() { Increment operation{}; return std::move(operation)(2); }
+// --- step 2
+import std.memory;
+interface Operation { int operator()(int value) &&; };
+class Increment : public Operation { public:
+  int operator()(int value) mut override { return value + 1; }  //~ ERROR GTI-S2042
+ public: Increment() = default; };
+int main() { Increment operation{}; return std::move(operation)(2); }  //~ ERROR GTI-S2044

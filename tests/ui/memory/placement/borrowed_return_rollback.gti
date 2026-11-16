@@ -1,0 +1,64 @@
+// A failure on a borrowed return path cleans up exactly once in place.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R0017]: panic: "return cleanup failure"
+// --- main.gti
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+class ReferenceResult {
+  mut int& source;
+public:
+  ReferenceResult(mut int& value) : source(value) {}
+  ~ReferenceResult() {
+    destroyed = destroyed * 10 + 1;
+    this.source = this.source + 1;
+  }
+};
+class FailingLocal {
+public:
+  ~FailingLocal() {
+    destroyed = destroyed * 10 + 2;
+    std::panic("return cleanup failure");
+  }
+public:
+  FailingLocal() = default;
+};
+ReferenceResult make_view(mut int& source) {
+  FailingLocal local{};
+  return ReferenceResult(source);
+}
+class Observer {
+public:
+  ~Observer() {
+    if (destroyed != 21) { std::panic("incorrect return cleanup"); }
+  }
+public:
+  Observer() = default;
+};
+int main() {
+  mut int source = 0;
+  Observer observer{};
+  ReferenceResult result = make_view(source);
+  return 0;
+}

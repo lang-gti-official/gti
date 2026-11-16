@@ -722,7 +722,8 @@ invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
 source file has an area or a stated reason, and the `test_ownership_map`
 CTest requires every named test to be registered. A new test under `tests/ui/`,
 `tests/lsp/`, `tests/project/` or `tests/unit/` needs no map entry: the
-directory-walking `gti_test_ui` and `gti_unit_tests` entries own them.
+directory-walking `gti_test_ui` entries (`gti_test_ui` and its `tests/ui`
+shards `gti_test_ui_<i>`) and `gti_unit_tests` own them.
 
 The compiler-smoke execution covers scalar control flow and owning strings in
 a vector at O0/O3. The GTI executable itself is always optimized. Each plan
@@ -1043,7 +1044,8 @@ A ready, full-mode pull request declares its evidence in a `Validation:` block
 in its body. The `T0` (reproducer or new regression) and `T1` (owning tests)
 items list CTest names only; other items are prose for reviewers. A new
 `gti-test` case is declared as `gti_test_ui` (a `tests/unit/` case as
-`gti_unit_tests`), never by a per-test name.
+`gti_unit_tests`), never by a per-test name; verify with `-R '^gti_test_ui'`,
+which also selects the `tests/ui` shards the CI gate runs beside it.
 `validation_checks.py declared` parses the block: the plan job rejects a missing
 or malformed declaration, and the `fast` job re-runs the declared tests by exact
 name on both platforms. Each one must be registered and enabled. The body is

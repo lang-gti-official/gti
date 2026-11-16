@@ -1,0 +1,19 @@
+// An executed runtime-only call fails an immediate request.
+//@ check-fail
+//@ snapshot: diagnostics
+import std.panic;
+constexpr int checked_third(int v) {
+  if (v % 3 != 0) { std::panic("not a multiple of three"); }
+  return v / 3;
+}
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+constexpr int checked_half(int v) {
+  if (v % 2 != 0) { std::panic("odd {}", v); }
+  return v / 2;
+}
+consteval int clamp(int v) { return clamp_positive(v); }
+int main() { return clamp(-3); }  //~ ERROR GTI-S2057

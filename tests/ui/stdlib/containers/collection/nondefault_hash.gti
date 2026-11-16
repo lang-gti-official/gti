@@ -1,0 +1,10 @@
+// Brace construction of std::unordered_set needs a default-constructible hash policy.
+//@ check-fail
+import std.unordered_set;
+class Policy {
+  int value;
+public:
+  Policy(int value) : value(value) {}
+  std::size_t operator()(int& key) { return std::size_t(key); }
+};
+int main() { std::unordered_set<int, Policy> values = {1, 2}; return int(values.size()); }  //~ ERROR GTI-S2029

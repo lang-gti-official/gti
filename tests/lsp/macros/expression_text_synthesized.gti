@@ -1,0 +1,44 @@
+// expression_text! of a synthesized expression needs the complete written
+// source; an incomplete invocation is reported; both repair.
+// (From expression_text_lsp_test.py.)
+import std.source_location;
+#macro int choose(bool condition, int value) {
+  if (condition) { return value; } return 0;
+}
+#macro std::string_view quoted<T>(T expression) {
+  return std::expression_text!(expression + 1);
+}
+int main() {
+  mut int counter = 0; int answer = choose!(true, 7);  //~ WARN GTI-S2095
+  /*😀*/ std::string_view text = std::expression_text!(++counter);
+  std::string_view forwarded = quoted!(answer /* λ */ + 1);  //~ ERROR GTI-S2019 complete written source expression
+  return answer + counter;
+}
+// --- step 2
+import std.source_location;
+#macro int choose(bool condition, int value) {
+  if (condition) { return value; } return 0;
+}
+#macro std::string_view quoted<T>(T expression) {
+  return std::expression_text!(expression);
+}
+int main() {
+  mut int counter = 0; int answer = choose!(true, 7);
+  /*😀*/ std::string_view text = std::expression_text!(;
+  std::string_view forwarded = quoted!(answer /* λ */ + 1);
+  return answer + counter;
+}  //~ ERROR GTI-I0016
+// --- step 3
+import std.source_location;
+#macro int choose(bool condition, int value) {
+  if (condition) { return value; } return 0;
+}
+#macro std::string_view quoted<T>(T expression) {
+  return std::expression_text!(expression);
+}
+int main() {
+  mut int counter = 0; int answer = choose!(true, 7);  //~ WARN GTI-S2095 //~ WARN GTI-S2096
+  /*😀*/ std::string_view text = std::expression_text!(++counter);
+  std::string_view forwarded = quoted!(answer /* λ */ + 1);
+  return answer + counter;
+}

@@ -1,0 +1,53 @@
+// Fresh same-type results keep one object identity and failure cleanup.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 7
+//@[default] stdout: 1
+//@[default] stdout: 201
+//@[default] stdout: 99
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 201
+//@[fail] stdout: 99
+//@[fail] stderr-contains: prvalue_direct_initialization_cleanup.gti:20: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- prvalue_direct_initialization_cleanup.gti
+import std.string;
+import std.vector;
+
+class Part {
+  int id;
+public:
+  Part(int id) : id(id) {}
+  ~Part() { std::println(200 + this.id); }
+};
+
+class Anchor {
+  Part part;
+  std::string label;
+  int value;
+  mut const int* original = nullptr;
+public:
+  Anchor(int value, int divisor)
+      : part(Part(value)), label(std::string("owned")), value(value) {
+    this.original = &this.value;
+    int checked = 1 / divisor;
+  }
+  Anchor(Anchor& other) = delete;
+  Anchor(Anchor&& other) = delete;
+  bool stable() { return this.original == &this.value; }
+  ~Anchor() { std::println(this.value); }
+};
+
+class Tail { public: ~Tail() { std::println(99); }  public: Tail() = default; };
+
+Anchor make_anchor(int divisor) { return Anchor(1, divisor); }
+Anchor relay(int divisor) { return Anchor(Anchor((make_anchor(divisor)))); }
+
+int main(int argc, std::vector<std::string> argv) {
+  Tail tail{};
+  Anchor result = Anchor((relay(argc == 1 ? 1 : 0)));
+  if (!result.stable()) { return 1; }
+  std::println(7);
+  return 0;
+}

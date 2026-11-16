@@ -150,7 +150,8 @@ jobs:
         # Instrumenting the whole tree took longer than the integration shards
         # while only these tests run; CTestTestfile.cmake names their targets.
         run: |
-          pattern="${GTI_SANITIZER_TESTS}"
+          # The library partition also runs gti_test_ui (gti-test, gti).
+          pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"
           if [[ "${{ matrix.kind }}" == "compiler" ]]; then
             pattern='^compiler_pipeline$'
           fi
@@ -179,6 +180,30 @@ jobs:
               --parallel "${GTI_TEST_JOBS}" -R "${GTI_SANITIZER_TESTS}" \
               -E '^compiler_pipeline$' -I "${{ matrix.index }},,${{ matrix.count }}"
           fi
+      - name: Run the gti-test cases with instrumented programs
+        # gti_test_ui's run (the runner's self-test, tidy, tests/ui and
+        # tests/project; this tree builds no gti_lsp) through the ASan/UBSan
+        # gti-test, with every test program built under the driver's
+        # address,undefined instrumentation by the Clang of the linked LLVM.
+        # An instrumented runner scales its limits 5x by itself; hosted
+        # runners are about 2x slower again, so the limits scale 10x and
+        # only catch hangs. Run directly rather than through CTest, whose
+        # entry would pin the per-commit 2x scale times this tree's timeout
+        # scale. Locally gti_test_ui costs about 370 CPU-seconds; instrumented
+        # on a hosted runner, expect 30 to 60 minutes. The step bound keeps
+        # it from consuming the partition.
+        if: matrix.kind == 'libraries'
+        timeout-minutes: 120
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          GTI_TEST_INSTRUMENTATION: address,undefined
+          GTI_TEST_TIME_SCALE: "10"
+        run: |
+          llvm_major="$(sed -n 's/^set(GTI_PINNED_LLVM_VERSION "\([0-9]*\)\..*/\1/p' CMakeLists.txt)"
+          export GTI_CXX="/usr/bin/clang++-${llvm_major}" GTI_CC="/usr/bin/clang-${llvm_major}"
+          python3 tests/runner/check.py build-sanitized/gti-test --jobs "${GTI_TEST_JOBS}" \
+            --junit "${RUNNER_TEMP}/sanitizers-gti-test.xml"
       - name: Preserve sanitizer test evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -186,6 +211,7 @@ jobs:
           name: sanitizers-${{ matrix.kind }}-${{ matrix.index }}
           path: |
             ${{ runner.temp }}/sanitizers-${{ matrix.kind }}-${{ matrix.index }}.xml
+            ${{ runner.temp }}/sanitizers-gti-test.xml
             build-sanitized/Testing/Temporary/LastTest.log
             build-sanitized/Testing/Temporary/LastTestsFailed.log
           if-no-files-found: warn
