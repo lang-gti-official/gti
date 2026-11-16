@@ -613,7 +613,9 @@ private:
       return owner && owner->syntaxKind != CompileTimeSyntaxKind::None;
     };
     if (!constantClosure &&
-        (declaration.proceduralOnly || syntaxIntrinsic(declaration.intrinsic) ||
+        ((declaration.declaration &&
+          declaration.declaration->isProceduralMacro()) ||
+         declaration.proceduralOnly || syntaxIntrinsic(declaration.intrinsic) ||
          syntaxType(declaration.returnType) ||
          std::any_of(declaration.parameterTypes.begin(),
                      declaration.parameterTypes.end(), syntaxType)))
