@@ -1,0 +1,3 @@
+// Patterns without an output to check.
+// CHECK: something
+int main() { return 0; }

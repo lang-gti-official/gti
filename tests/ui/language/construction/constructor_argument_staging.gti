@@ -1,0 +1,82 @@
+// Constructors preserve prepared argument ownership until invocation.
+//@ run-pass
+//@ revisions: default case case-case case-case-case case-case-case-case
+//@[default] stdout: 11
+//@[default] stdout: 12
+//@[default] stdout: 1
+//@[default] stdout: 2
+//@[default] stdout: 9
+//@[case] run-fail
+//@[case] args: case
+//@[case] exit-code: 70
+//@[case] stdout: 11
+//@[case] stdout: 12
+//@[case] stdout: 1
+//@[case] stdout: 9
+//@[case] stderr-contains: constructor_argument_staging.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[case-case] run-fail
+//@[case-case] args: case case
+//@[case-case] exit-code: 70
+//@[case-case] stdout: 11
+//@[case-case] stdout: 12
+//@[case-case] stdout: 2
+//@[case-case] stdout: 1
+//@[case-case] stdout: 9
+//@[case-case] stderr-contains: constructor_argument_staging.gti:20: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[case-case-case] run-fail
+//@[case-case-case] args: case case case
+//@[case-case-case] exit-code: 70
+//@[case-case-case] stdout: 11
+//@[case-case-case] stdout: 12
+//@[case-case-case] stdout: 2
+//@[case-case-case] stdout: 1
+//@[case-case-case] stdout: 9
+//@[case-case-case] stderr-contains: constructor_argument_staging.gti:39: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[case-case-case-case] run-fail
+//@[case-case-case-case] args: case case case case
+//@[case-case-case-case] exit-code: 70
+//@[case-case-case-case] stdout: 11
+//@[case-case-case-case] stdout: 9
+//@[case-case-case-case] stderr-contains: constructor_argument_staging.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- constructor_argument_staging.gti
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity, int divisor) : identity(identity) {
+    std::println(identity + 10);
+    int checked = 12 / divisor;
+  }
+  ~Token() { std::println(this.identity); }
+};
+
+class Extract<T> {
+  mut T first;
+  T second;
+public:
+  Extract(T first, T second, int divisor)
+      : first(std::move(first)), second(std::move(second)) {
+    int checked = 6 / divisor;
+  }
+  int operator()() && {
+    T extracted = std::move(this.first);
+    return 0;
+  }
+};
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+public:
+  Caller() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  Extract<Token> callback{
+      Token(1, argc == 5 ? 0 : 1), Token(2, argc == 2 ? 0 : 1),
+      argc == 3 ? 0 : 8 / (argc == 4 ? 0 : 1)};
+  return std::move(callback)();
+}

@@ -1,0 +1,52 @@
+// Consuming receivers retain caller-owned full-expression cleanup.
+//@ run-pass
+//@ revisions: default body
+//@[default] stdout: 1
+//@[default] stdout: 3
+//@[default] stdout: 4
+//@[default] stdout: 2
+//@[default] stdout: 5
+//@[default] stdout: 9
+//@[body] run-fail
+//@[body] args: body
+//@[body] exit-code: 70
+//@[body] stdout: 1
+//@[body] stdout: 2
+//@[body] stdout: 9
+//@[body] stderr-contains: consuming_receiver_fields.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- consuming_receiver_fields.gti
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+};
+
+class Extract<T> {
+  mut T first;
+  T second;
+public:
+  Extract(T first, T second)
+      : first(std::move(first)), second(std::move(second)) {}
+  int operator()(int divisor) && {
+    T extracted = std::move(this.first);
+    return 12 / divisor;
+  }
+};
+
+int later() { std::println(3); return 6; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  Token first{1};
+  Token second{2};
+  Extract<Token> callback{std::move(first), std::move(second)};
+  int divisor = argc == 2 ? 0 : 1;
+  int value = combine(std::move(callback)(divisor), later());
+  std::println(5);
+  return value - 18;
+}

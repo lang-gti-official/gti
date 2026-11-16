@@ -1,0 +1,48 @@
+// Owning pack fixture pack special member construction fails with 1 injected failure and cleans up.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: main.gti:37: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@ stdout: 7
+//@ stdout: 9
+//@ args: fail
+import std.string;
+import std.vector;
+
+class Payload {
+  int number;
+  std::string text;
+public:
+  Payload(int initial) : number(initial), text(std::string("payload")) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() { std::println(this.number); }
+  int value() { return this.number; }
+};
+
+struct Copyable {
+  int number;
+  Copyable(int initial) : number(initial) {}
+};
+
+T construct<T, Args...>(Args... args) {
+  return T(args...);
+}
+
+void copies<T, Args...>(Args... args) {
+  T first = T(args...);
+  T second = T(args...);
+}
+
+int inspect(Payload payload, int divisor) {
+  return payload.value() / divisor;
+}
+
+int later(int divisor) { return 1 / divisor; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Payload caller = Payload(9);
+  copies<Copyable>(Copyable(3));
+  int value = inspect(construct<Payload>(Payload(7)),
+                      argc == 2 ? 0 : later(argc == 3 ? 0 : 1));
+  return value - 7;
+}
