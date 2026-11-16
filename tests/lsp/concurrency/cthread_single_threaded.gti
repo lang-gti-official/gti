@@ -1,0 +1,8 @@
+// A C-thread API needs the concurrent profile; the default server rejects
+// it even inside unsafe, and a program without it is clean.
+// (cthread_lsp_test.py, single-threaded thrd_join.)
+import std.cthread;
+int main() { std::thrd_t handle = 0; mut int32_t result = 0; unsafe { return std::thrd_join(handle, result); } }  //~ ERROR GTI-S2084
+// --- step 2
+import std.cthread;
+int main() { std::thrd_yield(); return 0; }
