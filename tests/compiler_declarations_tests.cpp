@@ -11468,7 +11468,7 @@ int main() {
       lang::Frontend(
           {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
           .analyze("range-pattern.gti", R"(
-struct Entry<T> { T key; T value; Entry(T k, T v) : key(k), value(v) {} };
+struct Entry<T> { mut T key; mut T value; Entry(T k, T v) : key(k), value(v) {} };
 int main() {
   mut Entry<int> entries[2] = {Entry<int>(1, 2), Entry<int>(3, 4)};
   mut int sum = 0;
@@ -11527,6 +11527,8 @@ struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b
   rejectRange(
       "for (auto& [a, b] : items) { items[0].first = 7; int copy = a; }",
       "owner mutation cannot invalidate a projected borrow");
+  rejectRange("for (mut auto& [a, b] : items) {}",
+              "mutable patterns cannot upgrade immutable fields");
   rejectRange("for (mut auto [a, b] : items) {}",
               "mutable range patterns require a reference");
   rejectRange(

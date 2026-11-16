@@ -14,8 +14,8 @@ if __name__ == "__main__":
 import std.vector;
 import std.utility;
 struct Entry {
-  std::string key;
-  int value;
+  mut std::string key;
+  mut int value;
   Entry(std::string key, int value) : key(std::move(key)), value(value) {}
 };
 int main() {
@@ -26,6 +26,7 @@ int main() {
         "implicit-copy": "for (auto [key, value] : entries) {}",
         "partial-move": "for (auto& [key, value] : entries) { auto moved = std::move(key); }",
         "owner-invalidation": "for (auto& [key, value] : entries) { entries.clear(); int size = int(key.size()); }",
+        "immutable-field": "struct Frozen { int a; int b; Frozen():a(1),b(2){} }; mut Frozen frozen[1] = {Frozen()}; for (mut auto& [a, b] : frozen) {}",
         "mutable-invalidation": "for (mut auto& [key, value] : entries) { entries.clear(); value += 1; }",
         "mutable-alias": "for (mut auto& [key, value] : entries) { auto& held = value; value += 1; int copy = held; }",
         "immutable-owner": "auto& readonly = entries; for (mut auto& [key, value] : readonly) { value += 1; }",

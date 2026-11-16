@@ -8,7 +8,7 @@ import tempfile
 from lsp_smoke_test import LspSession, lsp_position
 
 
-SOURCE = """struct Entry { int key; int value; Entry(int k, int v) : key(k), value(v) {} };
+SOURCE = """struct Entry { mut int key; mut int value; Entry(int k, int v) : key(k), value(v) {} };
 int main() {
   mut Entry entries[1] = {Entry(1, 2)};
   /* 😀 */ for (auto& [key, value] : entries) { int result = key + value; }

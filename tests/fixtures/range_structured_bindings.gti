@@ -3,8 +3,8 @@ import std.string;
 import std.utility;
 
 struct Entry {
-  std::string key;
-  int value;
+  mut std::string key;
+  mut int value;
   Entry(std::string key, int value) : key(std::move(key)), value(value) {}
 };
 

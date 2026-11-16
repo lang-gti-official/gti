@@ -12,8 +12,8 @@ import time
 
 SOURCE = """extern "C" { uint64_t seed(); void sink(uint64_t value); }
 struct Pair {
-  uint64_t key;
-  uint64_t value;
+  mut uint64_t key;
+  mut uint64_t value;
   Pair(uint64_t key, uint64_t value) : key(key), value(value) {}
 };
 uint64_t run(uint64_t initial) {

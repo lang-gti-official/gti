@@ -48,7 +48,8 @@ copying from a borrowed range requires a copyable element, while a consuming
 range transfers the element. The second form borrows the current element.
 The first two forms create read-only projections. The explicit `mut auto&`
 form selects normal mutable iteration and creates mutable references to each
-component. It requires mutable access to every component; it cannot upgrade a
+component. It requires mutable access to every component (record fields must themselves
+permit mutation, such as fields declared `mut`); it cannot upgrade a
 stored read-only reference. Disjoint fields can be mutated independently while
 the exclusive iteration loan prevents conflicting access to the range.
 Decomposition adds no copies or allocations. Their checked references cannot outlive the current iteration

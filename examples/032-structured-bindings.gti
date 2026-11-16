@@ -15,7 +15,7 @@ public:
 
 struct Interval {
   mut int lo;
-  int hi;
+  mut int hi;
   Interval(int lo, int hi) : lo(lo), hi(hi) {}
   int width() { return this.hi - this.lo; }
 };
