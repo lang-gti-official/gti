@@ -19,7 +19,8 @@ if __name__ == "__main__":
              "temporary_borrow_cpp_supported", "noreturn_temporary_borrow",
              "temporary_borrow_symbolic_producers", "borrowed_text_temporary_failure",
              "call_operator_temporary_borrow", "panic_argument_borrow_order",
-             "shared_parent_call_borrows", "temporary_owned_carrier_arguments")
+             "shared_parent_call_borrows", "temporary_owned_carrier_arguments",
+             "temporary_argument_text_publication")
     argument_order = root / "tests/fixtures/panic_argument_borrow_order.gti"
     def argument_order_line(marker):
         return next(i for i, line in enumerate(argument_order.read_text().splitlines(), 1)
@@ -53,6 +54,12 @@ if __name__ == "__main__":
     cursor_check = next(i for i, line in enumerate(iterator_lines, 1)
                         if "index_bounds_check(selected - begin" in line)
     owned_carrier = root / "tests/fixtures/temporary_owned_carrier_arguments.gti"
+    text_publication = root / "tests/fixtures/temporary_argument_text_publication.gti"
+    def publication_failure(marker):
+        line = next(i for i, line in enumerate(text_publication.read_text().splitlines(), 1)
+                    if line.endswith('// ' + marker))
+        return (f"{text_publication.name}:{line}: runtime error[GTI-R0002]: "
+                "division_by_zero in integer_division\n")
     def owned_failure(marker):
         line = next(i for i, line in enumerate(owned_carrier.read_text().splitlines(), 1)
                     if line.endswith('// ' + marker))
@@ -63,7 +70,12 @@ if __name__ == "__main__":
                                 "scalar, plain-enum, and text temporary reference arguments")
                           for name in names},
          fixture_paths={name: root / "examples" / f"{name}.gti" for name in names[1:3]},
-         cases={"temporary_owned_carrier_arguments": [
+         cases={"temporary_argument_text_publication": [
+                    ((), (0, "pattern\nmatch\n7\nhello\n", "")),
+                    (("producer",), (70, "", publication_failure("producer-failure"))),
+                    (("later", "fails"), (70, "pattern\n7\n", publication_failure("later-failure"))),
+                    (("body", "now", "fails"), (70, "pattern\nmatch\n7\n", publication_failure("body-failure")))],
+                "temporary_owned_carrier_arguments": [
                     ((), (0, "consume\n14\n24\n13\n23\n", "")),
                     (("later",), (70, "14\n24\n13\n23\n", owned_failure("later-failure"))),
                     (("body", "fails"), (70, "consume\n14\n24\n13\n23\n", owned_failure("body-failure"))),

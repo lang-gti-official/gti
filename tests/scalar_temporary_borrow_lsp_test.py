@@ -76,6 +76,22 @@ void observe<Args...>(Args&... values) {}
 int main() { observe(View(Owner().get())); return 0; }
 """
             assert not publish(owned)
+            publication = """import std.string;
+class Pattern { public: Pattern() = default; };
+class Result { std::string_view text; public:
+  Result(std::string_view text) : text(text) {}
+  bool matched() { return this.text.size() != std::size_t(0); }
+};
+Result match(std::string_view text, Pattern& pattern) { return Result(text); }
+bool matches(std::string& text) { return match(text.view(), Pattern()).matched(); }
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }
+"""
+            assert not publish(publication)
+            invalid = publication.replace("Pattern& pattern", "mut Pattern& pattern")
+            diagnostics = publish(invalid)
+            assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
+            assert not any(item.get("code", "").startswith("GTI-B") for item in diagnostics), diagnostics
+            assert not publish(publication)
             invalid = owned.replace("Args&... values", "mut Args&... values")
             diagnostics = publish(invalid)
             assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
