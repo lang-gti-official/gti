@@ -1,0 +1,9 @@
+// `//@ opt: O0` pins the level: the global override leaves it unoptimized.
+//@ run-pass
+//@ opt: O0
+//@ reason: the override must not reach a pinned test
+//@ snapshot: llvm-ir
+// CHECK: define {{.*}} ; twice
+// CHECK: alloca
+int twice(int value) { mut int doubled = value; doubled *= 2; return doubled; }
+int main() { return twice(2) - 4; }

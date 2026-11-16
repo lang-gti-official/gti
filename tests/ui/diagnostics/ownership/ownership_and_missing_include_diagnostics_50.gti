@@ -1,0 +1,2 @@
+// Ownership and missing include diagnostics: unknown non-standard types must not receive a guessed include edit.
+using values = vendor::vector<int>;  //~ ERROR GTI-S2000

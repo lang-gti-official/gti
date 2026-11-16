@@ -1,0 +1,55 @@
+// Cross-call cleanup context with source-defined classes: a cleanup failure is primary, an
+// inherited primary survives a nested cleanup failure, and the context restores afterwards.
+//@ run-pass
+//@ revisions: normal first inherited restored
+//@[first] run-fail
+//@[first] args: phase
+//@[first] exit-code: 70
+//@[first] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[inherited] run-fail
+//@[inherited] args: phase phase
+//@[inherited] exit-code: 70
+//@[inherited] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:31; secondary [GTI-R0002]
+//@[restored] run-fail
+//@[restored] args: phase phase phase
+//@[restored] exit-code: 70
+//@[restored] stderr-contains: main.gti:35: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- main.gti
+import std.vector;
+import std.string;
+
+class Marker {
+  char code;
+public:
+  Marker(char code) : code(code) {}
+  ~Marker() { std::print(this.code); }
+};
+
+void nested(int divisor) {
+  Marker local{'L'};
+  int secondary = 10 / divisor;
+}
+
+class Action {
+  int divisor;
+public:
+  Action(int divisor) : divisor(divisor) {}
+  ~Action() {
+    std::print('D');
+    nested(this.divisor);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Marker outer{'O'};
+  {
+    Action action{argc == 2 || argc == 3 ? 0 : 1};
+    if (argc == 3) {
+      int primary = 10 / (argc - 3);
+    }
+  }
+  if (argc == 4) {
+    int after_success = 10 / (argc - 4);
+  }
+  return 0;
+}

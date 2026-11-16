@@ -1,0 +1,10 @@
+// Recovery finding diagnostics: ordinary runtime initializer dependencies remain diagnosed.
+class Globals {
+public:
+  static int read() { return Globals::later; }
+  static mut int first = Globals::read();  //~ ERROR GTI-S2068
+  static mut int later = 1;
+public:
+  Globals() = default;
+};
+int main() { return Globals::first; }

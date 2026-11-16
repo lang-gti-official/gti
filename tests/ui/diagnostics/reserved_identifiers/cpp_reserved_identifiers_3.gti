@@ -1,0 +1,2 @@
+// Cpp reserved identifiers: issue #14 should diagnose each reserved occurrence in the GTI frontend before C++ emission.
+int main() { int template = 1; return template - 1; }  //~ ERROR GTI-P0002 //~ ERROR GTI-P0002

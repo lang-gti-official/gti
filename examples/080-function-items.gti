@@ -9,7 +9,7 @@ int32_t invoke_with<Function, Args...>(Function function, Args... args) {
 }
 
 int main() {
-  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+  std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
 
   // An exact namespace function can satisfy a confined generic callable
   // contract directly. No lambda wrapper or function-pointer conversion is

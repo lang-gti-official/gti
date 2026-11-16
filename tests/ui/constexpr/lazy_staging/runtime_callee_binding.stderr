@@ -1,0 +1,10 @@
+main.gti:5:37: error[GTI-S2057]: The initializer for constexpr binding 'c' reached a call that cannot run during compilation. 'runtime_only' is not constexpr.
+ 5 |   if (v < 0) { return runtime_only(v); }  //~ ERROR GTI-S2057
+   |                                     ^
+main.gti:8:1: note: constexpr binding declared here.
+ 8 | constexpr int c = clamp_positive(-5);
+   | ^~~~~~~~~
+main.gti:8:36: note: Constant evaluation requested here.
+ 8 | constexpr int c = clamp_positive(-5);
+   |                                    ^
+help: Only operations that execute during compilation must be constexpr. Declare the callee constexpr, or keep this call off the path that compile-time evaluation takes.

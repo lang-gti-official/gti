@@ -1,0 +1,5 @@
+// A declaration-wide unreachable tail in a generic is warned once, not per instance, and without per-instance notes.
+//@ check-pass
+//@ snapshot: diagnostics
+void stop<T>(T value) { return; int after = 1; }  //~ WARN GTI-S2095
+int main() { stop(1); stop(true); return 0; }

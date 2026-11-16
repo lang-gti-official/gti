@@ -1,0 +1,10 @@
+// A consuming call that would return a borrow is one error at the call, naming the result; the fresh argument it would borrow is not checked against it as well.
+import std.meta;
+class Source {
+public:
+  Source() {}
+  std::meta::callable_return_type<F> map<F>(F& mapper) && { return mapper(1); }
+};
+int stored = 1;
+int& pick(int value) { return stored; }
+int main() { [[discard]] Source().map(pick); return 0; }  //~ ERROR GTI-S2022 this call returns 'int32_t&'

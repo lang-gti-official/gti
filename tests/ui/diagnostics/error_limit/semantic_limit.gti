@@ -1,0 +1,28 @@
+// Semantic analysis stops at the default limit of twenty errors with a terminal GTI-D0002.
+void broken() {
+missing_0();  //~ ERROR GTI-S2001
+missing_1();  //~ ERROR GTI-S2001
+missing_2();  //~ ERROR GTI-S2001
+missing_3();  //~ ERROR GTI-S2001
+missing_4();  //~ ERROR GTI-S2001
+missing_5();  //~ ERROR GTI-S2001
+missing_6();  //~ ERROR GTI-S2001
+missing_7();  //~ ERROR GTI-S2001
+missing_8();  //~ ERROR GTI-S2001
+missing_9();  //~ ERROR GTI-S2001
+missing_10();  //~ ERROR GTI-S2001
+missing_11();  //~ ERROR GTI-S2001
+missing_12();  //~ ERROR GTI-S2001
+missing_13();  //~ ERROR GTI-S2001
+missing_14();  //~ ERROR GTI-S2001
+missing_15();  //~ ERROR GTI-S2001
+missing_16();  //~ ERROR GTI-S2001
+missing_17();  //~ ERROR GTI-S2001
+missing_18();  //~ ERROR GTI-S2001
+missing_19();  //~ ERROR GTI-S2001 //~ ERROR GTI-D0002
+missing_20();
+missing_21();
+missing_22();
+missing_23();
+missing_24();
+}

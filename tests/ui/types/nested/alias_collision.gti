@@ -1,0 +1,3 @@
+// A nested type and a member alias of the same name conflict.
+//@ check-fail
+struct C { using N = int; struct N { int value; };  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2006 conflicts with a member

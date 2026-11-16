@@ -1,0 +1,8 @@
+// Two imported modules each declaring type aliases of the same name link and keep their own meanings.
+//@ run-pass
+// --- main.gti
+import "left.gti"; import "right.gti"; int main(){return left()+right()-42;}
+// --- left.gti
+export module left;using Number=int; export int left(){Number value=20;return value;}
+// --- right.gti
+export module right;using Number=bool; export int right(){Number value=true;return value?22:0;}

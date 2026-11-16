@@ -1,0 +1,15 @@
+// A re-exported module keeps its own imports private.
+// --- main.gti
+import "facade.gti";
+int main() { return hidden(); }  //~ ERROR GTI-S2024
+// --- facade.gti
+export module facade;
+export import std.vector;
+export import "legacy.gti";
+// --- legacy.gti
+export module legacy;
+import "nested.gti";
+namespace old { export int answer() { return hidden() + 2; } }
+// --- nested.gti
+export module nested;
+export int hidden() { return 40; }

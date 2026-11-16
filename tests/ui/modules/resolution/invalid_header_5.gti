@@ -1,0 +1,2 @@
+// A malformed or misplaced module import or header fails during source loading: a quoted non-GTI file.
+import "main.cpp";  //~ ERROR GTI-I0012 must name a relative .gti file

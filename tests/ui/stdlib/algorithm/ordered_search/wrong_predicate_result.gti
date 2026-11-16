@@ -1,0 +1,18 @@
+// std::partition_point rejects a predicate returning int.
+//@ check-fail
+import std.algorithm;
+import std.functional;
+import std.vector;
+class OncePredicate {
+public:
+  bool operator()(int& value) && { return value < 2; }
+public:
+  OncePredicate() = default;
+};
+class OnceComparator {
+public:
+  bool operator()(int& left, int& right) && { return left < right; }
+public:
+  OnceComparator() = default;
+};
+int main() { mut std::vector<int> values = {1, 2, 3}; int key = 2; std::partition_point(values.begin(), values.end(), [](int& value) -> int { return value; }); return 0; }  //~ ERROR GTI-S2029

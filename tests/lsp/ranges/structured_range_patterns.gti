@@ -1,0 +1,33 @@
+// Structured bindings in range loops navigate and rename like locals, and
+// formatting keeps the binding patterns. (From consuming_range_lsp_test.py.)
+//@ hover @key: int32_t
+//@ definition @key: @decl
+//@ rename @key entry_key: @decl @key
+//@ formatting: auto& [key, value] : entries
+//@ formatting: mut auto& [key, value] : entries
+struct Entry { mut int key; mut int value; Entry(int k, int v) : key(k), value(v) {} };
+int main() {
+  mut Entry entries[1] = {Entry(1, 2)};  //~ WARN GTI-S2096
+  /* 😀 */ for (auto& [/*@decl*/key, value] : entries) { int result = /*@key*/key + value; }
+  for (auto [key, value] : entries) { int result = key + value; }
+  for (mut auto& [key, value] : entries) { key += 1; value += key; }
+  return 0;
+}
+// --- step 2
+struct Entry { mut int key; mut int value; Entry(int k, int v) : key(k), value(v) {} };
+int main() {
+  mut Entry entries[1] = {Entry(1, 2)};
+  /* 😀 */ for (auto& [key] : entries) { int result = key + value; }  //~ ERROR GTI-S2048 //~ ERROR GTI-S2001
+  for (auto [key, value] : entries) { int result = key + value; }
+  for (mut auto& [key, value] : entries) { key += 1; value += key; }
+  return 0;
+}
+// --- step 3
+struct Entry { mut int key; mut int value; Entry(int k, int v) : key(k), value(v) {} };
+int main() {
+  mut Entry entries[1] = {Entry(1, 2)};  //~ WARN GTI-S2096
+  /* 😀 */ for (auto& [key, ] : entries) { int result = key + value; }  //~ ERROR GTI-P0001
+  for (auto [key, value] : entries) { int result = key + value; }
+  for (mut auto& [key, value] : entries) { key += 1; value += key; }
+  return 0;
+}

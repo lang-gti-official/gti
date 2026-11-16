@@ -1,0 +1,35 @@
+// Several files open as documents; markers address any of them.
+//@ definition @use: @lib.gti:decl
+//@ references @use: @decl @use
+//@ hover @use: int32_t answer()
+//@ hover @use: !no such text
+//@ completion-detail @dot level: int32_t
+//@ signature @call: int32_t scale(int32_t value)
+//@ symbols: main
+// --- main.gti
+import "lib.gti";
+int main() {
+  Settings settings{};
+  int32_t sum = /*@use*/answer() + scale(/*@call*/settings./*@dot*/level);
+  return sum - 43;
+}
+// --- lib.gti
+export module lib;
+export int /*@decl*/answer() { return 42; }
+export int scale(int value) { return value; }
+export class Settings {
+public:
+  int level = 1;
+  Settings() = default;
+};
+// --- step 2 lib.gti
+//@ hover @decl: int32_t answer()
+//@ definition @main.gti:use: @decl
+export module lib;
+export int /*@decl*/answer() { return 41; }
+export int scale(int value) { return value; }
+export class Settings {
+public:
+  int level = 1;
+  Settings() = default;
+};

@@ -1,0 +1,44 @@
+// Isolated module configuration still rejects an import cycle.
+// --- main.gti
+import "first.gti";
+import "second.gti";
+int main() { return first_value() + second_value(); }
+// --- first.gti
+export module first;
+#define MODULE_LOCAL
+#define SECOND_ONLY
+#define STARTED
+import "parent.gti";
+import "flags.gti";
+import "parent.gti";
+#if defined(ENABLED) || !defined(STARTED) || !defined(MODULE_LOCAL)
+#error "module imports must preserve the caller's flags"
+#endif
+export int first_value() { return parent_value(); }
+// --- second.gti
+export module second;
+#define MODULE_LOCAL
+#define SECOND_ONLY
+#define STARTED
+import "parent.gti";
+import "flags.gti";
+import "parent.gti";
+#if defined(ENABLED) || !defined(STARTED) || !defined(MODULE_LOCAL)
+#error "module imports must preserve the caller's flags"
+#endif
+export int second_value() { return parent_value(); }
+// --- parent.gti
+export module parent;
+import "flags.gti";
+#if defined(ENABLED) || defined(SECOND_ONLY) || defined(STARTED)
+#error "an imported module changed its caller's configuration"
+#endif
+export int parent_value() { return flag_value(); }
+// --- flags.gti
+export module flags;
+#define ENABLED
+#undef STARTED
+#if defined(ENABLED) && !defined(STARTED)
+export int flag_value() { return 1; }
+#endif
+import "parent.gti";  //~ ERROR GTI-I0001

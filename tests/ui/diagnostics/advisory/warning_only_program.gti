@@ -1,0 +1,10 @@
+// An unused local mut and an unreachable tail are warnings: the first offers a token-removal fix, the second no semantics-changing deletion, and the program still checks.
+//@ check-pass
+//@ snapshot: diagnostics
+int main() {
+  mut int read_only = 1;  //~ WARN GTI-S2096
+  mut int changed = 2;
+  changed = 3;
+  return read_only + changed;
+  int unreachable = 4;  //~ WARN GTI-S2095
+}

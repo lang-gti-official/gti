@@ -1,0 +1,63 @@
+// An erased callable's text result through a virtual root or std::function is ownerless.
+//@ run-pass
+//@ stdout: lit
+//@ stdout: fixed
+//@ stdout: word
+//@ stdout: echoed
+//@ stdout: word
+import std.functional;
+import std.polymorphic;
+import std.string;
+// A virtual text result follows its root's contract, a lambda's result is
+// what its returns hold, and a generic result its instance makes text relays
+// at the call: an erased callable over a literal lambda returns ownerless text
+// through a user-defined interface and through std::function.
+interface Labeler {
+  std::string_view label();
+};
+class Fixed : public Labeler {
+public:
+  Fixed() {}
+  std::string_view label() override { return "fixed"; }
+};
+class Wrapped<F> : public Labeler {
+  F fn;
+public:
+  Wrapped(F fn) : fn(fn) {}
+  std::string_view label() override { return this.fn(); }
+};
+class Erased {
+  mut std::inline_polymorphic<Labeler, 32, 8> target{};
+public:
+  Erased() {}
+  void set<F>(F fn) mut { this.target.replace(Wrapped<F>(fn)); }
+  std::string_view operator()() { return this.target.get().label(); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R same(R text) { return text; }
+};
+mut std::string_view kept = "";
+int main() {
+  auto lit = []() -> std::string_view { return "lit"; };
+  mut Erased erased{};
+  erased.set(std::move(lit));
+  kept = erased();
+  std::println(kept);
+  mut std::inline_polymorphic<Labeler, 32, 8> slot{};
+  slot.replace(Fixed());
+  std::println(slot.get().label());
+  auto word = []() -> std::string_view { return "word"; };
+  std::function<std::string_view()> fn{word};
+  std::println(fn());
+  std::string_view held = fn();
+  Echo<std::string_view> echo{};
+  mut std::string owner{"echoed"};
+  std::string_view relayed = echo.same(owner.view());
+  std::println(relayed);
+  owner.append("!");
+  std::println(held);
+  return kept == "lit" ? 0 : 1;
+}

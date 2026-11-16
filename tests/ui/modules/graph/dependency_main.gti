@@ -1,0 +1,6 @@
+// Only the entry unit may declare main.
+// --- main.gti
+import "branch.gti";
+// --- branch.gti
+export module branch;
+export int main() { return 0; }  //~ ERROR GTI-S2025

@@ -1,0 +1,8 @@
+// Reproducer a21-value-argument-resolved-as-type: explicit generic arguments are checked against the written contract, not as type lookups.
+// A21: a bare identifier explicit value argument is resolved as a type.
+uint64_t extent<uint64_t N>() { return N; }
+
+int main() {
+  uint64_t runtime = 4;
+  return int32_t(extent<runtime>());  //~ ERROR GTI-S2026 compile-time value
+}

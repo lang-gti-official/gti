@@ -1,0 +1,15 @@
+// A concept used as a condition hovers as a concept, navigates to its
+// declaration, is a type token, and its argument navigates to the type;
+// formatting keeps `&&`/`and` spellings. (From concept_conditions_lsp_test.py.)
+//@ hover @use: concept sized
+//@ definition @use: @decl
+//@ token @use: type
+//@ definition @arg: @box
+//@ formatting: sized<Box> && !sized<int> || std::integral<int>
+//@ formatting: sized<Box> and std::integral<int> or sized<int>
+concept /*@decl*/sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+struct /*@box*/Box { Box() = default; uint64_t size() { return 3; } };
+uint64_t measure<T>(T& value) { if constexpr(sized<T>) { return value.size(); } else { return 0; } }
+int main() { Box box{}; bool value = /* 😀 */ /*@use*/sized</*@arg*/Box>; return int(measure(box)); }
+static_assert(sized<Box> && !sized<int> || std::integral<int>);
+static_assert(sized<Box> and std::integral<int> or sized<int>);

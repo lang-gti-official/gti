@@ -1,0 +1,7 @@
+// Standard string: std::string copies should require explicit allocating clone() rather than hidden allocation.
+import std.string;
+int main() {
+  std::string original = std::string("text");
+  std::string copied = original;  //~ ERROR GTI-S2003 Cannot initialize 'copied'
+  return 0;
+}

@@ -1,0 +1,3 @@
+// An import inside a declaration is a syntax error at the import keyword; it is never erased into a valid program.
+//@ parse-fail
+int before(int value = import lib; 1) { return value; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001

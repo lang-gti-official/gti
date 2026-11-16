@@ -1,0 +1,5 @@
+// View guidance is discovered from an ordinary user type's public accessor, not a standard type name.
+//@ snapshot: diagnostics
+class Number { public: int view() { return 1; }  public: Number() = default; };
+int consume(int value) { return value; }
+int main() { Number value{}; return consume(value); }  //~ ERROR GTI-S2003

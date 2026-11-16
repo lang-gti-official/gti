@@ -1,0 +1,10 @@
+// Read only receiver diagnostics: an immutable terminal field should keep field immutability precedence.
+struct Component { int offset = 0;  public: Component() = default; };
+class Path {
+public:
+  void update() { component.offset = 1; }  //~ ERROR GTI-S2000
+private:
+  mut Component component = Component();
+public:
+  Path() = default;
+};

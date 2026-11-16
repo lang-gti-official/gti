@@ -1,0 +1,7 @@
+main.gti:3:43: error[GTI-S2002]: Cannot assign to immutable binding 'fixed'.
+ 3 | void examine() { constexpr int fixed = 4; fixed = 5; }  //~ ERROR GTI-S2002
+   |                                           ^~~~~
+main.gti:3:32: note: Binding declared here.
+ 3 | void examine() { constexpr int fixed = 4; fixed = 5; }  //~ ERROR GTI-S2002
+   |                                ^~~~~
+help: A constant cannot be mutated; use separate mutable storage if a changing value is needed.

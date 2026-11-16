@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: division through reference.
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr void divide(mut int& value) { value /= 0; } constexpr int bad() { mut int value = 4; divide(value); return value; } constexpr int constant = bad();  //~ ERROR GTI-S2004 //~ ERROR GTI-S2057
+int main() { return 0; }
