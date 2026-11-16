@@ -8,7 +8,13 @@ name: Slow tier
 # execution matrices and load-sensitive measurements. This workflow runs
 # that slow set at -O0 and -O3 and re-runs every per-commit level-sensitive
 # harness at -O3 (scripts/validation_checks.py test sets `slow` and `o3`,
-# and their `darwin-` counterparts on macOS). It never gates main, `tip` or
+# and their `darwin-` counterparts on macOS). The slow set includes the
+# gti-test entries `gti_test_slow` (every `//@ slow` case under tests/slow)
+# and `gti_test_isolate` (tests/ui with each case in a fresh `gti` process,
+# the path users run; per-commit runs share an analysed stdlib per worker).
+# gti-test has no global -O3 override yet, so tests/ui's run cases are not
+# re-run at -O3 here; cases with `//@ opt: O3` run at -O3 per commit. It
+# never gates main, `tip` or
 # `nightly`. The release train (scripts/release_train.py) cuts and promotes
 # only a commit with a passing `Slow tier verdict` here and a passing
 # sanitizer verdict, so beta and stable wait for it. A failure on the
@@ -120,6 +126,7 @@ jobs:
           -DGTI_RELEASE_BUILD=ON
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
           -DGTI_TEST_TIMEOUT_SCALE=3
+          -DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/shard/gti-test"
       - name: Run this shard of the slow tier
         # The shard runner sets GTI_TEST_LLVM_LEVELS for its test set:
         # O0,O3 for the slow sets and O3 for the re-run sets.
@@ -129,6 +136,7 @@ jobs:
           GTI_SHARD_PLATFORM: ${{ matrix.platform }}
           GTI_SHARD_TEST_SET: ${{ matrix.set }}
         run: >-
+          mkdir -p "${RUNNER_TEMP}/shard/gti-test" &&
           python3 scripts/validation_checks.py shard --build build
           --test-set "${GTI_SHARD_TEST_SET}"
           --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
@@ -150,6 +158,7 @@ jobs:
           path: |
             ${{ runner.temp }}/shard/*.json
             ${{ runner.temp }}/shard/*.xml
+            ${{ runner.temp }}/shard/gti-test/*.xml
           retention-days: 30
           if-no-files-found: ignore
 

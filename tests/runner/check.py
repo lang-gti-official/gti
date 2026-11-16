@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The gti_test_ui gate: gti-test's own behaviour, then tidy and tests/ui.
 
-usage: check.py <gti-test> [--jobs N] [--self-test-only]
+usage: check.py <gti-test> [--jobs N] [--junit FILE] [--self-test-only]
 
 The self-test drives gti-test over tests/runner/fixtures and checks every
 outcome class it reports: pass, wrong/missing/unmatched annotations, stdout
@@ -468,8 +468,12 @@ def main():
         sys.stdout.write(out)
         if code != 0:
             return code
+    # --junit FILE goes to the run of the tests: CI's per-case report.
+    report = []
+    if "--junit" in sys.argv:
+        report = ["--junit", sys.argv[sys.argv.index("--junit") + 1]]
     code, out = run(runner, *(ROOT / root for root in roots), "--jobs",
-                    jobs, fixtures=False)
+                    jobs, *report, fixtures=False)
     sys.stdout.write(out)
     return code
 

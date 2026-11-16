@@ -9935,6 +9935,30 @@ that an `-O3`-only miscompile or a corpus-invariant violation is found within
 a day rather than on the merging head
 ([test-suite redesign](../plans/test-suite-redesign.md)).
 
+**Where the `gti-test` entries run.** The runner's CTest entries are wired
+into the tiers of the redesign's §7:
+
+| Tier | Entries | How |
+| --- | --- | --- |
+| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/ui`, `tests/project`, `tests/lsp`), `gti_test_examples`, `gti_unit_tests`; Linux also `compiler_pipeline` until it drains | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
+| Pull request budget (Linux) | cases the PR adds or changes | `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`: a case whose warm CPU time exceeds half its scaled limit fails the PR with the runner's "over budget" message |
+| Per-commit full validation | the same three entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
+| Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
+| Daily sanitizers (`sanitizers.yml`) | `gti_test_ui`'s run | the library partition runs `tests/runner/check.py` with the ASan/UBSan `gti-test`, `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, under a 120-minute step bound, inside the `Sanitizer verdict` |
+
+The over-budget rule's scale assumes a hosted Linux runner is about twice as
+slow as the development machine the limits were measured on, as the
+`gti_test_ui` entry does. Measured on that machine (Apple M4 Pro) on
+2026-11-17, the most expensive warm case of `tests/ui` used 47% of its limit
+and five used 40% or more; a pull request that edits one of those can be
+flagged if its hosted runner is more than about 2.1 to 2.5 times slower. LSP
+cases are held to wall time, which is noisier. The per-case JUnit reports
+give the hosted ratio to recalibrate the scale against.
+
+`gti-test` has no global `-O3` override, so the slow tier does not yet re-run
+`tests/ui`'s run cases at `-O3`; cases that declare `//@ opt: O3` run at `-O3`
+per commit.
+
 **Advisory checks.** Some checks guard the repository's own bookkeeping rather than the product:
 a pull request's `Validation:` block, the stdlib surface manifest review,
 reviewed census counts, and ownership-map coverage. Each broke on

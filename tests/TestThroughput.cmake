@@ -341,6 +341,8 @@ set(gti_slow_test_patterns
   "^mir_cutover_corpus_oracle$"
   "^language_coverage_corpus$"
   "^lowered_program_corpus_census$"
+  # gti-test's tests/slow cases and its --isolate run (tests/gti_test.cmake).
+  "^gti_test_(slow|isolate)$"
   # Raw-pointer-audit independence, including the >20-minute std import.
   "^allocator_raw_audit_independence(_.+)?$"
   # Whole-program MIR mutation loops.
