@@ -1,0 +1,19 @@
+// Thread-local scalars keep per-thread values.
+//@ run-pass
+enum Mode { First, Second };
+using Callback = () -> int32_t;
+thread_local mut Mode mode = Mode::First;
+thread_local mut int32_t values[2] = {3, 4};
+thread_local mut int32_t* address = nullptr;
+thread_local Callback callback = nullptr;
+int main() {
+  if (mode != Mode::First || values[0] != 3 || values[1] != 4 ||
+      address != nullptr || callback != nullptr) return 1;
+  mode = Mode::Second;
+  values[1] += 1;
+  unsafe {
+    address = &values[0];
+    if (*address != 3) return 2;
+  }
+  return mode == Mode::Second && values[1] == 5 ? 0 : 3;
+}

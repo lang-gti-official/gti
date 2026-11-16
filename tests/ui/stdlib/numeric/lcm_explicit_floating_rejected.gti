@@ -1,0 +1,4 @@
+// An explicit floating-point std::lcm is rejected like an inferred one.
+//@ check-fail
+import std.numeric;
+int main() { std::lcm<double>(1.0d, 2.0d); return 0; }  //~ ERROR GTI-S2029

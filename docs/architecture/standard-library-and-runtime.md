@@ -147,7 +147,7 @@ status-pointee write. Verified LLVM call edges retain nullable fresh-return
 Injected allocation providers implement both routes with the same observation,
 failure and release accounting. `process_provider_target_contract`,
 `llvm_memory_contracts`, `resource_memory_runtime` and
-`process_storage_query_runtime` own the route/signature, size/alignment boundary,
+`tests/ui/stdlib/process` own the route/signature, size/alignment boundary,
 exhaustion and rollback controls. Allocation count and runtime improvements
 still require measurement; choosing the ordinary route is not allocation elision.
 

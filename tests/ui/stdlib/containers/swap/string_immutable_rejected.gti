@@ -1,0 +1,10 @@
+// A string cannot swap with an immutable one.
+//@ check-fail
+import std.string;
+int main() {
+mut std::string a = std::string();
+mut std::string b = std::string();
+std::string fixed = std::string();
+a.swap(fixed);  //~ ERROR GTI-S2017
+return 0;
+}

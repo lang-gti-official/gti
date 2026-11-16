@@ -1,0 +1,95 @@
+// A panic among cleanup-free call arguments skips later arguments and the call.
+//@ run-pass
+//@ revisions: all argument constructed constructor constructed_argument
+//@[all] stdout: 3
+//@[all] stdout: 6
+//@[all] stdout: 1
+//@[all] stdout: 90
+//@[argument] run-fail
+//@[argument] exit-code: 70
+//@[argument] args: case
+//@[argument] stdout: 3
+//@[argument] stdout: 1
+//@[argument] stdout: 90
+//@[argument] stderr-contains: panic_cleanup_free_arguments.gti:32: runtime error[GTI-R0017]: panic: "later argument failed"
+//@[constructed] args: case case
+//@[constructed] stdout: 2
+//@[constructed] stdout: 3
+//@[constructed] stdout: 6
+//@[constructed] stdout: 1
+//@[constructed] stdout: 90
+//@[constructor] run-fail
+//@[constructor] exit-code: 70
+//@[constructor] args: case case case
+//@[constructor] stdout: 2
+//@[constructor] stdout: 1
+//@[constructor] stdout: 90
+//@[constructor] stderr-contains: panic_cleanup_free_arguments.gti:22: runtime error[GTI-R0017]: panic: "constructor failed"
+//@[constructed_argument] run-fail
+//@[constructed_argument] exit-code: 70
+//@[constructed_argument] args: case case case case
+//@[constructed_argument] stdout: 2
+//@[constructed_argument] stdout: 3
+//@[constructed_argument] stdout: 1
+//@[constructed_argument] stdout: 90
+//@[constructed_argument] stderr-contains: panic_cleanup_free_arguments.gti:32: runtime error[GTI-R0017]: panic: "later argument failed"
+// --- panic_cleanup_free_arguments.gti
+import std.panic;
+import std.string;
+import std.vector;
+
+struct Guard {
+  int id;
+  Guard(int value) : id(value) {}
+  ~Guard() { std::println(id); }
+};
+
+// Neither argument shell has a source destructor or owns a resource.
+struct Plain {
+  int value;
+  Plain(int input) : value(input) {}
+};
+
+struct Marker {
+  int value;
+  Marker(int input, bool fails) : value(input) {
+    std::println(input);
+    if (fails) {
+      std::panic("constructor failed"); // constructor-site
+    }
+  }
+};
+
+expected<Guard, int> first() { return Guard(1); }
+
+int last(bool fails) {
+  std::println(3);
+  if (fails) {
+    std::panic("later argument failed"); // argument-site
+  }
+  return 3;
+}
+
+void plain(expected<Guard, int> owner, Plain item, int tail) {
+  std::println(owner.value().id + item.value + tail);
+}
+
+void marked(expected<Guard, int> owner, Marker item, int tail) {
+  std::println(owner.value().id + item.value + tail);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard parent{90};
+  if (argc == 1) {
+    plain(first(), Plain(2), last(false));
+  } else if (argc == 2) {
+    plain(first(), Plain(2), last(true));
+  } else if (argc == 3) {
+    marked(first(), Marker(2, false), last(false));
+  } else if (argc == 4) {
+    marked(first(), Marker(2, true), last(false));
+  } else {
+    marked(first(), Marker(2, false), last(true));
+  }
+  return 0;
+}

@@ -1,0 +1,53 @@
+// A worker thread gets its own thread-local instances, dropped at thread exit.
+//@ run-pass
+//@ execution-profile: concurrent
+//@ stdout: init 2
+//@ stdout: init 1
+//@ stdout: worker 2 1 1 1
+//@ stdout: drop 1
+//@ stdout: drop 2
+//@ stdout: joined
+//@ stdout: init 1
+//@ stdout: init 2
+//@ stdout: drop 2
+//@ stdout: drop 1
+import std.thread;
+import std.format;
+class State {
+  int32_t id;
+public:
+  State(int32_t id) : id(id) { std::println("init {}", this.id); }
+  int32_t read() { return this.id; }
+  ~State() { std::println("drop {}", this.id); }
+};
+thread_local mut State first = State(1);
+thread_local mut State second = State(2);
+thread_local mut State unused = State(99);
+int32_t local_visit() {
+  thread_local mut int32_t visits = 0;
+  visits += 1;
+  return visits;
+}
+class Registry {
+public:
+  static thread_local mut int32_t visits = 0;
+  static int32_t visit() {
+    Registry::visits += 1;
+    return Registry::visits;
+  }
+};
+int main() {
+  auto started = std::thread::start([]() -> void {
+    int32_t left = second.read();
+    int32_t right = first.read();
+    std::println("worker {} {} {} {}", left, right, local_visit(), Registry::visit());
+  });
+  if (!started) return 1;
+  mut auto worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) return 2;
+  std::println("joined");
+  if (first.read() != 1 || second.read() != 2 || local_visit() != 1 ||
+      local_visit() != 2 || Registry::visit() != 1) return 3;
+  return 0;
+}
