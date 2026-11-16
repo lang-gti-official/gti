@@ -1334,7 +1334,8 @@ exactInvocationShell(const MirInstruction &instruction,
   return finishInstructionEffects(
       instruction, result, false, false,
       instruction.kind == MirInstructionKind::Call &&
-          instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+          (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+           instruction.intrinsic == IntrinsicKind::ObjectConstructOwned) &&
           instruction.constructorTarget.has_value());
 }
 
@@ -1851,7 +1852,8 @@ exactWholeObjectVirtualTarget(const MirProgram &program, const MirBody &body,
            .owner = static_cast<std::size_t>(destructor)});
     }
   } else if (instruction.kind == MirInstructionKind::Call &&
-             instruction.intrinsic == IntrinsicKind::ObjectConstruct &&
+             (instruction.intrinsic == IntrinsicKind::ObjectConstruct ||
+              instruction.intrinsic == IntrinsicKind::ObjectConstructOwned) &&
              instruction.constructorTarget) {
     // The sealed slot operation also executes the exact source constructor;
     // retain its memory, synchronization and escape effects in the shared

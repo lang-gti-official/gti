@@ -269,6 +269,7 @@ void testInPlaceConstructorEffects() {
       Frontend().analyze("optimizer-in-place-constructor.gti", R"(
 import std.string;
 import std.vector;
+import std.memory;
 class Item {
   std::string text;
 public:
@@ -337,11 +338,11 @@ int main() {
                    caller->traits.writesUnknownMemory &&
                    caller->traits.initializesValue,
                "caller fixed-point summary retains both effect families");
-        expect(
-            summary && target && target->parameterTypes.empty() &&
-                *summary == target->effectSummary,
-            "exact raw-construction query retains the selected zero-argument "
-            "constructor summary, not a private storage parameter");
+        expect(summary && target && target->parameterTypes.empty() &&
+                   *summary == target->effectSummary,
+               "exact placement-construction query retains the selected "
+               "zero-argument "
+               "constructor summary, not a private storage parameter");
 
         MirProgram changed = frontend.mir;
         auto *body = findMirBody(changed, address);
@@ -354,7 +355,8 @@ int main() {
             }
           }
         }
-        expect(lostTarget != nullptr, "copied append instruction must exist");
+        expect(lostTarget != nullptr,
+               "copied placement instruction must exist");
         if (lostTarget == nullptr)
           continue;
         lostTarget->constructorTarget.reset();

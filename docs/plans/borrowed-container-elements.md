@@ -226,7 +226,10 @@ replacement of these cleanup-bound carriers requires explicit MIR cleanup-loan
 transfer and matching independent verification; this PR does not add that
 separate capability.
 
-Optimizer checks cover both raw and owner-aware selected constructors. Text
+Optimizer checks cover both raw and owner-aware selected constructors. The
+shared effect analysis now includes the selected constructor for both forms,
+preserving its allocation, memory, synchronization and escape effects in
+instruction and caller summaries. Missing-target and coherence checks remain. Text
 field initialization now has an explicit MIR `Initialize`; tests require its
 producer and unique publication to survive optimization and reject removal of
 the stage. They no longer demand the obsolete metadata-only text initializer
