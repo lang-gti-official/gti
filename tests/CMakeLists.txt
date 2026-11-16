@@ -3815,7 +3815,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(inline_closure_owner_runtime PROPERTIES TIMEOUT 600)
-  add_test(
   if(TARGET gti_lsp)
     add_test(
       NAME executable_entry_cli_lsp
