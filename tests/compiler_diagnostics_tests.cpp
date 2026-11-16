@@ -4845,6 +4845,17 @@ void testAnalysisErrorLimit() {
             all.diagnostics.back().code != "GTI-D0002",
         "an unlimited request never reuses truncated source or parse caches");
   }
+  std::string probes = "struct Sample {}; int main() {\n";
+  for (int index = 0; index < 40; ++index)
+    probes += "static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; "
+              "}));\n";
+  probes += "return 0; }\n";
+  lang::FrontendOptions probeOptions;
+  probeOptions.limits.errorLimit = 1;
+  expect(lang::Frontend(probeOptions)
+             .analyze("probes.gti", probes)
+             .canGenerateCode(),
+         "discarded speculative errors do not consume the analysis budget");
   std::vector<lang::Diagnostic> warnings(40);
   for (auto &diagnostic : warnings)
     diagnostic.severity = lang::DiagnosticSeverity::Warning;
