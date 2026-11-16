@@ -8673,10 +8673,12 @@ in that combined run.
 `executable_entry_semantics` checks explicit executable intent, exact
 `GTI-S2094` classification/source spans/related candidates, no unsafe fix-it,
 inactive-entry exclusion, completion recovery, and library opt-out.
-`executable_entry_cli_lsp` covers direct and project rejection before native
-linking, valid global forwarding, include boundaries, emit-only requests,
-declared executable/test roots versus ordinary library/standalone documents,
-and versioned editor publication, clearing, and close/reopen behavior.
+`tests/project/executable_entry` covers direct and project rejection before
+native linking, valid global forwarding, include boundaries and emit-only
+requests; `tests/lsp/diagnostics/executable_entry.gti` and
+`executable_entry_reopen.jsonl` cover declared executable/test roots versus
+ordinary library/standalone documents, and versioned editor publication,
+clearing, and close/reopen behavior.
 The entry rule adds no syntax, runtime behavior, or backend operation.
 
 `testProgramPlanValidationIsOperationScoped` in the emitter preflight suite uses
@@ -12845,14 +12847,14 @@ Owning Release evidence on macOS arm64:
 - `compiled_interface_types`: canonical metadata/source round trips, fresh ID
   remapping, nested and private declarations, unused member rejection, malformed
   metadata and sealed field/default/export mutations.
-- `compiled_value_types`: O0/O1/O3 producer deletion followed by consumer check
-  and execution, nested and private nominal fields, enums, signed-minimum and
+- `tests/project/compiled_value_types` (formerly O0/O1/O3, now the release
+  profile's O3): producer deletion followed by consumer check and execution, nested and private nominal fields, enums, signed-minimum and
   mixed scalar defaults, by-value mutation without modifying the original,
   private type/field rejection and wrong nominal argument rejection.
-- `compiled_borrow_contract` and `compiled_borrow_library`: malformed origin,
-  index/access/type contracts, including forged access-enum ordinals; O0/O3
-  source-absent primitive/record reference execution, mutable writes and eight
-  exact GTI-S2017 escape/alias/access rejections at each level.
+- `compiled_borrow_contract` and `tests/project/compiled_borrowing`: malformed
+  origin, index/access/type contracts, including forged access-enum ordinals;
+  source-absent primitive/record reference execution at O3 (formerly also O0),
+  mutable writes and eight exact GTI-S2017 escape/alias/access rejections.
 - `project_model` and `compiled_dependency_project`: immutable DAG planning,
   automatic diamond builds, timestamp reuse, dependency-body invalidation,
   stale receipts/corrupt artifact recovery, failure preservation, graph/path
@@ -12907,7 +12909,8 @@ coordinator. Proposed surface version: 0.499.0, subject to integration reconcili
 
 Release compiler evidence on macOS arm64:
 
-- `compiled_namespaces`: 33 CLI steps at O0/O1/O3, including automatic builds of
+- `compiled_namespaces` (now `tests/project/compiled_namespaces`, at O0 only):
+  33 CLI steps at O0/O1/O3, including automatic builds of
   two libraries with same-leaf type/function names, overloads, inherited exports,
   namespace reopening, private layout, read/mutable borrowed results, consumer-only
   reuse and source-absent check/execution after deleting both producers. Negative

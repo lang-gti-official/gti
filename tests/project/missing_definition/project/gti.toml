@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "closure"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

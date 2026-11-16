@@ -1,0 +1,2 @@
+import "api.gti";
+int main() { int& v = read(7); return v; }

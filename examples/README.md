@@ -905,11 +905,11 @@ O0/O1/O3 execution and failure/cleanup checks.
 
 [`compiled-value-types/`](compiled-value-types/README.md) demonstrates source-free
 record, nested-record and integral-enum interfaces, with normal field access and
-generated value operations. `compiled_value_types` owns its execution matrix.
+generated value operations. `tests/project/compiled_value_types` owns its checks.
 
 [`compiled-borrowing/`](compiled-borrowing/README.md) demonstrates reference
 parameters and borrowed results through library metadata, with normal caller
-loan checking. `compiled_borrow_library` owns its positive and negative matrix.
+loan checking. `tests/project/compiled_borrowing` owns its positive and negative cases.
 
 [`compiled-dependencies/`](compiled-dependencies/README.md) demonstrates automatic
 library builds through a diamond dependency graph, a shared private counter and
