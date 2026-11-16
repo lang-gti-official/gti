@@ -12,6 +12,7 @@
 #include "gti/object_layout.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"
+#include "semantic_body_context.h"
 #include "semantic_declaration_index.h"
 #include "semantic_diagnostics.h"
 #include "semantic_reflection_traits.h"
@@ -505,8 +506,6 @@ public:
   // The declarations a resumed analysis adds; lexical frames point into it,
   // so it lives as long as the analyzer.
   StmtList resumeDeclarations;
-  // Preamble bodies whose diagnostics this analysis has reported.
-  std::unordered_set<const FunctionDecl *> reachedPreambleBodies;
   // Registration below these positions/identities was adopted from the
   // preamble; whole-catalog registration passes start here.
   struct RegistrationFloor {
@@ -7341,6 +7340,10 @@ private:
     std::unordered_set<const ConstructorDecl *> constexprConstructorsAnalyzed;
     // Only nested staging workers share the request's execution budget.
     std::shared_ptr<ConstexprWorkBudget> constexprWork;
+    // Which deferred or held-back bodies are ready here (BodyContext). The
+    // request's root analyzer owns it; workers share it unless they complete
+    // bodies in a private context of their own.
+    std::shared_ptr<BodyContext> bodyContext;
     // Every analyzer of the request shares its proved staged constants.
     std::shared_ptr<StagedConstantResults> stagedConstants;
     std::unordered_set<ProgramEffectOwner, ProgramEffectOwnerHash>
@@ -7861,6 +7864,19 @@ private:
   // Analyses `function`'s body now if it has not been analysed yet, so a
   // body-derived fact a caller consumes never depends on source order.
   void ensureBodyAnalyzed(const FunctionInfo &function);
+  // The one readiness contract for compile-time paths. Ready when the body's
+  // facts are final in this context, or when this analyzer owns the context
+  // and can make them final in place (analysing a deferred body, reaching a
+  // held-back one). Otherwise the need is recorded in the context and the
+  // caller must treat the body's facts as unavailable.
+  BodyReadiness requireBody(const FunctionDecl *declaration);
+  // Makes a pending body of an owned context final: analyses a deferred
+  // body or reaches a held-back one.
+  void resolveBody(const FunctionDecl *declaration);
+  [[nodiscard]] bool ownsBodyContext() const {
+    return requestSession.bodyContext != nullptr &&
+           requestSession.bodyContext->ownedBy(this);
+  }
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);

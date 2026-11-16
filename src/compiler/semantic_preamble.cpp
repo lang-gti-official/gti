@@ -108,6 +108,14 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   // Request-local budgets and query states are never shared with the
   // preamble or with another resumed analysis.
   requestSession.constexprWork.reset();
+  // Readiness is per analysis: a held-back body is not ready until this
+  // analysis reaches it.
+  requestSession.bodyContext = std::make_shared<BodyContext>(this);
+  for (const FunctionDecl *declaration : requestSession.preambleBodyOrder)
+    if (const FunctionInfo *function = semanticModel.findFunction(*declaration))
+      requestSession.bodyContext->track(
+          *declaration, {.kind = BodyKind::Function, .id = function->id},
+          BodyState::HeldBack);
   requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
   requestSession.stagedConstants->enabled = reuseConstantEvaluations;
   requestSession.programConcreteEffects =
@@ -319,8 +327,12 @@ auto SemanticVisitor::Impl::reachPreambleBodies(
   std::vector<const FunctionDecl *> reached;
   const auto consider = [&](const FunctionDecl *declaration) {
     if (declaration != nullptr && bodies.contains(declaration) &&
-        reachedPreambleBodies.insert(declaration).second)
+        requestSession.bodyContext != nullptr &&
+        requestSession.bodyContext->state(declaration) == BodyState::HeldBack) {
+      assert(ownsBodyContext());
+      requestSession.bodyContext->markAnalysed(*declaration);
       reached.push_back(declaration);
+    }
   };
   const auto considerFunction = [&](FunctionId id) {
     if (const FunctionInfo *function = semanticModel.findFunction(id))
@@ -367,7 +379,8 @@ auto SemanticVisitor::Impl::reachConsultedPreambleBodies(
         function == nullptr ? nullptr : function->bodyDeclaration();
     if (declaration != nullptr &&
         requestSession.preambleBodies.contains(declaration) &&
-        !reachedPreambleBodies.contains(declaration))
+        requestSession.bodyContext != nullptr &&
+        requestSession.bodyContext->state(declaration) == BodyState::HeldBack)
       roots.push_back(declaration);
   }
   if (roots.empty() || !reachPreambleBodies(roots, false))

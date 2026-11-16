@@ -174,7 +174,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.unionShapes.clear();
   requestSession.unionStates.clear();
   resumeDeclarations.clear();
-  reachedPreambleBodies.clear();
+  requestSession.bodyContext = std::make_shared<BodyContext>(this);
   registrationFloor = {};
   stagedWorker = {};
   primitiveRequirementProofs.clear();
@@ -4072,6 +4072,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     return;
   }
   if (deferTrustedBody(stmt)) {
+    if (ownsBodyContext())
+      requestSession.bodyContext->track(
+          stmt,
+          {.kind = BodyKind::Function,
+           .id = functionInfo == nullptr ? 0 : functionInfo->id},
+          BodyState::Deferred);
     deferredBodyIndex.emplace(&stmt, deferredBodies.size());
     deferredBodies.push_back(
         {.declaration = &stmt,
@@ -4120,6 +4126,13 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
                      : trustedBodies == TrustedBodyAnalysis::Reachable
                          ? &demandedFunctions
                          : nullptr);
+  // Only the owner of the body context completes a body for it; a worker
+  // that shares the context analyses for itself.
+  const bool completesTrackedBody = !instanceAnalysisActive &&
+                                    ownsBodyContext() &&
+                                    requestSession.bodyContext->tracked(&stmt);
+  if (completesTrackedBody)
+    requestSession.bodyContext->markInProgress(stmt);
   if (!instanceAnalysisActive) {
     analyzedBodies.insert(&stmt);
     semanticModel.recordAnalyzedFunctionBody(stmt);
@@ -4253,10 +4266,15 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     }
   }
   endScope();
+  // Only a primary analysis completes a definition; an instance reanalysis
+  // of the same declaration must not stand in for it.
   if ((stmt.isConstexpr() || stmt.isProceduralMacro()) &&
-      constexprDeclarationValid && !functionErrors()) {
+      constexprDeclarationValid && !functionErrors() &&
+      !instanceAnalysisActive) {
     constexprDefinitionsAnalyzed.insert(&stmt);
   }
+  if (completesTrackedBody)
+    requestSession.bodyContext->markAnalysed(stmt);
   --functionDepth;
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
@@ -4919,6 +4937,53 @@ auto SemanticVisitor::Impl::drainDemandedDeferredBodies() -> void {
       progress = true;
       analyzeDeferredBody(body);
     }
+  }
+}
+
+auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
+    -> BodyReadiness {
+  const auto &context = requestSession.bodyContext;
+  if (context == nullptr)
+    return BodyReadiness::Ready;
+  switch (context->state(declaration)) {
+  case BodyState::Analysed:
+    return BodyReadiness::Ready;
+  case BodyState::InProgress:
+    // Recursion: the facts are unavailable exactly as for a body analysed in
+    // place, and completing the body cannot change that for this caller, so
+    // it is not a need.
+    return BodyReadiness::Unavailable;
+  case BodyState::Deferred:
+  case BodyState::HeldBack:
+    break;
+  }
+  if (context->ownedBy(this) && bodyPhaseActive && !instanceAnalysisActive) {
+    resolveBody(declaration);
+    if (context->state(declaration) == BodyState::Analysed)
+      return BodyReadiness::Ready;
+  }
+  context->need(*declaration);
+  return BodyReadiness::Unavailable;
+}
+
+auto SemanticVisitor::Impl::resolveBody(const FunctionDecl *declaration)
+    -> void {
+  const auto &context = requestSession.bodyContext;
+  if (context == nullptr || !context->ownedBy(this))
+    return;
+  switch (context->state(declaration)) {
+  case BodyState::Deferred:
+    if (const FunctionInfo *function = semanticModel.findFunction(*declaration))
+      ensureBodyAnalyzed(*function);
+    return;
+  case BodyState::HeldBack: {
+    const FunctionDecl *const roots[] = {declaration};
+    (void)reachPreambleBodies(roots, false);
+    return;
+  }
+  case BodyState::Analysed:
+  case BodyState::InProgress:
+    return;
   }
 }
 
@@ -15237,6 +15302,7 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
             : "Call to non-constexpr function '" + declaration->name().lexeme +
                   "' cannot be evaluated during compilation.");
   }
+  (void)requireBody(declaration);
   noteConstexprAvailabilityObserved();
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
