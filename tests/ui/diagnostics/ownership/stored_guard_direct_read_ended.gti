@@ -1,0 +1,15 @@
+// Ending the scope of a guard published from a stored (direct) mutex reference permits a read of the ancestor.
+//@ execution-profile: concurrent
+//@ check-pass
+import std.mutex;
+void see(std::mutex<int32_t>& value) {}
+class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+  void use() {
+    { auto guard = this.owner.lock(); }
+    see(this.owner);
+  }
+};
+int main() { return 0; }

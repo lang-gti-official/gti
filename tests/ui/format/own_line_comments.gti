@@ -1,0 +1,30 @@
+// Own-line comments stay on their own line after statements, closing braces and blocks; trailing comments stay trailing.
+//@ parse-pass
+//@ snapshot: format
+int y = 2;
+// own line
+int x = 1;
+int f() {
+  int y = 2;
+  // own line
+  return y;
+}
+int g() {
+  return 1;
+}
+// next
+int h() {}
+int k() {
+  int y = 2;
+  /* own */
+  /* lead */ return y;
+}
+int t = 2; // note
+int u() {
+  int z = 3; /* note */
+  if (z > 0) {
+    return z;
+  } // done
+  return 0;
+}
+// last

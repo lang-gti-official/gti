@@ -1,0 +1,18 @@
+// An upper_bound cursor keeps the vector borrowed across clear().
+//@ check-fail
+import std.algorithm;
+import std.functional;
+import std.vector;
+class OncePredicate {
+public:
+  bool operator()(int& value) && { return value < 2; }
+public:
+  OncePredicate() = default;
+};
+class OnceComparator {
+public:
+  bool operator()(int& left, int& right) && { return left < right; }
+public:
+  OnceComparator() = default;
+};
+int main() { mut std::vector<int> values = {1, 2, 3}; int key = 2; auto found = std::upper_bound(values.begin(), values.end(), key, std::less<int>()); values.clear(); return *found; return 0; }  //~ WARN GTI-S2095 //~ ERROR GTI-S2017

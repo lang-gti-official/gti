@@ -1,0 +1,9 @@
+// export written after constexpr is one syntax error at the keyword, and the declaration is still published as exported.
+// --- main.gti
+import "api.gti";
+int main() { return api::checked(1) - 2; }
+// --- api.gti
+export module api;
+namespace api {
+  constexpr export int checked(int value) { return value + 1; }  //~ ERROR GTI-P0001 'export' must begin the declaration
+}

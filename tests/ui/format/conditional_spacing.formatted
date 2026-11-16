@@ -1,0 +1,6 @@
+// Conditional expressions format with C++-style spacing, nested arms included.
+//@ parse-pass
+//@ snapshot: format
+int choose(bool c, int a, int b) {
+  return c ? a : b ? b : a;
+}

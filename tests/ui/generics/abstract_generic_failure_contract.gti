@@ -1,0 +1,36 @@
+// Abstract-only generic virtual calls retain the checked ABI declaration.
+//@ run-fail
+//@ revisions: default mutable
+//@[default] exit-code: 70
+//@[default] stderr-contains: <std/detail/memory_core>:
+//@[default] stderr-contains: : runtime error[GTI-R0008]: empty_owner_access in member_access
+//@[mutable] args: mutable
+//@[mutable] exit-code: 70
+//@[mutable] stderr-contains: <std/detail/memory_core>:
+//@[mutable] stderr-contains: : runtime error[GTI-R0008]: empty_owner_access in member_access
+import std.memory;
+import std.string;
+import std.vector;
+
+class Reader<R, Args...> {
+public:
+  virtual R probe_read(Args... args) = 0;
+public:
+  Reader() = default;
+};
+
+class Writer<R, Args...> {
+public:
+  virtual R probe_mut(Args... args) mut = 0;
+public:
+  Writer() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 1) {
+    std::unique_ptr<Reader<int, int>> reader{};
+    return reader->probe_read(1);
+  }
+  mut std::unique_ptr<Writer<int, int>> writer{};
+  return writer->probe_mut(1);
+}

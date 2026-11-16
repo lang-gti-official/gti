@@ -1,0 +1,44 @@
+// Dependent constexpr branches: satisfied and unsatisfied member constraints over identity-only enum type arguments select dependent branches through staged MIR.
+//@ check-pass
+struct underlying_probe<E, U> {
+  bool matches() requires std::enum_underlying<E, U> { return true; }
+public:
+  underlying_probe() = default;
+};
+struct plain_probe<T> {
+  bool matches() { return true; }
+public:
+  plain_probe() = default;
+};
+enum class small : uint8_t { low, high };
+enum class wide : uint16_t { low, high };
+enum envelope<T> { empty, held(T value) };
+constexpr int width<E>() {
+  if constexpr (requires(underlying_probe<E, uint8_t>& probe) {
+                  { probe.matches() } -> bool;
+                }) {
+    return 8;
+  } else if constexpr (requires(underlying_probe<E, uint16_t>& probe) {
+                         { probe.matches() } -> bool;
+                       }) {
+    return 16;
+  }
+  return 0;
+}
+constexpr int plain<T>() {
+  if constexpr (requires(plain_probe<T>& probe) {
+                  { probe.matches() } -> bool;
+                }) {
+    return 1;
+  }
+  return 0;
+}
+static_assert(width<small>() == 8);
+static_assert(width<wide>() == 16);
+static_assert(width<int32_t>() == 0);
+static_assert(width<envelope<small>>() == 0);
+static_assert(plain<small>() == 1);
+int main() {
+  return width<small>() + width<wide>() + width<int32_t>() +
+         width<envelope<small>>() + plain<small>() - 25;
+}

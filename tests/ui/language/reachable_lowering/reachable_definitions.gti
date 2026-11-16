@@ -1,0 +1,60 @@
+// An executable defines the functions its entry reaches and global and static initializers (one read method, not Unused::read), but not unreferenced functions or methods.
+//@ snapshot: llvm-ir
+// CHECK-NOT: ; unused_helper
+// CHECK-NOT: ; unread
+// CHECK-NOT: ; read
+// CHECK: define {{.*}} ; main
+// CHECK-NOT: ; unused_helper
+// CHECK-NOT: ; unread
+// CHECK-NOT: ; read
+// CHECK: define {{.*}} ; initialize_only
+// CHECK-NOT: ; unused_helper
+// CHECK-NOT: ; unread
+// CHECK-NOT: ; read
+// CHECK: define {{.*}} ; used_helper
+// CHECK-NOT: ; unused_helper
+// CHECK-NOT: ; unread
+// CHECK-NOT: ; read
+// CHECK: define {{.*}} ; read
+// CHECK-NOT: ; unused_helper
+// CHECK-NOT: ; unread
+// CHECK-NOT: ; read
+class Used {
+  int value = 1;
+public:
+  int read() { return this.value; }
+  int unread() { return 2; }
+public:
+  Used() = default;
+};
+class Unused {
+  int value = 3;
+public:
+  int read() { return this.value; }
+public:
+  Unused() = default;
+};
+int initialize_only() { return 7; }
+int unreferenced_global = initialize_only();
+class StaticOnly {
+public:
+  static int value = initialize_only();
+public:
+  StaticOnly() = default;
+};
+using UnusedAlias = Unused;
+int unused_helper() {
+  Unused unused{};
+  return unused.read();
+}
+int used_helper() {
+  Used used{};
+  return used.read();
+}
+[[c_abi]] struct NativeRecord {
+  int32_t value;
+};
+extern "C" {
+  int32_t native_declared(NativeRecord record);
+}
+int main() { return used_helper() - 1; }

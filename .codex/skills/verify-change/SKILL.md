@@ -49,7 +49,8 @@ tooling that consume them. For the changed paths the planner prints:
   (`python3 scripts/validation_checks.py smoke --build build`);
 - **T0**, the registered tests whose CMake registration names a changed test,
   fixture or harness file (a changed `tests/ui/`, `tests/lsp/` or
-  `tests/project/` file selects `gti_test_ui`; for a quick loop run
+  `tests/project/` file selects `gti_test_ui` and its `tests/ui` shards,
+  `-R '^gti_test_ui'`; for a quick loop run
   `build-release/gti-test <path>` on just those files);
 - **T1**, the owning tests, and **T2**, the consumer tests, each as one
   runnable `ctest ... -R '<anchored regex>'` command, followed by a

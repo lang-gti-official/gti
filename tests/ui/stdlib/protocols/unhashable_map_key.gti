@@ -1,0 +1,3 @@
+// An unordered_map keyed by a pair with an unhashable member is rejected.
+//@ check-fail
+import std.unordered_map; import std.utility; struct Opaque { Opaque() = default; bool operator==(Opaque& other) { return true; } bool operator!=(Opaque& other) { return false; } }; int main() { std::unordered_map<std::pair<Opaque, int>, int> values{}; return 0; }  //~ ERROR GTI-S2029

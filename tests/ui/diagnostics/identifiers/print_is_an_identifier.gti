@@ -1,0 +1,4 @@
+// Print is an identifier: the program is accepted.
+//@ check-pass
+int print(int value) { return value; }
+int main() { return print(0); }

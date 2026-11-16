@@ -1,0 +1,2 @@
+// An unresolved std::unordered_set offers the canonical import std.unordered_set; fix.
+using dictionary = std::unordered_set<int>;  //~ ERROR GTI-S2089

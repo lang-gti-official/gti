@@ -1,0 +1,3 @@
+// The removed #include <...> spelling fails during source loading.
+#include <array>  //~ ERROR GTI-I0014 removed
+int main() { return 0; }

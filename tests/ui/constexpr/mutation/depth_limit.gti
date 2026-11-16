@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: depth limit.
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr void recurse(mut int& value) { if (value > 0) { value--; recurse(value); } } constexpr int bad() { mut int value = 600; recurse(value); return value; } constexpr int constant = bad();  //~ ERROR GTI-S2057
+int main() { return 0; }

@@ -1,0 +1,29 @@
+// Thread-local arrays of pinned objects are built and destroyed in place.
+//@ run-pass
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+thread_local Pinned items[2][1] = {{make(1)}, {relay(2)}};
+int main() {
+  return items[0][0].stable() && items[1][0].stable() && constructed == 12 ? 0 : 1;
+}

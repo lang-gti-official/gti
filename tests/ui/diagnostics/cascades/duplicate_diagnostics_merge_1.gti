@@ -1,0 +1,2 @@
+// Duplicate diagnostics merge: a type checked twice reports its error once.
+class Pack<Args...> { public: Pack() = default; }; int main() { Pack<void&> value{}; return 0; }  //~ ERROR GTI-S2017

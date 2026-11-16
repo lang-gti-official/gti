@@ -1,0 +1,27 @@
+// Multi-file, library and text expectations that do not hold are reported.
+//@ definition @use: @main.gti:twin
+//@ definition @join: @std:std/thread.gti
+//@ definition @join: @std:std/cthread.gti#no_such_symbol
+//@ hover @use: !answer
+//@ signature @call: double scale
+//@ completion-detail @dot level: bool
+//@ hover @lib.gti:nosuch: x
+// --- main.gti
+import std.cthread;
+import "lib.gti";
+int main() {
+  Settings settings{};
+  int32_t /*@twin*/sum = /*@use*/answer() + scale(/*@call*/settings./*@dot*/level);
+  std::thrd_t handle = 0; mut int32_t result = 0;
+  unsafe { [[discard]] std::/*@join*/thrd_join(handle, result); }  //~ ERROR GTI-S2084
+  return sum - 43;
+}
+// --- lib.gti
+export module lib;
+export int /*@twin*/answer() { return 42; }
+export int scale(int value) { return value; }
+export class Settings {
+public:
+  int level = 1;
+  Settings() = default;
+};

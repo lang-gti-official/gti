@@ -1,0 +1,13 @@
+// --- main.gti
+import "leaf.gti";
+int main() {
+  return api::answer() - 42;
+}
+// --- leaf.gti
+export module leaf;
+export import std.vector;
+export namespace api {
+  int answer() {
+    return 42;
+  }
+}

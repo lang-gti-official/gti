@@ -1,0 +1,30 @@
+// A wrapper over a `mut int&` parameter shows it at the call; `mut` on a
+// by-value parameter, or an immutable argument, is reported.
+// (From function_signature_lsp_test.py.)
+//@ hover @call: mut int32_t&
+import std.functional;
+void change(mut int& value) { value++; }
+int main() {
+  std::function<void(mut int&)> callback{change};
+  mut int value = 0;
+  /*@call*/callback(value);
+  return value;
+}
+// --- step 2
+import std.functional;
+void change(mut int& value) { value++; }
+int main() {
+  std::function<void(mut int)> callback{change};  //~ ERROR GTI-S2093 //~ ERROR GTI-S2030
+  mut int value = 0;
+  callback(value);
+  return value;
+}
+// --- step 3
+import std.functional;
+void change(mut int& value) { value++; }
+int main() {
+  std::function<void(mut int&)> callback{change};
+  int value = 0;
+  callback(value);  //~ ERROR GTI-S2022
+  return value;
+}

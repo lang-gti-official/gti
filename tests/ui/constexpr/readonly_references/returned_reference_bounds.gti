@@ -1,0 +1,9 @@
+// An out-of-bounds returned reference is reported at the requesting member.
+import std.array;
+import std.string;
+constexpr int inspect(int& value) { return value + 1; }
+class Base { public: int x = 0; };
+class Derived : public Base { public: int y = 0; };
+constexpr std::array<int, 3> values = std::array<int, 3>({1,2,3});
+constexpr int value = values.at(3);  //~ ERROR GTI-S2057
+int main() { return 0; }

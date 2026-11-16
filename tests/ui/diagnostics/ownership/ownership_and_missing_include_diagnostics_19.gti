@@ -1,0 +1,7 @@
+// Ownership and missing include diagnostics: an early return still retains a borrow that its own arm uses.
+int run(bool condition) {
+  mut int value = 1;
+  int& borrowed = value;
+  if (condition) { value = 2; return borrowed; }  //~ ERROR GTI-S2017
+  return borrowed;
+}

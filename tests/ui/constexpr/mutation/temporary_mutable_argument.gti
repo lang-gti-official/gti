@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: temporary mutable argument.
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr int bad() { add(4, 1); return 0; }  //~ ERROR GTI-S2017
+int main() { return 0; }

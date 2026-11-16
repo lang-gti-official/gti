@@ -1,0 +1,5 @@
+// import std.memory exposes unique ownership.
+//@ check-pass
+import std.memory;
+class Value { public: Value() {} };
+int main() { auto owner = std::make_unique<Value>(); return 0; }

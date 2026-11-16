@@ -1,0 +1,16 @@
+// Source-local flags neither configure an imported module nor escape it.
+//@ check-pass
+// --- main.gti
+#define IMPORTER
+import "local.gti";
+#if defined(MODULE_LOCAL)
+#error "module flags must not leak"
+#endif
+int main() { return local_value() - 1; }
+// --- local.gti
+export module local;
+#if defined(IMPORTER)
+#error "importer flags must not leak"
+#endif
+#define MODULE_LOCAL
+export int local_value() { return 1; }

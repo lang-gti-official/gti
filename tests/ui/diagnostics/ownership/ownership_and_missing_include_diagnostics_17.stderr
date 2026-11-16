@@ -1,0 +1,10 @@
+main.gti:8:5: error[GTI-S2017]: Cannot assign to storage while an overlapping borrow may still be live.
+ 8 |     value = copy + 1;  //~ ERROR GTI-S2017
+   |     ^~~~~
+main.gti:5:19: note: Retained borrow originates here. This borrows 'value'.
+ 5 |   int& borrowed = value;
+   |                   ^~~~~
+main.gti:7:5: note: The borrowed value can be used again here on a later loop iteration.
+ 7 |     int copy = borrowed;
+   |     ^~~~~~~~~~~~~~~~~~~~
+help: Finish using the borrowed value before changing or moving its owner, or perform the owner operation before creating the borrow. Choose an order that preserves the intended effects.

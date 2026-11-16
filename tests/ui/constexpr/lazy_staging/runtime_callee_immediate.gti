@@ -1,0 +1,9 @@
+// An executed runtime-only callee fails through an immediate call, naming the callee at its call.
+//@ snapshot: diagnostics
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }
+  return v;
+}
+consteval int clamp(int v) { return clamp_positive(v); }
+int main() { return clamp(-3); }  //~ ERROR GTI-S2057

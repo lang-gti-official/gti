@@ -1,0 +1,17 @@
+main.gti:9:29: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 9 | int main() { return clamp(-3); }  //~ ERROR GTI-S2057
+   |                             ^
+main.gti:5:37: note: This call cannot run during compilation.
+ 5 |   if (v < 0) { return runtime_only(v); }
+   |                                     ^
+main.gti:8:15: note: Immediate declaration is here.
+ 8 | consteval int clamp(int v) { return clamp_positive(v); }
+   |               ^~~~~
+main.gti:9:29: note: Constant evaluation requested here.
+ 9 | int main() { return clamp(-3); }  //~ ERROR GTI-S2057
+   |                             ^
+main.gti:8:53: note: Constant evaluation requested here.
+ 8 | consteval int clamp(int v) { return clamp_positive(v); }
+   |                                                     ^
+help: 'runtime_only' is not constexpr.
+help: Only operations that execute during compilation must be constexpr. Declare the callee constexpr, or keep this call off the path that compile-time evaluation takes.

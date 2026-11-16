@@ -1,0 +1,7 @@
+main.gti:12:14: error[GTI-S2017]: Cannot read storage while an overlapping mutable borrow may still be live.
+ 12 |     see(this.owner);  //~ ERROR GTI-S2017
+    |              ^~~~~
+main.gti:11:34: note: Retained borrow originates here.
+ 11 |     auto guard = this.owner.lock();
+    |                                  ^
+help: This borrow protects a resource until its carrier is destroyed, not merely until its last read. End the carrier's scope before accessing the owner again.

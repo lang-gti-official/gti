@@ -1,0 +1,3 @@
+// A shadowed qualified enum owner spelling gets no scaffold: it would name another enum.
+//@ snapshot: diagnostics
+namespace sample { enum Value { empty, item(int value) }; namespace sample { enum Value { empty, item(int value) }; } void inspect(Value& value) { switch (value) {} } } int main() { return 0; }  //~ ERROR GTI-S2067

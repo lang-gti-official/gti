@@ -1,0 +1,18 @@
+// An export in an inactive conditional branch does not publish its enclosing namespace.
+// --- main.gti
+import "leaf.gti"; namespace alias = inactive; int main() { return 0; }  //~ ERROR GTI-S2000
+// --- leaf.gti
+export module leaf;
+#define MODULE_SELECTED
+#undef MODULE_SELECTED
+namespace inactive {
+#if defined(MODULE_SELECTED)
+  export int answer() { return 1; }
+#endif
+  int helper() { return 0; }
+}
+namespace active {
+#if !defined(MODULE_SELECTED)
+  export int answer() { return 42; }
+#endif
+}

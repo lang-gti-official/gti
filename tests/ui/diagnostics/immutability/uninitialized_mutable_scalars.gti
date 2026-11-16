@@ -1,0 +1,16 @@
+// A mutable scalar local requires an initializer, also when an assignment follows.
+int int8_t_plain() { mut int8_t value; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int int8_t_assigned() { mut int8_t value; value = 1; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int int32_t_plain() { mut int32_t value; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int int32_t_assigned() { mut int32_t value; value = 1; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int uint64_t_plain() { mut uint64_t value; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int uint64_t_assigned() { mut uint64_t value; value = 1; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int float_plain() { mut float value; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int float_assigned() { mut float value; value = 1.0; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int double_plain() { mut double value; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int double_assigned() { mut double value; value = 1.0; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int bool_plain() { mut bool value; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int bool_assigned() { mut bool value; value = false; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int char_plain() { mut char value; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int char_assigned() { mut char value; value = 'x'; return 0; }  //~ ERROR GTI-S2000 requires an initializer
+int main() { return 0; }

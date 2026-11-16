@@ -1,0 +1,52 @@
+// Returned-owner observations survive later arguments, never their full expression.
+//@ run-pass
+//@ revisions: default later-fails call-fails
+//@[default] stdout: 1
+//@[default] stdout: 2
+//@[default] stdout: 3
+//@[default] stdout: 4
+//@[default] stdout: 9
+//@[later-fails] run-fail
+//@[later-fails] args: later-fails
+//@[later-fails] exit-code: 70
+//@[later-fails] stdout: 1
+//@[later-fails] stdout: 2
+//@[later-fails] stdout: 3
+//@[later-fails] stdout: 9
+//@[later-fails] stderr-contains: temporary_owner_borrow.gti:17: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[call-fails] run-fail
+//@[call-fails] args: call fails
+//@[call-fails] exit-code: 70
+//@[call-fails] stdout: 1
+//@[call-fails] stdout: 2
+//@[call-fails] stdout: 3
+//@[call-fails] stdout: 4
+//@[call-fails] stdout: 9
+//@[call-fails] stderr-contains: temporary_owner_borrow.gti:18: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- temporary_owner_borrow.gti
+import std.string;
+import std.vector;
+
+class Owner {
+  int value = 7;
+public:
+  Owner() { std::println(1); }
+  ~Owner() { std::println(9); }
+  int& get() { std::println(2); return this.value; }
+};
+class Passive { int value = 3; public: int& get() { return this.value; }  public: Passive() = default; };
+Passive passive() { return Passive(); }
+int read(int& value) { return value; }
+Owner produce() { return Owner(); }
+std::string text() { return std::string("hello"); }
+int size(std::string_view value) { return int(value.size()); }
+int later(int divisor) { std::println(3); return 1 / divisor; }
+int consume(int& value, int divisor) { std::println(4); return value / divisor; }
+
+int main(int argc, std::vector<std::string> argv) {
+  if (size(text().view()) != 5 || size(std::string("hello").view()) != 5 ||
+      read(passive().get()) != 3 || read(Passive().get()) != 3) { return 1; }
+  int divisor = argc == 2 ? 0 : 1;
+  int value = consume(produce().get(), later(divisor) - (argc == 3 ? 1 : 0));
+  return value - 7;
+}

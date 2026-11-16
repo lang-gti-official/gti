@@ -1,0 +1,9 @@
+// Cpp reserved identifiers: built-in multiplication and real qualified type aliases remain valid.
+//@ check-pass
+constexpr uint64_t download_limit = uint64_t(1024) * 1024 * 1024;
+constexpr uint64_t archive_limit = 4 * download_limit;
+static_assert(download_limit == uint64_t(1073741824));
+static_assert(archive_limit == uint64_t(4294967296));
+namespace custom { using Wide = uint64_t; }
+constexpr custom::Wide named_limit = archive_limit;
+int main() { return 0; }
