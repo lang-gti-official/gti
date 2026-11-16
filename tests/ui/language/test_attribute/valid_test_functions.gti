@@ -1,0 +1,5 @@
+// [[test]] accepts void, parameterless, non-generic, defined namespace-scope functions, also beside another attribute.
+//@ check-pass
+namespace app { [[test]] void first() {} }
+[[test, track_caller]] void second() {}
+int main() { return 0; }

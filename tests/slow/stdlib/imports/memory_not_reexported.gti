@@ -1,0 +1,5 @@
+// A standard module does not re-export its own std.memory dependency.
+//@ slow
+import std.cstdio;
+class Value { public: Value() {} };
+int main() { auto owner = std::make_unique<Value>(); return 0; }  //~ ERROR GTI-S2024 import its public module interface

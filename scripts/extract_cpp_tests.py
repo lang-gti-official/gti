@@ -783,9 +783,6 @@ SPECS: dict[str, FileSpec] = {
             for name in ("testStoredReferenceLoopInvalidation3",
                          "testStoredReferenceLoopInvalidation4",
                          "testWritableAndMovementIteratorCapabilities")}),
-    "compiler_frontend_tests.cpp": FileSpec(
-        area="language/control_flow", topic="Definite return",
-        only=("testDefiniteReturnAnalysis",)),
     "compiler_constexpr_tests.cpp": FileSpec(
         area="constexpr", topic="Constant evaluation",
         # The heaviest named tests; their fixture mutations, rejection tables

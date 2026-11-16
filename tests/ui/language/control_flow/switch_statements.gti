@@ -1,0 +1,50 @@
+// Integer, char, uint64_t and scoped-enum switches with grouped labels, arm-local declarations, continue and default.
+//@ run-pass
+enum class Stage : uint8_t { Boot, Ready, Running };
+
+int classify(Stage stage) {
+  switch (stage) {
+  case Stage::Boot:
+    return 0;
+  case Stage::Ready:
+  case Stage::Running:
+    return 1;
+  default:
+    return 2;
+  }
+}
+
+int main() {
+  mut int total = 0;
+  for (mut int index = 0; index < 3; index++) {
+    switch (index) {
+    case 0:
+      continue;
+    case 1:
+      int local = 1;
+      total += local;
+      break;
+    default:
+      int local = 2;
+      total += local;
+      break;
+    }
+  }
+  char marker = 'G';
+  switch (marker) {
+  case 'G':
+    total += 1;
+    break;
+  default:
+    break;
+  }
+  uint64_t wide = 7;
+  switch (wide) {
+  case uint64_t(7):
+    total += classify(Stage::Ready) + classify(Stage::Boot) - 1;
+    break;
+  default:
+    break;
+  }
+  return total == 4 ? 0 : 1;
+}

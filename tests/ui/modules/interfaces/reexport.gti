@@ -1,0 +1,20 @@
+// export import makes the re-exported interface visible to the importer.
+//@ check-pass
+// --- main.gti
+import "facade.gti";
+int main() { return api::answer() - 42; }
+// --- leaf.gti
+export module leaf;
+namespace api {
+  int helper() { return 40; }
+  export int answer() { return helper() + 2; }
+  int answer(int value) { return value; }
+  struct Secret { int value; };
+  export struct Record { int value; Record(int input) : value(input) {} };
+  export using Count = int;
+  export enum class State { ready };
+  export int identity<T>(T value) { return helper() + 2; }
+}
+// --- facade.gti
+export module facade;
+export import "leaf.gti";

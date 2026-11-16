@@ -1,0 +1,12 @@
+// A missing case colon is one parse error; recovery keeps the later case and default arms.
+//@ parse-fail
+void recover(int value) {
+  switch (value) {
+  case 0
+    int skipped_arm = 0;  //~ ERROR GTI-P0001
+  case 1:
+    break;
+  default:
+    break;
+  }
+}

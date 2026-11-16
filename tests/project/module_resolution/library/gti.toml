@@ -1,0 +1,8 @@
+manifest-version = 1
+
+[package]
+name = "library"
+version = "1.0.0"
+
+[modules]
+main = "src/api.gti"

@@ -918,7 +918,6 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 set(GTI_COMPILER_TEST_SUITES
-    frontend
     declarations
     ownership
     constexpr

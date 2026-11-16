@@ -36,8 +36,9 @@ private root; descriptive fixture names live beneath it, and RAII cleanup remove
 only that owned root on normal exit or exception unwinding. Fixed paths directly
 under the system temporary directory are not safe across concurrent CTest runs
 or worktrees. Failure-only MIR dumps go to captured stderr so their evidence
-stays with the failed test. `testSupportFacilities` checks independent roots and
-cleanup without removing a surviving fixture.
+stays with the failed test. The `frontend_api` case of `gti_unit_tests`
+(`tests/unit/frontend_api_tests.cpp`) checks independent roots and cleanup
+without removing a surviving fixture.
 
 ## RFC 0004 erasure gate
 
@@ -11853,14 +11854,20 @@ exact native arguments, report policy round trips, and profile defaults. These
 tests use an optimized host compiler; the tested program intentionally uses
 `-O0`. Parser/semantics/formatter/Tree-sitter/LSP syntax is unchanged.
 
-The source-module slice is owned by `testSourceModuleInterfaces`,
-`testSourceModuleResolution`, `testSourceModuleConfigurationDomains`, and
-`testStandardLibraryModules` in `compiler_frontend`, `testModuleManifest` in
-`project_model`, and build-provenance round trips in `driver_pipeline`.
-`testStandardLibraryModules` covers direct and project `std.name` resolution,
-the canonical trusted `stdlib/std/name.gti` interface and import edge,
-non-republication of private imports, the portable aggregate and unknown
-modules, application re-exports, and same-name application modules.
+The source-module slice is owned by `tests/ui/modules/` (interfaces, export
+placement, import graph and visibility, resolution of quoted and malformed
+imports, per-module configuration flags), `tests/project/module_resolution`
+and `tests/project/package_imports` (package default, named and local modules,
+dependency-alias boundaries, reserved `std` owner in project mode),
+`testModuleManifest` in `project_model`, and build-provenance round trips in
+`driver_pipeline`. `tests/ui/stdlib/imports/` and `tests/slow/stdlib/imports/`
+cover direct `std.name` resolution, non-republication of private imports,
+unknown modules, application re-exports, same-name application modules and
+the compiler-private `gti_internal` namespace; example 147 checks the portable
+aggregate on the host. The `source_loader_provenance` case of `gti_unit_tests`
+keeps the overlay-only checks: canonical provenance of a directly opened
+standard file, private capabilities behind trusted public declarations, and
+configured prelude initialization order.
 `stdlib_modules` imports every canonical standard module individually; detail
 and experimental facades remain outside the portable aggregate. Removed GTI
 include syntax is a source-loading rejection, including legacy republication.
@@ -11887,21 +11894,13 @@ portable aggregate case; reconciliation also adds the general-layout case,
 bringing its inventory to 195 cases. These reviewed
 inventory changes do not replace execution, rejection or platform acceptance.
 
-Reachable executable lowering is owned by `testReachableExecutableLowering` in
-`compiler_frontend`. It covers:
-
-- the hosted root's closure;
-- that unreferenced functions, methods, and classes are omitted;
-- that C declarations and records are kept;
-- that complete lowering is unchanged without the option;
-- that an error in a generic instantiated only by unreachable code is still
-  reported;
-- that with `lowerLibraryReachableOnly`, an unreferenced trusted declaration
-  adds no HIR function instance (`FrontendWorkMetrics::hirFunctionInstances`),
-  while an unreferenced application declaration or trusted entry-unit
-  declaration still does;
-- that unreferenced trusted bodies are still semantically checked;
-- that the emitted program is identical with and without the option.
+Reachable executable lowering is owned by `tests/ui/language/reachable_lowering/`:
+an LLVM-IR pattern test that the hosted root's closure and global and static
+initializers are defined while unreferenced functions and methods are not, and
+a rejection test that an error in a generic instantiated only by unreachable
+code is still reported. Complete versus reachable trusted-body analysis is
+compared by `trusted_body_analysis_fixtures` and gti-corpus's `trusted`
+invariant.
 
 The census gates measure the reduced artifact inventory:
 

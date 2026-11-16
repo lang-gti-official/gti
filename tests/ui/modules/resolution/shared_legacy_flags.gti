@@ -1,0 +1,12 @@
+// A shared legacy unit cannot be read under two different flag contexts.
+// --- main.gti
+#define IMPORTER
+import "shared.gti";  //~ ERROR GTI-I0012
+import "local.gti";
+// --- local.gti
+export module local;
+import "shared.gti";  //~ ERROR GTI-I0012
+// --- shared.gti
+#if defined(IMPORTER)
+int configured = 1;
+#endif

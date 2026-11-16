@@ -1,0 +1,20 @@
+// An application interface re-exports a standard module and its own dependency module.
+//@ check-pass
+// --- main.gti
+import "facade.gti";
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(old::answer());
+  return values[std::size_t(0)] == 42 ? 0 : 1;
+}
+// --- facade.gti
+export module facade;
+export import std.vector;
+export import "legacy.gti";
+// --- legacy.gti
+export module legacy;
+import "nested.gti";
+namespace old { export int answer() { return hidden() + 2; } }
+// --- nested.gti
+export module nested;
+export int hidden() { return 40; }

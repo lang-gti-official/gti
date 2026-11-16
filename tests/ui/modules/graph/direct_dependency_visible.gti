@@ -1,0 +1,12 @@
+// Each unit sees the declarations of the modules it imports directly.
+//@ check-pass
+// --- main.gti
+import "branch.gti";
+int main() { return branch_value() - 1; }
+// --- branch.gti
+export module branch;
+import "leaf.gti";
+export int branch_value() { return leaf_value(); }
+// --- leaf.gti
+export module leaf;
+export int leaf_value() { return 1; }
