@@ -980,10 +980,8 @@ def freeze_contract(root):
             code, output = check(exempt, commit())
             assert code == 1 and name in output, (name, output)
             guidance = output.strip().splitlines()[-2:]
-            assert guidance[0].startswith("The old test suite is frozen") and all(
-                directory in guidance[1] for directory in ("tests/ui/", "tests/lsp/", "tests/project/",
-                                                           "tests/unit/")) \
-                and "never add to an old harness" in guidance[1], output
+            assert guidance[0].startswith("The old test suite is frozen") and "tests/ui/" in guidance[1] \
+                and "existing harness" in guidance[1], output
 
 
 def installed_system_command_contract(root):

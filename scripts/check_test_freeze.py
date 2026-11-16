@@ -30,8 +30,7 @@ CMAKE_FILE = re.compile(r"tests/(?:.+/)?(?:CMakeLists\.txt|[^/]+\.cmake)")
 ADD_TEST = re.compile(r"\badd_test\s*\(")
 GUIDANCE = (
     "The old test suite is frozen: add no new tests/*_test.py, tests/*_tests.cpp or add_test(.\n"
-    "New tests are gti-test files in tests/ui/, tests/lsp/ or tests/project/, or C++ unit cases in tests/unit/ "
-    "(AGENTS.md, Writing Tests); fix or convert a broken old case, never add to an old harness."
+    "Put new tests in the new runner's tests/ui/ once it lands; until then, add cases to an existing harness."
 )
 
 
