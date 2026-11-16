@@ -650,31 +650,11 @@
       "suite": "diagnostics"
     },
     {
-      "name": "testSemanticVisitorRequestReuse",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testUnknownFunctionAttributeClassification",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testUnknownTypeCascadeSuppression",
-      "suite": "diagnostics"
-    },
-    {
       "name": "testDuplicateDiagnosticsMerge",
       "suite": "diagnostics"
     },
     {
       "name": "testRejectedInstanceCascades",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testRecoveryFindingDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testGenericArgumentDiagnosticGuidance",
       "suite": "diagnostics"
     },
     {
@@ -690,10 +670,6 @@
       "suite": "diagnostics"
     },
     {
-      "name": "testSemanticDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
       "name": "testOwnershipAndMissingIncludeDiagnostics",
       "suite": "diagnostics"
     },
@@ -702,23 +678,7 @@
       "suite": "diagnostics"
     },
     {
-      "name": "testCppReservedIdentifiers",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDefaultImmutability",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDefaultNodiscard",
-      "suite": "diagnostics"
-    },
-    {
       "name": "testAdvisoryDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testPrintIsAnIdentifier",
       "suite": "diagnostics"
     },
     {
@@ -731,10 +691,6 @@
     },
     {
       "name": "testToolingOccurrenceOptOut",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testReadOnlyReceiverDiagnostics",
       "suite": "diagnostics"
     },
     {
