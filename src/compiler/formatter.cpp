@@ -282,7 +282,9 @@ public:
         // Consecutive attribute lists stay adjacent: `[[a]][[b]]`.
         if ((isLambdaCaptureStart(lexemes, index) &&
              (previous == nullptr || previous->kind != Kind::LeftParen)) ||
-            isStructuredBindingStart(lexemes, index) ||
+            (isStructuredBindingStart(lexemes, index) &&
+             !(previous != nullptr && previous->text == "&" &&
+               options.referenceAlignment == ReferenceAlignment::Right)) ||
             (isAttributeListStart(lexemes, index) &&
              (previous == nullptr || previous->kind != Kind::RightBracket))) {
           state.space();
@@ -1480,6 +1482,13 @@ private:
       return false;
     }
 
+    if (previous->kind == Kind::Word && previous->text == "auto" &&
+        next->kind == Kind::LeftBracket &&
+        isStructuredBindingStart(
+            lexemes, static_cast<std::size_t>(next - lexemes.data()))) {
+      return true;
+    }
+
     // An angle argument after a reference marker cannot be a binary
     // expression: `<` has no left operand there. This structure identifies
     // reference types even when their nominal base comes from another file.
@@ -2665,6 +2674,9 @@ private:
   static bool isStructuredBindingStart(const std::vector<Lexeme> &lexemes,
                                        std::size_t index) {
     const Lexeme *previous = previousSignificant(lexemes, index);
+    if (previous != nullptr && previous->text == "&")
+      previous = previousSignificant(
+          lexemes, static_cast<std::size_t>(previous - lexemes.data()));
     if (previous == nullptr || previous->kind != Kind::Word ||
         previous->text != "auto") {
       return false;
@@ -2675,8 +2687,9 @@ private:
         ++depth;
       } else if (lexemes[current].kind == Kind::RightBracket && --depth == 0) {
         const Lexeme *next = nextSignificant(lexemes, current);
-        return next != nullptr && next->kind == Kind::Operator &&
-               next->text == "=";
+        return next != nullptr &&
+               (next->text == ":" ||
+                (next->kind == Kind::Operator && next->text == "="));
       }
     }
     return false;

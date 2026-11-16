@@ -165,6 +165,9 @@ struct StructuredBindingElementInfo {
 struct StructuredBindingInfo {
   BindingInfo source;
   std::vector<StructuredBindingElementInfo> elements;
+  // A range already owns/borrows its current element. Decompose that place
+  // through ordinary checked reference locals, without another owner/copy.
+  StmtList rangeProjections;
 };
 
 enum class CallableInvocationCapability {

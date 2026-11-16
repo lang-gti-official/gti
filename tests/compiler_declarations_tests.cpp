@@ -11464,6 +11464,122 @@ int main() {
          "structured-binding diagnostics should reject ambiguous ownership, "
          "shape, access, mutation, and untyped initialization");
 
+  const auto rangePattern =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("range-pattern.gti", R"(
+struct Entry<T> { mut T key; mut T value; Entry(T k, T v) : key(k), value(v) {} };
+int main() {
+  mut Entry<int> entries[2] = {Entry<int>(1, 2), Entry<int>(3, 4)};
+  mut int sum = 0;
+  for (auto [key, value] : entries) { sum += key + value; }
+  for (auto& [key, value] : entries) { sum += key + value; }
+  for (mut auto& [key, value] : entries) { key += 1; value += key; }
+  return sum - 20;
+}
+)");
+  for (const auto &diagnostic : rangePattern.diagnostics)
+    std::cerr << "range-pattern: " << diagnostic.code << " "
+              << diagnostic.message << '\n';
+  expect(rangePattern.canGenerateCode(),
+         "owning and borrowed range patterns should reach verified MIR");
+
+  std::size_t projectedDebugLocals = 0;
+  for (const auto &body : rangePattern.semantics.sourceDebugBodies()) {
+    if (body.facts.tables) {
+      for (const auto &local : body.facts.tables->locals)
+        projectedDebugLocals += local.name == "key" || local.name == "value";
+    }
+  }
+  expect(projectedDebugLocals == 6 &&
+             rangePattern.semantics.verifySourceDebug().empty(),
+         "range pattern names retain ordinary lexical debug-local records");
+  const auto retainedProjections = std::count_if(
+      rangePattern.hir.sourceStatementOwners().begin(),
+      rangePattern.hir.sourceStatementOwners().end(), [](const auto &owner) {
+        const auto *declaration = lang::stmtAs<lang::VariableDecl>(owner.get());
+        return declaration != nullptr &&
+               (declaration->name().lexeme == "key" ||
+                declaration->name().lexeme == "value");
+      });
+  expect(retainedProjections == 6,
+         "HIR owns projection syntax after concrete semantic models expire");
+
+  const std::string rangePrelude = R"(
+struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
+)";
+  const auto rejectRange = [&](std::string body, std::string_view reason) {
+    auto checked = lang::Frontend().analyze(
+        "invalid-range-pattern.gti",
+        rangePrelude + "int main() { mut Item items[1] = {Item(1, 2)}; " +
+            body + " return 0; }");
+    expect(!checked.canGenerateCode(), std::string(reason));
+    expect(std::none_of(checked.diagnostics.begin(), checked.diagnostics.end(),
+                        [](const auto &d) { return d.code == "GTI-B0001"; }),
+           "invalid range patterns must not cause internal diagnostics");
+  };
+  rejectRange("for (auto& [only] : items) {}",
+              "range patterns require exact arity");
+  rejectRange("for (auto& [a, a] : items) {}",
+              "range patterns require distinct names");
+  rejectRange("for (auto& [a, b] : items) { a = 7; }",
+              "range projections remain read-only");
+  rejectRange(
+      "for (auto& [a, b] : items) { items[0].first = 7; int copy = a; }",
+      "owner mutation cannot invalidate a projected borrow");
+  rejectRange("for (mut auto& [a, b] : items) {}",
+              "mutable patterns cannot upgrade immutable fields");
+  rejectRange("for (mut auto [a, b] : items) {}",
+              "mutable range patterns require a reference");
+  rejectRange(
+      "Item frozen[1] = {Item(1, 2)}; for (mut auto& [a, b] : frozen) {}",
+      "mutable range patterns require mutable storage");
+  rejectRange("for (mut auto& [a, b] : items) { items[0].first = 7; a += b; }",
+              "mutable patterns retain exclusive access to the owner");
+  rejectRange("for (auto& [a, b] : items) {} return a;",
+              "pattern names end with the iteration");
+  auto escapedRange =
+      lang::Frontend().analyze("escaping-range-pattern.gti", rangePrelude + R"(
+int& escape(Item& fallback) {
+  Item items[1] = {Item(1, 2)};
+  for (auto& [a, b] : items) { return a; }
+  return fallback.first;
+}
+)");
+  expect(!escapedRange.canGenerateCode(),
+         "projected references cannot escape local range storage");
+  rejectRange("int values[1] = {1}; for (auto [a] : values) {}",
+              "scalar range elements cannot be decomposed");
+  const auto ownedEscape =
+      lang::Frontend().analyze("escaping-owned-pattern.gti", rangePrelude + R"(
+int& escape(Item& fallback) {
+  Item items[1] = {Item(1, 2)};
+  for (auto [a, b] : items) { return a; }
+  return fallback.first;
+}
+)");
+  expect(!ownedEscape.canGenerateCode(),
+         "an owned iteration projection cannot escape its element");
+
+  const std::string rangeFormatted = lang::Formatter().format(
+      "int "
+      "main(){for(auto[a,b]:items){use(a,b);}for(auto&"
+      "[a,b]:items){use(a,b);}for(mut auto&[a,b]:items){a+=b;}}");
+  expect(rangeFormatted.find("auto [a, b] : items") != std::string::npos &&
+             rangeFormatted.find("auto& [a, b] : items") != std::string::npos &&
+             rangeFormatted.find("mut auto& [a, b] : items") !=
+                 std::string::npos &&
+             lang::Formatter().format(rangeFormatted) == rangeFormatted,
+         "range patterns format consistently and idempotently");
+  lang::FormatOptions rightAligned;
+  rightAligned.referenceAlignment = lang::ReferenceAlignment::Right;
+  const std::string rightPattern =
+      lang::Formatter(rightAligned)
+          .format("int main(){for(auto&[a,b]:items){use(a,b);}}");
+  expect(rightPattern.find("auto &[a, b] : items") != std::string::npos &&
+             lang::Formatter(rightAligned).format(rightPattern) == rightPattern,
+         "range patterns honor configured reference alignment");
+
   lang::Lexer lexer;
   const auto expectSyntaxError = [&](std::string input,
                                      std::string_view message) {
@@ -11483,7 +11599,7 @@ int main() {
   expectSyntaxError(
       "int main() { for (auto [left, right] = values; true; left++) {} "
       "return 0; }",
-      "not supported in a for-loop initializer");
+      "Structured for bindings require a range");
   lang::Parser autoArrayParser(
       lexer.scan("int main() { auto[2] values = {1, 2}; return 0; }"));
   (void)autoArrayParser.parse();
