@@ -137,6 +137,15 @@ and may not escape its iteration. A read-only element cannot mutate; a mutable
 element is one child of the exclusive range loan and is the only overlapping
 mutation path until it ends.
 
+An ordinary range-for may instead use `auto [a, b]` or `auto& [a, b]`.
+The range first establishes the same owned element or read-only element borrow
+as its named binding form. Exact-arity decomposition then creates read-only
+checked projections of fixed-array elements or public direct instance fields;
+inherited storage is rejected. Projection references retain their source places
+and parent loans and cannot escape the iteration. Decomposition performs no
+additional element copy and does not permit partial movement. See
+[structured range bindings](ranges.md#structured-bindings).
+
 For a raw pointer, leading `mut` controls whether the pointer binding may be
 reseated. Pointee access is writable for `T*` and read-only for `const T*`.
 A raw-pointer variable or field requires an explicit initializer. Raw pointers

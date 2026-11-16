@@ -1375,7 +1375,8 @@ for-init               = variable-declaration | expression-statement ;
 range-for-statement    = "for" "(" range-for-declaration ":" expression ")"
                          statement ;
 
-range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent } ;
+range-for-declaration  = [ "mut" ] type IDENTIFIER { array-extent }
+                       | "auto" [ "&" ] "[" IDENTIFIER { "," IDENTIFIER } "]" ;
 
 constexpr-for-statement = "constexpr" "for" "(" [ "mut" ] type IDENTIFIER ":"
                           expression ")" statement ;

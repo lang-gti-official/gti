@@ -282,7 +282,9 @@ public:
         // Consecutive attribute lists stay adjacent: `[[a]][[b]]`.
         if ((isLambdaCaptureStart(lexemes, index) &&
              (previous == nullptr || previous->kind != Kind::LeftParen)) ||
-            isStructuredBindingStart(lexemes, index) ||
+            (isStructuredBindingStart(lexemes, index) &&
+             !(previous != nullptr && previous->text == "&" &&
+               options.referenceAlignment == ReferenceAlignment::Right)) ||
             (isAttributeListStart(lexemes, index) &&
              (previous == nullptr || previous->kind != Kind::RightBracket))) {
           state.space();
@@ -1478,6 +1480,13 @@ private:
     const Lexeme *next = nextSyntaxLexeme(lexemes, index);
     if (previous == nullptr || next == nullptr) {
       return false;
+    }
+
+    if (previous->kind == Kind::Word && previous->text == "auto" &&
+        next->kind == Kind::LeftBracket &&
+        isStructuredBindingStart(
+            lexemes, static_cast<std::size_t>(next - lexemes.data()))) {
+      return true;
     }
 
     // An angle argument after a reference marker cannot be a binary

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Execute owning and borrowed structured range bindings on LLVM."""
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,14 @@ int main() {
     }
     with tempfile.TemporaryDirectory(prefix="gti-range-pattern-negative-") as directory:
         scratch = pathlib.Path(directory)
+        debug_ir = scratch / "debug.ll"
+        fixture = pathlib.Path(__file__).parent / "fixtures/range_structured_bindings.gti"
+        result = subprocess.run([sys.argv[1], str(fixture), "-O0", "-g", "--emit-llvm",
+                                 "-o", str(debug_ir)], capture_output=True, text=True, timeout=90)
+        assert result.returncode == 0, result.stdout + result.stderr
+        debug = debug_ir.read_text()
+        for name in ("key", "value"):
+            assert re.search(r'DILocalVariable\(name: "' + name + '"', debug), name
         for name, body in invalid.items():
             source = scratch / (name + ".gti")
             source.write_text(prefix + body + " return 0; }")

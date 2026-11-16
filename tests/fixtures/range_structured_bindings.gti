@@ -14,11 +14,34 @@ struct BorrowedEntry {
   BorrowedEntry(int& key, int value) : key(key), value(value) {}
 };
 
+class Iterator {
+  BorrowedEntry& entry;
+  mut int index = 0;
+public:
+  Iterator(BorrowedEntry& entry) : entry(entry) {}
+  BorrowedEntry& operator*() { return this.entry; }
+  bool operator!=(int end) { return this.index != end; }
+  void operator++() mut { this.index++; }
+};
+class Range {
+  BorrowedEntry& entry;
+public:
+  Range(BorrowedEntry& entry) : entry(entry) {}
+  Iterator begin() { return Iterator(this.entry); }
+  int end() { return 1; }
+};
+
+int borrowed_sum<Tag>(std::vector<Entry>& entries) {
+  mut int sum = 0;
+  for (auto& [key, value] : entries) { sum += value; }
+  return sum;
+}
+
 int main() {
   mut std::vector<Entry> entries{};
   entries.emplace_back(std::string("one"), 1);
   entries.emplace_back(std::string("two"), 2);
-  mut int total = 0;
+  mut int total = borrowed_sum<int>(entries);
   for (auto& [key, value] : entries) {
     if (key.size() != 3) return 1;
     total += value;
@@ -31,7 +54,8 @@ int main() {
   for (auto& [first, second] : rows) { total += first + second; }
   for (auto [first, second] : rows) { total += first + second; }
   int owner = 7;
-  BorrowedEntry references[1] = {BorrowedEntry(owner, 8)};
+  BorrowedEntry entry{owner, 8};
+  auto references = Range(entry);
   for (auto& [key, value] : references) { total += key + value; }
-  return total == 57 ? 0 : 3;
+  return total == 60 ? 0 : 3;
 }

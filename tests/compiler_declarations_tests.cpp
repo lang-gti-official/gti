@@ -11464,7 +11464,10 @@ int main() {
          "structured-binding diagnostics should reject ambiguous ownership, "
          "shape, access, mutation, and untyped initialization");
 
-  const auto rangePattern = lang::Frontend().analyze("range-pattern.gti", R"(
+  const auto rangePattern =
+      lang::Frontend(
+          {.sourceDebugProfile = lang::SourceDebugProfile::LexicalV1})
+          .analyze("range-pattern.gti", R"(
 struct Entry<T> { T key; T value; Entry(T k, T v) : key(k), value(v) {} };
 int main() {
   Entry<int> entries[2] = {Entry<int>(1, 2), Entry<int>(3, 4)};
@@ -11479,6 +11482,17 @@ int main() {
               << diagnostic.message << '\n';
   expect(rangePattern.canGenerateCode(),
          "owning and borrowed range patterns should reach verified MIR");
+
+  std::size_t projectedDebugLocals = 0;
+  for (const auto &body : rangePattern.semantics.sourceDebugBodies()) {
+    if (body.facts.tables) {
+      for (const auto &local : body.facts.tables->locals)
+        projectedDebugLocals += local.name == "key" || local.name == "value";
+    }
+  }
+  expect(projectedDebugLocals == 4 &&
+             rangePattern.semantics.verifySourceDebug().empty(),
+         "range pattern names retain ordinary lexical debug-local records");
 
   const std::string rangePrelude = R"(
 struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
@@ -11537,6 +11551,14 @@ int& escape(Item& fallback) {
              rangeFormatted.find("auto& [a, b] : items") != std::string::npos &&
              lang::Formatter().format(rangeFormatted) == rangeFormatted,
          "range patterns format consistently and idempotently");
+  lang::FormatOptions rightAligned;
+  rightAligned.referenceAlignment = lang::ReferenceAlignment::Right;
+  const std::string rightPattern =
+      lang::Formatter(rightAligned)
+          .format("int main(){for(auto&[a,b]:items){use(a,b);}}");
+  expect(rightPattern.find("auto &[a, b] : items") != std::string::npos &&
+             lang::Formatter(rightAligned).format(rightPattern) == rightPattern,
+         "range patterns honor configured reference alignment");
 
   lang::Lexer lexer;
   const auto expectSyntaxError = [&](std::string input,

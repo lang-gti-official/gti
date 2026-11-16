@@ -6354,7 +6354,7 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
       auto projected =
           std::make_shared<VariableDecl>(Mutability::Immutable, std::move(type),
                                          binding.name(), std::move(projection));
-      visitVariableDecl(*projected);
+      analyze(projected);
       if (const BindingInfo *info = semanticModel.findBinding(*projected)) {
         element.binding = *info;
         semanticModel.record(binding, *info);

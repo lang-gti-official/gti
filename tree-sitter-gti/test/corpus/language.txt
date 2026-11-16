@@ -1611,18 +1611,9 @@ import std.string;
 ---
 
 (source_file
-  (import_declaration
-    (module_name
-      (identifier)
-      (identifier)))
-  (import_declaration
-    (module_name
-      (identifier)
-      (identifier)))
-  (import_declaration
-    (module_name
-      (identifier)
-      (identifier))))
+  (import_declaration (module_name (identifier) (identifier)))
+  (import_declaration (module_name (identifier) (identifier)))
+  (import_declaration (module_name (identifier) (identifier))))
 
 ==================
 Local type inference
