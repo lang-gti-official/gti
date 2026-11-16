@@ -219,6 +219,16 @@ provenance queries resolve an exact dereferenced capture slot to its entry loan;
 selected fields/elements retain their separate identity. A same-typed captured
 array cannot substitute another capture's loan at a call boundary.
 
+Range structured patterns use these ordinary reference-local contracts. The
+parser records a pattern over the existing range element binding; value versus
+reference ownership remains the range's responsibility. Semantic analysis checks
+exact arity, public direct fields or fixed-array elements, then records checked
+read-only reference declarations for each projection. Those declarations retain
+field/index identity, parent loans, stored-owner dependencies and iteration scope.
+HIR flattens them into the same iteration block, avoiding a second hidden owner
+or a shorter nested scope. MIR and LLVM use ordinary reference/place lowering;
+no backend decomposition or independent lifetime rule is introduced.
+
 ## Generic payload enum signatures
 
 Nominal registration inventories class and enum identities and their ordinary

@@ -11465,9 +11465,9 @@ int main() {
          "shape, access, mutation, and untyped initialization");
 
   const auto rangePattern = lang::Frontend().analyze("range-pattern.gti", R"(
-struct Entry { int key; int value; Entry(int k, int v) : key(k), value(v) {} };
+struct Entry<T> { T key; T value; Entry(T k, T v) : key(k), value(v) {} };
 int main() {
-  Entry entries[2] = {Entry(1, 2), Entry(3, 4)};
+  Entry<int> entries[2] = {Entry<int>(1, 2), Entry<int>(3, 4)};
   mut int sum = 0;
   for (auto [key, value] : entries) { sum += key + value; }
   for (auto& [key, value] : entries) { sum += key + value; }
@@ -11508,14 +11508,27 @@ struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b
               "pattern names end with the iteration");
   auto escapedRange =
       lang::Frontend().analyze("escaping-range-pattern.gti", rangePrelude + R"(
-int& escape() {
+int& escape(Item& fallback) {
   Item items[1] = {Item(1, 2)};
   for (auto& [a, b] : items) { return a; }
-  return items[0].first;
+  return fallback.first;
 }
 )");
   expect(!escapedRange.canGenerateCode(),
          "projected references cannot escape local range storage");
+  rejectRange("int values[1] = {1}; for (auto [a] : values) {}",
+              "scalar range elements cannot be decomposed");
+  const auto ownedEscape =
+      lang::Frontend().analyze("escaping-owned-pattern.gti", rangePrelude + R"(
+int& escape(Item& fallback) {
+  Item items[1] = {Item(1, 2)};
+  for (auto [a, b] : items) { return a; }
+  return fallback.first;
+}
+)");
+  expect(!ownedEscape.canGenerateCode(),
+         "an owned iteration projection cannot escape its element");
+
   const std::string rangeFormatted =
       lang::Formatter().format("int "
                                "main(){for(auto[a,b]:items){use(a,b);}for(auto&"

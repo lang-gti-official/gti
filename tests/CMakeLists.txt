@@ -7036,3 +7036,7 @@ endif()
 add_test(NAME range_structured_bindings_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/range_structured_bindings_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(range_structured_bindings_runtime PROPERTIES TIMEOUT 300)
+
+add_test(NAME range_structured_bindings_lsp
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/range_structured_bindings_lsp_test.py" $<TARGET_FILE:gti_lsp>)
+set_tests_properties(range_structured_bindings_lsp PROPERTIES TIMEOUT 120)

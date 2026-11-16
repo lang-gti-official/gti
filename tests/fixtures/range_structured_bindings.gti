@@ -8,6 +8,12 @@ struct Entry {
   Entry(std::string key, int value) : key(std::move(key)), value(value) {}
 };
 
+struct BorrowedEntry {
+  int& key;
+  int value;
+  BorrowedEntry(int& key, int value) : key(key), value(value) {}
+};
+
 int main() {
   mut std::vector<Entry> entries{};
   entries.emplace_back(std::string("one"), 1);
@@ -21,5 +27,11 @@ int main() {
     if (key.size() != 3) return 2;
     total += value;
   }
-  return total == 6 ? 0 : 3;
+  int rows[2][2] = {{3, 4}, {5, 6}};
+  for (auto& [first, second] : rows) { total += first + second; }
+  for (auto [first, second] : rows) { total += first + second; }
+  int owner = 7;
+  BorrowedEntry references[1] = {BorrowedEntry(owner, 8)};
+  for (auto& [key, value] : references) { total += key + value; }
+  return total == 57 ? 0 : 3;
 }
