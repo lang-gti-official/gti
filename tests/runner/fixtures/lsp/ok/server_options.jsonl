@@ -1,0 +1,7 @@
+// A transcript names the server's options and spells the document $DIR_URI/main.gti.
+//@ execution-profile: concurrent
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$DIR_URI/main.gti", "languageId": "gti", "version": 1, "text": "import std.cthread;\nint main() { std::thrd_t handle = 0; mut int32_t result = 0; return std::thrd_join(handle, result); }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [{"code": "GTI-S2055"}]}}}

@@ -1,0 +1,29 @@
+// Under the strict audit, passing a dangling pointer to an unsafe helper
+// that reads it is S2102 at the call; a live referent or a helper that only
+// compares the pointer is clean. (raw_pointer_provenance_lsp_test.py, third
+// part; related locations are not asserted.)
+//@ raw-pointer-audit: strict
+unsafe int read_address(const int* pointer) {
+  unsafe { return *pointer; }
+}
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  unsafe { /*😀*/ return read_address(pointer); }  //~ ERROR GTI-S2102
+}
+// --- step 2
+unsafe int read_address(const int* pointer) {
+  unsafe { return *pointer; }
+}
+int main() {
+  mut const int* pointer = nullptr;
+  int dead = 7; pointer = &dead;
+  unsafe { /*😀*/ return read_address(pointer); }
+}
+// --- step 3
+bool is_null(const int* pointer) { return pointer == nullptr; }
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  unsafe { /*😀*/ return is_null(pointer) ? 1 : 0; }  //~ WARN GTI-S2100
+}

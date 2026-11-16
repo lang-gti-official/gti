@@ -1,0 +1,29 @@
+// transform/and_then/expect chain; a wrong and_then error type fails
+// expected_result and a non-string expect message is a type error. (From expected_transform_error_lsp_test.py.)
+expected<int, int> read() { return 7; }
+int main() {
+  /*😀*/ return read().transform([](int value) -> int { return value + 1; })
+      .and_then([](int value) -> expected<int, int> { return value; })
+      .expect("required value");
+}
+// --- step 2
+expected<int, int> read() { return 7; }
+int main() {
+  /*😀*/ return read().transform([](int value) -> int { return value + 1; })
+      .and_then([](int value) -> expected<int, bool> { return value; })  //~ ERROR GTI-S2029 expected_result
+      .expect("required value");
+}
+// --- step 3
+expected<int, int> read() { return 7; }
+int main() {
+  /*😀*/ return read().transform([](int value) -> int { return value + 1; })
+      .and_then([](int value) -> expected<int, int> { return value; })
+      .expect(42);  //~ ERROR GTI-S2003 std::string_view
+}
+// --- step 4
+expected<int, int> read() { return 7; }
+int main() {
+  /*😀*/ return read().transform([](int value) -> int { return value + 1; })
+      .and_then([](int value) -> expected<int, int> { return value; })
+      .expect("required value");
+}

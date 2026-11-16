@@ -1,0 +1,5 @@
+// An unannotated warning passes where the defaults allow warnings.
+int main() {
+  mut int unused_mutably = 1;
+  return unused_mutably - 1;
+}

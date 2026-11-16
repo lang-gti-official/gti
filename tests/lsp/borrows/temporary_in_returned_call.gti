@@ -1,0 +1,32 @@
+// A temporary passed in a call whose result is returned publishes the
+// frontend's S2017 for a mutable parameter, never a backend error, and is
+// clean otherwise. (scalar_temporary_borrow_lsp_test.py, third part)
+import std.string;
+class Pattern { public: Pattern() = default; };
+class Result { std::string_view text; public:
+  Result(std::string_view text) : text(text) {}
+  bool matched() { return this.text.size() != std::size_t(0); }
+};
+Result match(std::string_view text, Pattern& pattern) { return Result(text); }
+bool matches(std::string& text) { return match(text.view(), Pattern()).matched(); }
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }
+// --- step 2
+import std.string;
+class Pattern { public: Pattern() = default; };
+class Result { std::string_view text; public:
+  Result(std::string_view text) : text(text) {}
+  bool matched() { return this.text.size() != std::size_t(0); }
+};
+Result match(std::string_view text, mut Pattern& pattern) { return Result(text); }
+bool matches(std::string& text) { return match(text.view(), Pattern()).matched(); }  //~ ERROR GTI-S2017
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }
+// --- step 3
+import std.string;
+class Pattern { public: Pattern() = default; };
+class Result { std::string_view text; public:
+  Result(std::string_view text) : text(text) {}
+  bool matched() { return this.text.size() != std::size_t(0); }
+};
+Result match(std::string_view text, Pattern& pattern) { return Result(text); }
+bool matches(std::string& text) { return match(text.view(), Pattern()).matched(); }
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }

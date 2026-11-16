@@ -45,4 +45,11 @@ Output is normalised before matching: the copied directory becomes `$DIR`,
 the standard library root `$STD`, the `gti` path `gti`, and durations such
 as `0.63s` or `12 ms` become `<time>`. All commands together get 20 s of CPU
 (scaled by `GTI_TEST_TIME_SCALE`); a test that needs more belongs in
-tests/slow. There is nothing to bless: expectations are written by hand.
+tests/slow. `--bless` runs every command and rewrites only what it can
+know: each `? N` becomes the actual exit code, and a command with no
+`stdout:`/`stderr:` lines gains a `stderr:` line per diagnostic header it
+printed (at most five). Other expectations are written by hand and are never
+rewritten.
+
+A `test.transcript` is a project test only under a directory named
+`project`; tidy reports one anywhere else.

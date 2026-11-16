@@ -1,0 +1,44 @@
+// Immediate functions and constructors keep hover, definition and keyword
+// tokens; a runtime argument is reported until the function is constexpr,
+// whose hover then says so. (From consteval_lsp_test.py.)
+//@ hover @square: consteval
+//@ hover @square: square
+//@ hover @port: consteval
+//@ hover @port: Port
+//@ definition @square: @square_decl
+//@ token @consteval: keyword
+//@ token @consteval_port: keyword
+/*@consteval*/consteval int /*@square_decl*/square(int value) { return value * value; }
+struct Port {
+  int value;
+  /*@consteval_port*/consteval Port(int number) : value(number) {}
+};
+int use(int runtime) { /* 😀 */ return /*@square*/square(3) + /*@port*/Port(80).value + runtime; }
+int main() { return use(0) - 89; }
+// --- step 2
+consteval int square(int value) { return value * value; }
+struct Port {
+  int value;
+  consteval Port(int number) : value(number) {}
+};
+int use(int runtime) { /* 😀 */ return square(runtime) + Port(80).value + runtime; }  //~ ERROR GTI-S2057 Consteval invocation
+int main() { return use(0) - 89; }
+// --- step 3
+//@ hover @square: constexpr
+constexpr int square(int value) { return value * value; }
+struct Port {
+  int value;
+  consteval Port(int number) : value(number) {}
+};
+int use(int runtime) { /* 😀 */ return /*@square*/square(runtime) + Port(80).value + runtime; }
+int main() { return use(0) - 89; }
+// --- step 4
+consteval int pending(int value  //~ ERROR GTI-P0001
+// --- step 5
+consteval int square(int value) { return value * value; }
+struct Port {
+  int value;
+  consteval Port(int number) : value(number) {}
+};
+int use(int runtime) { /* 😀 */ return square(3) + Port(80).value + runtime; }
+int main() { return use(0) - 89; }

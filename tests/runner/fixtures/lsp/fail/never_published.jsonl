@@ -1,0 +1,5 @@
+// Before any publication an awaited message that never comes still fails fast.
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"expect": {"method": "window/logMessage", "params": {"message": "never sent"}}}
