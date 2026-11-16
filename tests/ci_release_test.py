@@ -758,10 +758,11 @@ def change_review_contract(root):
     assert "fetch-depth: 0" in job, "diff-based reviews need the full history"
     ordered(job, ["- name: Find where the candidate forked\n        id: range\n",
                   'python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
+                  'python3 scripts/check_test_freeze.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
                   'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}" --advisory'],
-            "both reviews follow the one fork computation")
-    assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 2
-    assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 3
+            "every review follows the one fork computation")
+    assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 3
+    assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 4
     assert ("GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || "
             "github.event.merge_group.base_sha }}") in job
     assert "merge_group:" in ci.split("\njobs:\n", 1)[0]
@@ -799,6 +800,63 @@ def change_review_contract(root):
                                     text=True, capture_output=True, timeout=10)
             assert result.returncode == 0, result.stderr
             assert output.read_text() == f"base={expected}\n", (base, output.read_text())
+
+
+def freeze_contract(root):
+    """The old suite is frozen: a candidate adding a test file or an add_test(
+    registration fails, with the two-line guidance; edits, deletions, renames,
+    moved registrations and the new runner's directories pass."""
+    script = root / "scripts/check_test_freeze.py"
+    with tempfile.TemporaryDirectory(prefix="gti-test-freeze-") as directory:
+        work = pathlib.Path(directory)
+        run(["git", "init", "--quiet", "-b", "main"], work)
+        run(["git", "config", "user.name", "GTI Test"], work)
+        run(["git", "config", "user.email", "test@example.invalid"], work)
+
+        def write(name, text):
+            (work / name).parent.mkdir(parents=True, exist_ok=True)
+            (work / name).write_text(text)
+
+        def commit():
+            run(["git", "add", "-A"], work)
+            run(["git", "commit", "--quiet", "--allow-empty", "-m", "change"], work)
+            return run(["git", "rev-parse", "HEAD"], work)
+
+        def check(base, head):
+            result = subprocess.run([sys.executable, str(script), base, head, "--root", str(work)],
+                                    capture_output=True, text=True, timeout=30, check=False)
+            return result.returncode, result.stdout
+
+        registrations = "add_test(NAME old COMMAND old_tests)\nadd_test(NAME moved COMMAND moved)\n"
+        write("tests/CMakeLists.txt", registrations)
+        write("tests/old_test.py", "old\n")
+        write("tests/old_tests.cpp", "old\n")
+        base = commit()
+        # Editing, renaming and deleting old tests, moving a registration and
+        # adding a helper module are all allowed.
+        write("tests/old_test.py", "edited\n")
+        run(["git", "mv", "tests/old_tests.cpp", "tests/renamed_tests.cpp"], work)
+        write("tests/CMakeLists.txt", "add_test(NAME moved COMMAND moved)\n# old removed\n")
+        write("tests/helper_support.py", "helper\n")
+        allowed = commit()
+        assert check(base, allowed) == (0, "test freeze: the candidate adds no old-suite tests\n")
+        # The new runner's directories and registration file are exempt.
+        for name in ("tests/ui/borrow/x_test.py", "tests/unit/arena_tests.cpp",
+                     "tests/runner/runner_test.py", "tests/runner/CMakeLists.txt"):
+            write(name, "add_test(NAME runner COMMAND runner)\n")
+        write("tests/gti_test.cmake", "add_test(NAME gti_test COMMAND gti-test)\n")
+        exempt = commit()
+        assert check(allowed, exempt)[0] == 0
+        for name, text in (("tests/new_test.py", "x\n"), ("tests/nested/new_tests.cpp", "x\n"),
+                           ("tests/CMakeLists.txt", registrations + "add_test(NAME fresh COMMAND fresh)\n"),
+                           ("tests/TestThroughput.cmake", "add_test(\n")):
+            run(["git", "checkout", "--quiet", "-B", "candidate", exempt], work)
+            write(name, text)
+            code, output = check(exempt, commit())
+            assert code == 1 and name in output, (name, output)
+            guidance = output.strip().splitlines()[-2:]
+            assert guidance[0].startswith("The old test suite is frozen") and "tests/ui/" in guidance[1] \
+                and "existing harness" in guidance[1], output
 
 
 def installed_system_command_contract(root):
@@ -1203,6 +1261,7 @@ def main():
     workflow_contract(root)
     installed_system_command_contract(root)
     change_review_contract(root)
+    freeze_contract(root)
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)

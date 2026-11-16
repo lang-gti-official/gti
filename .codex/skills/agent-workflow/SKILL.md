@@ -144,6 +144,11 @@ integration is complete contributor work; report it as deferred, never as passed
    new CMake registrations, routing/native/build changes or unknown paths use
    full CI. Register new source cases in an existing owning harness or surface
    manifest where appropriate; never omit required tests to get the cheaper lane.
+   The old suite is frozen: PR CI (`scripts/check_test_freeze.py`) rejects a new
+   `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`. New tests go in the
+   new runner's `tests/ui/` once it lands
+   ([plan](../../../docs/plans/test-suite-redesign.md)); until then, add cases
+   to an existing harness.
 3. Write the final PR description to a temporary file: behaviour, exactly
    which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`

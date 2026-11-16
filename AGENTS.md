@@ -322,6 +322,11 @@ one-off implementation-note or redesign files when an existing category fits.
    language meaning in semantics, concrete instances in HIR, body-local control
    flow and effects in MIR, and representation choices in backends.
 4. Add focused positive and negative tests at the layer that owns the rule.
+   The old suite is frozen (`scripts/check_test_freeze.py` in PR CI): add no
+   new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`. New tests go in
+   the new runner's `tests/ui/` once it lands
+   ([test-suite redesign](docs/plans/test-suite-redesign.md)); until then, add
+   cases to an existing harness.
    Run broader relevant CTest, CLI, LSP, Tree-sitter, formatter, or installed
    toolchain checks in proportion to the change. Use a GTI compiler executable
    built with host optimization for every test that compiles or analyzes GTI

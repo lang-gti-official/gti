@@ -24,7 +24,8 @@ python3 scripts/agent_workflow.py protection
 
 `workflows/ci.yml` reports the single required check, `CI gate`:
 
-- On a pull request: lint (formatting, release version, Tree-sitter), the
+- On a pull request: lint (formatting, release version, the old-suite test
+  freeze `scripts/check_test_freeze.py`, Tree-sitter), the
   workflow regression tests, and a macOS arm64 and Linux x64 build running
   `feedback-fast` and `compiler_pipeline`. Drafts run lint only.
 - On manual dispatch from main: full integration and production packaging,
