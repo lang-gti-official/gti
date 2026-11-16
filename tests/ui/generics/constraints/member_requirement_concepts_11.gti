@@ -1,0 +1,3 @@
+// Member requirement concepts: safe member requirements must reject unsafe method declarations.
+//@ check-pass
+struct Item { unsafe Item snapshot() { Item result{}; return result; }  public: Item() = default; }; int main() { static_assert(!(requires(Item& x) { { x.snapshot() } -> Item; })); return 0; }

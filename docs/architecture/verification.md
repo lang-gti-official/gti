@@ -2788,11 +2788,11 @@ another call site and an edge re-entering the preparation.
 
 ## Protected member visibility
 
-`protected_members` covers frontend admission and rejection for declaring,
+`tests/ui/language/protected/` covers frontend admission and rejection for declaring,
 derived, transitive, nested, base and sibling access; fields, methods, statics,
 aliases, nested types, constructors, generic substitutions, out-of-class bodies,
-public overrides and unchanged mutation restrictions. Access diagnostics retain
-`GTI-S2007` and use/declaration provenance. `protected_member_runtime` executes
+public overrides and unchanged mutation restrictions, with `GTI-S2007` on the
+offending line and a formatter fixed point. `protected_member_runtime` executes
 example 150 through the existing MIR backend in C++20/C++23 at O0/O1/O3,
 without elision and with ASan/UBSan. `protected_member_lsp` checks protected
 keyword tokens, hover/definition, receiver-aware completion, UTF-16 diagnostic
@@ -3111,7 +3111,7 @@ it changes no source semantics, ABI, allocation policy or cleanup schedule.
 
 ## Interface static methods (0.414.0)
 
-`testInterfaceStaticMethods` and `testInterfaceStaticAmbiguity` cover ordinary
+`testInterfaceStaticMethods` and `tests/ui/generics/constraints/interface_static_ambiguity.gti` cover ordinary
 concrete interface statics, access, default arguments, method generics and
 constraints, constant evaluation, unsafe calls, inherited lookup, and selected
 declaration definition closure. Instance members remain public, bodyless pure
@@ -8162,13 +8162,13 @@ checks of this inventory, not waived by the declaration-only explanation.
 
 ## Explicit cloning and Objective-C++ bridges
 
-`testMemberRequirementConcepts` covers named, relational, composed, and direct
+`tests/ui/generics/constraints/member_requirement_concepts_*` covers named, relational, composed, and direct
 exact read-member requirements, symbolic calls, and verified lowered-program
 publication. Negative checks preserve member-name identity and reject absent,
 wrong-result, unsafe, mutable, consuming, static, inaccessible, and non-nullary
 members. A disjunction does not grant a method missing from another alternative;
 self-referential requirements fail closed and reference results are not owned
-results. Formatter round trips preserve the query. `member_requirement_lsp`
+results. `//@ format-stable` keeps formatter round trips. `member_requirement_lsp`
 checks compiler-owned hover, receiver definition, malformed-source recovery,
 shared diagnostic codes, and formatting/reanalysis.
 `testCompilerPrivateMemberRequirements` proves that trusted source selects a
@@ -10471,7 +10471,7 @@ taken and skipped `&&`/`||`/`?:` operands, nested operators and a loop
 condition; defined failure covers the borrowing callee, the producer, and
 failure after the merge with the enum engaged or skipped, in the same eight
 native modes.
-`testConstexprConditionalTemporaries`
+`tests/ui/constexpr/temporaries/`
 runs argument and receiver borrows of such slots, one destructor-bearing,
 through exactly four staged MIR executions with exact results; a wrong
 assertion fails as `GTI-S2079`, not as an unsupported read. The LSP smoke gate
@@ -11568,7 +11568,7 @@ full corpus/census acceptance remains the combined campaign's responsibility.
 
 ### Generic contract and advisory regression gates
 
-`testDependentRequiresArgumentAdmission` in the declarations partition checks
+`tests/ui/generics/constraints/dependent_requires_argument_admission_*` checks
 complete-clause dependent compound admission, reversed conjunction order,
 common disjunction facts, missing/branch-local facts, unknown types, and
 concrete rejection. `function_item_semantic_ir` also covers deduced value

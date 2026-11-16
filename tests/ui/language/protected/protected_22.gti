@@ -1,0 +1,2 @@
+// Protected members: rejected with GTI-S2021.
+class Bad { protected: ~Bad() {}  public: Bad() = default; };  //~ ERROR GTI-S2021

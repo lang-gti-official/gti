@@ -64,6 +64,8 @@ public:
   Outcome run(const TestFile &test);
 
 private:
+  void checkFormatting(const TestFile &test, Outcome &outcome);
+
   struct State;
   std::unique_ptr<State> state;
 };

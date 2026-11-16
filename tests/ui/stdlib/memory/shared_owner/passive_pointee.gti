@@ -1,0 +1,9 @@
+// Passive pointee: passive allocated classes require allocation-only cleanup.
+//@ check-pass
+import std.memory;
+
+struct Passive { int value = 11;  public: Passive() = default; };
+int main() {
+  auto owner = std::make_shared<Passive>();
+  return owner->value - 11;
+}

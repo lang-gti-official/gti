@@ -1,0 +1,49 @@
+// Definite return analysis: complete branches, proven infinite loops, void functions, and main fallthrough should pass return analysis.
+//@ check-pass
+int choose(bool first) {
+  if (first) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+
+int literal_branch() {
+  if (true) {
+    return 3;
+  }
+}
+
+int spin() {
+  while (true) {}
+}
+
+int iterate() {
+  for (;;) {
+    continue;
+  }
+}
+
+int post_test_spin() {
+  do {
+    continue;
+  } while (true);
+}
+
+int post_test_return() {
+  do {
+    return 4;
+  } while (false);
+}
+
+int selected_target() {
+#if target.os == "never"
+  int inactive = 0;
+#else
+  return 3;
+#endif
+}
+
+void observe() {}
+
+int main() {}

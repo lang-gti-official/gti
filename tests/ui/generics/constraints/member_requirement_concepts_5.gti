@@ -1,0 +1,5 @@
+// Member requirement concepts: missing, mismatched, mutable, consuming, static and inaccessible members must fail the declared concept.
+concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };
+struct Item { Item snapshot() && { Item result{}; return result; }  public: Item() = default; };
+T read<T>(T& x) requires snapshots<T> { return x.snapshot(); }
+int main() { Item item{}; auto copy = read(item); return 0; }  //~ ERROR GTI-S2029 satisfy concept
