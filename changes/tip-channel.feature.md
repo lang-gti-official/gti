@@ -1,0 +1,1 @@
+A rolling `tip` toolchain channel is published from `main` before the complete suite finishes: the newest commit whose release archives built and passed their installed-toolchain checks, usually within about an hour of a merge. `nightly` is unchanged and remains the newest commit that passed the complete suite. Installing `tip` needs a gtiup release that accepts the channel.
