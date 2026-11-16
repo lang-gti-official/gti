@@ -84,5 +84,9 @@ build-release/gti-test --tidy                   # validate directives/layout
 build-release/gti-test --isolate                # each case in a fresh gti
 ```
 
+Editor behaviour is tested in [tests/lsp](../lsp/README.md), with markers
+and request expectations against `gti_lsp`; `gti-test` with no arguments
+still runs tests/ui only, so name `tests/lsp` (or both) explicitly.
+
 `--bless` refuses under `CI`, never accepts an internal compiler error or
 turns a declared pass test into an error test. Review its diff.

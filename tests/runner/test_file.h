@@ -20,6 +20,11 @@ enum class Mode {
   // Stop after the lexer and parser: syntax and recovery tests.
   ParsePass,
   ParseFail,
+  // A `.gti` file under an `lsp` directory: requests at markers against a
+  // language server (tests/lsp/README.md).
+  Lsp,
+  // A `.jsonl` request/response transcript under an `lsp` directory.
+  LspTranscript,
 };
 
 [[nodiscard]] const char *modeName(Mode mode);
@@ -70,6 +75,14 @@ struct Section {
   std::string text;
 };
 
+// `//@ hover @a: text` and the other LSP expectations: the request, its
+// arguments (marker, new name) and the expected value.
+struct LspDirective {
+  std::vector<std::string> words;
+  std::string value;
+  int writtenLine = 0;
+};
+
 struct TestFile {
   std::filesystem::path path;
   // Path relative to the invocation's working directory, for messages.
@@ -98,6 +111,7 @@ struct TestFile {
   // `// CHECK:` patterns, against the llvm-ir snapshot when there is one,
   // else the mir snapshot.
   std::vector<CheckPattern> checks;
+  std::vector<LspDirective> lspDirectives;
   std::string reason;
   std::vector<std::string> only;
   // Self-test fault injection (`//@ runner-fault:`); honoured only when

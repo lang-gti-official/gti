@@ -124,6 +124,8 @@ def self_test(runner):
                "bless rewrote the inline stdout", stdout)
 
     kinds_self_test(runner)
+    if (runner.parent / "gti_lsp").exists():
+        lsp_self_test(runner)
 
     code, out = run(runner, "--tidy", "--root", FIXTURES / "tidy")
     for problem in ("unknown directive 'check-pas'", "no_purpose.gti: the first line",
@@ -203,6 +205,47 @@ def kinds_self_test(runner):
                "blessed snapshots pass", out)
 
 
+def lsp_self_test(runner):
+    """LSP marker tests and transcripts against a per-worker gti_lsp."""
+    code, out = run(runner, FIXTURES / "lsp/ok", "--jobs", "2")
+    expect(code == 0 and "RESULT ok: 3 passed, 0 failed" in out,
+           "LSP fixtures pass", out)
+    code, out = run(runner, FIXTURES / "lsp/fail", "--jobs", "2")
+    expect(code == 1 and "RESULT fail: 0 passed, 4 failed" in out,
+           "failing LSP fixtures fail without timing out", out)
+    wrong = block(out, "FAIL", "wrong_answers.gti")
+    for problem in ('line 2 (hover): hover does not contain "no such text"',
+                    "line 3 (definition): expected @local; got @twice",
+                    "line 4 (references): expected @twice; got @twice @call",
+                    "line 5 (token): expected token variable, got function",
+                    "line 6 (rename): expected edits at @local; got @local "
+                    "@local_use",
+                    "line 7 (completion): completion lacks 'absent'",
+                    "line 7 (completion): completion offers 'level'",
+                    "line 8 (symbols): document symbols lack 'missing_symbol'",
+                    "line 9 (formatting): formatting changes the file"):
+        expect(problem in wrong, f"LSP failure reported: {problem}", out)
+    expect("actual:   ERROR GTI-S2001 at line 4" in
+           block(out, "FAIL", "unannotated.gti"),
+           "an unannotated published diagnostic fails", out)
+    expect("no marker /*@nowhere*/" in block(out, "FAIL", "bad_marker.gti"),
+           "an unknown marker is an invalid test", out)
+    expect("line 3: expected a message matching" in
+           block(out, "FAIL", "wrong_transcript.jsonl") and "seen: " in out,
+           "a transcript mismatch shows what was seen", out)
+    code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp",
+                    "/usr/bin/true")
+    expect(code == 1 and "could not start /usr/bin/true" in out,
+           "a server that does not initialize fails the test", out)
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory) / "lsp"
+        shutil.copytree(FIXTURES / "lsp/fail", work)
+        code, out = run(runner, work / "unannotated.gti", "--bless")
+        expect(code == 0 and "BLESSED" in out and "//~ ERROR GTI-S2001" in
+               (work / "unannotated.gti").read_text(),
+               "bless annotates published diagnostics", out)
+
+
 def main():
     runner = Path(sys.argv[1]).resolve()
     jobs = "4"
@@ -212,13 +255,20 @@ def main():
     print("gti-test self-test: ok", flush=True)
     if "--self-test-only" in sys.argv:
         return 0
-    code, out = run(runner, "--tidy", "--root", ROOT / "tests/ui",
-                    fixtures=False)
-    sys.stdout.write(out)
-    if code != 0:
-        return code
-    code, out = run(runner, "--root", ROOT / "tests/ui", "--jobs", jobs,
-                    fixtures=False)
+    # Trees built without the language server (GTI_BUILD_LSP=OFF) skip it.
+    roots = ["tests/ui"]
+    if (runner.parent / "gti_lsp").exists():
+        roots.append("tests/lsp")
+    else:
+        print("gti-test: no gti_lsp beside the runner; tests/lsp skipped")
+    for root in roots:
+        code, out = run(runner, "--tidy", "--root", ROOT / root,
+                        fixtures=False)
+        sys.stdout.write(out)
+        if code != 0:
+            return code
+    code, out = run(runner, *(ROOT / root for root in roots), "--jobs",
+                    jobs, fixtures=False)
     sys.stdout.write(out)
     return code
 
