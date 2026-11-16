@@ -1,3 +1,5 @@
+// A callable template with mixed captures instantiates and runs.
+//@ run-pass
 import std.algorithm;
 import std.vector;
 

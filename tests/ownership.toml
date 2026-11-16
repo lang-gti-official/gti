@@ -418,7 +418,6 @@ owners = [
   "checked_integer_overflow_runtime",
   "numeric_boundaries_runtime",
   "contextual_numeric_literals_runtime",
-  "float_text_runtime",
 ]
 consumers = [
   "^constexpr_",
@@ -654,7 +653,6 @@ consumers = [
   "feature_interaction_smoke",
   "issues_117_120_regressions",
   "issues_208_210_211_regressions",
-  "issues_212_214_regressions",
 ]
 
 [[area]]
@@ -991,7 +989,6 @@ paths = [
 owners = [
   "charconv_runtime_boundary",
   "charconv_runtime",
-  "float_text_runtime",
   "c_string_import_runtime",
   "string_c_string_runtime",
   "cmath_runtime",
@@ -1216,7 +1213,6 @@ owners = [
   "extensible_formatting_runtime",
   "format_output_matrix_runtime",
   "charconv_runtime",
-  "float_text_runtime",
 ]
 consumers = [
   "extensible_formatting_lsp",

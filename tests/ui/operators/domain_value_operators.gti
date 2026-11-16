@@ -1,24 +1,5 @@
-#!/usr/bin/env python3
-"""Run the domain-value operator capability family end to end."""
-
-import pathlib
-import subprocess
-import sys
-import tempfile
-from backend_modes import native_modes
-
-
-def run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, text=True, capture_output=True, check=False)
-
-
-def fail(process: subprocess.CompletedProcess[str]) -> int:
-    sys.stderr.write(process.stdout)
-    sys.stderr.write(process.stderr)
-    return 1
-
-
-SOURCE = """\
+// The domain-value operator capability family runs over two domain types through one generic body.
+//@ run-pass
 import std.numeric;
 
 class vec3 {
@@ -113,45 +94,3 @@ int main() {
   }
   return 0;
 }
-"""
-
-
-def main() -> int:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: domain_operator_runtime_test.py <gti>")
-
-    compiler = pathlib.Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix="gti-domain-operator-") as temporary:
-        root = pathlib.Path(temporary)
-        source = root / "domain-operator.gti"
-        source.write_text(SOURCE, encoding="utf8")
-
-        for mode, flags, native in native_modes():
-            executable = root / f"domain-operator-{mode}"
-            built = run(
-                [
-                    str(compiler),
-                    str(source),
-                    *flags,
-                    "-o",
-                    str(executable),
-                ]
-            )
-            if built.returncode != 0:
-                return fail(built)
-
-            executed = run([str(executable)])
-            if executed.returncode != 0:
-                sys.stderr.write(
-                    "domain-value operator behavior failed for "
-                    f"{mode}: exit={executed.returncode} "
-                    f"stdout={executed.stdout!r} stderr={executed.stderr!r}\n"
-                )
-                return 1
-
-    print("domain-value operator capability runtime behavior verified")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

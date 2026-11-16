@@ -1,3 +1,5 @@
+// Fresh fixed-array selections execute.
+//@ run-pass
 import std.utility;
 
 int32_t[3] make_values(int32_t first) {

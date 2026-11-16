@@ -1,3 +1,6 @@
+// A read-receiver call on a by-value vector mut cursor parameter verifies and runs.
+//@ run-pass
+//@ stdout: ok
 import std.vector;
 import std.iterator;
 

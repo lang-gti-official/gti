@@ -1,3 +1,5 @@
+// User lease owners run and clean up (issue 214).
+//@ run-pass
 import std.utility;
 
 // The issue #214 shape with user-defined types: two fields each built from

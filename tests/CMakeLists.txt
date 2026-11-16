@@ -2842,11 +2842,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
             "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
   set_tests_properties(passive_fixed_array_runtime PROPERTIES TIMEOUT 300)
-  add_test(NAME fresh_array_index_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/fresh_array_index_runtime_test.py"
-            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
-  set_tests_properties(fresh_array_index_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME coverage_native_fixture_policy
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/coverage/native_fixture_policy_test.py")
@@ -3914,19 +3909,6 @@ if(Python3_Interpreter_FOUND)
                    "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
     )
     add_test(
-      NAME mut_cursor_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/mut_cursor_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-              "${PROJECT_SOURCE_DIR}/tests/fixtures"
-    )
-    set_tests_properties(
-      mut_cursor_runtime
-      PROPERTIES TIMEOUT 600
-                 ENVIRONMENT
-                   "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
-    )
-    add_test(
       NAME stdlib_surface
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/stdlib_surface_test.py"
@@ -4369,14 +4351,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures"
   )
   set_tests_properties(issues_208_210_211_regressions PROPERTIES TIMEOUT 300)
-  add_test(
-    NAME issues_212_214_regressions
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/issues_212_214_regression_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures"
-  )
-  set_tests_properties(issues_212_214_regressions PROPERTIES TIMEOUT 300)
   add_test(
     NAME borrowed_receiver_carriers_regressions
     COMMAND "${Python3_EXECUTABLE}"
@@ -5272,15 +5246,6 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(moved_loop_local_runtime PROPERTIES TIMEOUT 180)
     add_test(
-      NAME mixed_capture_callable_template_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/mixed_capture_callable_template_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-              "${PROJECT_SOURCE_DIR}/tests/fixtures"
-    )
-    set_tests_properties(mixed_capture_callable_template_runtime
-                         PROPERTIES TIMEOUT 240)
-    add_test(
       NAME generic_owner_callable_variants_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/generic_owner_callable_variants_runtime_test.py"
@@ -5887,20 +5852,6 @@ if(Python3_Interpreter_FOUND)
       atomic_tsan mutex_tsan
       PROPERTIES SKIP_RETURN_CODE 77
     )
-    add_test(
-      NAME domain_operator_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/domain_operator_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(domain_operator_runtime PROPERTIES TIMEOUT 300)
-    add_test(
-      NAME float_text_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/float_text_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(float_text_runtime PROPERTIES TIMEOUT 300)
 
 
   if(TARGET gti_lsp)

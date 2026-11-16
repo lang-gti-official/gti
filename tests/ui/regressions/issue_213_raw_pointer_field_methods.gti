@@ -1,3 +1,5 @@
+// Methods on raw pointer fields run (issue 213).
+//@ run-pass
 import std.vector;
 import std.memory;
 

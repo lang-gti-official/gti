@@ -1,3 +1,5 @@
+// An Expected local returned by value runs (issue 212).
+//@ run-pass
 import std.utility;
 
 // A named Expected reaches a placement Expected result by copy, after an

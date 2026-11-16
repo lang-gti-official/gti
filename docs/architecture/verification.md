@@ -4534,7 +4534,7 @@ budget. The native allocation assertions above remain deterministic gates.
 
 ## Backend crash fixes for #212–#214 (0.397.9)
 
-- **Regression programs.** `issues_212_214_regressions` builds and runs five
+- **Regression programs.** `tests/ui/regressions/issue_21[234]_*.gti` builds and runs five
   self-checking fixtures at O0 and O3 under C++20 and C++23:
   - a user-defined payload returned four ways from a named `expected`;
   - the issue's forwarding provider in its three reported forms;
