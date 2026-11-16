@@ -930,9 +930,10 @@ orders, follow the same rule.
 
 `TrustedBodyAnalysis::Deferred` is a test mode of `FrontendOptions` that
 analyses compiler-trusted bodies after the application bodies, in reverse
-lexical order. The `body_analysis_order` test proves that it produces the same
-diagnostics as the complete pass over the examples and the standard-library
-tests, and checks fixtures for both orders of the moved-return generic, global
+lexical order. The `order` invariant of the slow-tier `gti-corpus` walk
+(`tests/corpus/gti_corpus.cpp`) proves that it produces the same diagnostics
+as the complete pass over the examples and the standard-library tests;
+`body_analysis_order_fixtures` checks fixtures for both orders of the moved-return generic, global
 and `constexpr` visibility across a demand, and mutually recursive demands.
 `TrustedBodyAnalysis::Reachable` extends that infrastructure for artifact
 builds and editor snapshots/completion. Function lookups during body analysis
@@ -2171,8 +2172,8 @@ processes. Include-fix trials of such a compilation run without the cache.
   never served under another preamble of the same units.
 
 `FrontendWorkMetrics` reports preamble builds and adoptions with their time,
-the held-back bodies and how many were reached. The `trusted_body_analysis`
-parity gate analyses every example and standard-library test fresh, resumed
+the held-back bodies and how many were reached. The `trusted` invariant
+of `gti-corpus` analyses every example and standard-library test fresh, resumed
 from a preamble twice (built, then adopted) and completely over a preamble,
 and requires the application-located diagnostics of the complete check, a
 subset of its library diagnostics under bounded analysis and exactly its
@@ -2244,7 +2245,7 @@ The cache is bounded by entries, estimated bytes and generations (LRU), and a
 generation whose units have the same paths but other syntax supersedes the
 earlier one. `FrontendWorkMetrics` reports reuse hits, misses (with rejected
 entries), ineligible requests, stores and the time spent validating and
-copying entries. The `instance_reuse` test analyses every example fresh and
+copying entries. The `reuse` invariant of `gti-corpus` analyses every example fresh and
 then twice through one cache and requires identical diagnostics, HIR inventory
 and MIR modulo a single program-wide alpha-renaming of body-local symbols,
 keyed by exact HIR binding identity and source declaration identity/role.

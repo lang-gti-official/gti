@@ -307,9 +307,10 @@ owners = [
   "protocol_concepts",
   "protected_members",
   "qualified_type_members",
-  "instance_reuse",
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "instance_reuse_fixtures",
+  "trusted_body_analysis_fixtures",
+  "body_analysis_order_fixtures",
+  "gti_corpus",
   "thread_local_semantic",
   "executable_entry_semantics",
   "generic_discovery",
@@ -460,7 +461,7 @@ owners = [
   "generic_discovery",
   "generic_layout",
   "generic_initialization",
-  "instance_reuse",
+  "instance_reuse_fixtures",
   "ownerless_text_contracts",
   "view_fields",
   "field_symbol_identity",
@@ -1078,8 +1079,9 @@ consumers = [
   "mir_census_regression",
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "trusted_body_analysis_fixtures",
+  "body_analysis_order_fixtures",
+  "gti_corpus",
 ]
 
 [[area]]
@@ -1957,8 +1959,9 @@ owners = [
 ]
 consumers = [
   "language_coverage_corpus",
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "trusted_body_analysis_fixtures",
+  "body_analysis_order_fixtures",
+  "gti_corpus",
   "native_packages",
 ]
 

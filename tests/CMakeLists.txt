@@ -1414,47 +1414,21 @@ target_link_libraries(gti_raw_borrow_tests PRIVATE gti_llvm_backend)
 add_test(NAME raw_borrow_contract COMMAND gti_raw_borrow_tests)
 add_executable(gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}/tests/body_analysis_order_tests.cpp")
 target_link_libraries(gti_body_analysis_order_tests PRIVATE gti_compiler)
-add_test(NAME body_analysis_order COMMAND gti_body_analysis_order_tests)
-# The corpus walk is 27 minutes under a contended shard. Four partitions by
-# entry filter run the fixtures once each plus a quarter of the corpus; the
-# aggregate stays for direct callers and the shard runner excludes it when
-# the partitions are present. Entries are selected by the binary's optional
-# filter argument, so no case, assertion or timeout changes.
-foreach(gti_order_partition RANGE 0 3)
-  add_test(NAME body_analysis_order_${gti_order_partition}
-    COMMAND gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}"
-            --partition ${gti_order_partition}/4)
-  set_tests_properties(body_analysis_order_${gti_order_partition} PROPERTIES TIMEOUT 900)
-  set_property(TEST body_analysis_order_${gti_order_partition} APPEND PROPERTY LABELS "corpus-partition")
-endforeach()
+# The corpus walk is gti-corpus's `order` invariant (tests/gti_test.cmake).
+# This entry keeps the binary's fixtures; --partition 0/1000 leaves one
+# corpus entry beside them.
+set(gti_order_partition fixtures)
+add_test(NAME body_analysis_order_${gti_order_partition}
+  COMMAND gti_body_analysis_order_tests "${PROJECT_SOURCE_DIR}" --partition 0/1000)
+set_tests_properties(body_analysis_order_${gti_order_partition} PROPERTIES TIMEOUT 900)
 add_executable(gti_trusted_body_analysis_tests "${PROJECT_SOURCE_DIR}/tests/trusted_body_analysis_tests.cpp")
 target_link_libraries(gti_trusted_body_analysis_tests PRIVATE gti_compiler)
-# Each entry has independent complete/reachable and preamble-cache comparisons.
-# Keep all entries and fixture checks, but do not put the entire growing corpus
-# under one platform-dependent aggregate deadline.
-file(GLOB gti_trusted_body_entries CONFIGURE_DEPENDS
-  "${PROJECT_SOURCE_DIR}/examples/*.gti")
-list(SORT gti_trusted_body_entries)
-foreach(gti_trusted_partition RANGE 0 3)
-  set(gti_trusted_partition_entries)
-  set(gti_trusted_entry_index 0)
-  foreach(gti_trusted_entry IN LISTS gti_trusted_body_entries)
-    math(EXPR gti_trusted_entry_partition "${gti_trusted_entry_index} % 4")
-    if(gti_trusted_entry_partition EQUAL gti_trusted_partition)
-      list(APPEND gti_trusted_partition_entries "${gti_trusted_entry}")
-    endif()
-    math(EXPR gti_trusted_entry_index "${gti_trusted_entry_index} + 1")
-  endforeach()
-  if(NOT gti_trusted_partition_entries)
-    message(FATAL_ERROR "trusted-body analysis partition is empty")
-  endif()
-  add_test(NAME trusted_body_analysis_${gti_trusted_partition}
-    COMMAND "${CMAKE_COMMAND}" -E env $<TARGET_FILE:gti_trusted_body_analysis_tests>
-            "${PROJECT_SOURCE_DIR}"
-            ${gti_trusted_partition_entries})
-  set_tests_properties(trusted_body_analysis_${gti_trusted_partition}
-    PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)
-endforeach()
+# The corpus walk is gti-corpus's `trusted` invariant; this entry keeps the
+# binary's fixtures, library-only omission and preamble-graph checks.
+set(gti_trusted_partition fixtures)
+add_test(NAME trusted_body_analysis_${gti_trusted_partition}
+  COMMAND gti_trusted_body_analysis_tests "${PROJECT_SOURCE_DIR}" --fixtures)
+set_tests_properties(trusted_body_analysis_${gti_trusted_partition} PROPERTIES TIMEOUT 600)
 add_test(NAME stdlib_package_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/stdlib_package_runtime_test.py" $<TARGET_FILE:gti>)
@@ -1478,14 +1452,13 @@ if(TARGET gti_lsp)
 endif()
 add_executable(gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}/tests/instance_reuse_tests.cpp")
 target_link_libraries(gti_instance_reuse_tests PRIVATE gti_compiler)
-add_test(NAME instance_reuse COMMAND gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}")
-set_tests_properties(instance_reuse PROPERTIES TIMEOUT 900)
-foreach(gti_reuse_partition RANGE 0 3)
-  add_test(NAME instance_reuse_${gti_reuse_partition}
-    COMMAND gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}" --partition ${gti_reuse_partition}/4)
-  set_tests_properties(instance_reuse_${gti_reuse_partition} PROPERTIES TIMEOUT 900)
-  set_property(TEST instance_reuse_${gti_reuse_partition} APPEND PROPERTY LABELS "corpus-partition")
-endforeach()
+# The corpus walk is gti-corpus's `reuse` invariant; this entry keeps the
+# binary's container, fixture and view-relay checks plus one corpus entry
+# (the binary requires at least one reused instance).
+set(gti_reuse_partition fixtures)
+add_test(NAME instance_reuse_${gti_reuse_partition}
+  COMMAND gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}" 020-strings)
+set_tests_properties(instance_reuse_${gti_reuse_partition} PROPERTIES TIMEOUT 900)
 add_executable(gti_reflection_tests "${PROJECT_SOURCE_DIR}/tests/reflection_tests.cpp")
 target_link_libraries(gti_reflection_tests PRIVATE gti_compiler)
 add_test(NAME reflection_semantics COMMAND gti_reflection_tests)

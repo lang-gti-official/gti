@@ -38,7 +38,6 @@ endif()
 set(gti_long_gate_timeouts
   failure_metadata 2400
   operator_relay_pipeline 2400
-  body_analysis_order 1800
   compiler_pipeline 1800
   reflection_semantics 1800
   view_fields 900)
@@ -371,9 +370,12 @@ endforeach()
 # pattern that matches no registered test is an error, so the list cannot rot.
 set(gti_slow_test_patterns
   # Whole-corpus walks over examples/ and the census baselines.
-  "^body_analysis_order(_[0-9]+)?$"
-  "^instance_reuse(_[0-9]+)?$"
-  "^trusted_body_analysis(_[0-9]+)?$"
+  "^gti_corpus$"
+  # The corpus binaries' own fixtures (40-50 s of std-importing analyses
+  # each) until they move to tests/ui.
+  "^body_analysis_order_fixtures$"
+  "^instance_reuse_fixtures$"
+  "^trusted_body_analysis_fixtures$"
   "^mir_census_regression$"
   "^mir_cutover_corpus_oracle$"
   "^language_coverage_corpus$"

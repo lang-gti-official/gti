@@ -1,5 +1,20 @@
 # Compiler Verification
 
+## Example corpus walk
+
+`gti-corpus` (`tests/corpus/gti_corpus.cpp`, the slow-tier `gti_corpus` entry)
+analyses each example once per configuration and checks three whole-program
+invariants on it: `order` (complete versus deferred trusted-body order gives
+identical diagnostics and validity), `trusted` (the editor's reachable policy
+and an adopted trusted preamble keep the complete check's application
+diagnostics and a subset of its library ones) and `reuse` (analyses through a
+cold and a warm instance cache equal a fresh one, MIR included). Each keeps the
+entry set of the walk it replaced (`body_analysis_order_*`,
+`trusted_body_analysis_*`, `instance_reuse_*`). A violation fails; the
+per-entry census and CPU times in its `--json` report are information only.
+`--only`, `--shard I/N`, `--jobs N` and entry substrings narrow a run. Those
+binaries' own fixtures stay as the `*_fixtures` entries.
+
 ## Isolated native test fixtures
 
 C++ test executables that write source/module fixtures use
