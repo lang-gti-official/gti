@@ -38,4 +38,3 @@ int main() {
   { mut View view = View(value); view.update(); }
   return value == 45 && order == 12 ? 0 : 1;
 }
-
