@@ -1,0 +1,9 @@
+// Ownership and missing include diagnostics: retained-borrow conflicts identify their origin and later use.
+import std.string;
+
+int main() {
+  mut std::string owner = std::string("hello");
+  auto view = owner.view();
+  owner.clear();  //~ ERROR GTI-S2017
+  return int(view.size());
+}

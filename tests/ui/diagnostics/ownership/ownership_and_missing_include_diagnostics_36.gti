@@ -1,0 +1,9 @@
+// Ownership and missing include diagnostics: move-only field initialization should explain the ownership cause without offering an intent-changing edit.
+import std.string;
+import std.vector;
+
+class Options {
+  std::vector<std::string> arguments;
+public:
+  Options(std::vector<std::string> argv) : arguments(argv) {}  //~ ERROR GTI-S2003
+};

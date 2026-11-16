@@ -1,0 +1,15 @@
+// Reproducer a11-explicit-generic-argument-messages: explicit generic arguments are checked against the written contract, not as type lookups.
+// A11: explicitly supplied generic arguments are described as inferred.
+T identity<T>(T value) {
+  return value;
+}
+
+constexpr uint64_t extent<uint64_t N>() {
+  return N;
+}
+
+int main() {
+  int a = identity<int>("x");  //~ ERROR GTI-S2003 parameter requires 'int32_t'
+  uint64_t b = extent<int>();  //~ ERROR GTI-S2026 uint64_t compile-time value
+  return a + int32_t(b);
+}

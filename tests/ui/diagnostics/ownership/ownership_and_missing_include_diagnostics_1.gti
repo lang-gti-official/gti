@@ -1,0 +1,5 @@
+// Ownership and missing include diagnostics: a returned local reference identifies the escaping expression and the local whose storage ends at return.
+int& invalid() {
+  int value = 1;
+  return value;  //~ ERROR GTI-S2017 local value 'value'
+}

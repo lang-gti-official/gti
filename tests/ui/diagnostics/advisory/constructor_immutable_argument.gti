@@ -1,0 +1,15 @@
+// Removing the mut a mutable-reference constructor argument needs is an error, not an advisory fix, for every construction spelling.
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+};
+class View {
+  mut Counter& owner;
+public:
+  View(mut Counter& source) : owner(source) {}
+  void advance() mut { this.owner.value += 1; }
+};
+void braced() { Counter owner{4}; mut View view{owner}; view.advance(); }  //~ ERROR GTI-S2012
+void called() { Counter owner{4}; mut View view = View(owner); view.advance(); }  //~ ERROR GTI-S2012
+void parenthesized() { Counter owner{4}; mut View view = (View(owner)); view.advance(); }  //~ ERROR GTI-S2012
+int main() { return 0; }

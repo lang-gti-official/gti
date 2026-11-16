@@ -1,0 +1,25 @@
+// Requires disjunction: disjunctive structural branches should expose their strongest common callable capability to the generic body.
+//@ check-pass
+import std.functional;
+class readable {
+public:
+  int32_t operator()(int32_t& value) { return value + 1; }
+public:
+  readable() = default;
+};
+class mutable_callable {
+public:
+  int32_t operator()(int32_t& value) mut { return value + 2; }
+public:
+  mutable_callable() = default;
+};
+int32_t invoke<Callable>(int32_t value, mut Callable callable)
+  requires std::read_callable<Callable, int32_t, int32_t> ||
+           std::mut_callable<Callable, int32_t, int32_t> {
+  return callable(value);
+}
+int main() {
+  if (invoke(1, readable()) != 2) { return 1; }
+  if (invoke(1, mutable_callable()) != 3) { return 2; }
+  return 0;
+}

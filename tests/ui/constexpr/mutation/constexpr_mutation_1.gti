@@ -1,0 +1,25 @@
+// Constexpr mutation: direct canonical MIR shares mutable referents across nested calls, and a branch reads the live mutable field referent.
+//@ check-pass
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr mut int& forward_mut(mut int& value) { return value; }
+constexpr int scalar_work(int seed) {
+  mut int value = seed;
+  add(value, 4);
+  { mut int& same = forward_mut(value); add(same, 2); }
+  return value;
+}
+struct Flag {
+  mut bool enabled;
+  constexpr Flag() : enabled(true) {}
+};
+constexpr void flip(mut bool& flag) {
+  if (flag) { flag = false; } else { flag = true; }
+}
+constexpr bool conditional_work() {
+  mut Flag flag = Flag();
+  flip(flag.enabled);
+  return !flag.enabled;
+}
+static_assert(scalar_work(3) == 9);
+static_assert(conditional_work());
+int main() { return scalar_work(3) - 9; }

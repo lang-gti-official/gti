@@ -1,0 +1,12 @@
+// export precedes a declaration's attribute lists and specifiers, including the forms the misplaced-export fix produces.
+//@ check-pass
+// --- main.gti
+import "api.gti";
+int main() { return api::checked(1) + api::constant(1) + api::traced(1) - 6; }
+// --- api.gti
+export module api;
+namespace api {
+  export [[track_caller]] int checked(int value) { return value + 1; }
+  export constexpr int constant(int value) { return value + 1; }
+  export [[track_caller]] /* traced */ [[discardable]] int traced(int value) { return value + 1; }
+}

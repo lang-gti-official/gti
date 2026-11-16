@@ -1,0 +1,11 @@
+// Program initialization plans: GTI-S2068 should reject direct later and self storage access with an exact access span, declaration relations, ordering guidance, and no unsafe fix-it.
+//@ snapshot: diagnostics
+class Globals {
+public:
+  static mut int32_t first = Globals::later;  //~ ERROR GTI-S2068
+  static mut int32_t later = 1;
+  static mut int32_t self = Globals::self;  //~ ERROR GTI-S2068
+public:
+  Globals() = default;
+};
+int main() { return Globals::first + Globals::later + Globals::self; }

@@ -1,0 +1,23 @@
+// Constructor text storage contracts: a helper storing its text formal in a field (generic) carries an ownerless input obligation and is valid alone.
+//@ check-pass
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  constexpr Label(std::string_view input = "default") : text((input)) {}
+};
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+struct CLabel {
+  c_string text;
+  CLabel(c_string input) : text(input) {}
+};
+struct Borrowed {
+  std::string_view& text;
+  Borrowed(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+void generic(std::string_view input) { Box<std::string_view> saved{input}; } int main() { return 0; }

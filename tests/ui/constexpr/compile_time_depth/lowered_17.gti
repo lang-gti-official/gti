@@ -1,0 +1,9 @@
+// Compile-time depth: A lowered limit rejects one call more and names its value.
+//@ constexpr-depth: 16
+//@ snapshot: diagnostics
+constexpr int32_t depth_of(std::string_view text, int32_t at) {
+  if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+  return 0;
+}
+static_assert(depth_of("((((((((((((((((x", 0) == 16);  //~ ERROR GTI-S2057 call depth exceeded
+int main() { return 0; }

@@ -1,0 +1,43 @@
+// Static assertions: active exact-bool static assertions should pass in namespace, class-like, and block scopes.
+//@ check-pass
+#define ASSERTIONS_ENABLED
+
+constexpr uint64_t expected_width = uint64_t(4);
+static_assert(true);
+
+namespace checks {
+static_assert(expected_width == uint64_t(4),
+              "must never reach native C++");
+}
+
+struct Packet {
+  static_assert(sizeof(int32_t) == uint64_t(4), "packet field width");
+  int32_t value = 0;
+public:
+  Packet() = default;
+};
+
+interface Contract {
+  static_assert(true);
+};
+
+union Choice {
+  static_assert(true);
+  int32_t value;
+};
+
+int main() {
+  constexpr bool ready = true;
+  static_assert(ready, "local assertion");
+#ifdef ASSERTIONS_ENABLED
+  static_assert(true);
+#else
+  static_assert(false, "inactive configuration assertion");
+#endif
+  if constexpr (false) {
+    static_assert(false, "discarded constexpr assertion");
+  } else {
+    static_assert(true);
+  }
+  return 0;
+}

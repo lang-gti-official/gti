@@ -1,0 +1,12 @@
+// Constraint failure provenance: contract diagnostic provenance must not change valid member selection or introduce backend policy.
+//@ check-pass
+namespace library {
+concept snapshot_as<R, T> = requires(T& value) { { value.snapshot() } -> R; };
+concept readable<T> = snapshot_as<int, T>;
+int read<A, B>(A& unrelated, B& value) requires readable<B> {
+  return value.snapshot();
+}
+}
+
+struct Item { int snapshot() { return 7; }  public: Item() = default; };
+int main() { Item value{}; return library::read(value, value); }

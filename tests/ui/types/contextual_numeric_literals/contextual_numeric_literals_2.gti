@@ -1,0 +1,3 @@
+// Contextual numeric literals: numeric instances must reject negative literals for unsigned operands before backend entry.
+bool invalid<std::numeric T>(T value) { return value == (-1); }  //~ ERROR GTI-S2004
+int main() { if (invalid(uint8_t(0))) { return 1; } return 0; }

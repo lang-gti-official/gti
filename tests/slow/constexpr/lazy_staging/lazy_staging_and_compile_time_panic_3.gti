@@ -1,0 +1,14 @@
+// Lazy staging and compile time panic: an unexecuted runtime-only operation does not reject constexpr bindings, static_assert, if constexpr or immediate calls.
+//@ check-pass
+//@ slow
+import std.assert;
+import std.panic;
+#macro fail_if(bool c, int v) { if (c) { std::panic("bad {}", v); } }
+constexpr int checked_half(int v) {
+  std::assert!(v % 2 == 0);
+  fail_if!(v % 2 != 0, v);
+  return v / 2;
+}
+constexpr int h = checked_half(8);
+consteval int immediate_half(int v) { return checked_half(v); }
+int main() { return checked_half(4) + h + immediate_half(6) == 9 ? 0 : 1; }

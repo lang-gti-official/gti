@@ -1,0 +1,4 @@
+// Contextual integer literal arguments: constructors and base initializers do not rank fallback counts.
+class Choice { public:
+Choice(uint8_t a, int b) {} Choice(uint8_t a, uint8_t b) {} };
+int main() { Choice choice{1, 2}; return 0; }  //~ ERROR GTI-S2013

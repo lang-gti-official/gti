@@ -1,0 +1,6 @@
+// Container scaffold surfaces: an opaque string_view parameter must not be retained in global storage without an expressible dependency graph.
+import std.string;
+mut std::string_view saved = "";
+void retain(std::string_view value) { saved = value; }
+int main() { std::string owner = std::string("abc");
+  retain(owner.view()); return 0; }  //~ ERROR GTI-S2045 requiring ownerless text

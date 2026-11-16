@@ -1,0 +1,15 @@
+// Standard string: source-defined formatting should use two verified ordered folds for counting and appending all three arguments in the concrete integral pack.
+//@ check-pass
+//@ slow
+import std.format;
+import std.string;
+int main() {
+  int8_t left = -8;
+  uint64_t right = 9;
+  int count = 3;
+  mut auto formatted =
+      std::try_runtime_format("left={} right={} count={}", left, right, count);
+  if (!formatted) { return 1; }
+  if (formatted.value() != "left=-8 right=9 count=3") { return 2; }
+  return 0;
+}

@@ -1,0 +1,11 @@
+// Program arguments entry point: main should reject arbitrary containers, source lookalikes, and raw native argument pointers without widening pointer-to-pointer semantics or granting spelling-based behavior.
+namespace std {
+class string { public: string() = default; };
+class vector<T> {
+public:
+  void push_back(T value) {}
+public:
+  vector() = default;
+};
+}
+int main(int count, std::vector<std::string> values) { return count; }  //~ ERROR GTI-S2032

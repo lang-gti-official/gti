@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "app"
+version = "1.0.0"
+
+[dependencies]
+math = { path = "../math" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

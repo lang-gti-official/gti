@@ -1,0 +1,3 @@
+// Out-of-class methods: an unknown split signature type keeps its own error, without a signature-mismatch cascade, and neighbouring analysis recovers.
+export module types;
+export namespace demo { struct Parcel<T> { T value; }; interface Factory { static int make(); }; Parcel<Missing> Factory::make() { return 0; } } int neighboring() { return absent; } int main(){ return 0; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2001

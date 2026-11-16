@@ -1,0 +1,4 @@
+// Ownership and missing include diagnostics: a return lifetime mismatch relates the supplied and required regions at their exact written locations.
+int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  return second;  //~ ERROR GTI-S2127
+}

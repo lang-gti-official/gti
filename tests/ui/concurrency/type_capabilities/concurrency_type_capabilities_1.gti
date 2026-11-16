@@ -1,0 +1,87 @@
+// Concurrency type capabilities: structural transfer/share capabilities should accept scalars, recursive owners, reviewed cleanup, interfaces, and safe captures.
+//@ check-pass
+import std.cstdio;
+import std.memory;
+
+struct Scalar {
+  int value = 0;
+public:
+  Scalar() = default;
+};
+
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+};
+
+class Node {
+  int value = 0;
+  mut std::unique_ptr<Node> next = std::unique_ptr<Node>();
+public:
+  Node() = default;
+};
+
+class RawBox {
+  int* address = nullptr;
+public:
+  RawBox() = default;
+};
+
+[[no_transfer, unsafe_share]] class PolicyValue {
+  int value = 0;
+public:
+  PolicyValue() = default;
+};
+
+[[unsafe_transfer]] class AuditedCleanup {
+  int* address = nullptr;
+public:
+  ~AuditedCleanup() {}
+public:
+  AuditedCleanup() = default;
+};
+
+[[transfer, share]] interface ConcurrentValue {
+  int read();
+};
+
+class ConcurrentScalar : public ConcurrentValue {
+  int value = 0;
+public:
+  int read() override { return this.value; }
+public:
+  ConcurrentScalar() = default;
+};
+
+T transfer_value<std::transferable T>(T value) {
+  return std::move(value);
+}
+
+void share_value<std::shareable T>(T& value) {}
+int inspect_transfer<std::transferable T>(T value) { return value(); }
+T relay_transfer<std::transferable T>(T value) {
+  return transfer_value(std::move(value));
+}
+void relay_share<std::shareable T>(T& value) { share_value(value); }
+
+int main() {
+  Scalar scalar = transfer_value(Scalar());
+  Node node = relay_transfer(Node());
+  std::unique_ptr<Scalar> owner = std::make_unique<Scalar>();
+  std::unique_ptr<Scalar> moved_owner = transfer_value(std::move(owner));
+  share_value(scalar);
+  relay_share(node);
+  share_value(moved_owner);
+  Box<int> integer_box = Box<int>(1);
+  Box<std::string_view> view_box = Box<std::string_view>("view");
+  expected<Scalar, int> result = Scalar();
+  int values[2] = {};
+  int* addresses[2] = {nullptr, nullptr};
+  auto callable = [scalar]() -> int { return 1; };
+  int callable_result = inspect_transfer(callable);
+  ConcurrentScalar concurrent = ConcurrentScalar();
+  share_value(concurrent);
+  AuditedCleanup cleanup = transfer_value(AuditedCleanup());
+  return callable_result - 1;
+}

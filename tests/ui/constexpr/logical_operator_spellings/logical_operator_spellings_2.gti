@@ -1,0 +1,13 @@
+// Logical operator spellings: mixed symbolic and word spellings share boolean semantics.
+//@ check-pass
+bool choose(bool left, bool right, bool fallback) {
+  return left && right || fallback;
+}
+
+int main() {
+  bool words = true and true or false;
+  if (choose(words, true, false) && !false || false) {
+    return 0;
+  }
+  return 1;
+}

@@ -1,0 +1,5 @@
+// Compile time conditionals: an unknown target property is diagnosed.
+//@ parse-fail
+#if target.platform == "macos"  //~ ERROR GTI-P0003
+int value = 1;
+#endif

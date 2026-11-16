@@ -1,0 +1,26 @@
+// Static assertions: class and function instances reanalysed by constant evaluation or initializer effects should see the completed program.
+//@ check-pass
+constexpr int32_t start_value = 5;
+constexpr bool admits<uint64_t N>() { return N <= uint64_t(4); }
+class Counter<uint64_t N> {
+  static_assert(admits<N>(), "counter is too wide");
+  int32_t start = start_value;
+public:
+  constexpr Counter() {}
+  constexpr int32_t first() { return start; }
+};
+constexpr int32_t first_of<uint64_t N>() {
+  Counter<N> counter = Counter<N>();
+  return counter.first();
+}
+static_assert(first_of<2>() == 5);
+int32_t pick<uint64_t N>() {
+  if constexpr (admits<N>()) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+Counter<3> counter = Counter<3>();
+int32_t picked = pick<3>();
+int main() { return counter.first() + picked - 6; }

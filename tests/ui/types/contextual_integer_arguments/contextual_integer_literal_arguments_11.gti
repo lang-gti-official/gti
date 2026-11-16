@@ -1,0 +1,5 @@
+// Contextual integer literal arguments: constructors and base initializers do not rank fallback counts.
+class Base { public:
+Base(uint8_t a, int b) {} Base(uint8_t a, uint8_t b) {} };
+class Derived : public Base { public: Derived() : Base(1, 2) {} };  //~ ERROR GTI-S2013
+int main() { Derived value{}; return 0; }

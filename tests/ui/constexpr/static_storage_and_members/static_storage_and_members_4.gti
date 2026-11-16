@@ -1,0 +1,12 @@
+// Static storage and members: static members should reject object-qualified access.
+class Registry {
+public:
+  static int value = 1;
+public:
+  Registry() = default;
+};
+
+int main() {
+  Registry registry = Registry();
+  return registry.value;  //~ ERROR GTI-S2039 must be accessed through its class or struct name
+}

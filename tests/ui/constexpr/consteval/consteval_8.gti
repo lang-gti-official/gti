@@ -1,0 +1,16 @@
+// Consteval: ordinary immediate calculations and checked records accept constant inputs.
+//@ check-pass
+consteval int square(int x) { return x * x; }
+constexpr int twice(int x) { return x * 2; }
+consteval int nested(int x) { return square(twice(x)); }
+consteval T identity<T>(T x) { return x; }
+struct Port {
+  int value;
+  implicit consteval Port(int x) : value(100 / (x > 0 ? 1 : 0) + x) {}
+};
+int consume(Port port, int runtime) { return port.value + runtime; }
+int run(int runtime) {
+  Port port = 80;
+  return consume(Port(81), runtime) + port.value + nested(3) + identity(4);
+}
+int main() { return run(2) - 403; }

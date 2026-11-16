@@ -1,0 +1,2 @@
+module api;
+namespace demo { Parcel<int> Factory::make() { Parcel<int> result = {.value = 7}; return result; } }

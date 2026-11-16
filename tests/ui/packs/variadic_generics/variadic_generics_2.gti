@@ -1,0 +1,17 @@
+// Variadic generics: a concrete move-only pack should be forwarded once and retained in typed HIR.
+//@ check-pass
+import std.memory;
+
+class PackedValue { public: PackedValue() = default; };
+
+void consume_owner<Args...>(Args... values) {}
+
+void forward_owner<Args...>(Args... values) {
+  consume_owner(values...);
+}
+
+int main() {
+  auto owner = std::make_unique<PackedValue>();
+  forward_owner(std::move(owner));
+  return 0;
+}

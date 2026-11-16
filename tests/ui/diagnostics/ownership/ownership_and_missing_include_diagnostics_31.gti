@@ -1,0 +1,3 @@
+// Ownership and missing include diagnostics: constexpr mutation advice must not recommend a forbidden mut prefix.
+//@ snapshot: diagnostics
+void examine() { constexpr int fixed = 4; fixed = 5; }  //~ ERROR GTI-S2002

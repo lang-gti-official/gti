@@ -1,0 +1,5 @@
+main.gti:3:25: error[GTI-S2089]: Unknown type 'std::deque'.
+ 3 | using dictionary = std::deque<int>;  //~ ERROR GTI-S2089
+   |                         ^~~~~
+help: Add import std.deque; to this source file.
+help: Add import std.deque;

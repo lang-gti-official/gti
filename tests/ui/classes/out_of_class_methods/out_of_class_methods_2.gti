@@ -1,0 +1,18 @@
+// Out of class methods: private constructors, consuming receivers and differently named borrowed parameters keep declaration contracts.
+//@ check-pass
+class Maker {
+  Maker() {}
+public:
+  static Maker create();
+  int take() &&;
+  static int&<a> relay<lifetime a>(int&<a> input);
+};
+Maker Maker::create() { return Maker(); }
+int Maker::take() && { return 7; }
+int& Maker::relay(int& value) { return value; }
+int main() {
+  Maker made = Maker::create();
+  int number = std::move(made).take();
+  auto& borrowed = Maker::relay(number);
+  return borrowed - 7;
+}

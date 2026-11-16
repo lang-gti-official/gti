@@ -1,0 +1,2 @@
+// Consteval: invalid immediate declaration, invocation or escape rejects.
+struct P { int v; implicit consteval P(int x):v(x){} }; int f(int x){ P p=x; return p.v; }  //~ ERROR GTI-S2057

@@ -1,0 +1,3 @@
+// Out of class methods: a generic method may have a separate alpha-renamed definition.
+//@ check-pass
+struct A { static T read<T>(T x); }; U A::read<U>(U x) { return x; } int main() { return A::read(0); }

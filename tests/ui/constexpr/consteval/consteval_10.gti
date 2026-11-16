@@ -1,0 +1,37 @@
+// Consteval: published immediate values erase operand and contextual runtime storage effects while preserving an enclosing call's other inputs.
+//@ check-pass
+mut int global = 7;
+constexpr int source(bool read) { return read ? global : 42; }
+constexpr int generic_source<T>(bool read) { return read ? global : 42; }
+consteval int immediate(bool read) { return source(read); }
+consteval int identity(int value) { return value; }
+struct Port {
+  int value;
+  implicit consteval Port(int value) : value(value < 0 ? global : value) {}
+};
+struct Convertible {
+  int value;
+  constexpr Convertible(int value) : value(value) {}
+  implicit consteval operator int() {
+    return this.value < 0 ? global : this.value;
+  }
+};
+struct Truth {
+  bool value;
+  constexpr Truth(bool value) : value(value) {}
+  consteval operator bool() { return this.value; }
+};
+bool runtime_read() { return global == 7; }
+int combine(mut int& value, int input) { return value + input; }
+
+int main() {
+  mut int& held = global;
+  int direct = immediate(false);
+  int argument = identity(source(false));
+  int generic_argument = identity(generic_source<int>(false));
+  Port contextual = 42;
+  int converted = Convertible(42);
+  int ordered = combine(held, immediate(false));
+  return held + direct + argument + generic_argument + contextual.value +
+         converted + ordered - 266;
+}

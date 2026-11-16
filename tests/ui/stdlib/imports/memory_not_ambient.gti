@@ -1,0 +1,3 @@
+// Unique ownership is not ambient: std::make_unique needs import std.memory.
+class Value { public: Value() {} };
+int main() { auto owner = std::make_unique<Value>(); return 0; }  //~ ERROR GTI-S2089 Undefined qualified name 'std::make_unique'

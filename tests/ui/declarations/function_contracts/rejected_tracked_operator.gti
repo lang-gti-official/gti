@@ -1,0 +1,7 @@
+// Function contracts: the function-contract diagnostic rejects tracked operator.
+[[noreturn]] void stop() { while (true) {} }
+[[noreturn]] int stop_number() { while (true) {} }
+[[noreturn]] bool stop_test() { while (true) {} }
+int identity(int value) { return value; }
+struct Index { [[track_caller]] int operator[](std::size_t index) { return 0; }  public: Index() = default; };  //~ ERROR GTI-S2099
+int main() { return 0; }

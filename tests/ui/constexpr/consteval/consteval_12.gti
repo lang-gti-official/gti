@@ -1,0 +1,7 @@
+// Consteval: exact nullptr construction enforces immediate failure in semantics.
+constexpr int divide(int divisor) { return 1 / divisor; }
+struct P {
+  int value;
+  consteval P(nullptr_t ignored) : value(divide(0)) {}
+};
+int main() { P p = nullptr; return p.value; }  //~ ERROR GTI-S2057

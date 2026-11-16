@@ -1,0 +1,3 @@
+// Operator eligibility and runtime-input or arithmetic failures are constant-evaluation errors: operator overflow.
+struct Item { int x; constexpr Item(int x) : x(x) {} constexpr int operator+(int n) { return this.x + n; } }; constexpr Item item = Item(2147483647); constexpr int bad = item + 1;  //~ ERROR GTI-S2057 overflow
+int main() { return 0; }

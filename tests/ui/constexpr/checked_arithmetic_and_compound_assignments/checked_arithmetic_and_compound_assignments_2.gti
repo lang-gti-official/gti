@@ -1,0 +1,18 @@
+// Checked arithmetic and compound assignments: invalid compound domains and statically known arithmetic failures should be rejected by semantics.
+int main() {
+  mut int integer = 1;
+  mut float decimal = 1.0;
+  mut bool condition = true;
+  mut int32_t signed_value = 1;
+  mut uint32_t unsigned_value = 1;
+  integer += 1.5;  //~ ERROR GTI-S2003 cannot use a floating-point right operand
+  integer /= 0;  //~ ERROR GTI-S2004 Integer division by zero is not allowed
+  integer %= 0;  //~ ERROR GTI-S2004 Modulo divisor cannot be zero
+  integer <<= -1;  //~ ERROR GTI-S2000 Shift count cannot be negative
+  integer >>= 32;  //~ ERROR GTI-S2000 Shift count must be less than 32
+  decimal %= 2;  //~ ERROR GTI-S2004 requires integer operands
+  condition &= true;  //~ ERROR GTI-S2004
+  signed_value *= unsigned_value;  //~ ERROR GTI-S2004 no safe common type
+  int zero = 7 / 0;  //~ ERROR GTI-S2004
+  return 0;
+}

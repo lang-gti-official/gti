@@ -1,0 +1,12 @@
+// A conditional expression cannot select between values carrying borrowed state.
+class BorrowedValue {
+  int& value;
+
+public:
+  BorrowedValue(int& source) : value(source) {}
+};
+
+BorrowedValue choose_borrowed(  //~ ERROR GTI-S2017
+    bool condition, BorrowedValue left, BorrowedValue right) {
+  return condition ? std::move(left) : std::move(right);  //~ ERROR GTI-S2051
+}

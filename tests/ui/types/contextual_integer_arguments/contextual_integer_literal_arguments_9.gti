@@ -1,0 +1,5 @@
+// Contextual integer literal arguments: the shared fallback tier ranks neither literal width, the number of adapted arguments, nor literal adaptation against a temporary read borrow.
+class Owner { public: Owner() = default; };
+int choose(Owner& owner, uint8_t count) { return 1; }
+int choose(Owner& owner, uint64_t count) { return 2; }
+int main() { return choose(Owner(), 5); }  //~ ERROR GTI-S2013

@@ -1,0 +1,35 @@
+// Compile time conditionals: with EXTERNAL defined, boolean target/flag conditions select 11, a source #undef removes the external flag, and source-order define changes select 7.
+//@ run-pass
+//@ define: EXTERNAL
+#define LOCAL
+#define LOCAL
+#if target.os == "never"
+#define LEAKED
+#define ALTERNATE
+#define EXTERNAL
+#endif
+
+#if defined(EXTERNAL) &&
+    (target.os != "never" || defined(ALTERNATE))
+int selected_value() { return 11; }
+#else
+int selected_value() { return 22; }
+#endif
+
+#undef EXTERNAL
+#ifdef EXTERNAL
+#error "a source undef did not remove an externally seeded flag"
+#endif
+
+#ifdef LEAKED
+#error "an inactive definition leaked"
+#endif
+
+#undef LOCAL
+#ifndef LOCAL
+int local_state() { return 7; }
+#else
+int local_state() { return 9; }
+#endif
+
+int main() { return selected_value() + local_state() == 18 ? 0 : 1; }

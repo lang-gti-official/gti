@@ -1,0 +1,15 @@
+// Ownership and missing include diagnostics: move notes follow declaration identity rather than a shadowed name.
+//@ check-pass
+struct Ticket {
+  mut int code = 7;
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+struct Holder { mut Ticket field = Ticket();  public: Holder() = default; };
+
+void examine() {
+  Ticket original{};
+  { Ticket original{}; Ticket destination = std::move(original); }
+  int code = original.code;
+}

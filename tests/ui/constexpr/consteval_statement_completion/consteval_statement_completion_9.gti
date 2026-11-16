@@ -1,0 +1,2 @@
+// Consteval statement completion: invalid immediate statement or bare return rejects in semantics.
+mut int global=7; struct Port{int value;implicit consteval Port(int x=global):value(x){}}; Port make(){return;} int main(){return make().value;}  //~ ERROR GTI-S2057

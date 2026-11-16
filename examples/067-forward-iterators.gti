@@ -2,7 +2,7 @@ import std.algorithm;
 import std.iterator;
 import std.vector;
 int main() {
-  mut std::vector<int32_t> sorted =
+  std::vector<int32_t> sorted =
       std::vector<int32_t>({2, 4, 6, 8, 10, 12});
 
   // A read cursor may be copied. Each copy has an independent position, but

@@ -1,0 +1,16 @@
+// Constrained generics: concrete generic reanalysis should diagnose a contextual integer literal that does not fit the instantiated operand type.
+bool out_of_range<std::integral T>(T value) {
+  return value == 256;  //~ ERROR GTI-S2004 does not fit the contextual operand type 'uint8_t'
+}
+
+bool negative_out_of_range<std::integral T>(T value) {
+  return value == -1;  //~ ERROR GTI-S2004 Integer literal '-1'
+}
+
+int main() {
+  bool result = out_of_range(uint8_t(1));
+  bool negative = negative_out_of_range(uint8_t(1));
+  if (result) { return 1; }
+  if (negative) { return 2; }
+  return 0;
+}
