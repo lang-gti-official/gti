@@ -107,6 +107,51 @@ bool underSlowDirectory(const std::filesystem::path &path) {
 
 } // namespace
 
+std::vector<DefaultDirective>
+defaultDirectives(const std::filesystem::path &test,
+                  std::vector<std::string> &errors) {
+  // gti-test.defaults files from the repository (or filesystem) root down to
+  // the test's directory; inner files come later and so win.
+  std::vector<std::filesystem::path> files;
+  std::error_code error;
+  for (std::filesystem::path directory = test.parent_path(); !directory.empty();
+       directory = directory.parent_path()) {
+    if (std::filesystem::is_regular_file(directory / "gti-test.defaults",
+                                         error))
+      files.push_back(directory / "gti-test.defaults");
+    if (std::filesystem::exists(directory / ".git", error) ||
+        directory == directory.parent_path())
+      break;
+  }
+  std::reverse(files.begin(), files.end());
+  std::vector<DefaultDirective> result;
+  for (const std::filesystem::path &file : files) {
+    const std::optional<std::string> text = readFile(file);
+    const std::vector<std::string> fileLines = splitLines(text.value_or(""));
+    const std::string relative =
+        test.lexically_relative(file.parent_path()).generic_string();
+    bool applies = true;
+    for (std::size_t index = 0; index < fileLines.size(); ++index) {
+      const std::string line = trim(fileLines[index]);
+      const std::string where =
+          file.filename().string() + ":" + std::to_string(index + 1);
+      if (line.rfind("// --- ", 0) == 0) {
+        // `// --- a.gti b.gti`: the directives below apply to these tests.
+        const std::vector<std::string> names = splitWords(line.substr(7));
+        applies =
+            std::find(names.begin(), names.end(), relative) != names.end();
+      } else if (line.rfind("//@", 0) == 0) {
+        if (applies)
+          result.push_back({line, where});
+      } else if (!line.empty() && line.rfind("//", 0) != 0) {
+        errors.push_back(where + ": a defaults file holds `//` comments, "
+                                 "`// --- names` scopes and `//@` directives");
+      }
+    }
+  }
+  return result;
+}
+
 std::optional<int> signalNumber(const std::string &name) {
   static const std::map<std::string, int> names = {
       {"SIGABRT", SIGABRT}, {"SIGSEGV", SIGSEGV}, {"SIGBUS", SIGBUS},
@@ -272,8 +317,12 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     return test;
   }
   const std::vector<std::string> lines = splitLines(*contents);
+  // Directives from a gti-test.defaults file report where they came from.
+  std::string origin;
   const auto error = [&](int line, const std::string &message) {
-    test.errors.push_back("line " + std::to_string(line) + ": " + message);
+    test.errors.push_back(
+        (origin.empty() ? "line " + std::to_string(line) : origin) + ": " +
+        message);
   };
 
   // Sections.
@@ -340,6 +389,24 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     return false;
   };
 
+  // A single-file test that imports `"dir/file.gti"` from a sibling
+  // directory (as examples do) gets that directory copied beside it.
+  if (markers.empty())
+    for (const std::string &line : lines) {
+      const std::string text = trim(line);
+      if (text.rfind("import \"", 0) != 0)
+        continue;
+      const std::string target = text.substr(8, text.find('"', 8) - 8);
+      const std::string first = std::filesystem::path(target).begin()->string();
+      if (target.find('/') != std::string::npos && first != ".." &&
+          first != "." &&
+          std::filesystem::is_directory(path.parent_path() / first) &&
+          std::find(test.importDirectories.begin(),
+                    test.importDirectories.end(),
+                    first) == test.importDirectories.end())
+        test.importDirectories.push_back(first);
+    }
+
   // Directives. Run inputs and expectations are parsed into a RunSpec: the
   // shared one, or a revision's overrides (`//@[name] directive`).
   std::vector<std::string> modes;
@@ -405,10 +472,23 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     }
     return true;
   };
-  for (std::size_t index = 0; index < lines.size(); ++index) {
-    const int lineNumber = static_cast<int>(index) + 1;
-    const std::string text = trim(lines[index]);
-    if (text.rfind("import ", 0) == 0)
+  struct DirectiveLine {
+    std::string text;
+    int line = 0;
+    std::string origin;
+  };
+  std::vector<DirectiveLine> directiveLines;
+  for (DefaultDirective &directive : defaultDirectives(path, test.errors))
+    directiveLines.push_back(
+        {std::move(directive.text), 0, std::move(directive.origin)});
+  for (std::size_t index = 0; index < lines.size(); ++index)
+    directiveLines.push_back(
+        {trim(lines[index]), static_cast<int>(index) + 1, ""});
+  for (const DirectiveLine &entry : directiveLines) {
+    const int lineNumber = entry.line;
+    const std::string &text = entry.text;
+    origin = entry.origin;
+    if (origin.empty() && text.rfind("import ", 0) == 0)
       imports += text + "\n";
     if (text.rfind("//@", 0) != 0)
       continue;
@@ -441,6 +521,26 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     }
     name = trim(name);
     const std::string trimmed = trim(value);
+    if (!origin.empty() &&
+        (revisionPrefixed ||
+         (name != "allow-warnings" && name != "execution-profile" &&
+          name != "define" && name != "raw-pointer-audit" &&
+          name != "raw-pointer-audit-library-findings" &&
+          name != "require-function-definitions"))) {
+      error(lineNumber, "a defaults file sets only analysis options and "
+                        "allow-warnings, not '" +
+                            name + "'");
+      continue;
+    }
+    if (name == "allow-warnings") {
+      if (origin.empty())
+        error(lineNumber, "allow-warnings is only for a gti-test.defaults "
+                          "file of a directive-less root; annotate warnings");
+      else if (hasValue)
+        error(lineNumber, "'allow-warnings' takes no value");
+      test.allowWarnings = true;
+      continue;
+    }
     if (revisionPrefixed) {
       Override &entry = overrides[revision];
       if (entry.line == 0)
@@ -593,6 +693,7 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         test.revisions.end())
       error(entry.line,
             "revision '" + revision + "' is not declared by `//@ revisions:`");
+  origin.clear();
   test.stdoutLines = shared.stdoutLines;
   test.hasInlineStdout = shared.hasInlineStdout;
   test.stderrContains = shared.stderrContains;

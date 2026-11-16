@@ -116,5 +116,20 @@ still runs tests/ui only, so name `tests/lsp` (or both) explicitly. Driver,
 `gti.toml` and CLI behaviour is tested in [tests/project](../project/README.md)
 by command transcripts.
 
+Directive-less roots (`examples/`, run by `gti_test_examples`) take defaults
+from a `gti-test.defaults` file above them: `//@` lines for every test below,
+and after `// --- a.gti b.gti` only for those files. It sets only analysis
+options and `//@ allow-warnings` (unannotated warnings do not fail); tidy
+rejects it under a test root. A single-file test that imports
+`"dir/x.gti"` gets the sibling `dir/` copied beside it.
+
+Sanitizer tier: run `gti_test_ui` in a tree built with
+`-fsanitize=address,undefined`; a sanitized `gti-test` scales its limits by 5
+unless `GTI_TEST_TIME_SCALE` is set. `GTI_TEST_INSTRUMENTATION=address,undefined`
+(or `address`, `undefined`, `thread`) also builds every program with the
+driver's LLVM sanitizer instrumentation, which needs an upstream Clang
+(`GTI_CXX`, `GTI_CC`); tests with `native-args` and `--isolate` builds stay
+uninstrumented.
+
 `--bless` refuses under `CI`, never accepts an internal compiler error or
 turns a declared pass test into an error test. Review its diff.

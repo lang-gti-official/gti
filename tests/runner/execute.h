@@ -6,6 +6,8 @@
 
 #include "test_file.h"
 
+#include "gti/llvm_backend.h"
+
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -58,6 +60,10 @@ struct EngineOptions {
   std::filesystem::path workDirectory;
   bool isolate = false;
   bool bless = false;
+  // GTI_TEST_INSTRUMENTATION: build every program with LLVM sanitizer
+  // instrumentation (the sanitizer tier); off by default.
+  lang::LlvmInstrumentationMode instrumentation =
+      lang::LlvmInstrumentationMode::None;
   Limits limits;
 };
 

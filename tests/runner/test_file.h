@@ -160,6 +160,12 @@ struct TestFile {
   // `//@ stdlib-overlay: std/x.gti ...`: sections written over a private
   // copy of the standard library instead of beside the test.
   std::vector<std::string> stdlibOverlay;
+  // `//@ allow-warnings` (gti-test.defaults only): unannotated warnings do
+  // not fail the test; annotated ones must still match.
+  bool allowWarnings = false;
+  // Sibling directories a single-file test imports from (`import
+  // "dir/x.gti"`), copied beside it.
+  std::vector<std::string> importDirectories;
   std::vector<Snapshot> snapshots;
   // `//@ mir-function: name`; empty snapshots every function of the test.
   std::vector<std::string> mirFunctions;
@@ -181,6 +187,17 @@ struct TestFile {
   // running them back to back.
   std::string groupKey;
 };
+
+// The `//@` lines of the gti-test.defaults files above `test` that apply to
+// it, outermost first; `origin` is `path:line`. Malformed lines go to
+// `errors`.
+struct DefaultDirective {
+  std::string text;
+  std::string origin;
+};
+[[nodiscard]] std::vector<DefaultDirective>
+defaultDirectives(const std::filesystem::path &test,
+                  std::vector<std::string> &errors);
 
 [[nodiscard]] TestFile parseTestFile(const std::filesystem::path &path,
                                      std::string display);

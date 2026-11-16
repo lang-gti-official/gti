@@ -65,12 +65,46 @@ bool ciEnvironment() {
   return !text.empty() && text != "0" && text != "false";
 }
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) ||                                        \
+    __has_feature(undefined_behavior_sanitizer)
+#define GTI_TEST_SANITIZED 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) && !defined(GTI_TEST_SANITIZED)
+#define GTI_TEST_SANITIZED 1
+#endif
+
 double timeScale() {
   const char *value = std::getenv("GTI_TEST_TIME_SCALE");
-  if (value == nullptr || *value == '\0')
+  if (value == nullptr || *value == '\0') {
+#if defined(GTI_TEST_SANITIZED)
+    // A sanitized compiler runs several times slower; without an explicit
+    // scale the limits would report its ordinary cost as timeouts.
+    return 5.0;
+#else
     return 1.0;
+#endif
+  }
   const double scale = std::strtod(value, nullptr);
   return scale > 0 ? scale : 1.0;
+}
+
+// GTI_TEST_INSTRUMENTATION=address|undefined|address,undefined|thread.
+std::optional<lang::LlvmInstrumentationMode> instrumentation() {
+  const char *value = std::getenv("GTI_TEST_INSTRUMENTATION");
+  const std::string text = value == nullptr ? "" : value;
+  if (text.empty() || text == "none")
+    return lang::LlvmInstrumentationMode::None;
+  if (text == "address")
+    return lang::LlvmInstrumentationMode::Address;
+  if (text == "undefined")
+    return lang::LlvmInstrumentationMode::UndefinedMemory;
+  if (text == "address,undefined" || text == "undefined,address")
+    return lang::LlvmInstrumentationMode::AddressAndUndefinedMemory;
+  if (text == "thread")
+    return lang::LlvmInstrumentationMode::Thread;
+  return std::nullopt;
 }
 
 struct Options {
@@ -224,6 +258,12 @@ int tidy(const fs::path &root) {
       (void)parseProjectTranscript(text.value_or(""), errors);
       for (const std::string &error : errors)
         problems.push_back(display + ": " + error);
+      continue;
+    }
+    if (file.filename() == "gti-test.defaults") {
+      problems.push_back(display + ": defaults files are for directive-less "
+                                   "roots such as examples/; write the "
+                                   "directives in each test");
       continue;
     }
     if (insideProject(file))
@@ -524,6 +564,13 @@ int main(int argc, char **argv) {
       std::getenv("GTI_TEST_LSP") ? fs::path(std::getenv("GTI_TEST_LSP"))
                                   : self.parent_path() / "gti_lsp");
   engineOptions.isolate = options.isolate;
+  if (const auto mode = instrumentation()) {
+    engineOptions.instrumentation = *mode;
+  } else {
+    std::cerr << "gti-test: GTI_TEST_INSTRUMENTATION is address, undefined, "
+                 "address,undefined or thread\n";
+    return 2;
+  }
   engineOptions.bless = options.bless;
   const double scale = timeScale();
   engineOptions.limits.check *= scale;

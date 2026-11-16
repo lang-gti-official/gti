@@ -160,7 +160,11 @@ def self_test(runner):
                     "reserved_native_args.gti: line 0: native-args cannot pass '-o'",
                     "signal_run_pass.gti: line 4: configuration flag '9bad'",
                     "signal_run_pass.gti: line 5: env is written",
-                    "signal_run_pass.gti: line 0: exit-signal needs run-fail"):
+                    "signal_run_pass.gti: line 0: exit-signal needs run-fail",
+                    "allow_warnings.gti: line 2: allow-warnings is only for a "
+                    "gti-test.defaults file",
+                    "tidy/bad/gti-test.defaults: defaults files are for "
+                    "directive-less roots"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -191,6 +195,7 @@ def kinds_self_test(runner):
     expect(code == 0, "tidy accepts the kind fixtures", out)
 
     features_self_test(runner)
+    defaults_self_test(runner)
 
     code, out = run(runner, FIXTURES / "snapshot", "--jobs", "4")
     expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
@@ -256,6 +261,22 @@ def features_self_test(runner):
                out + test.read_text())
         code, out = run(runner, work)
         expect(code == 0, "the blessed binary output passes", out)
+
+
+def defaults_self_test(runner):
+    """gti-test.defaults files and sibling-directory imports (examples/)."""
+    ok = FIXTURES / "defaults/ok"
+    code, out = run(runner, ok / "warned.gti", ok / "scoped.gti",
+                    ok / "imports.gti")
+    expect(code == 0 and "RESULT ok: 3 passed, 0 failed" in out,
+           "defaults allow warnings, scope a profile, and imports are copied",
+           out)
+    code, out = run(runner, FIXTURES / "defaults/bad")
+    bad = block(out, "FAIL", "case.gti")
+    expect(code == 1 and "gti-test.defaults:2: a defaults file sets only "
+           "analysis options and allow-warnings, not 'run-pass'" in bad and
+           "gti-test.defaults:3: a defaults file holds" in bad,
+           "an invalid defaults file fails the tests below it", out)
 
 
 def project_self_test(runner):

@@ -328,7 +328,8 @@ compareDiagnostics(const TestFile &test,
     }
   }
   for (std::size_t index = 0; index < diagnostics.size(); ++index)
-    if (!used[index])
+    if (!used[index] && !(test.allowWarnings &&
+                          diagnostics[index].severity == Severity::Warning))
       problems.push_back("actual:   " + describe(test, diagnostics[index]));
   return problems;
 }
@@ -582,6 +583,9 @@ Materialized materialize(const TestFile &test, const fs::path &directory,
     else if (nativeKind(section.name) == NativeKind::Cpp)
       result.cppSources.push_back(path);
   }
+  for (const std::string &imported : test.importDirectories)
+    fs::copy(test.path.parent_path() / imported, directory / imported,
+             fs::copy_options::recursive, error);
   result.entry = directory / test.sections.front().name;
   return result;
 }
@@ -1091,8 +1095,16 @@ Outcome Engine::run(const TestFile &test) {
           const lang::driver::ExecutableBuildResult build =
               lang::driver::buildExecutable(
                   lang::driver::ExecutableBuildRequest(
-                      request.withBackend(lang::BackendKind::Llvm), toolchain,
-                      state->caseDirectory / "case.o", output,
+                      request
+                          .withBackend(lang::BackendKind::Llvm)
+                          // The driver admits instrumentation only with
+                          // structured native inputs, so native-args tests
+                          // build uninstrumented.
+                          .withLlvmInstrumentation(
+                              test.nativeArgs.empty()
+                                  ? options.instrumentation
+                                  : lang::LlvmInstrumentationMode::None),
+                      toolchain, state->caseDirectory / "case.o", output,
                       lang::driver::discoverNativeCompiler(), std::move(native),
                       false, false, false, std::nullopt,
                       files.cSources.empty()
