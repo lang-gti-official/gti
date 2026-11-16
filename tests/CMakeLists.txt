@@ -65,16 +65,6 @@ add_test(NAME thread_local_syntax COMMAND gti_thread_local_syntax_tests)
 add_executable(gti_thread_local_semantic_tests thread_local_semantic_tests.cpp)
 target_link_libraries(gti_thread_local_semantic_tests PRIVATE gti_compiler)
 add_test(NAME thread_local_semantic COMMAND gti_thread_local_semantic_tests)
-if(TARGET gti_lsp)
-  add_test(NAME thread_local_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/thread_local_lsp_test.py"
-      $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(thread_local_lsp PROPERTIES TIMEOUT 90)
-  add_test(NAME consteval_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consteval_lsp_test.py"
-      $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(consteval_lsp PROPERTIES TIMEOUT 90)
-endif()
 
 add_executable(gti_foreign_variable_borrow_tests foreign_variable_borrow_tests.cpp)
 target_link_libraries(gti_foreign_variable_borrow_tests PRIVATE gti_compiler)
@@ -202,12 +192,6 @@ add_test(NAME expression_text_runtime
     $<TARGET_FILE:gti>)
 set_tests_properties(expression_text_runtime PROPERTIES TIMEOUT 1200)
 if(TARGET gti_lsp)
-  add_test(NAME expression_text_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expression_text_lsp_test.py"
-      $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(expression_text_lsp PROPERTIES TIMEOUT 180)
-endif()
-if(TARGET gti_lsp)
   add_test(NAME lsp_code_snippets
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_code_snippets_test.py"
       $<TARGET_FILE:gti_lsp> $<TARGET_FILE:gti>)
@@ -225,12 +209,6 @@ add_test(NAME protected_member_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/protected_member_runtime_test.py"
     $<TARGET_FILE:gti>)
 set_tests_properties(protected_member_runtime PROPERTIES TIMEOUT 600)
-if(TARGET gti_lsp)
-  add_test(NAME protected_member_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/protected_member_lsp_test.py"
-      $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(protected_member_lsp PROPERTIES TIMEOUT 90)
-endif()
 
 add_executable(gti_nested_type_syntax_tests nested_type_syntax_tests.cpp)
 target_link_libraries(gti_nested_type_syntax_tests PRIVATE gti_compiler)
@@ -240,12 +218,6 @@ add_test(NAME nested_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_type_runtime_test.py"
     $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
 set_tests_properties(nested_type_runtime PROPERTIES TIMEOUT 600)
-if(TARGET gti_lsp)
-  add_test(NAME nested_type_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_type_lsp_test.py"
-      $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(nested_type_lsp PROPERTIES TIMEOUT 90)
-endif()
 
 add_executable(gti_qualified_type_member_tests qualified_type_member_tests.cpp)
 target_link_libraries(gti_qualified_type_member_tests PRIVATE gti_compiler)
@@ -257,13 +229,6 @@ if(Python3_Interpreter_FOUND)
       $<TARGET_FILE:gti>
       "${PROJECT_SOURCE_DIR}/examples/132-qualified-type-members.gti")
   set_tests_properties(qualified_type_member_runtime PROPERTIES TIMEOUT 600)
-  if(TARGET gti_lsp)
-    add_test(NAME qualified_type_member_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/qualified_type_member_lsp_test.py"
-        $<TARGET_FILE:gti_lsp>)
-    set_tests_properties(qualified_type_member_lsp PROPERTIES TIMEOUT 60)
-  endif()
 endif()
 
 add_executable(gti_local_reference_inference_tests local_reference_inference_tests.cpp)
@@ -319,10 +284,6 @@ set_tests_properties(operator_relay_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME existing_value_allocation_failure_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/existing_value_allocation_failure_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(existing_value_allocation_failure_runtime PROPERTIES TIMEOUT 180)
-if(TARGET gti_lsp)
-  add_test(NAME operator_relay_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/operator_relay_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-endif()
 
 add_executable(gti_native_c_scalar_tests native_c_scalar_tests.cpp)
 target_link_libraries(gti_native_c_scalar_tests PRIVATE gti_compiler)
@@ -768,8 +729,6 @@ if(TARGET gti_lsp)
   add_test(NAME lifetime_parameters_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_parameters_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   set_tests_properties(lifetime_parameters_lsp PROPERTIES TIMEOUT 120)
-  add_test(NAME nested_borrow_fields_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/nested_borrow_fields_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME borrowing_composition_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   add_test(NAME cleanup_bound_borrow_lsp
@@ -1307,12 +1266,6 @@ set_tests_properties(backend_contract_regressions PROPERTIES TIMEOUT 600)
 add_test(NAME semantic_call_regressions_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_runtime_test.py" $<TARGET_FILE:gti>)
-if(TARGET gti_lsp)
-  add_test(NAME semantic_call_regressions_lsp
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/semantic_call_regressions_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(semantic_call_regressions_lsp PROPERTIES TIMEOUT 120)
-endif()
 add_executable(gti_instance_reuse_tests "${PROJECT_SOURCE_DIR}/tests/instance_reuse_tests.cpp")
 target_link_libraries(gti_instance_reuse_tests PRIVATE gti_compiler)
 # The corpus walk is gti-corpus's `reuse` invariant; this entry keeps the
@@ -1346,13 +1299,6 @@ add_test(NAME conditional_member_operators
           "${PROJECT_SOURCE_DIR}/tests/conditional_member_operators_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}")
 set_tests_properties(conditional_member_operators PROPERTIES TIMEOUT 900)
-if(TARGET gti_lsp)
-  add_test(NAME conditional_member_operators_lsp
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/conditional_member_operators_lsp_test.py"
-            $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(conditional_member_operators_lsp PROPERTIES TIMEOUT 90)
-endif()
 add_test(NAME general_requires_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/173-general-requires.gti" --include-o1)
@@ -1377,11 +1323,6 @@ set_tests_properties(source_expected_example_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME callable_return_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)
-if(TARGET gti_lsp)
-  add_test(NAME callable_return_type_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(callable_return_type_lsp PROPERTIES TIMEOUT 60)
-endif()
 add_executable(gti_raw_access_tests "${PROJECT_SOURCE_DIR}/tests/raw_access_tests.cpp")
 target_link_libraries(gti_raw_access_tests PRIVATE gti_compiler)
 add_test(NAME raw_access_contract COMMAND gti_raw_access_tests)
@@ -1430,11 +1371,6 @@ add_test(NAME stdlib_discardable
           "$<TARGET_FILE:gti>")
 set_tests_properties(stdlib_discardable PROPERTIES TIMEOUT 300)
 if(TARGET gti_lsp)
-  add_test(NAME aggregate_std_lsp
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/aggregate_std_lsp_test.py"
-            $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(aggregate_std_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME raw_pointer_audit_policy
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_audit_policy_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
   set_tests_properties(raw_pointer_audit_policy PROPERTIES TIMEOUT 240)
@@ -2393,10 +2329,6 @@ if(Python3_Interpreter_FOUND)
     "${PROJECT_SOURCE_DIR}/tests/llvm_memory_execution_test.py"
   )
   if(GTI_BUILD_LSP)
-    add_test(NAME array_publication_lsp
-             COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/array_publication_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
-    set_tests_properties(array_publication_lsp PROPERTIES TIMEOUT 120)
   endif()
   add_test(NAME runtime_abi_inventory
            COMMAND "${Python3_EXECUTABLE}"
@@ -2597,10 +2529,6 @@ add_test(NAME issues_30_33_runtime
                  $<TARGET_FILE:gti>)
 set_tests_properties(issues_30_33_runtime PROPERTIES TIMEOUT 300)
 if(GTI_BUILD_LSP)
-  add_test(NAME issues_30_33_lsp
-           COMMAND "${Python3_EXECUTABLE}"
-                   "${PROJECT_SOURCE_DIR}/tests/issues_30_33_lsp_test.py"
-                   $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
 endif()
 
 add_test(NAME passive_record_runtime
@@ -2860,13 +2788,6 @@ if(Python3_Interpreter_FOUND)
       "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_cost_test.py"
       "$<TARGET_FILE:gti>")
   set_tests_properties(deferred_assertions_cost PROPERTIES TIMEOUT 300)
-  if(TARGET gti_lsp)
-    add_test(NAME deferred_assertions_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_lsp_test.py"
-        "$<TARGET_FILE:gti_lsp>")
-    set_tests_properties(deferred_assertions_lsp PROPERTIES TIMEOUT 90)
-  endif()
   add_test(
     NAME panic_adoption_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3129,10 +3050,6 @@ if(Python3_Interpreter_FOUND)
       "$<TARGET_FILE:gti>")
   set_tests_properties(concept_conditions PROPERTIES TIMEOUT 300)
   if(TARGET gti_lsp)
-    add_test(NAME concept_conditions_lsp
-      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/concept_conditions_lsp_test.py"
-        "$<TARGET_FILE:gti_lsp>")
-    set_tests_properties(concept_conditions_lsp PROPERTIES TIMEOUT 120)
     add_test(NAME reference_parameter_packs_lsp
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/reference_parameter_packs_lsp_test.py"
@@ -3949,14 +3866,6 @@ if(Python3_Interpreter_FOUND)
     # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
     set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 1800)
     if(TARGET gti_lsp)
-      add_test(NAME extensible_formatting_lsp
-        COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_lsp_test.py"
-          "$<TARGET_FILE:gti_lsp>")
-      add_test(NAME integral_enum_lsp
-        COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/integral_enum_lsp_test.py"
-          "$<TARGET_FILE:gti_lsp>")
       add_test(NAME generic_enum_lsp
         COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/generic_enum_lsp_test.py"
@@ -4573,34 +4482,12 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_performance_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(consuming_range_performance PROPERTIES TIMEOUT 180)
-  if(TARGET gti_lsp)
-    add_test(NAME consuming_range_lsp
-      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/consuming_range_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>")
-    set_tests_properties(consuming_range_lsp PROPERTIES TIMEOUT 120)
-  endif()
 
   add_test(NAME compact_owner_layout_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/compact_owner_layout_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(compact_owner_layout_runtime PROPERTIES TIMEOUT 600)
-  if(TARGET gti_lsp)
-    add_test(
-      NAME structural_relocation_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/structural_relocation_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>"
-    )
-    set_tests_properties(structural_relocation_lsp PROPERTIES TIMEOUT 120)
-  endif()
-  if(TARGET gti_lsp)
-    add_test(NAME restoring_exchange_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/restoring_exchange_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>")
-    set_tests_properties(restoring_exchange_lsp PROPERTIES TIMEOUT 120)
-  endif()
   add_test(
     NAME owning_function_policy_failure_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -4646,13 +4533,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(void_return_runtime PROPERTIES TIMEOUT 180)
   if(TARGET gti_lsp)
-    add_test(
-      NAME function_signature_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/function_signature_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>"
-    )
-    set_tests_properties(function_signature_lsp PROPERTIES TIMEOUT 60)
     add_test(
       NAME executable_entry_cli_lsp
       COMMAND "${Python3_EXECUTABLE}"
@@ -5415,30 +5295,12 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>" expected-payload-range
     )
     add_test(
-      NAME optional_contract_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/optional_contract_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>"
-    )
-    add_test(
       NAME source_expected_lsp
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/source_expected_lsp_test.py"
               "$<TARGET_FILE:gti_lsp>"
     )
     set_tests_properties(source_expected_lsp PROPERTIES TIMEOUT 120)
-    add_test(
-      NAME expected_transform_error_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/expected_transform_error_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>"
-    )
-    add_test(
-      NAME borrowed_expected_extraction_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/borrowed_expected_extraction_lsp_test.py"
-              "$<TARGET_FILE:gti_lsp>"
-    )
     add_test(
       NAME borrowed_payload_pattern_lsp
       COMMAND "${Python3_EXECUTABLE}"
@@ -5474,14 +5336,6 @@ if(Python3_Interpreter_FOUND)
                      "${PROJECT_SOURCE_DIR}/tests/diagnostic_recovery_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     set_tests_properties(diagnostic_recovery_lsp PROPERTIES TIMEOUT 60)
-    add_test(NAME runtime_object_layout_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/runtime_object_layout_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
-    add_test(NAME resource_protocol_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/resource_protocol_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
     add_test(NAME structural_class_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/structural_class_lsp_test.py"
@@ -5498,11 +5352,6 @@ if(Python3_Interpreter_FOUND)
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/generic_contract_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
-    add_test(NAME general_requires_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/general_requires_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
-    set_tests_properties(general_requires_lsp PROPERTIES TIMEOUT 60)
     add_test(
       NAME source_text_lsp
       COMMAND "${Python3_EXECUTABLE}"

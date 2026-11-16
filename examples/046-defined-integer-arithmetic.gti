@@ -10,7 +10,7 @@ constexpr bool checked_boundary =
 
 int main() {
   // Runtime operands use the same exact fixed-width rules as constexpr.
-  mut int8_t velocity = int8_t(100);
+  int8_t velocity = int8_t(100);
   int8_t accelerated = std::saturating_add(velocity, int8_t(40));
   int8_t scaled = std::saturating_mul(accelerated, int8_t(2));
   uint8_t sequence = std::wrapping_add(uint8_t(250), uint8_t(10));

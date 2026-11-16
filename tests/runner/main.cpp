@@ -65,18 +65,56 @@ bool ciEnvironment() {
   return !text.empty() && text != "0" && text != "false";
 }
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) ||                                        \
+    __has_feature(undefined_behavior_sanitizer)
+#define GTI_TEST_SANITIZED 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__) && !defined(GTI_TEST_SANITIZED)
+#define GTI_TEST_SANITIZED 1
+#endif
+
 double timeScale() {
   const char *value = std::getenv("GTI_TEST_TIME_SCALE");
-  if (value == nullptr || *value == '\0')
+  if (value == nullptr || *value == '\0') {
+#if defined(GTI_TEST_SANITIZED)
+    // A sanitized compiler runs several times slower; without an explicit
+    // scale the limits would report its ordinary cost as timeouts.
+    return 5.0;
+#else
     return 1.0;
+#endif
+  }
   const double scale = std::strtod(value, nullptr);
   return scale > 0 ? scale : 1.0;
+}
+
+// GTI_TEST_INSTRUMENTATION=address|undefined|address,undefined|thread.
+std::optional<lang::LlvmInstrumentationMode> instrumentation() {
+  const char *value = std::getenv("GTI_TEST_INSTRUMENTATION");
+  const std::string text = value == nullptr ? "" : value;
+  if (text.empty() || text == "none")
+    return lang::LlvmInstrumentationMode::None;
+  if (text == "address")
+    return lang::LlvmInstrumentationMode::Address;
+  if (text == "undefined")
+    return lang::LlvmInstrumentationMode::UndefinedMemory;
+  if (text == "address,undefined" || text == "undefined,address")
+    return lang::LlvmInstrumentationMode::AddressAndUndefinedMemory;
+  if (text == "thread")
+    return lang::LlvmInstrumentationMode::Thread;
+  return std::nullopt;
 }
 
 struct Options {
   std::vector<std::string> selectors;
   fs::path root = "tests/ui";
   bool rootGiven = false;
+  // `--changed [BASE]`: tests whose files changed against BASE's merge base.
+  std::optional<std::string> changed;
+  bool failed = false;
+  std::optional<fs::path> junit;
   bool list = false;
   bool tidy = false;
   bool bless = false;
@@ -91,12 +129,135 @@ struct Options {
 
 void usage(std::ostream &out) {
   out << "usage: gti-test [paths or substrings...] [--root DIR] [--jobs N]\n"
-         "                [--shard I/N] [--bless] [--isolate] [--gti PATH] "
-         "[--lsp PATH]\n"
-         "                [--json FILE] [--list] [--tidy]\n"
-         "Runs every .gti test under --root (default tests/ui). A positional\n"
-         "argument that names a file or directory selects it; any other\n"
-         "selects tests whose path contains it. See tests/ui/README.md.\n";
+         "                [--changed [BASE]] [--failed] [--shard I/N] "
+         "[--bless]\n"
+         "                [--isolate] [--gti PATH] [--lsp PATH] [--json FILE]\n"
+         "                [--junit FILE] [--list] [--tidy]\n"
+         "Runs every test under tests/ui, tests/project and tests/lsp (or\n"
+         "--root DIR). A positional argument that names a file or directory\n"
+         "selects it; any other selects tests whose path contains it.\n"
+         "--changed: tests whose file, expected files or directory differ "
+         "from\n"
+         "the merge base with BASE (default origin/main), held to half their\n"
+         "limit. --failed: the failures of the last run. See "
+         "tests/ui/README.md.\n";
+}
+
+// A command's standard output, or nullopt when it fails.
+std::optional<std::string> capture(const std::string &command) {
+  FILE *pipe = popen(command.c_str(), "r");
+  if (pipe == nullptr)
+    return std::nullopt;
+  std::string output;
+  char buffer[4096];
+  while (const std::size_t count = fread(buffer, 1, sizeof buffer, pipe))
+    output.append(buffer, count);
+  return pclose(pipe) == 0 ? std::optional(output) : std::nullopt;
+}
+
+std::string shellQuote(const std::string &text) {
+  std::string quoted = "'";
+  for (const char c : text)
+    quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+  return quoted + "'";
+}
+
+// Absolute paths changed against the merge base of HEAD and `base`: commits,
+// staged and unstaged edits, and untracked files.
+std::optional<std::set<fs::path>> changedFiles(const std::string &base,
+                                               std::string &error) {
+  const std::optional<std::string> top =
+      capture("git rev-parse --show-toplevel 2>/dev/null");
+  if (!top) {
+    error = "not in a git checkout";
+    return std::nullopt;
+  }
+  const fs::path root = std::string(top->substr(0, top->find('\n')));
+  const std::optional<std::string> mergeBase =
+      capture("git merge-base " + shellQuote(base) + " HEAD 2>/dev/null");
+  if (!mergeBase) {
+    error = "no merge base with " + base;
+    return std::nullopt;
+  }
+  const std::string commit = mergeBase->substr(0, mergeBase->find('\n'));
+  const std::optional<std::string> diff =
+      capture("git -C " + shellQuote(root.string()) +
+              " diff --name-only --no-renames " + shellQuote(commit));
+  const std::optional<std::string> untracked =
+      capture("git -C " + shellQuote(root.string()) +
+              " ls-files --others --exclude-standard");
+  if (!diff || !untracked) {
+    error = "git diff failed";
+    return std::nullopt;
+  }
+  std::set<fs::path> files;
+  std::istringstream lines(*diff + *untracked);
+  for (std::string line; std::getline(lines, line);)
+    if (!line.empty())
+      files.insert((root / line).lexically_normal());
+  return files;
+}
+
+// Whether a change to `file` affects `test`: the test itself, a sibling with
+// its stem (`name.stdout`, `name.mir`, `name.<revision>.stdin`), anything in
+// a project test's directory or a directory the test imports from, or a
+// gti-test.defaults file above it.
+bool affects(const TestFile &test, const fs::path &file) {
+  if (file == test.path)
+    return true;
+  const fs::path directory = test.path.parent_path();
+  const auto under = [&](const fs::path &root) {
+    const fs::path relative = file.lexically_relative(root);
+    return !relative.empty() && *relative.begin() != "..";
+  };
+  if (test.mode == Mode::Project)
+    return under(directory);
+  for (const std::string &imported : test.importDirectories)
+    if (under(directory / imported))
+      return true;
+  if (file.filename() == "gti-test.defaults") {
+    const fs::path relative = test.path.lexically_relative(file.parent_path());
+    if (!relative.empty() && *relative.begin() != "..")
+      return true;
+  }
+  return file.parent_path() == directory &&
+         file.filename().string().rfind(test.path.stem().string() + ".", 0) ==
+             0;
+}
+
+// The record of the last run, read by --failed: beside the runner unless
+// GTI_TEST_LAST_RUN names another file.
+fs::path lastRunPath(const fs::path &self) {
+  if (const char *path = std::getenv("GTI_TEST_LAST_RUN");
+      path != nullptr && *path != '\0')
+    return path;
+  return self.parent_path() / "gti-test.last-run";
+}
+
+std::string xmlEscape(const std::string &text) {
+  std::string out;
+  for (const char c : text) {
+    switch (c) {
+    case '&':
+      out += "&amp;";
+      break;
+    case '<':
+      out += "&lt;";
+      break;
+    case '>':
+      out += "&gt;";
+      break;
+    case '"':
+      out += "&quot;";
+      break;
+    default:
+      if (static_cast<unsigned char>(c) < 0x20 && c != '\n' && c != '\t')
+        out += "?";
+      else
+        out += c;
+    }
+  }
+  return out;
 }
 
 bool underLsp(const fs::path &path) {
@@ -109,10 +270,23 @@ bool underLsp(const fs::path &path) {
 // A `.gti` test, or a `.jsonl` LSP transcript under an `lsp` directory.
 // Whether `path` lies inside a project test (a directory, up to a few levels
 // above, holding `test.transcript`); its sources belong to that test.
+// A `test.transcript` is a project test only under a directory named
+// `project` (as LSP tests live under `lsp`), so a stray one elsewhere cannot
+// claim the tests below it.
+bool projectTranscript(const fs::path &path) {
+  if (path.filename() != "test.transcript")
+    return false;
+  for (const auto &part : path.parent_path())
+    if (part == "project")
+      return true;
+  return false;
+}
+
 bool insideProject(const fs::path &path) {
-  fs::path directory = path.parent_path();
+  fs::path directory = fs::absolute(path).parent_path();
   for (int depth = 0; depth < 6 && !directory.empty(); ++depth) {
-    if (fs::exists(directory / "test.transcript"))
+    if (projectTranscript(directory / "test.transcript") &&
+        fs::exists(directory / "test.transcript"))
       return true;
     if (directory == directory.parent_path())
       break;
@@ -123,7 +297,7 @@ bool insideProject(const fs::path &path) {
 
 bool isTestFile(const fs::path &path) {
   if (path.filename() == "test.transcript")
-    return true;
+    return projectTranscript(fs::absolute(path));
   if (insideProject(path))
     return false;
   return path.extension() == ".gti" ||
@@ -164,8 +338,9 @@ int tidy(const fs::path &root) {
                          displayPath(root));
       continue;
     }
-    if (extension == ".stdout") {
-      // name.stdout, or name.<revision>.stdout for a declared revision.
+    if (extension == ".stdout" || extension == ".stdin") {
+      // name.stdout, or name.<revision>.stdout for a declared revision (and
+      // the same for .stdin).
       const std::string stem = file.stem().string();
       const std::size_t dot = stem.find('.');
       const fs::path test = file.parent_path() / (stem.substr(0, dot) + ".gti");
@@ -214,6 +389,12 @@ int tidy(const fs::path &root) {
             "patterns, or a smaller test)");
       continue;
     }
+    if (file.filename() == "test.transcript" &&
+        !projectTranscript(fs::absolute(file))) {
+      problems.push_back(display + ": a test.transcript belongs in a "
+                                   "directory under a `project` directory");
+      continue;
+    }
     if (file.filename() == "test.transcript") {
       const std::optional<std::string> text = readFile(file);
       if (!text || text->rfind("// ", 0) != 0)
@@ -223,6 +404,12 @@ int tidy(const fs::path &root) {
       (void)parseProjectTranscript(text.value_or(""), errors);
       for (const std::string &error : errors)
         problems.push_back(display + ": " + error);
+      continue;
+    }
+    if (file.filename() == "gti-test.defaults") {
+      problems.push_back(display + ": defaults files are for directive-less "
+                                   "roots such as examples/; write the "
+                                   "directives in each test");
       continue;
     }
     if (insideProject(file))
@@ -272,7 +459,8 @@ int tidy(const fs::path &root) {
 
 // -- Worker protocol ----------------------------------------------------
 // Parent -> worker: "<index>\n". Worker -> parent: "<length>\n<payload>",
-// payload = "<status> <cpu> <wall>\n<n blessed>\n<blessed>...\n<detail>".
+// payload = "<status> <cpu> <wall> <cold> <in-process>\n<n blessed>\n
+// <blessed>...\n<detail>".
 
 bool writeAll(int fd, const std::string &text) {
   std::size_t written = 0;
@@ -292,7 +480,7 @@ bool writeAll(int fd, const std::string &text) {
 std::string encode(const Outcome &outcome) {
   std::ostringstream out;
   out << static_cast<int>(outcome.status) << ' ' << outcome.cpu << ' '
-      << outcome.wall << '\n'
+      << outcome.wall << ' ' << outcome.cold << ' ' << outcome.inProcess << '\n'
       << outcome.blessed.size() << '\n';
   for (const std::string &file : outcome.blessed)
     out << file << '\n';
@@ -306,7 +494,8 @@ Outcome decode(const std::string &payload) {
   std::istringstream in(payload);
   int status = 0;
   std::size_t blessed = 0;
-  in >> status >> outcome.cpu >> outcome.wall >> blessed;
+  in >> status >> outcome.cpu >> outcome.wall >> outcome.cold >>
+      outcome.inProcess >> blessed;
   outcome.status = static_cast<Status>(status);
   std::string line;
   std::getline(in, line);
@@ -436,6 +625,17 @@ int main(int argc, char **argv) {
       options.lsp = value();
     } else if (argument == "--json") {
       options.json = value();
+    } else if (argument == "--junit") {
+      options.junit = value();
+    } else if (argument == "--failed") {
+      options.failed = true;
+    } else if (argument == "--changed") {
+      // An optional base: the next argument, unless it is an option or a
+      // path (then it selects tests and the base is origin/main).
+      options.changed = "origin/main";
+      if (index + 1 < argc && argv[index + 1][0] != '-' &&
+          !fs::exists(argv[index + 1]))
+        options.changed = argv[++index];
     } else if (argument == "--jobs" || argument == "-j") {
       options.jobs = static_cast<unsigned>(std::stoul(value()));
     } else if (argument == "--shard") {
@@ -467,8 +667,36 @@ int main(int argc, char **argv) {
                  "and commit the result\n";
     return 2;
   }
-  if (options.tidy)
-    return tidy(options.root);
+  const fs::path self = fs::absolute(argv[0]);
+  const fs::path lspPath = options.lsp.value_or(
+      std::getenv("GTI_TEST_LSP") ? fs::path(std::getenv("GTI_TEST_LSP"))
+                                  : self.parent_path() / "gti_lsp");
+  // Without paths or --root: tests/ui, tests/project and tests/lsp (the
+  // last only when gti_lsp exists).
+  std::vector<fs::path> defaultRoots;
+  if (options.rootGiven) {
+    defaultRoots.push_back(options.root);
+  } else {
+    for (const char *root : {"tests/ui", "tests/project", "tests/lsp"}) {
+      if (!fs::exists(root))
+        continue;
+      if (std::string(root) == "tests/lsp" && !fs::exists(lspPath) &&
+          !options.tidy) {
+        std::cout << "gti-test: no gti_lsp at " << lspPath
+                  << "; tests/lsp skipped\n";
+        continue;
+      }
+      defaultRoots.push_back(root);
+    }
+    if (defaultRoots.empty())
+      defaultRoots.push_back(options.root);
+  }
+  if (options.tidy) {
+    int status = 0;
+    for (const fs::path &root : defaultRoots)
+      status = std::max(status, tidy(root));
+    return status;
+  }
 
   // Discovery and selection.
   std::vector<fs::path> roots;
@@ -480,7 +708,35 @@ int main(int argc, char **argv) {
       substrings.push_back(selector);
   }
   if (roots.empty())
-    roots.push_back(options.root);
+    roots = defaultRoots;
+  std::optional<std::set<fs::path>> changed;
+  if (options.changed) {
+    std::string error;
+    changed = changedFiles(*options.changed, error);
+    if (!changed) {
+      std::cerr << "gti-test: --changed " << *options.changed << ": " << error
+                << '\n';
+      return 2;
+    }
+  }
+  std::optional<std::set<fs::path>> previousFailures;
+  if (options.failed) {
+    const std::optional<std::string> record = readFile(lastRunPath(self));
+    if (!record) {
+      std::cerr << "gti-test: --failed: no record of a previous run at "
+                << lastRunPath(self) << '\n';
+      return 2;
+    }
+    previousFailures.emplace();
+    std::istringstream lines(*record);
+    // `STATUS<TAB>absolute path`, one line per test.
+    for (std::string line; std::getline(lines, line);) {
+      const std::size_t tab = line.find('\t');
+      if (tab != std::string::npos && line.substr(0, tab) != "PASS" &&
+          line.substr(0, tab) != "SKIP")
+        previousFailures->insert(line.substr(tab + 1));
+    }
+  }
   std::set<fs::path> seen;
   std::vector<TestFile> tests;
   for (const fs::path &root : roots) {
@@ -504,8 +760,21 @@ int main(int argc, char **argv) {
       if (options.shardCount != 0 &&
           stableHash(display) % options.shardCount != options.shardIndex - 1)
         continue;
-      tests.push_back(parseTestFile(absolute, display));
+      if (previousFailures && !previousFailures->contains(absolute))
+        continue;
+      TestFile test = parseTestFile(absolute, display);
+      if (changed && std::none_of(changed->begin(), changed->end(),
+                                  [&](const fs::path &file) {
+                                    return affects(test, file);
+                                  }))
+        continue;
+      tests.push_back(std::move(test));
     }
+  }
+  if ((changed || previousFailures) && tests.empty()) {
+    std::cout << "RESULT ok: no " << (changed ? "changed" : "failed")
+              << " tests\n";
+    return 0;
   }
   if (options.list) {
     for (const TestFile &test : tests)
@@ -513,16 +782,22 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  const fs::path self = fs::absolute(argv[0]);
   EngineOptions engineOptions;
   engineOptions.self = self;
   engineOptions.gti = options.gti.value_or(
       std::getenv("GTI_TEST_GTI") ? fs::path(std::getenv("GTI_TEST_GTI"))
                                   : self.parent_path() / "gti");
-  engineOptions.lsp = options.lsp.value_or(
-      std::getenv("GTI_TEST_LSP") ? fs::path(std::getenv("GTI_TEST_LSP"))
-                                  : self.parent_path() / "gti_lsp");
+  engineOptions.lsp = lspPath;
+  // New and modified tests are held to half their limit, measured warm.
+  engineOptions.budgetFraction = changed ? 0.5 : 1.0;
   engineOptions.isolate = options.isolate;
+  if (const auto mode = instrumentation()) {
+    engineOptions.instrumentation = *mode;
+  } else {
+    std::cerr << "gti-test: GTI_TEST_INSTRUMENTATION is address, undefined, "
+                 "address,undefined or thread\n";
+    return 2;
+  }
   engineOptions.bless = options.bless;
   const double scale = timeScale();
   engineOptions.limits.check *= scale;
@@ -615,14 +890,27 @@ int main(int argc, char **argv) {
   std::size_t finished = 0;
   const double start = wallSeconds();
   std::ofstream json;
+  std::ofstream lastRun(lastRunPath(self));
   if (options.json)
     json.open(*options.json);
   const std::string rerun = argv[0];
   std::size_t counts[6] = {};
   double totalCpu = 0;
 
+  std::size_t inProcess = 0;
   const auto record = [&](std::size_t index, Outcome outcome) {
     const TestFile &test = tests[index];
+    // --changed: a new or modified test must leave room under its limit.
+    const double limit = engineOptions.limits.forTest(test);
+    if (changed && !options.isolate && outcome.status == Status::Pass &&
+        !outcome.cold && outcome.cpu > limit / 2) {
+      outcome.status = Status::Fail;
+      outcome.detail =
+          "over budget: " + fixed(outcome.cpu) + " s of its " + fixed(limit) +
+          " s limit; a new or modified test must stay under half. Make it "
+          "cheaper, or move it to tests/slow/ with `//@ slow`.\n";
+    }
+    inProcess += outcome.inProcess ? 1 : 0;
     ++counts[static_cast<int>(outcome.status)];
     totalCpu += outcome.cpu;
     for (const std::string &file : outcome.blessed)
@@ -634,9 +922,8 @@ int main(int argc, char **argv) {
       for (std::string line; std::getline(detail, line);)
         std::cout << "  " << line << '\n';
       std::cout << "  rerun: " << rerun << ' ' << test.display << '\n';
-      // Transcripts have nothing to bless.
-      if (outcome.status == Status::Fail && test.mode != Mode::Project &&
-          test.mode != Mode::LspTranscript)
+      // LSP transcripts have nothing to bless.
+      if (outcome.status == Status::Fail && test.mode != Mode::LspTranscript)
         std::cout << "  bless: " << rerun << ' ' << test.display
                   << " --bless\n";
       std::cout.flush();
@@ -647,6 +934,7 @@ int main(int argc, char **argv) {
            << ",\"status\":" << jsonString(statusName(outcome.status))
            << ",\"cpu\":" << fixed(outcome.cpu, 3)
            << ",\"wall\":" << fixed(outcome.wall, 3) << "}\n";
+    lastRun << statusName(outcome.status) << '\t' << test.path.string() << '\n';
     outcomes[index] = std::move(outcome);
     ++finished;
   };
@@ -782,6 +1070,43 @@ int main(int argc, char **argv) {
   }
   std::error_code error;
   fs::remove_all(workRoot, error);
+  if (options.junit) {
+    std::ofstream junit(*options.junit);
+    std::size_t failures = 0;
+    std::size_t skipped = 0;
+    double seconds = 0;
+    for (const std::optional<Outcome> &outcome : outcomes) {
+      if (!outcome)
+        continue;
+      failures +=
+          outcome->status != Status::Pass && outcome->status != Status::Skip;
+      skipped += outcome->status == Status::Skip;
+      seconds += outcome->wall;
+    }
+    junit << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+          << "<testsuites>\n<testsuite name=\"gti-test\" tests=\""
+          << tests.size() << "\" failures=\"" << failures << "\" skipped=\""
+          << skipped << "\" time=\"" << fixed(seconds, 3) << "\">\n";
+    for (std::size_t index = 0; index < tests.size(); ++index) {
+      const TestFile &test = tests[index];
+      const Outcome outcome = outcomes[index].value_or(Outcome{});
+      junit << "  <testcase classname=\""
+            << xmlEscape(fs::path(test.display).parent_path().generic_string())
+            << "\" name=\"" << xmlEscape(test.display) << "\" time=\""
+            << fixed(outcome.wall, 3) << "\"";
+      if (outcome.status == Status::Pass) {
+        junit << "/>\n";
+      } else if (outcome.status == Status::Skip) {
+        junit << "><skipped/></testcase>\n";
+      } else {
+        junit << "><failure type=\"" << statusName(outcome.status)
+              << "\" message=\"" << statusName(outcome.status) << ' '
+              << modeName(test.mode) << "\">" << xmlEscape(outcome.detail)
+              << "</failure></testcase>\n";
+      }
+    }
+    junit << "</testsuite>\n</testsuites>\n";
+  }
 
   const double wall = wallSeconds() - start;
   std::size_t slowest = tests.size();
@@ -801,7 +1126,10 @@ int main(int argc, char **argv) {
             << counts[static_cast<int>(Status::Crash)] << " crash, "
             << counts[static_cast<int>(Status::Skip)] << " skipped; "
             << fixed(totalCpu, 1) << " cpu-s, " << fixed(wall, 1) << " wall-s, "
-            << jobs << " jobs" << (options.isolate ? ", isolated" : "");
+            << jobs << " jobs";
+  if (options.isolate)
+    std::cout << ", isolated (" << inProcess
+              << " in-process: parse modes, mir snapshots, C sections)";
   if (slowest < tests.size())
     std::cout << "; slowest " << tests[slowest].display << ' '
               << fixed(outcomes[slowest]->cpu) << 's';

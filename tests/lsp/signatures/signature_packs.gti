@@ -1,0 +1,23 @@
+// A pack in a function signature navigates to its binder; a trailing
+// parameter after the pack, or a broken signature, is reported and repaired.
+// (From function_signature_lsp_test.py.)
+//@ definition @use: @binder
+class Signature<R, /*@binder*/Args...> { using type = R(/*@use*/Args...);  public: Signature() = default; };
+class Forward<R, Args...> { Signature<R, Args...> field{};  public: Forward() = default; };
+class Types<Args...> { public: Types() = default; };
+int main() { Forward<void, int&> value{}; Types<> empty{}; return 0; }
+// --- step 2
+class Signature<R, Args...> { using type = R(Args..., int);  public: Signature() = default; };  //~ ERROR GTI-S2023
+class Forward<R, Args...> { Signature<R, Args...> field{};  public: Forward() = default; };
+class Types<Args...> { public: Types() = default; };
+int main() { Forward<void, int&> value{}; Types<> empty{}; return 0; }
+// --- step 3
+class Signature<R, Args...> { using type = R(Args...;  public: Signature() = default; };  //~ ERROR GTI-P0001
+class Forward<R, Args...> { Signature<R, Args...> field{};  public: Forward() = default; };
+class Types<Args...> { public: Types() = default; };
+int main() { Forward<void, int&> value{}; Types<> empty{}; return 0; }
+// --- step 4
+class Signature<R, Args...> { using type = R(Args...);  public: Signature() = default; };
+class Forward<R, Args...> { Signature<R, Args...> field{};  public: Forward() = default; };
+class Types<Args...> { public: Types() = default; };
+int main() { Forward<void, int&> value{}; Types<> empty{}; return 0; }

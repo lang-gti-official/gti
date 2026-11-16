@@ -1,0 +1,98 @@
+// The restoring APIs (swap, exchange, swap_elements) show their relocatable
+// requirement; a deleted move fails it, a self-swap is an overlapping
+// loan, and an incomplete call recovers. (From restoring_exchange_lsp_test.py.)
+//@ hover @swap: swap
+//@ hover @swap: relocatable
+//@ hover @exchange: exchange
+//@ hover @exchange: relocatable
+//@ hover @swap_elements: swap_elements
+//@ hover @swap_elements: relocatable
+import std.utility;
+import std.vector;
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+};
+int main() {
+  mut Resource first{};
+  mut Resource second{};
+  /*😀*/ std::/*@swap*/swap(first, second);
+  Resource old = std::/*@exchange*/exchange(first, Resource());
+  mut std::vector<Resource> values{};
+  values.push_back(std::move(old));
+  values./*@swap_elements*/swap_elements(std::size_t(0), std::size_t(0));
+  return 0;
+}
+// --- step 2
+import std.utility;
+import std.vector;
+class Resource {
+public:
+  Resource() {} Resource(Resource&& other) = delete;
+  Resource(Resource& other) = delete;
+};
+int main() {
+  mut Resource first{};
+  mut Resource second{};
+  /*😀*/ std::swap(first, second);  //~ ERROR GTI-S2029 relocatable
+  Resource old = std::exchange(first, Resource());  //~ ERROR GTI-S2029 //~ ERROR GTI-S2018
+  mut std::vector<Resource> values{};  //~ ERROR GTI-S2029
+  values.push_back(std::move(old));  //~ ERROR GTI-S2018
+  values.swap_elements(std::size_t(0), std::size_t(0));  //~ ERROR GTI-S2029
+  return 0;
+}
+// --- step 3
+import std.utility;
+import std.vector;
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+};
+int main() {
+  mut Resource first{};
+  mut Resource second{};
+  /*😀*/ std::swap(first, first);  //~ ERROR GTI-S2017 overlapping reference accesses
+  Resource old = std::exchange(first, Resource());
+  mut std::vector<Resource> values{};
+  values.push_back(std::move(old));
+  values.swap_elements(std::size_t(0), std::size_t(0));
+  return 0;
+}
+// --- step 4
+import std.utility;
+import std.vector;
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+};
+int main() {
+  mut Resource first{};
+  mut Resource second{};
+  /*😀*/ std::swap(first, second);
+  Resource old = std::exchange(;  //~ ERROR GTI-P0001
+  mut std::vector<Resource> values{};
+  values.push_back(std::move(old));  //~ ERROR GTI-S2001
+  values.swap_elements(std::size_t(0), std::size_t(0));
+  return 0;
+}
+// --- step 5
+import std.utility;
+import std.vector;
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+};
+int main() {
+  mut Resource first{};
+  mut Resource second{};
+  /*😀*/ std::swap(first, second);
+  Resource old = std::exchange(first, Resource());
+  mut std::vector<Resource> values{};
+  values.push_back(std::move(old));
+  values.swap_elements(std::size_t(0), std::size_t(0));
+  return 0;
+}

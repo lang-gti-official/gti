@@ -1,0 +1,6 @@
+// A scoped default selects the concurrent profile for this file only.
+mut int counter = 0;  //~ ERROR GTI-S2060
+int main() {
+  counter += 1;
+  return counter - 1;
+}

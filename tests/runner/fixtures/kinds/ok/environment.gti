@@ -1,0 +1,18 @@
+// env sets a variable in the program's environment.
+//@ run-fail
+//@ env: GTI_RUNNER_PROBE=42
+//@ exit-code: 42
+// --- main.gti
+extern "C" {
+  int32_t native_probe();
+}
+int main() {
+  return native_probe();
+}
+// --- probe.c
+#include <stdint.h>
+#include <stdlib.h>
+int32_t native_probe(void) {
+  const char *value = getenv("GTI_RUNNER_PROBE");
+  return value ? atoi(value) : -1;
+}

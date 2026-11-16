@@ -1,0 +1,38 @@
+// Copying a non-copyable element into a fresh array is reported, and
+// restoring the temporary clears it. (Converted from
+// array_publication_lsp_test.)
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+int main() {
+  Pinned original{};
+  Pinned values[1] = {Pinned()};
+  return 0;
+}
+// --- step 2
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+int main() {
+  Pinned original{};
+  Pinned values[1] = {original};  //~ ERROR GTI-S2003 Cannot copy array element of non-copyable type
+  return 0;
+}
+// --- step 3
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+int main() {
+  Pinned original{};
+  Pinned values[1] = {Pinned()};
+  return 0;
+}

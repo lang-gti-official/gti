@@ -21,8 +21,9 @@ int main() {
   `//@ stdin: line`. Stdout is always compared; absent means empty.
 - Several runs of one program: `//@ revisions: a b`, then `//@[a] args: x`
   and the like. The program is built once and run once per revision. Only
-  `run-pass`, `run-fail`, `stdout`, `stderr-contains`, `exit-code`, `args`
-  and `stdin` take a revision; a revision's directive replaces the shared
+  `run-pass`, `run-fail`, `stdout`, `stderr-contains`, `exit-code`,
+  `exit-signal`, `args`, `stdin` and `env` take a revision; a revision's
+  directive replaces the shared
   (unprefixed) one of that name. A revision's expected-output file is
   `name.<revision>.stdout`.
 - `//@ opt: O3` and `//@ only: linux|macos|arm64|x86_64` need `//@ reason: …`.
@@ -33,6 +34,22 @@ int main() {
   annotation), `//~?` (outside the test's files, e.g. in std). Every error and
   warning must be annotated, and every annotation matched.
 - Several files: `// --- main.gti`, `// --- other.gti`; the first is the entry.
+- Native companions (build/run tests): `// --- helper.c` sections compile as
+  C17 and `.cpp` sections as C++, linked like a project's `c-sources` and
+  `cpp-sources`; `.h` sections are only written (the test directory is on the
+  include path). `//@ native-args: -lm …` is what `gti main.gti -- …`
+  forwards, to the C++ compile and the link.
+- Analysis flags, spelled as `gti`'s: `//@ define: NAME` (`-D NAME`),
+  `//@ raw-pointer-audit: off|warn|strict`,
+  `//@ raw-pointer-audit-library-findings`.
+- `//@ stdlib-overlay: std/x.gti …` writes those sections (or exposes an
+  existing `std/…` file) into a private copy of the standard library,
+  registering each new `std/a/b.gti` as module `a.b`; it analyses with its own
+  caches, so it costs a cold standard library.
+- `//@ exit-signal: SIGABRT` (run-fail): the program dies of that signal.
+  `//@ env: NAME=value`: a variable in the program's environment. Binary
+  input and output: sibling `name.stdin` / `name.stdout`, compared bytewise;
+  `--bless` writes output with NUL, control or non-UTF-8 bytes to the file.
 - Parse only: `//@ parse-pass` / `//@ parse-fail` stop after the lexer and
   parser (syntax and recovery tests; annotations as above).
 - Analysis options, named after the compiler's: `//@ execution-profile:
@@ -80,23 +97,53 @@ int main() { return sum(1, 2) - 3; }
 ```
 
 Rendering snapshots run `gti` in a separate process (about 0.1 s without
-imports); keep them free of imports. Under `--isolate`, parse modes and mir
-snapshots still run in-process; llvm-ir uses `gti --emit-llvm`.
+imports); keep them free of imports. `--isolate` runs each case through a
+fresh `gti`, except parse modes, mir snapshots and tests with C sections, which
+still run in-process (the RESULT line counts them); llvm-ir uses
+`gti --emit-llvm` and C++ sections go after `--`.
 
 ```sh
-build-release/gti-test                          # everything in tests/ui
+build-release/gti-test                          # tests/ui, tests/project, tests/lsp
 build-release/gti-test tests/ui/stdlib/format   # a directory or file
 build-release/gti-test borrow                   # paths containing "borrow"
+build-release/gti-test --changed                # tests changed vs origin/main
+build-release/gti-test --changed HEAD~3         # ... vs another base
+build-release/gti-test --failed                 # the last run's failures
 build-release/gti-test tests/ui/x/y.gti --bless # rewrite annotations/stdout
 build-release/gti-test --tidy                   # validate directives/layout
 build-release/gti-test --isolate                # each case in a fresh gti
+build-release/gti-test --json r.json --junit r.xml  # reports
 ```
 
+`--changed [BASE]` selects tests whose file, sibling expected files
+(`name.*`), project directory, imported directories or defaults file differ
+from the merge base with BASE (default `origin/main`), uncommitted and
+untracked files included. It also enforces the budget for new work: a selected
+test that passes using more than half its limit (measured warm) fails, telling
+the author to make it cheaper or move it to `tests/slow/`. Without `--changed`
+older tests keep their full limit. `--failed` re-runs the failures recorded by
+the last run (`gti-test.last-run` beside the runner; `GTI_TEST_LAST_RUN`
+names another file).
+
 Editor behaviour is tested in [tests/lsp](../lsp/README.md), with markers
-and request expectations against `gti_lsp`; `gti-test` with no arguments
-still runs tests/ui only, so name `tests/lsp` (or both) explicitly. Driver,
-`gti.toml` and CLI behaviour is tested in [tests/project](../project/README.md)
-by command transcripts.
+and request expectations against `gti_lsp` (skipped, with a note, when the
+runner has no `gti_lsp` beside it). Driver, `gti.toml` and CLI behaviour is
+tested in [tests/project](../project/README.md) by command transcripts.
+
+Directive-less roots (`examples/`, run by `gti_test_examples`) take defaults
+from a `gti-test.defaults` file above them: `//@` lines for every test below,
+and after `// --- a.gti b.gti` only for those files. It sets only analysis
+options and `//@ allow-warnings` (unannotated warnings do not fail); tidy
+rejects it under a test root. A single-file test that imports
+`"dir/x.gti"` gets the sibling `dir/` copied beside it.
+
+Sanitizer tier: run `gti_test_ui` in a tree built with
+`-fsanitize=address,undefined`; a sanitized `gti-test` scales its limits by 5
+unless `GTI_TEST_TIME_SCALE` is set. `GTI_TEST_INSTRUMENTATION=address,undefined`
+(or `address`, `undefined`, `thread`) also builds every program with the
+driver's LLVM sanitizer instrumentation, which needs an upstream Clang
+(`GTI_CXX`, `GTI_CC`); tests with `native-args` and `--isolate` builds stay
+uninstrumented.
 
 `--bless` refuses under `CI`, never accepts an internal compiler error or
 turns a declared pass test into an error test. Review its diff.

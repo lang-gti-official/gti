@@ -84,10 +84,13 @@ struct LspResult {
                                    const std::filesystem::path &directory,
                                    double deadline);
 
-// Runs a `.jsonl` transcript against a fresh server.
+// Runs a `.jsonl` transcript against a fresh server. Once the server has
+// published diagnostics, an expectation fails after `quiet` seconds without
+// any message.
 [[nodiscard]] LspResult
 runLspTranscript(const std::filesystem::path &executable, const TestFile &test,
-                 const std::filesystem::path &directory, double deadline);
+                 const std::filesystem::path &directory, double deadline,
+                 double quiet);
 
 // Wall-clock seconds, the clock deadlines use.
 [[nodiscard]] double lspClock();
