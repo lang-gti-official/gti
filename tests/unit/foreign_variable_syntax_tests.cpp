@@ -2,6 +2,7 @@
 #include "gti/formatter.h"
 #include "gti/lexer.h"
 #include "gti/parser.h"
+#include "unit_test.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -91,8 +92,9 @@ void testInitializerRejectionAndRecovery() {
 }
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(foreign_variable_syntax) {
   testDeclarationsAndFormatting();
   testInitializerRejectionAndRecovery();
   std::cout << "Foreign variable syntax tests passed\n";
+  return 0;
 }

@@ -1,4 +1,5 @@
-#include "../src/compiler/llvm/instrumentation.h"
+#include "../../src/compiler/llvm/instrumentation.h"
+#include "unit_test.h"
 
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Constants.h>
@@ -117,7 +118,7 @@ void atomicControls(llvm::Module &module) {
   }
 }
 
-int main() {
+GTI_UNIT_TEST(llvm_instrumentation) {
   for (const auto invalid : {-1, 5, 99}) {
     bool rejected = false;
     try {
@@ -247,4 +248,5 @@ int main() {
   std::cout
       << controls
       << " LLVM mode/layout/handler controls plus rejection preflight passed\n";
+  return 0;
 }

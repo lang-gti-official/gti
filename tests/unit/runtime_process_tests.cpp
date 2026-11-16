@@ -1,4 +1,5 @@
 #include "gti/runtime.h"
+#include "unit_test.h"
 
 #include <cerrno>
 #include <csignal>
@@ -34,7 +35,7 @@ gti_process_error_v1 run(std::string_view encoded,
 
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(runtime_process_boundary) {
   std::int32_t kind = -1;
   std::int32_t value = -1;
   std::int32_t native = -1;

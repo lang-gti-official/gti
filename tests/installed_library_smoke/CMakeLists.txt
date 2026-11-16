@@ -15,12 +15,12 @@ target_link_libraries(gti_installed_charconv_smoke PRIVATE GTI::runtime)
 target_compile_features(gti_installed_charconv_smoke PRIVATE cxx_std_20)
 add_test(NAME installed_charconv_boundary COMMAND gti_installed_charconv_smoke)
 
-add_executable(gti_installed_memory_smoke ../resource_memory_runtime_tests.cpp)
+add_executable(gti_installed_memory_smoke ../unit/resource_memory_runtime_tests.cpp)
 target_link_libraries(gti_installed_memory_smoke PRIVATE GTI::runtime)
 target_compile_features(gti_installed_memory_smoke PRIVATE cxx_std_20)
 add_test(NAME installed_memory_boundary COMMAND gti_installed_memory_smoke)
 
-add_executable(gti_installed_filesystem_smoke ../runtime_filesystem_tests.cpp)
+add_executable(gti_installed_filesystem_smoke ../unit/runtime_filesystem_tests.cpp)
 target_link_libraries(gti_installed_filesystem_smoke PRIVATE GTI::runtime)
 target_compile_features(gti_installed_filesystem_smoke PRIVATE cxx_std_20)
 add_test(NAME installed_filesystem_boundary COMMAND gti_installed_filesystem_smoke)
@@ -64,7 +64,7 @@ target_link_libraries(gti_installed_llvm_backend_smoke
 add_test(NAME installed_llvm_backend_library
          COMMAND gti_installed_llvm_backend_smoke)
 
-add_executable(gti_installed_runtime_execution_smoke ../runtime_execution_tests.cpp)
+add_executable(gti_installed_runtime_execution_smoke ../unit/runtime_execution_tests.cpp)
 target_link_libraries(gti_installed_runtime_execution_smoke PRIVATE GTI::runtime)
 add_test(NAME installed_runtime_execution_boundary COMMAND gti_installed_runtime_execution_smoke)
 

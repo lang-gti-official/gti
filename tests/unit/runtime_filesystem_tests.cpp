@@ -1,4 +1,5 @@
 #include "gti/filesystem.h"
+#include "unit_test.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -18,7 +19,7 @@ gti_c_string_view view(std::string_view input) {
 }
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(filesystem_runtime_boundary) {
   uint32_t type = 123;
   uint64_t count = 456;
   int64_t handle = 789;

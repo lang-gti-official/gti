@@ -343,7 +343,7 @@ python3 scripts/remote_runner.py --runner ubuntu-6 configure
 python3 scripts/remote_runner.py --runner ubuntu-8 configure
 python3 scripts/remote_runner.py hosts
 python3 scripts/remote_runner.py status --all
-python3 scripts/remote_runner.py run --target gti_runtime_failure_tests --ctest-regex '^runtime_failure_boundary$'
+python3 scripts/remote_runner.py run --target gti_unit_tests --ctest-regex '^gti_unit_tests$'
 ```
 
 For a compiler feature, build the compiler and applicable test targets in the

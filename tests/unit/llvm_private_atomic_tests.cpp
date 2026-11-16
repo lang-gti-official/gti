@@ -1,4 +1,5 @@
-#include "../src/compiler/llvm/private_atomics.h"
+#include "../../src/compiler/llvm/private_atomics.h"
+#include "unit_test.h"
 #include <iostream>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Config/llvm-config.h>
@@ -292,7 +293,7 @@ void check(Shape shape, llvm::AtomicRMWInst::BinOp operation, bool accepted) {
               "old/new mismatch after promotion");
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(llvm_private_atomics) {
   try {
     for (auto operation : {llvm::AtomicRMWInst::Add, llvm::AtomicRMWInst::Sub,
                            llvm::AtomicRMWInst::And, llvm::AtomicRMWInst::Or,
@@ -348,4 +349,5 @@ int main() {
     std::cerr << error.what() << '\n';
     return 1;
   }
+  return 0;
 }

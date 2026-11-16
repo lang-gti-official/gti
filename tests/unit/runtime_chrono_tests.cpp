@@ -1,4 +1,5 @@
 #include "gti/chrono.h"
+#include "unit_test.h"
 
 #include "chrono_internal.h"
 
@@ -78,7 +79,7 @@ void testHostClocks() {
 
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(chrono_runtime_boundary) {
   testCompositionBoundary();
   testHostClocks();
   return 0;

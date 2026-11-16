@@ -1,4 +1,5 @@
-#include "../src/compiler/llvm/checked_offsets.h"
+#include "../../src/compiler/llvm/checked_offsets.h"
+#include "unit_test.h"
 #include <iostream>
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Config/llvm-config.h>
@@ -292,7 +293,7 @@ void check(Shape shape, bool admitted) {
     }
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(llvm_checked_offsets) {
   try {
     for (unsigned kind = 0; kind < 6; ++kind) {
       Shape shape;
@@ -337,4 +338,5 @@ int main() {
     std::cerr << error.what() << '\n';
     return 1;
   }
+  return 0;
 }

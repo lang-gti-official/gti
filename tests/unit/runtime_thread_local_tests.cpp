@@ -1,4 +1,5 @@
 #include "gti/runtime_thread.hpp"
+#include "unit_test.h"
 
 #include <array>
 #include <cstdlib>
@@ -168,8 +169,9 @@ void explicitAttachmentBoundary() {
 }
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(thread_local_runtime_registry) {
   explicitAttachmentBoundary();
   ordinaryAndFailureExit();
   pendingResultFailure();
+  return 0;
 }

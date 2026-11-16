@@ -1,5 +1,6 @@
 #include "cthread_mutex_internal.h"
 #include "gti/cthread.h"
+#include "unit_test.h"
 
 #include <array>
 #include <atomic>
@@ -227,7 +228,7 @@ void publication() {
 }
 } // namespace
 
-int main(int argc, char **argv) {
+GTI_UNIT_TEST(cthread_mutex_boundary) {
   if (argc == 2 && std::string_view(argv[1]) == "destroy-locked") {
     std::set_terminate([] { std::_Exit(86); });
     std::uint64_t handle = 0;

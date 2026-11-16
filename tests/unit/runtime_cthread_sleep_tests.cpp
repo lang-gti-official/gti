@@ -1,5 +1,6 @@
 #include "cthread_sleep_internal.h"
 #include "gti/cthread.h"
+#include "unit_test.h"
 
 #include <cstdint>
 #include <initializer_list>
@@ -198,7 +199,7 @@ void testNativeInterruption() {
 }
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(cthread_sleep_boundary) {
   testPublication();
   testValidation();
   testNative();

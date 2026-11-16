@@ -25,3 +25,26 @@ endif()
 math(EXPR gti_test_time_scale "2 * ${gti_test_timeout_scale}")
 set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
+
+# gti_unit_tests: every tests/unit/*.cpp linked into one executable of C++
+# unit tests of library code (runtime, driver, LLVM passes, formatter). A file
+# declares GTI_UNIT_TEST cases (tests/unit/unit_test.h); adding one needs no
+# CMake edit. `gti_unit_tests --list`, `--test NAME`.
+file(GLOB gti_unit_sources CONFIGURE_DEPENDS
+  "${PROJECT_SOURCE_DIR}/tests/unit/*.cpp")
+add_executable(gti_unit_tests ${gti_unit_sources})
+target_include_directories(gti_unit_tests PRIVATE
+  "${PROJECT_SOURCE_DIR}/tests/unit" "${PROJECT_SOURCE_DIR}/runtime/src")
+target_include_directories(gti_unit_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_compile_features(gti_unit_tests PRIVATE cxx_std_23)
+target_compile_definitions(gti_unit_tests PRIVATE GTI_UNIT_TESTS_RUNNER)
+target_link_libraries(gti_unit_tests PRIVATE
+  gti_driver gti_llvm_backend gti_runtime Threads::Threads
+  ${CMAKE_DL_LIBS})
+# The embedding context checks are assertions.
+set_source_files_properties(
+  "${PROJECT_SOURCE_DIR}/tests/unit/runtime_embedding_tests.cpp"
+  PROPERTIES COMPILE_OPTIONS "-UNDEBUG")
+add_test(NAME gti_unit_tests COMMAND gti_unit_tests)
+set_tests_properties(gti_unit_tests PROPERTIES TIMEOUT 300
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")

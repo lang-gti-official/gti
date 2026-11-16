@@ -2,6 +2,7 @@
 #include "gti/driver/manifest.h"
 #include "gti/driver/project_facts.h"
 #include "gti/driver/registry.h"
+#include "unit_test.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -382,7 +383,7 @@ void testArchives() {
   }
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(package_registry_model) {
   Temporary temporary;
   const char *old = std::getenv("GTI_PACKAGE_CACHE");
   const std::string saved = old ? old : "";
