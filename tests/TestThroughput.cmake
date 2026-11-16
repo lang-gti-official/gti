@@ -102,6 +102,7 @@ if(Python3_Interpreter_FOUND)
     borrowed_enum_terminal_contexts_runtime
     contextual_borrowed_construction_runtime
     consuming_range_runtime
+    range_structured_bindings_runtime
     enum_replacement_runtime
     enum_selector_runtime
     protected_member_runtime

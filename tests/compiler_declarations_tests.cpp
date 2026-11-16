@@ -11488,7 +11488,7 @@ struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b
         "invalid-range-pattern.gti",
         rangePrelude + "int main() { mut Item items[1] = {Item(1, 2)}; " +
             body + " return 0; }");
-    expect(!checked.canGenerateCode(), reason);
+    expect(!checked.canGenerateCode(), std::string(reason));
     expect(std::none_of(checked.diagnostics.begin(), checked.diagnostics.end(),
                         [](const auto &d) { return d.code == "GTI-B0001"; }),
            "invalid range patterns must not cause internal diagnostics");

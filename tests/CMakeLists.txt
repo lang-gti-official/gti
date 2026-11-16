@@ -5616,6 +5616,18 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(consuming_range_lsp PROPERTIES TIMEOUT 120)
   endif()
 
+  add_test(NAME range_structured_bindings_runtime
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/range_structured_bindings_runtime_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(range_structured_bindings_runtime PROPERTIES TIMEOUT 300)
+  add_test(NAME range_structured_bindings_performance
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/range_structured_bindings_performance_test.py" "$<TARGET_FILE:gti>")
+  set_tests_properties(range_structured_bindings_performance PROPERTIES TIMEOUT 600)
+  if(TARGET gti_lsp)
+    add_test(NAME range_structured_bindings_lsp
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/range_structured_bindings_lsp_test.py" "$<TARGET_FILE:gti_lsp>")
+    set_tests_properties(range_structured_bindings_lsp PROPERTIES TIMEOUT 120)
+  endif()
+
   add_test(NAME compact_owner_layout_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/compact_owner_layout_runtime_test.py"
@@ -7032,11 +7044,3 @@ if(GTI_RELEASE_BUILD)
     "GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
   )
 endif()
-
-add_test(NAME range_structured_bindings_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/range_structured_bindings_runtime_test.py" $<TARGET_FILE:gti>)
-set_tests_properties(range_structured_bindings_runtime PROPERTIES TIMEOUT 300)
-
-add_test(NAME range_structured_bindings_lsp
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/range_structured_bindings_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-set_tests_properties(range_structured_bindings_lsp PROPERTIES TIMEOUT 120)

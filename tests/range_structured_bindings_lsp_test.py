@@ -11,8 +11,7 @@ from lsp_smoke_test import LspSession, lsp_position
 SOURCE = """struct Entry { int key; int value; Entry(int k, int v) : key(k), value(v) {} };
 int main() {
   Entry entries[1] = {Entry(1, 2)};
-  // supplementary character: 😀
-  for (auto& [key, value] : entries) { int result = key + value; }
+  /* 😀 */ for (auto& [key, value] : entries) { int result = key + value; }
   for (auto [key, value] : entries) { int result = key + value; }
   return 0;
 }
@@ -87,7 +86,8 @@ def main():
             errors = change(3, SOURCE.replace("[key, value]", "[key]", 1))
             assert errors and not any(item.get("code") == "GTI-B0001" for item in errors), errors
             clean(change(4, SOURCE))
-            assert change(5, SOURCE.replace("[key, value]", "[key, ]", 1))
+            errors = change(5, SOURCE.replace("[key, value]", "[key, ]", 1))
+            assert errors and not any(item.get("code") == "GTI-B0001" for item in errors), errors
             clean(change(6, SOURCE))
         finally:
             session.close()
