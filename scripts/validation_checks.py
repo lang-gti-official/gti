@@ -419,10 +419,15 @@ def shard_assignment(names, durations, shards, default=30.0):
 
 
 def merge_shards(reports, platforms):
-    """Prove that each platform's shards ran exactly its whole inventory once."""
+    """Prove that each platform's shards ran exactly its whole inventory once.
+
+    A `platform:test-set` entry (the slow tier's `linux:o3`, say) selects that
+    platform's reports for one test set, so one run may prove several sets."""
     summary = {}
     for platform in sorted(platforms):
-        rows = [report for report in reports if report.get("platform") == platform]
+        host, _, test_set = platform.partition(":")
+        rows = [report for report in reports if report.get("platform") == host
+                and (not test_set or report.get("test_set") == test_set)]
         if not rows:
             raise ValueError("No shard results for required platform " + platform)
         first = rows[0]
@@ -555,26 +560,30 @@ SHARDED_AGGREGATES = {
     "body_analysis_order": "body_analysis_order_",
     "instance_reuse": "instance_reuse_",
 }
-# Post-integration full validation runs every registered test. The merge
-# gate's shards skip these: C++-backend-only variants of tests whose
-# shipped-default (c++23) or primary entry still runs, and generated-C++
-# corpus censuses. They stay in full validation; this is the gate's test set,
-# not a quarantine, and `--test-set full` restores them.
+# Post-integration full validation runs every registered per-commit test. The
+# merge gate's shards also skip these trusted-body corpus partitions; they
+# stay in the slow tier. This is the gate's test set, not a quarantine.
 GATE_EXCLUDED = {
     "trusted_body_analysis_1", "trusted_body_analysis_2", "trusted_body_analysis_3",
-    "lowered_program_corpus_census",
 }
-# The C++ backend is frozen and built only with GTI_ENABLE_CPP_BACKEND. Tests
-# whose only subject is that backend's generated text or its emitter run only
-# in the hand-dispatched C++ job (cpp-backend.yml, GTI_TEST_BACKENDS=cpp),
-# never in the gate or in full validation. Harness-driven C++ modes are selected by GTI_TEST_BACKENDS in
-# tests/backend_modes.py; these are the CTest entries that exist only for it.
-CPP_ONLY_PREFIXES = ("cpp_mir_", "cpp_debug_artifacts", "lowered_program_corpus_census")
 # macOS does not repeat the Linux inventory. It runs the `darwin` set from
 # tests/ci_darwin_tests.json: what differs on the platform. Linux proves the
 # rest once. See AGENTS.md "Validation".
 DARWIN_TESTS = "tests/ci_darwin_tests.json"
-TEST_SETS = ("gate", "full", "darwin", "cpp")
+# Tests labelled `slow` (tests/TestThroughput.cmake) leave per-commit full
+# validation for the daily slow tier (.github/workflows/slow.yml), which also
+# re-runs the per-commit runtime harnesses at -O3. Per commit, runtime
+# harnesses run at -O0 only (tests/backend_modes.py GTI_TEST_LLVM_LEVELS).
+SLOW_LABEL = "slow"
+# Each test set's GTI_TEST_LLVM_LEVELS, set by the shard runner itself so a
+# caller's environment cannot change what a set proves.
+TEST_SET_LEVELS = {"gate": "O0", "full": "O0", "darwin": "O0",
+                   "slow": "O0,O3", "darwin-slow": "O0,O3", "o3": "O3", "darwin-o3": "O3"}
+TEST_SETS = tuple(TEST_SET_LEVELS)
+# A harness that imports one of these follows GTI_TEST_LLVM_LEVELS; the -O3
+# re-run selects exactly those tests.
+LEVEL_POLICY_MODULES = {"backend_modes", "backend_execution"}
+IMPORTED_MODULE = re.compile(r"^\s*(?:from\s+([A-Za-z_][A-Za-z0-9_]*)\s+import|import\s+([A-Za-z_][A-Za-z0-9_]*))", re.M)
 
 
 def darwin_set(root):
@@ -584,16 +593,64 @@ def darwin_set(root):
     return tuple(table["prefixes"]), set(table["tests"])
 
 
-def cpp_only(name):
-    return any(name.startswith(prefix) for prefix in CPP_ONLY_PREFIXES)
+def labelled(document, label):
+    """The registered test names that carry a CTest label."""
+    names = set()
+    for row in document.get("tests", []):
+        for prop in row.get("properties", []):
+            if prop.get("name") == "LABELS" and label in (prop.get("value") or []):
+                names.add(row["name"])
+    return names
 
 
-def shard_inventory(expected, test_set="full", darwin=None):
+def level_sensitive(document, root):
+    """Registered tests whose Python harness follows GTI_TEST_LLVM_LEVELS.
+
+    A harness follows it when it imports tests/backend_modes.py or
+    tests/backend_execution.py, directly or through other modules beside it."""
+    root = Path(root).resolve()
+    cache = {}
+
+    def follows(path, seen):
+        if path in cache:
+            return cache[path]
+        if path in seen or not path.is_file():
+            return False
+        seen.add(path)
+        found = False
+        for match in IMPORTED_MODULE.finditer(path.read_text(errors="replace")):
+            module = match.group(1) or match.group(2)
+            if module in LEVEL_POLICY_MODULES:
+                found = True
+                break
+            for directory in (path.parent, root / "tests"):
+                if follows(directory / (module + ".py"), seen):
+                    found = True
+                    break
+            if found:
+                break
+        cache[path] = found
+        return found
+
+    names = set()
+    for row in document.get("tests", []):
+        for argument in row.get("command", []) or []:
+            path = Path(argument)
+            if path.suffix == ".py" and path.is_absolute() and path.resolve().is_relative_to(root / "tests") \
+                    and follows(path.resolve(), set()):
+                names.add(row["name"])
+                break
+    return names
+
+
+def shard_inventory(expected, test_set="full", darwin=None, slow=frozenset(), sensitive=frozenset()):
     """The names a sharded run of `test_set` executes, from the registered inventory.
 
     `darwin` is (prefixes, names) from tests/ci_darwin_tests.json; the darwin
-    set needs it. A listed name that is not registered is an error, so the
-    list cannot silently rot.
+    sets need it. A listed name that is not registered is an error, so the
+    list cannot silently rot. `slow` names the tests labelled `slow`, which
+    only the slow sets run; `sensitive` names the tests the -O3 re-run (the
+    `o3` sets) repeats.
     """
     if test_set not in TEST_SETS:
         raise ValueError("unknown test set")
@@ -601,21 +658,23 @@ def shard_inventory(expected, test_set="full", darwin=None):
     for aggregate, prefix in SHARDED_AGGREGATES.items():
         if aggregate in names and any(name.startswith(prefix) for name in names):
             names.discard(aggregate)
-    if test_set == "cpp":
-        return names
-    names = {name for name in names if not cpp_only(name)}
-    if test_set == "gate":
-        missing = GATE_EXCLUDED - set(expected)
-        if missing:
-            raise ValueError("Gate exclusions name unregistered tests; update GATE_EXCLUDED: " + ", ".join(sorted(missing)))
-        names -= GATE_EXCLUDED
-    elif test_set == "darwin":
+    if test_set.startswith("darwin"):
         prefixes, listed = darwin or ((), set())
         stale = listed - set(expected)
         if stale:
             raise ValueError("tests/ci_darwin_tests.json names unregistered tests: " + ", ".join(sorted(stale)))
         names = {name for name in names
                  if name == SMOKE or name in listed or any(name.startswith(prefix) for prefix in prefixes)}
+    if test_set in ("slow", "darwin-slow"):
+        return names & set(slow)
+    names -= set(slow)
+    if test_set in ("o3", "darwin-o3"):
+        return names & set(sensitive)
+    if test_set == "gate":
+        missing = GATE_EXCLUDED - set(expected)
+        if missing:
+            raise ValueError("Gate exclusions name unregistered tests; update GATE_EXCLUDED: " + ", ".join(sorted(missing)))
+        names -= GATE_EXCLUDED
     return names
 
 
@@ -630,7 +689,8 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
     excluded = set(quarantined_on(load_quarantine(root), sys.platform))
     if excluded - expected:
         raise ValueError("Quarantined tests are not registered; remove them: " + ", ".join(sorted(excluded - expected)))
-    candidates = shard_inventory(expected, test_set, darwin_set(root) if test_set == "darwin" else None)
+    candidates = shard_inventory(expected, test_set, darwin_set(root) if test_set.startswith("darwin") else None,
+                                 labelled(document, SLOW_LABEL), level_sensitive(document, root))
     table = json.loads(Path(durations).read_text())
     selected = shard_assignment(candidates - excluded, table["seconds"], shards, table.get("default_seconds", 30))[index]
     skipped = []
@@ -640,13 +700,14 @@ def run_shard(root, build, shards, index, durations, jobs=4, log=None, junit=Non
             subprocess.run(["ctest", "--test-dir", str(build), "--no-tests=error", "--output-on-failure",
                             "--parallel", str(jobs), "--output-junit", str(report),
                             "-R", "^(" + "|".join(re.escape(name) for name in selected) + ")$"],
-                           check=True, stdout=log, stderr=subprocess.STDOUT)
+                           check=True, stdout=log, stderr=subprocess.STDOUT,
+                           env=dict(os.environ, GTI_TEST_LLVM_LEVELS=TEST_SET_LEVELS[test_set]))
             skipped = results(report, set(selected), set(selected) & {SMOKE})
     smoke_results = smoke(root, build, log) if index == 0 else []
     return {"head": git(root, "rev-parse", "HEAD"), "tree": git(root, "rev-parse", "HEAD^{tree}"),
             "platform": sys.platform, "build_type": cache["CMAKE_BUILD_TYPE"], "scope": "shard",
             "shards": shards, "index": index, "inventory": sorted(candidates), "tests": selected,
-            "registered": sorted(expected), "test_set": test_set,
+            "registered": sorted(expected), "test_set": test_set, "levels": TEST_SET_LEVELS[test_set],
             "quarantined": sorted(excluded), "skipped": skipped, "smoke": smoke_results}
 
 

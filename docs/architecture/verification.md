@@ -182,14 +182,17 @@ a watcher, and a trace assertion that body-only saves do not repeat analysis.
 
 The affected source-module, driver, cache and LSP consumers, `compiler_pipeline`
 and native O0/O3 smoke remain focused acceptance obligations. Post-integration
-full validation proves the complete inventory on Linux x64 and the `darwin`
-set on macOS arm64 (what differs on the platform) before the change can
-reach nightly. The frozen C++ backend is not part of validation; it is built
-and tested only by the hand-dispatched `cpp-backend.yml`.
+full validation proves the per-commit inventory (every registered test except
+those labelled `slow`) on Linux x64 and the `darwin` set on macOS arm64 (what
+differs on the platform) before the change can reach nightly; the daily slow
+tier (`slow.yml`) proves the `slow` set and the `-O3` re-run on the nightly
+commit before a beta cut or stable promotion. The frozen C++ backend is not
+part of validation; its tests and `cpp-backend.yml` were removed on
+2026-11-16 ([test-suite redesign](../plans/test-suite-redesign.md)).
 
 Runtime harnesses take their modes from `tests/backend_modes.py`
-(`native_modes()`: `llvm-O0` and `llvm-O3` under the default
-`GTI_TEST_BACKENDS=llvm`, `cpp-c++23-O3` under `cpp`, all three under `both`)
+(`native_modes()`: LLVM at the levels `GTI_TEST_LLVM_LEVELS` selects, `O0` by
+default and per commit, `O0,O3` or `O3` in the slow tier)
 and never spell `--std`, `--backend cpp` or a bare `--keep-cpp` themselves.
 Assertions on the emitted C++ text run only for modes where `is_cpp_mode(flags)`
 holds, with `keep_cpp(flags)` requesting the text; `cpp_text_modes()` serves
@@ -9886,6 +9889,24 @@ stable stay sanitizer-gated while main pushes no longer wait three hours for
 evidence. Sanitizer jobs have their own runner budgets; one job's successful
 build does not satisfy another job's test gate.
 
+The daily slow tier (`slow.yml`, since 2026-11-16) is the same kind of
+evidence on the same commit. Per-commit full validation runs runtime
+harnesses at `-O0` only and leaves out the tests labelled `slow`
+(`gti_slow_test_patterns` in `tests/TestThroughput.cmake`: whole-corpus walks,
+raw-pointer-audit independence, the MIR mutation loops, the LLVM execution
+matrices over 100 seconds, the LLVM coverage-evidence audit and the
+load-sensitive `single_body_compile_scaling`). The slow tier runs that set at
+`-O0` and `-O3` and re-runs every per-commit harness that follows
+`tests/backend_modes.py` at `-O3`, on Linux and (for the `darwin` set) macOS;
+`merge-shards` proves each set ran its whole inventory once. Its
+`Slow tier verdict (<commit>)` is required by the release train exactly like
+the sanitizer verdict, a failure on the nightly commit opens its own
+`main-broken` issue ("Slow tier on the nightly commit is failing"), and it
+never gates `main`, `tip` or nightly. The tradeoff, accepted by the owner, is
+that an `-O3`-only miscompile or a corpus-invariant violation is found within
+a day rather than on the merging head
+([test-suite redesign](../plans/test-suite-redesign.md)).
+
 **Advisory checks.** Some checks guard the repository's own bookkeeping rather than the product:
 a pull request's `Validation:` block, the stdlib surface manifest review,
 reviewed census counts, and ownership-map coverage. Each broke on
@@ -11701,7 +11722,7 @@ as the tests they inspect.
 python3 scripts/build_window.py --kind suite -- \
     ctest --test-dir build --parallel 4 --output-on-failure -L feedback-fast
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full -LE cpp-backend
+    ctest --test-dir build --parallel 4 --output-on-failure -L coverage-full -LE slow
 python3 scripts/build_window.py --kind suite -- \
     python3 tests/owning_function_runtime_test.py build/gti --jobs 1
 ```
@@ -11721,7 +11742,7 @@ cmake -S . -B build -DGTI_TEST_CASE_JOBS=4
 python3 scripts/build_window.py --kind build -- \
     cmake --build build --parallel 12
 python3 scripts/build_window.py --kind suite -- \
-    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure -LE cpp-backend
+    ctest --test-dir build --parallel 12 --test-load 12 --output-on-failure -LE slow
 ```
 
 `--test-load` makes CTest wait to start a test while the host's load average

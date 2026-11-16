@@ -109,12 +109,12 @@ class SourceStdlibCI(unittest.TestCase):
         with self.assertRaises(ValueError):
             source.selected_tests(['runtime_case'], inventory, [])
 
-    def test_cpp_backend_owners_are_dropped_not_rejected(self):
+    def test_slow_tier_owners_are_dropped_not_rejected(self):
         disabled = {'name': 'DISABLED', 'value': True}
         inventory = {'tests': [
             {'name': 'compiler_pipeline'},
             {'name': 'lowered_program_corpus_census',
-             'properties': [disabled, {'name': 'LABELS', 'value': ['coverage-full', 'cpp-backend']}]},
+             'properties': [{'name': 'LABELS', 'value': ['coverage-full', 'slow']}]},
             {'name': 'runtime_case', 'properties': [disabled, {'name': 'LABELS', 'value': ['coverage-full']}]}]}
         self.assertEqual(source.selected_tests(['compiler_pipeline', 'lowered_program_corpus_census'],
                                                inventory, []), {'compiler_pipeline'})

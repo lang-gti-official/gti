@@ -144,12 +144,11 @@ invalid setup cheaply; they do not replace required broad coverage.
    `python3 scripts/build_window.py --kind build|suite -- <command>`, so
    concurrent sessions share the host; focused `-R` selections and
    single-file compiles run directly. Local runs follow the CI test policy:
-   a configured tree exports `GTI_TEST_BACKENDS=llvm` to every harness, so
-   runtime harnesses prove the shipped backend. The frozen C++ backend is not
-   built (`GTI_ENABLE_CPP_BACKEND` is off) and no general check may need it;
-   `-LE cpp-backend` stays harmless. Only deliberate C++ backend work
-   configures `-DGTI_ENABLE_CPP_BACKEND=ON -DGTI_TEST_BACKENDS=cpp`, runs
-   `-L cpp-backend`, and dispatches `cpp-backend.yml` by hand.
+   runtime harnesses run on LLVM, the shipped backend, at `-O0` unless
+   `GTI_TEST_LLVM_LEVELS` (for example `O0,O3`) selects more. The frozen C++
+   backend is not built (`GTI_ENABLE_CPP_BACKEND` is off) and has no tests.
+   Tests labelled `slow` belong to the daily slow tier; leave them out of broad
+   local runs with `-LE slow`.
 3. Select completion coverage from the changed invariant and affected consumer
    graph, as described in the canonical verification document. An independent
    isolated subsystem change can complete with owning, cross-phase and required

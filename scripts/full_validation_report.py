@@ -23,6 +23,7 @@ import sys
 DEFAULT_LABEL = "main-broken"
 DEFAULT_TITLE = "Full validation of main is failing"
 SANITIZER_TITLE = "Sanitizers on the nightly commit are failing"
+SLOW_TITLE = "Slow tier on the nightly commit is failing"
 SHA = re.compile(r"[0-9a-f]{40}")
 
 
@@ -54,6 +55,18 @@ def body(run_url: str, before: str, sha: str, status: str, label: str,
             "day, or dispatch sanitizers.yml with the fixed commit. This issue is updated on each later "
             "failure and closed automatically when the sanitizers pass.\n"
         )
+    if label == DEFAULT_LABEL and title == SLOW_TITLE:
+        return (
+            f"The daily slow tier **{status}** on the nightly commit `{sha}`.\n\n"
+            f"- Run: {run_url}\n\n"
+            "The slow tier (tests labelled `slow` in tests/TestThroughput.cmake, at -O0 and -O3, and the "
+            "-O3 re-run of the per-commit runtime harnesses) runs once a day on the commit the `nightly` "
+            "tag names, not on every main push. Until it passes, the release train cuts no beta from this "
+            "nightly and promotes no beta built on it.\n\n"
+            "To resolve: fix forward through an ordinary PR; the next nightly is tested the following "
+            "day, or dispatch slow.yml with the fixed commit. This issue is updated on each later "
+            "failure and closed automatically when the slow tier passes.\n"
+        )
     if label == DEFAULT_LABEL:
         return (
             f"Full validation of `main` **{status}** at `{sha}`.\n\n"
@@ -68,10 +81,9 @@ def body(run_url: str, before: str, sha: str, status: str, label: str,
     return (
         f"The scheduled `{label}` run **{status}** at `{sha}`.\n\n"
         f"- Run: {run_url}\n\n"
-        "This run proves the deprecated C++ backend on its own schedule under one profile. "
-        "It never blocks the merge queue, full validation or a channel; a failure here is a "
-        "backend drift to triage, not a broken main. This issue is updated on each later "
-        "failure and closed automatically when the run passes.\n"
+        "This scheduled run never blocks the merge queue, full validation or a channel; "
+        "a failure here is a finding to triage, not a broken main. This issue is updated on each "
+        "later failure and closed automatically when the run passes.\n"
     )
 
 

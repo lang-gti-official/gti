@@ -2,21 +2,23 @@ name: Release train
 
 # Daily and on manual dispatch:
 # - cut: once a week, from Monday until one lands that ISO week (a day without
-#   a sanitizer verdict retries the next day), run scripts/cut_release.py on
-#   the published nightly's commit when it passed full validation and the
-#   daily sanitizers (sanitizers.yml), and deliver the
+#   both daily verdicts retries the next day), run scripts/cut_release.py on
+#   the published nightly's commit when it passed full validation, the
+#   daily sanitizers (sanitizers.yml) and the daily slow tier (slow.yml),
+#   and deliver the
 #   `Release-Cut:` commit as a `rollup=never` pull request queued with the
 #   release App token (a GITHUB_TOKEN PR would get no PR checks). The queue
 #   lands it on main; beta.yml then publishes v<VERSION>-beta.1.
 # - promote (checked every day): republish the newest beta that soaked 48 h with no open
 #   `release-blocker` issue naming its version, and whose code passed the
-#   sanitizers (a release cut's nightly parent, or the backported line
+#   sanitizers and the slow tier (a release cut's nightly parent, or the backported line
 #   commit itself), as the stable v<VERSION>
 #   release, byte for byte, behind the protected `stable` environment.
 on:
   # 09:00 UTC: after nightly (02:00) and the daily sanitizer run on its commit
-  # (02:45, about three hours), so a nightly that moved today already has the
-  # sanitizer verdict the cut and promotion require.
+  # (02:45, about three hours), so a nightly that moved today usually has the
+  # sanitizer verdict the cut and promotion require. The slow tier (03:15) can
+  # finish later; a cut without it retries the next day.
   schedule:
     - cron: "0 9 * * *"
   workflow_dispatch:

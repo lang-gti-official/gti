@@ -83,8 +83,9 @@ checks their source/platform/configuration manifest and file hashes, and
 republishes the rolling `nightly` prerelease without rebuilding or repeating
 the complete suite. Full CI builds `GTI_RELEASE_BUILD=ON` bundled-LLVM packages
 for `linux-x64` (`ubuntu-24.04`) and `darwin-arm64` (`macos-26`), validates their
-installed consumers, runs the full release suite and separate sanitizer gates,
-and retains the archives for 30 days. Nightly publishes one archive and
+installed consumers, runs the per-commit release suite (runtime harnesses at
+`-O0`, tests labelled `slow` left to the daily slow tier) and retains the
+archives for 30 days. Nightly publishes one archive and
 `.sha256` per platform plus
 `BUILD_ID`. A commit older than the published nightly does not publish; one
 that main has moved past still does. Scheduled runs skip when nothing newer is
@@ -110,10 +111,10 @@ for the full contract.
 
 | Workflow | Trigger | Does |
 | --- | --- | --- |
-| `workflows/train.yml` job `cut` | 09:00 UTC daily, after the daily sanitizer run; cuts once per ISO week, from Monday until one lands; dispatch | cuts the published nightly once it has passed full CI with retained release artifacts and the daily sanitizers; opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
+| `workflows/train.yml` job `cut` | 09:00 UTC daily, after the daily sanitizer and slow-tier runs; cuts once per ISO week, from Monday until one lands; dispatch | cuts the published nightly once it has passed full CI with retained release artifacts, the daily sanitizers (`sanitizers.yml`) and the daily slow tier (`slow.yml`: `slow`-labelled tests at `-O0`/`-O3` plus the `-O3` re-run); opens and queues a `rollup=never` `Release-Cut:` PR with the App token |
 | `workflows/beta.yml` | `push` to `main` (the queue's merge) or `beta/**` (a merged backport), daily 05:30 fallback, dispatch | builds the release cut (or the line's new tip) with its own bundled build, installed checks and full release-suite shards; publishes prerelease `v<VERSION>-beta.<K>` with provenance; creates `beta/<major>.<minor>` |
 | `workflows/backport.yml` | pull requests into `beta/**` | `Backport provenance` (each commit a `cherry-pick -x` of a `main` commit; an optional final patch release cut), the release suite, `Backport gate` |
-| `workflows/train.yml` job `promote` | with the train, dispatch | behind the `stable` environment: republishes the newest beta that soaked 48 h with no open `release-blocker` issue naming its version as `v<VERSION>`, byte for byte, and marks it latest |
+| `workflows/train.yml` job `promote` | with the train, dispatch | behind the `stable` environment: republishes the newest beta that soaked 48 h with no open `release-blocker` issue naming its version, and whose commit passed both daily verdicts, as `v<VERSION>`, byte for byte, and marks it latest |
 | `workflows/rollback.yml` | dispatch only | behind the `stable` environment: `withdraw-beta` or `yank-stable`, recorded on the `release-status` branch the installer reads |
 
 The cut job is the only train job with a secret (the rollup App's, for the

@@ -72,9 +72,8 @@ jobs:
     # suites round-robin across three runners, so the ownership suite (about
     # three hours instrumented, run 41837802931) shares its runner only with
     # the short e2e suite. Every compiler partition verifies the complete
-    # manifest census first. Without the C++ emitter suites (now in
-    # cpp-backend.yml) the library partition fits one runner, which saves a
-    # cold instrumented build.
+    # manifest census first. Without the removed C++ emitter suites the
+    # library partition fits one runner, which saves a cold instrumented build.
     strategy:
       fail-fast: false
       matrix:
@@ -208,7 +207,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
-      GTI_TEST_BACKENDS: llvm
+      # The levels these harnesses ran before per-commit runs dropped -O3.
+      GTI_TEST_LLVM_LEVELS: O0,O3
       # The LLVM backend's test binaries and its cheap control harnesses. The
       # execution harnesses compile and run dozens of programs each and cost
       # 20-30 hours of test time under ASan (measured 2026-11-03), so they stay
@@ -300,7 +300,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      GTI_TEST_BACKENDS: llvm
+      # The levels these harnesses ran before per-commit runs dropped -O3.
+      GTI_TEST_LLVM_LEVELS: O0,O3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -378,7 +379,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      GTI_TEST_BACKENDS: llvm
+      # The levels these harnesses ran before per-commit runs dropped -O3.
+      GTI_TEST_LLVM_LEVELS: O0,O3
       GTI_RUNTIME_IDENTITY_TESTS: '^(shared_ownership_instrumented|compact_owner_layout_instrumented|llvm_native_runtime_identity)$'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
