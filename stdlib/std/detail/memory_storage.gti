@@ -13,10 +13,16 @@ namespace detail {
 unsafe constexpr void relocate_within_owned_at<T, Owner>(T* destination, T* source,
                                                mut Owner& owner)
     requires layout_queryable<T> && move_constructible<T> {
-  mut std::uninitialized<T> temporary{};
-  unsafe {
-    std::relocate_owned_at(temporary.data(), temporary, source, owner);
-    std::relocate_owned_at(destination, owner, temporary.data(), temporary);
+  if constexpr (std::relocatable<T>) {
+    // Relocatable values carry no external dependencies. Preserve the direct
+    // move within this owner's allocation, including constant evaluation.
+    unsafe { std::relocate_at(destination, source); }
+  } else {
+    mut std::uninitialized<T> temporary{};
+    unsafe {
+      std::relocate_owned_at(temporary.data(), temporary, source, owner);
+      std::relocate_owned_at(destination, owner, temporary.data(), temporary);
+    }
   }
 }
 

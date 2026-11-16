@@ -136,11 +136,11 @@ export unsafe constexpr void initialize_owned_at<T, Owner>(T* destination,
 export class uninitialized<layout_queryable T> {
   mut gti_internal::uninitialized_storage<T> bytes{};
 public:
-  constexpr uninitialized() = default;
-  constexpr const T* data() {
+  uninitialized() = default;
+  const T* data() {
     unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
   }
-  constexpr T* data() mut {
+  T* data() mut {
     unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
   }
 };

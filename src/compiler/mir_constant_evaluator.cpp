@@ -3142,12 +3142,29 @@ private:
           dependency->storedDependency == 0 &&
           dependency->designatedFields.empty() &&
           dependency->additionalDependencies.empty();
-      if ((loan.storedDependency != 0 && !constantTextDependency) ||
+      // Owner-aware reads of supported, borrow-free records carry a separate
+      // verified content witness too. It is not an embedded reference value:
+      // storageType still rejects reference-bearing records and capabilities.
+      const auto *dependencySource =
+          dependency ? body.findPlace(dependency->source) : nullptr;
+      const bool supportedStoredDependency =
+          dependency && dependency->kind == MirLoanKind::Stored &&
+          !dependency->lifecycleBound &&
+          dependency->additionalSources().empty() && dependencySource &&
+          observedStorageType(dependencySource->type);
+      if ((loan.storedDependency != 0 && !constantTextDependency &&
+           !supportedStoredDependency) ||
           !loan.additionalSources().empty() || loan.lifecycleBound ||
           source == nullptr || !observedStorageType(source->type)) {
-        return fail(frame, ConstantEvaluationFailure::UnsupportedType,
-                    "Constant MIR only admits checked loans to supported "
-                    "values, without stored reference carriers.");
+        return fail(
+            frame, ConstantEvaluationFailure::UnsupportedType,
+            "Constant MIR only admits checked loans to supported "
+            "values, without stored reference carriers. stored=" +
+                std::to_string(loan.storedDependency) + " additional=" +
+                std::to_string(loan.additionalSources().size()) +
+                " lifecycle=" + std::to_string(loan.lifecycleBound) +
+                " supported-source=" +
+                std::to_string(source && observedStorageType(source->type)));
       }
     }
     // Refuse optimizer-dependent eligibility, including rewrites in untaken
