@@ -674,7 +674,11 @@ def gti_test_tiers_contract(root):
     budget = budget.split("- name:", 1)[0]
     assert "if: github.event_name == 'pull_request' && matrix.platform == 'linux'" in budget
     assert 'GTI_TEST_TIME_SCALE: "2"' in budget, "hosted runners scale limits as the gti_test_ui entry does"
-    assert 'run: build/gti-test --changed HEAD^1 --jobs "${GTI_TEST_JOBS}"' in budget
+    # Advisory until calibrated: over-budget cases are warnings, not failures.
+    assert 'run: python3 scripts/gti_test_budget.py build/gti-test HEAD^1 --jobs "${GTI_TEST_JOBS}"' in budget
+    assert "continue-on-error" not in budget, "the advisory script decides what fails, not the step"
+    script = (root / "scripts/gti_test_budget.py").read_text()
+    assert '"--changed", base' in script and "::warning file=" in script and "GITHUB_STEP_SUMMARY" in script
     upload = fast.split("name: Upload gti-test reports", 1)[1].split("- name:", 1)[0]
     assert "if: always()" in upload and "path: ${{ runner.temp }}/gti-test/*.xml" in upload
     for line in fast.splitlines():
