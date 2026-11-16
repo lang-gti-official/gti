@@ -1,0 +1,13 @@
+// Exports work after a private overload, in an exported namespace group and in constant contexts.
+//@ check-pass
+// --- main.gti
+import "leaf.gti"; static_assert(api::size == 2); int main() { return visible::value() + api::size - 44; }
+// --- leaf.gti
+export module leaf;
+namespace api {
+  int answer(int value) { return value; }
+  export int answer() { return 42; }
+  using Hidden = int;
+  export constexpr int size = 2;
+}
+export namespace visible { int value() { return api::answer(); } }

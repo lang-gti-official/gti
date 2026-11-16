@@ -1,0 +1,4 @@
+// Constexpr library: runtime-only constexpr instantiations retain ordinary ownership errors rather than signature eligibility errors.
+import std.string;
+constexpr T relay<T>(T value) { return std::move(value); }
+int main() { std::string value = std::string("a"); std::string& borrowed = value; std::string moved = relay(std::move(value)); return int(borrowed.size()); }  //~ ERROR GTI-S2017

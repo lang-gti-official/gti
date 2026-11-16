@@ -1,0 +1,120 @@
+// Consuming receivers retain caller-owned full-expression cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6 run7 run8
+//@[run2] run-fail
+//@[run2] args: case
+//@[run2] exit-code: 70
+//@[run2] stdout: 6
+//@[run2] stdout: 21
+//@[run2] stdout: 1
+//@[run2] stdout: 2
+//@[run2] stdout: 9
+//@[run2] stderr-contains: consuming_receiver_failure.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: case case
+//@[run3] exit-code: 70
+//@[run3] stdout: 6
+//@[run3] stdout: 21
+//@[run3] stdout: 3
+//@[run3] stdout: 2
+//@[run3] stdout: 1
+//@[run3] stdout: 9
+//@[run3] stderr-contains: consuming_receiver_failure.gti:28: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: case case case
+//@[run4] exit-code: 70
+//@[run4] stdout: 6
+//@[run4] stdout: 1
+//@[run4] stdout: 2
+//@[run4] stdout: 9
+//@[run4] stderr-contains: consuming_receiver_failure.gti:22: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: case case case case
+//@[run5] exit-code: 70
+//@[run5] stdout: 6
+//@[run5] stdout: 21
+//@[run5] stdout: 3
+//@[run5] stdout: 22
+//@[run5] stdout: 4
+//@[run5] stdout: 2
+//@[run5] stdout: 1
+//@[run5] stdout: 9
+//@[run5] stderr-contains: consuming_receiver_failure.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run6] run-fail
+//@[run6] args: case case case case case
+//@[run6] exit-code: 70
+//@[run6] stdout: 6
+//@[run6] stdout: 21
+//@[run6] stdout: 1
+//@[run6] stderr-contains: consuming_receiver_failure.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at consuming_receiver_failure.gti:16; secondary [GTI-R0002]
+//@[run7] run-fail
+//@[run7] args: case case case case case case
+//@[run7] exit-code: 70
+//@[run7] stdout: 6
+//@[run7] stdout: 21
+//@[run7] stdout: 3
+//@[run7] stdout: 2
+//@[run7] stderr-contains: consuming_receiver_failure.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at consuming_receiver_failure.gti:28; secondary [GTI-R0002]
+//@[run8] run-fail
+//@[run8] args: case case case case case case case
+//@[run8] exit-code: 70
+//@[run8] stdout: 6
+//@[run8] stdout: 21
+//@[run8] stdout: 3
+//@[run8] stdout: 22
+//@[run8] stdout: 4
+//@[run8] stdout: 2
+//@[run8] stdout: 1
+//@[run8] stderr-contains: consuming_receiver_failure.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at consuming_receiver_failure.gti:12; secondary [GTI-R0002]
+// --- consuming_receiver_failure.gti
+import std.string;
+import std.vector;
+
+class Receiver {
+  int identity;
+  int cleanup_divisor;
+public:
+  Receiver(int identity, int cleanup_divisor)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Receiver() {
+    std::println(this.identity);
+    int checked = 1 / this.cleanup_divisor;
+  }
+  int operator()(int divisor) && {
+    std::println(20 + this.identity);
+    return 12 / divisor;
+  }
+};
+
+int argument(int divisor, int value) {
+  std::println(6);
+  int checked = 1 / divisor;
+  return value;
+}
+
+int later(int divisor) {
+  std::println(3);
+  return 1 / divisor;
+}
+
+int combine(int left, int right) {
+  std::println(4);
+  return left + right;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int mode = argc - 1;
+  Receiver caller{9, 1};
+  int first_cleanup = mode == 4 || mode == 5 || mode == 7 ? 0 : 1;
+  int second_cleanup = mode == 6 || mode == 7 ? 0 : 1;
+  Receiver first{1, first_cleanup};
+  Receiver second{2, second_cleanup};
+  int body_divisor = mode == 1 || mode == 5 ? 0 : 1;
+  int later_divisor = mode == 2 || mode == 6 ? 0 : 1;
+  int argument_divisor = mode == 3 ? 0 : 1;
+  int value = combine(
+      std::move(first)(argument(argument_divisor, body_divisor)),
+      std::move(second)(later(later_divisor)));
+  std::println(5);
+  return value - 24;
+}

@@ -1,0 +1,3 @@
+// Parentheses nested 32 deep stay within the parser limit.
+//@ parse-pass
+int32_t f() { return ((((((((((((((((((((((((((((((((0)))))))))))))))))))))))))))))))); }

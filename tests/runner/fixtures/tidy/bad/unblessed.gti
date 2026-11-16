@@ -1,0 +1,3 @@
+// A snapshot directive without its expected file.
+//@ snapshot: diagnostics
+int main() { return 0; }

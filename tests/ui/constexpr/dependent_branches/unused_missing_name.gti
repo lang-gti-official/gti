@@ -1,0 +1,4 @@
+// Dependent constexpr branch deferral retains concrete flow, declaration checks and resource limits (a name outside the branch is resolved in the primary).
+import std.string;
+int unused<uint64_t N>() { if constexpr(N == 0) { return 1; } return missing_outside_branch; }  //~ ERROR GTI-S2001 missing_outside_branch
+int main() { return 0; }

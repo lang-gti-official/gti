@@ -1,0 +1,11 @@
+// A transcript: initialize, open, diagnostics, shutdown and exit in order.
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int main() { return 0; }\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int main() { return 0; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "shutdown"}}
+{"expect": {"id": 2, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}

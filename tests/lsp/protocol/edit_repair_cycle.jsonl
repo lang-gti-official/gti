@@ -1,0 +1,17 @@
+// Diagnostics follow document versions: a clean open, a breaking change and
+// its repair each publish for their own version, then shutdown and exit.
+// (The version cycle of integral_enum_lsp_test.py, without its imports.)
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"textDocumentSync": "$ANY"}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "int main() { return 0; }\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int main() { return 0; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int main() { return missing; }\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-S2001"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "int main() { return 0; }\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "shutdown"}}
+{"expect": {"id": 2, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}

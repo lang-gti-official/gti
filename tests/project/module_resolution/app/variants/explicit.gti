@@ -1,0 +1,1 @@
+import lib.main; int main() { return answer() - 42; }
