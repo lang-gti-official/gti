@@ -1,5 +1,8 @@
 #include "semantic_analyzer_impl.h"
 
+#include "gti/lowered_program.h"
+
+#include <cstdio>
 #include <cstdlib>
 
 #include <iterator>
@@ -174,11 +177,12 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.unionShapes.clear();
   requestSession.unionStates.clear();
   resumeDeclarations.clear();
-  reachedPreambleBodies.clear();
+  requestSession.bodyContext = std::make_shared<BodyContext>(this);
   registrationFloor = {};
   stagedWorker = {};
   primitiveRequirementProofs.clear();
   primitiveRequirementProofCount = 0;
+  idleQueryCatalogs.clear();
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
@@ -341,37 +345,59 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
     -> void {
   const RegistrationFloor &floor = registrationFloor;
   registerNamespaces(declarations, {});
+  throwIfCancelled();
   registerNamespaceAliases(declarations, {});
+  throwIfCancelled();
   registerConstraintPredicateDeclarations(declarations, {});
+  throwIfCancelled();
   registerTypeAliases(declarations, {});
+  throwIfCancelled();
   registerEnums(declarations, {});
+  throwIfCancelled();
   registerConcepts(declarations, {});
+  throwIfCancelled();
   registerEnumGenericParameters();
+  throwIfCancelled();
   genericDefaultConstants.clear();
   registerClasses(declarations, {});
+  throwIfCancelled();
   for (ClassId id = floor.classes + 1; id <= classes.size(); ++id)
     resolveClassGenericDefaults(id);
   for (EnumId id = floor.enums + 1; id <= enums.size(); ++id)
     resolveEnumGenericDefaults(id);
   resolveTypeAliases();
+  throwIfCancelled();
   for (ClassId id = floor.classes + 1; id <= classes.size(); ++id) {
     resolveClassArgumentPatterns(id);
   }
   registerClassSpecializations(declarations, {});
+  throwIfCancelled();
   resolveConcepts();
+  throwIfCancelled();
   registerConformances(declarations, {});
+  throwIfCancelled();
   refreshTypeAliasProjections();
+  throwIfCancelled();
   recordClassTypeIdentities();
+  throwIfCancelled();
   resolveEnumPayloads();
+  throwIfCancelled();
   resolveClassInheritance();
+  throwIfCancelled();
   genericDefaultConstants.clear();
   registerFunctionGenericParameters(declarations, {}, false);
+  throwIfCancelled();
   genericDefaultConstants.clear();
   registerNamespaceSymbols(declarations, {});
+  throwIfCancelled();
   bindConformanceOperations();
+  throwIfCancelled();
   collectRootNativeStorageSymbols(declarations);
+  throwIfCancelled();
   collectClassMembers(declarations, {});
+  throwIfCancelled();
   bindOutOfClassDefinitions(declarations, {});
+  throwIfCancelled();
   if (requireFunctionDefinitions) {
     for (const auto &owner : registering(classes, floor.classes)) {
       for (const auto &[name, member] : owner.members) {
@@ -386,17 +412,24 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
     }
   }
   recordClassFieldSymbols();
+  throwIfCancelled();
   validateOrdinaryClassLayouts();
   registerGlobalBorrowStorage(declarations, {});
+  throwIfCancelled();
   resolveInheritedMembers();
+  throwIfCancelled();
   validateNativeRecords();
   validateNativeFacingNamespaces(declarations);
   validateStoredReferenceContracts();
   resolveFunctionBorrowSummaries();
+  throwIfCancelled();
   validateInterfaceCapabilities();
   recordClassTypes();
+  throwIfCancelled();
   recordClassLifecycles();
+  throwIfCancelled();
   registerDesignatedConstructors();
+  throwIfCancelled();
   const auto checkOverloads = [&](const Symbol &symbol) {
     for (std::size_t right = 1; right < symbol.overloads.size(); ++right)
       for (std::size_t left = 0; left < right; ++left)
@@ -903,6 +936,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
           classId, classTypeArguments, classValueArguments);
       !fails || *fails) {
     const auto assertionStart = static_cast<std::ptrdiff_t>(diagnostics.size());
+    const std::uint64_t needsBefore = bodyNeedSerial();
     analyzeConcreteClassStaticAssertions(classType->declaration->members());
     const bool rejected =
         std::any_of(diagnostics.begin() + assertionStart, diagnostics.end(),
@@ -913,7 +947,8 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
         declaresConcreteClassStaticAssertions(
             classType->declaration->members()))
       recordConcreteClassAssertionOutcome(classId, classTypeArguments,
-                                          classValueArguments, rejected);
+                                          classValueArguments, rejected,
+                                          needsBefore);
   }
   if (const auto *primary =
           semanticModel.findClassLifecycle(*classType->declaration)) {
@@ -4072,6 +4107,12 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
     return;
   }
   if (deferTrustedBody(stmt)) {
+    if (ownsBodyContext())
+      requestSession.bodyContext->track(
+          stmt,
+          {.kind = BodyKind::Function,
+           .id = functionInfo == nullptr ? 0 : functionInfo->id},
+          BodyState::Deferred, stmt.isConstexpr() || stmt.isProceduralMacro());
     deferredBodyIndex.emplace(&stmt, deferredBodies.size());
     deferredBodies.push_back(
         {.declaration = &stmt,
@@ -4120,6 +4161,13 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
                      : trustedBodies == TrustedBodyAnalysis::Reachable
                          ? &demandedFunctions
                          : nullptr);
+  // Only the owner of the body context completes a body for it; a worker
+  // that shares the context analyses for itself.
+  const bool completesTrackedBody = !instanceAnalysisActive &&
+                                    ownsBodyContext() &&
+                                    requestSession.bodyContext->tracked(&stmt);
+  if (completesTrackedBody)
+    requestSession.bodyContext->markInProgress(stmt);
   if (!instanceAnalysisActive) {
     analyzedBodies.insert(&stmt);
     semanticModel.recordAnalyzedFunctionBody(stmt);
@@ -4253,10 +4301,16 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     }
   }
   endScope();
+  // Only a primary analysis completes a definition; an instance reanalysis
+  // of the same declaration must not stand in for it.
   if ((stmt.isConstexpr() || stmt.isProceduralMacro()) &&
-      constexprDeclarationValid && !functionErrors()) {
+      constexprDeclarationValid && !functionErrors() &&
+      !instanceAnalysisActive) {
     constexprDefinitionsAnalyzed.insert(&stmt);
   }
+  if (completesTrackedBody)
+    requestSession.bodyContext->markAnalysed(
+        stmt, stmt.isConstexpr() || stmt.isProceduralMacro());
   --functionDepth;
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
@@ -4312,9 +4366,10 @@ auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
       !stmt.isStatic()) {
     return false;
   }
-  // The language requires a constexpr definition to be analysed before a
-  // constant-evaluated call to it; deferral would break that rule.
-  if (stmt.isConstexpr()) {
+  // A constexpr definition must be analysed before a constant-evaluated call
+  // executes it; the compile-time path that reaches a deferred one demands it
+  // (requireBody, withBodyDemands). Tests may keep them eager to compare.
+  if (stmt.isConstexpr() && !deferConstexprBodies) {
     return false;
   }
   return true;
@@ -4542,6 +4597,15 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
 auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
     -> void {
   const FunctionDecl *declaration = function.bodyDeclaration();
+  // While an attempt that can resolve needs is open, a worker sharing the
+  // context never completes a pending body privately: it records the need,
+  // and the attempt's owner completes the body and repeats the attempt.
+  if (const auto &context = requestSession.bodyContext;
+      context != nullptr && !context->ownedBy(this) &&
+      context->resolvingAttemptOpen() && context->pending(declaration)) {
+    context->need(*declaration);
+    return;
+  }
   if (!bodyPhaseActive || instanceAnalysisActive || declaration == nullptr ||
       declaration->body() == nullptr || analyzedBodies.contains(declaration) ||
       bodiesInProgress.contains(declaration)) {
@@ -4922,10 +4986,212 @@ auto SemanticVisitor::Impl::drainDemandedDeferredBodies() -> void {
   }
 }
 
+auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
+    -> BodyReadiness {
+  const auto &context = requestSession.bodyContext;
+  if (context == nullptr)
+    return BodyReadiness::Ready;
+  switch (context->state(declaration)) {
+  case BodyState::Analysed:
+    return BodyReadiness::Ready;
+  case BodyState::InProgress:
+    // Recursion: the facts are unavailable exactly as for a body analysed in
+    // place, and completing the body cannot change that for this caller, so
+    // it is not a need.
+    context->noteRequested(*declaration);
+    return BodyReadiness::Unavailable;
+  case BodyState::Deferred:
+  case BodyState::HeldBack:
+    break;
+  }
+  // The reader asked first, whatever the answer (checkBodyFactRead).
+  context->noteRequested(*declaration);
+  // A worker that analysed the body privately (outside any resolving
+  // attempt; see ensureBodyAnalyzed) has its facts for its own use.
+  if (!context->ownedBy(this) && analyzedBodies.contains(declaration) &&
+      !bodiesInProgress.contains(declaration))
+    return BodyReadiness::Ready;
+  if (context->ownedBy(this) && bodyPhaseActive && !instanceAnalysisActive) {
+    resolveBody(declaration);
+    if (context->state(declaration) == BodyState::Analysed)
+      return BodyReadiness::Ready;
+  }
+  // Only a body whose facts a compile-time path consumes is a need here; an
+  // ordinary deferred callee's facts reach concrete analysis through the
+  // demanded-function record and late demand, which repeat the instance.
+  if (declaration->isConstexpr() || declaration->isProceduralMacro())
+    context->need(*declaration);
+  return BodyReadiness::Unavailable;
+}
+
+auto SemanticVisitor::Impl::checkBodyFactRead(const FunctionDecl *body,
+                                              FunctionId id,
+                                              const char *site) const -> void {
+  // GTI_COMPILER_VALIDATION is the one switch for compiler self-checks.
+  if (!loweredProgramSealValidation())
+    return;
+  // Only a deferred body's facts are missing. A held-back preamble body was
+  // analysed completely when the preamble was built, so its facts are final
+  // here; reaching it only reports the diagnostics it held back.
+  const auto &context = requestSession.bodyContext;
+  if (context == nullptr || body == nullptr ||
+      context->state(body) != BodyState::Deferred)
+    return;
+  if (context->requested(body))
+    return;
+  // An instance analysis that consulted the function is repeated by late
+  // demand once the body is complete (withLateDemand).
+  if (instanceAnalysisActive && id != 0 &&
+      (semanticModel.functionDemandRecorded(id) ||
+       (instanceBaseModel != nullptr &&
+        instanceBaseModel->functionDemandRecorded(id))))
+    return;
+  std::fprintf(stderr,
+               "internal compiler error: %s reads a body-derived fact of "
+               "'%s', whose body is deferred here and was not requested "
+               "first\n",
+               site, body->name().lexeme.c_str());
+  std::abort();
+}
+
+auto SemanticVisitor::Impl::resolveBody(const FunctionDecl *declaration)
+    -> void {
+  const auto &context = requestSession.bodyContext;
+  if (context == nullptr || !context->ownedBy(this))
+    return;
+  switch (context->state(declaration)) {
+  case BodyState::Deferred:
+    if (const FunctionInfo *function = semanticModel.findFunction(*declaration))
+      ensureBodyAnalyzed(*function);
+    return;
+  case BodyState::HeldBack: {
+    const FunctionDecl *const roots[] = {declaration};
+    (void)reachPreambleBodies(roots, false);
+    return;
+  }
+  case BodyState::Analysed:
+  case BodyState::InProgress:
+    return;
+  }
+}
+
+auto SemanticVisitor::Impl::noteBodyNeed(const FunctionDecl *declaration)
+    -> void {
+  const auto &context = requestSession.bodyContext;
+  if (declaration != nullptr && context != nullptr &&
+      context->pending(declaration))
+    context->need(*declaration);
+}
+
+auto SemanticVisitor::Impl::pendingConstexprDefinitions() const
+    -> std::vector<const FunctionDecl *> {
+  std::vector<const FunctionDecl *> pending;
+  if (const auto &context = requestSession.bodyContext;
+      context != nullptr && context->anyUnfinished())
+    for (const FunctionDecl *body : context->compileTimeBodies())
+      if (context->state(body) != BodyState::Analysed &&
+          !constexprDefinitionsAnalyzed.contains(body))
+        pending.push_back(body);
+  return pending;
+}
+
+auto SemanticVisitor::Impl::captureAttemptCheckpoint() const
+    -> AttemptCheckpoint {
+  AttemptCheckpoint checkpoint{
+      .diagnostics = diagnostics.size(),
+      .requirementQueryWork = requirementQueryWork,
+      .requirementQueryCharged =
+          requirementQueryWork ? *requirementQueryWork : 0,
+      .nativeObjectLayout = semanticModel.nativeObjectLayoutMarked()};
+  if (const auto &work = requestSession.constexprWork) {
+    checkpoint.constexprSteps = work->steps;
+    checkpoint.exhaustion = work->exhaustion;
+  }
+  return checkpoint;
+}
+
+auto SemanticVisitor::Impl::restoreAttemptCheckpoint(
+    const AttemptCheckpoint &checkpoint) -> void {
+  if (const auto &work = requestSession.constexprWork) {
+    work->steps = checkpoint.constexprSteps;
+    work->exhaustion = checkpoint.exhaustion;
+  }
+  requirementQueryWork = checkpoint.requirementQueryWork;
+  if (requirementQueryWork)
+    *requirementQueryWork = checkpoint.requirementQueryCharged;
+  semanticModel.restoreNativeObjectLayoutMark(checkpoint.nativeObjectLayout);
+}
+
+auto SemanticVisitor::Impl::reapplyAttemptCharges(const AttemptCheckpoint &from,
+                                                  const AttemptCheckpoint &to)
+    -> void {
+  if (const auto &work = requestSession.constexprWork) {
+    work->steps += to.constexprSteps - from.constexprSteps;
+    if (to.exhaustion)
+      work->exhaustion = to.exhaustion;
+  }
+  if (to.requirementQueryWork) {
+    if (requirementQueryWork == to.requirementQueryWork &&
+        from.requirementQueryWork == to.requirementQueryWork)
+      *requirementQueryWork +=
+          to.requirementQueryCharged - from.requirementQueryCharged;
+    else
+      requirementQueryWork = to.requirementQueryWork;
+  }
+  if (to.nativeObjectLayout)
+    semanticModel.requireNativeObjectLayout();
+}
+
+SemanticVisitor::Impl::BodyAttemptScope::BodyAttemptScope(
+    BodyContext &context, BodyContext::AttemptNeeds &needs)
+    : context(context), needs(needs) {
+  context.openAttempt(needs);
+}
+
+SemanticVisitor::Impl::BodyAttemptScope::~BodyAttemptScope() {
+  context.closeAttempt(needs);
+}
+
+auto SemanticVisitor::Impl::attemptOutstandingNeeds(
+    const BodyContext &context, const BodyContext::AttemptNeeds &needs) const
+    -> std::vector<const FunctionDecl *> {
+  // Only explicit needs count: a body whose facts were read (requireBody) or
+  // that a compile-time path would execute (noteBodyNeed). Looking a function
+  // up, for example to consider it as a candidate, is not a need.
+  std::vector<const FunctionDecl *> outstanding;
+  for (const FunctionDecl *body : needs.needs)
+    if (context.pending(body))
+      outstanding.push_back(body);
+  return context.inResolutionOrder(std::move(outstanding));
+}
+
 auto SemanticVisitor::Impl::pendingDeferredBody(
     const FunctionDecl *declaration) const -> bool {
-  return declaration != nullptr && deferredBodyIndex.contains(declaration) &&
-         !analyzedBodies.contains(declaration);
+  const bool pending = declaration != nullptr &&
+                       deferredBodyIndex.contains(declaration) &&
+                       !analyzedBodies.contains(declaration);
+  checkBodyContextConsistency(declaration, pending);
+  return pending;
+}
+
+auto SemanticVisitor::Impl::checkBodyContextConsistency(
+    const FunctionDecl *declaration, bool pending) const -> void {
+  // GTI_COMPILER_VALIDATION is the one switch for compiler self-checks.
+  if (!loweredProgramSealValidation() || declaration == nullptr ||
+      !ownsBodyContext() || !requestSession.bodyContext->tracked(declaration))
+    return;
+  const bool deferred =
+      requestSession.bodyContext->state(declaration) == BodyState::Deferred;
+  if (deferred == pending)
+    return;
+  std::fprintf(stderr,
+               "internal compiler error: the body readiness table and the "
+               "deferred-body records disagree about '%s' (table %s, records "
+               "%s)\n",
+               declaration->name().lexeme.c_str(),
+               deferred ? "deferred" : "not deferred",
+               pending ? "pending" : "not pending");
+  std::abort();
 }
 
 auto SemanticVisitor::Impl::finalizesFunction(
@@ -6793,87 +7059,13 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     updated.traits = initializerInfo->traits;
     semanticModel.record(stmt, std::move(updated));
   }
-  // A value whose text field or payload holds dynamic text carries that
-  // dependency itself (L-OWN-02). Only a local binding can retain it.
-  // A contextual construction that publishes its argument's owner converts
-  // the initializer into such a value of the declared type.
-  const bool contextualText =
-      initializer && contextualTextValue(*initializer, declaredType);
-  const bool ownerDependentValue = !ownerDependentText &&
-                                   (declaredType.kind == SemanticType::Class ||
-                                    declaredType.kind == SemanticType::Enum) &&
-                                   initializerInfo != nullptr &&
-                                   ((isTextDependentValue(*initializerInfo) &&
-                                     initializerInfo->type == declaredType) ||
-                                    contextualText);
-  // A dependent field of a dependent value has no loan of its own yet: a
-  // switch observes it in place.
-  const Expr *source = initializer.get();
-  while (source != nullptr) {
-    if (const auto *group = exprAs<Grouping>(source))
-      source = group->expression().get();
-    else if (const auto *call = exprAs<Call>(source);
-             call != nullptr && call->arguments().size() == 1 &&
-             resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
-      source = call->arguments().front().get();
-    else
-      break;
-  }
-  // So does a reference relay to a nested text class: a dependent place
-  // other than a named value is observed, not copied out. A reference local
-  // bound to such a place is that place.
-  const auto *sourceVariable = exprAs<Variable>(source);
-  const Symbol *sourceSymbol =
-      sourceVariable == nullptr ? nullptr : resolve(sourceVariable->name());
-  const bool aliasSource =
-      sourceSymbol != nullptr &&
-      sourceSymbol->type.kind == SemanticType::Reference &&
-      sourceSymbol->variableDeclaration != nullptr &&
-      dependentReferenceAliases.contains(sourceSymbol->variableDeclaration);
-  if (ownerDependentValue && !contextualText &&
-      (exprAs<Get>(source) != nullptr || aliasSource ||
-       (sourceVariable == nullptr &&
-        initializerInfo->category == ValueCategory::Place))) {
-    consumeTextDependentValue(initializer);
-    report(expressionToken(initializer),
-           "This field holds dynamic text from a local owner; a switch on "
-           "the field can observe it, but it cannot yet be copied or moved "
-           "out of its value.",
-           "GTI-S2045");
-  } else if (ownerDependentValue) {
-    consumeTextDependentValue(initializer);
-    if (globalStorage || instanceField) {
-      report(stmt.name(),
-             globalStorage
-                 ? "A value holding dynamic text cannot have global or static "
-                   "storage duration because its owner dependency is local."
-                 : "A value holding dynamic text cannot be stored in a field.",
-             "GTI-S2045");
-    }
+  const auto dependentValueTraits = retainDependentTextInitializer(
+      stmt, declaredType, initializer, globalStorage, instanceField);
+  const bool ownerDependentValue = dependentValueTraits.has_value();
+  if (dependentValueTraits) {
     BindingInfo updated = *semanticModel.findBinding(stmt);
-    updated.traits = contextualText
-                         ? textDependentValueInfo(declaredType).traits
-                         : initializerInfo->traits;
+    updated.traits = *dependentValueTraits;
     semanticModel.record(stmt, std::move(updated));
-  }
-
-  // A reference local bound to a call's dependent reference result, or to
-  // another such local, aliases it (L-OWN-02). A reference to a dependent
-  // value's own field stays unsupported.
-  if ((exprAs<Call>(source) != nullptr || aliasSource) &&
-      declaredType.kind == SemanticType::Reference &&
-      declaredType.arguments.size() == 1 && initializerInfo != nullptr &&
-      initializerInfo->category == ValueCategory::Place &&
-      isTextDependentValue(*initializerInfo) &&
-      initializerInfo->type == declaredType.arguments.front()) {
-    consumeTextDependentValue(initializer);
-    if (globalStorage || instanceField)
-      report(stmt.name(),
-             "A reference into a value holding dynamic text cannot be "
-             "stored because the value's owner dependency is local.",
-             "GTI-S2045");
-    else
-      dependentReferenceAliases[&stmt] = initializer.get();
   }
 
   // A contextual construction or conversion is a fresh value of the declared
@@ -11411,6 +11603,7 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
                "GTI-S2063");
         return false;
       }
+      const std::uint64_t needsBefore = bodyNeedSerial();
       worker->analyzeConcreteClassStaticAssertions(
           owner->declaration->members());
       worker->finishClassInstanceContext();
@@ -11425,7 +11618,8 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
       diagnostics.insert(diagnostics.end(), worker->diagnostics.begin(),
                          worker->diagnostics.end());
       recordConcreteClassAssertionOutcome(type.classId, type.arguments,
-                                          type.valueArguments, failed);
+                                          type.valueArguments, failed,
+                                          needsBefore);
       if (failed)
         return false;
     }
@@ -15311,6 +15505,7 @@ auto SemanticVisitor::Impl::evaluateConstexprCall(
             : "Call to non-constexpr function '" + declaration->name().lexeme +
                   "' cannot be evaluated during compilation.");
   }
+  (void)requireBody(declaration);
   noteConstexprAvailabilityObserved();
   if (!constexprDefinitionsAnalyzed.contains(declaration) ||
       !declaredBeforeCurrent(declaration)) {
@@ -16581,8 +16776,12 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
         "For an independent value, use an explicit clone operation if the "
         "type provides one.");
   }
+  const auto dependentValueTraits = retainDependentTextInitializer(
+      declaration, inferredType, declaration.initializer(),
+      !local || declaration.isThreadLocal(), false);
   if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
-      (typeTraits(inferredType).containsBorrowedState || ownerDependentText)) {
+      (typeTraits(inferredType).containsBorrowedState || ownerDependentText ||
+       dependentValueTraits.has_value())) {
     validateStoredBorrowInitialization(inferredType, declaration.initializer());
   }
 
@@ -16607,6 +16806,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
   BindingInfo info = bindingInfo(inferredType, access);
   if (ownerDependentText) {
     info.traits = initializerInfo->traits;
+  } else if (dependentValueTraits) {
+    info.traits = *dependentValueTraits;
   }
   info.symbol = symbol;
   info.constant = constant;
@@ -16620,7 +16821,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
          .name = type.name.last().lexeme,
          .type = inferredType,
          .traits = ownerDependentText ? initializerInfo->traits
-                                      : typeTraits(inferredType),
+                                      : dependentValueTraits.value_or(
+                                            typeTraits(inferredType)),
          .access = access,
          .mutableBinding = declaration.isMutable()});
   }
@@ -16663,7 +16865,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
                                  !isDirectOwnerType(initializerType);
   const bool retainedStoredValue =
       !type.reference && !rangeOwnerReference &&
-      (typeTraits(inferredType).containsBorrowedState || ownerDependentText);
+      (typeTraits(inferredType).containsBorrowedState || ownerDependentText ||
+       dependentValueTraits.has_value());
   const auto *rangeIteratorCall =
       declaration.isRangeIterator() && declaration.initializer()
           ? exprAs<Call>(declaration.initializer().get())

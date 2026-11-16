@@ -1586,6 +1586,95 @@ auto SemanticVisitor::Impl::consumeTextDependentValue(const ExprPtr &expression)
     found->second.consumed = true;
 }
 
+auto SemanticVisitor::Impl::retainDependentTextInitializer(
+    const VariableDecl &stmt, const SemanticType &declaredType,
+    const ExprPtr &initializer, bool globalStorage, bool instanceField)
+    -> std::optional<SemanticTypeTraits> {
+  const ExpressionInfo *initializerInfo =
+      initializer ? semanticModel.findExpression(*initializer) : nullptr;
+  // A value whose text field or payload holds dynamic text carries that
+  // dependency itself (L-OWN-02). Only a local binding can retain it.
+  // A contextual construction that publishes its argument's owner converts
+  // the initializer into such a value of the declared type.
+  const bool contextualText =
+      initializer && contextualTextValue(*initializer, declaredType);
+  const bool ownerDependentValue = (declaredType.kind == SemanticType::Class ||
+                                    declaredType.kind == SemanticType::Enum) &&
+                                   initializerInfo != nullptr &&
+                                   ((isTextDependentValue(*initializerInfo) &&
+                                     initializerInfo->type == declaredType) ||
+                                    contextualText);
+  // A dependent field of a dependent value has no loan of its own yet: a
+  // switch observes it in place.
+  const Expr *source = initializer.get();
+  while (source != nullptr) {
+    if (const auto *group = exprAs<Grouping>(source))
+      source = group->expression().get();
+    else if (const auto *call = exprAs<Call>(source);
+             call != nullptr && call->arguments().size() == 1 &&
+             resolvedIntrinsicKind(*call) == IntrinsicKind::Move)
+      source = call->arguments().front().get();
+    else
+      break;
+  }
+  // So does a reference relay to a nested text class: a dependent place
+  // other than a named value is observed, not copied out. A reference local
+  // bound to such a place is that place.
+  const auto *sourceVariable = exprAs<Variable>(source);
+  const Symbol *sourceSymbol =
+      sourceVariable == nullptr ? nullptr : resolve(sourceVariable->name());
+  const bool aliasSource =
+      sourceSymbol != nullptr &&
+      sourceSymbol->type.kind == SemanticType::Reference &&
+      sourceSymbol->variableDeclaration != nullptr &&
+      dependentReferenceAliases.contains(sourceSymbol->variableDeclaration);
+  if (ownerDependentValue && !contextualText &&
+      (exprAs<Get>(source) != nullptr || aliasSource ||
+       (sourceVariable == nullptr &&
+        initializerInfo->category == ValueCategory::Place))) {
+    consumeTextDependentValue(initializer);
+    report(expressionToken(initializer),
+           "This field holds dynamic text from a local owner; a switch on "
+           "the field can observe it, but it cannot yet be copied or moved "
+           "out of its value.",
+           "GTI-S2045");
+  } else if (ownerDependentValue) {
+    consumeTextDependentValue(initializer);
+    if (globalStorage || instanceField) {
+      report(stmt.name(),
+             globalStorage
+                 ? "A value holding dynamic text cannot have global or static "
+                   "storage duration because its owner dependency is local."
+                 : "A value holding dynamic text cannot be stored in a field.",
+             "GTI-S2045");
+    }
+  }
+
+  // A reference local bound to a call's dependent reference result, or to
+  // another such local, aliases it (L-OWN-02). A reference to a dependent
+  // value's own field stays unsupported.
+  if ((exprAs<Call>(source) != nullptr || aliasSource) &&
+      declaredType.kind == SemanticType::Reference &&
+      declaredType.arguments.size() == 1 && initializerInfo != nullptr &&
+      initializerInfo->category == ValueCategory::Place &&
+      isTextDependentValue(*initializerInfo) &&
+      initializerInfo->type == declaredType.arguments.front()) {
+    consumeTextDependentValue(initializer);
+    if (globalStorage || instanceField)
+      report(stmt.name(),
+             "A reference into a value holding dynamic text cannot be "
+             "stored because the value's owner dependency is local.",
+             "GTI-S2045");
+    else
+      dependentReferenceAliases[&stmt] = initializer.get();
+  }
+
+  if (!ownerDependentValue)
+    return std::nullopt;
+  return contextualText ? textDependentValueInfo(declaredType).traits
+                        : initializerInfo->traits;
+}
+
 auto SemanticVisitor::Impl::finalizeTextDependentValues() -> void {
   // A relay into a callee that lets none of the value's dynamic fields
   // outlive the call keeps the value within the caller's loan. Relays are
@@ -3692,6 +3781,8 @@ auto SemanticVisitor::Impl::publishTextReturnResult(const Call &call,
                                                     ResolvedCallInfo &resolved,
                                                     const FunctionInfo &callee)
     -> void {
+  checkBodyFactRead(callee.bodyDeclaration(), callee.id,
+                    "a text return publication");
   if (!callee.dependentTextReturn || callee.returnBorrowFields.size() != 1 ||
       resolved.returnType.kind == SemanticType::Reference)
     return;
@@ -3712,6 +3803,7 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
   // not recorded yet into a text field of its result, so text passed to it
   // must be ownerless here.
   const FunctionDecl *body = callee.bodyDeclaration();
+  checkBodyFactRead(body, callee.id, "a text call publication");
   const bool provisional =
       body != nullptr && bodiesInProgress.contains(body) &&
       !directTextFieldSymbols(resolved.returnType, true).empty();
@@ -5187,9 +5279,11 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->defaultArgumentDependencies = defaultArgumentDependencies;
   worker->nextLambdaId = nextLambdaId;
   worker->requestSession.constexprWork = requestSession.constexprWork;
+  worker->requestSession.bodyContext = requestSession.bodyContext;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;
+  const std::uint64_t needsBefore = bodyNeedSerial();
   const auto analysis =
       key.kind == InstanceAnalysisKind::Constructor
           ? worker->analyzeConstructorInstance(key.declaration, key.classTypes,
@@ -5225,6 +5319,13 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   state->idleCatalogs.push_back(std::move(worker->catalog));
   entry->complete = true;
   --state->depth;
+  // A summary computed while a needed body was unavailable answers this
+  // query only; it is not kept for later ones.
+  if (bodyNeedSerial() != needsBefore) {
+    const auto result = entry->result;
+    state->entries.erase(key);
+    return result;
+  }
   state->completed.push_back(key);
   while (state->completed.size() >
          CompleteReturnQueryState::maximumRetainedResults) {

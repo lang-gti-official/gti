@@ -10,6 +10,38 @@
 
 namespace lang {
 
+std::size_t errorDiagnosticCount(std::span<const Diagnostic> diagnostics) {
+  return std::ranges::count_if(diagnostics, [](const Diagnostic &diagnostic) {
+    return diagnostic.severity == DiagnosticSeverity::Error;
+  });
+}
+
+bool errorLimitReached(std::span<const Diagnostic> diagnostics,
+                       std::size_t limit) {
+  return limit != 0 && errorDiagnosticCount(diagnostics) >= limit;
+}
+
+bool applyErrorLimit(std::vector<Diagnostic> &diagnostics, std::size_t limit) {
+  if (!errorLimitReached(diagnostics, limit))
+    return false;
+  std::size_t errors = 0;
+  auto end = diagnostics.begin();
+  for (; end != diagnostics.end(); ++end) {
+    if (end->severity == DiagnosticSeverity::Error && ++errors == limit) {
+      ++end;
+      break;
+    }
+  }
+  diagnostics.erase(end, diagnostics.end());
+  Diagnostic terminal =
+      makeDiagnostic(DiagnosticId::AnalysisErrorLimit,
+                     diagnostics.back().primary, {std::to_string(limit)});
+  terminal.hints.emplace_back("Use --error-limit <n> to change the limit, or "
+                              "--error-limit 0 for unlimited errors.");
+  diagnostics.push_back(std::move(terminal));
+  return true;
+}
+
 WarningPolicy::WarningPolicy(std::vector<std::string> disabledGroups)
     : disabledWarningGroups(std::move(disabledGroups)) {
   std::ranges::sort(disabledWarningGroups);
