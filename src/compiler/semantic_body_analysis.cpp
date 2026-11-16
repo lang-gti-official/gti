@@ -3476,7 +3476,8 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
           ? nullptr
           : semanticModel.findExpression(*accessBinding->initializer());
   const bool elementBorrowsCursorRegions =
-      rangeType.kind != SemanticType::Array && elementValue != nullptr &&
+      rangeType.kind != SemanticType::Array && !mutableElementRequested &&
+      elementAccess == AccessMode::ReadOnly && elementValue != nullptr &&
       elementValue->category == ValueCategory::Value &&
       cursorRegionDereference(dereference, elementValue->type);
   semanticModel.record(
