@@ -124,6 +124,7 @@ def self_test(runner):
                "bless rewrote the inline stdout", stdout)
 
     kinds_self_test(runner)
+    project_self_test(runner)
     if (runner.parent / "gti_lsp").exists():
         lsp_self_test(runner)
 
@@ -136,7 +137,9 @@ def self_test(runner):
                     "oversized.formatted: snapshot is 450 lines, over the 400-line "
                     "limit; narrow it",
                     "bad_check.gti: line 0: CHECK patterns need",
-                    "bad_check_kind.gti: line 3: patterns are"):
+                    "bad_check_kind.gti: line 3: patterns are",
+                    "project_bad/test.transcript: line 2: expectations follow",
+                    "project_bad/test.transcript: line 4: exit codes are"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -205,6 +208,31 @@ def kinds_self_test(runner):
                "blessed snapshots pass", out)
 
 
+def project_self_test(runner):
+    """Project transcripts: commands in a copy of the directory."""
+    code, out = run(runner, FIXTURES / "project/ok")
+    expect(code == 0 and "RESULT ok: 1 passed, 0 failed" in out,
+           "a project transcript passes", out)
+    code, out = run(runner, FIXTURES / "project/fail", "--jobs", "3",
+                    env={"GTI_TEST_TIME_SCALE": "0.1"})
+    expect(code == 1 and "0 passed, 2 failed, 0 ice, 1 timeout" in out,
+           "failing transcripts fail", out)
+    wrong = block(out, "FAIL", "wrong_exit/test.transcript")
+    expect("line 2: $ gti main.gti --emit-mir -o out.mir" in wrong and
+           "exit code 65, expected 2" in wrong and
+           "$DIR/main.gti:1:21: error[GTI-S2001]" in wrong and
+           "bless:" not in wrong,
+           "a wrong exit code shows normalised output and no bless", out)
+    output = block(out, "FAIL", "wrong_output/test.transcript")
+    expect('stdout lacks "no such text"' in output and
+           'stdout contains "Diagnostics"' in output,
+           "missing and forbidden output fail", out)
+    expect("over the CPU limit" in block(out, "TIMEOUT", "spin/test.transcript"),
+           "a spinning command exceeds the CPU budget", out)
+    expect(not list((FIXTURES / "project").rglob("build")),
+           "transcripts never write into the source tree")
+
+
 def lsp_self_test(runner):
     """LSP marker tests and transcripts against a per-worker gti_lsp."""
     code, out = run(runner, FIXTURES / "lsp/ok", "--jobs", "2")
@@ -256,7 +284,7 @@ def main():
     if "--self-test-only" in sys.argv:
         return 0
     # Trees built without the language server (GTI_BUILD_LSP=OFF) skip it.
-    roots = ["tests/ui"]
+    roots = ["tests/ui", "tests/project"]
     if (runner.parent / "gti_lsp").exists():
         roots.append("tests/lsp")
     else:

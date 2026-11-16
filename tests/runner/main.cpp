@@ -4,6 +4,7 @@
 // tests/ui/README.md and docs/plans/test-suite-redesign.md.
 
 #include "execute.h"
+#include "project.h"
 #include "snapshot.h"
 #include "test_file.h"
 
@@ -106,7 +107,25 @@ bool underLsp(const fs::path &path) {
 }
 
 // A `.gti` test, or a `.jsonl` LSP transcript under an `lsp` directory.
+// Whether `path` lies inside a project test (a directory, up to a few levels
+// above, holding `test.transcript`); its sources belong to that test.
+bool insideProject(const fs::path &path) {
+  fs::path directory = path.parent_path();
+  for (int depth = 0; depth < 6 && !directory.empty(); ++depth) {
+    if (fs::exists(directory / "test.transcript"))
+      return true;
+    if (directory == directory.parent_path())
+      break;
+    directory = directory.parent_path();
+  }
+  return false;
+}
+
 bool isTestFile(const fs::path &path) {
+  if (path.filename() == "test.transcript")
+    return true;
+  if (insideProject(path))
+    return false;
   return path.extension() == ".gti" ||
          (path.extension() == ".jsonl" && underLsp(path));
 }
@@ -187,6 +206,19 @@ int tidy(const fs::path &root) {
             "patterns, or a smaller test)");
       continue;
     }
+    if (file.filename() == "test.transcript") {
+      const std::optional<std::string> text = readFile(file);
+      if (!text || text->rfind("// ", 0) != 0)
+        problems.push_back(display + ": the first line must be a `// ` comment "
+                                     "saying what the transcript checks");
+      std::vector<std::string> errors;
+      (void)parseProjectTranscript(text.value_or(""), errors);
+      for (const std::string &error : errors)
+        problems.push_back(display + ": " + error);
+      continue;
+    }
+    if (insideProject(file))
+      continue;
     if (extension == ".jsonl" && underLsp(file)) {
       const std::optional<std::string> text = readFile(file);
       if (!text || text->rfind("// ", 0) != 0)
@@ -489,6 +521,7 @@ int main(int argc, char **argv) {
   engineOptions.limits.run *= scale;
   engineOptions.limits.slow *= scale;
   engineOptions.limits.lsp *= scale;
+  engineOptions.limits.project *= scale;
   engineOptions.limits.coldAllowance *= scale;
   if (options.isolate && !fs::exists(engineOptions.gti)) {
     std::cerr << "gti-test: --isolate needs gti; not found at "
@@ -594,7 +627,8 @@ int main(int argc, char **argv) {
         std::cout << "  " << line << '\n';
       std::cout << "  rerun: " << rerun << ' ' << test.display << '\n';
       // Transcripts have nothing to bless.
-      if (outcome.status == Status::Fail && test.mode != Mode::LspTranscript)
+      if (outcome.status == Status::Fail && test.mode != Mode::Project &&
+          test.mode != Mode::LspTranscript)
         std::cout << "  bless: " << rerun << ' ' << test.display
                   << " --bless\n";
       std::cout.flush();

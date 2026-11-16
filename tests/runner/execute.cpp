@@ -1,5 +1,6 @@
 #include "execute.h"
 #include "lsp.h"
+#include "project.h"
 #include "snapshot.h"
 
 #include "gti/compile_limits.h"
@@ -354,6 +355,27 @@ Engine::Engine(EngineOptions options) : state(std::make_unique<State>()) {
 
 Engine::~Engine() = default;
 
+// A project transcript: its commands' CPU, all together, against the
+// project limit.
+Outcome Engine::runProject(const TestFile &test) {
+  Outcome outcome;
+  const EngineOptions &options = state->options;
+  const double start = lspClock();
+  const ProjectResult result = runProjectTest(
+      test,
+      ProjectTools{options.gti, options.lsp,
+                   state->toolchain.standardLibrary.root},
+      state->caseDirectory / "project", options.limits.forTest(test));
+  outcome.cpu = result.cpu;
+  outcome.wall = lspClock() - start;
+  if (result.timedOut)
+    outcome.status = Status::Timeout;
+  else if (!result.failure.empty())
+    outcome.status = Status::Fail;
+  outcome.detail = result.failure;
+  return outcome;
+}
+
 // LSP tests are measured in wall time: the work happens in the server
 // process. A worker's first LSP test (or any transcript, which starts its own
 // server) may also spend the cold allowance analysing the standard library.
@@ -604,6 +626,8 @@ Outcome Engine::run(const TestFile &test) {
   }
   if (test.mode == Mode::Lsp || test.mode == Mode::LspTranscript)
     return runLsp(test);
+  if (test.mode == Mode::Project)
+    return runProject(test);
   const EngineOptions &options = state->options;
   const double limit = options.limits.forTest(test);
   const bool warm = state->warmGroups.contains(test.groupKey);

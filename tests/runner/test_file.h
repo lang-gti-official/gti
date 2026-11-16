@@ -25,6 +25,9 @@ enum class Mode {
   Lsp,
   // A `.jsonl` request/response transcript under an `lsp` directory.
   LspTranscript,
+  // A `test.transcript` of commands run in a copy of its directory
+  // (tests/project/README.md).
+  Project,
 };
 
 [[nodiscard]] const char *modeName(Mode mode);

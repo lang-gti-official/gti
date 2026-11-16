@@ -34,6 +34,8 @@ struct Limits {
   double slow = 120.0;
   // Wall time of an LSP test's requests (the server is a shared process).
   double lsp = 3.0;
+  // CPU of a project transcript's commands, all together.
+  double project = 20.0;
   // Extra CPU a case may spend while its worker first analyses a standard
   // library prefix; the case is then re-measured warm.
   double coldAllowance = 30.0;
@@ -43,6 +45,8 @@ struct Limits {
       return slow;
     if (test.mode == Mode::Lsp || test.mode == Mode::LspTranscript)
       return lsp;
+    if (test.mode == Mode::Project)
+      return project;
     return modeBuilds(test.mode) ? run : check;
   }
 };
@@ -70,6 +74,7 @@ public:
 
 private:
   Outcome runLsp(const TestFile &test);
+  Outcome runProject(const TestFile &test);
 
   struct State;
   std::unique_ptr<State> state;
