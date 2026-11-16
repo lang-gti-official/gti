@@ -1521,6 +1521,60 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
               retainSource(dependency.source);
           }
         }
+        // Publishing a moved cleanup carrier renames its local capability.
+        // The prepared return value must use that escaping capability during
+        // fallible scope cleanup too. Update only the exact moved SSA value;
+        // older copies, other dependencies and expired versions stay intact.
+        // The body verifier independently checks publication authority and
+        // the adjacent retirement of the source loan.
+        const auto *published = body.findLoan(*instruction.loan);
+        if (!symbolicSummary &&
+            instruction.kind == MirInstructionKind::Borrow && published &&
+            published->kind == MirLoanKind::Return && published->escapes &&
+            !published->entry && !published->parent &&
+            published->lifecycleBound && instruction.hirValue &&
+            published->producedBy == instruction.hirValue &&
+            instruction.operands.size() == 1 &&
+            instruction.operands.front().kind == MirOperandKind::Loan &&
+            instruction.operands.front().place == 0 &&
+            instruction.operands.front().value == 0) {
+          const auto *previous =
+              body.findLoan(instruction.operands.front().loan);
+          if (previous && previous->kind == MirLoanKind::Stored &&
+              !previous->entry && !previous->escapes &&
+              previous->lifecycleBound &&
+              previous->source == published->source &&
+              previous->access == published->access &&
+              previous->storedDependency == published->storedDependency &&
+              previous->designatedFields == published->designatedFields &&
+              previous->conditions == published->conditions &&
+              previous->additionalDependencies ==
+                  published->additionalDependencies &&
+              !state.unavailable.contains(previous->id)) {
+            for (const auto &move : block->instructions) {
+              if (move.id == instruction.id)
+                break;
+              if (move.kind != MirInstructionKind::Move || !move.result ||
+                  move.hirValue != instruction.hirValue ||
+                  move.info.type != instruction.info.type)
+                continue;
+              auto held = state.values.find(*move.result);
+              const auto expired = state.expiredValues.find(*move.result);
+              if (held != state.values.end() && held->second &&
+                  expired != state.expiredValues.end() && expired->second &&
+                  std::find(expired->second->begin(), expired->second->end(),
+                            previous->id) == expired->second->end()) {
+                const auto old = std::find(held->second->begin(),
+                                           held->second->end(), previous->id);
+                if (old != held->second->end()) {
+                  held->second->erase(old);
+                  join(held->second,
+                       Fact{std::vector<MirLoanId>{published->id}});
+                }
+              }
+            }
+          }
+        }
         state.unavailable.erase(*instruction.loan);
       }
       // Reading an argument does not prove that the result carries its

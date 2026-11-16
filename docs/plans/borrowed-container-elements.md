@@ -252,3 +252,14 @@ controls. It now uses the native driver's reachable-only lowering options.
 All source fixtures, unsafe-admission checks, cleanup mutations, O0/O3 emission,
 and fixed-address/immovable-element controls remain. The timeout is unchanged;
 Linux timing and the five CI-consumer results are recorded on PR #425.
+
+
+The cleanup runtime consumer also exercises a moved nested guard returned past
+a fallible local destructor. Return publication transfers the guard's local
+loan into an escaping loan, but carrier flow still named the retired local
+loan in the prepared return value. The concrete flow now renames only that
+exact moved SSA value's matching, still-valid dependency; independent carried
+dependencies and older copies remain unchanged. Independent MIR verification
+still checks the publication authority. The existing runtime fixture checks
+normal return, failed return cleanup and failure during rollback at O0/O3; a
+proof mutation also rejects ending the escaping loan before rollback cleanup.
