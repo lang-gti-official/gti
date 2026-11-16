@@ -1,0 +1,7 @@
+// Unknown type cascade suppression: unknown operands must remain rejected.
+int main() {
+  Missing value{};  //~ ERROR GTI-S2000
+  auto result = missing + "text";  //~ ERROR GTI-S2001
+  int independent = "text";  //~ ERROR GTI-S2003
+  return 0;
+}

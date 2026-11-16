@@ -1,0 +1,9 @@
+// Recovery finding diagnostics: ordinary multiple checked-reference fields remain supported.
+//@ check-pass
+class Pair {
+  int& first;
+  int& second;
+public:
+  Pair(int& a, int& b) : first(a), second(b) {}
+};
+int main() { int a = 1; int b = 2; Pair pair{a, b}; return 0; }

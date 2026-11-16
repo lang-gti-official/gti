@@ -1,0 +1,2 @@
+// [[test]] rejects a generic function, reported at the attribute.
+[[test]] void invalid<T>() {}  //~ ERROR GTI-S2099

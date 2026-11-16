@@ -1,0 +1,14 @@
+// An empty switch over an unimported enum reports missing cases without inserting their names.
+//@ snapshot: diagnostics
+// --- main.gti
+import "api.gti";
+int main() { auto value = get(); switch (value) {} return 0; }  //~ ERROR GTI-S2067
+// --- api.gti
+export module api;
+import "types.gti";
+export sample::Value get() { return sample::Value::item(42); }
+// --- types.gti
+export module types;
+export namespace sample {
+  enum Value { none, item(int value) };
+}

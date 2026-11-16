@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: write under live view.
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr int bad() { mut int value = 4; int& view = value; add(value, 1); return view; }  //~ ERROR GTI-S2017
+int main() { return 0; }

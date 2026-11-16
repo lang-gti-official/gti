@@ -1,0 +1,10 @@
+main.gti:16:11: error[GTI-S2022]: No exact overload of operator== for argument types (V).
+ 16 |   if (!(c == a + b)) { return 1; }  //~ ERROR GTI-S2022
+    |           ^~
+main.gti:10:8: note: Candidate: operator==(V&)
+ 10 |   bool operator==(mut V& o) { return this.x == o.x; }
+    |        ^~~~~~~~
+main.gti:16:16: note: Argument 1 is a temporary; a mutable reference requires an existing mutable place.
+ 16 |   if (!(c == a + b)) { return 1; }  //~ ERROR GTI-S2022
+    |                ^
+help: A readonly reference accepts a supported fresh temporary only when the selected source target cannot retain that argument. Mutable references require existing mutable places.

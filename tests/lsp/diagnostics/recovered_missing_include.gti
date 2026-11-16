@@ -1,0 +1,3 @@
+// Parser recovery keeps both the syntax error and the unresolved standard type of a recovered program, without a speculative include fix.
+using values = std::vector<int>;  //~ ERROR GTI-S2000
+enum Broken { item(int value };  //~ ERROR GTI-P0001

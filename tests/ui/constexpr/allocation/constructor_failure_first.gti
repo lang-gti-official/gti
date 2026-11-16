@@ -1,0 +1,33 @@
+// Constant execution retains reverse cleanup and reports the first construction or destruction failure: constructor failure first.
+import std.memory;
+struct First {
+  constexpr First() {}
+  ~First() { int zero = 0; int failure = 11 / zero; }
+};
+struct Last {
+  constexpr Last() {}
+  ~Last() { int zero = 0; int failure = 22 / zero; }
+};
+struct Fields {
+  First first{};
+  Last last{};
+  constexpr Fields() {}
+};
+struct Element {
+  int tag;
+  constexpr Element(int tag) : tag(tag) {}
+  ~Element() {
+    int zero = 0;
+    if (this.tag == 1) { int failure = 33 / zero; }
+    else { int failure = 44 / zero; }
+  }
+};
+struct FailingConstructor {
+  std::unique_ptr<int> first;
+  int second;
+  constexpr FailingConstructor(int zero)
+    : first(std::make_unique<int>(1)), second(55 / zero) {}  //~ ERROR GTI-S2057 zero
+};
+
+constexpr int probe() { auto value = std::make_unique<FailingConstructor>(0); return 0; }
+static_assert(probe() == 0);

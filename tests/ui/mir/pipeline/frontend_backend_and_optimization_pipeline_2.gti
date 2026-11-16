@@ -1,0 +1,2 @@
+// Frontend backend and optimization pipeline: the frontend should block code generation after syntax errors.
+int main() { return 0 }  //~ ERROR GTI-P0001

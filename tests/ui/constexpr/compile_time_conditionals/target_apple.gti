@@ -1,0 +1,41 @@
+// Compile time conditionals: an Apple arm64 target selects the vendor branch and its nested arm64 branch; inactive branches (an unknown name, a runtime binding, #error) are never analysed.
+//@ check-pass
+//@ target: arm64-apple-macos
+#if target.vendor == "apple"
+constexpr int platform_value() { return 101; }
+#if target.arch == "arm64"
+constexpr int nested_value() { return 64; }
+#else
+constexpr int nested_value() { return 32; }
+#endif
+#elif target.os == "windows"
+constexpr int platform_value() { return 202; }
+#else
+constexpr int platform_value() { return 303; }
+#endif
+
+#if target.os == "never"
+expected<int, int> inactive_error() { return missing_name; }
+@runtime("stdout.write")
+void inactive_runtime(gti_internal::text_view value);
+#error "This target is deliberately unsupported."
+#endif
+
+class PlatformInfo {
+#if target.arch == "arm64"
+  int bits = 64;
+#else
+  int bits = 32;
+#endif
+public:
+  int selected_bits() { return this.bits; }
+public:
+  PlatformInfo() = default;
+};
+
+static_assert(platform_value() == 101 && nested_value() == 64);
+
+int main() {
+  PlatformInfo info{};
+  return platform_value() + info.selected_bits();
+}

@@ -1,0 +1,29 @@
+// A project with a path dependency; the library's interface is on disk only.
+//@ disk-only: library/api.gti
+//@ definition @use: @library/api.gti:decl
+//@ completion @typed: answer !main
+// --- app/main.gti
+import dep.net.http;
+int main() { return /*@use*/answer() + ans/*^typed*/; }  //~ ERROR GTI-S2001
+// --- app/gti.toml
+manifest-version = 1
+[package]
+name = "app"
+version = "0.1.0"
+source-root = "."
+[dependencies]
+dep = { path = "../library" }
+[targets.app]
+kind = "executable"
+root = "main.gti"
+// --- library/gti.toml
+manifest-version = 1
+[package]
+name = "library"
+version = "0.1.0"
+source-root = "."
+[modules]
+"net.http" = "api.gti"
+// --- library/api.gti
+export module net.http;
+export int /*@decl*/answer() { return 42; }

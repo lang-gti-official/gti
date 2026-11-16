@@ -1,0 +1,18 @@
+// Reproducer a53-operator-temporary-ref-diagnostic: a temporary operand for a mutable operator reference parameter is explained by its value category, without conversion advice.
+//@ snapshot: diagnostics
+// A53: a temporary cannot satisfy a mutable operator reference parameter.
+// Explain the operand's value category, without conversion or ADL advice.
+class V {
+public:
+  int32_t x;
+  V(int32_t x) : x(x) {}
+  V operator+(V& o) { return V(this.x + o.x); }
+  bool operator==(mut V& o) { return this.x == o.x; }
+};
+int main() {
+  V a = V(1);
+  V b = V(2);
+  V c = V(3);
+  if (!(c == a + b)) { return 1; }  //~ ERROR GTI-S2022
+  return 0;
+}

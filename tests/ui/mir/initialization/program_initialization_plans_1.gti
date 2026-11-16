@@ -1,0 +1,20 @@
+// Program initialization plans: one deterministic global/static initialization plan: zero-initialized storage, constant copies and a static field read of an earlier global have their values before main.
+//@ run-pass
+constexpr int32_t negative = -7;
+constexpr bool enabled = true;
+constexpr char marker = 'G';
+constexpr double ratio = 1.5;
+mut int32_t zeroed;
+mut int32_t negative_copy = negative;
+mut bool enabled_copy = enabled;
+mut char marker_copy = marker;
+mut double ratio_copy = ratio;
+
+class Registry {
+public:
+  static mut int32_t value = negative_copy;
+public:
+  Registry() = default;
+};
+
+int main() { return Registry::value + zeroed + negative_copy + 7 == -7 ? 0 : 1; }

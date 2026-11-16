@@ -1,0 +1,22 @@
+// --- main.gti
+import "api.gti";
+int main() {
+  return both() - 1;
+}
+// --- api.gti
+export module api;
+export [[track_caller]] void check(bool ready) {}
+int choose(bool ready) {
+  if (ready) [[discard]] choose(false);
+  else [[discard]] choose(true);
+  return 0;
+}
+int first(int[2] values) {
+  return values[ [](int i) -> int {
+    return i;
+  }
+  (0)];
+}
+export [[track_caller]][[discardable]] int both() {
+  return 1;
+}

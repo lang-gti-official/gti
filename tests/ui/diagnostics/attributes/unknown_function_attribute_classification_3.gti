@@ -1,0 +1,2 @@
+// Unknown function attribute classification: class attributes retain their owning class validation.
+[[not_an_attribute]] struct Record { public: Record() = default; };  //~ ERROR GTI-S2059

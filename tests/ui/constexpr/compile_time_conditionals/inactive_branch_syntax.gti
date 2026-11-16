@@ -1,0 +1,7 @@
+// Compile time conditionals: an inactive branch must still be valid syntax; exactly one error is reported.
+//@ parse-fail
+#if target.os == "never"
+int broken = ;  //~ ERROR GTI-P0001
+#else
+int valid = 1;
+#endif

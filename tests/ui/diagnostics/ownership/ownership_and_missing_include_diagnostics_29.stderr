@@ -1,0 +1,7 @@
+main.gti:6:39: error[GTI-S2000]: Cannot mutate through a read-only receiver.
+ 6 |   auto modify = [cmd]() -> void { cmd.name = 1; };  //~ ERROR GTI-S2000
+   |                                       ^~~~
+main.gti:6:18: note: 'cmd' is declared without mutable access here.
+ 6 |   auto modify = [cmd]() -> void { cmd.name = 1; };  //~ ERROR GTI-S2000
+   |                  ^~~
+help: This capture is an immutable value snapshot; changing its source binding does not make the captured value mutable.

@@ -1,0 +1,10 @@
+// Program initialization plans: a later constexpr value should be deferred, substituted as exact HIR/MIR data, and never loaded from its later storage step.
+//@ run-pass
+class DeferredGlobals {
+public:
+  static mut int32_t first = DeferredGlobals::later;
+  static constexpr int32_t later = -7;
+public:
+  DeferredGlobals() = default;
+};
+int main() { return DeferredGlobals::first + DeferredGlobals::later + 7 == -7 ? 0 : 1; }

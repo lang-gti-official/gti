@@ -1,0 +1,3 @@
+// Static assertions: static assertions should reject non-bool conditions without contextual conversion.
+static_assert(1);  //~ ERROR GTI-S2080 exact type 'bool'
+int main() { return 0; }

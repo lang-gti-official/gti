@@ -1,0 +1,7 @@
+// A function instance whose own static assertion fails reports only that assertion, not the index error it guards.
+int first<uint64_t N>() {
+  static_assert(N > 0, "first needs at least one element");  //~ ERROR GTI-S2079 first needs at least one element
+  int values[N] = {};
+  return values[0];
+}
+int main() { return first<0>(); }

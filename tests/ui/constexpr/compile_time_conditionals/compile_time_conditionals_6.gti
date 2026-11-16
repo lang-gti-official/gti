@@ -1,0 +1,3 @@
+// Compile time conditionals: defined(...) should remain confined to compile-time conditions.
+bool enabled = defined(DEBUG);  //~ ERROR GTI-P0004
+int main() { return 0; }

@@ -1,0 +1,9 @@
+// Module import cycles are rejected by the source-cycle gate.
+// --- main.gti
+import "local.gti";
+// --- local.gti
+export module local;
+import "duplicate.gti";
+// --- duplicate.gti
+export module duplicate;
+import "local.gti";  //~ ERROR GTI-I0001

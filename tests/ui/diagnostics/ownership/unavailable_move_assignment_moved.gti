@@ -1,0 +1,13 @@
+// Assigning a moved value to a borrowed carrier without move assignment reports the unavailable move assignment, not a move suggestion.
+class Slot {
+  mut int& value;
+public:
+  Slot(mut int& owner) : value(owner) {}
+};
+void examine() {
+  mut int first = 1;
+  mut int second = 2;
+  mut Slot destination = Slot(first);
+  Slot source = Slot(second);
+  destination = std::move(source);  //~ ERROR GTI-S2003 Move assignment is unavailable
+}

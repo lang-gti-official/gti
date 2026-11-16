@@ -1,0 +1,7 @@
+main.gti:5:84: error[GTI-S2067]: Payload-enum switch is not exhaustive; missing Packet::empty, Packet::filled.
+ 5 | void inspect<T>(Packet<T>& value) { if constexpr (std::meta::is_same<T, bool>()) { switch (value) {} } }  //~ ERROR GTI-S2067
+   |                                                                                    ^~~~~~
+main.gti:6:56: note: Concrete generic instance requested here.
+ 6 | int main() { Packet<bool> value = Packet<bool>::empty; inspect(value); return 0; }
+   |                                                        ^~~~~~~
+help: Handle every variant explicitly or add a 'default' arm.

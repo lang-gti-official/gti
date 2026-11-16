@@ -1,0 +1,10 @@
+// Static assertions: dependent assertion detection must not depend on semantic tooling occurrence collection.
+class Limited<uint64_t N> {
+  static_assert(N < uint64_t(2), "extent is too large");  //~ ERROR GTI-S2079
+public:
+  Limited() = default;
+};
+int main() {
+  Limited<3> value{};
+  return 0;
+}

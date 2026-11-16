@@ -1,0 +1,2 @@
+// A malformed or misplaced module import or header fails during source loading: an empty name component.
+import lib.;  //~ ERROR GTI-I0012 Expect a module name

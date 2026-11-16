@@ -1,0 +1,20 @@
+// Characters and string views: control, two-digit hexadecimal and Unicode escapes decode to the exact code units; character escapes decode to one code unit.
+//@ check-pass
+static_assert(uint8_t('\b') == uint8_t(8) && uint8_t('\x41') == uint8_t(0x41) &&
+              uint8_t('\e') == uint8_t(0x1b) && uint8_t('\'') == uint8_t(0x27) &&
+              uint8_t('\\') == uint8_t(0x5c) && uint8_t('A') == uint8_t(0x41));
+constexpr std::string_view control = "\a\b\e\f\v";
+constexpr std::string_view hex = "\x41\x7e\x00\xFF\x4142";
+constexpr std::string_view unicode = "é€\U0001F600A";
+constexpr std::string_view quote = "it\'s";
+static_assert(control.size() == 5 && uint8_t(control[0]) == uint8_t(7) &&
+              uint8_t(control[2]) == uint8_t(0x1b) && uint8_t(control[4]) == uint8_t(0x0b));
+static_assert(hex.size() == 7 && hex[0] == 'A' && hex[1] == '~' &&
+              uint8_t(hex[2]) == uint8_t(0) && uint8_t(hex[3]) == uint8_t(0xff) &&
+              hex[4] == 'A' && hex[5] == '4' && hex[6] == '2');
+static_assert(unicode.size() == 10 && uint8_t(unicode[0]) == uint8_t(0xc3) &&
+              uint8_t(unicode[1]) == uint8_t(0xa9) && uint8_t(unicode[2]) == uint8_t(0xe2) &&
+              uint8_t(unicode[5]) == uint8_t(0xf0) && uint8_t(unicode[8]) == uint8_t(0x80) &&
+              unicode[9] == 'A');
+static_assert(quote.size() == 4 && quote[2] == '\'');
+int main() { return 0; }

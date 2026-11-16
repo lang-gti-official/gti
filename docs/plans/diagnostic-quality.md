@@ -44,7 +44,7 @@ The following inspected implementation is the starting point:
 | Constraint explanations | `SemanticConstraintFailure` and `SemanticMemberRequirementFailure` in `src/compiler/semantic_diagnostics.h`; pure `SemanticDiagnosticReporter` | Preserve structured nested causes where text-only leaves remain; unify candidate rejection presentation without changing overload selection |
 | Source provenance | `SourceSpan`, `SourceManager`, generic-instantiation and macro attribution in the diagnostic architecture | Explicit ownership/invalidation for retained explanation records; bounded, inspectable deeper traces |
 | Terminal and editor | `src/cli/`, `src/lsp/main.cpp`, `tests/diagnostic_explanations_test.py` | Cross-family parity, repair grouping/applicability and snapshot-bound causal details |
-| Recovery and regression tests | `tests/compiler_diagnostics_tests.cpp`, `tests/diagnostic_recovery_lsp_test.py`, `tests/diagnostic_registry_generator_test.py` | Representative scored corpus, causal cascade suppression and systematic repair validation |
+| Recovery and regression tests | `tests/ui/diagnostics/`, `tests/diagnostic_recovery_lsp_test.py`, `tests/diagnostic_registry_generator_test.py` | Representative scored corpus, causal cascade suppression and systematic repair validation |
 
 The initial `FixIt` model had one span/replacement/message and a `preferred`
 Boolean. The first repair slice adds conservative applicability and atomic

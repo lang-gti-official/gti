@@ -1,0 +1,9 @@
+// A switch produced by macro expansion gets no scaffold: it can edit neither the definition nor the call site.
+//@ snapshot: diagnostics
+// --- main.gti
+import "library.gti";
+enum Message { idle, item(int value), done };
+int main() { return identity!({ []() -> int { Message value = Message::idle; switch (value) {} return 0; }() }); }  //~ ERROR GTI-S2067
+// --- library.gti
+export module library; import std.syntax;
+export #macro(proc) std::syntax::expr identity(std::syntax::tokens input) { return std::syntax::parse(std::syntax::slice(input, uint64_t(1), std::syntax::size(input) - uint64_t(1))); }

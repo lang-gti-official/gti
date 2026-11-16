@@ -1,0 +1,12 @@
+// Program initialization plans: a reference return must preserve the later constexpr as a storage access in the transitive initializer proof.
+class ReferenceReturnGlobals {
+public:
+  static int32_t& borrow_later() {
+    return ReferenceReturnGlobals::later;
+  }
+  static mut int32_t first = ReferenceReturnGlobals::borrow_later();  //~ ERROR GTI-S2068
+  static constexpr int32_t later = -7;
+public:
+  ReferenceReturnGlobals() = default;
+};
+int main() { return ReferenceReturnGlobals::first; }

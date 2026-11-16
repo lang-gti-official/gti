@@ -1,0 +1,21 @@
+// Advisory diagnostics: mutable-reference arguments, mutable address-taking, and mutable receivers, field writes, and indexed writes should each preserve a required local mut qualifier.
+//@ check-pass
+void replace(mut int& value) { value = 3; }
+struct Box {
+  mut int value = 0;
+  void change() mut { this.value = 4; }
+public:
+  Box() = default;
+};
+int main() {
+  mut int referenced = 1;
+  replace(referenced);
+  mut int addressed = 2;
+  unsafe { int* pointer = &addressed; *pointer = 5; }
+  mut Box box = Box();
+  box.change();
+  box.value += 1;
+  mut int[1] values = {1};
+  values[0] *= 2;
+  return referenced + addressed + box.value + values[0];
+}

@@ -1,0 +1,8 @@
+// A syntax error in an imported module is reported in that module.
+// --- main.gti
+import "branch.gti";
+int main() { return 0; }
+// --- branch.gti
+export module branch;
+int broken = 1
+int after = 2;  //~ ERROR GTI-P0001
