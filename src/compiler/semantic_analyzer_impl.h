@@ -2461,6 +2461,11 @@ private:
   textDependentFields(const Expr &expression) const;
   void noteTextDependentValue(const Expr &expression);
   void consumeTextDependentValue(const ExprPtr &expression);
+  [[nodiscard]] std::optional<SemanticTypeTraits>
+  retainDependentTextInitializer(const VariableDecl &declaration,
+                                 const SemanticType &type,
+                                 const ExprPtr &initializer, bool globalStorage,
+                                 bool instanceField);
   // The owner dependency of a switch subject when it designates exactly this
   // binding's text payload (L-OWN-02), through the subject's `prefix` of
   // fields of the dependency's carrier.
