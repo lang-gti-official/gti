@@ -4090,6 +4090,8 @@ private:
         range.ownsRangeTemporary = resolved->ownsRangeTemporary;
         range.nonBorrowingEndpoint = resolved->nonBorrowingEndpoint;
         range.materializesElementValue = resolved->materializesElementValue;
+        range.elementBorrowsCursorRegions =
+            resolved->elementBorrowsCursorRegions;
       }
       range.owner = bindingFor(rangeFor->ownerBinding());
       range.rangeCarrier = bindingFor(rangeFor->rangeBinding());

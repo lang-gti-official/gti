@@ -3471,6 +3471,14 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
         "'mut T&', or use a read-only element reference.");
     diagnostics.emplace_back(std::move(diagnostic));
   }
+  const ExpressionInfo *elementValue =
+      accessBinding == nullptr || !accessBinding->initializer()
+          ? nullptr
+          : semanticModel.findExpression(*accessBinding->initializer());
+  const bool elementBorrowsCursorRegions =
+      rangeType.kind != SemanticType::Array && elementValue != nullptr &&
+      elementValue->category == ValueCategory::Value &&
+      cursorRegionDereference(dereference, elementValue->type);
   semanticModel.record(
       stmt, {.strategy = rangeType.kind == SemanticType::Array
                              ? RangeIterationStrategy::FixedArray
@@ -3502,7 +3510,8 @@ auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
              .nonBorrowingEndpoint = nonBorrowingEndpoint,
              .materializesElementValue =
                  elementOwner != nullptr &&
-                 elementOwner->type.kind != SemanticType::Reference});
+                 elementOwner->type.kind != SemanticType::Reference,
+             .elementBorrowsCursorRegions = elementBorrowsCursorRegions});
 }
 
 auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
@@ -16391,6 +16400,28 @@ auto SemanticVisitor::Impl::summarizeLoanFlow(const Stmt *statement) const
   return summarizeFlow(statement);
 }
 
+auto SemanticVisitor::Impl::cursorRegionDereference(
+    const ResolvedOperatorInfo *dereference, const SemanticType &value) const
+    -> bool {
+  if (dereference == nullptr || dereference->declaration == nullptr ||
+      dereference->kind != OverloadedOperator::Dereference ||
+      dereference->receiverMutability != ReceiverMutability::ReadOnly ||
+      value.kind == SemanticType::Reference ||
+      value.kind == SemanticType::StringView ||
+      value.kind == SemanticType::CString)
+    return false;
+  const SemanticTypeTraits traits = typeTraits(value);
+  if (!traits.copyable || !traits.containsBorrowedState)
+    return false;
+  const FunctionInfo *function =
+      semanticModel.findFunction(dereference->function);
+  // The declaration's own scope proved the full contract (no elided
+  // position); a use site re-reads only its written regions.
+  return function != nullptr &&
+         resultBorrowsOnlyStoredRegions(*dereference->declaration,
+                                        function->ownerClass, false);
+}
+
 auto SemanticVisitor::Impl::analyzeInferredVariable(
     const VariableDecl &declaration) -> void {
   const std::size_t declarationDiagnosticStart = diagnostics.size();
@@ -16468,15 +16499,26 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
       initializerInfo != nullptr &&
       initializerInfo->category == ValueCategory::Place &&
       initializerType != SemanticType::Unknown;
+  // A yield whose borrowed state the selected operator* writes only in its
+  // cursor's own lifetime parameters borrows the cursor's referents, not the
+  // cursor, so the hidden owner may hold it across the iteration.
+  const auto storedRegionYield = [&] {
+    return declaration.initializer() &&
+           cursorRegionDereference(
+               semanticModel.findOperator(*declaration.initializer()),
+               initializerType);
+  };
   if (declaration.isRangeElementOwner() && initializerInfo != nullptr &&
       initializerInfo->category == ValueCategory::Value &&
       initializerType != SemanticType::Unknown &&
       initializerType.kind != SemanticType::TypeParameter &&
       (!readableIteratorValue(initializerType) ||
-       initializerInfo->traits.containsBorrowedState)) {
+       initializerInfo->traits.containsBorrowedState) &&
+      !storedRegionYield()) {
     report(expressionToken(declaration.initializer()),
            "A value-yielding range requires an independent copyable element "
-           "with no borrowed state.",
+           "with no borrowed state, or one whose borrowed state the "
+           "iterator's operator* writes only in its own lifetime parameters.",
            "GTI-S2083");
   }
   const bool ownerDependentText =

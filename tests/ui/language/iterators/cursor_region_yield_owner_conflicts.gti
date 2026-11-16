@@ -1,0 +1,62 @@
+// A cursor-region yield keeps its owner borrowed after the cursor advances:
+// the owner cannot be mutated or moved while the yield is live, and the yield
+// cannot escape its owner or outlive a temporary one.
+import std.vector;
+import std.span;
+import std.utility;
+
+class chunk_end { public: chunk_end() = default; };
+class chunk_cursor<lifetime owner> {
+  std::span<int, owner> source;
+  mut uint64_t first;
+public:
+  chunk_cursor(std::span<int, owner> source) : source(source), first(0) {}
+  std::span<int, owner> operator*() { return this.source.subspan(this.first, uint64_t(1)); }
+  void operator++() mut { this.first = this.first + uint64_t(1); }
+  bool operator!=(chunk_end end) { return this.first < this.source.size(); }
+};
+class chunks<lifetime owner> {
+  std::span<int, owner> source;
+public:
+  chunks(std::span<int, owner> source) : source(source) {}
+  chunk_cursor<owner> begin() { return chunk_cursor(this.source); }
+  chunk_end end() { return chunk_end(); }
+};
+std::vector<int> make() {
+  mut std::vector<int> values{};
+  values.push_back(7);
+  return values;
+}
+int consume(std::vector<int> values) { return int(values.size()); }
+
+int mutate_owner() {
+  mut std::vector<int> values = make();
+  mut auto cursor = chunk_cursor(values.as_span());
+  auto piece = *cursor;
+  ++cursor;
+  values.push_back(1);  //~ ERROR GTI-S2017
+  return piece[0];
+}
+int mutate_in_loop() {
+  mut std::vector<int> values = make();
+  for (auto piece : chunks(values.as_span())) { values.push_back(piece[0]); }  //~ ERROR GTI-S2017
+  return 0;
+}
+int move_owner() {
+  std::vector<int> values = make();
+  auto cursor = chunk_cursor(values.as_span());
+  auto piece = *cursor;
+  int moved = consume(std::move(values));  //~ ERROR GTI-S2017
+  return piece[0] + moved;
+}
+std::span<int> escape_owner() {
+  std::vector<int> values = make();
+  auto cursor = chunk_cursor(values.as_span());
+  return *cursor;  //~ ERROR GTI-S2127
+}
+int temporary_owner() {
+  auto cursor = chunk_cursor(make().as_span());  //~ ERROR GTI-S2045
+  auto piece = *cursor;
+  return piece[0];
+}
+int main() { return 0; }

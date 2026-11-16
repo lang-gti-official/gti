@@ -1,0 +1,84 @@
+// The cursor-region yield rule is general: an unrelated user-defined borrow
+// carrier written in the cursor's lifetime parameter is yielded by value or
+// by reference, survives ++, and satisfies the iterator concepts.
+//@ run-pass
+import std.iterator;
+import std.meta;
+
+struct Readings {
+  mut int values[6];
+  Readings() : values({3, 1, 4, 1, 5, 9}) {}
+};
+// A read-only window over storage it does not own.
+class window<lifetime w> {
+  Readings&<w> source;
+  uint64_t first;
+public:
+  window(Readings&<w> source, uint64_t first) : source(source), first(first) {}
+  int sum() { return this.source.values[this.first] + this.source.values[this.first + uint64_t(1)]; }
+};
+class window_end { public: window_end() = default; };
+class window_cursor<lifetime owner> {
+  Readings&<owner> source;
+  mut uint64_t first;
+public:
+  window_cursor(Readings&<owner> source) : source(source), first(0) {}
+  window_cursor(window_cursor<owner>& other) = default;
+  window<owner> operator*() { return window(this.source, this.first); }
+  void operator++() mut { this.first = this.first + uint64_t(2); }
+  bool operator!=(window_end end) { return this.first < uint64_t(6); }
+  bool operator!=(window_cursor<owner>& other) { return this.first != other.first; }
+};
+class windows<lifetime owner> {
+  Readings&<owner> source;
+public:
+  windows(Readings&<owner> source) : source(source) {}
+  window_cursor<owner> begin() { return window_cursor(this.source); }
+  window_end end() { return window_end(); }
+};
+
+static_assert(std::input_iterator<window_cursor<static>>);
+static_assert(std::forward_iterator<window_cursor<static>>);
+
+// The reflected signature fact the iterator concepts read.
+class facts<lifetime owner> {
+  Readings&<owner> source;
+  Readings local;
+public:
+  facts(Readings&<owner> source) : source(source), local(Readings()) {}
+  window<owner> stored() { return window(this.source, uint64_t(0)); }
+  window<this> own() { return window(this.local, uint64_t(0)); }
+  Readings& elided() { return this.local; }
+  int&<a> pick<lifetime a>(int&<a> value) { return value; }
+  int plain() { return 1; }
+};
+static_assert(std::meta::method<facts<static>, 0>().result_outlives_receiver());
+static_assert(!std::meta::method<facts<static>, 1>().result_outlives_receiver());
+static_assert(!std::meta::method<facts<static>, 2>().result_outlives_receiver());
+static_assert(std::meta::method<facts<static>, 3>().result_outlives_receiver());
+static_assert(std::meta::method<facts<static>, 4>().result_outlives_receiver());
+
+int pair_sums<I, S>(mut I first, S last) requires std::input_iterator<I> && std::sentinel_for<S, I> {
+  mut int total = 0;
+  for (; first != last; ++first) {
+    auto current = *first;
+    total += current.sum();
+  }
+  return total;
+}
+
+int main() {
+  Readings readings{};
+  mut int by_value = 0;
+  mut int by_reference = 0;
+  for (auto part : windows(readings)) by_value += part.sum();
+  for (auto& part : windows(readings)) by_reference += part.sum();
+  if (by_value != 23 || by_reference != 23 ||
+      pair_sums(window_cursor(readings), window_end()) != 23)
+    return 1;
+  mut auto at = window_cursor(readings);
+  auto first = *at;
+  ++at;
+  auto second = *at;
+  return first.sum() == 4 && second.sum() == 5 ? 0 : 2;
+}

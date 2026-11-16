@@ -4050,6 +4050,25 @@ auto SemanticVisitor::Impl::metaMethodFacts(const SemanticType &type,
   for (const Parameter &parameter : declaration.parameters()) {
     facts.parameterNames.push_back(parameter.name.lexeme);
   }
+  const SemanticType &result = facts.returnType;
+  if (facts.staticMember) {
+    facts.resultOutlivesReceiver = true;
+  } else if (result.kind == SemanticType::StringView ||
+             result.kind == SemanticType::CString) {
+    // A legacy text handle's owner is tracked per value, not by signature.
+    facts.resultOutlivesReceiver = false;
+  } else if (result.kind != SemanticType::Reference &&
+             !typeTraits(result).containsBorrowedState) {
+    facts.resultOutlivesReceiver = true;
+  } else {
+    const auto lifetime = explicitLifetimeResult(
+        declaration, facts.parameterTypes, function->ownerClass);
+    facts.resultOutlivesReceiver =
+        resultBorrowsOnlyStoredRegions(declaration, function->ownerClass,
+                                       false) ||
+        (lifetime.kind == ExplicitLifetimeResult::Kind::Region &&
+         !lifetime.classBinder && !lifetime.parameters.empty());
+  }
   return facts;
 }
 

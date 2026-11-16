@@ -365,6 +365,7 @@ struct HirRangeIteration {
   bool ownsRangeTemporary = false;
   bool nonBorrowingEndpoint = false;
   bool materializesElementValue = false;
+  bool elementBorrowsCursorRegions = false;
 
   friend bool operator==(const HirRangeIteration &,
                          const HirRangeIteration &) = default;

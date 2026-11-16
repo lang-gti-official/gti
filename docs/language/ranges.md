@@ -204,8 +204,10 @@ The iterator must provide:
 
 - `operator!=(Sentinel&)` or `operator!=(Sentinel)`, with one exact read-only
   reference parameter or copyable by-value parameter accepting the sentinel;
-- read-only `operator*()`, returning a checked reference or an independent
-  copyable value without borrowed state;
+- read-only `operator*()`, returning a checked reference, an independent
+  copyable value without borrowed state, or a copyable value whose borrowed
+  state lies only in the iterator's own lifetime parameters (a
+  [cursor-region yield](#cursor-region-yields));
 - `void operator++() mut`, the prefix increment operation.
 
 These are ordinary GTI methods. Access control, generic substitution, receiver
@@ -234,6 +236,56 @@ value after its borrowers. Assigning through the read-only reference or
 storing, capturing, or returning it beyond the iteration is ill-formed.
 This range-local materialization does not permit ordinary reference binding to
 temporaries elsewhere, or mutable element access to a value-yielding range.
+
+### Cursor-region yields
+
+A read-only `operator*` may return a copyable value that carries borrowed
+state when every region its signature writes is one of the iterator class's
+own lifetime parameters (or `static`). Such a value borrows what the cursor
+stores, never the cursor itself:
+
+```gti
+class chunk_cursor<lifetime owner> {
+  std::span<int, owner> source;
+  mut uint64_t first;
+public:
+  std::span<int, owner> operator*() { return this.source.subspan(this.first, uint64_t(2)); }
+  void operator++() mut { this.first = this.first + uint64_t(2); }
+  bool operator!=(chunk_end end) { return this.first + uint64_t(2) <= this.source.size(); }
+};
+
+auto kept = *cursor;
+++cursor;              // valid: `kept` borrows the vector, not the cursor
+use(kept, *cursor);
+```
+
+The rule is structural: the yielded type may be any copyable borrow carrier,
+such as an application `window<lifetime w>` holding `Data&<w>`; no library
+type is named. The signature is the contract, exactly as for a named method
+returning the same type (see
+[lifetime parameters](ownership-and-lifetimes.md#lifetime-parameters-and-elision)),
+and the body is checked against it: returning a view of storage the cursor
+owns under a stored region reports `GTI-S2127`.
+
+The declaration is rejected with `GTI-S2022` when the yield would borrow the
+receiver: a region written `this`, an elided region (`std::span<int>` or
+`window` with no region argument, also inside a type argument such as
+`holder<window>`), a mutable or consuming receiver, or a non-copyable carrier.
+Legacy text handles (`string_view`, `c_string`) remain rejected as yields; their
+owner is tracked per value by the
+[stored-view rules](ownership-and-lifetimes.md#owner-tracked-view-fields), not
+by a signature region.
+
+A range loop accepts the yield by value, with an explicit carrier type, or by
+reference (`auto&`), where the hidden per-iteration owner holds the yield. In
+every form the element retains its own loan on the cursor's referent: the
+range owner cannot be mutated, moved or destroyed while it is live, and it
+cannot escape that owner. Advancing the cursor does not end it. Semantics
+records the fact on the range plan; HIR preserves it and the MIR verifier
+proves that the element's loan is a read-only stored loan on a place the
+cursor's own stored loan protects, never the cursor, the range shell or an
+escaping loan, and that the selected `operator*` returns the value supplied by
+the cursor's stored fields.
 
 A by-reference lambda capture is ranged over exactly like a reference
 parameter: the traversal takes its own reborrow of the captured referent,
@@ -473,10 +525,13 @@ inline eight-byte field to each vector/resource-vector cursor, with no allocatio
 without making an iterator inherit a category base or teaching the compiler a
 public library name:
 
-- `std::input_iterator<I>` proves read-only checked-reference or independent
-  copyable-value dereference and mutable prefix increment; ordinary parameter
+- `std::input_iterator<I>` proves read-only checked-reference, independent
+  copyable-value or [cursor-region](#cursor-region-yields) copyable-carrier
+  dereference and mutable prefix increment; ordinary parameter
   ownership separately checks whether a
-  particular iterator expression can be transferred into an algorithm;
+  particular iterator expression can be transferred into an algorithm. The
+  carrier case reads the reflected declaration fact
+  `std::meta::method<I, N>().result_outlives_receiver()`;
 - `std::sentinel_for<S, I>` proves exact public read-only
   `bool I::operator!=(S&)` or `bool I::operator!=(S)` with copyable `S`;
 - `std::output_iterator<I>` proves mut checked dereference returning a mutable

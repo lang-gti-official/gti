@@ -1,0 +1,109 @@
+// Cursors that yield views: a read-only `operator*` may return a copyable
+// value that carries borrowed state, provided every region in its signature is
+// one of the cursor class's own lifetime parameters. Such a value borrows what
+// the cursor stores (the samples), never the cursor itself, so it stays valid
+// after `++`, can be bound by value or by reference in a range loop, and the
+// cursor satisfies `std::input_iterator`.
+//
+// A yield written with an elided region or `this` (for example
+// `std::span<int> operator*()` over storage the cursor owns) still borrows the
+// cursor and is rejected (GTI-S2022): advancing would invalidate it.
+// `string_view` and `c_string` yields remain unsupported.
+import std.vector;
+import std.span;
+import std.iterator;
+import std.format;
+
+// Fixed-size frames over a sample buffer, each a std::span of the samples.
+class frame_end { public: frame_end() = default; };
+class frame_cursor<lifetime samples> {
+  std::span<int, samples> source;
+  uint64_t width;
+  mut uint64_t first;
+public:
+  frame_cursor(std::span<int, samples> source, uint64_t width)
+      : source(source), width(width), first(0) {}
+  frame_cursor(frame_cursor<samples>& other) = default;
+  std::span<int, samples> operator*() { return this.source.subspan(this.first, this.width); }
+  void operator++() mut { this.first = this.first + this.width; }
+  bool operator!=(frame_end end) { return this.first + this.width <= this.source.size(); }
+  bool operator!=(frame_cursor<samples>& other) { return this.first != other.first; }
+};
+class frames<lifetime samples> {
+  std::span<int, samples> source;
+  uint64_t width;
+public:
+  frames(std::span<int, samples> source, uint64_t width) : source(source), width(width) {}
+  frame_cursor<samples> begin() { return frame_cursor(this.source, this.width); }
+  frame_end end() { return frame_end(); }
+};
+
+// The rule is not specific to std::span: an application carrier works too.
+struct Calendar {
+  mut int temperatures[7];
+  Calendar() : temperatures({12, 15, 11, 18, 21, 19, 14}) {}
+};
+class day_pair<lifetime week> {
+  Calendar&<week> calendar;
+  uint64_t first;
+public:
+  day_pair(Calendar&<week> calendar, uint64_t first) : calendar(calendar), first(first) {}
+  int swing() {
+    int change = this.calendar.temperatures[this.first + uint64_t(1)] -
+                 this.calendar.temperatures[this.first];
+    return change < 0 ? -change : change;
+  }
+};
+class day_pair_cursor<lifetime week> {
+  Calendar&<week> calendar;
+  mut uint64_t first;
+public:
+  day_pair_cursor(Calendar&<week> calendar) : calendar(calendar), first(0) {}
+  day_pair<week> operator*() { return day_pair(this.calendar, this.first); }
+  void operator++() mut { this.first = this.first + uint64_t(1); }
+  bool operator!=(frame_end end) { return this.first + uint64_t(1) < uint64_t(7); }
+};
+
+static_assert(std::input_iterator<frame_cursor<static>>);
+static_assert(std::forward_iterator<frame_cursor<static>>);
+static_assert(std::input_iterator<day_pair_cursor<static>>);
+
+// A generic algorithm keeps the best yield while it advances the cursor.
+int largest_swing<I, S>(mut I first, S last) requires std::input_iterator<I> && std::sentinel_for<S, I> {
+  mut int best = 0;
+  for (; first != last; ++first) {
+    auto pair = *first;
+    if (pair.swing() > best) best = pair.swing();
+  }
+  return best;
+}
+
+int main() {
+  mut std::vector<int> samples{};
+  for (mut int i = 1; i <= 9; i++) samples.push_back(i * i % 10);
+
+  // By value: each frame is a span of `samples`.
+  for (auto frame : frames(samples.as_span(), uint64_t(3))) {
+    std::println("frame {} {} {}", frame[0], frame[1], frame[2]);
+  }
+  // By reference: the loop owns each yielded span and lends it to the body.
+  mut int peak = 0;
+  for (auto& frame : frames(samples.as_span(), uint64_t(3))) {
+    for (int sample : frame) {
+      if (sample > peak) peak = sample;
+    }
+  }
+  std::println("peak {}", peak);
+
+  // A yield outlives the advance that follows it; both borrow `samples`.
+  mut auto cursor = frame_cursor(samples.as_span(), uint64_t(3));
+  auto first = *cursor;
+  ++cursor;
+  auto second = *cursor;
+  // samples.push_back(0);  // GTI-S2017: `first` and `second` still borrow it
+  std::println("first {} second {}", first[0], second[0]);
+
+  Calendar week{};
+  std::println("largest swing {}", largest_swing(day_pair_cursor(week), frame_end()));
+  return 0;
+}
