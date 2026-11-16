@@ -4312,9 +4312,9 @@ auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
       !stmt.isStatic()) {
     return false;
   }
-  // The language requires a constexpr definition to be analysed before a
-  // constant-evaluated call to it; deferral would break that rule.
-  if (stmt.isConstexpr()) {
+  // Constant evaluation and procedural expansion both require a checked
+  // definition before invocation; deferral would break that rule.
+  if (stmt.isConstexpr() || stmt.isProceduralMacro()) {
     return false;
   }
   return true;
