@@ -592,7 +592,7 @@ int main() { auto text = Text::value("static"); return 0; }
         "int main() { mut std::string owner{\"owned\"}; "
         "std::string_view view = owner.view(); auto text = Text::value(" +
         expression +
-        "); switch (text) { case Text::value(auto& selected): "
+        "); switch (text) { case Text::value(selected): "
         "return int(selected.size()); case Text::empty: return 0; } }";
     const auto dynamicPayload = lang::Frontend().analyze(
         "dynamic-text-payload.gti", source, {standardLibraryPrelude()}, {},

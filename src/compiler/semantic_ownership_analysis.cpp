@@ -958,6 +958,13 @@ auto SemanticVisitor::Impl::typeTraits(
   if (hasSourceDestructorBody(owner)) {
     traits.copyable = false;
     traits.copyAssignable = false;
+    // Shared-reference fields permit ordinary whole-record replacement, but
+    // a destructor that retains borrowed state owns a cleanup-bound loan.
+    // Replacement does not yet transfer that obligation to the destination;
+    // keep these carriers move-constructible, not implicitly move-assignable.
+    // Containing records inherit this restriction through their field traits.
+    if (traits.containsBorrowedState)
+      traits.moveAssignable = false;
   }
   if ((hasSourceDestructorBody(owner) || concreteBase(owner) != nullptr ||
        owner.polymorphic || owner.kind == ClassKind::Union) &&

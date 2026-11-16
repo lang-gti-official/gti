@@ -2107,9 +2107,9 @@ int main() {
 ''')
 
 
-# Replacing an owning resource carrier must destroy the old elements before
-# releasing their regions, and retain the replacement's exact provider.
-CASES['resource_replacement_cleanup'] = (True, r'''
+# Move construction must retain the exact provider and destroy elements before
+# releasing their regions. Replacement needs a separate cleanup-loan transfer.
+CASES['resource_move_cleanup'] = (True, r'''
 import std.resource;
 import std.memory;
 mut int first_releases = 0;
@@ -2153,8 +2153,8 @@ int main() {
       mut std::resource_storage<Item, Provider> right{second_ref};
       left.try_allocate(1).value(); right.try_allocate(1).value();
       left.emplace(0, 1); right.emplace(0, 2);
-      left = std::move(right);
-      if (first_releases != 2 || second_releases != 0 || first_live != 0 || second_live != 1) { return 1; }
+      auto moved = std::move(right);
+      if (first_releases != 0 || second_releases != 0 || first_live != 1 || second_live != 1) { return 1; }
     }
   }
   return violations == 0 && first_releases == 2 && second_releases == 2 && second_live == 0 ? 0 : 2;
@@ -2187,8 +2187,23 @@ int main() {
   return 0;
 }
 '''
-CASES['resource_replacement_protects_provider'] = (False, RESOURCE_REPLACEMENT)
-CASES['resource_replacement_surviving_provider'] = (True, RESOURCE_REPLACEMENT.replace('    second.reset();', ''))
+CASES['resource_move_protects_provider'] = (False, RESOURCE_REPLACEMENT.replace('left = std::move(right);', 'auto moved = std::move(right);'))
+CASES['resource_replacement_requires_cleanup_transfer'] = (False, RESOURCE_REPLACEMENT.replace('    second.reset();', ''))
+CASES['resource_move_surviving_provider'] = (True, RESOURCE_REPLACEMENT.replace('left = std::move(right);', 'auto moved = std::move(right);').replace('    second.reset();', ''))
+CASES['observing_cleanup_replacement_requires_transfer'] = (False, r'''
+class Observer {
+  int& source;
+public:
+  Observer(int& source) : source(source) {}
+  ~Observer() { std::println(this.source); }
+};
+int main() {
+  int first = 1; int second = 2;
+  mut Observer left{first}; Observer right{second};
+  left = std::move(right);
+  return 0;
+}
+''')
 CASES['record_default_text_initializer'] = (True, r'''
 struct P { std::string_view name = "Ada"; uint32_t health = 7; public: P() = default; };
 int main() { P value{}; return value.name == "Ada" && value.health == 7 ? 0 : 1; }
@@ -2204,7 +2219,7 @@ int main() {
   std::string_view view = owner.view();
   auto text = Text::value(EXPRESSION);
   switch (text) {
-    case Text::value(auto& selected): return selected == "owned" ? 0 : 1;
+    case Text::value(selected): return selected == "owned" ? 0 : 1;
     case Text::empty: return 2;
   }
 }
@@ -2282,6 +2297,8 @@ def main():
                     ok = ok and 'A returned borrow' not in diagnostic
                 if name == 'borrowed_cursor_assignment_rejects_live_child':
                     ok = ok and 'error[GTI-S2017]' in diagnostic
+                if name.endswith('_requires_cleanup_transfer') or name == 'observing_cleanup_replacement_requires_transfer':
+                    ok = ok and 'error[GTI-S2003]' in diagnostic and 'assignment is unavailable' in diagnostic
                 if name.startswith('record_') or '_protects_' in name or name in (
                         'copy_retains_old_owner', 'replacement_protects_new_owner',
                         'replacement_branch_keeps_old_copy'):

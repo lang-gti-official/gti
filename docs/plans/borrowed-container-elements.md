@@ -207,14 +207,24 @@ standard-library import, and compile-time container controls together.
 
 ### CI consumer regression alignment
 
-The next CI run found expectations inherited from the pre-container boundary:
-`vector<shared-reference-record>`, borrowed text in arrays and enum payloads,
-and replacement of a resource-bound owner are no longer blanket rejections.
+The next CI run found stale blanket rejections for
+`vector<shared-reference-record>` and borrowed text in arrays and enum payloads.
 The owning tests now distinguish valid publication from later invalidation of
-its retained owner. Native controls exercise resource replacement cleanup and
-provider identity, including destruction before release and no duplicate release.
-The optional wrapper's still-unsupported reference-field shapes retain their
-rejection tests.
+its retained owner. Enum payloads use by-value extraction; reference binding
+of a payload containing local-owner text remains unsupported. The optional
+wrapper's unsupported reference-field shapes retain their rejection tests.
+
+The resource assignment failure was a real admission regression, not an obsolete
+expectation: allowing shared-reference record replacement also admitted
+replacement of cleanup-bound resource owners. Local-provider probes then failed
+cleanup liveness, and a called helper exposed ambiguous stored-owner authority.
+Implicit assignment remains unavailable for records whose source destructor
+retains borrowed state, and for aggregates containing them. Move construction
+remains available. Native controls check provider identity, destruction before
+release, no duplicate release, and provider protection after a move. Supporting
+replacement of these cleanup-bound carriers requires explicit MIR cleanup-loan
+transfer and matching independent verification; this PR does not add that
+separate capability.
 
 Optimizer checks cover both raw and owner-aware selected constructors. Text
 field initialization now has an explicit MIR `Initialize`; tests require its
