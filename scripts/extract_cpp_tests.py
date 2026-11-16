@@ -784,26 +784,6 @@ SPECS: dict[str, FileSpec] = {
             for name in ("testStoredReferenceLoopInvalidation3",
                          "testStoredReferenceLoopInvalidation4",
                          "testWritableAndMovementIteratorCapabilities")}),
-    "compiler_diagnostics_tests.cpp": FileSpec(
-        area="diagnostics/misc", topic="Diagnostics",
-        # Per-function directories; fixture-driven and table-driven cases
-        # (tests/coverage/reproducers, keyword and type tables) were written
-        # by hand from the same file.
-        areas={
-            "testOwnershipAndMissingIncludeDiagnostics":
-                "diagnostics/ownership",
-            "testAdvisoryDiagnostics": "diagnostics/advisory",
-            "testGenericAdvisorySoundness": "diagnostics/generic_advisory",
-            "testOverloadFailureGuidance": "diagnostics/overload_guidance",
-            "testPayloadPatternVisibilityDiagnostics":
-                "diagnostics/payload_patterns",
-            "testMissingSwitchCasesFix": "diagnostics/switch_cases",
-            "testRejectedInstanceCascades": "diagnostics/cascades",
-            "testDuplicateDiagnosticsMerge": "diagnostics/cascades",
-            "testConversionDiagnosticGuidance": "diagnostics/conversions",
-            "testToolingOccurrenceOptOut": "diagnostics/tooling",
-            "testAnalysisErrorLimit": "diagnostics/error_limit",
-            "testLanguageQueries": "diagnostics/language_queries"}),
     "compiler_constexpr_tests.cpp": FileSpec(
         area="constexpr", topic="Constant evaluation",
         # The heaviest named tests; their fixture mutations, rejection tables

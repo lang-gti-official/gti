@@ -1,0 +1,42 @@
+// Removing the mut that a projected move requires is an error rather than an advisory fix.
+struct Record {
+  mut int value = 4;
+public:
+  Record() = default;
+};
+struct Holder {
+  mut Record record = Record();
+  mut Record slots[2] = {Record(), Record()};
+public:
+  Holder() = default;
+};
+struct Token {
+  mut int value = 2;
+  int take() && { return this.value; }
+public:
+  Token() = default;
+};
+int element() {
+  Record records[2] = {Record(), Record()};
+  Record taken = std::move(records[1]);  //~ ERROR GTI-S2018
+  return taken.value;
+}
+int field() {
+  Holder holder = Holder();
+  Record taken = std::move(holder.record);  //~ ERROR GTI-S2018
+  return taken.value;
+}
+int field_element() {
+  Holder holder = Holder();
+  Record taken = std::move(holder.slots[0]);  //~ ERROR GTI-S2018
+  return taken.value;
+}
+int consumed_element() {
+  Token tokens[2] = {Token(), Token()};
+  return std::move(tokens[1]).take();  //~ ERROR GTI-S2018
+}
+T first<T>(T left, T right) {
+  T values[2] = {left, right};
+  return std::move(values[0]);  //~ ERROR GTI-S2018
+}
+int main() { return element() + field() + field_element() + consumed_element() + first(Record(), Record()).value; }

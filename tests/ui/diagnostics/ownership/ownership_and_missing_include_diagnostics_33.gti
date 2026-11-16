@@ -1,0 +1,12 @@
+// Ownership and missing include diagnostics: user-defined dereference assignment must reject implicit owner copies at the RHS before lowering, without an ownership-changing fix-it.
+import std.string;
+class Slot {
+  mut std::string value = std::string("old");
+public:
+  Slot() = default;
+  mut std::string& operator*() mut { return value; }
+};
+int main() {
+  mut Slot slot{};
+  std::string source = std::string("new");
+  *slot = source; return 0; }  //~ ERROR GTI-S2003 Cannot copy assign

@@ -1,0 +1,10 @@
+// A second lock while the first guard lives conflicts; the explanation is the guard's destruction, not a last-read endpoint.
+//@ execution-profile: concurrent
+//@ snapshot: diagnostics
+import std.mutex;
+int main() {
+  std::mutex<int32_t> owner{1};
+  std::mutex_guard<int32_t> first = owner.lock();
+  std::mutex_guard<int32_t> second = owner.lock();  //~ ERROR GTI-S2017
+  return 0;
+}

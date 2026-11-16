@@ -1,0 +1,3 @@
+// A shadowed generic-argument spelling gets no scaffold: it would name another type.
+//@ snapshot: diagnostics
+namespace sample { struct Item { Item() = default; }; namespace sample { struct Item { Item() = default; }; } } enum Packet<T> { empty, item(T value) }; namespace sample { void inspect(Packet<Item>& value) { switch (value) {} } } int main() { return 0; }  //~ ERROR GTI-S2067

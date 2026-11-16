@@ -1,0 +1,3 @@
+// Ownership and missing include diagnostics: an unresolved canonical standard-library type should carry one compiler-owned include fix.
+//@ snapshot: diagnostics
+using values = std::vector<int>;  //~ ERROR GTI-S2089

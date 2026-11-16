@@ -1,0 +1,7 @@
+main.gti:14:8: error[GTI-S2018]: Method cannot return while part of 'this' remains moved.
+ 14 |   void remove() mut { Ticket previous = std::move(this.field); }  //~ ERROR GTI-S2018
+    |        ^~~~~~
+main.gti:14:56: note: Ownership transferred here.
+ 14 |   void remove() mut { Ticket previous = std::move(this.field); }  //~ ERROR GTI-S2018
+    |                                                        ^~~~~
+help: Reinitialize every moved field on each reachable path before the method returns.
