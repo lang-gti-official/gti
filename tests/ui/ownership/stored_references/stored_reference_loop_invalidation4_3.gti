@@ -1,0 +1,3 @@
+// Stored reference loop invalidation4: a later carrier use must suppress an otherwise valid loop-exit endpoint.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (false) { char current = *iterator; } value.push_back('!'); char later = *iterator; return 0; }  //~ ERROR GTI-S2017 while a reference borrowed from it may still be live

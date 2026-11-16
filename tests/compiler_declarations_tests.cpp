@@ -2721,19 +2721,6 @@ concept Number<T> = std::numeric<T>;
   }
 }
 
-void testInterfaceStaticAmbiguity() {
-  const auto ambiguous = lang::Frontend().analyze("ambiguous-static.gti", R"(
-interface Left { static int create() { return 1; } };
-interface Right { static int create() { return 2; } };
-class Both : public Left, public Right { public: Both() = default; };
-int main() { return Both::create(); }
-)");
-  expect(
-      !ambiguous.canGenerateCode() &&
-          hasDiagnostic(ambiguous.diagnostics, "ambiguous"),
-      "selecting ambiguous inherited static functions must fail in semantics");
-}
-
 void testInheritanceAndInterfaces() {
   const std::string source = R"(
 interface Renderable {
@@ -13543,7 +13530,6 @@ constexpr NamedTest kTests[] = {
     {"testInheritanceAndInterfaces", testInheritanceAndInterfaces},
     {"testOutOfClassMethods", testOutOfClassMethods},
     {"testInterfaceStaticMethods", testInterfaceStaticMethods},
-    {"testInterfaceStaticAmbiguity", testInterfaceStaticAmbiguity},
     {"testInheritedGenericTargetInstances",
      testInheritedGenericTargetInstances},
     {"testDirectBraceConstruction", testDirectBraceConstruction},

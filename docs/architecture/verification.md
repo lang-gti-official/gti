@@ -3111,7 +3111,7 @@ it changes no source semantics, ABI, allocation policy or cleanup schedule.
 
 ## Interface static methods (0.414.0)
 
-`testInterfaceStaticMethods` and `testInterfaceStaticAmbiguity` cover ordinary
+`testInterfaceStaticMethods` and `tests/ui/generics/constraints/interface_static_ambiguity.gti` cover ordinary
 concrete interface statics, access, default arguments, method generics and
 constraints, constant evaluation, unsafe calls, inherited lookup, and selected
 declaration definition closure. Instance members remain public, bodyless pure
@@ -10471,7 +10471,7 @@ taken and skipped `&&`/`||`/`?:` operands, nested operators and a loop
 condition; defined failure covers the borrowing callee, the producer, and
 failure after the merge with the enum engaged or skipped, in the same eight
 native modes.
-`testConstexprConditionalTemporaries`
+`tests/ui/constexpr/temporaries/`
 runs argument and receiver borrows of such slots, one destructor-bearing,
 through exactly four staged MIR executions with exact results; a wrong
 assertion fails as `GTI-S2079`, not as an unsupported read. The LSP smoke gate

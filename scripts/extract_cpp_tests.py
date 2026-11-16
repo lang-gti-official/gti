@@ -463,10 +463,18 @@ def split_top(tokens: list[Token], separator: str) -> list[list[Token]]:
     return parts if parts != [[]] else []
 
 
-def compact(tokens: list[Token]) -> str:
+def compact(tokens: list[Token], var: str = "") -> str:
+    """Tokens as compact text; identifier `var` (never text inside a
+    literal) is written `$`."""
     out = []
     previous = None
     for token in tokens:
+        if var and token.kind == "ident" and token.text == var:
+            if previous is not None and previous.kind in ("ident", "number"):
+                out.append(" ")
+            out.append("$")
+            previous = token
+            continue
         if previous is not None and previous.kind in ("ident", "number") and \
                 token.kind in ("ident", "number"):
             out.append(" ")
@@ -749,14 +757,36 @@ SPECS: dict[str, FileSpec] = {
               "testStructuralClassConstraints",
               "testDependentRequiresArgumentAdmission",
               "testMemberRequirementConcepts",
-              "testExactMemberSignatureConcepts"),
+              "testExactMemberSignatureConcepts",
+              "testInterfaceStaticAmbiguity"),
         review_policy={
             name: "the C++ test asserts rejection (or one code of it); the "
                   "compiler's complete code set was read and matches the "
                   "case's stated reason"
-            for name in ("testMemberRequirementConcepts",
+            for name in ("testInterfaceStaticAmbiguity",
+                         "testMemberRequirementConcepts",
                          "testExactMemberSignatureConcepts",
                          "testStructuralClassConstraints")}),
+    "compiler_ownership_tests.cpp": FileSpec(
+        area="ownership/stored_references", topic="Ownership",
+        # Most named ownership tests assert MIR loan/cleanup structure and
+        # wait for MIR snapshots; these three are accept/reject shaped.
+        only=("testStoredReferenceLoopInvalidation3",
+              "testStoredReferenceLoopInvalidation4",
+              "testWritableAndMovementIteratorCapabilities"),
+        review_policy={
+            name: "the C++ test asserts rejection; the reported code "
+                  "(GTI-S2017 invalidated loan, GTI-S2029 unsatisfied "
+                  "iterator concept) is the case's stated reason"
+            for name in ("testStoredReferenceLoopInvalidation3",
+                         "testStoredReferenceLoopInvalidation4",
+                         "testWritableAndMovementIteratorCapabilities")}),
+    "compiler_frontend_tests.cpp": FileSpec(
+        area="language/control_flow", topic="Definite return",
+        only=("testDefiniteReturnAnalysis",)),
+    "compiler_constexpr_tests.cpp": FileSpec(
+        area="constexpr/temporaries", topic="Constexpr temporaries",
+        only=("testConstexprConditionalTemporaries",)),
 }
 
 
@@ -862,9 +892,7 @@ def _classify_structural(text: str) -> str:
 def interpret(statement_tokens: list[Token], var: str, case: Case) -> bool:
     """Reads one assertion on result `var` into `case`; False if it is not
     an assertion at all (logging)."""
-    text = compact(statement_tokens)
-    if var:
-        text = re.sub(rf"(?<![\w.]){re.escape(var)}(?!\w)", "$", text)
+    text = compact(statement_tokens, var)
     # Logging-only statements.
     if re.match(r"^(std::cerr|std::cout|dump\w*\(|print\w*\(|for\(|"
                 r"report\w*\()", text):
@@ -875,10 +903,7 @@ def interpret(statement_tokens: list[Token], var: str, case: Case) -> bool:
         args = split_top(statement_tokens[2:match_close(statement_tokens, 1)],
                          ",")
         condition = args[0] if args else []
-        conjuncts = [compact(c) for c in split_top(condition, "&&")]
-        if var:
-            conjuncts = [re.sub(rf"(?<![\w.]){re.escape(var)}(?!\w)", "$", c)
-                         for c in conjuncts]
+        conjuncts = [compact(c, var) for c in split_top(condition, "&&")]
     else:
         conjuncts = [text]
     for conjunct in conjuncts:

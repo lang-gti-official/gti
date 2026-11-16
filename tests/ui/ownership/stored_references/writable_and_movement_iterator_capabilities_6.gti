@@ -1,0 +1,24 @@
+// Writable and movement iterator capabilities: sized_sentinel_for should reject an iterator without the signed distance operator.
+import std.iterator;
+
+class PlainSentinel { public: PlainSentinel() = default; };
+
+class PlainIterator {
+  mut int32_t value = 0;
+
+public:
+  PlainIterator() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(PlainSentinel& other) { return false; }
+};
+
+std::ptrdiff_t measure<Iterator, Sentinel>(Iterator first, Sentinel last)
+  requires std::sized_sentinel_for<Sentinel, Iterator> {
+  return first - last;
+}
+
+int use() {
+  std::ptrdiff_t left = measure(PlainIterator(), PlainSentinel());  //~ ERROR GTI-S2029 satisfy concept 'std::sized_sentinel_for
+  return 0;
+}

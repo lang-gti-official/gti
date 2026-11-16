@@ -1,0 +1,11 @@
+// Writable and movement iterator capabilities: a read-only iterator destination should fail std::output_iterator.
+import std.algorithm;
+import std.vector;
+
+int main() {
+  mut std::vector<int32_t> source = std::vector<int32_t>();
+  source.push_back(1);
+  mut std::vector<int32_t> destination = std::vector<int32_t>(std::size_t(1));
+  std::copy(source.begin(), source.end(), destination.begin());  //~ ERROR GTI-S2029 satisfy concept 'std::output_iterator
+  return 0;
+}
