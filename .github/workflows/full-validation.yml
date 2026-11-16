@@ -208,6 +208,86 @@ jobs:
       # key; a validation run only restores it. Saving a per-run key here
       # evicted the reachable entries from the 10 GB cache.
 
+  tip:
+    # The tip channel: this commit's production archives, published as soon as
+    # both platforms built and passed their installed-toolchain checks, without
+    # waiting for the integration shards. It claims nothing about the complete
+    # suite; nightly remains the newest commit that passed it and later serves
+    # the same archive bytes. A publication failure never changes this run's
+    # verdict, so it cannot keep nightly from selecting the commit.
+    name: Tip toolchain
+    needs: [package]
+    if: github.event_name == 'push' && github.repository == 'lang-gti-official/gti'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: gti-tip-publication
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GTI_TIP_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out the packaged commit with main's history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Download this run's archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: gti-nightly-*-${{ github.run_attempt }}
+          path: dist/nightly
+          merge-multiple: true
+      - name: Verify package provenance and name the tip assets
+        env:
+          GTI_SOURCE_ATTEMPT: ${{ github.run_attempt }}
+        run: >-
+          python3 scripts/release_artifacts.py tip --directory dist/nightly
+          --output dist/tip --sha "${GTI_TIP_SHA}" --run-id "${GITHUB_RUN_ID}"
+          --attempt "${GTI_SOURCE_ATTEMPT}" --repository "${GITHUB_REPOSITORY}"
+      - name: Admit a main commit no older than the published tip, including a retry
+        id: admission
+        run: >-
+          python3 scripts/resolve_release_source.py admit-tip
+          --sha "${GTI_TIP_SHA}" --output "${GITHUB_OUTPUT}"
+      # The lease names the exact tag value admission read (empty: the tag
+      # must not exist yet), so a concurrent or stale move fails, not wins.
+      - name: Advance the tip tag
+        if: steps.admission.outputs.publish == 'true'
+        env:
+          GTI_TIP_LEASE: ${{ steps.admission.outputs.lease }}
+        run: >-
+          git push --porcelain
+          "--force-with-lease=refs/tags/tip:${GTI_TIP_LEASE}"
+          origin "${GTI_TIP_SHA}:refs/tags/tip"
+      - name: Publish the tip release and its assets
+        if: steps.admission.outputs.publish == 'true'
+        run: |
+          {
+            printf 'Rolling build of the newest GitHub `main` commit whose release packages built and passed their installed-toolchain checks.\n\n'
+            printf 'The complete test suite has **not** run on this build. Use `nightly` for the newest commit that passed it.\n\n'
+            printf -- '- commit: `%s`\n' "${GTI_TIP_SHA}"
+            printf -- '- version at build: `%s`\n' "$(cat VERSION)"
+          } > "${RUNNER_TEMP}/tip-notes.md"
+          if gh release view tip --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit tip --repo "${GITHUB_REPOSITORY}" --prerelease \
+              --latest=false --title "GTI tip" --notes-file "${RUNNER_TEMP}/tip-notes.md"
+          else
+            gh release create tip --repo "${GITHUB_REPOSITORY}" --verify-tag --prerelease \
+              --latest=false --title "GTI tip" --notes-file "${RUNNER_TEMP}/tip-notes.md"
+          fi
+          # Archives first, BUILD_ID last: an installer that reads the new
+          # BUILD_ID finds the matching archives. A download racing this step
+          # fails its identity or checksum check and installs nothing.
+          for asset in dist/tip/gti-tip-*; do
+            gh release upload tip --repo "${GITHUB_REPOSITORY}" --clobber "${asset}"
+          done
+          gh release upload tip --repo "${GITHUB_REPOSITORY}" --clobber dist/tip/BUILD_ID
+
   integration:
     name: Integration (${{ matrix.platform }} ${{ matrix.index }}/${{ matrix.shards }})
     needs: [plan]

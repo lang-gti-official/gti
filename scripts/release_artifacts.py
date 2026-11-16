@@ -91,6 +91,30 @@ def verify(directory, sha, run_id, attempt, repository, consume=False, channel="
             path.unlink()
 
 
+def tip_assets(directory, output, sha, run_id, attempt, repository):
+    """Republish one run's verified packages under the tip channel's asset names.
+
+    Tip serves the bytes nightly would later serve for the same commit: the
+    archive is copied unchanged, so only its name and checksum line differ.
+    Every archive must carry the commit as its embedded build identity, which
+    is what an installer compares with the release's BUILD_ID asset.
+    """
+    verify(directory, sha, run_id, attempt, repository)
+    output.mkdir(parents=True)
+    for platform in PLATFORMS:
+        source = directory / f"gti-nightly-{platform}.tar.gz"
+        with tarfile.open(source) as archive:
+            matches = [member for member in archive.getmembers()
+                       if member.name.removeprefix("./") == "share/gti/BUILD_ID"]
+            if len(matches) != 1 or not matches[0].isfile() or matches[0].size > 128 or \
+                    archive.extractfile(matches[0]).read().decode().strip() != sha:
+                raise ValueError(f"{platform}: archive was not built from {sha}")
+        name = f"gti-tip-{platform}.tar.gz"
+        (output / name).write_bytes(source.read_bytes())
+        (output / f"{name}.sha256").write_text(f"{digest(output / name)}  {name}\n")
+    (output / "BUILD_ID").write_text(sha + "\n")
+
+
 # Post-integration full validation produces the channel packages; the merge
 # gate (ci.yml) proves only build and fast checks. A source-library merge run
 # of ci.yml may still seed compiler reuse.
@@ -183,7 +207,7 @@ def release_evidence(repository, sha, request, full_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("record", "verify"))
+    parser.add_argument("mode", choices=("record", "verify", "tip"))
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--platform", choices=PLATFORMS)
     parser.add_argument("--sha")
@@ -194,10 +218,13 @@ def main():
     parser.add_argument("--channel", choices=("nightly",), default="nightly")
     parser.add_argument("--compiler-origin", type=Path)
     parser.add_argument("--require-compiler-origin", action="store_true")
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.mode == "record":
         record(args.directory, args.platform, {**os.environ, "GITHUB_SHA": args.sha or os.environ["GITHUB_SHA"]}, args.channel,
                json.loads(args.compiler_origin.read_text()) if args.compiler_origin else None)
+    elif args.mode == "tip":
+        tip_assets(args.directory, args.output, args.sha, args.run_id, args.attempt, args.repository)
     else:
         verify(args.directory, args.sha, args.run_id, args.attempt, args.repository, args.consume, args.channel, args.require_compiler_origin)
 

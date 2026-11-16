@@ -508,6 +508,11 @@ gtiup run nightly gti_lsp --version
 gtiup which gti             # real executable, useful to editor integrations
 ```
 
+`gtiup install tip` (a gtiup release that knows the channel) selects the newest
+main commit whose release archives built and passed their installed-toolchain
+checks, usually within about an hour of a merge. The complete test suite has
+not run on a tip build; `nightly` is the newest commit that passed it.
+
 A channel must have a published toolchain before it can be installed. There is
 no fallback to another channel if beta/stable is not yet published. The former
 `preview` channel is retired: `gtiup install preview` fails and suggests

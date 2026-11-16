@@ -10779,9 +10779,20 @@ auto SemanticVisitor::Impl::visitLambdaExpr(const Lambda &expr) -> void {
     const Token &sourceName = sourceExpressionForCapture == nullptr
                                   ? capture.name
                                   : sourceExpressionForCapture->name();
-    const Symbol *source = resolve(sourceName);
+    const bool receiverCapture = capture.name.kind == TokenKind::THIS;
+    const Symbol *source = receiverCapture && lambdaDepth == 0
+                               ? receiverStateSymbol()
+                               : resolve(sourceName);
+    if (receiverCapture &&
+        (!currentClass || currentStaticMemberFunction ||
+         analyzingDefaultArgument || analyzingConstructorInitializer)) {
+      report(capture.name, "Receiver capture requires an instance method body.",
+             "GTI-S2027");
+      continue;
+    }
     if (source == nullptr ||
-        (source->bindingKind != SemanticBindingKind::LocalVariable &&
+        (!receiverCapture &&
+         source->bindingKind != SemanticBindingKind::LocalVariable &&
          source->bindingKind != SemanticBindingKind::Parameter &&
          source->bindingKind != SemanticBindingKind::LambdaCapture) ||
         source->type == SemanticType::Function ||
@@ -12619,11 +12630,23 @@ auto SemanticVisitor::Impl::visitThisExpr(const This &expr) -> void {
     return;
   }
   if (lambdaDepth > 0) {
-    report(expr.keyword(),
-           "Lambdas cannot capture 'this' yet; class borrows require an "
-           "explicit lifetime design.",
-           "GTI-S2027");
-    currentType = SemanticType::Unknown;
+    const Symbol *capture = resolve(expr.keyword());
+    if (capture == nullptr || !capture->lambdaCapture ||
+        capture->type.kind != SemanticType::Reference) {
+      report(expr.keyword(),
+             "The receiver is not captured; use '[&this]' or '[mut &this]'.",
+             "GTI-S2027");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    // Receiver spelling selects the checked environment binding. All place,
+    // loan, access and lowering rules then follow an ordinary reference
+    // capture.
+    Token name = expr.keyword();
+    name.kind = TokenKind::IDENTIFIER;
+    auto reference = std::make_shared<Variable>(std::move(name));
+    const Expr &alias = semanticModel.recordExpressionAlias(expr, reference);
+    currentType = analyze(alias);
     return;
   }
   if (!currentClass || functionDepth == 0) {
