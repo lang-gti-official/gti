@@ -452,30 +452,24 @@ std::string LspServer::logTail() const {
 LspResult runLspTest(LspServer &server, const TestFile &test,
                      const fs::path &directory, double deadline) {
   LspResult result;
-  const std::string text = test.sections.front().text;
-  std::vector<std::string> errors;
-  const std::map<std::string, Position> marks = markers(text, errors);
   const auto fail = [&](const std::string &line) {
     result.failure += line + "\n";
   };
-  for (const std::string &error : errors)
-    fail("invalid test: " + error);
+  std::vector<std::map<std::string, Position>> stepMarks;
+  for (const Section &section : test.sections) {
+    std::vector<std::string> errors;
+    stepMarks.push_back(markers(section.text, errors));
+    for (const std::string &error : errors)
+      fail("invalid test: " + error);
+  }
   if (!result.failure.empty())
     return result;
 
   const fs::path file = directory / test.sections.front().name;
   fs::create_directories(directory);
-  writeFile(file, text);
+  writeFile(file, test.sections.front().text);
   const std::string uri = uriFor(file);
   const auto document = [&] { return json::Object{{"uri", uri}}; };
-  server.send(json::Object{
-      {"jsonrpc", "2.0"},
-      {"method", "textDocument/didOpen"},
-      {"params",
-       json::Object{{"textDocument", json::Object{{"uri", uri},
-                                                  {"languageId", "gti"},
-                                                  {"version", 1},
-                                                  {"text", text}}}}}});
   const auto close = [&] {
     server.send(
         json::Object{{"jsonrpc", "2.0"},
@@ -489,314 +483,348 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
          (server.running() ? "" : "; gti_lsp exited:\n" + server.logTail()));
   };
 
-  // Diagnostics first: every request then sees the analysed document.
-  const auto published = server.waitFor(
-      [&](const json::Object &message) {
-        const json::Object *params = message.getObject("params");
-        return message.getString("method") ==
-                   "textDocument/publishDiagnostics" &&
-               params && params->getString("uri") == uri &&
-               params->getInteger("version") == 1;
-      },
-      deadline);
-  if (!published) {
-    timeout("published diagnostics");
-    close();
-    return result;
-  }
-  result.published = true;
-  if (const json::Object *params = published->getObject("params"))
-    if (const json::Array *diagnostics = params->getArray("diagnostics"))
-      for (const json::Value &value : *diagnostics) {
-        const json::Object *diagnostic = value.getAsObject();
-        if (!diagnostic)
-          continue;
-        const auto severity = diagnostic->getInteger("severity").value_or(1);
-        if (severity != 1 && severity != 2)
-          continue;
-        LocatedDiagnostic located;
-        located.severity = severity == 1 ? Severity::Error : Severity::Warning;
-        located.code = diagnostic->getString("code").value_or("").str();
-        located.message = diagnostic->getString("message").value_or("").str();
-        const auto start = rangeStart(*diagnostic);
-        located.section = test.sections.front().name;
-        located.line = start ? start->line + 1 : 0;
-        result.diagnostics.push_back(std::move(located));
-      }
-
-  std::optional<json::Object> tokens;
-  const auto at = [&](const Position &position) {
-    return json::Object{{"textDocument", document()},
-                        {"position", positionJson(position)}};
-  };
-  for (const LspDirective &directive : test.lspDirectives) {
-    const std::string where = "line " + std::to_string(directive.writtenLine) +
-                              " (" + directive.words.front() + "): ";
-    const std::string &kind = directive.words.front();
-    const bool needsMarker = kind != "formatting" && kind != "symbols";
-    std::optional<Position> marker;
-    if (needsMarker) {
-      if (directive.words.size() < 2 || directive.words[1].front() != '@') {
-        fail("invalid test: " + where + "write `//@ " + kind +
-             " @marker: ...`");
-        continue;
-      }
-      const auto found = marks.find(directive.words[1].substr(1));
-      if (found == marks.end()) {
-        fail("invalid test: " + where + "no marker /*" + directive.words[1] +
-             "*/");
-        continue;
-      }
-      marker = found->second;
+  // Each step is one document version: the first is opened, each
+  // `// --- step N` replaces the whole text as version N.
+  for (std::size_t step = 0; step < test.sections.size(); ++step) {
+    const std::string &text = test.sections[step].text;
+    const std::map<std::string, Position> &marks = stepMarks[step];
+    const int version = static_cast<int>(step) + 1;
+    const std::string label =
+        step == 0 ? std::string() : test.sections[step].name + ": ";
+    if (step == 0)
+      server.send(json::Object{
+          {"jsonrpc", "2.0"},
+          {"method", "textDocument/didOpen"},
+          {"params",
+           json::Object{{"textDocument", json::Object{{"uri", uri},
+                                                      {"languageId", "gti"},
+                                                      {"version", 1},
+                                                      {"text", text}}}}}});
+    else
+      server.send(json::Object{
+          {"jsonrpc", "2.0"},
+          {"method", "textDocument/didChange"},
+          {"params",
+           json::Object{{"textDocument",
+                         json::Object{{"uri", uri}, {"version", version}}},
+                        {"contentChanges",
+                         json::Array{json::Object{{"text", text}}}}}}});
+    // Diagnostics first: every request then sees the analysed document.
+    const auto published = server.waitFor(
+        [&](const json::Object &message) {
+          const json::Object *params = message.getObject("params");
+          return message.getString("method") ==
+                     "textDocument/publishDiagnostics" &&
+                 params && params->getString("uri") == uri &&
+                 params->getInteger("version") == version;
+        },
+        deadline);
+    if (!published) {
+      timeout(label + "published diagnostics");
+      close();
+      return result;
     }
-    // `@a @b` in the expected value -> positions.
-    const auto markerSet = [&](const std::string &value,
-                               std::set<Position> &positions) {
-      std::istringstream words(value);
-      for (std::string word; words >> word;) {
-        const auto found =
-            word.front() == '@' ? marks.find(word.substr(1)) : marks.end();
+    result.published = true;
+    if (const json::Object *params = published->getObject("params"))
+      if (const json::Array *diagnostics = params->getArray("diagnostics"))
+        for (const json::Value &value : *diagnostics) {
+          const json::Object *diagnostic = value.getAsObject();
+          if (!diagnostic)
+            continue;
+          const auto severity = diagnostic->getInteger("severity").value_or(1);
+          if (severity != 1 && severity != 2)
+            continue;
+          LocatedDiagnostic located;
+          located.severity =
+              severity == 1 ? Severity::Error : Severity::Warning;
+          located.code = diagnostic->getString("code").value_or("").str();
+          located.message = diagnostic->getString("message").value_or("").str();
+          const auto start = rangeStart(*diagnostic);
+          located.section = test.sections[step].name;
+          located.line = start ? start->line + 1 : 0;
+          result.diagnostics.push_back(std::move(located));
+        }
+
+    std::optional<json::Object> tokens;
+    const auto at = [&](const Position &position) {
+      return json::Object{{"textDocument", document()},
+                          {"position", positionJson(position)}};
+    };
+    for (const LspDirective &directive : test.lspDirectives) {
+      if (directive.step != static_cast<int>(step))
+        continue;
+      const std::string where = "line " +
+                                std::to_string(directive.writtenLine) + " (" +
+                                directive.words.front() + "): ";
+      const std::string &kind = directive.words.front();
+      const bool needsMarker = kind != "formatting" && kind != "symbols";
+      std::optional<Position> marker;
+      if (needsMarker) {
+        if (directive.words.size() < 2 || directive.words[1].front() != '@') {
+          fail("invalid test: " + where + "write `//@ " + kind +
+               " @marker: ...`");
+          continue;
+        }
+        const auto found = marks.find(directive.words[1].substr(1));
         if (found == marks.end()) {
-          fail("invalid test: " + where + "unknown marker '" + word + "'");
-          return false;
+          fail("invalid test: " + where + "no marker /*" + directive.words[1] +
+               "*/");
+          continue;
         }
-        positions.insert(found->second);
+        marker = found->second;
       }
-      return true;
-    };
-    const auto positionsText = [&](const std::set<Position> &positions) {
-      std::string text;
-      for (const Position &position : positions) {
-        std::string name;
-        for (const auto &[markerName, markerPosition] : marks)
-          if (markerPosition == position)
-            name = "@" + markerName;
-        text += (text.empty() ? "" : " ") +
-                (name.empty() ? describe(position) : name);
-      }
-      return text.empty() ? "(none)" : text;
-    };
-
-    if (kind == "hover") {
-      const auto response =
-          server.request("textDocument/hover", at(*marker), deadline);
-      if (!response) {
-        timeout("hover response");
-        break;
-      }
-      const std::string text = hoverText(response->get("result"));
-      if (directive.value == "none") {
-        if (!text.empty() && text != "null")
-          fail(where + "expected no hover, got: " + shorten(text));
-      } else if (text.find(directive.value) == std::string::npos) {
-        fail(where + "hover does not contain \"" + directive.value +
-             "\"; got: " + shorten(text));
-      }
-    } else if (kind == "definition" || kind == "references") {
-      const bool references = kind == "references";
-      json::Object params = at(*marker);
-      if (references)
-        params["context"] = json::Object{{"includeDeclaration", true}};
-      const auto response = server.request(
-          references ? "textDocument/references" : "textDocument/definition",
-          std::move(params), deadline);
-      if (!response) {
-        timeout(kind + " response");
-        break;
-      }
-      std::set<Position> expected;
-      if (directive.value != "none" && !markerSet(directive.value, expected))
-        continue;
-      std::set<Position> actual;
-      std::set<std::string> elsewhere;
-      const json::Value *value = response->get("result");
-      const auto add = [&](const json::Value &item) {
-        const json::Object *location = item.getAsObject();
-        if (!location)
-          return;
-        const auto target = location->getString("uri")
-                                ? location->getString("uri")
-                                : location->getString("targetUri");
-        const auto start = rangeStart(*location);
-        if (target && *target == uri && start)
-          actual.insert(*start);
-        else if (target)
-          elsewhere.insert(target->str());
+      // `@a @b` in the expected value -> positions.
+      const auto markerSet = [&](const std::string &value,
+                                 std::set<Position> &positions) {
+        std::istringstream words(value);
+        for (std::string word; words >> word;) {
+          const auto found =
+              word.front() == '@' ? marks.find(word.substr(1)) : marks.end();
+          if (found == marks.end()) {
+            fail("invalid test: " + where + "unknown marker '" + word + "'");
+            return false;
+          }
+          positions.insert(found->second);
+        }
+        return true;
       };
-      if (value && value->getAsArray())
-        for (const json::Value &item : *value->getAsArray())
-          add(item);
-      else if (value && value->getAsObject())
-        add(*value);
-      if (actual != expected || !elsewhere.empty())
-        fail(where + "expected " + positionsText(expected) + "; got " +
-             positionsText(actual) +
-             (elsewhere.empty() ? "" : " and " + joined(elsewhere)));
-    } else if (kind == "completion") {
-      const auto response =
-          server.request("textDocument/completion", at(*marker), deadline);
-      if (!response) {
-        timeout("completion response");
-        break;
-      }
-      std::set<std::string> labels;
-      const json::Value *value = response->get("result");
-      const json::Array *items = value ? value->getAsArray() : nullptr;
-      if (!items && value && value->getAsObject())
-        items = value->getAsObject()->getArray("items");
-      if (items)
-        for (const json::Value &item : *items)
-          if (const json::Object *object = item.getAsObject())
-            labels.insert(object->getString("label").value_or("").str());
-      std::istringstream words(directive.value);
-      for (std::string word; words >> word;) {
-        const bool excluded = word.front() == '!';
-        const std::string label = excluded ? word.substr(1) : word;
-        if (labels.contains(label) == excluded)
-          fail(where + "completion " + (excluded ? "offers" : "lacks") + " '" +
-               label + "'" +
-               (excluded ? std::string()
-                         : "; offered: " + shorten(joined(labels), 200)));
-      }
-    } else if (kind == "token") {
-      if (!tokens) {
-        tokens = server.request("textDocument/semanticTokens/full",
-                                json::Object{{"textDocument", document()}},
-                                deadline);
+      const auto positionsText = [&](const std::set<Position> &positions) {
+        std::string text;
+        for (const Position &position : positions) {
+          std::string name;
+          for (const auto &[markerName, markerPosition] : marks)
+            if (markerPosition == position)
+              name = "@" + markerName;
+          text += (text.empty() ? "" : " ") +
+                  (name.empty() ? describe(position) : name);
+        }
+        return text.empty() ? "(none)" : text;
+      };
+
+      if (kind == "hover") {
+        const auto response =
+            server.request("textDocument/hover", at(*marker), deadline);
+        if (!response) {
+          timeout("hover response");
+          break;
+        }
+        const std::string text = hoverText(response->get("result"));
+        if (directive.value == "none") {
+          if (!text.empty() && text != "null")
+            fail(where + "expected no hover, got: " + shorten(text));
+        } else if (text.find(directive.value) == std::string::npos) {
+          fail(where + "hover does not contain \"" + directive.value +
+               "\"; got: " + shorten(text));
+        }
+      } else if (kind == "definition" || kind == "references") {
+        const bool references = kind == "references";
+        json::Object params = at(*marker);
+        if (references)
+          params["context"] = json::Object{{"includeDeclaration", true}};
+        const auto response = server.request(
+            references ? "textDocument/references" : "textDocument/definition",
+            std::move(params), deadline);
+        if (!response) {
+          timeout(kind + " response");
+          break;
+        }
+        std::set<Position> expected;
+        if (directive.value != "none" && !markerSet(directive.value, expected))
+          continue;
+        std::set<Position> actual;
+        std::set<std::string> elsewhere;
+        const json::Value *value = response->get("result");
+        const auto add = [&](const json::Value &item) {
+          const json::Object *location = item.getAsObject();
+          if (!location)
+            return;
+          const auto target = location->getString("uri")
+                                  ? location->getString("uri")
+                                  : location->getString("targetUri");
+          const auto start = rangeStart(*location);
+          if (target && *target == uri && start)
+            actual.insert(*start);
+          else if (target)
+            elsewhere.insert(target->str());
+        };
+        if (value && value->getAsArray())
+          for (const json::Value &item : *value->getAsArray())
+            add(item);
+        else if (value && value->getAsObject())
+          add(*value);
+        if (actual != expected || !elsewhere.empty())
+          fail(where + "expected " + positionsText(expected) + "; got " +
+               positionsText(actual) +
+               (elsewhere.empty() ? "" : " and " + joined(elsewhere)));
+      } else if (kind == "completion") {
+        const auto response =
+            server.request("textDocument/completion", at(*marker), deadline);
+        if (!response) {
+          timeout("completion response");
+          break;
+        }
+        std::set<std::string> labels;
+        const json::Value *value = response->get("result");
+        const json::Array *items = value ? value->getAsArray() : nullptr;
+        if (!items && value && value->getAsObject())
+          items = value->getAsObject()->getArray("items");
+        if (items)
+          for (const json::Value &item : *items)
+            if (const json::Object *object = item.getAsObject())
+              labels.insert(object->getString("label").value_or("").str());
+        std::istringstream words(directive.value);
+        for (std::string word; words >> word;) {
+          const bool excluded = word.front() == '!';
+          const std::string label = excluded ? word.substr(1) : word;
+          if (labels.contains(label) == excluded)
+            fail(where + "completion " + (excluded ? "offers" : "lacks") +
+                 " '" + label + "'" +
+                 (excluded ? std::string()
+                           : "; offered: " + shorten(joined(labels), 200)));
+        }
+      } else if (kind == "token") {
         if (!tokens) {
-          timeout("semantic tokens");
+          tokens = server.request("textDocument/semanticTokens/full",
+                                  json::Object{{"textDocument", document()}},
+                                  deadline);
+          if (!tokens) {
+            timeout("semantic tokens");
+            break;
+          }
+        }
+        std::optional<std::string> type;
+        const json::Object *body = tokens->getObject("result");
+        const json::Array *data = body ? body->getArray("data") : nullptr;
+        Position cursor;
+        for (std::size_t index = 0; data && index + 4 < data->size() + 0;
+             index += 5) {
+          const int deltaLine =
+              static_cast<int>((*data)[index].getAsInteger().value_or(0));
+          const int deltaStart =
+              static_cast<int>((*data)[index + 1].getAsInteger().value_or(0));
+          const int length =
+              static_cast<int>((*data)[index + 2].getAsInteger().value_or(0));
+          const auto typeIndex = (*data)[index + 3].getAsInteger().value_or(0);
+          cursor.character =
+              deltaLine == 0 ? cursor.character + deltaStart : deltaStart;
+          cursor.line += deltaLine;
+          if (cursor.line == marker->line &&
+              marker->character >= cursor.character &&
+              marker->character < cursor.character + length) {
+            type = typeIndex >= 0 && static_cast<std::size_t>(typeIndex) <
+                                         server.tokenTypes.size()
+                       ? server.tokenTypes[static_cast<std::size_t>(typeIndex)]
+                       : std::to_string(typeIndex);
+            break;
+          }
+        }
+        const std::string actual = type.value_or("none");
+        if (actual != directive.value)
+          fail(where + "expected token " + directive.value + ", got " + actual);
+      } else if (kind == "rename") {
+        if (directive.words.size() != 3) {
+          fail("invalid test: " + where +
+               "write `//@ rename @marker NewName: "
+               "@a @b` or `: error [text]`");
+          continue;
+        }
+        json::Object params = at(*marker);
+        params["newName"] = directive.words[2];
+        const auto response =
+            server.request("textDocument/rename", std::move(params), deadline);
+        if (!response) {
+          timeout("rename response");
           break;
         }
-      }
-      std::optional<std::string> type;
-      const json::Object *body = tokens->getObject("result");
-      const json::Array *data = body ? body->getArray("data") : nullptr;
-      Position cursor;
-      for (std::size_t index = 0; data && index + 4 < data->size() + 0;
-           index += 5) {
-        const int deltaLine =
-            static_cast<int>((*data)[index].getAsInteger().value_or(0));
-        const int deltaStart =
-            static_cast<int>((*data)[index + 1].getAsInteger().value_or(0));
-        const int length =
-            static_cast<int>((*data)[index + 2].getAsInteger().value_or(0));
-        const auto typeIndex = (*data)[index + 3].getAsInteger().value_or(0);
-        cursor.character =
-            deltaLine == 0 ? cursor.character + deltaStart : deltaStart;
-        cursor.line += deltaLine;
-        if (cursor.line == marker->line &&
-            marker->character >= cursor.character &&
-            marker->character < cursor.character + length) {
-          type = typeIndex >= 0 && static_cast<std::size_t>(typeIndex) <
-                                       server.tokenTypes.size()
-                     ? server.tokenTypes[static_cast<std::size_t>(typeIndex)]
-                     : std::to_string(typeIndex);
+        if (directive.value.rfind("error", 0) == 0) {
+          const json::Object *error = response->getObject("error");
+          const std::string expected =
+              directive.value.size() > 5 ? directive.value.substr(6) : "";
+          const std::string message =
+              error ? error->getString("message").value_or("").str() : "";
+          if (!error)
+            fail(where + "expected an error; got " +
+                 shorten(print(json::Value(json::Object(*response)))));
+          else if (message.find(expected) == std::string::npos)
+            fail(where + "error does not contain \"" + expected +
+                 "\": " + message);
+          continue;
+        }
+        std::set<Position> expected;
+        if (!markerSet(directive.value, expected))
+          continue;
+        std::set<Position> actual;
+        if (const json::Object *edit = response->getObject("result")) {
+          if (const json::Object *changes = edit->getObject("changes"))
+            if (const json::Array *edits = changes->getArray(uri))
+              for (const json::Value &item : *edits)
+                if (const json::Object *object = item.getAsObject())
+                  if (const auto start = rangeStart(*object))
+                    actual.insert(*start);
+          if (const json::Array *changes = edit->getArray("documentChanges"))
+            for (const json::Value &change : *changes)
+              if (const json::Object *object = change.getAsObject())
+                if (const json::Array *edits = object->getArray("edits"))
+                  for (const json::Value &item : *edits)
+                    if (const json::Object *e = item.getAsObject())
+                      if (const auto start = rangeStart(*e))
+                        actual.insert(*start);
+        } else if (const json::Object *error = response->getObject("error")) {
+          fail(where + "rename failed: " +
+               error->getString("message").value_or("").str());
+          continue;
+        }
+        if (actual != expected)
+          fail(where + "expected edits at " + positionsText(expected) +
+               "; got " + positionsText(actual));
+      } else if (kind == "formatting") {
+        const auto response = server.request(
+            "textDocument/formatting",
+            json::Object{{"textDocument", document()},
+                         {"options", json::Object{{"tabSize", 2},
+                                                  {"insertSpaces", true}}}},
+            deadline);
+        if (!response) {
+          timeout("formatting response");
           break;
         }
-      }
-      const std::string actual = type.value_or("none");
-      if (actual != directive.value)
-        fail(where + "expected token " + directive.value + ", got " + actual);
-    } else if (kind == "rename") {
-      if (directive.words.size() != 3) {
-        fail("invalid test: " + where +
-             "write `//@ rename @marker NewName: "
-             "@a @b` or `: error [text]`");
-        continue;
-      }
-      json::Object params = at(*marker);
-      params["newName"] = directive.words[2];
-      const auto response =
-          server.request("textDocument/rename", std::move(params), deadline);
-      if (!response) {
-        timeout("rename response");
-        break;
-      }
-      if (directive.value.rfind("error", 0) == 0) {
-        const json::Object *error = response->getObject("error");
-        const std::string expected =
-            directive.value.size() > 5 ? directive.value.substr(6) : "";
-        const std::string message =
-            error ? error->getString("message").value_or("").str() : "";
-        if (!error)
-          fail(where + "expected an error; got " +
-               shorten(print(json::Value(json::Object(*response)))));
-        else if (message.find(expected) == std::string::npos)
-          fail(where + "error does not contain \"" + expected +
-               "\": " + message);
-        continue;
-      }
-      std::set<Position> expected;
-      if (!markerSet(directive.value, expected))
-        continue;
-      std::set<Position> actual;
-      if (const json::Object *edit = response->getObject("result")) {
-        if (const json::Object *changes = edit->getObject("changes"))
-          if (const json::Array *edits = changes->getArray(uri))
-            for (const json::Value &item : *edits)
-              if (const json::Object *object = item.getAsObject())
-                if (const auto start = rangeStart(*object))
-                  actual.insert(*start);
-        if (const json::Array *changes = edit->getArray("documentChanges"))
-          for (const json::Value &change : *changes)
-            if (const json::Object *object = change.getAsObject())
-              if (const json::Array *edits = object->getArray("edits"))
-                for (const json::Value &item : *edits)
-                  if (const json::Object *e = item.getAsObject())
-                    if (const auto start = rangeStart(*e))
-                      actual.insert(*start);
-      } else if (const json::Object *error = response->getObject("error")) {
-        fail(where + "rename failed: " +
-             error->getString("message").value_or("").str());
-        continue;
-      }
-      if (actual != expected)
-        fail(where + "expected edits at " + positionsText(expected) + "; got " +
-             positionsText(actual));
-    } else if (kind == "formatting") {
-      const auto response = server.request(
-          "textDocument/formatting",
-          json::Object{{"textDocument", document()},
-                       {"options",
-                        json::Object{{"tabSize", 2}, {"insertSpaces", true}}}},
-          deadline);
-      if (!response) {
-        timeout("formatting response");
-        break;
-      }
-      const json::Value *value = response->get("result");
-      const std::string formatted = value && value->getAsArray()
-                                        ? applyEdits(text, *value->getAsArray())
-                                        : text;
-      if (directive.value == "unchanged") {
-        if (formatted != text)
-          fail(where + "formatting changes the file (-before +after):\n" +
-               lineDiff(text, formatted, 20));
-      } else if (formatted.find(directive.value) == std::string::npos) {
-        fail(where + "formatted text does not contain \"" + directive.value +
-             "\":\n" + shorten(formatted, 600));
-      }
-    } else if (kind == "symbols") {
-      const auto response =
-          server.request("textDocument/documentSymbol",
-                         json::Object{{"textDocument", document()}}, deadline);
-      if (!response) {
-        timeout("document symbols");
-        break;
-      }
-      std::set<std::string> names;
-      if (const json::Value *value = response->get("result"))
-        if (const json::Array *symbols = value->getAsArray())
-          collectSymbolNames(*symbols, names);
-      std::istringstream words(directive.value);
-      for (std::string word; words >> word;) {
-        const bool excluded = word.front() == '!';
-        const std::string name = excluded ? word.substr(1) : word;
-        if (names.contains(name) == excluded)
-          fail(where + "document symbols " + (excluded ? "include" : "lack") +
-               " '" + name + "'; symbols: " + shorten(joined(names), 200));
+        const json::Value *value = response->get("result");
+        const std::string formatted =
+            value && value->getAsArray()
+                ? applyEdits(text, *value->getAsArray())
+                : text;
+        if (directive.value == "unchanged") {
+          if (formatted != text)
+            fail(where + "formatting changes the file (-before +after):\n" +
+                 lineDiff(text, formatted, 20));
+        } else if (formatted.find(directive.value) == std::string::npos) {
+          fail(where + "formatted text does not contain \"" + directive.value +
+               "\":\n" + shorten(formatted, 600));
+        }
+      } else if (kind == "symbols") {
+        const auto response = server.request(
+            "textDocument/documentSymbol",
+            json::Object{{"textDocument", document()}}, deadline);
+        if (!response) {
+          timeout("document symbols");
+          break;
+        }
+        std::set<std::string> names;
+        if (const json::Value *value = response->get("result"))
+          if (const json::Array *symbols = value->getAsArray())
+            collectSymbolNames(*symbols, names);
+        std::istringstream words(directive.value);
+        for (std::string word; words >> word;) {
+          const bool excluded = word.front() == '!';
+          const std::string name = excluded ? word.substr(1) : word;
+          if (names.contains(name) == excluded)
+            fail(where + "document symbols " + (excluded ? "include" : "lack") +
+                 " '" + name + "'; symbols: " + shorten(joined(names), 200));
+        }
       }
     }
+    if (result.timedOut || result.crashed)
+      break;
   }
   close();
   server.warm = true;
@@ -862,7 +890,8 @@ json::Value substitute(const json::Value &value,
 } // namespace
 
 LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
-                           const fs::path &directory, double deadline) {
+                           const fs::path &directory, double deadline,
+                           double quiet) {
   LspResult result;
   const std::string text = readFile(test.path).value_or("");
   LspServer server(executable, directory / "gti_lsp.log");
@@ -877,6 +906,11 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
     return result;
   }
   std::vector<std::string> seen;
+  // Once the server has published diagnostics (its standard library is
+  // analysed), `quiet` seconds without any message means the awaited one is
+  // not coming: fail then, naming it, instead of at the test's deadline.
+  bool warm = false;
+  double lastMessage = lspClock();
   std::istringstream lines(text);
   int number = 0;
   for (std::string line; std::getline(lines, line);) {
@@ -930,19 +964,32 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
                other->get("version") &&
                *other->get("version") == *params->get("version");
       };
+      bool silent = false;
       while (!matched && !answered) {
-        std::optional<json::Value> message = server.receive(deadline);
-        if (!message)
+        const double wait =
+            warm ? std::min(deadline, lastMessage + quiet) : deadline;
+        std::optional<json::Value> message = server.receive(wait);
+        if (!message) {
+          silent = warm && server.running() && lspClock() < deadline;
           break;
+        }
+        lastMessage = lspClock();
+        if (const json::Object *object = message->getAsObject())
+          warm = warm || object->getString("method") ==
+                             "textDocument/publishDiagnostics";
         matched = matchesExpected(want, *message);
         if (!matched)
           seen.push_back(shorten(print(*message), 200));
         answered = !matched && identifies(*message);
       }
       if (!matched) {
-        result.timedOut = !answered && server.running();
-        result.failure += where + "expected a message matching " +
-                          shorten(print(want)) + "\n";
+        result.timedOut = !answered && !silent && server.running();
+        result.failure +=
+            where +
+            (silent ? "no message for " + std::to_string(quiet).substr(0, 4) +
+                          " s while awaiting one matching "
+                    : std::string("expected a message matching ")) +
+            shorten(print(want)) + "\n";
         const std::size_t first = seen.size() > 5 ? seen.size() - 5 : 0;
         for (std::size_t index = first; index < seen.size(); ++index)
           result.failure += "  seen: " + seen[index] + "\n";

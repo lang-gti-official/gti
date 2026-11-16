@@ -1,0 +1,2 @@
+export module helper;
+export int helper_value() { return 3; }

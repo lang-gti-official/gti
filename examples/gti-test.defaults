@@ -1,0 +1,10 @@
+// gti-test defaults for the single-file examples (tests/gti_test.cmake runs
+// them as check-pass tests; examples carry no `//@` directives).
+// --- 066-managed-threads.gti 076-scalar-atomics.gti 175-thread-local-storage.gti
+// These examples are built with --execution-profile concurrent.
+//@ execution-profile: concurrent
+// --- 065-mutable-ranges.gti
+// GTI-S2096 reports `samples` as never used mutably although the
+// `for (mut auto& sample : samples)` loop writes through it: a compiler false
+// positive for fixed arrays, tracked separately. Remove once it is fixed.
+//@ allow-warnings
