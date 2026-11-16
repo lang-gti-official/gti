@@ -204,7 +204,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
 | Build strings, vectors and your own containers at compile time | [195: constexpr owned containers](195-constexpr-owned-containers.gti) |
-| Loop over arrays, vectors and your own ranges at compile time | [196: constexpr range-for](196-constexpr-range-for.gti) |
+| Loop over arrays, vectors and your own ranges at compile time | [198: constexpr range-for](198-constexpr-range-for.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
@@ -393,7 +393,7 @@ is a teaching helper, not a production server.
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
 | `195-constexpr-owned-containers.gti` | compile-time `std::string` building, a `std::vector<std::string>`, and an application container over `std::storage`, sizing a fixed array, with runtime parity |
-| `196-constexpr-range-for.gti` | range-based `for` in `constexpr` functions over a fixed array, a vector temporary, a mutable `std::array` and an application range whose cursor refers to it, with `break`, `continue` and a computed table size, with runtime parity |
+| `198-constexpr-range-for.gti` | range-based `for` in `constexpr` functions over a fixed array, a vector temporary, a mutable `std::array` and an application range whose cursor refers to it, with `break`, `continue` and a computed table size, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
 | `156-borrowing-callbacks.gti` | shared/exclusive local and receiver captures, mutable and read-only lambda parameter results through local aliases, call-scoped fresh callable borrows, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |

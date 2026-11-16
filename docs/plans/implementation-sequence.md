@@ -10207,7 +10207,7 @@ follow-ups:
   `std::array` and the checked cursor helpers declare their cursor protocol
   `constexpr`; an unrelated application range and cursor cover the same rule
   (`tests/ui/language/constexpr_range_for*.gti`,
-  `tests/ui/stdlib/vector/constexpr_*.gti`, example 196). Remaining: the
+  `tests/ui/stdlib/vector/constexpr_*.gti`, example 198). Remaining: the
   consuming `into_range()` cursor (declaration-default fields and a draining
   destructor), carriers whose cleanup uses a stored borrow, and `constexpr`
   coverage of the generic algorithms (`std::sort` uses restoring swaps,
