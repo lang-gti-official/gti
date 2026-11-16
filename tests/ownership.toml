@@ -31,7 +31,6 @@ schema = 1
 reason = "registered only on some hosts or with optional tools or build options"
 tests = [
   # GTI_BUILD_LSP=OFF omits these registrations.
-  "init_statements_lsp",
   "scalar_temporary_borrow_lsp",
   "concept_conditions_lsp",
   "conditional_member_operators_lsp",
@@ -108,7 +107,6 @@ paths = [
   "include/gti/token.h",
   "include/gti/configuration_flags.h",
   "tests/source_text_tests.cpp",
-  "tests/init_statements_lsp_test.py",
   "tests/ui/language/init_statements/*.gti",
 ]
 owners = [
@@ -137,7 +135,6 @@ consumers = [
   "concept_conditions_lsp",
   "conditional_member_operators_lsp",
   "reference_parameter_packs_lsp",
-  "init_statements_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
