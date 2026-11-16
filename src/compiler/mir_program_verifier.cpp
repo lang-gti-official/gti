@@ -2523,6 +2523,13 @@ mirFieldTypeThroughBases(const MirProgram &program,
                                   contract.boundary ==
                                       CallableBoundary::Confined;
                          }));
+        // A contextual text publication borrows its designated argument's
+        // owner, not an unrelated temporary argument. Its declaration has an
+        // ownerless return summary; verify the call's exact publication
+        // instead of treating that summary as a missing borrow contract.
+        const bool independentTextPublication =
+            functionTarget && instruction.borrowArgument != index &&
+            dependentTextCallPublication(instruction, *functionTarget);
         const bool supportedResult =
             temporaryConstruction
                 ? constructorTarget && constructorOwner &&
@@ -2531,8 +2538,9 @@ mirFieldTypeThroughBases(const MirProgram &program,
                       constructorOwner->type == instruction.info.type &&
                       !constructorOwner->traits.containsBorrowedState &&
                       !instruction.info.traits.containsBorrowedState
-                : supportsEphemeralBorrowResult(functionTarget,
-                                                instruction.info, index);
+                : independentTextPublication ||
+                      supportsEphemeralBorrowResult(functionTarget,
+                                                    instruction.info, index);
         const bool exactTarget =
             temporaryConstruction
                 ? constructorTarget &&

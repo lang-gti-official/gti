@@ -17,12 +17,12 @@ def host_default_backend() -> str:
 
 
 def cpp_selected() -> bool:
-    """Whether GTI_TEST_BACKENDS selects the frozen C++ backend."""
+    """Whether the environment selects the C++ backend: never (tests/backend_modes.py)."""
     return selected_backends() in ("cpp", "both")
 
 
 def selected_endpoints(endpoints) -> tuple["Endpoint", ...]:
-    """A harness's endpoints, keeping C++ ones only when the policy selects C++."""
+    """A harness's endpoints without the C++ ones, which the policy never selects."""
     return tuple(endpoint for endpoint in endpoints
                  if endpoint.backend != "cpp" or cpp_selected())
 
@@ -45,8 +45,10 @@ class Endpoint:
             raise ValueError(f"unknown C++ standard: {self.standard}")
 
 
-def policy_endpoints(levels=("O0", "O3"), *, backends=None) -> tuple[Endpoint, ...]:
-    """Use the shared runtime policy for endpoint-based execution harnesses."""
+def policy_endpoints(levels=None, *, backends=None) -> tuple[Endpoint, ...]:
+    """Use the shared runtime policy for endpoint-based execution harnesses.
+
+    Without `levels`, the LLVM levels are GTI_TEST_LLVM_LEVELS' (default O0)."""
     return tuple(
         Endpoint("cpp", optimization_level(flags), cpp_standard(flags))
         if is_cpp_mode(flags) else Endpoint("llvm", optimization_level(flags))

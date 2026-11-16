@@ -475,6 +475,25 @@ def sanitizer_evidence_contract():
         refused(evidence, **options)
     refused(train.sanitizer_evidence, repository, "nightly", lambda path: {}, contains="exact")
 
+    # The daily slow tier is the same evidence from its own workflow and
+    # verdict name; a sanitizer verdict never stands in for it.
+    slow_run = dict(good, path=train.SLOW_WORKFLOW)
+    slow_verdict = dict(verdict, name=f"Slow tier verdict ({sha})")
+
+    def slow(runs=(slow_run,), jobs=(slow_verdict,)):
+        def request(path):
+            if "/actions/workflows/slow.yml/runs?" in path:
+                return {"workflow_runs": list(runs)}
+            if "/actions/runs/5/jobs?" in path:
+                return {"jobs": list(jobs)}
+            raise AssertionError(path)
+        return train.slow_evidence(repository, sha, request)
+
+    assert slow() == 5
+    for options in ({"runs": [good]}, {"jobs": [verdict]}, {"jobs": [dict(slow_verdict, conclusion="failure")]}):
+        refused(slow, **options)
+    assert set(train.DAILY_TIERS) == {"sanitizers", "slow"}
+
 
 def delivery_contract(repo, nightly, base, verified):
     sanitized = sanitized_for({nightly})

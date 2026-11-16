@@ -5,9 +5,11 @@ name: Full validation
 # queue proves build and fast checks on the exact candidate; this workflow
 # proves production packaging and every bundled-release integration shard on
 # both platforms on the merged result, and produces the packages the nightly,
-# beta and release-train channels publish. The compiler, LLVM-backend and
-# thread sanitizers run once a day on the nightly commit instead
-# (sanitizers.yml), and the release train requires their verdict. A failure
+# beta and release-train channels publish. Runtime harnesses run at -O0
+# only, and tests labelled `slow` are left out: the daily slow tier
+# (slow.yml) runs them and the -O3 re-run on the nightly commit, as the
+# compiler, LLVM-backend and thread sanitizers run once a day there
+# (sanitizers.yml); the release train requires both verdicts. A failure
 # opens (or updates) a `main-broken` issue naming the commit range; it never
 # blocks the queue, and a channel never selects a main commit this workflow
 # has not passed. See docs/architecture/agent-workflow.md.
@@ -358,7 +360,6 @@ jobs:
           GTI_SHARD_PLATFORM: ${{ matrix.platform }}
           GTI_SHARD_TEST_SET: ${{ matrix.platform == 'darwin' && 'darwin' || 'full' }}
         run: >-
-          GTI_TEST_BACKENDS=llvm
           python3 scripts/validation_checks.py shard --build build
           --test-set "${GTI_SHARD_TEST_SET}"
           --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"

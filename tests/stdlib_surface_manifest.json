@@ -5661,7 +5661,6 @@
         "tests/fixtures/programmable_allocators.gti",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/source_sparse_storage_tests.cpp",
-        "tests/source_sparse_storage_runtime_test.py",
         "tests/fixtures/source_sparse_slots.gti",
         "stdlib/std/memory.gti",
         "tests/fixtures/constexpr_owned_storage.gti"
@@ -5753,7 +5752,6 @@
         "tests/fixtures/programmable_allocators.gti",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/source_sparse_storage_tests.cpp",
-        "tests/source_sparse_storage_runtime_test.py",
         "tests/fixtures/source_sparse_slots.gti",
         "stdlib/std/memory.gti",
         "tests/fixtures/constexpr_owned_storage.gti"
