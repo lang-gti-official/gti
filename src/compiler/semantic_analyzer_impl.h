@@ -278,6 +278,7 @@ public:
   // the abandoned analyzer is discarded. Speculative workers never receive it.
   struct AnalysisCancelled {};
   struct ErrorLimitReached {};
+  void finishLimitedAnalysis();
   bool enforceErrorLimit = false;
   const std::atomic<bool> *cancellation = nullptr;
   // FrontendOptions::reuseConstantEvaluations; workers share the request's

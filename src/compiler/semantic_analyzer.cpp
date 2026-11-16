@@ -29,6 +29,14 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
   return fresh;
 }
 
+void SemanticVisitor::Impl::finishLimitedAnalysis() {
+  for (auto &held : heldDiagnostics)
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(held.begin()),
+                       std::make_move_iterator(held.end()));
+  heldDiagnostics.clear();
+  enforceErrorLimit = false;
+}
+
 bool SemanticVisitor::check(const Program &program) {
   impl->enforceErrorLimit = true;
   try {
@@ -47,12 +55,7 @@ bool SemanticVisitor::check(const Program &program) {
     impl->enforceErrorLimit = false;
     return valid;
   } catch (const Impl::ErrorLimitReached &) {
-    for (auto &held : impl->heldDiagnostics)
-      impl->diagnostics.insert(impl->diagnostics.end(),
-                               std::make_move_iterator(held.begin()),
-                               std::make_move_iterator(held.end()));
-    impl->heldDiagnostics.clear();
-    impl->enforceErrorLimit = false;
+    impl->finishLimitedAnalysis();
     return false;
   } catch (const Impl::AnalysisCancelled &) {
     impl->enforceErrorLimit = false;
