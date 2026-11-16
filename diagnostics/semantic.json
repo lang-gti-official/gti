@@ -196,5 +196,14 @@
     "group": "checked-literal-overload",
     "format": "An exact overload can bypass implicit consteval argument validation in this overload set.",
     "arguments": 0
+  },
+  {
+    "id": "AnalysisErrorLimit",
+    "code": "GTI-D0002",
+    "phase": "Driver",
+    "severity": "Error",
+    "group": "error-limit",
+    "format": "Too many errors; stopping analysis (error limit {0}).",
+    "arguments": 1
   }
 ]

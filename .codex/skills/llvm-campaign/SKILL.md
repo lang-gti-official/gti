@@ -100,8 +100,9 @@ The named gates are a lower bound, not permission to skip an affected invariant.
    only required targets with an optimized GTI compiler. Test supported behavior,
    rejection and failure/cleanup where relevant, not merely generated IR text.
 2. Before handoff, validate the published source, affected subsystem/consumers,
-   dependency boundary, smoke and required platform/performance cases. Reuse
-   existing registered matrices rather than inventing a weaker fast substitute.
+   dependency boundary, smoke and required platform/performance cases. New
+   tests follow [Writing Tests](../../../AGENTS.md#writing-tests); an old
+   registered matrix is fixed or converted where it breaks, never extended.
    Report every skip, missing prerequisite and pending gate separately.
 3. The coordinator selects independent completion or combined milestone
    integration from the changed invariant. Workers do not start full CTest,

@@ -21,6 +21,10 @@ option(GTI_BUILD_FUZZERS
        "Build opt-in libFuzzer harnesses (Clang only; never installed)" OFF)
 option(GTI_ENABLE_THREAD_SANITIZER_TESTS
        "Run ThreadSanitizer test variants on a compatible host" ON)
+# Clang source-based coverage of the first-party build, for the suite
+# yardstick (.github/workflows/suite-measures.yml); never a release build.
+option(GTI_ENABLE_SOURCE_COVERAGE
+       "Instrument first-party code with Clang source-based coverage" OFF)
 
 # Enforce the host compiler configuration before dependency discovery.
 include(CTest)
@@ -73,6 +77,12 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 function(gti_program_component target)
   if(CMAKE_CXX_FLAGS MATCHES "-fsanitize=")
     target_compile_options("${target}" PRIVATE -fno-sanitize=all)
+  endif()
+  # The same holds for coverage counters: a generated program does not link
+  # the profile runtime, so program components stay uninstrumented.
+  if(GTI_ENABLE_SOURCE_COVERAGE)
+    target_compile_options("${target}" PRIVATE -fno-profile-instr-generate
+                                               -fno-coverage-mapping)
   endif()
 endfunction()
 
@@ -556,6 +566,23 @@ extern \"C\" int LLVMFuzzerTestOneInput(const uint8_t *, size_t) { return 0; }
   add_compile_options(-fsanitize=fuzzer-no-link,address,undefined
                       -fno-omit-frame-pointer -fno-sanitize-recover=all)
   add_link_options(-fsanitize=address,undefined)
+endif()
+
+if(GTI_ENABLE_SOURCE_COVERAGE)
+  # Measurement, not a gate (position load-bearing, as above). The coverage
+  # toolchain is the reviewed Clang, which may warn where the reviewed GCC
+  # does not, so warnings stay visible but are not errors here. Every process
+  # writes LLVM_PROFILE_FILE; scripts/coverage_report.py merges the profiles.
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "GTI_ENABLE_SOURCE_COVERAGE requires Clang; the "
+                        "current compiler is ${CMAKE_CXX_COMPILER_ID}.")
+  endif()
+  if(GTI_RELEASE_BUILD OR GTI_BUILD_FUZZERS)
+    message(FATAL_ERROR "GTI_ENABLE_SOURCE_COVERAGE is exclusive with "
+                        "GTI_RELEASE_BUILD and GTI_BUILD_FUZZERS.")
+  endif()
+  add_compile_options(-fprofile-instr-generate -fcoverage-mapping -Wno-error)
+  add_link_options(-fprofile-instr-generate)
 endif()
 
 add_library(

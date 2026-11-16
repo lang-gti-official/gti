@@ -1778,3 +1778,28 @@ protocol tests when publication or edits change.
 
 Use the repository [`add-diagnostic`](../../.codex/skills/add-diagnostic/SKILL.md)
 skill for the repeatable workflow.
+
+## Analysis error budget
+
+Compiler and editor frontend analyses default to 20 errors. Use
+`gti file.gti --error-limit 50`, `gti check --error-limit 50`, or
+`gti_lsp --error-limit 50` to change the budget; `0` disables it. The root
+package's `[limits]` table also accepts `error-limit = 50`; a command-line
+setting overrides it. Warnings and related notes do not consume the budget.
+
+The budget applies cumulatively across source loading, parsing, and semantic
+analysis of a frontend request. Lexing stops between tokens (and while decoding
+literal escapes), parsing abandons the incomplete declaration, and semantics
+stops at safe registration and statement boundaries. Concrete HIR discovery
+also stops scheduling instances once its diagnostic budget is exhausted.
+A single operation can produce several diagnostics before the next safe point;
+publication retains the first N errors and one terminal `GTI-D0002` diagnostic.
+Later verification diagnostics obey the same publication cap. This is an error
+budget, not a wall-clock timeout or a ranking of the most important errors.
+
+Speculative semantic workers do not enforce the whole-program budget against
+rejected candidate diagnostics. Truncated syntax is not cached, and an aborted
+semantic request does not publish a semantic model or start code generation.
+The configuration participates in semantic and build identities. An editor edit
+starts a new budget; fixing an early error can reveal later errors. Hover and
+completion may have less semantic information when analysis stops early.

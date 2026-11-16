@@ -87,7 +87,8 @@ while canonical language documents continue to describe actual support.
   [organisation reference website](https://git.internal.howetotech.dev/gti-lang/gti-reference),
   which owns authored MDX, examples, validation, and deployment.
 - [Verification](architecture/verification.md) — test ownership, broad checks,
-  and the optional local language audit.
+  and the optional local language audit. How to write a test is
+  [Writing Tests](../AGENTS.md#writing-tests) in `AGENTS.md`.
 
 ## Language
 

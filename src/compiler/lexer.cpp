@@ -106,7 +106,7 @@ std::vector<Token> Lexer::scan(std::string sourceText, std::string sourceName) {
     current = source_text::utf8Bom.size();
   }
 
-  while (!isAtEnd()) {
+  while (!isAtEnd() && !errorLimitReached(diagnostics, errorLimit)) {
     start = current;
     scanToken();
   }
@@ -614,7 +614,9 @@ void Lexer::character() {
 void Lexer::decodeLiteralBody(std::string_view body, std::size_t bodyStart,
                               std::string &value) {
   value.reserve(value.size() + body.size());
-  for (std::size_t index = 0; index < body.size(); ++index) {
+  for (std::size_t index = 0;
+       index < body.size() && !errorLimitReached(diagnostics, errorLimit);
+       ++index) {
     if (body[index] != '\\' || index + 1 >= body.size()) {
       value += body[index];
       continue;

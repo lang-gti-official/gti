@@ -1,0 +1,4 @@
+// A retained or aliased string view excludes editing: view_then_move.
+//@ check-fail
+import std.string;
+int main() { mut std::string text{"abc"}; auto view = text.view(); auto moved = std::move(text); return int(view.size());}  //~ WARN GTI-S2096 //~ ERROR GTI-S2017

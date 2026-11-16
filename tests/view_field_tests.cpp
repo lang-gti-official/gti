@@ -164,6 +164,79 @@ int main() {
   }
 }
 
+void testInferredDependentValues() {
+  const auto result = analyzeText(kDeclarations + R"gti(
+Token makeToken(std::string_view text) { return Token(text, 3); }
+enum Word { text(std::string_view value), none };
+int inspectInput(std::string& input) {
+  auto token = makeToken(input.view());
+  auto copy = token;
+  auto moved = std::move(copy);
+  auto word = Word::text(input.view());
+  switch (word) {
+  case Word::text(value): return int(moved.width() + value.size());
+  case Word::none: return 0;
+  }
+}
+int main() {
+  std::string input{"token text"};
+  auto token = Token(input.view(), 3);
+  mut auto mutableToken = Token(input.view(), 4);
+  return int(measure(token) + mutableToken.width()) + inspectInput(input) == 40 ? 0 : 1;
+}
+)gti");
+  if (!result.canGenerateCode())
+    printDiagnostics(result);
+  expect(result.canGenerateCode(),
+         "auto retains text dependencies from construction, factories, copies, "
+         "moves and payload enums");
+  if (result.canGenerateCode()) {
+    const auto published = publications(result.mir);
+    expect(!published.empty(),
+           "inferred values publish their text dependencies");
+    if (!published.empty()) {
+      auto changed = result.mir;
+      instructionAt(changed, published.front()).dependentTextPublication =
+          false;
+      expect(!lang::verifyMirProgram(changed).valid(),
+             "MIR independently rejects missing inferred text publication");
+    }
+  }
+  struct Case {
+    const char *body;
+    const char *code;
+  };
+  const Case cases[] = {
+      {"auto token = Token(input.view(), 3); keep(token);", "GTI-S2045"},
+      {"auto token = Token(input.view(), 3); kept = token.text;", "GTI-S2045"},
+      {"auto token = Token(input.view(), 3); auto copy = token; "
+       "input.append(\"!\"); uint64_t n = copy.width();",
+       "GTI-S2017"},
+      {"auto token = Token(input.view(), 3); auto moved = std::move(token); "
+       "input.append(\"!\"); uint64_t n = moved.width();",
+       "GTI-S2017"},
+      {"auto token = Token(input.view(), 3); auto read = [token]() -> "
+       "uint64_t { return token.width(); }; uint64_t n = read();",
+       "GTI-S2045"},
+      {"auto token = Token(std::string(\"x\").view(), 3);", "GTI-S2045"},
+      {"thread_local auto token = Token(input.view(), 3);", "GTI-S2045"},
+  };
+  for (const auto &entry : cases) {
+    const auto rejected = analyzeText(
+        kDeclarations + "int main() { mut std::string input{\"text\"}; " +
+        entry.body + " return 0; }");
+    expect(!rejected.semanticValid &&
+               hasDiagnosticCode(rejected.diagnostics, entry.code),
+           std::string("inferred values preserve confinement: ") + entry.body);
+    expect(std::none_of(rejected.diagnostics.begin(),
+                        rejected.diagnostics.end(),
+                        [](const auto &diagnostic) {
+                          return diagnostic.code.starts_with("GTI-B");
+                        }),
+           "invalid inferred borrows are rejected before backend lowering");
+  }
+}
+
 void testOwnerlessConstructionUnchanged() {
   const auto result = analyzeText(kDeclarations + R"gti(
 int main() {
@@ -3044,6 +3117,7 @@ int main() { return run(); }
 
 constexpr NamedTest kTests[] = {
     {"testDependentPublication", testDependentPublication},
+    {"testInferredDependentValues", testInferredDependentValues},
     {"testOwnerlessConstructionUnchanged", testOwnerlessConstructionUnchanged},
     {"testConfinement", testConfinement},
     {"testRelays", testRelays},

@@ -18,8 +18,10 @@ does not authorize merging the proposal or implementing it. Discussion-only,
 local-only, and no-publication requests override that default; ordinary bug-fix
 plans and execution plans for accepted designs do not create new RFCs.
 
-The short version: run focused checks (reproducer, owning tests, affected
-cross-phase consumers, `compiler_pipeline`, smoke), record them with `verify`,
+The short version: write tests as
+[Writing Tests](../../../AGENTS.md#writing-tests) says, run focused checks
+(reproducer, owning tests, affected cross-phase consumers, `compiler_pipeline`,
+smoke), record them with `verify`,
 and `finish`: it labels the PR for a rollup (phase `rollup`) or, for Risk-system
 diffs and `--no-rollup`, queues it alone (phase `queued`). Never run the
 complete suite to finish a task; the queue proves build and fast checks on the
@@ -49,6 +51,13 @@ Make task edits/builds/checks there with absolute paths and preserve the
 session worktree. `--adopt` is for an existing clean task checkout outside
 primary, not a way around ownership or freshness checks. Retain the ordinary
 GitHub PR URL, and attach it with the client's PR tool when one is available.
+
+Put temporary files (check plans, PR bodies, logs) in a directory unique to
+the task, such as a subdirectory of the session scratchpad, never at the top
+of a shared scratch or `/tmp` directory. Wait on a background operation by its
+pid or output file (or the client's background-task notification); never with
+`until ! pgrep -f "<text>"`, which matches its own command line and never
+exits.
 
 The stash stack is shared across worktrees: never use an unqualified
 `git stash`/`git stash pop` or blanket-stash another active checkout.

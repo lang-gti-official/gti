@@ -44,6 +44,7 @@ struct RawStringScan {
 class Lexer {
 public:
   Lexer() = default;
+  void setErrorLimit(std::size_t limit) { errorLimit = limit; }
   Lexer(Lexer &&) = default;
   Lexer(const Lexer &) = delete;
   Lexer &operator=(Lexer &&) = default;
@@ -99,6 +100,7 @@ private:
   void report(std::string code, std::string message, std::size_t errorStart,
               std::size_t errorEnd);
 
+  std::size_t errorLimit = 0;
   std::string source;
   std::string sourceName;
   std::vector<Token> tokens;
