@@ -1,0 +1,7 @@
+// Constructor initializers stay on the declaration line by default.
+// (From constructor_formatting_tests.cpp, default options.)
+//@ parse-pass
+//@ snapshot: format
+class http_service {
+  http_service(std::http::client client, std::http::url base_url) : m_client_(std::move(client)), m_base_url_(base_url.clone()) {}
+};

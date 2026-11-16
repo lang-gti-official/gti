@@ -1,0 +1,11 @@
+// Generated primary-template constructors are declared before native use.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: <std/detail/memory_core>:
+//@ stderr-contains: : runtime error[GTI-R0008]: empty_owner_access in member_access
+import std.memory;
+struct HeapValue { public: int read() { return 1; }  public: HeapValue() = default; };
+int main() {
+  std::unique_ptr<HeapValue> value = std::unique_ptr<HeapValue>();
+  return value->read();
+}

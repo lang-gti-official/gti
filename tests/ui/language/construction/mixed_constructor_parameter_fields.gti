@@ -1,0 +1,85 @@
+// Passive copied prefixes compose with body-ordered owning field cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4
+//@[run1] stdout: 20
+//@[run1] stdout: 30
+//@[run1] stdout: 40
+//@[run1] stdout: 10
+//@[run1] stdout: 10
+//@[run1] stdout: 90
+//@[run2] run-fail
+//@[run2] args: argument
+//@[run2] exit-code: 70
+//@[run2] stdout: 20
+//@[run2] stdout: 10
+//@[run2] stdout: 90
+//@[run2] stderr-contains: mixed_constructor_parameter_fields.gti:37: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: constructor failure
+//@[run3] exit-code: 70
+//@[run3] stdout: 20
+//@[run3] stdout: 30
+//@[run3] stdout: 10
+//@[run3] stdout: 10
+//@[run3] stdout: 90
+//@[run3] stderr-contains: mixed_constructor_parameter_fields.gti:26: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: constructor cleanup failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 20
+//@[run4] stdout: 30
+//@[run4] stdout: 10
+//@[run4] stderr-contains: mixed_constructor_parameter_fields.gti:15: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at mixed_constructor_parameter_fields.gti:26; secondary [GTI-R0002]
+// --- mixed_constructor_parameter_fields.gti
+import std.string;
+import std.vector;
+
+mut int stage = 0;
+struct Leaf { mut int value = 7;  public: Leaf() = default; };
+struct Handle { mut Leaf leaf{};  public: Handle() = default; };
+class Path {
+  std::string text;
+public:
+  Path(std::string value) : text(std::move(value)) {}
+  Path clone() { return Path(text.clone()); }
+  ~Path() {
+    std::println(10);
+    int cleanup_divisor = stage == 3 ? 0 : 1;
+    int checked = 2 / cleanup_divisor;
+  }
+};
+struct Metadata {
+  Handle first;
+  Handle second;
+  Path path;
+  Metadata(Handle one, Handle two, Path location)
+      : first(one), second(two), path(std::move(location)) {
+    std::println(30);
+    int constructor_divisor = stage == 2 || stage == 3 ? 0 : 1;
+    int checked = 7 / constructor_divisor;
+  }
+};
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() { std::println(90); }
+};
+int Later() {
+  std::println(20);
+  int argument_divisor = stage == 1 ? 0 : 1;
+  return 1 / argument_divisor;
+}
+Path Make(Path& source, int token) { return source.clone(); }
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Guard guard{};
+  mut Handle original{};
+  Path source{std::string("value")};
+  Metadata metadata{original, original, Make(source, Later())};
+  original.leaf.value = 9;
+  if (metadata.first.leaf.value != 7 || metadata.second.leaf.value != 7) {
+    return 1;
+  }
+  std::println(40);
+  return 0;
+}

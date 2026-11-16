@@ -1,0 +1,4 @@
+// A retained or aliased string view excludes editing: replace_with_own_view.
+//@ check-fail
+import std.string;
+int main() { mut std::string text{"abc"}; text.replace(std::size_t(0), std::size_t(1), text.view()); return 0;}  //~ ERROR GTI-S2017
