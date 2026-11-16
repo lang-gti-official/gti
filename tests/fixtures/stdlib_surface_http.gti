@@ -10,6 +10,9 @@ bool rejects_url(std::string_view source, std::http::url_errc expected_error) {
 }
 
 int main() {
+  mut std::http::request restricted{std::http::method::get, "https://example.com"};
+  restricted.set_scheme_policy(std::http::scheme_policy::https_only);
+  if (restricted.schemes_policy() != std::http::scheme_policy::https_only) { return 99; }
   mut auto parsed = std::http::url::parse(
       "HTTPS://Example.COM:0443/a%20b?x=1&na%6De=old&name=older");
   if (!parsed) {
@@ -101,6 +104,12 @@ int main() {
   request.set_connect_timeout_ms(uint64_t(1000));
   request.set_timeout_ms(uint64_t(2000));
   request.set_max_response_bytes(uint64_t(4096));
+  if (request.redirects_policy() != std::http::redirect_policy::none ||
+      request.redirect_limit() != uint32_t(5)) { return 16; }
+  request.set_redirect_policy(std::http::redirect_policy::same_origin);
+  request.set_redirect_limit(uint32_t(3));
+  if (request.redirects_policy() != std::http::redirect_policy::same_origin ||
+      request.redirect_limit() != uint32_t(3)) { return 17; }
 
   mut auto client_result = std::http::client::create();
   if (!client_result) {

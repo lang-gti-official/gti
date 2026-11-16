@@ -695,9 +695,185 @@ int main() {
   expect(checked == 1,
          "one returned carrier protects two independent accessors");
 }
+
+// Issue #221: a mutable range-for over a by-value mutable_span formal
+// reborrows the span shell, whose entry Stored group is the external storage
+// the loop writes. The reborrows name that group as their stored dependency,
+// so they are derived from it rather than competing with it. Writing through
+// the span while an element is live stays rejected.
+void checkByValueMutableSpanRange() {
+  const std::string prefix = "import std.span;\nimport std.vector;\n";
+  const auto accepted = lang::Frontend().analyze(
+      "by-value-span-range.gti", prefix + R"(
+void twice(mut std::mutable_span<int> elements) {
+  for (mut auto& value : elements) { value = value * 2; }
+  for (mut auto& value : elements) { value = value + 1; }
+}
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  twice(values.as_mutable_span());
+  return values[std::size_t(2)] - 7;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  for (const auto &diagnostic : accepted.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "a mutable range over a by-value mutable_span formal is accepted");
+  const auto rejected = lang::Frontend().analyze(
+      "by-value-span-range-conflict.gti", prefix + R"(
+void clash(mut std::mutable_span<int> elements) {
+  for (mut auto& value : elements) {
+    elements[std::size_t(0)] = 1;
+    value = value + 1;
+  }
+}
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  clash(values.as_mutable_span());
+  return 0;
+}
+)",
+      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  expect(!rejected.semanticValid &&
+             hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
+             !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+         "writing through the span while an element is live is rejected");
+}
+// Issue #394: a range-for over one field of a `mut` reference formal keeps a
+// read-only child of the formal's loan live, which suspends the formal. A
+// two-phase write to a disjoint sibling field (`st.visited[i] = 0`) reserves
+// through that suspended formal; the reservation and activation sibling
+// checks keep it disjoint from the loop's borrow. Writing the iterated field
+// or the whole formal stays rejected.
+void checkReferenceFormalSiblingFieldWrite() {
+  const std::string prefix = R"(import std.vector;
+struct State {
+  mut {
+    std::vector<int> dirty;
+    std::vector<int> visited;
+  }
+  State() : dirty(std::vector<int>()), visited(std::vector<int>()) {}
+};
+)";
+  const auto program = [&](const std::string &name, const std::string &body) {
+    return lang::Frontend().analyze(name,
+                                    prefix +
+                                        "void clear(mut State& st) {\n"
+                                        "  for (int word : st.dirty) { " +
+                                        body + " }\n}\n" + R"(
+int main() {
+  mut State st = State();
+  st.visited.push_back(5);
+  st.dirty.push_back(0);
+  clear(st);
+  return st.visited[std::size_t(0)];
+}
+)",
+                                    {standardLibraryPrelude()}, {},
+                                    {standardLibraryRoot()});
+  };
+  const auto accepted = program("reference-formal-sibling-field.gti",
+                                "st.visited[std::size_t(word)] = 0;");
+  for (const auto &diagnostic : accepted.diagnostics)
+    if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+      std::cerr << diagnostic.message << '\n';
+  expect(accepted.canGenerateCode() &&
+             lang::verifyMirProgram(accepted.mir).valid(),
+         "#394 a sibling-field subscript write in a range-for over a field of "
+         "a mut reference formal is accepted");
+  for (const auto &[name, body] :
+       {std::pair{"reference-formal-same-field.gti",
+                  "st.dirty[std::size_t(0)] = 1;"},
+        std::pair{"reference-formal-whole.gti", "st = State();"}}) {
+    const auto rejected = program(name, body);
+    expect(!rejected.semanticValid &&
+               hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
+               !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+           std::string("#394 ") + name +
+               " overlapping the iterated field stays rejected");
+  }
+}
+// Issue #395: a return out of a range-for leaves the loop's extent, so a
+// conflicting `return r.fail();` (or `r.fail(); return ...;`) ends the loop's
+// read-only borrow on that path. The returned value reading the element, or a
+// later read of it, keeps the borrow live, and the note then names that read
+// rather than a statement the returning path never reaches.
+void checkReturnFromRangeForEndsLoopBorrow() {
+  const std::string prefix = R"(import std.string;
+import std.vector;
+struct Registry {
+  mut {
+    std::vector<std::string> names;
+    std::size_t count;
+  }
+  Registry() : names(std::vector<std::string>()), count(0) {}
+  [[discardable]] std::size_t fail() mut { return 0; }
+};
+[[discardable]] std::size_t add(mut Registry& r, std::string name) {
+  for (std::string& existing : r.names) {
+    if (existing == name) { )";
+  const std::string suffix = R"( }
+  }
+  r.count = r.count + std::size_t(1);
+  r.names.push_back(std::move(name));
+  return r.count;
+}
+int main() {
+  mut Registry r = Registry();
+  add(r, std::string("a"));
+  return int32_t(add(r, std::string("a")));
+}
+)";
+  const auto analyze = [&](const std::string &name, const std::string &arm) {
+    return lang::Frontend().analyze(name, prefix + arm + suffix,
+                                    {standardLibraryPrelude()}, {},
+                                    {standardLibraryRoot()});
+  };
+  for (const auto &[name, arm] :
+       {std::pair{"return-conflict.gti", "return r.fail();"},
+        std::pair{"conflict-then-return.gti", "r.fail(); return 7;"}}) {
+    const auto accepted = analyze(name, arm);
+    for (const auto &diagnostic : accepted.diagnostics)
+      if (diagnostic.severity == lang::DiagnosticSeverity::Error)
+        std::cerr << name << ": " << diagnostic.message << '\n';
+    expect(accepted.canGenerateCode() &&
+               lang::verifyMirProgram(accepted.mir).valid(),
+           std::string("#395 ") + name +
+               " out of a range-for ends the loop borrow on that path");
+  }
+  const std::string laterRead = "r.fail(); std::size_t n = existing.size(); "
+                                "return n;";
+  const auto rejected = analyze("conflict-then-read.gti", laterRead);
+  const lang::Diagnostic *conflict = nullptr;
+  for (const auto &diagnostic : rejected.diagnostics)
+    if (diagnostic.code == "GTI-S2017")
+      conflict = &diagnostic;
+  const auto readAt = (prefix + laterRead).find("std::size_t n");
+  bool laterNote = false;
+  if (conflict != nullptr)
+    for (const auto &related : conflict->related)
+      laterNote = laterNote || (related.message ==
+                                    "The borrowed value is used later here." &&
+                                related.span.start == readAt);
+  expect(!rejected.semanticValid && conflict != nullptr && laterNote &&
+             !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+         "#395 a later read of the element keeps the borrow live and the note "
+         "names that read");
+  const auto returned =
+      analyze("return-reads-element.gti", "return existing.size() + r.fail();");
+  expect(!returned.semanticValid &&
+             hasDiagnosticCode(returned.diagnostics, "GTI-S2017"),
+         "#395 a returned value reading the element keeps the borrow live");
+}
 } // namespace
 
 int main() {
+  checkByValueMutableSpanRange();
+  checkReferenceFormalSiblingFieldWrite();
+  checkReturnFromRangeForEndsLoopBorrow();
   checkTextOwnerPublication();
   checkTextReturnPublication();
   checkReceiverFields();

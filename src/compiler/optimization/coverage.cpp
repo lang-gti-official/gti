@@ -162,6 +162,12 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectAlignment:
     return supported("pure target-dependent representation query; scalar "
                      "interpretation overdefined");
+  case IntrinsicKind::ConstantEvaluation:
+    return supported("pure execution-context query; scalar interpretation "
+                     "overdefined until a backend or the evaluator decides it");
+  case IntrinsicKind::ConstantAllocate:
+  case IntrinsicKind::ConstantRelease:
+    return barrier("evaluator-owned raw storage; never executed natively");
   case IntrinsicKind::ObjectBorrowOwned:
   case IntrinsicKind::ObjectBorrowOwnedMut:
   case IntrinsicKind::RawBorrow:
@@ -310,6 +316,9 @@ MirOptimizationCoverage optimizationCoverage(IntrinsicKind intrinsic) {
   case IntrinsicKind::RestoringIndexedSwap:
     return barrier("exclusive restoring ownership transfer; mutable place "
                    "facts invalidated");
+  case IntrinsicKind::TextViewNarrow:
+    return barrier("rewrites a referenced counted view; mutable place facts "
+                   "invalidated");
   case IntrinsicKind::ThreadSpawn:
   case IntrinsicKind::ThreadScope:
   case IntrinsicKind::ThreadJoin:

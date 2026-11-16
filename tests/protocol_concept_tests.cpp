@@ -350,7 +350,7 @@ int&<a> escape<lifetime a>(int&<a> owner) {
 }
 int main() { return 0; }
 )gti",
-           "GTI-S2017", "Returned reference");
+           "GTI-S2127", "not declared to outlive");
   const auto relayProof = analyze(borrowedRelay);
   if (relayProof.canGenerateCode()) {
     for (int corruption = 0; corruption != 5; ++corruption) {

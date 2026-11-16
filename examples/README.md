@@ -192,9 +192,10 @@ You do not need to read the entire sequence to find an API pattern:
 | Modify a checked contiguous subrange without copying | [108: mutable slices](108-mutable-slices.gti) |
 | Format my own application types | [106: custom formatters](106-custom-formatters.gti) |
 | Build and edit JSON with runtime keys and mixed value kinds | [186: dynamic JSON](186-dynamic-json.gti) |
+| Match, search, replace and split text with regular expressions | [194: regular expressions](194-regular-expressions.gti) |
 | Read and write JSON as plain structs | [91: JSON documents](091-json-documents.gti) |
 | Map JSON to a class with an invariant and report field errors | [92: JSON codecs](092-json-codecs.gti) |
-| Build URLs, GET JSON, or POST a JSON body | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
+| Build URLs, GET/POST JSON, or stream a response to a file | [93: HTTP/JSON client](093-http-json-client.gti), [local demo below](#http-and-json-without-an-external-service) |
 | Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Consume owned vector elements into a record without cloning values | [186: consuming ranges](186-consuming-ranges.gti) |
@@ -202,6 +203,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
+| Build strings, vectors and your own containers at compile time | [195: constexpr owned containers](195-constexpr-owned-containers.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
@@ -336,10 +338,11 @@ is a teaching helper, not a production server.
 | `088-consuming-builders.gti` | consuming builder methods and explicit receiver movement |
 | `089-library-workflow.gti` | numeric option parsing, string editing, filesystem queries, owning work queues/history/sets, and emplacement with a move-only constructor argument |
 | `090-generic-algorithms.gti` | stable compaction and container erasure; search, mutation, replacement, filtered copying, chaining returned output cursors, and maximum mapped-value selection |
+| `194-regular-expressions.gti` | `std.regex` compile errors as values, named groups, borrow-checked results over a log, `$<name>` replacement, callable replacement, splitting, and linear-time matching of `(a*)*b` |
 | `186-dynamic-json.gti` | owned dynamic objects and arrays, CSV-style construction, typed cells, checked access, explicit independent cloning, and parse/encode round trips |
 | `091-json-documents.gti` | decoding and encoding structs through reflection, optionals for `null` and absent members, pretty output, strict-grammar errors with paths and locations |
 | `092-json-codecs.gti` | a `std::json::codec` specialization for a class with an invariant, used automatically inside structs and vectors, and JSON Pointer errors through it |
-| `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, transport/status/schema errors, and JSON responses |
+| `093-http-json-client.gti` | encoded URLs, bounded GET/POST requests, streaming through generic I/O to a file, transport/status/schema errors, and JSON responses |
 | `094-binary-text-encoding.gti` | Base64/hex round trips, embedded zero bytes, strict UTF-8 validation and scalar traversal |
 | `095-explicit-cloning.gti` | vector/string cloning, ownership transfer, and exact member requirements |
 | `096-error-mapping.gti` | consuming `transform_error`, named mapper functions, and `?` propagation |
@@ -388,6 +391,7 @@ is a teaching helper, not a production server.
 | `141-reflected-json.gti` | `std.experimental_json` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
+| `195-constexpr-owned-containers.gti` | compile-time `std::string` building, a `std::vector<std::string>`, and an application container over `std::storage`, sizing a fixed array, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
 | `156-borrowing-callbacks.gti` | shared/exclusive captures, mutable and read-only lambda parameter results through local aliases, call-scoped fresh callable borrows, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
@@ -426,10 +430,11 @@ is a teaching helper, not a production server.
 | `188-concept-conditions.gti` | Named structural and protocol concept conditions, constexpr selection and Boolean composition. |
 | `189-protocol-format-hash.gti` | Conditional conformance formats and hashes a generic user family and uses a pair as a hash-table key (LLVM). |
 | `190-conditional-member-operators.gti` | Conditional user operators, inserting map indexing, exclusive result loans and pair equality (LLVM). |
-| `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary lifetime, constrained mutable packs and per-element exclusive access (LLVM). |
+| `191-reference-parameter-packs.gti` | Variadic move-only observers, temporary views and their owners, constrained mutable packs and per-element exclusive access (LLVM). |
 | `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records, inferred typed copy/move destinations, checked type-erasure round trips, copied shared fields across carrier cleanup, inferred conformance-head regions, projected reference regions, function items, stored higher-ranked invocation pointers and fixed lambda environment premises; ordinary callers infer lifetime arguments (LLVM). |
 | `193-tcp-line-server.gti` | A loopback line service: `std::tcp::listen`/`connect` by host and port, `serve` driving an application type through the `connection_handler` protocol concept, and `buffered_stream` frames borrowed in place (`span<uint8_t, this>`) until `consume` (LLVM). |
 | `194-borrowed-containers.gti` | Multiple external owners in vectors of text views and shared-reference records; direct indexed copies preserve owners independently of container growth and scope (LLVM). |
+| `194-string-view-subviews.gti` | Counted sub-views: `substr` with clamped counts, in-place `remove_prefix`/`remove_suffix` trimming, owner relay through a by-value `mut` view parameter, and the `GTI-R0007` boundary (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |
@@ -473,6 +478,7 @@ Run these from the first terminal:
 /tmp/http-json                                      # offline URL-building recipe
 /tmp/http-json http://127.0.0.1:8765/user             # GET: prints "local demo"
 /tmp/http-json http://127.0.0.1:8765/user post        # POST JSON: prints "tea"
+/tmp/http-json http://127.0.0.1:8765/user stream /tmp/user.json # bounded copy; prints byte count
 /tmp/http-json http://127.0.0.1:8765/not-found        # status error; exits 6
 /tmp/http-json http://127.0.0.1:8765/invalid-json     # parse error; exits 7
 /tmp/http-json http://127.0.0.1:8765/missing-name     # schema error; exits 8
@@ -923,3 +929,7 @@ contract. `static_assert` and a Boolean binding demonstrate conjunction,
 disjunction and negation. Build and run with `gti examples/188-concept-conditions.gti
 --backend llvm -O2 -o /tmp/concept-conditions` and `/tmp/concept-conditions`;
 success exits with 0 and prints nothing.
+
+The [constant character conversion example](constant-character/main.gti) shows
+explicit fitting integer constants, constexpr calls and value-generic code units.
+It is registered by `testCharactersAndStringViews` in `compiler_pipeline`.

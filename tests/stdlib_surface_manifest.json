@@ -802,6 +802,46 @@
       }
     },
     {
+      "id": "constexpr-owned-storage",
+      "mode": "run",
+      "source": "tests/fixtures/constexpr_owned_storage.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "constexpr-owned-storage-index-failure",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/constexpr_owned_storage_index_failure.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "index_out_of_bounds"
+        ]
+      }
+    },
+    {
+      "id": "constexpr-owned-storage-vacant-failure",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/constexpr_owned_storage_vacant_failure.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "uninitialized_access"
+        ]
+      }
+    },
+    {
       "id": "constexpr-readonly-references",
       "mode": "run",
       "source": "tests/fixtures/constexpr_readonly_references.gti",
@@ -2401,6 +2441,58 @@
       }
     },
     {
+      "id": "regex",
+      "mode": "run",
+      "source": "tests/fixtures/stdlib_surface_regex.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "regex-example",
+      "mode": "run",
+      "source": "examples/194-regular-expressions.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "rejected pattern at offset 0: unmatched '(' or ')'\n09:14 WARN: disk at 91%\n09:16 ERROR: write failed\n09h14 and 17h05\n11 2222 333333\n[a][b][c]\nno match, quickly\n",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "regex-result-escape",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/regex_result_escape.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2045"
+        ]
+      }
+    },
+    {
+      "id": "regex-subject-mutation",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/regex_subject_mutation.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2017"
+        ]
+      }
+    },
+    {
       "id": "removal-algorithms",
       "mode": "run",
       "source": "tests/fixtures/removal_algorithms.gti",
@@ -2901,6 +2993,20 @@
       "id": "string-view-assignment",
       "mode": "run",
       "source": "tests/fixtures/string_view_assignment.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "string-view-subview",
+      "mode": "run",
+      "source": "tests/fixtures/text_view_subview.gti",
       "optimizations": [
         "O0",
         "O3"
@@ -4123,13 +4229,18 @@
         "gti_internal::unique_owner"
       ],
       "case_ids": [
-        "unique-ptr",
+        "allocator-storage",
+        "constexpr-owned-storage",
         "shared-ptr",
-        "allocator-storage"
+        "unique-ptr"
       ],
       "evidence": [
         "tests/llvm_memory_execution_test.py",
-        "tests/stdlib_module_boundaries_test.py"
+        "tests/stdlib_module_boundaries_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
+      ],
+      "required_instantiations": [
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ]
     },
     {
@@ -4144,6 +4255,7 @@
       ],
       "case_ids": [
         "allocator-storage",
+        "constexpr-owned-storage",
         "resource-container-usage",
         "string"
       ],
@@ -4152,7 +4264,11 @@
         "tests/source_sparse_storage_tests.cpp",
         "tests/fixtures/process_storage_policy.gti",
         "tests/fixtures/process_storage_query_policy.gti",
-        "tests/stdlib_module_boundaries_test.py"
+        "tests/stdlib_module_boundaries_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
+      ],
+      "required_instantiations": [
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ]
     },
     {
@@ -4267,7 +4383,8 @@
         "? moving the value out and returning the empty residual",
         "consuming value() &&",
         "move assignment over engaged and empty optionals",
-        "empty-access panic after cleanup"
+        "empty-access panic after cleanup",
+        "value() panic reported at the caller's call site"
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_experimental_optional.gti",
@@ -4856,6 +4973,7 @@
         "std::http::client::post",
         "std::http::client::put",
         "std::http::client::send",
+        "std::http::client::send_stream",
         "std::http::header::header",
         "std::http::header::name",
         "std::http::header::replace_value",
@@ -4866,12 +4984,18 @@
         "std::http::request::connect_timeout_ms",
         "std::http::request::headers",
         "std::http::request::max_response_bytes",
+        "std::http::request::redirect_limit",
+        "std::http::request::redirects_policy",
         "std::http::request::request",
+        "std::http::request::schemes_policy",
         "std::http::request::set_body",
         "std::http::request::set_ca_bundle",
         "std::http::request::set_connect_timeout_ms",
         "std::http::request::set_header",
         "std::http::request::set_max_response_bytes",
+        "std::http::request::set_redirect_limit",
+        "std::http::request::set_redirect_policy",
+        "std::http::request::set_scheme_policy",
         "std::http::request::set_timeout_ms",
         "std::http::request::set_url",
         "std::http::request::timeout_ms",
@@ -4881,6 +5005,15 @@
         "std::http::response::headers",
         "std::http::response::response",
         "std::http::response::status",
+        "std::http::streaming_response::bytes_read",
+        "std::http::streaming_response::cancel",
+        "std::http::streaming_response::effective_url",
+        "std::http::streaming_response::headers",
+        "std::http::streaming_response::last_error",
+        "std::http::streaming_response::last_native_code",
+        "std::http::streaming_response::read_some",
+        "std::http::streaming_response::status",
+        "std::http::streaming_response::streaming_response",
         "std::http::url::add_query_parameter",
         "std::http::url::clear_query",
         "std::http::url::clone",
@@ -4904,7 +5037,9 @@
       "required_instantiations": [
         "absolute HTTP/HTTPS URL parse, validation, cloning, rendering, path and query construction",
         "string_view and owned-url request/client overloads",
-        "read-only named URL cloning, consuming operator chains, mutable path append and borrow rejection"
+        "read-only named URL cloning, consuming operator chains, mutable path append and borrow rejection",
+        "bounded streaming std::io::reader with independent request/client lifetime, generic short writer, cancellation, limits and late transport errors",
+        "same-origin and secure redirects with method conversion, header stripping and a shared deadline"
       ],
       "evidence": [
         "docs/language/http.md",
@@ -5449,6 +5584,28 @@
       ]
     },
     {
+      "id": "memory.constant-storage-failures",
+      "source": "stdlib/std/memory.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::storage<T>::get<vacant slot during constant evaluation>",
+        "std::string::operator[]<past the end during constant evaluation>"
+      ],
+      "case_ids": [
+        "constexpr-owned-storage-index-failure",
+        "constexpr-owned-storage-vacant-failure"
+      ],
+      "reason": "Constant evaluation checks every raw storage access and reports the same defined failure the runtime check reports.",
+      "required_instantiations": [
+        "out-of-bounds string index",
+        "read of a never-constructed storage slot"
+      ],
+      "evidence": [
+        "tests/fixtures/constexpr_owned_storage_index_failure.gti",
+        "tests/fixtures/constexpr_owned_storage_vacant_failure.gti"
+      ]
+    },
+    {
       "id": "memory.core-primitives",
       "source": "stdlib/std/detail/memory_core.gti",
       "status": "executable",
@@ -5464,18 +5621,19 @@
       ],
       "case_ids": [
         "allocator-storage",
+        "arena-pool",
+        "constexpr-owned-storage",
+        "owned-error-pipelines",
+        "raw-owner-witness",
+        "raw-pointer-conversion",
+        "resource-programmable",
+        "resource-region-contracts",
         "storage-discardable-result",
         "storage-final-address",
         "storage-immovable",
         "storage-owning-view",
         "storage-release",
-        "arena-pool",
-        "raw-owner-witness",
-        "raw-pointer-conversion",
-        "structural-relocation",
-        "owned-error-pipelines",
-        "resource-programmable",
-        "resource-region-contracts"
+        "structural-relocation"
       ],
       "required_instantiations": [
         "std::alignment(64)",
@@ -5486,7 +5644,8 @@
         "std::storage<int32_t>",
         "std::storage<tracked>",
         "std::storage<immovable object> with final-address emplacement",
-        "std::alloc_errc invalid_region and invalid_state"
+        "std::alloc_errc invalid_region and invalid_state",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
@@ -5504,7 +5663,8 @@
         "tests/source_sparse_storage_tests.cpp",
         "tests/source_sparse_storage_runtime_test.py",
         "tests/fixtures/source_sparse_slots.gti",
-        "stdlib/std/memory.gti"
+        "stdlib/std/memory.gti",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {
@@ -5553,18 +5713,19 @@
       ],
       "case_ids": [
         "allocator-storage",
+        "arena-pool",
+        "constexpr-owned-storage",
+        "owned-error-pipelines",
+        "raw-owner-witness",
+        "raw-pointer-conversion",
+        "resource-programmable",
+        "resource-region-contracts",
         "storage-discardable-result",
         "storage-final-address",
         "storage-immovable",
         "storage-owning-view",
         "storage-release",
-        "arena-pool",
-        "raw-owner-witness",
-        "raw-pointer-conversion",
-        "structural-relocation",
-        "owned-error-pipelines",
-        "resource-programmable",
-        "resource-region-contracts"
+        "structural-relocation"
       ],
       "required_instantiations": [
         "std::alignment(64)",
@@ -5575,7 +5736,8 @@
         "std::storage<int32_t>",
         "std::storage<tracked>",
         "std::storage<immovable object> with final-address emplacement",
-        "std::alloc_errc invalid_region and invalid_state"
+        "std::alloc_errc invalid_region and invalid_state",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
@@ -5593,7 +5755,8 @@
         "tests/source_sparse_storage_tests.cpp",
         "tests/source_sparse_storage_runtime_test.py",
         "tests/fixtures/source_sparse_slots.gti",
-        "stdlib/std/memory.gti"
+        "stdlib/std/memory.gti",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {
@@ -6740,6 +6903,100 @@
       ]
     },
     {
+      "id": "regex.dangling-results",
+      "source": "stdlib/std/regex.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::match_results<returned past its subject>",
+        "std::match_results<subject changed while used>"
+      ],
+      "case_ids": [
+        "regex-result-escape",
+        "regex-subject-mutation"
+      ],
+      "reason": "A match result borrows the subject it read, so the borrow checker rejects changing the subject while the result is used and returning a result over local text.",
+      "required_instantiations": [
+        "subject mutation while a result is live",
+        "result returned over a local owner"
+      ],
+      "evidence": [
+        "tests/fixtures/regex_result_escape.gti",
+        "tests/fixtures/regex_subject_mutation.gti"
+      ]
+    },
+    {
+      "id": "regex.executable",
+      "source": "stdlib/std/regex.gti",
+      "status": "executable",
+      "operations": [
+        "std::describe(regex_errc)",
+        "std::match_groups",
+        "std::match_groups::matched",
+        "std::match_groups::position",
+        "std::match_groups::size",
+        "std::match_groups::str",
+        "std::match_results",
+        "std::match_results::empty",
+        "std::match_results::equals",
+        "std::match_results::format",
+        "std::match_results::length",
+        "std::match_results::matched",
+        "std::match_results::next_position",
+        "std::match_results::operator bool",
+        "std::match_results::operator[]",
+        "std::match_results::position",
+        "std::match_results::prefix",
+        "std::match_results::size",
+        "std::match_results::str",
+        "std::match_results::suffix",
+        "std::regex",
+        "std::regex::clone",
+        "std::regex::compile",
+        "std::regex::contains",
+        "std::regex::count",
+        "std::regex::find_all",
+        "std::regex::flags",
+        "std::regex::group_index",
+        "std::regex::mark_count",
+        "std::regex::match",
+        "std::regex::matches",
+        "std::regex::replace",
+        "std::regex::replace_with",
+        "std::regex::search",
+        "std::regex::split",
+        "std::regex_errc",
+        "std::regex_error",
+        "std::regex_error::description",
+        "std::regex_format_options",
+        "std::regex_match",
+        "std::regex_options",
+        "std::regex_replace",
+        "std::regex_replace_with",
+        "std::regex_search",
+        "std::sub_match",
+        "std::sub_match::length"
+      ],
+      "case_ids": [
+        "regex",
+        "regex-example"
+      ],
+      "required_instantiations": [
+        "ECMAScript grammar: alternation, greedy and lazy quantifiers, counted repetition, classes with ranges, escapes and POSIX names, anchors, word boundaries, capturing, non-capturing and named groups, backreferences and lookaheads",
+        "icase, nosubs, multiline and dotall options",
+        "every regex_errc reachable from compile with its byte offset, including nesting and program-size limits",
+        "linear-time matching of patterns without backreferences or lookaheads, and compilation without native recursion",
+        "replacement strings ($&, $`, $', $n, $<name>, $$), first_only and no_copy, callable replacement, split, count and find_all",
+        "borrow checking of match results against their subject"
+      ],
+      "evidence": [
+        "docs/language/regex.md",
+        "examples/194-regular-expressions.gti",
+        "stdlib/std/regex.gti",
+        "tests/fixtures/stdlib_surface_regex.gti",
+        "tests/stdlib_surface_test.py"
+      ]
+    },
+    {
       "id": "resource-vector.checked-iteration",
       "source": "stdlib/std/resource_vector.gti",
       "status": "executable",
@@ -7242,6 +7499,9 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_aggregate.gti",
         "stdlib/module-map.json"
+      ],
+      "required_instantiations": [
+        "portable modules through one import, including std.charconv and std.regex"
       ]
     },
     {
@@ -7292,6 +7552,32 @@
         "tests/text_view_iterator_runtime_test.py",
         "tests/text_view_iterator_compiler_tests.cpp",
         "examples/146-counted-text-view-iteration.gti"
+      ]
+    },
+    {
+      "id": "string-view.sub-views",
+      "source": "stdlib/std/string_view.gti",
+      "status": "executable",
+      "operations": [
+        "std::string_view::remove_prefix",
+        "std::string_view::remove_suffix",
+        "std::string_view::substr"
+      ],
+      "case_ids": [
+        "string-view-subview"
+      ],
+      "required_instantiations": [
+        "literal-backed and owner-backed sources",
+        "clamped count, empty result and position equal to size",
+        "owner relay through by-value view parameters and view fields",
+        "in-place shrinking of a writable view"
+      ],
+      "evidence": [
+        "tests/fixtures/text_view_subview.gti",
+        "tests/fixtures/text_view_subview_failure.gti",
+        "stdlib/std/string_view.gti",
+        "tests/text_view_iterator_runtime_test.py",
+        "examples/194-string-view-subviews.gti"
       ]
     },
     {
@@ -7395,20 +7681,22 @@
         "std::to_string(float)"
       ],
       "case_ids": [
+        "associative-hashes",
+        "constexpr-owned-storage",
+        "container-member-aliases",
+        "protocol-format-hash",
+        "sequence-unchecked",
         "span",
         "string",
         "string-c-string",
         "string-index-range",
-        "string-ordering",
-        "associative-hashes",
-        "container-member-aliases",
-        "sequence-unchecked",
-        "protocol-format-hash"
+        "string-ordering"
       ],
       "required_instantiations": [
         "std::to_string for every fixed-width integer family",
         "std::to_string(float)",
-        "owning string elements in source-protocol-hashed pair keys"
+        "owning string elements in source-protocol-hashed pair keys",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -7423,7 +7711,8 @@
         "tests/fixtures/associative_hash_contracts.gti",
         "stdlib/std/string.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/protocol_format_hash_runtime_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {
@@ -8206,14 +8495,15 @@
         "std::vector_element<T>"
       ],
       "case_ids": [
-        "span",
-        "vector",
-        "utility-clone",
-        "vector-construction-only",
-        "optional-expected-composition",
+        "constexpr-owned-storage",
         "container-member-aliases",
+        "optional-expected-composition",
+        "sequence-unchecked",
         "source-prefix-complete-elements",
-        "sequence-unchecked"
+        "span",
+        "utility-clone",
+        "vector",
+        "vector-construction-only"
       ],
       "required_instantiations": [
         "std::vector<int32_t>",
@@ -8223,7 +8513,8 @@
         "user-defined Record",
         "construction-only Message",
         "std::vector<std::optional<std::string>>",
-        "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking"
+        "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking",
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -8235,7 +8526,8 @@
         "stdlib/std/vector.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/source_prefix_complete_elements.gti",
-        "tests/source_prefix_owner_runtime_test.py"
+        "tests/source_prefix_owner_runtime_test.py",
+        "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
     {

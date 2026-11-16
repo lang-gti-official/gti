@@ -197,6 +197,10 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
     copy->depth = queries->depth;
     copy->nextIdentity = queries->nextIdentity;
     copy->hasRawGlobals = queries->hasRawGlobals;
+    copy->charged = queries->charged;
+    copy->deepest = queries->deepest;
+    copy->runningSince = queries->runningSince;
+    copy->reaching = queries->reaching;
     std::unordered_map<const RawResultQuery *, std::shared_ptr<RawResultQuery>>
         entries;
     const auto clone = [&](const std::shared_ptr<RawResultQuery> &entry) {
@@ -211,6 +215,9 @@ auto SemanticVisitor::Impl::unevaluatedExpressionWorker() const
       copy->cachedRoots.push_back(clone(entry));
     for (const auto &entry : queries->familyEntries)
       copy->familyEntries.push_back(clone(entry));
+    // Completed independent results are immutable; share them.
+    copy->independentEntries = queries->independentEntries;
+    copy->reusedAt = queries->reusedAt;
     if (requestSession.collectingRawResult)
       worker->requestSession.collectingRawResult =
           clone(requestSession.collectingRawResult);

@@ -1108,8 +1108,13 @@ import "detail/memory_capabilities.gti";
 namespace std { export class Mixed { public: Mixed() {} int select(int value) { return value; } int select(gti_internal::unique_owner<int> value) { return 0; } }; }
 )GTIMODULE"}},
       {standardLibraryRoot()});
+  // The private-signature overload is not a candidate for application code,
+  // so the one public overload reports its own mismatch (issue #396).
   expect(!mixedOverload.canGenerateCode() &&
-             countDiagnosticCode(mixedOverload.diagnostics, "GTI-S2012") == 1 &&
+             countDiagnosticCode(mixedOverload.diagnostics, "GTI-S2003") == 1 &&
+             countDiagnosticCode(mixedOverload.diagnostics, "GTI-S2012") == 0 &&
+             hasRelatedDiagnostic(mixedOverload.diagnostics,
+                                  "Only candidate accepting 1 argument") &&
              !hasRelatedDiagnostic(mixedOverload.diagnostics,
                                    "gti_internal::unique_owner<int>"),
          "application overload diagnostics must preserve public siblings "

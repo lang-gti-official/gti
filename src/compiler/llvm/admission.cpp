@@ -3560,6 +3560,32 @@ public:
              (!stage.elementCleanup ||
               dispatchProofs.cleanup(*stage.elementCleanup).has_value());
     }
+    // Native code is never constant evaluation: the query lowers to false and
+    // evaluator-owned storage operations lower to a trap if ever reached.
+    if (stage.intrinsic == IntrinsicKind::ConstantEvaluation ||
+        stage.intrinsic == IntrinsicKind::ConstantAllocate ||
+        stage.intrinsic == IntrinsicKind::ConstantRelease) {
+      if (stage.kind != MirInstructionKind::Call || stage.receiver ||
+          stage.functionTarget || stage.constructorTarget || stage.bodyTarget ||
+          stage.loan || stage.operands.size() != stage.parameterTypes.size())
+        return false;
+      const auto rawVoid = [](const SemanticType &type) {
+        return type.kind == SemanticType::RawPointer &&
+               type.arguments.size() == 1 &&
+               type.arguments[0] == SemanticType::Void;
+      };
+      if (stage.intrinsic == IntrinsicKind::ConstantEvaluation)
+        return stage.parameterTypes.empty() &&
+               stage.info.type == SemanticType::Bool;
+      if (stage.intrinsic == IntrinsicKind::ConstantAllocate)
+        return stage.parameterTypes ==
+                   std::vector<SemanticType>{SemanticType::UInt64,
+                                             SemanticType::UInt64} &&
+               rawVoid(stage.info.type);
+      return stage.parameterTypes.size() == 1 &&
+             rawVoid(stage.parameterTypes[0]) &&
+             stage.info.type == SemanticType::Void && !stage.result;
+    }
     if (stage.kind != MirInstructionKind::Call ||
         stage.info.type != SemanticType::Void || stage.result ||
         stage.receiver || stage.functionTarget || stage.constructorTarget ||
@@ -4300,6 +4326,20 @@ public:
            stage.info.type == pointer.arguments.front();
   }
 
+  // In-place narrowing rewrites one writable view's address/count pair from
+  // two counts. Its unsafe marker is the caller's extent proof, nothing more.
+  static bool textViewNarrowing(const MirInstruction &stage) {
+    return stage.intrinsic == IntrinsicKind::TextViewNarrow &&
+           stage.kind == MirInstructionKind::Call && !stage.receiver &&
+           !stage.result && !stage.functionTarget && !stage.rawMemoryAccess &&
+           stage.operands.size() == 3 && stage.parameterTypes.size() == 3 &&
+           stage.parameterTypes[0] ==
+               SemanticType::referenceTo(SemanticType::StringView,
+                                         AccessMode::Mutable) &&
+           stage.parameterTypes[1] == SemanticType::UInt64 &&
+           stage.parameterTypes[2] == SemanticType::UInt64;
+  }
+
   bool representedTextAddress(const MirBody &body,
                               const MirInstruction &stage) const {
     if (!mir_detail::textAddressResultLoan(body, stage, &program))
@@ -4549,6 +4589,51 @@ public:
   // unsafe call's by-value result into its consumer. A call input carrying
   // the exact result of an admitted ordinary unsafe call performs no unsafe
   // operation of its own; the transport is admitted on its own terms.
+  // A by-value unsafe call result passed straight to a by-reference parameter
+  // is staged as a read temporary borrow of the call's result value. The
+  // staging carries the call's HIR value and therefore its unsafe marker, but
+  // the permission belongs to the call, admitted on its own terms; the staging
+  // itself only borrows the materialized result (issue #332).
+  bool unsafeCallTemporaryInput(const MirBody &body,
+                                const MirInstruction &stage) const {
+    if (stage.kind != MirInstructionKind::CallInput || !stage.result ||
+        stage.callInputRole != MirCallInputRole::Argument ||
+        stage.callInputKind != HirCallInputKind::ReadTemporaryBorrow ||
+        stage.unsafeOperation != UnsafeOperationKind::DeclaredUnsafeCall ||
+        stage.hirValue == 0 || stage.callSite == 0 || stage.defaultArgument ||
+        stage.rawMemoryAccess || stage.intrinsic != IntrinsicKind::None ||
+        stage.info.type.kind != SemanticType::Reference ||
+        stage.info.type.arguments.size() != 1 ||
+        stage.info.type.referenceAccess != AccessMode::ReadOnly ||
+        stage.operands.size() != 1 || stage.destination || stage.receiver ||
+        stage.functionTarget || stage.constructorTarget || stage.lambdaTarget ||
+        stage.bodyTarget || stage.nativeCalleeType ||
+        !stage.lifecycle.empty() || !stage.definedFailure.empty())
+      return false;
+    const MirOperand &input = stage.operands.front();
+    const MirPlace *place = body.findPlace(input.place);
+    if (input.kind != MirOperandKind::BorrowRead || place == nullptr ||
+        place->root != MirPlaceRootKind::Value || place->value == 0 ||
+        !place->projections.empty() ||
+        place->type != stage.info.type.arguments.front())
+      return false;
+    // The producing call: its result is the borrowed value, with the same HIR
+    // value, the same unsafe permission and a by-value result of exactly the
+    // staged referent type.
+    for (const MirBlock &block : body.blocks)
+      for (const MirInstruction &instruction : block.instructions)
+        if (instruction.kind == MirInstructionKind::Call &&
+            instruction.result && *instruction.result == place->value &&
+            instruction.hirValue == stage.hirValue &&
+            instruction.unsafeOperation ==
+                UnsafeOperationKind::DeclaredUnsafeCall &&
+            instruction.result &&
+            instruction.info.category == ValueCategory::Value &&
+            instruction.info.type == place->type)
+          return true;
+    return false;
+  }
+
   bool unsafeCallResultStaging(const MirBody &body,
                                const MirInstruction &stage) const {
     if (stage.kind != MirInstructionKind::CallInput ||
@@ -5607,6 +5692,7 @@ public:
               stage.operands.empty() &&
               (stage.intrinsic == IntrinsicKind::StringViewSize ||
                stage.intrinsic == IntrinsicKind::StringViewEmpty);
+          const bool textNarrowing = textViewNarrowing(stage);
           std::optional<Shape> callableIntrinsic;
           if (stage.intrinsic == IntrinsicKind::FunctionPointerFromItem)
             callableIntrinsic = classShape(stage.info.type);
@@ -5643,7 +5729,7 @@ public:
               // type; a payload enum has no underlying value to read.
               : sealedIntegralUnderlyingValue(stage)
                   ? std::optional(Shape::NativeIntegralEnumValue)
-              : textQuery ? std::optional(Shape::CountedText)
+              : textQuery || textNarrowing ? std::optional(Shape::CountedText)
               : stage.receiver &&
                       stage.receiver->type.kind == SemanticType::Array &&
                       passiveArrayElement(stage.receiver->type) &&
@@ -5883,6 +5969,7 @@ public:
             : (ordinaryUnsafe || unsafeCallResultLoad(mir, mirBlock, stage) ||
                unsafeCallResultInput(mir, mirBlock, stage) ||
                unsafeCallResultStaging(mir, stage) ||
+               unsafeCallTemporaryInput(mir, stage) ||
                unsafeCallValueReceiver(mir, stage) ||
                unsafeCallResultReturn(mir, mirBlock, stage))
                 ? std::optional(Shape::OrdinaryUnsafeInvocation)
@@ -5893,6 +5980,9 @@ public:
                     (erasedReference(stage) ||
                      restoredLoanTransport(mir, stage))
                 ? std::optional(Shape::ErasedReference)
+            : stage.unsafeOperation == UnsafeOperationKind::PointerArithmetic &&
+                    textViewNarrowing(stage)
+                ? std::optional(Shape::CountedText)
             : ((stage.unsafeOperation == UnsafeOperationKind::RawDereference &&
                 (representedTextAddress(mir, stage) ||
                  rawTextResultReturn(mir, mirBlock, stage))) ||

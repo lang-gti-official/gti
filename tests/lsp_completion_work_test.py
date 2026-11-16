@@ -46,6 +46,18 @@ def records(trace):
             if line.endswith("\n")]
 
 
+def preamble_built(trace):
+    # The first analysis defers the standard-library preamble to the preamble
+    # worker; completion adopts it only once that build is stored.
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        if any(row["kind"] == "preamble" and row["preambleBuilds"] == 1
+               for row in records(trace)):
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"preamble never built: {records(trace)}")
+
+
 def started(trace, request_id):
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -77,6 +89,7 @@ def reuse_and_diagnostics(executable, root):
         initialize(session)
         uri = open_document(session, path, SOURCE)
         assert not diagnostics_for(session, uri, 1)
+        preamble_built(trace)
         items = []
         for request_id in (10, 11):
             complete(session, request_id, uri, SOURCE)

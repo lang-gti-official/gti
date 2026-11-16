@@ -40,7 +40,7 @@ export constexpr bool has_borrowed_payload<T>() {
 /// End one live object's lifetime without releasing its storage.
 /// The caller guarantees a live, writable, correctly aligned complete object,
 /// exclusive access, and that no later cleanup will destroy that object again.
-export unsafe void destroy_at<T>(T* address) requires layout_queryable<T> {
+export unsafe constexpr void destroy_at<T>(T* address) requires layout_queryable<T> {
   unsafe { gti_internal::object_destroy(address); }
 }
 
@@ -51,7 +51,7 @@ export unsafe void destroy_at<T>(T* address) requires layout_queryable<T> {
 /// Argument construction selects only safe constructors. For an unsafe
 /// constructor, explicitly construct an owned value first and move it here.
 export [[discardable]]
-unsafe T* construct_at<T, Args...>(T* address, Args... args)
+unsafe constexpr T* construct_at<T, Args...>(T* address, Args... args)
     requires layout_queryable<T> {
   unsafe { gti_internal::object_construct(address, args...); }
   return address;
@@ -62,7 +62,7 @@ unsafe T* construct_at<T, Args...>(T* address, Args... args)
 /// Successful construction retains its external dependencies in owner; failure
 /// uses the selected constructor's ordinary partial-object cleanup.
 export [[discardable]]
-unsafe T* construct_owned_at<T, Owner, Args...>(T* address, mut Owner& owner,
+unsafe constexpr T* construct_owned_at<T, Owner, Args...>(T* address, mut Owner& owner,
                                                Args... args)
     requires layout_queryable<T> {
   unsafe { gti_internal::object_construct_owned(address, owner, args...); }
@@ -79,41 +79,41 @@ unsafe T* construct_owned_at<T, Owner, Args...>(T* address, mut Owner& owner,
 export struct layout {
   size_t bytes;
   size_t alignment;
-  layout(size_t bytes, size_t alignment) : bytes(bytes), alignment(alignment) {}
+  constexpr layout(size_t bytes, size_t alignment) : bytes(bytes), alignment(alignment) {}
 };
 
 /// Queries a complete object type without constructing or moving an object.
-export layout layout_of<T>() requires std::layout_queryable<T> {
+export constexpr layout layout_of<T>() requires std::layout_queryable<T> {
   layout result{gti_internal::object_size<T>(),
                 gti_internal::object_alignment<T>()};
   return result;
 }
 
 namespace detail {
-Target convert_address<Target, T>(T* address) {
+constexpr Target convert_address<Target, T>(T* address) {
   return Target(address);
 }
-Target convert_address<Target, T>(const T* address) {
+constexpr Target convert_address<Target, T>(const T* address) {
   return Target(address);
 }
 }
 
 /// Erases only the pointee spelling; preserves constness and known origins.
-export void* erase_address<T>(T* address) {
+export constexpr void* erase_address<T>(T* address) {
   return detail::convert_address<void*, T>(address);
 }
 
-export const void* erase_address<T>(const T* address) {
+export constexpr const void* erase_address<T>(const T* address) {
   return detail::convert_address<const void*, T>(address);
 }
 
 /// Selects a pointee spelling, without establishing initialization, alignment,
 /// lifetime, ownership or permission to access the pointee.
-export T* typed_address<T>(void* address) {
+export constexpr T* typed_address<T>(void* address) {
   return detail::convert_address<T*, void>(address);
 }
 
-export const T* typed_address<T>(const void* address) {
+export constexpr const T* typed_address<T>(const void* address) {
   return detail::convert_address<const T*, void>(address);
 }
 
@@ -122,7 +122,7 @@ export const T* typed_address<T>(const void* address) {
 /// controls this object's lifetime. Checked value dependencies are retained by
 /// owner; a raw destination pointer alone does not establish this relation.
 /// Only failure-free generated relocation is used, never a user move body.
-export unsafe void initialize_owned_at<T, Owner>(T* destination,
+export unsafe constexpr void initialize_owned_at<T, Owner>(T* destination,
                                                  mut Owner& owner, T value)
     requires layout_queryable<T> && move_constructible<T> {
   unsafe { gti_internal::object_initialize_owned(destination, owner, std::move(value)); }
@@ -136,11 +136,11 @@ export unsafe void initialize_owned_at<T, Owner>(T* destination,
 export class uninitialized<layout_queryable T> {
   mut gti_internal::uninitialized_storage<T> bytes{};
 public:
-  uninitialized() = default;
-  const T* data() {
+  constexpr uninitialized() = default;
+  constexpr const T* data() {
     unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
   }
-  T* data() mut {
+  constexpr T* data() mut {
     unsafe { return std::typed_address<T>(std::erase_address(&this.bytes)); }
   }
 };
@@ -151,7 +151,7 @@ public:
 /// vacant and nonoverlapping. Success ends the source lifetime without running
 /// its GTI destructor and leaves exactly one live destination. Eligibility is
 /// the existing failure-free generated relocation contract, never custom moves.
-export unsafe void relocate_at<T>(T* destination, T* source)
+export unsafe constexpr void relocate_at<T>(T* destination, T* source)
     requires layout_queryable<T> && relocatable<T> {
   unsafe { gti_internal::object_relocate(destination, source); }
 }
@@ -162,7 +162,7 @@ export unsafe void relocate_at<T>(T* destination, T* source)
 /// The destination retains all external dependencies of the source storage.
 /// Source dependency retention is conservative until its owner ends; this
 /// operation neither releases storage nor invokes user-defined movement.
-export unsafe void relocate_owned_at<T, Destination, Source>(
+export unsafe constexpr void relocate_owned_at<T, Destination, Source>(
     T* destination, mut Destination& destination_owner,
     T* source, mut Source& source_owner)
     requires layout_queryable<T> && move_constructible<T> {
@@ -175,7 +175,7 @@ export unsafe void relocate_owned_at<T, Destination, Source>(
 /// objects, valid alignment, exclusive access and a representable byte extent.
 /// All source lifetimes end without cleanup; exactly count destination objects
 /// become live. A zero count accesses neither pointer (null is then permitted).
-export unsafe void relocate_range_at<T>(T* destination, T* source, size_t count)
+export unsafe constexpr void relocate_range_at<T>(T* destination, T* source, size_t count)
     requires layout_queryable<T> && bitwise_relocatable<T> {
   unsafe { gti_internal::object_relocate_range(destination, source, count); }
 }
@@ -185,7 +185,7 @@ export unsafe void relocate_range_at<T>(T* destination, T* source, size_t count)
 /// access, and retires the source from its enclosing storage owner's live set.
 /// Success leaves the source vacant without destroying it or releasing its
 /// allocation. Generated relocation cannot fail or call user movement code.
-export unsafe T take_at<T>(T* source)
+export unsafe constexpr T take_at<T>(T* source)
     requires layout_queryable<T> && relocatable<T> {
   unsafe { return gti_internal::object_take(source); }
 }
@@ -194,7 +194,7 @@ export unsafe T take_at<T>(T* source)
 /// proves address validity and that owner retains every external dependency
 /// of the stored value (for example through initialize_owned_at). The returned
 /// reference borrows storage; copies of its contents retain their own owners.
-export unsafe T&<a> borrow_owned_at<T, Owner, lifetime a>(const T* address,
+export unsafe constexpr T&<a> borrow_owned_at<T, Owner, lifetime a>(const T* address,
                                                         Owner&<a> owner) {
   unsafe { return gti_internal::object_borrow_owned(address, owner); }
 }
@@ -202,7 +202,7 @@ export unsafe T&<a> borrow_owned_at<T, Owner, lifetime a>(const T* address,
 /// Exclusively borrows a live object in owner-tracked storage. The caller
 /// proves a writable aligned address, exclusive access and that owner retains
 /// every external dependency of the stored contents.
-export unsafe mut T&<a> borrow_owned_mut_at<T, Owner, lifetime a>(T* address,
+export unsafe constexpr mut T&<a> borrow_owned_mut_at<T, Owner, lifetime a>(T* address,
                                                                mut Owner&<a> owner) {
   unsafe { return gti_internal::object_borrow_owned_mut(address, owner); }
 }
@@ -210,13 +210,13 @@ export unsafe mut T&<a> borrow_owned_mut_at<T, Owner, lifetime a>(T* address,
 /// Asserts that address denotes a live T whose lifetime is covered by owner.
 /// The caller proves alignment, initialization and aliasing. The returned
 /// reference is checked against owner; the raw pointer itself remains nonowning.
-export unsafe T&<a> assume_ref<T, Owner, lifetime a>(const T* address,
+export unsafe constexpr T&<a> assume_ref<T, Owner, lifetime a>(const T* address,
                                                     Owner&<a> owner) {
   unsafe { return *address; }
 }
 
 /// Asserts exclusive access to a live T for the checked borrow of owner.
-export unsafe mut T&<a> assume_mut<T, Owner, lifetime a>(T* address,
+export unsafe constexpr mut T&<a> assume_mut<T, Owner, lifetime a>(T* address,
                                                         mut Owner&<a> owner) {
   unsafe { return *address; }
 }
@@ -224,7 +224,7 @@ export unsafe mut T&<a> assume_mut<T, Owner, lifetime a>(T* address,
 /// Assert that count readable character objects at address remain valid for
 /// the checked owner borrow. The caller proves extent, initialization and
 /// aliasing; the result retains owner even when count is zero.
-export unsafe string_view assume_string_view<Owner>(
+export unsafe constexpr string_view assume_string_view<Owner>(
     const char* address, size_t count, Owner& owner) {
   unsafe { return gti_internal::text_view_from_address(address, count, owner); }
 }

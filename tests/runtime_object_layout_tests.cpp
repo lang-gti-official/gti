@@ -226,9 +226,23 @@ int main() {
              constantLayout.mir.requiresNativeObjectLayout(),
          "ordinary object sizeof is a native constant independently of the "
          "runtime layout descriptor");
-  rejected(prefix + "constexpr std::layout descriptor = std::layout_of<int>(); "
-                    "int main() { return 0; }",
-           "GTI-S2057", "runtime query is not a constant expression");
+  // layout_of is a constexpr library function over the same semantic layout
+  // oracle as sizeof/alignof (static semantics, "Raw storage and owning
+  // containers"), so a published constant query agrees with them.
+  const auto constantQuery = analyze(
+      prefix + "struct Ordinary { int value; double real; };\n"
+               "constexpr std::layout descriptor = std::layout_of<int>();\n"
+               "constexpr std::layout ordinary = std::layout_of<Ordinary>();\n"
+               "static_assert(descriptor.bytes == sizeof(int));\n"
+               "static_assert(ordinary.bytes == sizeof(Ordinary) && "
+               "ordinary.alignment == alignof(Ordinary));\n"
+               "int main() { return 0; }");
+  if (!constantQuery.canGenerateCode())
+    for (const auto &item : constantQuery.diagnostics)
+      std::cerr << item.code << ": " << item.message << '\n';
+  expect(constantQuery.canGenerateCode() &&
+             constantQuery.mir.requiresNativeObjectLayout(),
+         "constant layout_of agrees with sizeof and alignof");
   // Merely using the public spelling never selects the private capability.
   const auto ordinary =
       analyze("namespace std { int layout_of<T>() { return 17; } }\n"

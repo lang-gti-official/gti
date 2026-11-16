@@ -55,8 +55,10 @@ private:
   void directive();
   void string();
   void character();
-  char decodeEscape(char escaped, std::size_t escapeStart,
-                    bool characterLiteral);
+  void decodeLiteralBody(std::string_view body, std::size_t bodyStart,
+                         std::string &value);
+  void decodeEscape(std::string_view body, std::size_t &index,
+                    std::size_t bodyStart, std::string &value);
   [[nodiscard]] static bool isNumber(char value);
   [[nodiscard]] static bool isAlpha(char value);
   [[nodiscard]] static bool isAlphaNumeric(char value);

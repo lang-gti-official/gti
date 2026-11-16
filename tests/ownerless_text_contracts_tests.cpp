@@ -7113,6 +7113,126 @@ int main() {
   }
 }
 
+// Issue #379: storing a view into a field names what the view borrows. A
+// temporary owner dies at the end of the statement; a named owner is local.
+// Both suggest an owning std::string field.
+void testStoredViewOwnerDiagnostics() {
+  const std::string declarations = R"gti(
+import std.filesystem;
+struct Metadata {
+  Metadata() {}
+  mut std::string_view name = "";
+};
+)gti";
+  const auto diagnosticWith = [](const lang::FrontendResult &result,
+                                 std::string_view text) {
+    return std::find_if(result.diagnostics.begin(), result.diagnostics.end(),
+                        [&](const lang::Diagnostic &diagnostic) {
+                          return diagnostic.code == "GTI-S2045" &&
+                                 diagnostic.message.find(text) !=
+                                     std::string::npos;
+                        });
+  };
+  const auto temporary = analyzeText(declarations + R"gti(
+int main() {
+  std::filesystem::path entry = std::filesystem::path("dir/file.txt");
+  mut Metadata data{};
+  data.name = entry.filename().view();
+  return 0;
+}
+)gti");
+  const auto fromTemporary =
+      diagnosticWith(temporary, "borrows a temporary that is destroyed");
+  expect(
+      fromTemporary != temporary.diagnostics.end() &&
+          std::any_of(
+              fromTemporary->related.begin(), fromTemporary->related.end(),
+              [](const auto &related) {
+                return related.message.find("This temporary owns the text") !=
+                       std::string::npos;
+              }) &&
+          std::any_of(fromTemporary->hints.begin(), fromTemporary->hints.end(),
+                      [](const std::string &hint) {
+                        return hint.find("owning std::string") !=
+                               std::string::npos;
+                      }),
+      "#379 a view of a temporary owner names the temporary");
+  const auto named = analyzeText(declarations + R"gti(
+int main() {
+  std::filesystem::path entry = std::filesystem::path("dir/file.txt");
+  mut Metadata data{};
+  data.name = entry.view();
+  return 0;
+}
+)gti");
+  const auto fromNamed = diagnosticWith(named, "borrows 'entry'");
+  expect(fromNamed != named.diagnostics.end() &&
+             fromNamed->message.find("temporary") == std::string::npos &&
+             fromNamed->message.find("single-owner") == std::string::npos,
+         "#379 a view of a named local owner names that owner");
+}
+
+// Issue #392: a call on a temporary receiver whose result publishes a text
+// argument in a field (L-OWN-02) borrows that argument's owner, not the
+// temporary; chaining or binding the result is accepted, and a temporary text
+// owner is still rejected.
+// Issue #393: an operator call that forwards through `this[...]` takes its
+// receiver directly; it forwards to that overload's receiver contract like a
+// named helper call does, rather than requiring every receiver text field.
+void testTemporaryReceiverTextPublication() {
+  const std::string classes = R"gti(
+import std.string;
+import std.vector;
+class Result {
+  std::string_view subject;
+  std::vector<std::size_t> spans;
+public:
+  Result(std::string_view subject, std::vector<std::size_t> spans)
+      : subject(subject), spans(std::move(spans)) {}
+  std::size_t length() { return this.spans.size(); }
+  std::size_t operator[](std::size_t n) { return this.spans[n]; }
+  std::size_t operator[](std::string_view name) { return this[std::size_t(0)]; }
+};
+class Finder {
+  std::vector<int> program;
+public:
+  Finder(int seed) : program(std::vector<int>()) {}
+  Result find(std::string_view subject) {
+    mut std::vector<std::size_t> spans{};
+    spans.push_back(1);
+    return Result(subject, std::move(spans));
+  }
+};
+)gti";
+  for (const auto &[name, body] :
+       {std::pair{"#392 chained", "std::size_t n = "
+                                  "Finder(1).find(text.view()).length();"},
+        std::pair{"#392 bound", "Result r = Finder(1).find(text.view()); "
+                                "std::size_t n = r.length();"},
+        std::pair{"#393 forwarding subscript",
+                  "Result r = Finder(1).find(text.view()); "
+                  "std::size_t n = r[\"x\"];"}}) {
+    const auto result = analyzeText(classes +
+                                    "int main() {\n"
+                                    "  std::string text{\"abc\"};\n  " +
+                                    body + "\n  return int32_t(n) - 1;\n}\n");
+    if (!result.canGenerateCode())
+      printDiagnostics(result);
+    expect(result.canGenerateCode() &&
+               lang::verifyMirProgram(result.mir).valid(),
+           std::string(name) + " is accepted with valid MIR");
+  }
+  const auto dying = analyzeText(
+      classes + "int main() {\n"
+                "  Result r = Finder(1).find(std::string(\"xyz\").view());\n"
+                "  return int32_t(r.length());\n}\n");
+  expect(!dying.canGenerateCode() &&
+             hasDiagnosticCode(dying.diagnostics, "GTI-S2045") &&
+             !hasDiagnosticCode(dying.diagnostics, "GTI-B0001"),
+         "#392 a temporary text owner published through a temporary receiver "
+         "is still rejected");
+}
+
 constexpr NamedTest kTests[] = {
     {"testGrowableBorrowedRecordReturn", testGrowableBorrowedRecordReturn},
     {"testCopiedReferenceParameterProof", testCopiedReferenceParameterProof},
@@ -7196,6 +7316,9 @@ constexpr NamedTest kTests[] = {
     {"testReplacementDependencyVerification",
      testReplacementDependencyVerification},
     {"testMultipleTextOwners", testMultipleTextOwners},
+    {"testTemporaryReceiverTextPublication",
+     testTemporaryReceiverTextPublication},
+    {"testStoredViewOwnerDiagnostics", testStoredViewOwnerDiagnostics},
     {"testArrayElementTextStorage", testArrayElementTextStorage},
     {"testArrayElementTextRejections", testArrayElementTextRejections},
     {"testRawMemoryTextReads", testRawMemoryTextReads},

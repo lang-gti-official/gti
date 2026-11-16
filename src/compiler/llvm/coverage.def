@@ -540,6 +540,10 @@ LLVM_COVERAGE_ENTRY(ObjectBorrowOwned, 5, Pending, None, "owner-tracked read req
 LLVM_COVERAGE_ENTRY(ObjectInitializeOwned, 8, Pending, None, "owner-aware initialized-value transfer requires native lowering")
 LLVM_COVERAGE_ENTRY(ObjectRelocateOwned, 8, Pending, None, "owner-aware raw storage transfer requires native lowering")
 LLVM_COVERAGE_ENTRY(ObjectConstructOwned, 8, Pending, None, "owner-aware final-address construction requires checked constructor lowering")
+LLVM_COVERAGE_ENTRY(ConstantEvaluation, 8, Pending, None, "native code is never constant evaluation; lowers to false")
+LLVM_COVERAGE_ENTRY(ConstantAllocate, 8, Pending, None, "evaluator-owned storage; native code traps if reached")
+LLVM_COVERAGE_ENTRY(ConstantRelease, 8, Pending, None, "evaluator-owned storage; native code traps if reached")
+LLVM_COVERAGE_ENTRY(TextViewNarrow, 5, Pending, None, "all represented shapes remain pending native lowering")
 LLVM_COVERAGE_SENTINEL(Count)
 LLVM_COVERAGE_END()
 

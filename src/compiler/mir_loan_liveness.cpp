@@ -948,6 +948,119 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     }
   };
 
+  // A path that reaches `return` from a conflict inside a loop
+  // (`return conflict;` or `conflict; return ...;`) leaves the body: it never
+  // reaches the loan's later uses, the loop's next iteration included. The
+  // loan ends on that path after its last use in the conflict's arm, or at
+  // the entry of the innermost conditional arm that holds the conflict.
+  // Uses before that arm on an enclosing path already happened; a use inside
+  // the arm before the conflict, other than in its own statement list, or in
+  // the returned value itself keeps the loan live (issue #395).
+  // The block a range-for lowers to, when it is the only reason `loan` is
+  // unconfined: the loan is a read-only, non-payload loan created in that
+  // block, and each carrier without a source symbol is one of the block's
+  // own declarations (the range and iterator), which user code cannot name.
+  const auto rangeForBlock =
+      [&](const LoanFacts &loan) -> std::optional<HirStatementId> {
+    if (loan.entry || loan.access != AccessMode::ReadOnly || !created[loan.id])
+      return std::nullopt;
+    const HirStatementId block = tree.parentOf(*created[loan.id]);
+    const HirStatement *owner = indexedStatement(body, block);
+    const HirStatement *loop =
+        owner ? indexedStatement(body, tree.parentOf(block)) : nullptr;
+    if (owner == nullptr || owner->kind != HirStatementKind::Block ||
+        loop == nullptr || loop->kind != HirStatementKind::RangeFor)
+      return std::nullopt;
+    for (const HirBindingId carrier : loan.carriers) {
+      const HirBinding *binding = nullptr;
+      for (const HirBinding &candidate : body.bindings)
+        if (candidate.id == carrier)
+          binding = &candidate;
+      if (binding == nullptr || binding->payloadPattern != nullptr)
+        return std::nullopt;
+      if (binding->info.symbol != 0)
+        continue;
+      const auto declared = declaringStatement.find(carrier);
+      if (declared == declaringStatement.end() ||
+          tree.parentOf(declared->second) != block)
+        return std::nullopt;
+    }
+    return block;
+  };
+  const auto returnPlans = [&](const HirStatement &target,
+                               const LoanFacts &loan,
+                               const std::vector<HirStatementId> &own,
+                               MirDerivedLoanEnds &ends) {
+    std::vector<HirStatementId> statements;
+    subtree(target.id, statements);
+    for (const HirStatementId conflict : statements) {
+      if (conflict == target.id ||
+          !conflictsWithLoan(body, tree, conflict, loan.placeRoot, loan.access))
+        continue;
+      const HirStatement *conflicting = indexedStatement(body, conflict);
+      if (conflicting == nullptr)
+        continue;
+      const auto list = siblingsOf(conflict);
+      const auto at = std::find(list.begin(), list.end(), conflict);
+      if (at == list.end())
+        continue;
+      HirStatementId exit = conflict;
+      if (conflicting->kind != HirStatementKind::Return) {
+        if (std::next(at) == list.end())
+          continue;
+        const HirStatement *next = indexedStatement(body, *std::next(at));
+        if (next == nullptr || next->kind != HirStatementKind::Return)
+          continue;
+        exit = next->id;
+      }
+      // Only conditional arms: a switch arm's payload bindings read the
+      // subject's selection, which is not among this loan's recorded uses.
+      const auto conflictPath = armPath(conflict, target.id);
+      if (conflictPath.empty() ||
+          std::any_of(conflictPath.begin(), conflictPath.end(),
+                      [&](const ArmStep &step) {
+                        const HirStatement *owner =
+                            indexedStatement(body, step.statement);
+                        return owner == nullptr ||
+                               owner->kind != HirStatementKind::If;
+                      }))
+        continue;
+      std::optional<HirStatementId> lastUse;
+      bool valid = true;
+      for (const HirStatementId use : own) {
+        if (!within(use, target.id) && use != target.id)
+          continue;
+        if (tree.orderOf(use) > tree.orderOf(exit))
+          continue;
+        const auto usePath = armPath(use, target.id);
+        if (!isPrefix(conflictPath, usePath))
+          continue; // before the arm on an enclosing path, or a sibling path
+        if (usePath != conflictPath ||
+            tree.orderOf(use) >= tree.orderOf(conflict)) {
+          valid = false;
+          break;
+        }
+        if (!lastUse || tree.orderOf(use) > tree.orderOf(*lastUse))
+          lastUse = use;
+      }
+      if (!valid)
+        continue;
+      if (lastUse) {
+        const HirStatement *last = indexedStatement(body, *lastUse);
+        if (last == nullptr ||
+            std::find(list.begin(), list.end(), *lastUse) == list.end() ||
+            (last->kind != HirStatementKind::Variable &&
+             last->kind != HirStatementKind::Expression))
+          continue;
+        ends.after[*lastUse].push_back(loan.id);
+        continue;
+      }
+      const ArmStep entry = conflictPath.back();
+      (entry.arm == 0 ? ends.thenEntry : ends.elseEntry)[entry.statement]
+          .push_back(loan.id);
+    }
+  };
+
   for (const LoanFacts &loan : loans) {
     // An entry loan is the caller's: it outlives the whole body.
     if (loan.entry)
@@ -955,12 +1068,64 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     // A cleanup-bound carrier keeps its loan until the carrier's cleanup;
     // several exclusive aliases share state transitions a single last-use
     // end point cannot express. Both end at their region's exit.
-    if (loan.lifecycleBound || unconfined.contains(loan.id) ||
+    if (loan.lifecycleBound ||
         (loan.carriers.size() > 1 && loan.access != AccessMode::ReadOnly))
       continue;
+    if (unconfined.contains(loan.id)) {
+      // A range-for's loan is carried by the loop's own symbol-less range
+      // and iterator bindings and by element bindings inside the body, so it
+      // keeps the loop's lexical extent. A return out of the loop still
+      // leaves that extent early.
+      if (const auto target = rangeForBlock(loan))
+        if (const HirStatement *block = indexedStatement(body, *target))
+          returnPlans(*block, loan, uses[loan.id], result);
+      continue;
+    }
     const auto &own = uses[loan.id];
     if (own.empty())
       continue;
+    // A returning arm cannot reach uses after its enclosing conditional.
+    // The ordinary last-use plan below only visits the final use's enclosing
+    // statement, so it otherwise misses an earlier `if (...) { ...; return; }`.
+    // Reuse the existing arm proof, but only for function-exiting arms: a
+    // break/continue can still reach uses outside that arm and needs its own
+    // target-aware plan.
+    if (created[loan.id]) {
+      const auto creationRegion = tree.regionOf(*created[loan.id]);
+      for (const auto &conditional : body.statements) {
+        if (conditional.kind != HirStatementKind::If ||
+            !(tree.regionOf(conditional.id) == creationRegion) ||
+            tree.orderOf(conditional.id) <= tree.orderOf(*created[loan.id]))
+          continue;
+        for (const bool thenBranch : {true, false}) {
+          const auto arm =
+              thenBranch ? conditional.body : conditional.elseBranch;
+          if (!arm || !cannotFallThrough(*arm) || unsupportedFlow(*arm))
+            continue;
+          std::vector<HirStatementId> statements;
+          subtree(*arm, statements);
+          const bool otherExit = std::any_of(
+              statements.begin(), statements.end(), [&](HirStatementId id) {
+                const auto *statement = indexedStatement(body, id);
+                return statement &&
+                       (statement->kind == HirStatementKind::Break ||
+                        statement->kind == HirStatementKind::Continue);
+              });
+          if (otherExit)
+            continue;
+          std::vector<Point> points;
+          if (!terminatingEndpoints(conditional, thenBranch, loan, own, points))
+            continue;
+          for (const auto &point : points) {
+            auto &target = point.kind == 0 ? result.after[point.statement]
+                           : point.kind == 1
+                               ? result.thenEntry[point.statement]
+                               : result.elseEntry[point.statement];
+            target.push_back(loan.id);
+          }
+        }
+      }
+    }
     const HirStatementId last = *std::max_element(
         own.begin(), own.end(), [&](HirStatementId left, HirStatementId right) {
           return tree.orderOf(left) < tree.orderOf(right);
@@ -995,6 +1160,11 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
     // A path that reaches `conflict; break;` out of this loop or switch never
     // returns to a later use, so the loan also ends on that path: after its
     // last use before the conflict, or at the entry of the arm that holds it.
+    if (ending->kind == HirStatementKind::While ||
+        ending->kind == HirStatementKind::For ||
+        ending->kind == HirStatementKind::DoWhile ||
+        ending->kind == HirStatementKind::RangeFor)
+      returnPlans(*ending, loan, own, result);
     if (ending->kind != HirStatementKind::While &&
         ending->kind != HirStatementKind::For &&
         ending->kind != HirStatementKind::DoWhile &&
@@ -1046,6 +1216,22 @@ deriveLoanEnds(const HirBody &body, const std::vector<LoanFacts> &loans,
         result.switchArmEntry[{statement.id, arm}].push_back(dependency);
     }
   }
+  // A terminating-arm plan and the ordinary final-use plan can establish
+  // the same endpoint. Emit it once, retaining dependency ordering.
+  const auto uniqueEnds = [](auto &points) {
+    for (auto &[point, ids] : points) {
+      (void)point;
+      std::unordered_set<MirLoanId> seen;
+      ids.erase(
+          std::remove_if(ids.begin(), ids.end(),
+                         [&](MirLoanId id) { return !seen.insert(id).second; }),
+          ids.end());
+    }
+  };
+  uniqueEnds(result.after);
+  uniqueEnds(result.thenEntry);
+  uniqueEnds(result.elseEntry);
+  uniqueEnds(result.switchArmEntry);
   return result;
 }
 

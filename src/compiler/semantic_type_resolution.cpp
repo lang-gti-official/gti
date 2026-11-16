@@ -527,6 +527,9 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         info = instanceBaseModel->findFunction(function);
       if (info == nullptr)
         return false;
+      // The contract is a body-derived fact: resolve the body first so
+      // a deferred or later declaration cannot change which items match.
+      ensureBodyAnalyzed(*info);
       const CallableParameterContract *current =
           callableParameterContract(function, parameterIndex);
       if (current != nullptr && current->boundary != CallableBoundary::Confined)
@@ -640,6 +643,11 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         target.parameterTypes[index].kind == SemanticType::NativeFunction) {
       continue;
     }
+    if (const FunctionInfo *info = semanticModel.findFunction(target.id))
+      ensureBodyAnalyzed(*info);
+    else if (instanceBaseModel != nullptr)
+      if (const FunctionInfo *base = instanceBaseModel->findFunction(target.id))
+        ensureBodyAnalyzed(*base);
     const CallableParameterContract *contract =
         callableParameterContract(target.id, index);
     const bool threadTask = contract != nullptr &&
@@ -1235,7 +1243,7 @@ auto SemanticVisitor::Impl::temporaryReadBorrowArgumentMatches(
                                    record->kind == ClassKind::Struct)));
   }
   const FreshTemporaryValueAssessment assessment =
-      freshTemporaryBorrowValue(expression);
+      freshTemporaryBorrowValue(expression, true);
   return assessment.eligible && assessment.type == argument;
 }
 
@@ -1392,7 +1400,7 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
                  " cannot bind a mutable reference to a temporary.";
       } else if (isTemporaryBorrowReferentType(argument)) {
         const FreshTemporaryValueAssessment assessment =
-            freshTemporaryBorrowValue(expression);
+            freshTemporaryBorrowValue(expression, true);
         if (assessment.eligible && function != nullptr &&
             !ephemeralBorrowTargetSupported(*function, index)) {
           reason = !ephemeralBorrowResultSupported(*function, index)
@@ -1577,6 +1585,8 @@ auto SemanticVisitor::Impl::reportCallArgumentMismatch(
       return;
     }
   }
+  if (expression && reportTypeUsedAsValue(*expression, argument))
+    return;
   Diagnostic diagnostic = makeDiagnostic(
       "GTI-S2003", DiagnosticPhase::Semantics, expressionToken(expression),
       argumentLabel + std::to_string(index + 1) + " has type '" +
@@ -3311,39 +3321,63 @@ auto SemanticVisitor::Impl::analyzeArrayMemberCall(
   recordSelectedCallOccurrence(call, std::move(resolved));
 }
 
-auto SemanticVisitor::Impl::textViewMemberFactory(std::string_view member) const
+auto SemanticVisitor::Impl::textViewMemberFactory(
+    std::string_view member, std::optional<std::size_t> inputs) const
     -> std::optional<CallableCandidate> {
-  // A builtin counted view has no source class body. Its cursor operations
-  // are ordinary source functions selected only from this trusted unit.
+  // A builtin counted view has no source class body. Its members are
+  // ordinary source functions selected only from this trusted unit, whose
+  // first formal receives the view by read-only reference (a cursor that
+  // retains the view itself), by value (a result that relays only the view's
+  // owner dependency) or by mutable reference (an in-place update of a
+  // writable view place). Overloads differ by arity alone; `inputs`
+  // counts the receiver, and without it any valid overload answers.
   // The public alias spelling is deliberately absent from this binding.
   const auto &symbols = activeNamespaceSymbols();
   const auto found =
       symbols.find("gti_internal::text_view_" + std::string(member));
-  if (found == symbols.end() || found->second.overloads.size() != 1 ||
+  if (found == symbols.end() || found->second.overloads.empty() ||
       sourceGraph == nullptr)
     return std::nullopt;
-  const auto &candidate = found->second.overloads.front();
-  const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
-  if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
-      unit->standardLibraryName != "std/string_view" ||
-      candidate.ownerClass != 0 || candidate.declaration == nullptr ||
-      candidate.bodyDeclaration()->body() == nullptr ||
-      candidate.record().intrinsic != IntrinsicKind::None ||
-      candidate.record().requiresUnsafe || candidate.parameterPack ||
-      !candidate.record().genericParameters.empty() ||
-      candidate.parameterTypes.empty() ||
-      candidate.parameterTypes.front() !=
-          SemanticType::referenceTo(SemanticType::StringView,
-                                    AccessMode::ReadOnly))
-    return std::nullopt;
-  return candidate;
+  std::optional<CallableCandidate> selected;
+  for (const auto &candidate : found->second.overloads) {
+    const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
+    if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
+        unit->standardLibraryName != "std/string_view" ||
+        candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+        candidate.bodyDeclaration()->body() == nullptr ||
+        candidate.record().intrinsic != IntrinsicKind::None ||
+        candidate.record().requiresUnsafe || candidate.parameterPack ||
+        !candidate.record().genericParameters.empty() ||
+        candidate.parameterTypes.empty() ||
+        (candidate.parameterTypes.front() !=
+             SemanticType::referenceTo(SemanticType::StringView,
+                                       AccessMode::ReadOnly) &&
+         candidate.parameterTypes.front() !=
+             SemanticType::referenceTo(SemanticType::StringView,
+                                       AccessMode::Mutable) &&
+         candidate.parameterTypes.front() != SemanticType::StringView))
+      return std::nullopt;
+    if (inputs && candidate.parameterTypes.size() != *inputs)
+      continue;
+    // Two overloads of one arity would need ordinary overload ranking.
+    if (inputs && selected)
+      return std::nullopt;
+    if (!selected)
+      selected = candidate;
+  }
+  return selected;
 }
 
 auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     const Call &call, const Get &member,
     const std::vector<SemanticType> &argumentTypes, const Token &paren)
     -> void {
-  if (const auto factory = textViewMemberFactory(member.name().lexeme)) {
+  // A wrong arity still selects a member, reported as such below.
+  auto factory =
+      textViewMemberFactory(member.name().lexeme, call.arguments().size() + 1);
+  if (!factory)
+    factory = textViewMemberFactory(member.name().lexeme);
+  if (factory) {
     std::vector<const ExprPtr *> inputs{&member.object()};
     for (const auto &argument : call.arguments())
       inputs.push_back(&argument);
@@ -3367,6 +3401,11 @@ auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
       }
     }
     validateCallPlaceExclusivityImpl(factory->parameterTypes, inputs, paren);
+    // A writable receiver or argument is a mutable use of its binding.
+    for (std::size_t index = 0; index < inputs.size(); ++index)
+      if (factory->parameterTypes[index].kind == SemanticType::Reference &&
+          factory->parameterTypes[index].referenceAccess == AccessMode::Mutable)
+        recordMutableBindingUse(*inputs[index]);
     recordResolvedCall(call, *factory, {}, {}, {}, {}, CallReceiverMode::None,
                        &member.object());
     currentType = callExpressionType(factory->returnType);
@@ -5254,7 +5293,7 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
   // Under MIR authority MIR proves the binding's loans outlive their uses,
   // except for a result borrowing the own storage of a temporary receiver
   // that holds no borrow: MIR does not see that temporary's storage end.
-  const bool temporaryReceiverStorage = [&] {
+  const ExprPtr *temporaryReceiverStorage = [&]() -> const ExprPtr * {
     const Expr *expression = initializer.get();
     while (const auto *group = exprAs<Grouping>(expression))
       expression = group->expression().get();
@@ -5266,17 +5305,28 @@ auto SemanticVisitor::Impl::validateStoredBorrowInitialization(
     const ExpressionInfo *receiver =
         member == nullptr ? nullptr
                           : semanticModel.findExpression(*member->object());
-    return resolved != nullptr && receiver != nullptr &&
-           resolved->borrowOrigin == BorrowOriginKind::Receiver &&
-           receiver->category == ValueCategory::Value &&
-           receiver->type.kind == SemanticType::Class &&
-           !receiver->traits.containsBorrowedState;
+    const bool temporary =
+        resolved != nullptr && receiver != nullptr &&
+        resolved->borrowOrigin == BorrowOriginKind::Receiver &&
+        receiver->category == ValueCategory::Value &&
+        receiver->type.kind == SemanticType::Class &&
+        !receiver->traits.containsBorrowedState;
+    return temporary ? &member->object() : nullptr;
   }();
   if (temporaryReceiverStorage && !hasStableBorrowStorage(initializer)) {
     report(expressionToken(initializer),
            "Stored-reference value is derived from temporary storage that "
            "does not outlive the binding.",
            "GTI-S2045");
+    diagnostics.back().related.push_back(
+        {tokenSpan(expressionToken(*temporaryReceiverStorage)),
+         "This temporary owns the borrowed storage and is destroyed at the "
+         "end of this full expression."});
+    diagnostics.back().hints.emplace_back(
+        "Store the owner in a named local, then borrow from that local. Keep "
+        "the owner alive until every use of the borrowed value has finished; "
+        "naming only the borrowed result does not extend the owner's "
+        "lifetime.");
   }
 }
 
@@ -5413,7 +5463,7 @@ auto SemanticVisitor::Impl::validateOwnerDependentTextReturn(
 
 auto SemanticVisitor::Impl::validateReferenceReturn(
     const SemanticType &reference, const SemanticType &valueType,
-    const ExprPtr &value) -> void {
+    const ExprPtr &value, bool regionValid) -> void {
   if (reference.arguments.size() != 1) {
     return;
   }
@@ -5479,6 +5529,12 @@ auto SemanticVisitor::Impl::validateReferenceReturn(
   }
   if (!validateForeignStorageBorrow(value) ||
       !validateNativePointerSlotBorrow(value, reference)) {
+    return;
+  }
+  // A rejected declared region already explains why this value cannot supply
+  // the result. Do not also demand a different, inferred parameter supplier.
+  // Type, addressability and access checks above remain independent.
+  if (!regionValid) {
     return;
   }
   if (isBorrowedCarrierReference(reference)) {

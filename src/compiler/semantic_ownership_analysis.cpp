@@ -4038,24 +4038,67 @@ auto SemanticVisitor::Impl::reportOwnerDependentTextStorage(
   const ExpressionInfo *info = semanticModel.findExpression(expression);
   const bool cString =
       info != nullptr && info->type.kind == SemanticType::CString;
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2045", DiagnosticPhase::Semantics, expressionToken(expression),
-      (cString ? "An owner-dependent c_string" : "A dynamic std::string_view") +
-          std::string(" cannot be ") + std::string(destination) +
-          (cString ? " in the single-owner text-borrow model."
-                   : " in the single-owner view model."));
+  const std::string text = cString ? "c_string" : "std::string_view";
+  // The owner the text borrows, when the expression is a member call such as
+  // `owner.view()`: an unnamed temporary dies at the end of the statement, so
+  // the store would dangle in any model; a named owner can outlive the store,
+  // and only the rule that stored text must not borrow a local owner applies.
+  const auto ungroup = [](const Expr *current) {
+    while (current != nullptr)
+      if (const auto *grouping = exprAs<Grouping>(current))
+        current = grouping->expression().get();
+      else
+        break;
+    return current;
+  };
+  const Expr *owner = nullptr;
+  if (const auto *call = exprAs<Call>(ungroup(&expression)))
+    if (const auto *member = exprAs<Get>(ungroup(call->callee().get())))
+      owner = ungroup(member->object().get());
+  const ExpressionInfo *ownerInfo =
+      owner == nullptr ? nullptr : semanticModel.findExpression(*owner);
+  const bool temporaryOwner = owner != nullptr && ownerInfo != nullptr &&
+                              ownerInfo->type.kind != SemanticType::Reference &&
+                              (exprAs<Call>(owner) != nullptr ||
+                               exprAs<DirectInitializer>(owner) != nullptr ||
+                               exprAs<Conversion>(owner) != nullptr);
+  const auto *namedOwner = owner == nullptr ? nullptr : exprAs<Variable>(owner);
+  std::string message;
+  if (temporaryOwner)
+    message = "This " + text +
+              " borrows a temporary that is destroyed at "
+              "the end of the statement, so it cannot be " +
+              std::string(destination) + ".";
+  else if (namedOwner != nullptr)
+    message = "This " + text + " borrows '" + namedOwner->name().lexeme +
+              "', so it cannot be " + std::string(destination) +
+              ": stored text must not borrow a local owner.";
+  else
+    message = (cString ? "An owner-dependent c_string"
+                       : "A std::string_view that borrows a local owner") +
+              std::string(" cannot be ") + std::string(destination) + ".";
+  Diagnostic diagnostic =
+      makeDiagnostic("GTI-S2045", DiagnosticPhase::Semantics,
+                     expressionToken(expression), std::move(message));
+  if (temporaryOwner)
+    diagnostic.related.push_back(
+        {tokenSpan(expressionToken(*owner)),
+         "This temporary owns the text and is destroyed at the end of the "
+         "statement."});
+  else if (namedOwner != nullptr)
+    diagnostic.related.push_back(
+        {tokenSpan(namedOwner->name()), "The borrowed text is owned here."});
   if (capturedText || capturedTextValue(expression))
     diagnostic.hints.emplace_back(capturedTextHint(cString));
   else
     diagnostic.hints.emplace_back(
-        cString ? "Initialize a new local C-string binding "
-                  "in a narrow lexical scope; stored and "
-                  "reassignable dependency graphs are not "
-                  "supported yet."
-                : "Initialize a new local view binding in "
-                  "a narrow lexical scope; stored and "
-                  "reassignable dependency graphs are not "
-                  "supported yet.");
+        cString ? "Store an owning std::string and take its c_str() where "
+                  "it is used, or keep the text in a local binding that is "
+                  "used only while its owner is alive."
+                : "Make the field an owning std::string (for example "
+                  "std::string(text)) so it keeps its own copy, or keep the "
+                  "view in a local binding that is used only while its owner "
+                  "is alive.");
   diagnostics.emplace_back(std::move(diagnostic));
 }
 
@@ -7226,6 +7269,44 @@ auto SemanticVisitor::Impl::reportMissingFunctionReturnBorrowSummary(
     return;
   }
   Diagnostic diagnostic;
+  // Once the body has been checked, a direct reference to an owned local has
+  // an exact declaration identity. Explain that escape rather than guessing
+  // an input lifetime from the signature. Unchecked/deferred bodies and local
+  // reference aliases retain the contract diagnostic below.
+  if (info.returnType.kind == SemanticType::Reference &&
+      summary.eligibleParameters == 0 && function.body()) {
+    std::vector<const ExprPtr *> returns;
+    collectBorrowReturnExpressions(function.body().get(), returns);
+    bool explainedLocal = false;
+    for (const auto *value : returns) {
+      const Expr *expression = value ? value->get() : nullptr;
+      while (const auto *group = exprAs<Grouping>(expression))
+        expression = group->expression().get();
+      const auto *variable = exprAs<Variable>(expression);
+      const auto *local =
+          variable == nullptr
+              ? nullptr
+              : semanticModel.database().findSymbol(
+                    semanticModel.findResolvedSymbol(*variable));
+      if (local == nullptr || local->kind != SymbolKind::LocalVariable ||
+          local->type.kind == SemanticType::Reference || local->threadLocal ||
+          local->internalLinkage)
+        continue;
+      Diagnostic escape = makeDiagnostic(
+          code, DiagnosticPhase::Semantics, variable->name(),
+          "Cannot return a reference to local value '" + local->name + "'.");
+      escape.related.push_back(
+          {local->nameSpan,
+           "This local's storage ends when the function returns."});
+      escape.hints.emplace_back(
+          "Return an owned value, or borrow storage supplied by the caller. "
+          "Adding a lifetime annotation does not keep a local value alive.");
+      diagnostics.emplace_back(std::move(escape));
+      explainedLocal = true;
+    }
+    if (explainedLocal)
+      return;
+  }
   if (summary.eligibleParameters > 1) {
     const std::string dependencyDescription =
         summary.access == AccessMode::Mutable
@@ -7525,6 +7606,14 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
   if (scope.size() != 1) {
     return IntrinsicKind::None;
   }
+  // The counted text carrier is a compiler representation, so narrowing its
+  // address/count pair is a primitive; checked sub-view policy is source.
+  if (unit && unit->role == SourceUnitRole::StandardLibrary &&
+      unit->standardLibraryName == "std/string_view") {
+    return scope.front() == "gti_internal" && name == "narrow_text_view"
+               ? IntrinsicKind::TextViewNarrow
+               : IntrinsicKind::None;
+  }
   if (isThreadLibraryUnit(sourceUnit)) {
     if (scope.front() != "gti_internal") {
       return IntrinsicKind::None;
@@ -7648,6 +7737,12 @@ auto SemanticVisitor::Impl::trustedIntrinsicKind(
     if (name == "c_string_from_address") {
       return IntrinsicKind::CStringFromAddress;
     }
+    if (name == "constant_evaluation")
+      return IntrinsicKind::ConstantEvaluation;
+    if (name == "constant_allocate")
+      return IntrinsicKind::ConstantAllocate;
+    if (name == "constant_release")
+      return IntrinsicKind::ConstantRelease;
     if (name == "allocate_unique_owner") {
       return IntrinsicKind::AllocateUniqueOwner;
     }
@@ -13694,6 +13789,43 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::TextViewNarrow) {
+    std::vector<SemanticType> arguments;
+    for (const ExprPtr &argument : expr.arguments())
+      arguments.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    requireUnsafe(expr, UnsafeOperationKind::PointerArithmetic, expr.paren(),
+                  "Narrowing a counted text view without a bounds check");
+    const ExpressionInfo *view =
+        arguments.empty() ? nullptr
+                          : semanticModel.findExpression(*expr.arguments()[0]);
+    // Narrowing rewrites only the address and count of an existing view
+    // place. The place keeps whatever owner dependency it already has, so a
+    // dynamic view needs no new loan and an ownerless view stays ownerless.
+    if (arguments.size() != 3 || !expr.typeArguments().empty() ||
+        arguments[0] != SemanticType::StringView ||
+        arguments[1] != SemanticType::UInt64 ||
+        arguments[2] != SemanticType::UInt64 || view == nullptr ||
+        view->category != ValueCategory::Place ||
+        view->access != AccessMode::Mutable) {
+      report(expr.paren(),
+             "Narrowing a text view requires one writable view place and "
+             "uint64_t offset and count.",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    arguments[0] = SemanticType::referenceTo(SemanticType::StringView,
+                                             AccessMode::Mutable);
+    currentType = SemanticType::Void;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = currentType,
+                               .parameterTypes = std::move(arguments),
+                               .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::ObjectBorrowOwned ||
       intrinsic == IntrinsicKind::ObjectBorrowOwnedMut) {
     const bool mutableBorrow = intrinsic == IntrinsicKind::ObjectBorrowOwnedMut;
@@ -14263,6 +14395,59 @@ auto SemanticVisitor::Impl::analyzeIntrinsicCall(
     bindIntrinsicCallDeclaration(expr, declaration);
     return;
   }
+  if (intrinsic == IntrinsicKind::ConstantEvaluation ||
+      intrinsic == IntrinsicKind::ConstantAllocate ||
+      intrinsic == IntrinsicKind::ConstantRelease) {
+    // The compile-time allocation floor: an execution-context query and the
+    // evaluator-owned storage pair. Native code never takes the storage path.
+    // The pair demands an unsafe context for its caller contract, but has no
+    // function target and no raw access for MIR to verify, so it records no
+    // unsafe operation kind (DeclaredUnsafeCall requires an exact target).
+    std::vector<SemanticType> argumentTypes;
+    for (const ExprPtr &argument : expr.arguments())
+      argumentTypes.push_back(analyze(argument));
+    for (const TypeRef &argument : expr.typeArguments())
+      validateType(argument);
+    const auto rawVoid = [](const SemanticType &type) {
+      return type.kind == SemanticType::RawPointer &&
+             type.arguments.size() == 1 &&
+             type.arguments.front() == SemanticType::Void &&
+             type.pointerAccess == AccessMode::Mutable;
+    };
+    SemanticType result = SemanticType::Bool;
+    bool valid = expr.typeArguments().empty();
+    if (intrinsic == IntrinsicKind::ConstantEvaluation) {
+      valid = valid && argumentTypes.empty();
+    } else if (intrinsic == IntrinsicKind::ConstantAllocate) {
+      requireUnsafe(expr, UnsafeOperationKind::None, expr.paren(),
+                    "Allocating constant-evaluation storage");
+      valid = valid && argumentTypes.size() == 2 &&
+              argumentTypes[0] == SemanticType::UInt64 &&
+              argumentTypes[1] == SemanticType::UInt64;
+      result = SemanticType::rawPointerTo(SemanticType::Void);
+    } else {
+      requireUnsafe(expr, UnsafeOperationKind::None, expr.paren(),
+                    "Releasing constant-evaluation storage");
+      valid = valid && argumentTypes.size() == 1 && rawVoid(argumentTypes[0]);
+      result = SemanticType::Void;
+    }
+    if (!valid) {
+      report(expr.paren(),
+             "Constant-evaluation storage intrinsics take no type arguments: "
+             "constant_evaluation(), constant_allocate(uint64_t, uint64_t) "
+             "and constant_release(void*).",
+             "GTI-S2019");
+      currentType = SemanticType::Unknown;
+      return;
+    }
+    currentType = result;
+    semanticModel.record(
+        expr, ResolvedCallInfo{.returnType = result,
+                               .parameterTypes = std::move(argumentTypes),
+                               .intrinsic = intrinsic});
+    bindIntrinsicCallDeclaration(expr, declaration);
+    return;
+  }
   if (intrinsic == IntrinsicKind::ThreadScope) {
     analyzeThreadScopeCall(expr);
     bindIntrinsicCallDeclaration(expr, declaration);
@@ -14662,14 +14847,18 @@ auto SemanticVisitor::Impl::analyzeMoveCall(
     currentType = SemanticType::Unknown;
     return;
   }
-  if (place.root != nullptr &&
-      unavailableProjectedState(place, true) != nullptr) {
-    report(expressionToken(argument),
-           "std::move cannot consume a value while one of its owned "
-           "places remains moved.",
-           "GTI-S2018");
-    diagnostics.back().hints.emplace_back(
-        "Reinitialize the moved place before transferring its owner.");
+  if (const auto *state = place.root != nullptr
+                              ? unavailableProjectedState(place, true)
+                              : nullptr) {
+    const auto diagnosticCount = diagnostics.size();
+    reportUnavailablePlace(expressionToken(argument), *state, &place);
+    if (diagnostics.size() != diagnosticCount) {
+      diagnostics.back().message +=
+          " The whole value cannot be transferred while one of its owned "
+          "places remains moved.";
+      diagnostics.back().hints.emplace_back(
+          "Reinitialize the moved place before transferring its owner.");
+    }
     currentType = SemanticType::Unknown;
     return;
   }
@@ -14887,6 +15076,28 @@ auto SemanticVisitor::Impl::analyzeUniqueOwnerIntrinsicCall(
           "GTI-S2018", DiagnosticPhase::Semantics, expr.paren(),
           "Unique allocation cannot retain checked borrowed state because "
           "the owner does not track external borrow dependencies.");
+      // Use the same structural inventory as borrow verification. A generic
+      // allocation may be diagnosed in a library instance, but the terminal
+      // field/capture declaration explains which source state it would retain.
+      if (const auto paths = storedReferenceInventory(pointeeType)) {
+        for (const auto &path : *paths) {
+          if (path.fields.empty())
+            continue;
+          const auto &field = path.fields.back();
+          const SourceSpan span = tokenSpan(field.name());
+          if (std::any_of(diagnostic.related.begin(), diagnostic.related.end(),
+                          [&](const auto &note) { return note.span == span; }))
+            continue;
+          diagnostic.related.push_back(
+              {span, std::string(field.capture ? "Capture '" : "Field '") +
+                         field.name().lexeme +
+                         "' can retain a reference to external storage; "
+                         "allocating the containing value does not own that "
+                         "storage."});
+          if (diagnostic.related.size() == 4)
+            break;
+        }
+      }
       diagnostic.hints.emplace_back(
           "Keep the borrowing value in tracked local storage, or store owned "
           "state instead.");

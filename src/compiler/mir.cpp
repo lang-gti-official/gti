@@ -868,27 +868,6 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
        producer->closureCaptureTypes.size() != producer->operands.size() ||
        producer->closureCaptureModes.size() != producer->operands.size()))
     return {};
-  // A cursor may borrow a stable carrier's physical shell while that carrier
-  // retains external owners. Its exact producer-owned Stored loan remains
-  // the temporary's dependency; do not flatten or discard the separately
-  // recorded storedDependency. Program verification independently checks
-  // that edge against the concrete reference fields and source publication,
-  // while lifetime dataflow keeps its full ancestry live through cleanup.
-  const auto stableOwner = [&](MirPlaceId id) {
-    const auto *owner = body.findPlace(id);
-    return owner != nullptr &&
-           ((owner->root != MirPlaceRootKind::Value &&
-             owner->root != MirPlaceRootKind::Temporary) ||
-            (id == loan->source && staticCarrierRootLoan(body, *loan)));
-  };
-  if (!stableOwner(loan->source) ||
-      std::any_of(loan->additionalDependencies.begin(),
-                  loan->additionalDependencies.end(),
-                  [&](const auto &dependency) {
-                    return !stableOwner(dependency.source);
-                  })) {
-    return {};
-  }
   // Cleanup-bearing temporaries retain the same exact producer/value/drop
   // identity as passive carriers. Their Stored dependency is lifecycle-bound;
   // the separate CallArgument shell is not. Lifecycle and loan dataflow still
@@ -906,9 +885,45 @@ findMirTemporaryCarrierDependency(const MirBody &body, const MirPlace &place) {
     }
     drop = &candidate;
   }
-  return drop == nullptr
-             ? MirTemporaryCarrierDependency{}
-             : MirTemporaryCarrierDependency{materialization, loan, drop};
+  if (drop == nullptr)
+    return {};
+  // A dependency may be named storage or an owner materialized in this same
+  // full expression. Match the owner's exact root and construction/drop pair;
+  // mere membership in a temporary place is not a lifetime proof. Loan flow
+  // separately verifies that no move, mutation or cleanup invalidates the
+  // dependency while the carrier (or its argument borrow) remains live.
+  const auto liveOwner = [&](MirPlaceId id) {
+    const auto *owner = body.findPlace(id);
+    if (owner == nullptr)
+      return false;
+    if (owner->root != MirPlaceRootKind::Value &&
+        owner->root != MirPlaceRootKind::Temporary)
+      return true;
+    if (id == loan->source && staticCarrierRootLoan(body, *loan))
+      return true;
+    for (const auto &ownerDrop : body.dropObligations) {
+      const auto *root = body.findPlace(ownerDrop.place);
+      if (ownerDrop.kind != MirDropObligationKind::Value || root == nullptr ||
+          ownerDrop.hirFullExpression != drop->hirFullExpression ||
+          root->root != owner->root || root->value != owner->value ||
+          root->temporary != owner->temporary || !root->projections.empty() ||
+          ownerDrop.value != root->sourceValue ||
+          ownerDrop.dropType.type != root->type || root->id == place.id)
+        continue;
+      if (findMirTemporaryMaterialization(body, *root, root->sourceValue) ||
+          findMirMovedTemporaryMaterialization(body, *root, root->sourceValue))
+        return true;
+    }
+    return false;
+  };
+  if (!liveOwner(loan->source) ||
+      std::any_of(loan->additionalDependencies.begin(),
+                  loan->additionalDependencies.end(),
+                  [&](const auto &dependency) {
+                    return !liveOwner(dependency.source);
+                  }))
+    return {};
+  return {materialization, loan, drop};
 }
 
 bool mirLoanRetainsDependency(const MirBody &body, MirLoanId loan,
@@ -1009,17 +1024,25 @@ void append(MirVerificationResult &destination, MirVerificationResult source) {
                             std::make_move_iterator(source.errors.end()));
 }
 
+// An integer literal must lie in its type's domain. The one exception is the
+// lexical magnitude of a signed minimum (`128` in `-128`), one greater than
+// the positive range: it is valid only where every use negates it, which the
+// caller proves and passes as `negatedMinimum`.
 [[nodiscard]] bool literalMatchesType(const Literal &literal,
-                                      const SemanticType &type) {
+                                      const SemanticType &type,
+                                      bool negatedMinimum = false) {
   if (const auto *integer = std::get_if<std::uint64_t>(&literal)) {
-    (void)integer;
-    // The lexical magnitude of a signed minimum literal is one greater than
-    // the positive range and becomes valid only when consumed by unary
-    // negation. Semantic analysis owns that contextual proof; MIR verifies the
-    // literal alternative and integer result domain without rejecting the
-    // intermediate lexical magnitude.
-    return type == SemanticType::Unknown ||
-           constantIntegerDomain(type).has_value();
+    if (type == SemanticType::Unknown)
+      return true;
+    const std::optional<CheckedIntegerDomain> domain =
+        constantIntegerDomain(type);
+    if (!domain || domain->width == 0 || domain->width > 64)
+      return false;
+    if (!domain->signedValue)
+      return domain->width == 64 ||
+             *integer <= (std::uint64_t{1} << domain->width) - 1;
+    const std::uint64_t maximum = (std::uint64_t{1} << (domain->width - 1)) - 1;
+    return *integer <= maximum || (negatedMinimum && *integer == maximum + 1);
   }
   if (const auto *floating = std::get_if<BinaryFloat>(&literal)) {
     return validBinaryFloat(*floating) &&
@@ -3846,6 +3869,13 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
       if (active[loan - 1] == MirLoanFlowState::Suspended) {
         // Using a parent while its exclusive child reborrow is live is a
         // source borrow conflict, not malformed MIR.
+        const auto child = std::find_if(
+            body.loans.begin(), body.loans.end(),
+            [&](const MirLoan &candidate) {
+              return active[candidate.id - 1] != MirLoanFlowState::Inactive &&
+                     !isParkedLoan(active[candidate.id - 1]) &&
+                     isLoanAncestor(body, loan, candidate.id);
+            });
         MirVerificationResult rejected =
             failure(body, owner,
                     "loan " + std::to_string(loan) +
@@ -3857,7 +3887,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           rejected.errors.back().borrow = {
               .kind = MirBorrowRejectionKind::ParentUse,
               .loanAccess = body.loans[loan - 1].access,
-              .loan = loan};
+              .loan = loan,
+              .conflictingLoan = child != body.loans.end() ? child->id : 0};
         return rejected;
       }
       if (active[loan - 1] != MirLoanFlowState::Active) {
@@ -4147,7 +4178,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
               (parent.kind == MirLoanKind::Parameter ||
                parent.kind == MirLoanKind::Local) &&
               parent.storedDependency == 0;
-          const bool overlapsDescendant = std::any_of(
+          const auto overlappingDescendant = std::find_if(
               body.loans.begin(), body.loans.end(), [&](const MirLoan &loan) {
                 if (active[loan.id - 1] == MirLoanFlowState::Inactive ||
                     isParkedLoan(active[loan.id - 1]) ||
@@ -4171,7 +4202,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                                                        bindingLoans, active));
                            });
               });
-          if (overlapsDescendant) {
+          if (overlappingDescendant != body.loans.end()) {
             MirVerificationResult rejected = failure(
                 body, owner,
                 "loan " + std::to_string(place.throughLoan) +
@@ -4183,7 +4214,8 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 .kind = MirBorrowRejectionKind::ParentUse,
                 .write = write,
                 .loanAccess = body.loans[place.throughLoan - 1].access,
-                .loan = place.throughLoan};
+                .loan = place.throughLoan,
+                .conflictingLoan = overlappingDescendant->id};
             return rejected;
           }
         }
@@ -4371,6 +4403,29 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                          [&](const auto &dependency) {
                            return covers(dependency.source, dependency.parent);
                          });
+    };
+    // A two-phase reservation normally finds its parent active. A mutable
+    // parent that is suspended only because other live children borrow parts
+    // of it can still host a reservation of a disjoint part: the reservation
+    // and activation sibling checks reject any overlap with those children,
+    // and the parent stays suspended until its last suspending child ends
+    // (issue #394: writing `st.visited[i]` in a range-for over `st.dirty`
+    // through a `mut State&` parameter).
+    const auto reservationParentReady = [&](MirLoanId parent,
+                                            MirLoanId reservation) {
+      if (active[parent - 1] == MirLoanFlowState::Active)
+        return true;
+      return active[parent - 1] == MirLoanFlowState::Suspended &&
+             body.loans[parent - 1].access == AccessMode::Mutable &&
+             std::any_of(
+                 children[parent - 1].begin(), children[parent - 1].end(),
+                 [&](MirLoanId child) {
+                   return child != reservation &&
+                          (active[child - 1] == MirLoanFlowState::Active ||
+                           active[child - 1] == MirLoanFlowState::Suspended) &&
+                          suspendsParentCapability(body.loans[child - 1],
+                                                   parent);
+                 });
     };
     const auto callInputDefinition =
         [&](const MirOperand &operand) -> const MirInstruction * {
@@ -5017,7 +5072,7 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 changingLoan(outer) = MirLoanFlowState::Suspended;
               continue;
             }
-            if (active[parent - 1] != MirLoanFlowState::Active) {
+            if (!reservationParentReady(parent, loan)) {
               return failure(body, owner,
                              "ending two-phase reservation " +
                                  std::to_string(loan) + " finds parent loan " +
@@ -5123,7 +5178,10 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                            return active[ancestor - 1] !=
                                   MirLoanFlowState::Reserved;
                          })) ||
-            (outer != 0 && active[outer - 1] != MirLoanFlowState::Active)) {
+            (outer != 0 &&
+             (ancestors.empty()
+                  ? !reservationParentReady(outer, loan)
+                  : active[outer - 1] != MirLoanFlowState::Active))) {
           return failure(body, owner,
                          "two-phase loan " + std::to_string(loan) +
                              " cannot activate while its parent loan is not "
@@ -5321,6 +5379,20 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           }
           const MirCanonicalPlace otherPlace =
               canonicalPlace(body, other.source, bindingLoans, active);
+          // A by-value carrier formal's entry Stored group is the external
+          // dependency its shell holds. A reborrow of that shell which names
+          // the group as its stored dependency is derived from it, not a
+          // competing sibling (issue #221): the group must grant at least the
+          // child's access, and both must reach the same canonical root.
+          const MirLoan &child = body.loans[loan - 1];
+          if (child.storedDependency == other.id &&
+              other.kind == MirLoanKind::Stored && other.entry &&
+              !other.escapes && other.parent == 0 &&
+              (other.access == AccessMode::Mutable ||
+               child.access == AccessMode::ReadOnly) &&
+              !childPlace.ambiguous && !otherPlace.ambiguous &&
+              sameCanonicalRoot(childPlace, otherPlace))
+            continue;
           if (abstractStoredEntry(body, other) &&
               sameCanonicalRoot(childPlace, otherPlace) &&
               !abstractStoredAccess(other, childPlace).overlaps)
@@ -6349,7 +6421,9 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
           }
           if (active[parent - 1] == MirLoanFlowState::Inactive ||
               (body.loans[loan - 1].twoPhase &&
-               active[parent - 1] != MirLoanFlowState::Active)) {
+               !(reservationAncestors(body.loans[loan - 1]).empty()
+                     ? reservationParentReady(parent, loan)
+                     : active[parent - 1] == MirLoanFlowState::Active))) {
             return failure(body, owner,
                            "derived loan " + std::to_string(loan) +
                                " is created without one active parent loan " +
@@ -6438,6 +6512,20 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                 sameCanonicalRoot(childPlace, otherPlace) &&
                 !abstractStoredAccess(other, childPlace).overlaps)
               continue;
+            // As for a direct child: a loan that names a by-value carrier
+            // formal's entry Stored group as its stored dependency is derived
+            // from that group (issue #221).
+            {
+              const MirLoan &derived = body.loans[loan - 1];
+              if (derived.storedDependency == other.id &&
+                  other.kind == MirLoanKind::Stored && other.entry &&
+                  !other.escapes && other.parent == 0 &&
+                  (other.access == AccessMode::Mutable ||
+                   derived.access == AccessMode::ReadOnly) &&
+                  !childPlace.ambiguous && !otherPlace.ambiguous &&
+                  sameCanonicalRoot(childPlace, otherPlace))
+                continue;
+            }
             const bool compatibleReadOnlyDependency =
                 (body.loans[loan - 1].kind == MirLoanKind::CallResult ||
                  body.loans[loan - 1].kind == MirLoanKind::Stored) &&
@@ -11932,8 +12020,47 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                         return sourceValue != 0 &&
                                body.findValue(sourceValue) != nullptr;
                       });
+      // The signed-minimum magnitude is admitted only as the operand of a
+      // same-typed negation, possibly through the same-typed identities that
+      // grouping parentheses lower to; any other use would observe the
+      // wrapped value.
+      const auto onlyNegated = [&](const auto &self, MirValueId value,
+                                   std::size_t depth) -> bool {
+        const auto &uses = body.usesOf(value);
+        return depth < 64 && !uses.empty() &&
+               std::all_of(
+                   uses.begin(), uses.end(),
+                   [&](const MirValueUse &use) {
+                     if (use.kind != MirValueUseKind::InstructionOperand)
+                       return false;
+                     const MirBlock *useBlock = body.findBlock(use.block);
+                     if (useBlock == nullptr)
+                       return false;
+                     const auto user =
+                         std::find_if(useBlock->instructions.begin(),
+                                      useBlock->instructions.end(),
+                                      [&](const MirInstruction &candidate) {
+                                        return candidate.id == use.instruction;
+                                      });
+                     if (user == useBlock->instructions.end() ||
+                         user->kind != MirInstructionKind::Compute ||
+                         user->operands.size() != 1 ||
+                         user->info.type != resultType)
+                       return false;
+                     if (user->operation == MirOperation::Negate)
+                       return true;
+                     return user->operation == MirOperation::Identity &&
+                            user->result &&
+                            self(self, *user->result, depth + 1);
+                   });
+      };
+      const bool negatedMinimum =
+          instruction.result &&
+          provenance.kind == MirLiteralProvenanceKind::Source &&
+          onlyNegated(onlyNegated, *instruction.result, 0);
       return instruction.operands.empty() && instruction.literal &&
-             literalMatchesType(*instruction.literal, resultType) &&
+             literalMatchesType(*instruction.literal, resultType,
+                                negatedMinimum) &&
              ((provenance.kind == MirLiteralProvenanceKind::Source &&
                provenance.sourceValue == 0) ||
               (provenance.kind == MirLiteralProvenanceKind::IdentityFold &&

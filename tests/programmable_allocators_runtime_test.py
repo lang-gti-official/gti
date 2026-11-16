@@ -23,7 +23,8 @@ if __name__ == "__main__":
         names=("raw_resource_movement", "arena_placement", "allocator_example",
                "programmable_allocators", "resource_constructor_rollback",
                "resource_vector_constructor_rollback", "resource_region_contracts",
-               "resource_container_usage", "resource_owner_moves"),
+               "resource_container_usage", "resource_owner_moves",
+               "resource_vector_subscript_assignment"),
         cases={"raw_resource_movement": [((), (0, "", ""))],
                "arena_placement": [((), (0, "", ""))],
                "allocator_example": [((), (0, "", ""))],
@@ -35,6 +36,7 @@ if __name__ == "__main__":
                    ((), (0, "2\n102\n1\n101\n900\n901\n", "")),
                    (("fail",), (70, "102\n1\n101\n900\n901\n", vector_failure))],
                "resource_container_usage": [((), (0, "", ""))],
+               "resource_vector_subscript_assignment": [((), (0, "", ""))],
                "resource_owner_moves": [
                    ((), (0, "2\n1\n900\n901\n", "")),
                    (("fail",), (70, "2\n1\n900\n901\n", owner_failure)),

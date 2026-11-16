@@ -1811,9 +1811,11 @@ class representation layout. Native record source-order offsets/size/alignment
 and passive-union size/alignment are retained in `ClassTypeInfo`.
 Separately, `runtimeObjectLayoutType` validates complete concrete object types
 for the declaration-bound object-size/alignment operations behind
-`std::layout_of<T>()`. That implemented runtime representation query admits
-ordinary classes and other supported carriers; it is not a compile-time or
-stable foreign-layout promise. A `[[c_opaque]] struct Name;` instead records one
+`std::layout_of<T>()`. That representation query admits ordinary classes and
+other supported carriers. It is a `constexpr` library function: constant
+evaluation answers it from the same frontend layout facts as `sizeof` and
+`alignof`, so a constant query agrees with them. It is not a stable
+foreign-layout promise. A `[[c_opaque]] struct Name;` instead records one
 incomplete nominal `ClassId` with no layout or lifecycle. Semantic type
 validation confines that identity behind raw-pointer indirection at any
 supported recursive pointer depth. Extern-C and native-record validation admit
@@ -2082,7 +2084,17 @@ and an analysis with the raw-pointer audit enabled never uses it.
   preamble is built, every body that bounded analysis would have deferred is
   analysed in place but *held back*: its body diagnostics and the function
   records it consulted are kept beside the body instead of being reported.
-  Prefix construction receives the request's cancellation token and uses the
+  With `FrontendOptions::deferPreambleBuild`, an analysis that finds no
+  cached preamble does not build one: it runs as bounded analysis without a
+  preamble (which reports the same diagnostics) and returns a
+  `SemanticPreambleBuild` in `FrontendResult::deferredPreambleBuild`. The
+  build owns copies of the source graph and sources and shares the prefix
+  declarations, so a caller can run it on another thread after the analysis
+  has finished; it stores its result in the same cache, and reuses an entry
+  another build stored meanwhile. A complete prefix costs several times a
+  bounded analysis of one file, so the editor builds it off the path to its
+  first diagnostics.
+  Prefix construction receives the caller's cancellation token and uses the
   same cancellation checkpoints and catching boundary as ordinary `check`.
   An invalid or interrupted prefix returns no preamble. Interrupted state is
   never frozen or cached, and the frontend reports cancellation. A completed
@@ -4150,6 +4162,15 @@ conversion schedule. MIR's constant-substitution inventory retains the exact
 value; body and program verification prove its typed publication. LLVM uses its
 existing target layout constant materializer. No public library name controls
 admission, and no runtime immediate call recreates the result.
+
+Explicit character conversion of a non-`uint8_t` integer also uses this
+immediate publication boundary. Semantics requires a constant operand in
+`0..255`, with MIR-required constexpr calls and the existing request limits;
+open value-dependent requests defer to concrete reanalysis. The result is a
+character constant, so runtime lowering neither repeats operand execution nor
+introduces a new numeric-to-character instruction. The source operand retains
+its integer type. Runtime `uint8_t` conversions keep the existing code-unit
+bridge, and aliases cannot bypass either rule.
 
 A direct `consteval void` expression statement uses the same verified MIR
 executor and shared resource budget. Semantics records successful completion

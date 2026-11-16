@@ -1,6 +1,7 @@
 # Shared borrowed container elements: implementation and acceptance
 
-Status: shared-element stage implemented and validated locally; unpublished. This is the
+Status: shared-element stage validated locally; reconciliation with current main
+is under validation for integration. This is the
 owner-authorized shared-element stage of [RFC 0003](https://github.com/lang-gti-official/rfcs/pull/3),
 stacked on the lifetime/MIR work. The starting compiler commit is
 `2ac3358f0909295a7305bc851aab1e3a30a6c60f`. Passing checks below are focused
@@ -109,3 +110,15 @@ for this bounded shared-element delivery passed on the final candidate.
 The explicit boundaries above remain unsupported; this does not claim the
 whole RFC is complete, or that the local implementation has been published,
 integrated or released.
+
+## Integration reconciliation
+
+The local stage was completed at `248de0e9d`. Integration merges main at
+`3d342f75b`, retaining its constant-allocation provider, counted-view narrowing
+and improved source diagnostics. Owner-aware storage operations use the same
+MIR constant evaluator as the existing raw storage operations: owner witnesses
+remain verified metadata, constructor arguments exclude the witness, and
+initialization/relocation preserve the live/vacant storage checks. The source
+wrappers retain main's `constexpr` declarations. The combined candidate is
+being revalidated, including the existing compile-time/runtime container
+fixtures; the measurements above describe the pre-reconciliation candidate.

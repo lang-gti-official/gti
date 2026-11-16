@@ -19,6 +19,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstdint>
 #include <deque>
 #include <limits>
 #include <map>
@@ -26,6 +27,7 @@
 #include <set>
 #include <span>
 #include <tuple>
+#include <unordered_set>
 
 namespace lang {
 
@@ -749,7 +751,8 @@ public:
   void analyzeFunctionBody(const FunctionDecl &stmt,
                            const FunctionInfo *functionInfo,
                            bool declarationErrors,
-                           bool constexprDeclarationValid);
+                           bool constexprDeclarationValid,
+                           bool explainMissingReturnAfterBody = false);
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
@@ -790,6 +793,11 @@ public:
   [[nodiscard]] static bool
   isCharacterCodeConversion(const SemanticType &source,
                             const SemanticType &target);
+
+  bool analyzeConstantCharacterConversion(const Expr &source,
+                                          const ExprPtr &operand,
+                                          const SemanticType &valueType,
+                                          const SemanticType &targetType);
 
   void analyzeTypeParameterCall(const Call &expr,
                                 const SemanticType &targetType);
@@ -1263,6 +1271,17 @@ private:
     SourceSpan site;
   };
 
+  // Identifies one raw-pointer-bearing global or static field independently
+  // of which analyzer snapshot holds its flow symbol.
+  struct RawStorageInputKey {
+    int space = 0;
+    SourceUnitId unit = 0;
+    std::string name;
+    const VariableDecl *staticField = nullptr;
+    friend auto operator<=>(const RawStorageInputKey &,
+                            const RawStorageInputKey &) = default;
+  };
+
   struct RawResultQuery {
     FunctionId function = 0;
     ConstructorId constructor = 0;
@@ -1278,30 +1297,85 @@ private:
     bool writesComplete = true;
     bool accessesComplete = true;
     std::size_t identity = 0;
-    // Only independently budgeted top-level outcomes may be reused by another
-    // demand. Nested results depend on their enclosing family's remaining work.
+    // A top-level outcome has its own budget and is reused by later root
+    // demands. A nested result is reused outside its family only under the
+    // conditions in reuseRawResult.
     bool topLevel = false;
     bool complete = false;
     bool valid = false;
+    // Cut short by the family's entry or depth budget; its facts are not a
+    // summary of the body and depend on where in the family it was demanded.
+    bool truncated = false;
+    // This result observed state outside its key: a family cycle member
+    // still in progress, a truncated entry, another dependent result, a
+    // change of the raw-global answer, or the request's growing set of
+    // available constexpr definitions. An independent nested result is a
+    // function of its key and recorded inputs alone, and is reusable.
+    bool familyDependent = false;
+    // What a fresh analysis of this demand would spend of the family budgets:
+    // an upper bound on the entries it would add (its own and every callee's,
+    // counting reused callees by their own cost) and the query depth it would
+    // reach below its own level. A reused result is only exact where a fresh
+    // analysis would also finish inside both budgets.
+    std::size_t cost = 0;
+    std::size_t height = 0;
+    // Charge counter when this query began; entries charged after it belong
+    // to its own analysis and are already part of its cost.
+    std::size_t chargedAt = 0;
+    // Raw program storage the analysis described as symbolic inputs, and the
+    // shared request's raw-global answer it ran under. Neither may differ
+    // when the result is reused.
+    std::vector<RawStorageInputKey> storageInputs;
+    bool rawGlobals = false;
+    // The program-level declarations the analysis could see; see
+    // rawDeclarationView.
+    std::vector<std::size_t> declarationView;
+    // Sorted rawCallableKey of this query and of every query its analysis
+    // demanded, transitively, however each demand was answered.
+    std::vector<std::uint64_t> reached;
     std::optional<Diagnostic> failure;
   };
 
   struct SemanticCatalog;
 
+  struct ValueFlowState;
   struct RawResultQueryState {
     // Interned diagnostic records only. Keeping evidence is independent of
     // admitting a complete root result to the bounded reuse cache.
     std::vector<std::shared_ptr<RawResultQuery>> entries;
     std::vector<std::shared_ptr<RawResultQuery>> cachedRoots;
     std::vector<std::shared_ptr<RawResultQuery>> familyEntries;
+    // Completed nested results that did not depend on their family, reusable
+    // by any later demand at any depth. Without this, every root re-analyses
+    // the same shared callee graph up to the family budget.
+    std::vector<std::shared_ptr<RawResultQuery>> independentEntries;
     std::size_t nextIdentity = 1;
     std::size_t depth = 0;
+    // Monotonic charge counter: one per entry added to a family, plus a
+    // reused result's cost. The difference across a query is its cost.
+    std::size_t charged = 0;
+    // Deepest query level reached, or that a reused result implies, since the
+    // innermost running query began.
+    std::size_t deepest = 0;
+    // chargedAt of the innermost running query.
+    std::size_t runningSince = 0;
+    // The callables each running query has demanded so far, innermost last.
+    std::vector<std::vector<std::uint64_t>> reaching;
+    // Charge counter when a running query last reused each result. Kept here,
+    // not in the shared result, so a speculative fork's charges stay its own.
+    std::unordered_map<const RawResultQuery *, std::size_t> reusedAt;
     std::optional<bool> hasRawGlobals;
     // Sealed catalog snapshots released by completed query workers. The
     // request catalog is sealed and asserted unchanged across every instance
     // analysis, so each snapshot has the same content; a later worker takes a
     // released one instead of re-registering every callable declaration.
     std::vector<SemanticCatalog> idleCatalogs;
+    // Value-flow and model storage released by completed query workers. A
+    // worker copy-assigns the caller's current state into one, so its content
+    // is exactly a fresh copy; reusing the storage avoids rebuilding and
+    // freeing every namespace index, symbol and overload list per query.
+    std::vector<ValueFlowState> idleValueFlows;
+    std::vector<SemanticModel> idleModels;
   };
 
   struct CompleteReturnQuery {
@@ -2957,7 +3031,7 @@ private:
                                        const ClassDecl &owner);
   // A returned call whose result region several caller regions supply lives
   // as long as the shortest; each must outlive the declared result region.
-  void validateReturnedCallRegion(const FunctionDecl &syntax,
+  bool validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
   // A result in a region the class stores is supplied by references the
   // receiver stores, never by storage the receiver owns (GTI-S2127).
@@ -4389,7 +4463,7 @@ private:
 
   void validateReferenceReturn(const SemanticType &reference,
                                const SemanticType &valueType,
-                               const ExprPtr &value);
+                               const ExprPtr &value, bool regionValid);
 
   void validateCurrentReturnBorrowSource(const ExprPtr &value,
                                          std::string_view description,
@@ -4920,6 +4994,20 @@ private:
   void registerConformances(const StmtList &statements,
                             std::vector<std::string> scope);
   void bindConformanceOperations();
+  void
+  noteRawResultDependency(const std::shared_ptr<RawResultQuery> &dependency);
+  [[nodiscard]] std::shared_ptr<RawResultQuery>
+  reuseRawResult(const RawResultQuery &demand, bool topLevel);
+  [[nodiscard]] std::vector<RawStorageInputKey> rawStorageInputKeys();
+  [[nodiscard]] std::vector<std::size_t> rawDeclarationView() const;
+  void noteRawDemand(const RawResultQuery &demand, bool withReach);
+  // Counts, on this thread, every decision that read which constexpr and
+  // procedural definitions are available. That set grows as the request
+  // proceeds, so a raw-result query that read it is not reusable.
+  static std::size_t &constexprAvailabilityObservations();
+  static void noteConstexprAvailabilityObserved() {
+    ++constexprAvailabilityObservations();
+  }
   void validateConformanceTypes(const ConformanceDecl &declaration);
   [[nodiscard]] std::optional<ConformanceMatch>
   matchConformance(ConceptId id,
@@ -5670,7 +5758,8 @@ private:
 
   [[nodiscard]] bool isMemoryLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] std::optional<CallableCandidate>
-  textViewMemberFactory(std::string_view member) const;
+  textViewMemberFactory(std::string_view member,
+                        std::optional<std::size_t> inputs = {}) const;
   [[nodiscard]] bool isOptionalLibraryUnit(SourceUnitId sourceUnit) const;
   [[nodiscard]] bool isPolymorphicLibraryUnit(SourceUnitId sourceUnit) const;
 
@@ -6328,10 +6417,12 @@ private:
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryValue(const ExprPtr &expression) const;
 
-  // A temporary carrier may retain only proven stable external dependencies.
-  // Shared by receivers and call-scoped reference arguments.
+  // Shared carrier admission for receivers and reference arguments. Receivers
+  // require stable owners; call-scoped arguments may use full-expression
+  // owners whose lifetime is proved by MIR.
   [[nodiscard]] FreshTemporaryValueAssessment
-  freshTemporaryBorrowValue(const ExprPtr &expression);
+  freshTemporaryBorrowValue(const ExprPtr &expression,
+                            bool allowFullExpressionOwners = false);
 
   [[nodiscard]] FreshTemporaryValueAssessment
   freshTemporaryReceiverValue(const ExprPtr &expression);
@@ -6635,6 +6726,22 @@ private:
                         bool strong);
   static bool rawWritesAreLinear(const StmtList &statements);
   [[nodiscard]] Symbol *rawPointerRoot(const PlaceKey &place);
+  // Roots that every namespace index missed, valid while those indexes keep
+  // the membership generations recorded with them. Most audit roots are
+  // body-local bindings of other bodies, which no namespace index holds, so
+  // a miss otherwise rescans every visible symbol of every source unit.
+  std::vector<std::uint64_t> rawRootMissGenerations;
+  std::vector<std::uint64_t> rawRootGenerationScratch;
+  std::unordered_set<SymbolId> rawRootMisses;
+  // Membership generations of the namespace indexes, in search order.
+  void namespaceIndexGenerations(std::vector<std::uint64_t> &generations,
+                                 const DeclarationIndex<Symbol> *current);
+  // Namespace program-storage bindings (globals and static fields), in the
+  // indexes' iteration order, valid for the recorded generations. Their raw
+  // pointer types are still checked per use: a binding's type is refined in
+  // place without changing index membership.
+  std::vector<RawProgramStorageState> rawStorageBindings;
+  std::vector<std::uint64_t> rawStorageBindingGenerations;
   // Replaces program storage's raw facts with symbolic inputs, so a cached
   // source-result summary describes the storage rather than one caller's
   // current value.
@@ -6683,6 +6790,9 @@ private:
 
   [[nodiscard]] static bool containsRawPointer(const SemanticType &type);
 
+  // A type name written where a value is required (issue #322). Reports
+  // "'T' names a type, not a value" and returns true for a TypeName type.
+  bool reportTypeUsedAsValue(const Expr &expression, const SemanticType &type);
   void requireBool(const ExprPtr &expression, SemanticType type,
                    const Token &token, std::string_view message);
 

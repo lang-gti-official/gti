@@ -14,6 +14,7 @@
 #include "mir_verification_support.h"
 #include <cstdlib>
 #include <iostream>
+#include <map>
 
 #include <algorithm>
 #include <functional>
@@ -2238,6 +2239,14 @@ mirFieldTypeThroughBases(const MirProgram &program,
             functionTarget->returnType.kind != SemanticType::Reference &&
             functionTarget->returnBorrowOrigin == BorrowOriginKind::None &&
             !instruction.info.traits.containsBorrowedState;
+        // A call that publishes one by-value text argument into a field of
+        // its fresh result (L-OWN-02) borrows that argument's owner, never
+        // the temporary receiver: the result is owned with respect to the
+        // receiver, as an owned result is (issue #392).
+        const bool argumentTextPublication =
+            functionTarget != nullptr &&
+            functionTarget->returnType.kind != SemanticType::Reference &&
+            dependentTextCallPublication(instruction, *functionTarget);
         // A text field relay (L-OWN-02) returns what a publishing
         // construction or call holds in that field: its owner's text, never a
         // view of the temporary itself.
@@ -2265,7 +2274,8 @@ mirFieldTypeThroughBases(const MirProgram &program,
             !inheritsOwner(inheritsOwner, *receiverClass, 0) ||
             !exactReceiverQualifier || !exactProducer ||
             receiverObligations != 1 ||
-            (!readObservation && !ownedResult && !externalConsumingReference) ||
+            (!readObservation && !ownedResult && !externalConsumingReference &&
+             !argumentTextPublication) ||
             (borrowedCarrier && !externalConsumingReference &&
              !textFieldRelay &&
              !supportsEphemeralBorrowResult(functionTarget,
@@ -13050,7 +13060,7 @@ verifyMirHostedStartup(const MirProgram &program) {
         append->parameterTypes == std::vector<SemanticType>{stringType} &&
         !append->staticMember && append->entryKind == ProgramEntryKind::None &&
         append->linkage == LanguageLinkage::Gti &&
-        append->externalSymbol.empty() && !append->constexprFunction &&
+        append->externalSymbol.empty() &&
         append->receiverMutability == ReceiverMutability::Mutable &&
         !append->virtualMethod && !append->pureVirtual &&
         !append->overrideMethod && append->virtualRoots.empty() &&
@@ -13824,6 +13834,56 @@ exactUniqueOwnerSwapContract(const MirBody &body,
     }
   }
   return ownerType != SemanticType::Unknown;
+}
+
+// Narrowing rewrites one writable counted-view place from two counts. It has
+// no result, loan, failure or owner effect: the place keeps the dependency it
+// already carries, which is why it needs no publication of its own.
+[[nodiscard]] bool
+exactTextViewNarrowContract(const MirBody &body,
+                            const MirInstruction &instruction) {
+  if (instruction.intrinsic != IntrinsicKind::TextViewNarrow)
+    return true;
+  const SemanticType view =
+      SemanticType::referenceTo(SemanticType::StringView, AccessMode::Mutable);
+  if (instruction.kind != MirInstructionKind::Call ||
+      instruction.operation != MirOperation::None || instruction.receiver ||
+      instruction.functionTarget || instruction.constructorTarget ||
+      instruction.lambdaTarget || instruction.bodyTarget ||
+      instruction.callableInvocation ||
+      !instruction.callableArguments.empty() || instruction.result ||
+      instruction.info.type != SemanticType::Void || instruction.loan ||
+      instruction.borrowOrigin != BorrowOriginKind::None ||
+      !instruction.borrowArguments.empty() || instruction.borrowPlace ||
+      instruction.unsafeOperation != UnsafeOperationKind::PointerArithmetic ||
+      instruction.operands.size() != 3 ||
+      instruction.parameterTypes !=
+          std::vector<SemanticType>{view, SemanticType::UInt64,
+                                    SemanticType::UInt64} ||
+      instruction.operands[0].type != view ||
+      instruction.operands[1].type != SemanticType::UInt64 ||
+      instruction.operands[2].type != SemanticType::UInt64 ||
+      !instruction.definedFailure.empty() ||
+      !instruction.localFailureSites.empty() || !instruction.lifecycle.empty())
+    return false;
+  // The view is either borrowed for writing here or reached through an
+  // exclusive loan, such as the referent of a mutable reference formal. A
+  // loan operand may also retain the exact place it addresses.
+  const MirOperand &operand = instruction.operands[0];
+  MirPlaceId source = 0;
+  if (operand.kind == MirOperandKind::BorrowWrite && operand.place != 0 &&
+      operand.loan == 0) {
+    source = operand.place;
+  } else if (operand.kind == MirOperandKind::Loan && operand.value == 0) {
+    const MirLoan *loan = body.findLoan(operand.loan);
+    if (loan == nullptr || loan->access != AccessMode::Mutable)
+      return false;
+    source = operand.place != 0 ? operand.place : loan->source;
+  } else {
+    return false;
+  }
+  const MirPlace *place = body.findPlace(source);
+  return place != nullptr && place->type == SemanticType::StringView;
 }
 
 // This indivisible operation has no user-code/failure point between taking
@@ -20232,6 +20292,15 @@ verifyMirProgramContracts(const MirProgram &program,
                .message = "unique-owner swap does not retain its exact "
                           "matching mutable-owner contract"});
         }
+        if (!exactTextViewNarrowContract(body, instruction)) {
+          result.errors.push_back(
+              {.bodyKind = body.kind,
+               .owner = owner,
+               .block = block.id,
+               .instruction = instruction.id,
+               .message = "text-view narrowing does not retain its exact "
+                          "writable-view, two-count, failure-free contract"});
+        }
         if (!exactRestoringTransferContract(program, body, instruction)) {
           result.errors.push_back(
               {.bodyKind = body.kind,
@@ -21000,6 +21069,37 @@ verifyMirProgramContracts(const MirProgram &program,
            .owner = instance.id,
            .message = "generated class special member contradicts its concrete "
                       "semantic traits"});
+    }
+    // The converse: an available trait names a special member that exists.
+    // HIR deletes a generated member exactly when its trait is unavailable.
+    if ((instance.traits.copyable &&
+         instance.copyConstructor == SpecialMemberStatus::Deleted) ||
+        (instance.traits.movable &&
+         instance.moveConstructor == SpecialMemberStatus::Deleted) ||
+        (instance.traits.copyAssignable &&
+         instance.copyAssignment == SpecialMemberStatus::Deleted) ||
+        (instance.traits.moveAssignable &&
+         instance.moveAssignment == SpecialMemberStatus::Deleted)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "class semantic trait has no matching special member"});
+    }
+    // A deleted destructor belongs only to a class with no lifecycle at all:
+    // every special member is deleted and no drop state exists, so nothing
+    // can create, store or destroy a value of it.
+    if (instance.destructorStatus == SpecialMemberStatus::Deleted &&
+        (instance.defaultConstructor != SpecialMemberStatus::Deleted ||
+         instance.copyConstructor != SpecialMemberStatus::Deleted ||
+         instance.moveConstructor != SpecialMemberStatus::Deleted ||
+         instance.copyAssignment != SpecialMemberStatus::Deleted ||
+         instance.moveAssignment != SpecialMemberStatus::Deleted ||
+         instance.requiresActiveDropState || instance.requiresActiveCleanup)) {
+      result.errors.push_back(
+          {.bodyKind = MirBodyKind::FieldInitializers,
+           .owner = instance.id,
+           .message = "deleted class destructor belongs to a class with live "
+                      "special members"});
     }
     if (instance.requiresActiveDropState != instance.destructor.has_value()) {
       result.errors.push_back(
@@ -23208,6 +23308,23 @@ verifyMirProgramContracts(const MirProgram &program,
           full.roots ==
               instance.initializers[full.constructorInitializer - 1].arguments;
     }
+    // Fields written by an Initialize that carries no initializer stage. A
+    // stage-publishing field initializer must not be completed that way: the
+    // stage count alone would accept a cleared tag as the unstaged form.
+    std::unordered_set<SymbolId> untaggedFieldWrites;
+    for (const MirBlock &block : instance.body.blocks)
+      for (const MirInstruction &instruction : block.instructions) {
+        if (instruction.kind != MirInstructionKind::Initialize ||
+            instruction.constructorInitializer != 0 || !instruction.destination)
+          continue;
+        const MirPlace *destination =
+            instance.body.findPlace(*instruction.destination);
+        if (destination != nullptr &&
+            destination->root == MirPlaceRootKind::This &&
+            destination->projections.size() == 1 &&
+            destination->projections.front().kind == MirProjectionKind::Field)
+          untaggedFieldWrites.insert(destination->projections.front().field);
+      }
     for (std::size_t initializerIndex = 0;
          initializerIndex < instance.initializers.size(); ++initializerIndex) {
       const MirConstructorInitializer &initializer =
@@ -23262,6 +23379,10 @@ verifyMirProgramContracts(const MirProgram &program,
       // not scalar-stage markers: reference, nested-construction, and
       // generated-default initializers can legitimately publish one. Only the
       // non-borrowing cleanup-free form requires a matching Initialize stage.
+      if ((explicitCleanupFreeField || explicitOwningField) &&
+          untaggedFieldWrites.contains(initializer.field)) {
+        exactInitializerStages = false;
+      }
       if ((explicitCleanupFreeField &&
            (initializerStageCounts[initializerIndex] != 1 ||
             initializerBoundaryCounts[initializerIndex] != 1)) ||
@@ -24221,6 +24342,136 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
     }
     for (const auto &obligation : body->dropObligations) {
       checkDrop(checkDrop, obligation.dropType);
+    }
+    // Every projected place's recorded type is its root's type carried
+    // through each projection (issue #339): a backend reads and writes a
+    // place at its recorded type, so a dropped Dereference or a field the
+    // receiver does not declare must not verify. The root type is that of
+    // the same root's unprojected place, or a value root's defining type.
+    // Raw field paths keep the dedicated check below; lambda capture
+    // selectors keep their exact environment proof.
+    {
+      const auto rootKey = [](const MirPlace &place) {
+        std::uint64_t identity = 0;
+        switch (place.root) {
+        case MirPlaceRootKind::Binding:
+          identity = place.binding;
+          break;
+        case MirPlaceRootKind::Symbol:
+          identity =
+              (static_cast<std::uint64_t>(place.symbol) << 16) ^ place.capture;
+          break;
+        case MirPlaceRootKind::This:
+          break;
+        case MirPlaceRootKind::Temporary:
+          identity = place.temporary;
+          break;
+        case MirPlaceRootKind::Value:
+          identity = place.value;
+          break;
+        case MirPlaceRootKind::Loan:
+          identity = place.loan;
+          break;
+        }
+        return std::pair<int, std::uint64_t>(static_cast<int>(place.root),
+                                             identity);
+      };
+      std::map<std::pair<int, std::uint64_t>, const MirPlace *> roots;
+      for (const MirPlace &place : body->places)
+        if (place.projections.empty())
+          roots.emplace(rootKey(place), &place);
+      for (const MirPlace &place : body->places) {
+        if (place.projections.empty())
+          continue;
+        const bool raw = std::any_of(
+            place.projections.begin(), place.projections.end(),
+            [](const MirPlaceProjection &projection) {
+              return projection.kind == MirProjectionKind::RawDereference ||
+                     projection.kind == MirProjectionKind::RawIndex;
+            });
+        if (raw)
+          continue;
+        std::optional<SemanticType> current;
+        if (const auto root = roots.find(rootKey(place)); root != roots.end())
+          current = root->second->type;
+        else if (place.root == MirPlaceRootKind::Value)
+          if (const MirValue *value = body->findValue(place.value))
+            current = value->info.type;
+        if (!current)
+          continue;
+        bool unresolved = false;
+        for (const MirPlaceProjection &projection : place.projections) {
+          if (current->kind == SemanticType::Lambda &&
+              projection.kind == MirProjectionKind::Field) {
+            unresolved = true;
+            break;
+          }
+          // A receiver that names no single class instance has no exact field
+          // table here; other proofs own such paths.
+          // Payload-enum member paths are owned by payload extraction
+          // proofs, so a field of anything but a class is not judged here.
+          if (projection.kind == MirProjectionKind::Field &&
+              (current->kind != SemanticType::Class ||
+               uniqueMirClassInstanceForType(program, *current) == nullptr)) {
+            unresolved = true;
+            break;
+          }
+          current = projectedMirType(
+              program, std::move(*current),
+              std::span<const MirPlaceProjection>(&projection, 1));
+          if (!current)
+            break;
+        }
+        if (!unresolved && (!current || *current != place.type))
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .message = "place " + std::to_string(place.id) +
+                          " does not match its root type through its "
+                          "projections"});
+      }
+    }
+    // A reference selected from a local payload-enum carrier names the
+    // carrier's field-less Stored loan as its source place. That place is
+    // provenance only: the referent's address comes from the payload
+    // extraction, and the loan's pointer is the carrier's storage. No
+    // instruction may read or write it (issue #341).
+    {
+      std::unordered_set<MirPlaceId> provenanceOnly;
+      for (const MirPlace &place : body->places) {
+        const MirLoan *stored = place.root == MirPlaceRootKind::Loan
+                                    ? body->findLoan(place.loan)
+                                    : nullptr;
+        if (stored != nullptr && stored->kind == MirLoanKind::Stored &&
+            stored->storedField == 0 && place.projections.empty() &&
+            std::any_of(body->loans.begin(), body->loans.end(),
+                        [&](const MirLoan &loan) {
+                          return loan.source == place.id &&
+                                 loan.referenceSelection;
+                        }))
+          provenanceOnly.insert(place.id);
+      }
+      if (!provenanceOnly.empty())
+        for (const MirBlock &block : body->blocks)
+          for (const MirInstruction &instruction : block.instructions) {
+            const bool evaluated =
+                (instruction.destination &&
+                 provenanceOnly.contains(*instruction.destination)) ||
+                std::any_of(instruction.operands.begin(),
+                            instruction.operands.end(),
+                            [&](const MirOperand &operand) {
+                              return operand.place != 0 &&
+                                     provenanceOnly.contains(operand.place);
+                            });
+            if (evaluated)
+              result.errors.push_back(
+                  {.bodyKind = address.kind,
+                   .owner = address.owner,
+                   .block = block.id,
+                   .instruction = instruction.id,
+                   .message = "instruction evaluates a provenance-only carrier "
+                              "owner place"});
+          }
     }
     for (const MirPlace &place : body->places) {
       check(place.type);

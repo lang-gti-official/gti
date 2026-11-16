@@ -31,6 +31,7 @@ mut auto cursor = pairs.begin();
         "indexed-first-invalidation": "auto entry = cursor[std::ptrdiff_t(1)]; left.clear(); return entry.first();",
         "indexed-second-invalidation": "auto entry = cursor[std::ptrdiff_t(1)]; right.clear(); return entry.second();",
         "indexed-readonly-first": "auto entry = cursor[std::ptrdiff_t(1)]; entry.first() = 99; return 0;",
+        "by-value-element-invalidation": "for (auto entry : pairs) { left.clear(); return entry.first(); } return 0;",
     }
     return {name: headers + "int main() { " + setup + body + " }\n" for name, body in bodies.items()}
 

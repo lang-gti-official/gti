@@ -101,6 +101,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
          "The procedural macro is declared here."});
     currentType = SemanticType::Unknown;
   };
+  noteConstexprAvailabilityObserved();
   if (!function || !constexprDefinitionsAnalyzed.contains(&definition)) {
     reject("The procedural definition must complete semantic analysis before "
            "expansion.");
@@ -853,6 +854,10 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
     fork->depth = queries->depth;
     fork->nextIdentity = queries->nextIdentity;
     fork->hasRawGlobals = queries->hasRawGlobals;
+    fork->charged = queries->charged;
+    fork->deepest = queries->deepest;
+    fork->runningSince = queries->runningSince;
+    fork->reaching = queries->reaching;
     std::unordered_map<const RawResultQuery *, std::shared_ptr<RawResultQuery>>
         copies;
     const auto copy = [&](const std::shared_ptr<RawResultQuery> &entry) {
@@ -867,6 +872,9 @@ auto SemanticVisitor::Impl::makeMacroProbe(const Call &call)
       fork->cachedRoots.push_back(copy(entry));
     for (const auto &entry : queries->familyEntries)
       fork->familyEntries.push_back(copy(entry));
+    // Completed independent results are immutable; share them.
+    fork->independentEntries = queries->independentEntries;
+    fork->reusedAt = queries->reusedAt;
     if (requestSession.collectingRawResult)
       probe.requestSession.collectingRawResult =
           copy(requestSession.collectingRawResult);

@@ -5,5 +5,7 @@ int main() {
   values.push_back(42);
   mut int parsed = 0;
   auto result = std::from_chars("42", parsed);
+  std::regex digits = std::regex("\\d+");
+  if (!digits.matches("42")) { return 2; }
   return result.ec == std::parse_errc::none && values[std::size_t(0)] == parsed ? 0 : 1;
 }

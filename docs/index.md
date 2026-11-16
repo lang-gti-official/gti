@@ -114,7 +114,8 @@ while canonical language documents continue to describe actual support.
   [clocks and durations](language/chrono.md),
   [child processes](language/process.md),
   [environment access](language/process.md#environment-observation), [TCP](language/tcp.md),
-  [HTTP/HTTPS](language/http.md), [JSON](language/json.md), and
+  [HTTP/HTTPS](language/http.md), [JSON](language/json.md),
+  [regular expressions](language/regex.md), and
   [standard library](language/standard-library.md) — current library-facing
   semantics and boundaries.
 

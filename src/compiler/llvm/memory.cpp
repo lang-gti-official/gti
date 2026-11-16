@@ -8,6 +8,7 @@
 #include <limits>
 #include <llvm/Config/llvm-config.h>
 #include <llvm/IR/Attributes.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/Support/Alignment.h>
 #include <llvm/Support/ModRef.h>
 #include <optional>
@@ -669,6 +670,9 @@ bool Memory::handles(IntrinsicKind intrinsic) {
   case IntrinsicKind::ObjectSize:
   case IntrinsicKind::ObjectAlignment:
   case IntrinsicKind::ObjectDestroy:
+  case IntrinsicKind::ConstantEvaluation:
+  case IntrinsicKind::ConstantAllocate:
+  case IntrinsicKind::ConstantRelease:
   case IntrinsicKind::ObjectRelocate:
   case IntrinsicKind::ObjectRelocateRange:
   case IntrinsicKind::RestoringSwap:
@@ -834,6 +838,25 @@ Memory::Result Memory::emit(const MirInstruction &instruction,
   case IntrinsicKind::ObjectRelocateRange:
     relocate(instruction, inputs);
     return {true};
+  case IntrinsicKind::ConstantEvaluation:
+    // Native code is never constant evaluation; the evaluator-only branch
+    // folds away.
+    return {true, ir.getFalse()};
+  case IntrinsicKind::ConstantAllocate:
+  case IntrinsicKind::ConstantRelease: {
+    // Evaluator-owned storage has no native representation. A guarded call
+    // is unreachable; reaching one anyway traps. Later instructions of the
+    // block continue in a detached unreachable block.
+    ir.CreateIntrinsic(llvm::Intrinsic::trap, llvm::ArrayRef<llvm::Type *>{},
+                       {});
+    ir.CreateUnreachable();
+    ir.SetInsertPoint(llvm::BasicBlock::Create(
+        session.context(), "constant.storage.unreachable",
+        ir.GetInsertBlock()->getParent()));
+    if (instruction.intrinsic == IntrinsicKind::ConstantRelease)
+      return {true};
+    return {true, llvm::ConstantPointerNull::get(session.layouts().pointer())};
+  }
   case IntrinsicKind::RestoringSwap: {
     // Two disjoint initialized places exchange representations through one
     // held object. Each transfer retires its source and every retired place

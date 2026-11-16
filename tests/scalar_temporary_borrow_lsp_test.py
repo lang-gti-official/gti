@@ -70,6 +70,17 @@ int main() { mut int owner = 1; mut int& parent = owner;
             assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
             assert not any(item.get("code", "").startswith("GTI-B") for item in diagnostics), diagnostics
             assert not publish(shared_parent)
+            owned = """class Owner { int value = 7; public: Owner() = default; int& get() { return this.value; } };
+class View { int& value; public: View(int& v) : value(v) {} };
+void observe<Args...>(Args&... values) {}
+int main() { observe(View(Owner().get())); return 0; }
+"""
+            assert not publish(owned)
+            invalid = owned.replace("Args&... values", "mut Args&... values")
+            diagnostics = publish(invalid)
+            assert any(item.get("code") == "GTI-S2017" for item in diagnostics), diagnostics
+            assert not any(item.get("code", "").startswith("GTI-B") for item in diagnostics), diagnostics
+            assert not publish(owned)
         finally:
             session.close()
 

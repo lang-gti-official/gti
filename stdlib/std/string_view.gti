@@ -115,6 +115,45 @@ export std::detail::text_view_iterator<1> text_view_rend_iterator(std::string_vi
 export std::detail::text_view_iterator<1> text_view_reverse_iterator_at(std::string_view& view, std::size_t position) {
   return std::detail::text_view_iterator<1>(view, position);
 }
+
+// Compiler primitive: rewrites view to [offset, offset + count) of its current
+// characters. The caller proves offset + count <= view.size(); the place keeps
+// its owner dependency, so a narrowed copy relays exactly what view relayed.
+unsafe void narrow_text_view(mut std::string_view& view, uint64_t offset, uint64_t count);
+
+// A counted sub-view over the same characters and the same owner. The count
+// clamps to the remainder; a position past size() raises GTI-R0007, even for
+// an empty result. No byte is copied. (One non-overloaded helper keeps the
+// relayed owner dependency a direct body fact for both member overloads.)
+std::string_view checked_text_subview(mut std::string_view view, std::size_t position,
+                                      std::size_t count) {
+  std::size_t size = view.size();
+  if (position > size) { gti_internal::index_bounds_check(position, size); }
+  mut std::size_t length = size - position;
+  if (count < length) { length = count; }
+  unsafe { narrow_text_view(view, position, length); }
+  return view;
+}
+// view.substr(position, count) and view.substr(position).
+export std::string_view text_view_substr(std::string_view view, std::size_t position,
+                                         std::size_t count) {
+  return checked_text_subview(view, position, count);
+}
+export std::string_view text_view_substr(std::string_view view, std::size_t position) {
+  return checked_text_subview(view, position, uint64_t(18446744073709551615));
+}
+// view.remove_prefix(count) and view.remove_suffix(count) shrink a writable
+// view in place; it keeps its owner. A count past size() raises GTI-R0007.
+export void text_view_remove_prefix(mut std::string_view& view, std::size_t count) {
+  std::size_t size = view.size();
+  if (count > size) { gti_internal::index_bounds_check(count, size); }
+  unsafe { narrow_text_view(view, count, size - count); }
+}
+export void text_view_remove_suffix(mut std::string_view& view, std::size_t count) {
+  std::size_t size = view.size();
+  if (count > size) { gti_internal::index_bounds_check(count, size); }
+  unsafe { narrow_text_view(view, std::size_t(0), size - count); }
+}
 }
 
 namespace std {
