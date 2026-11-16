@@ -21,8 +21,18 @@ class FunctionDecl;
 // context. A body the table does not track was analysed in place (or is not
 // subject to deferral), so it is always Analysed.
 //
-// The key names a body independently of its syntax address, so later body
-// kinds (constructors, destructors) and stored records can share the table.
+// The key names a body by kind and session-local id, so later body kinds
+// (constructors, destructors) can share the table. It is an extension point,
+// not a persistent identity: bodies are still found by AST pointer.
+//
+// Transitional state: the table is the readiness authority for compile-time
+// paths, but deferredBodies/deferredBodyIndex (a deferred body's declaration
+// context), analyzedBodies (bodies this analyzer ran) and
+// constexprDefinitionsAnalyzed (executable definitions) remain alongside it.
+// For the context's owner, a tracked body is Deferred exactly when it is in
+// deferredBodyIndex and not in analyzedBodies; checkBodyContextConsistency
+// asserts this under GTI_COMPILER_VALIDATION. See semantic-analysis.md,
+// "Compile-Time Body Demand".
 
 enum class BodyKind : std::uint8_t { Function, Constructor, Destructor };
 

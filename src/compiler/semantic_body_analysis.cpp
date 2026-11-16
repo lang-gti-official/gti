@@ -5137,8 +5137,31 @@ auto SemanticVisitor::Impl::attemptOutstandingNeeds(
 
 auto SemanticVisitor::Impl::pendingDeferredBody(
     const FunctionDecl *declaration) const -> bool {
-  return declaration != nullptr && deferredBodyIndex.contains(declaration) &&
-         !analyzedBodies.contains(declaration);
+  const bool pending = declaration != nullptr &&
+                       deferredBodyIndex.contains(declaration) &&
+                       !analyzedBodies.contains(declaration);
+  checkBodyContextConsistency(declaration, pending);
+  return pending;
+}
+
+auto SemanticVisitor::Impl::checkBodyContextConsistency(
+    const FunctionDecl *declaration, bool pending) const -> void {
+  // GTI_COMPILER_VALIDATION is the one switch for compiler self-checks.
+  if (!loweredProgramSealValidation() || declaration == nullptr ||
+      !ownsBodyContext() || !requestSession.bodyContext->tracked(declaration))
+    return;
+  const bool deferred =
+      requestSession.bodyContext->state(declaration) == BodyState::Deferred;
+  if (deferred == pending)
+    return;
+  std::fprintf(stderr,
+               "internal compiler error: the body readiness table and the "
+               "deferred-body records disagree about '%s' (table %s, records "
+               "%s)\n",
+               declaration->name().lexeme.c_str(),
+               deferred ? "deferred" : "not deferred",
+               pending ? "pending" : "not pending");
+  std::abort();
 }
 
 auto SemanticVisitor::Impl::finalizesFunction(

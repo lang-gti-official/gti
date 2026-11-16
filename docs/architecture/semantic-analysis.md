@@ -1013,7 +1013,8 @@ meet; every other worker shares its creator's. Only an owner changes a state.
   primary body, a pending constexpr callee the staged evaluator reaches at run
   time, and, when a staged closure cannot be lowered or verified, each pending
   constexpr callee it would have executed. Looking a function up, for example
-  as an overload candidate, is not a need. An attempt with none is clean. A resolving attempt restores one
+  as an overload candidate, is not a need. An attempt with none is clean. A
+  resolving attempt restores one
   `AttemptCheckpoint` (diagnostics, constexpr steps and exhaustion,
   requirement-query work, the native-layout mark), completes its needs in
   declaration order and repeats, bounded; otherwise its needs pass to the
@@ -1033,6 +1034,37 @@ meet; every other worker shares its creator's. Only an owner changes a state.
   example corpus, with and without a preamble, needs no such round.
 - `FrontendOptions::deferConstexprBodies = false` keeps constexpr definitions
   eager; it exists so tests can compare both on one binary.
+
+Transitional state and scope. This is a first step toward demand-driven
+analysis, not a query system:
+
+- Readiness is being consolidated, not yet unified. `BodyContext` is the
+  authority for whether a deferred or held-back body's facts may be read in a
+  context, and the only state compile-time paths and the request net consult.
+  Three older records remain beside it, each with its own role:
+  - `deferredBodies` and `deferredBodyIndex` hold a deferred declaration's
+    context, which the drain and late demand use to analyse it in place;
+  - `analyzedBodies` records which bodies this analyzer has run
+    `analyzeFunctionBody` for (`pendingDeferredBody` reads both);
+  - `constexprDefinitionsAnalyzed` gates execution of a completed constexpr
+    definition.
+
+  The obligation that keeps them consistent is checked under
+  `GTI_COMPILER_VALIDATION`: for the context's owner, a tracked body is
+  `Deferred` exactly when it is in `deferredBodyIndex` and not in
+  `analyzedBodies`. A worker that shares a context but is not its owner may
+  hold a private analysis outside resolving attempts. That analysis serves
+  only that worker, and the shared table does not record it.
+- Attempts record which unavailable bodies a computation needed and keep
+  provisional results out of caches. They are not a general dependency graph:
+  nothing here tracks dependencies across source edits or invalidates results
+  incrementally.
+- `BodyKey` is an extension point, not a persistent identity. Bodies are still
+  found by AST pointer, and ids are session-local. A stored (pre-analysed)
+  state would also need stable identities, serialisation, validity checks and
+  a defined per-body semantic record.
+- Only analysis scheduling changes. Constant-evaluation semantics and the
+  staged MIR evaluator, which executes them, are unchanged.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.

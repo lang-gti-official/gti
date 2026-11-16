@@ -569,6 +569,10 @@ public:
   void drainDemandedDeferredBodies();
   // A deferred trusted body that no analysis has demanded yet.
   [[nodiscard]] bool pendingDeferredBody(const FunctionDecl *declaration) const;
+  // For the body context's owner, a tracked body is Deferred exactly when
+  // pendingDeferredBody holds (GTI_COMPILER_VALIDATION; see BodyContext).
+  void checkBodyContextConsistency(const FunctionDecl *declaration,
+                                   bool pending) const;
   // Finalization covers every analysed body, or one late batch.
   [[nodiscard]] bool finalizesFunction(const FunctionInfo &function) const;
   [[nodiscard]] bool finalizesCall(const Call *call) const;
@@ -606,9 +610,8 @@ public:
       }
       result.model.setFunctionDemandSink(nullptr);
       const std::vector<const FunctionDecl *> needed =
-          context == nullptr
-              ? std::vector<const FunctionDecl *>{}
-              : attemptOutstandingNeeds(*context, needs);
+          context == nullptr ? std::vector<const FunctionDecl *>{}
+                             : attemptOutstandingNeeds(*context, needs);
       // A failure the attempt reported may be an artefact of a missing body;
       // its diagnostics are set aside so they cannot refuse the late demand
       // that completes it, and return unless the attempt is repeated.
