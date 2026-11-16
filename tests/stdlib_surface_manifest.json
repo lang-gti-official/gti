@@ -6242,11 +6242,11 @@
         "tests/reflection_runtime_test.py",
         "tests/reflection_tests.cpp",
         "stdlib/std/meta.gti",
-        "tests/fixtures/reflection_attributes.gti",
-        "tests/fixtures/reflection_construct.gti",
-        "tests/fixtures/reflection_callables.gti",
-        "tests/fixtures/reflection_deferred_range.gti",
-        "tests/fixtures/reflection_defaults.gti",
+        "tests/ui/reflection/attributes.gti",
+        "tests/ui/reflection/construct.gti",
+        "tests/ui/reflection/callables.gti",
+        "tests/ui/reflection/deferred_range.gti",
+        "tests/ui/reflection/defaults.gti",
         "tests/fixtures/reflection_method_invoke.gti",
         "tests/reflection_method_runtime_test.py",
         "examples/185-reflected-method-dispatch.gti"
@@ -8312,7 +8312,7 @@
       ],
       "evidence": [
         "tests/fixtures/generic_clone.gti",
-        "tests/generic_clone_runtime_test.py",
+        "tests/ui/generics/clone",
         "tests/concept_conditions_test.py"
       ]
     },

@@ -2018,9 +2018,6 @@ add_executable(gti_unsafe_expression_tests unsafe_expression_tests.cpp)
 target_link_libraries(gti_unsafe_expression_tests PRIVATE gti_llvm_backend)
 add_test(NAME unsafe_expression_contract COMMAND gti_unsafe_expression_tests)
 if(Python3_Interpreter_FOUND)
-  add_test(NAME unsafe_expression_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/unsafe_expression_runtime_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(unsafe_expression_runtime PROPERTIES TIMEOUT 900)
 endif()
 
 add_executable(gti_runtime_object_layout_tests runtime_object_layout_tests.cpp)
@@ -3391,13 +3388,6 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>")
     set_tests_properties(${iterator_gate} PROPERTIES TIMEOUT 600)
   endforeach()
-  add_test(
-    NAME pack_parameter_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/pack_parameter_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(pack_parameter_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME reference_parameter_packs
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/reference_parameter_packs_test.py"
@@ -3419,13 +3409,6 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/examples" --jobs 8)
     set_tests_properties(mir_lifetime_erasure_identity PROPERTIES TIMEOUT 3600)
   endif()
-  add_test(
-    NAME enum_pack_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/enum_pack_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(enum_pack_runtime PROPERTIES TIMEOUT 180)
   add_test(
     NAME unique_owner_access_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -4072,33 +4055,9 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_basic.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_generic_encoder.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_field_names.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_type_bridge.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_mutation.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_empty_and_nested.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_generic_struct.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_sequences.gti"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_binary_writer.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_attributes.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_construct.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_callables.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_receiver_effects.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_deferred_range.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_defaults.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_class_assertions.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_type_facts.gti"
   )
   set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
-  add_test(
-    NAME json_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/reflection_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/stdlib_surface_json.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/json_parity.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/json_config.gti"
-  )
-  set_tests_properties(json_runtime PROPERTIES TIMEOUT 1200)
   add_test(
     NAME json_dynamic_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -4421,13 +4380,6 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(constructor_nested_argument_runtime
                          PROPERTIES TIMEOUT 600)
-    add_test(
-      NAME generic_clone_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/generic_clone_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(generic_clone_runtime PROPERTIES TIMEOUT 240)
     add_test(NAME extensible_formatting_runtime
       COMMAND "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tests/extensible_formatting_runtime_test.py"
@@ -4583,23 +4535,6 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(owner_tied_reference_argument_runtime
                        PROPERTIES TIMEOUT 180)
   add_test(
-    NAME generic_symbolic_auto_local_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-              "${PROJECT_SOURCE_DIR}/tests/fixtures/generic_symbolic_auto_local.gti"
-    )
-  set_tests_properties(generic_symbolic_auto_local_runtime
-                       PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME requires_disjunction_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/requires_disjunction.gti"
-  )
-  set_tests_properties(requires_disjunction_runtime PROPERTIES TIMEOUT 180)
-  add_test(
     NAME explicit_function_value_generics_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/explicit_function_value_generics_runtime_test.py"
@@ -4729,33 +4664,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/examples/llvm/codegen-attributes.gti")
   set_tests_properties(codegen_attribute_runtime PROPERTIES TIMEOUT 180)
 
-  add_test(
-    NAME function_signature_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/function_signatures.gti"
-            --include-o1
-  )
-  set_tests_properties(function_signature_runtime PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME signature_pack_deduction_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/signature_pack_deduction.gti"
-            --include-o1
-  )
-  set_tests_properties(signature_pack_deduction_runtime PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME class_signature_pattern_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/class_signature_pattern.gti"
-            --include-o1
-  )
-  set_tests_properties(class_signature_pattern_runtime PROPERTIES TIMEOUT 180)
   add_test(
     NAME stored_callable_invocation_runtime
     COMMAND "${Python3_EXECUTABLE}"

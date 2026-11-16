@@ -55,6 +55,9 @@ def main() -> int:
                         help="diagnostic code a check-fail case must report")
     parser.add_argument("--build", type=Path, default=REPOSITORY / "build-release")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--section", action="store_true",
+                        help="put the program in a `// --- main.gti` section so its "
+                             "line numbers stay those of the source")
     arguments = parser.parse_args()
 
     dest = arguments.dest if arguments.dest.is_absolute() else REPOSITORY / arguments.dest
@@ -95,10 +98,16 @@ def main() -> int:
         if after:
             start = next(i for i, line in enumerate(body_lines) if after in line) + 1
         index = next(i for i in range(start, len(body_lines)) if needle in body_lines[i])
-        return str(len(header) + index + 1)
+        return str(offset + index + 1)
 
+    offset = 0 if arguments.section else len(header)
     header = [re.sub(r"\{line:([^}]*)\}", line_of, line) for line in header]
+    # `{src:N}` is line N of the source program, shifted below the header.
+    header = [re.sub(r"\{src:(\d+)\}", lambda m: str(offset + int(m.group(1))), line)
+              for line in header]
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if arguments.section:
+        header.append("// --- main.gti")
     dest.write_text("\n".join(header) + "\n" + body)
 
     gti_test = runner(arguments.build)
