@@ -447,7 +447,8 @@ void printUsage(std::ostream &stream) {
          "                       Build progress: auto (default), plain, "
          "never.\n"
          "\n"
-         "Compile-time limits (direct and project commands; each overrides "
+         "Analysis and compile-time limits (direct and project commands; each "
+         "overrides "
          "the\n"
          "root package's gti.toml [limits] entry of the same name):\n";
   const lang::CompileLimits defaults;

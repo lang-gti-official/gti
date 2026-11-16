@@ -277,12 +277,22 @@ public:
   // points throw AnalysisCancelled, which only SemanticVisitor::check catches;
   // the abandoned analyzer is discarded. Speculative workers never receive it.
   struct AnalysisCancelled {};
+  struct ErrorLimitReached {};
+  void finishLimitedAnalysis();
+  bool enforceErrorLimit = false;
   const std::atomic<bool> *cancellation = nullptr;
   // FrontendOptions::reuseConstantEvaluations; workers share the request's
   // StagedConstantResults, which carries it.
   bool reuseConstantEvaluations = true;
   bool analysisCancelled = false;
   void throwIfCancelled() const {
+    if (enforceErrorLimit && compileLimits.errorLimit != 0) {
+      std::size_t errors = errorDiagnosticCount(diagnostics);
+      for (const auto &held : heldDiagnostics)
+        errors += errorDiagnosticCount(held);
+      if (errors >= compileLimits.errorLimit)
+        throw ErrorLimitReached{};
+    }
     if (cancellation != nullptr &&
         cancellation->load(std::memory_order_relaxed))
       throw AnalysisCancelled{};

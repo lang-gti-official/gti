@@ -60,23 +60,31 @@ public:
     syntaxInput = std::move(syntax);
   }
 
+  std::size_t errorLimit = 0;
+  struct ErrorLimitReached {};
+
   Program parse() {
     reset();
     StmtList declarations;
 
-    while (!isAtEnd()) {
-      try {
-        if (check(TokenKind::IMPORT) ||
-            (check(TokenKind::EXPORT) && peekAt(1).kind == TokenKind::IMPORT)) {
-          sourceUnitImport();
-          continue;
+    try {
+      while (!isAtEnd()) {
+        try {
+          if (check(TokenKind::IMPORT) ||
+              (check(TokenKind::EXPORT) &&
+               peekAt(1).kind == TokenKind::IMPORT)) {
+            sourceUnitImport();
+            continue;
+          }
+          declarations.emplace_back(declaration());
+        } catch (const ParseError &) {
+          synchronize(false, false, true);
         }
-        declarations.emplace_back(declaration());
-      } catch (const ParseError &) {
-        synchronize(false, false, true);
       }
-    }
 
+    } catch (const ErrorLimitReached &) {
+      // Partial declarations are destroyed by stack unwinding.
+    }
     return Program(std::move(declarations));
   }
 
@@ -91,6 +99,8 @@ public:
       }
       return result;
     } catch (const ParseError &) {
+      return nullptr;
+    } catch (const ErrorLimitReached &) {
       return nullptr;
     }
   }
@@ -5349,6 +5359,8 @@ private:
   }
 
   const Token &advance() {
+    if (lang::errorLimitReached(diagnostics, errorLimit))
+      throw ErrorLimitReached{};
     if (!isAtEnd()) {
       consumedCompletion = consumedCompletion || peek().completion;
       ++current;
@@ -5653,6 +5665,8 @@ Parser::Parser(std::vector<Token> tokens, std::string_view source)
 Parser::~Parser() = default;
 Parser::Parser(Parser &&) noexcept = default;
 Parser &Parser::operator=(Parser &&) noexcept = default;
+
+void Parser::setErrorLimit(std::size_t limit) { impl->errorLimit = limit; }
 
 Program Parser::parse() { return impl->parse(); }
 
