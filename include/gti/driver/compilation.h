@@ -17,13 +17,30 @@
 #include "gti/target.h"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
 
+namespace lang {
+class FrontendCache;
+class SemanticPreambleCache;
+} // namespace lang
+
 namespace lang::driver {
+
+// Frontend state a long-lived caller shares across the compilations it runs
+// in one process: parsed units and the analysed trusted prefix (standard
+// library) of each import graph. A compilation that adopts a preamble reports
+// what a fresh analysis reports (see "Trusted Prefix Preamble" in
+// docs/architecture/semantic-analysis.md). The `gti` command never sets it;
+// `gti-test` does, and its `--isolate` mode checks the two paths agree.
+struct FrontendReuse {
+  std::shared_ptr<FrontendCache> parses;
+  std::shared_ptr<SemanticPreambleCache> preambles;
+};
 
 enum class RuntimeProfile {
   None,
@@ -143,6 +160,15 @@ public:
     result.resolvedCompileLimits = limits;
     return result;
   }
+  [[nodiscard]] const FrontendReuse &frontendReuse() const {
+    return sharedFrontend;
+  }
+  [[nodiscard]] CompilationRequest
+  withFrontendReuse(FrontendReuse reuse) const {
+    auto result = *this;
+    result.sharedFrontend = std::move(reuse);
+    return result;
+  }
   // Requires explicit LLVM selection for any non-None diagnostic mode.
   [[nodiscard]] CompilationRequest
   withLlvmInstrumentation(LlvmInstrumentationMode mode) const;
@@ -169,6 +195,7 @@ private:
   RawPointerAuditMode rawPointerAuditMode = RawPointerAuditMode::Off;
   bool reportLibraryAuditFindings = false;
   CompileLimits resolvedCompileLimits;
+  FrontendReuse sharedFrontend;
 };
 
 // One driver mapping is shared by object emission and cache identity queries.

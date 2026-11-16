@@ -1,0 +1,12 @@
+// Constant evaluation checks raw storage access: reading past the end of a
+// compile-time string is the same defined failure it is at run time.
+import std.string;
+
+constexpr char past_end() {
+  std::string text = std::string("ab");
+  return text[std::size_t(5)];
+}
+
+static_assert(past_end() == 'a');  //~ ERROR GTI-S2057
+
+int main() { return 0; }

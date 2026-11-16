@@ -1,0 +1,4 @@
+// The annotation names the wrong code.
+int main() {
+  return missing_name;  //~ ERROR GTI-S9999
+}

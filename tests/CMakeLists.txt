@@ -7010,6 +7010,7 @@ add_executable(gti_cpp_mir_uninitialized_carrier_tests cpp_mir_uninitialized_car
 target_link_libraries(gti_cpp_mir_uninitialized_carrier_tests PRIVATE gti_cpp_backend)
 add_test(NAME cpp_mir_uninitialized_carrier COMMAND gti_cpp_mir_uninitialized_carrier_tests)
 
+include("${PROJECT_SOURCE_DIR}/tests/gti_test.cmake")
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")
 
 # Every build-tree test runs the compiler's self-checks, such as the

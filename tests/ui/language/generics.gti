@@ -1,0 +1,69 @@
+// Type parameters appear directly after a class or function name.
+//@ run-pass
+//@ stdout: generic code keeps its type information
+class Box<T> {
+  T value;
+
+public:
+  Box(T value) : value(value) {}
+
+  T& get() {
+    return this.value;
+  }
+};
+
+T identity<T>(T value) {
+  return value;
+}
+
+T minimum<std::ordered T>(T left, T right) {
+  if (left < right) {
+    return left;
+  }
+  return right;
+}
+
+T multiply<std::numeric T>(T left, T right) {
+  // T(...) keeps narrow numeric results checked after concrete substitution.
+  return T(left * right);
+}
+
+T remainder<std::integral T>(T value, T divisor) {
+  return T(value % divisor);
+}
+
+// Value arguments can be supplied explicitly when no runtime argument can
+// infer them. They are part of the exact GTI function instance identity.
+constexpr uint64_t selected_extent<uint64_t N>() {
+  return N;
+}
+
+class StaticArray<T, uint64_t N> {
+  T values[N] = {};
+
+public:
+  std::size_t size() {
+    return N;
+  }
+public:
+  StaticArray() = default;
+};
+
+int main() {
+  // The declared generic type supplies the target for exact construction.
+  Box<int> boxed{21};
+
+  // Generic function arguments can be inferred from the value argument.
+  int value = identity(boxed.get());
+  int smaller = minimum(21, 34);
+  int product = multiply(6, 7);
+  int leftover = remainder(23, 5);
+  uint64_t explicit_extent = selected_extent<4>();
+  StaticArray<int, 4> values{};
+  if (value == 21 and smaller == 21 and product == 42 and leftover == 3 and
+      explicit_extent == 4 and values.size() == 4) {
+    std::println("generic code keeps its type information");
+    return 0;
+  }
+  return 1;
+}
