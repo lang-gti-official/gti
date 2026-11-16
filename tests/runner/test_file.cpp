@@ -122,6 +122,8 @@ const char *modeName(Mode mode) {
     return "lsp";
   case Mode::LspTranscript:
     return "lsp-transcript";
+  case Mode::Project:
+    return "project";
   }
   return "?";
 }
@@ -209,6 +211,14 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   TestFile test;
   test.path = path;
   test.display = std::move(display);
+  if (path.filename() == "test.transcript") {
+    test.mode = Mode::Project;
+    test.modeExplicit = true;
+    test.groupKey = "project";
+    if (!readFile(path))
+      test.errors.push_back("cannot read the transcript");
+    return test;
+  }
   const bool lsp = underLspDirectory(path);
   if (lsp && path.extension() == ".jsonl") {
     // Validated when it runs; the runner reads it line by line.

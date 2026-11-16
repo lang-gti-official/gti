@@ -1,0 +1,2 @@
+export module value;
+namespace leaf { export int value() { mut int value = 0; return value; } }
