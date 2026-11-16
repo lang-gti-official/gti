@@ -11468,6 +11468,68 @@ suite on every candidate and is the required integration gate. Contributors
 run focused checks and report the complete suite as deferred to the queue,
 never as passed.
 
+## Suite yardsticks: source coverage and seeded bugs
+
+Two measures tell whether rewriting the suite (the
+[test-suite redesign](../plans/test-suite-redesign.md), §11.4) loses
+assurance. Both run only from `.github/workflows/suite-measures.yml`, by
+dispatch or weekly on Sunday; neither gates `main`, `tip`, `nightly`, the
+slow tier or the release train. The owner's acceptable loss is: no compiler
+source file loses more than 2 points of line coverage without a written
+reason, and the seeded-bug kill rate falls by at most 5 points.
+
+- **Source coverage.** `-DGTI_ENABLE_SOURCE_COVERAGE=ON` instruments every
+  first-party target with Clang source-based coverage, except program
+  components (`gti_program_component`), which generated programs link without
+  a profile runtime; `runtime/` is therefore not measured. Linux CI's reviewed
+  host compiler is GCC 14, so `configure_ci_toolchain.sh` with
+  `GTI_CI_COVERAGE=1` adds the one Clang major `runtime/src/atomic_lane.h`
+  admits on Linux x86_64 (with its profile runtime, `llvm-profdata` and
+  `llvm-cov`) from the same apt.llvm.org repository and key. The workflow runs,
+  across eight Linux shards with `LLVM_PROFILE_FILE=…/%m.profraw` and a 6×
+  timeout scale, every test set of the shard runner that makes up the
+  complete Linux suite: `full`, plus `slow` and `o3` where the runner defines
+  them. Whatever CTest registers, `gti_test_ui` included, is in those sets.
+  Each shard exports LCOV with `scripts/coverage_report.py collect`; the final
+  job unions them with `summarize`. Test failures under instrumentation are
+  recorded in the artifact, never fatal: what ran still counts.
+- **Seeded bugs.** `scripts/seeded_bugs.py` draws a deterministic sample of
+  single-point mutants (comparison flips and boundaries, literal off-by-one,
+  `&&`/`||`, negated conditions, skipped early exits, dropped diagnostic
+  statements) from the `src/` files that `gti`, `gti_lsp` and the tested
+  binaries compile, stratified by directory and balanced across operators.
+  For each it rebuilds incrementally, confirms the object was rebuilt, runs
+  the test command with stop-at-first-failure, records `killed` (and the
+  killing test), `survived`, `build-failed` or `not-built`, and restores the
+  file. The kill rate is killed / (killed + survived). The workflow runs 180
+  mutants as eight slices of about 23 (one hosted job each, under a
+  250-minute budget) against the per-commit gate tier: `feedback-fast` plus
+  the `compiler-suite` parts of `compiler_pipeline`. The complete suite would
+  cost hours per surviving mutant. Mutant ids are stable for unchanged
+  sources, so `run --replay` scores another test command on exactly the same
+  mutants.
+
+Dispatch, then download, as below; `measure` is `coverage`, `seeded-bugs` or
+`both`:
+
+```sh
+gh workflow run suite-measures.yml --repo lang-gti-official/gti -f measure=both
+gh run download <run-id> --repo lang-gti-official/gti -n suite-coverage -n seeded-bugs
+python3 scripts/coverage_compare.py baseline/coverage.json candidate/coverage.json \
+  --allow coverage-allow.txt
+```
+
+`suite-coverage` holds `coverage.json` (schema 1: `commit`, `totals`,
+`directories`, and per repository-relative file `"lines": [covered, total]`
+and `"branches": [covered, total]`), the merged `coverage.lcov.gz` for
+line-level comparison, and each shard's test-set status; `seeded-bugs` holds
+`seeded-bugs.json` (`results` per mutant, `summary.kill_rate`, per-directory
+and per-operator rates). Artifacts are kept 90 days. The phase-1 baseline run
+is recorded in the
+[test-suite redesign campaign](../plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16);
+a conversion phase compares its own run against it, and copies the baseline
+JSON into the repository before it would expire.
+
 ## Development And Completion Cadence
 
 Native allocation/provider test oracles must be linked before the production
