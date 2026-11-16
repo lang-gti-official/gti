@@ -1,0 +1,15 @@
+// An action not returning exactly void does not satisfy std::once_action.
+//@ check-fail
+import std.functional;
+
+class value_action {
+public:
+  int32_t operator()() && { return 1; }
+public:
+  value_action() = default;
+};
+
+int main() {
+  std::invoke_once(value_action());  //~ ERROR GTI-S2029 concept 'std::once_action
+  return 0;
+}

@@ -104,7 +104,6 @@ paths = [
 ]
 owners = [
   "concept_conditions",
-  "conditional_member_operators",
   "reference_parameter_packs",
   "parser_conditional_recovery",
   "source_text_pipeline",
@@ -190,7 +189,6 @@ owners = [
   "module_editor_recovery",
   "module_system_runtime",
   "module_initialization_runtime",
-  "module_cpp_boundary",
   "include_removal",
   "frontend_cache_invalidation",
   "stdlib_module_boundaries",
@@ -279,7 +277,6 @@ paths = [
 ]
 owners = [
   "concept_conditions",
-  "conditional_member_operators",
   "protocol_requirements_runtime",
   "protocol_format_hash_runtime",
   "reference_parameter_packs",
@@ -326,7 +323,6 @@ consumers = [
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
-  "generic_algorithm_errors",
   "gti_test_ui",
 ]
 
@@ -463,7 +459,6 @@ area = "mir"
 risk = "shared"
 paths = [
   "tests/borrow_origin_publication_tests.cpp",
-  "tests/borrow_origin_publication_runtime_test.py",
   "tests/fixtures/borrowed_text_field_reborrow.gti",
   "tests/fixtures/temporary_cursor_cleanup_provider.gti",
   "tests/fixtures/receiver_field_carriers*.gti",
@@ -475,7 +470,6 @@ owners = [
   "reference_parameter_pack_mir",
   "^mir_",
   "borrow_origin_publication",
-  "borrow_origin_publication_runtime",
   "ephemeral_carrier_mir",
   "borrowing_callbacks_mir",
   "storage_adoption_contract",
@@ -493,7 +487,6 @@ owners = [
 ]
 consumers = [
   "concept_conditions",
-  "conditional_member_operators",
   "protocol_requirements_runtime",
   "reference_parameter_packs",
   "lowered_program_contract",
@@ -516,7 +509,6 @@ owners = [
   "mir_thread_local",
   "^thread_local_",
   "llvm_tls_contracts",
-  "llvm_tls_cleanup_context",
 ]
 consumers = []
 
@@ -722,7 +714,6 @@ owners = [
   "llvm_thread_lifecycle_contracts",
   "llvm_cthread_startup_execution",
   "llvm_tls_contracts",
-  "llvm_tls_cleanup_context",
   "llvm_mutex_contracts",
   "llvm_mutex_hierarchy_contracts",
   "llvm_mutex_service",
@@ -972,7 +963,6 @@ owners = [
   "cmath_runtime",
 ]
 consumers = [
-  "format_output_matrix_runtime",
 ]
 
 [[area]]
@@ -1030,7 +1020,6 @@ owners = [
   "stdlib_modules",
   "stdlib_module_boundaries",
   "stdlib_include_sweep",
-  "stdlib_discardable",
   "stdlib_adoption_runtime",
 ]
 consumers = [
@@ -1131,10 +1120,8 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
-  "conditional_member_operators",
   "protocol_format_hash_runtime",
   "complete_containers",
-  "complete_containers_collection",
   "container_contract_failure",
   "container_iterator_movement",
   "container_swap_runtime",
@@ -1156,7 +1143,6 @@ owners = [
   "gti_test_ui",
   "generic_algorithm_cluster",
   "removal_algorithms",
-  "generic_algorithm_errors",
 ]
 consumers = [
   "collection_initialization_runtime",
@@ -1183,7 +1169,6 @@ owners = [
   "text_view_iterator_runtime",
   "encoding_runtime",
   "gti_test_ui",
-  "format_output_matrix_runtime",
 ]
 consumers = [
   "source_text_pipeline",
@@ -1232,7 +1217,6 @@ paths = [
 ]
 owners = [
   "concept_conditions",
-  "conditional_member_operators",
   "protocol_format_hash_runtime",
   "gti_test_ui",
   "shared_ownership_failure",
@@ -1243,7 +1227,6 @@ owners = [
   "programmable_allocators_runtime",
   "inline_polymorphic_runtime",
   "owned_inline_consumption_runtime",
-  "polymorphic_owner_cleanup_runtime",
 ]
 consumers = [
   "gti_unit_tests",

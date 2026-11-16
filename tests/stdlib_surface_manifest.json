@@ -3528,8 +3528,8 @@
         "tests/fixtures/generic_callable_concepts.gti",
         "tests/fixtures/complete_range_probe.gti",
         "tests/generic_algorithm_cluster_test.py",
-        "tests/generic_callable_concepts_runtime_test.py",
-        "tests/generic_algorithm_errors_test.py",
+        "tests/ui/callables/concepts",
+        "tests/ui/stdlib/algorithm",
         "tests/ordered_search_runtime_test.py",
         "tests/fixtures/ordered_search.gti",
         "tests/fixtures/ordered_search_user_types.gti",
@@ -4618,7 +4618,7 @@
         "stdlib/std/format.gti",
         "tests/protocol_format_hash_runtime_test.py",
         "tests/reference_parameter_packs_test.py",
-        "tests/consteval_runtime_test.py",
+        "tests/ui/constexpr/consteval",
         "tests/fixtures/checked_literal_arguments.gti",
         "tests/ui/stdlib/contracts"
       ]
@@ -5541,7 +5541,7 @@
         "tests/container_contract_failure_test.py",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/conditional_member_operators_test.py",
+        "tests/ui/operators/conditional_members",
         "tests/fixtures/conditional_member_operators.gti"
       ]
     },
@@ -6475,7 +6475,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_numeric.gti",
         "tests/fixtures/generic_callable_concepts.gti",
-        "tests/generic_callable_concepts_runtime_test.py",
+        "tests/ui/callables/concepts",
         "tests/defined_integer_runtime_test.py",
         "tests/numeric_boundaries_runtime_test.py",
         "tests/fixtures/numeric_boundaries.gti",
@@ -6708,7 +6708,7 @@
       ],
       "evidence": [
         "stdlib/prelude.gti",
-        "tests/conditional_member_operators_test.py",
+        "tests/ui/operators/conditional_members",
         "tests/fixtures/conditional_member_operators.gti",
         "tests/fixtures/string_ordering.gti"
       ]
@@ -6756,7 +6756,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/expected_ergonomics_tests.cpp",
-        "tests/expected_ergonomics_runtime_test.py"
+        "tests/slow/expected/ergonomics.gti"
       ]
     },
     {
@@ -8199,7 +8199,7 @@
         "tests/container_contract_failure_test.py",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/conditional_member_operators_test.py",
+        "tests/ui/operators/conditional_members",
         "tests/fixtures/conditional_member_operators.gti",
         "tests/protocol_format_hash_runtime_test.py",
         "tests/fixtures/legacy_hash_policy_state.gti"
@@ -8380,7 +8380,7 @@
         "tests/fixtures/stdlib_surface_utility.gti",
         "tests/fixtures/stdlib_surface_utility_pair.gti",
         "stdlib/std/utility.gti",
-        "tests/conditional_member_operators_test.py",
+        "tests/ui/operators/conditional_members",
         "tests/protocol_format_hash_runtime_test.py"
       ],
       "required_instantiations": [

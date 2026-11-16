@@ -1,0 +1,12 @@
+// std::remove rejects a value borrowed from the vector it mutates.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.array;
+import std.map;
+class Once {
+public:
+  Once() = default;
+  bool operator()(int& value) && { return true; }
+};
+int main() { mut std::vector<int> values = {1, 2}; int& key = values[std::size_t(0)]; auto end = std::remove(values, key); return 0; }  //~ ERROR GTI-S2017

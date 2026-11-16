@@ -1,0 +1,12 @@
+// std::equal rejects an element type without equality.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+struct Item { int x = 0;  public: Item() = default; }; int main() { std::vector<Item> x = {Item()}; return std::equal(x.begin(), x.end(), x.begin(), x.end()) ? 1 : 0; }  //~ ERROR GTI-S2022
