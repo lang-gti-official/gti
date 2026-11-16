@@ -26,8 +26,12 @@ struct Outcome {
   // Failure explanation, one item per line, without the FAIL header.
   std::string detail;
   std::vector<std::string> blessed;
-  // The case built a standard-library preamble in this worker.
+  // The case built a standard-library preamble in this worker, and `cpu`
+  // was not re-measured warm.
   bool cold = false;
+  // Under --isolate, the case still ran in-process (parse modes, mir
+  // snapshots, C sections).
+  bool inProcess = false;
 };
 
 struct Limits {
@@ -60,6 +64,9 @@ struct EngineOptions {
   std::filesystem::path workDirectory;
   bool isolate = false;
   bool bless = false;
+  // A cold case is re-measured warm when it uses more than this fraction of
+  // its limit (half under --changed, whose budget rule needs a warm figure).
+  double budgetFraction = 1.0;
   // GTI_TEST_INSTRUMENTATION: build every program with LLVM sanitizer
   // instrumentation (the sanitizer tier); off by default.
   lang::LlvmInstrumentationMode instrumentation =

@@ -97,24 +97,38 @@ int main() { return sum(1, 2) - 3; }
 ```
 
 Rendering snapshots run `gti` in a separate process (about 0.1 s without
-imports); keep them free of imports. Under `--isolate`, parse modes and mir
-snapshots still run in-process; llvm-ir uses `gti --emit-llvm`; C++ sections
-go after `--`, and a test with C sections builds in-process.
+imports); keep them free of imports. `--isolate` runs each case through a
+fresh `gti`, except parse modes, mir snapshots and tests with C sections, which
+still run in-process (the RESULT line counts them); llvm-ir uses
+`gti --emit-llvm` and C++ sections go after `--`.
 
 ```sh
-build-release/gti-test                          # everything in tests/ui
+build-release/gti-test                          # tests/ui, tests/project, tests/lsp
 build-release/gti-test tests/ui/stdlib/format   # a directory or file
 build-release/gti-test borrow                   # paths containing "borrow"
+build-release/gti-test --changed                # tests changed vs origin/main
+build-release/gti-test --changed HEAD~3         # ... vs another base
+build-release/gti-test --failed                 # the last run's failures
 build-release/gti-test tests/ui/x/y.gti --bless # rewrite annotations/stdout
 build-release/gti-test --tidy                   # validate directives/layout
 build-release/gti-test --isolate                # each case in a fresh gti
+build-release/gti-test --json r.json --junit r.xml  # reports
 ```
 
+`--changed [BASE]` selects tests whose file, sibling expected files
+(`name.*`), project directory, imported directories or defaults file differ
+from the merge base with BASE (default `origin/main`), uncommitted and
+untracked files included. It also enforces the budget for new work: a selected
+test that passes using more than half its limit (measured warm) fails, telling
+the author to make it cheaper or move it to `tests/slow/`. Without `--changed`
+older tests keep their full limit. `--failed` re-runs the failures recorded by
+the last run (`gti-test.last-run` beside the runner; `GTI_TEST_LAST_RUN`
+names another file).
+
 Editor behaviour is tested in [tests/lsp](../lsp/README.md), with markers
-and request expectations against `gti_lsp`; `gti-test` with no arguments
-still runs tests/ui only, so name `tests/lsp` (or both) explicitly. Driver,
-`gti.toml` and CLI behaviour is tested in [tests/project](../project/README.md)
-by command transcripts.
+and request expectations against `gti_lsp` (skipped, with a note, when the
+runner has no `gti_lsp` beside it). Driver, `gti.toml` and CLI behaviour is
+tested in [tests/project](../project/README.md) by command transcripts.
 
 Directive-less roots (`examples/`, run by `gti_test_examples`) take defaults
 from a `gti-test.defaults` file above them: `//@` lines for every test below,

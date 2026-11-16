@@ -13,6 +13,7 @@ diagnostics and format snapshots with their failure and bless paths.
 
 import json
 import os
+from xml.etree import ElementTree
 import re
 import shutil
 import subprocess
@@ -24,10 +25,17 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/runner/fixtures"
 
 
+LAST_RUN = Path(tempfile.mkdtemp(prefix="gti-test-self-")) / "last-run"
+
+
 def run(runner, *args, env=None, cwd=ROOT, fixtures=True):
     environment = dict(os.environ)
     environment.pop("CI", None)
     environment.pop("GTI_TEST_SELF_TEST", None)
+    # The self-test's runs keep their own --failed record; the real run's
+    # stays beside the runner for `gti-test --failed`.
+    if fixtures:
+        environment["GTI_TEST_LAST_RUN"] = str(LAST_RUN)
     if fixtures:
         environment["GTI_TEST_SELF_TEST"] = "1"
     environment.update(env or {})
@@ -134,6 +142,7 @@ def self_test(runner):
     expect(code == 1 and "is not idempotent" in block(out, "FAIL", "drift.gti"),
            "format-stable fails when formatting is not a fixed point", out)
     kinds_self_test(runner)
+    ergonomics_self_test(runner)
     project_self_test(runner)
     if (runner.parent / "gti_lsp").exists():
         lsp_self_test(runner)
@@ -151,8 +160,8 @@ def self_test(runner):
                     "bad_check_kind.gti: line 3: patterns are",
                     "revision 'third' is not declared",
                     "stray_revision.fourth.stdout: expected output without a test",
-                    "project_bad/test.transcript: line 2: expectations follow",
-                    "project_bad/test.transcript: line 4: exit codes are",
+                    "project/test.transcript: line 2: expectations follow",
+                    "project/test.transcript: line 4: exit codes are",
                     "bad_overlay.gti: line 0: stdlib-overlay names "
                     "'missing.gti', which is neither a section nor",
                     "native_check.gti: line 0: C/C++ sections and native-args "
@@ -179,10 +188,83 @@ def self_test(runner):
     with tempfile.TemporaryDirectory() as directory:
         report = Path(directory) / "report.json"
         code, out = run(runner, FIXTURES / "pass", "--isolate", "--json", report)
-        expect(code == 0 and "isolated" in out, "--isolate agrees", out)
+        expect(code == 0 and "isolated (0 in-process" in out,
+               "--isolate agrees and counts in-process cases", out)
         rows = [json.loads(line) for line in report.read_text().splitlines()]
         expect(len(rows) == 8 and all("cpu" in row for row in rows),
                "the JSON report has one row per test", report.read_text())
+
+
+def ergonomics_self_test(runner):
+    """--failed, --junit, --changed and its budget, default roots, strays."""
+    run(runner, FIXTURES / "fail", "--jobs", "2")
+    code, out = run(runner, FIXTURES / "pass", FIXTURES / "fail", "--failed",
+                    "--jobs", "2")
+    expect(code == 1 and "RESULT fail: 0 passed, 5 failed" in out,
+           "--failed re-runs exactly the last run's failures", out)
+    run(runner, FIXTURES / "pass", "--jobs", "2")
+    code, out = run(runner, FIXTURES / "pass", "--failed")
+    expect(code == 0 and "no failed tests" in out,
+           "--failed after a clean run runs nothing", out)
+
+    with tempfile.TemporaryDirectory() as directory:
+        junit = Path(directory) / "junit.xml"
+        run(runner, FIXTURES / "fail", "--jobs", "2", "--junit", junit)
+        suite = ElementTree.parse(junit).getroot().find("testsuite")
+        cases = suite.findall("testcase")
+        expect(suite.get("failures") == "5" and len(cases) == 5 and
+               all(case.find("failure") is not None for case in cases),
+               "--junit writes one failing testcase per failure",
+               junit.read_text())
+
+    with tempfile.TemporaryDirectory() as directory:
+        repository = Path(directory)
+        tests = repository / "tests/ui/changed"
+        shutil.copytree(FIXTURES / "changed", tests)
+        git = ["git", "-C", str(repository), "-c", "user.name=t",
+               "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
+        subprocess.run(git + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "."], check=True)
+        subprocess.run(git + ["commit", "-qm", "base"], check=True)
+        base = subprocess.run(git + ["rev-parse", "HEAD"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+        code, out = run(runner, "--changed", base, cwd=repository)
+        expect(code == 0 and "no changed tests" in out,
+               "--changed with no change runs nothing", out)
+        (tests / "cheap.gti").write_text((tests / "cheap.gti").read_text() +
+                                         "// edited\n")
+        (tests / "other.stdout").write_text("x\n")
+        code, out = run(runner, "--changed", base, "--list", cwd=repository)
+        expect(code == 0 and "cheap.gti" in out and "other.gti" in out and
+               "budget.gti" not in out,
+               "--changed selects edited tests and their companions", out)
+        (tests / "other.stdout").unlink()
+        (tests / "budget.gti").write_text((tests / "budget.gti").read_text() +
+                                          "// edited\n")
+        code, out = run(runner, "--changed", base, cwd=repository,
+                        env={"GTI_TEST_TIME_SCALE": "0.5"})
+        expect(code == 1 and "over budget:" in block(out, "FAIL", "budget.gti")
+               and "tests/slow/" in out and "RESULT fail: 1 passed, 1 failed"
+               in out, "a changed test over half its limit fails", out)
+        code, out = run(runner, cwd=repository, env={"GTI_TEST_TIME_SCALE": "0.5"},
+                        *("--lsp", "/nonexistent/gti_lsp"))
+        expect(code == 0 and "tests/lsp skipped" not in out and
+               "RESULT ok: 3 passed" in out,
+               "without arguments every default root runs; old tests keep "
+               "their full limit", out)
+        (repository / "tests/lsp").mkdir()
+        code, out = run(runner, "--lsp", "/nonexistent/gti_lsp", "--list",
+                        cwd=repository)
+        expect("tests/lsp skipped" in out,
+               "tests/lsp is skipped cleanly without gti_lsp", out)
+
+    code, out = run(runner, FIXTURES / "stray")
+    expect(code == 0 and "RESULT ok: 1 passed" in out,
+           "a stray test.transcript neither runs nor hides the tests below it",
+           out)
+    code, out = run(runner, "--tidy", "--root", FIXTURES / "stray")
+    expect(code == 1 and "a test.transcript belongs in a directory under a "
+           "`project` directory" in out, "tidy reports a stray transcript", out)
 
 
 def kinds_self_test(runner):
@@ -292,8 +374,8 @@ def project_self_test(runner):
     expect("line 2: $ gti main.gti --emit-mir -o out.mir" in wrong and
            "exit code 65, expected 2" in wrong and
            "$DIR/main.gti:1:21: error[GTI-S2001]" in wrong and
-           "bless:" not in wrong,
-           "a wrong exit code shows normalised output and no bless", out)
+           "bless:" in wrong,
+           "a wrong exit code shows normalised output and offers bless", out)
     output = block(out, "FAIL", "wrong_output/test.transcript")
     expect('stdout lacks "no such text"' in output and
            'stdout contains "Diagnostics"' in output,
@@ -302,16 +384,33 @@ def project_self_test(runner):
            "a spinning command exceeds the CPU budget", out)
     expect(not list((FIXTURES / "project").rglob("build")),
            "transcripts never write into the source tree")
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory) / "project"
+        shutil.copytree(FIXTURES / "project/bless", work)
+        code, out = run(runner, work, "--bless")
+        text = (work / "exit/test.transcript").read_text()
+        expect(code == 0 and "BLESSED" in out and "\n? 65\n" in text and
+               "stderr: $DIR/main.gti:1:21: error[GTI-S2001]" in text,
+               "bless records exit codes and diagnostics", out + text)
+        code, out = run(runner, work)
+        expect(code == 0, "a blessed transcript passes", out)
 
 
 def lsp_self_test(runner):
     """LSP marker tests and transcripts against a per-worker gti_lsp."""
     code, out = run(runner, FIXTURES / "lsp/ok", "--jobs", "2")
-    expect(code == 0 and "RESULT ok: 3 passed, 0 failed" in out,
-           "LSP fixtures pass", out)
-    code, out = run(runner, FIXTURES / "lsp/fail", "--jobs", "2")
-    expect(code == 1 and "RESULT fail: 0 passed, 4 failed" in out,
+    expect(code == 0 and "RESULT ok: 4 passed, 0 failed" in out,
+           "LSP fixtures pass, edit steps included", out)
+    code, out = run(runner, FIXTURES / "lsp/fail", "--jobs", "3")
+    expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
            "failing LSP fixtures fail without timing out", out)
+    expect("actual:   ERROR GTI-S2001 at step 2:2" in
+           block(out, "FAIL", "wrong_step.gti"),
+           "a step's diagnostic is located in that step", out)
+    never = block(out, "FAIL", "never_arrives.jsonl")
+    expect("line 8: no message for" in never and "window/showMessage" in never
+           and float(never.split("] ")[1].split("s")[0]) < 10,
+           "an awaited message that never comes fails fast, naming it", out)
     wrong = block(out, "FAIL", "wrong_answers.gti")
     for problem in ('line 2 (hover): hover does not contain "no such text"',
                     "line 3 (definition): expected @local; got @twice",

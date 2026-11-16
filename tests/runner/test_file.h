@@ -113,6 +113,8 @@ struct LspDirective {
   std::vector<std::string> words;
   std::string value;
   int writtenLine = 0;
+  // The section (`// --- step N`, 0 for the first version) it is asked of.
+  int step = 0;
 };
 
 struct TestFile {

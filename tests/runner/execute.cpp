@@ -380,11 +380,14 @@ Outcome Engine::runProject(const TestFile &test) {
   Outcome outcome;
   const EngineOptions &options = state->options;
   const double start = lspClock();
-  const ProjectResult result = runProjectTest(
-      test,
-      ProjectTools{options.gti, options.lsp,
-                   state->toolchain.standardLibrary.root},
-      state->caseDirectory / "project", options.limits.forTest(test));
+  const ProjectResult result =
+      runProjectTest(test,
+                     ProjectTools{options.gti, options.lsp,
+                                  state->toolchain.standardLibrary.root},
+                     state->caseDirectory / "project",
+                     options.limits.forTest(test), options.bless);
+  if (result.blessed)
+    outcome.blessed.push_back(test.display);
   outcome.cpu = result.cpu;
   outcome.wall = lspClock() - start;
   if (result.timedOut)
@@ -410,8 +413,9 @@ Outcome Engine::runLsp(const TestFile &test) {
   bool cold = test.mode == Mode::LspTranscript;
   LspResult result;
   if (test.mode == Mode::LspTranscript) {
-    result = runLspTranscript(options.lsp, test, directory,
-                              start + limit + options.limits.coldAllowance);
+    result =
+        runLspTranscript(options.lsp, test, directory,
+                         start + limit + options.limits.coldAllowance, limit);
   } else {
     if (!state->lsp || !state->lsp->running()) {
       state->lsp = std::make_unique<LspServer>(
@@ -1012,6 +1016,12 @@ Outcome Engine::run(const TestFile &test) {
     if (test.runnerFault == "hang")
       while (true)
         pause();
+    if (test.runnerFault == "three-quarters") {
+      // Passes, using three quarters of its limit (the --changed budget).
+      volatile unsigned long spin = 0;
+      while (totalCpu() - cpuStart < 0.75 * limit)
+        spin = spin + 1;
+    }
     try {
       if (test.runnerFault == "throw")
         throw std::runtime_error("injected runner fault");
@@ -1318,12 +1328,21 @@ Outcome Engine::run(const TestFile &test) {
   // The limit applies to warm execution: a case that paid for analysing a
   // standard-library prefix is measured again once that prefix is cached.
   // The verdict stays the first run's.
-  if (!options.isolate && outcome.cold && outcome.cpu > limit &&
+  if (!options.isolate && outcome.cold &&
+      outcome.cpu > limit * options.budgetFraction &&
       outcome.status != Status::Timeout) {
     const Outcome warmRun = attempt(false);
     outcome.cpu = warmRun.cpu;
     outcome.wall = warmRun.wall;
+    outcome.cold = false;
   }
+  outcome.inProcess =
+      options.isolate &&
+      (modeParses(test.mode) || hasSnapshot(test, Snapshot::Mir) ||
+       std::any_of(test.sections.begin(), test.sections.end(),
+                   [](const Section &section) {
+                     return nativeKind(section.name) == NativeKind::C;
+                   }));
   if (outcome.status != Status::Skip)
     state->warmGroups.insert(test.groupKey);
   if (test.formatStable && outcome.status == Status::Pass)

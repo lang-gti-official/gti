@@ -79,12 +79,21 @@ std::string codePart(const std::string &line) {
   return marker == std::string::npos ? line : line.substr(0, marker);
 }
 
+// `step N`: an LSP marker test's next document version.
+bool isStepName(const std::string &name) {
+  return name.size() > 5 && name.rfind("step ", 0) == 0 &&
+         std::all_of(name.begin() + 5, name.end(), [](char c) {
+           return std::isdigit(static_cast<unsigned char>(c));
+         });
+}
+
 bool isSectionMarker(const std::string &line, std::string &name) {
   const std::string prefix = "// --- ";
   if (line.rfind(prefix, 0) != 0)
     return false;
   name = trim(line.substr(prefix.size()));
-  return !name.empty() && name.find_first_of(" \t") == std::string::npos;
+  return !name.empty() &&
+         (name.find_first_of(" \t") == std::string::npos || isStepName(name));
 }
 
 bool selfTestEnabled() {
@@ -336,6 +345,18 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       section.firstLine = static_cast<int>(index) + 2;
       test.sections.push_back(section);
     }
+  }
+  // An LSP marker test's `// --- step N` sections follow its first document
+  // version, the text before them.
+  if (lsp && !test.sections.empty() &&
+      std::all_of(
+          test.sections.begin(), test.sections.end(),
+          [](const Section &section) { return isStepName(section.name); })) {
+    markers.insert(markers.begin(), -1);
+    Section first;
+    first.name = "main.gti";
+    first.firstLine = 1;
+    test.sections.insert(test.sections.begin(), first);
   }
   if (test.sections.empty()) {
     Section whole;
@@ -800,8 +821,17 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     test.mode = Mode::Lsp;
     if (!modes.empty())
       error(0, "LSP tests take no mode; diagnostics are `//~` annotations");
-    if (test.sections.size() != 1 || test.sections.front().firstLine != 1)
-      error(0, "LSP tests are one file without `// --- name` sections");
+    if (test.sections.front().firstLine != 1)
+      error(0, "LSP tests are one file; edits are `// --- step 2`, "
+               "`// --- step 3`, ... sections");
+    for (std::size_t index = 1; index < test.sections.size(); ++index)
+      if (test.sections[index].name != "step " + std::to_string(index + 1))
+        error(0, "LSP edit steps are numbered `step 2`, `step 3`, ... in "
+                 "order");
+    for (LspDirective &directive : test.lspDirectives)
+      for (std::size_t index = 0; index < test.sections.size(); ++index)
+        if (directive.writtenLine >= test.sections[index].firstLine)
+          directive.step = static_cast<int>(index);
     if (!test.snapshots.empty() || !test.checks.empty() || test.optimize ||
         test.concurrent || test.requireFunctionDefinitions ||
         test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
@@ -815,6 +845,9 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   }
 
   // Mode and consistency.
+  for (const Section &section : test.sections)
+    if (isStepName(section.name))
+      error(0, "`// --- step N` sections are for LSP marker tests");
   const bool hasErrors = std::any_of(
       test.annotations.begin(), test.annotations.end(),
       [](const Annotation &a) { return a.severity == Severity::Error; });

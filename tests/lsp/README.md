@@ -44,15 +44,29 @@ rewrites those annotations, never the request expectations.
 A worker keeps one `gti_lsp` for all marker tests it runs, so the standard
 library is analysed once per worker. The limit is 3 s of wall time per test
 (plus the cold allowance for a worker's first), since the work happens in the
-server. A test is one document state: to test an edit, write the edited text
-as its own file.
+server.
+
+Edits are numbered steps: text after `// --- step 2` is the whole document
+as version 2 (sent as a full `didChange`), and so on in order. Each step's
+`//~` annotations match that version's published diagnostics, and its `//@`
+requests use its own markers:
+
+```gti
+// A fixed reference clears the diagnostic.
+int main() { return missing; }  //~ ERROR GTI-S2001
+// --- step 2
+//@ hover @x: int32_t x
+int main() { int /*@x*/x = 0; return x; }
+```
 
 ## Transcripts (`.jsonl`)
 
 For the few tests whose subject is protocol sequencing (initialize/shutdown,
 version ordering, cancellation, malformed input). Each line after the `// `
 purpose line (further `//` lines are comments) is one step against a fresh
-`gti_lsp`:
+`gti_lsp`. Once the server has published diagnostics, an `expect` fails
+after 3 s (the test's limit) without any message, naming what it awaited,
+rather than waiting for the whole test deadline:
 
 | Step | Meaning |
 | --- | --- |
@@ -70,7 +84,6 @@ build-release/gti-test tests/lsp/access --bless  # rewrite annotations
 build-release/gti-test --lsp path/to/gti_lsp …   # another server
 ```
 
-What this cannot express: multi-step edit sequences within a marker test
-(use separate files, or a transcript), workspace-wide requests across several
-open documents, server-to-client request contents, and timing (debounce,
+What this cannot express: workspace-wide requests across several open
+documents, server-to-client request contents, and timing (debounce,
 cancellation latency) beyond message order.

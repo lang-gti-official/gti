@@ -47,7 +47,7 @@ add_test(NAME gti_test_examples
 # limit here only catches hangs.
 math(EXPR gti_examples_time_scale "8 * ${gti_test_timeout_scale}")
 set_tests_properties(gti_test_examples PROPERTIES PROCESSORS 4
-  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale}")
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-examples.last-run")
 
 # gti-corpus: one walk of the example corpus checking the whole-program
 # analysis invariants (body-analysis order, trusted-body parity, instance
