@@ -1,0 +1,2 @@
+// Characters and string views: char should not inherit integer arithmetic or conversions.
+int main() { char value = 'A'; int number = value; return value + 1; }  //~ ERROR GTI-S2003 value of type 'char' //~ ERROR GTI-S2004 requires numeric operands

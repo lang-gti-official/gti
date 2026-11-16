@@ -33,6 +33,8 @@ struct ProjectResult {
   std::string failure;
   bool timedOut = false;
   double cpu = 0;
+  // `--bless` rewrote the transcript.
+  bool blessed = false;
 };
 
 struct ProjectTools {
@@ -42,10 +44,13 @@ struct ProjectTools {
 };
 
 // Copies the test's directory to `work` and runs its commands there under a
-// total CPU budget of `limit` seconds.
+// total CPU budget of `limit` seconds. With `bless`, every command runs and
+// the transcript is rewritten: each `? N` becomes the actual exit code, and a
+// command without stdout/stderr expectations gains a `stderr:` line per
+// diagnostic header it printed. Other expectations are never rewritten.
 [[nodiscard]] ProjectResult runProjectTest(const TestFile &test,
                                            const ProjectTools &tools,
                                            const std::filesystem::path &work,
-                                           double limit);
+                                           double limit, bool bless = false);
 
 } // namespace gti_test

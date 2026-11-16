@@ -1,0 +1,7 @@
+// Compile time conditionals: an unknown flag reference warns once without failing compilation; undefining an absent flag is a no-op.
+//@ check-pass
+#ifdef DEBGU  //~ WARN GTI-S2075
+int unused() { return 1; }
+#endif
+#undef NOT_DEFINED
+int main() { return 0; }

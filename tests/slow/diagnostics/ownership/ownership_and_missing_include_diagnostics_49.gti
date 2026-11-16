@@ -1,0 +1,4 @@
+// Ownership and missing include diagnostics: a loaded but non-visible standard declaration should carry the same direct-include fix.
+//@ slow
+import std.cstdio;
+using owner = std::unique_ptr<int>;  //~ ERROR GTI-S2024

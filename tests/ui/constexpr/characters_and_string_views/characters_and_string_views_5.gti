@@ -1,0 +1,2 @@
+// Characters and string views: the code-unit bridge should remain explicit and should not admit other integer widths.
+int main() { uint8_t byte = uint8_t(65); char implicit = byte; uint16_t wide_byte = uint16_t(65); char wide = char(wide_byte); return 0; }  //~ ERROR GTI-S2003 Cannot initialize 'implicit' //~ ERROR GTI-S2014

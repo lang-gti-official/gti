@@ -1,0 +1,5 @@
+// Constexpr string view inspection: runtime text cannot be inspected in a required constant context.
+uint64_t inspect(std::string_view text) {
+  constexpr uint64_t size = text.size();  //~ ERROR GTI-S2057
+  return size;
+}

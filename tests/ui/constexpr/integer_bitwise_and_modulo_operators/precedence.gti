@@ -1,0 +1,7 @@
+// Integer bitwise and modulo operators: bitwise operators follow C++ precedence, modulo and shifts integrate with arithmetic precedence, and ~ binds as a unary operator.
+//@ check-pass
+static_assert((1 | 2 ^ 3 & 4) == 3);
+static_assert(1 < 2 << 3 + 4 % 2);
+static_assert((2 << 3 + 4 % 2) == 16);
+static_assert(~1 * 2 == -4);
+int main() { return 0; }

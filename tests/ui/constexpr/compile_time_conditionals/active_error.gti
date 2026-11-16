@@ -1,0 +1,21 @@
+// Compile time conditionals: an active #error reports its source message once at each site (declaration, member and block contexts).
+//@ target: x86_64-pc-windows-msvc
+#if target.os == "windows"
+#error "This target is not supported."  //~ ERROR GTI-S2047 This target is not supported.
+#endif
+
+class PlatformState {
+#if target.os == "windows"
+#error "PlatformState is unavailable on this target."  //~ ERROR GTI-S2047
+#endif
+  int value = 1;
+public:
+  PlatformState() = default;
+};
+
+int main() {
+#if target.os == "windows"
+#error "No entry point is available for this target."  //~ ERROR GTI-S2047
+#endif
+  return 0;
+}

@@ -1,0 +1,21 @@
+// A repeated standard import loads its module once; std::array instantiates for int, an empty extent and a class without a default constructor.
+//@ run-pass
+import std.array;
+import std.array;
+class NoDefault {
+  int value;
+public:
+  NoDefault(int value) : value(value) {}
+};
+int main() {
+  int initial[3] = {1, 2, 3};
+  mut std::array<int, 3> values = std::array<int, 3>(initial);
+  std::array<int, 0> empty_values = std::array<int, 0>();
+  NoDefault objects[1] = {NoDefault(7)};
+  std::array<NoDefault, 1> non_default = std::array<NoDefault, 1>(objects);
+  std::size_t value_count = values.size();
+  std::ptrdiff_t offset = std::ptrdiff_t(-1);
+  values[1] = 4;
+  if (value_count == 3 and offset < 0 and !values.empty() and empty_values.size() == 0 and empty_values.empty() and values.at(1) == 4) { return 0; }
+  return 1;
+}

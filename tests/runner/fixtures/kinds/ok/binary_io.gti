@@ -1,0 +1,18 @@
+// Sibling .stdin and .stdout files carry NUL and non-UTF-8 bytes exactly.
+//@ run-pass
+// --- main.gti
+extern "C" {
+  void native_echo();
+}
+int main() {
+  native_echo();
+  return 0;
+}
+// --- echo.c
+#include <stdio.h>
+void native_echo(void) {
+  int c;
+  while ((c = getchar()) != EOF)
+    putchar(c);
+  fflush(stdout);
+}

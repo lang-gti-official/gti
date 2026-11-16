@@ -1,0 +1,16 @@
+// Importing the generic enum resolves its concrete case owners.
+//@ check-pass
+// --- main.gti
+import "types.gti";
+import "api.gti";
+int main() { auto value = get(); switch (value) {
+case sample::Value<bool>::item: return 0;
+case sample::Value<bool>::none: return 0;
+} }
+// --- api.gti
+export module api;
+import "types.gti";
+export sample::Value<bool> get() { return sample::Value<bool>::item(true); }
+// --- types.gti
+export module types;
+export namespace sample { enum Value<T> { none, item(T value) }; }

@@ -1,0 +1,8 @@
+// Static assertions: an unused genuinely dependent assertion should remain a deferred semantic obligation.
+//@ check-pass
+class Unused<T, uint64_t N> {
+  static_assert(sizeof(T) == N, "instance-only invariant");
+public:
+  Unused() = default;
+};
+int main() { return 0; }

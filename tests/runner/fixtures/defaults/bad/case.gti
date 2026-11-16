@@ -1,0 +1,2 @@
+// Fails: its defaults file is invalid.
+int main() { return 0; }

@@ -1,0 +1,9 @@
+// Compile-time depth: A raised limit admits recursion deeper than the default.
+//@ check-pass
+//@ constexpr-depth: 2048
+constexpr int32_t descend(int32_t n) {
+  if (n == 0) { return 0; }
+  return descend(n - 1) + 1;
+}
+static_assert(descend(2047) == 2047);
+int main() { return 0; }

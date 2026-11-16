@@ -1,0 +1,5 @@
+// Overload failure guidance: an unrelated overload count mismatch does not invent a conversion or an unverified include.
+//@ slow
+int select(int value) { return value; }
+int select(bool value) { return 0; }
+int main() { return select(1, 2); }  //~ ERROR GTI-S2012

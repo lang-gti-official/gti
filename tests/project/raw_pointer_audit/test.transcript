@@ -1,0 +1,19 @@
+// --raw-pointer-audit publishes one GTI-S2102 for an unsafe access observed
+// both directly and through its checked owner (reproducer A44), as a warning
+// under warn and an error under strict, nothing when off, and a separate
+// finding for each distinct access with the same origin. (From
+// testRawAuditDiagnosticPublication in compiler_diagnostics_tests.cpp.)
+$ gti one_access.gti --emit-mir -o out.mir --raw-pointer-audit=warn
+stderr: $DIR/one_access.gti:15:42: warning[GTI-S2102]
+stderr: $DIR/one_access.gti:12:26: note: Raw address obtained here.
+stdout: Diagnostics: 0 errors, 1 warning
+$ gti one_access.gti --emit-mir -o out.mir --raw-pointer-audit=strict
+? 65
+stderr: $DIR/one_access.gti:15:42: error[GTI-S2102]
+stdout: Diagnostics: 1 error, 0 warnings
+$ gti one_access.gti --emit-mir -o out.mir
+stdout: Diagnostics: 0 errors, 0 warnings
+$ gti two_accesses.gti --emit-mir -o out.mir --raw-pointer-audit=warn
+stderr: $DIR/two_accesses.gti:15:42: warning[GTI-S2102]
+stderr: $DIR/two_accesses.gti:16:47: warning[GTI-S2102]
+stdout: Diagnostics: 0 errors, 2 warnings

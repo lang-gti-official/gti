@@ -1,0 +1,5 @@
+// Characters and string views: invalid character widths, escapes and termination get focused lexical diagnostics.
+//@ parse-fail
+char empty = ''; char many = 'ab'; char escape = '\q';  //~ ERROR GTI-L0010 //~ ERROR GTI-L0010 //~ ERROR GTI-L0005
+char open = 'x  //~ ERROR GTI-L0009
+int after = 0;  //~ ERROR GTI-P0001

@@ -1,0 +1,10 @@
+// Advisory diagnostics: a mutable payload borrow requires its enum owner's mut qualifier and must not offer an invalid removal fix.
+//@ check-pass
+enum class Data { some(int item), none };
+int main() {
+  mut Data input = Data::some(3);
+  switch (input) {
+    case Data::some(mut auto& item): item = 7; return item;
+    case Data::none: return 0;
+  }
+}

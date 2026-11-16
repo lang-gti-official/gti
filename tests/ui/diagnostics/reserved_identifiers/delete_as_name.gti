@@ -1,0 +1,4 @@
+// delete is reserved for = delete special-member policy outside it.
+//@ parse-fail
+int delete = 1;  //~ ERROR GTI-P0002 'delete' is reserved for '= delete' special-member policy and cannot be used as a GTI identifier.
+int recovered = 2;

@@ -1,0 +1,14 @@
+// A program that dies of another signal than exit-signal names fails.
+//@ run-fail
+//@ exit-signal: SIGSEGV
+// --- main.gti
+extern "C" {
+  void native_abort();
+}
+int main() {
+  native_abort();
+  return 0;
+}
+// --- abort.c
+#include <stdlib.h>
+void native_abort(void) { abort(); }

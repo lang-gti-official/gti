@@ -1,0 +1,2 @@
+// Logical operator spellings: symbolic logical operators use the existing operand diagnostic.
+int main() { if (1 && true) { return 0; } return 1; }  //~ ERROR GTI-S2003 Logical operands must be bool.

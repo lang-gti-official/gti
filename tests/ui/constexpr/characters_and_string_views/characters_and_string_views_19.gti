@@ -1,0 +1,3 @@
+// Characters and string views: character conversion must preserve the shared constant-evaluation budget.
+//@ constexpr-steps: 32
+constexpr int slow() { mut int n = 0; while (n < 1000) { n++; } return 65; } char value = char(slow());  //~ ERROR GTI-S2014
