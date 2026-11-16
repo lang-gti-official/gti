@@ -1344,10 +1344,6 @@ if(TARGET gti_lsp)
   add_test(NAME compile_limits
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compile_limits_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
   set_tests_properties(compile_limits PROPERTIES TIMEOUT 240)
-  add_test(NAME raw_pointer_conversion_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_conversion_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  add_test(NAME raw_pointer_provenance_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_provenance_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 endif()
 
 add_executable("gti_layout_query_tests" "${PROJECT_SOURCE_DIR}/tests/layout_query_tests.cpp")
@@ -5224,10 +5220,6 @@ if(Python3_Interpreter_FOUND)
                      "${PROJECT_SOURCE_DIR}/tests/diagnostic_recovery_lsp_test.py"
                      "$<TARGET_FILE:gti_lsp>")
     set_tests_properties(diagnostic_recovery_lsp PROPERTIES TIMEOUT 60)
-    add_test(NAME cthread_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/cthread_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
     add_test(NAME generic_advisory_lsp
              COMMAND "${Python3_EXECUTABLE}"
                      "${PROJECT_SOURCE_DIR}/tests/generic_advisory_lsp_test.py"

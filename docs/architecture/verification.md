@@ -6455,7 +6455,7 @@ type calls, source-defined erasure/restoration helpers, constness, forbidden
 integer/unrelated-pointer conversions, known pointee facts through aggregates,
 calls and loop backedges, expired origins and the separate unsafe-access rule.
 Its seven MIR mutations reject forged operand shape, constness, pointee type,
-loan, access and raw-memory claims. `raw_pointer_conversion_lsp` checks
+loan, access and raw-memory claims. `tests/lsp/audit/pointer_*` checks
 source-located UTF-16 diagnostics, related type provenance, alias-call
 definition identity and invalid-to-valid recovery. The historical runtime
 matrix passed
@@ -6553,7 +6553,7 @@ the compiler stack. These are integration checks, not new constexpr features.
 explicit and inferred pointer bindings, reseating, copies and branch joins;
 moved owners; raw array aliasing; raw mutable receiver calls; and checked-loan
 conflicts before versus after their ordinary last-use endpoints. The
-`raw_pointer_provenance_lsp` protocol test verifies the same lifetime error,
+`tests/lsp/audit` (`pointer_provenance_*`, `lifetime_contract_queries`) protocol test verifies the same lifetime error,
 the original address's related location, UTF-16 positions, invalid-source
 recovery and clearing on subsequent document generations. These checks cover
 local provenance; the source-result and owner-witness gates below cover the
@@ -9578,7 +9578,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `cthread_runtime` | real C-style yield; stable initial/managed/manual identities, exact create-handle equality and non-joinable observed identities; total source-defined equality; both profiles, atomic/join composition, exact yield native-call retention, and verified-MIR witnesses at O0/O1/O3 under C++20/C++23 plus ASan/UBSan and TSAN; no timing or fairness oracle |
 | `cthread_runtime_boundary` / `cthread_runtime_firewall` | source-private create/join and identity: non-reused identities across initial/manual and 128 concurrently/sequentially observed foreign threads, stable identity before entry and after leave/shutdown, no identity-derived join or callback permission, exact integer-result and ordinary-write publication, repeated/nested/self/competing joins, injected recoverable failures, exact once-only callback attachment, foreign-thread rejection, initial-thread-owned in-flight shutdown, and exact native-exception/incomplete-entry terminal outcomes |
 | `cthread_sleep_boundary` / `cthread_sleep_runtime` | scalar duration validation, zero/positive sleep, real host interruption, normalized bounded remaining time, invalid native output pairs, exact interruption-only publication, safe and unsafe input/output aliasing, null handling, and managed/manual worker composition; actual native runtime plus 24 public GTI executions across C++20/C++23 O0/O1/O3 and ASan/UBSan/TSAN, with ordinary verified-MIR native-call witnesses and no elapsed-time threshold |
-| `cthread_semantic_ir` / `cthread_create_join_runtime` / `cthread_lsp` | public unsafe create/join and mutex profile/target admission, registered callback entry, hosted runtime lifecycle, exact native synchronization and verifier mutations; integer results and retained context publication, owned-argument entry, failure cleanup, initial/foreign entry rejection and outstanding-handle termination at C++20/C++23 O0/O1/O3 plus sanitizer modes; shared editor diagnostics and selected create/join/mutex wrapper hover/definition |
+| `cthread_semantic_ir` / `cthread_create_join_runtime` / `tests/lsp/concurrency` | public unsafe create/join and mutex profile/target admission, registered callback entry, hosted runtime lifecycle, exact native synchronization and verifier mutations; integer results and retained context publication, owned-argument entry, failure cleanup, initial/foreign entry rejection and outstanding-handle termination at C++20/C++23 O0/O1/O3 plus sanitizer modes; shared editor diagnostics and selected create/join/mutex wrapper hover/definition |
 | `cthread_mutex_boundary` / `cthread_mutex_runtime` | plain/recursive/timed mutexes, preserved initialization outputs and injected allocation failure, stale identities, wrong-thread and recursive ownership, blocked and timed acquisitions, failed-wakeup handoff to another waiter, exact deadline bounds, busy/timeout non-acquisition, in-flight destruction rejection and terminal C/GTI violations; four-worker ordinary-data publication, 24 public GTI executions plus actual runtime and terminal tests in eight C++20/C++23 O0/O1/O3 and ASan/UBSan/TSAN configurations; no fairness or elapsed-time threshold |
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
@@ -10111,7 +10111,7 @@ matrix includes 72 public program executions at C++20/C++23 O0/O1/O3 plus
 ASan/UBSan and TSAN, including immutable tagged globals, manual contention,
 managed workers, nested distinct flags, null and foreign-entry rejection, and
 cleanup before terminal defined failure. A post-success failure separately
-proves managed handoff is restored. `cthread_semantic_ir` and `cthread_lsp`
+proves managed handoff is restored. `cthread_semantic_ir` and `tests/lsp/concurrency`
 retain exact callback roles, unsafe/profile diagnostics, and shared declaration
 selection. Fresh immobile values and passive argument snapshots are explicit
 regressions, not C++ copy-elision assumptions.
@@ -10128,7 +10128,7 @@ runtime matrix builds the actual native implementation and runs 24 public GTI
 programs across C++20/C++23 O0/O1/O3 plus ASan/UBSan and TSAN. The public client
 alternates two manual workers through predicate loops for 200 protected
 updates. `cthread_semantic_ir` mutates every private declaration identity and
-signature plus wait synchronization/order facts; `cthread_lsp` checks selected
+signature plus wait synchronization/order facts; `tests/lsp/concurrency` checks selected
 wait declarations and shared unsafe/profile diagnostics. The installed C
 consumer calls all six condition ABI entries. No elapsed-time threshold or
 scheduler-fairness assumption is a correctness oracle.
