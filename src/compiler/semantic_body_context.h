@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace lang {
@@ -67,15 +68,25 @@ public:
 
   // Starts tracking `declaration` in `state` (Deferred or HeldBack). Tracking
   // order is the resolution order, so it follows declaration order.
-  void track(const FunctionDecl &declaration, BodyKey key, BodyState state) {
+  // `compileTime`: a constexpr or procedural definition (see
+  // compileTimeBodies).
+  void track(const FunctionDecl &declaration, BodyKey key, BodyState state,
+             bool compileTime) {
     const auto [entry, inserted] = entries.try_emplace(
         &declaration, Entry{.key = key, .state = state, .order = nextOrder});
     if (!inserted)
       return;
     ++nextOrder;
     keys.emplace(key, &declaration);
+    if (compileTime)
+      trackedCompileTime.push_back(&declaration);
     if (state != BodyState::Analysed)
       ++unfinished;
+  }
+  // The tracked constexpr and procedural definitions, in tracking order.
+  [[nodiscard]] const std::vector<const FunctionDecl *> &
+  compileTimeBodies() const {
+    return trackedCompileTime;
   }
   // Whether any tracked body is not final yet; with none, nothing in this
   // context can need one.
@@ -124,6 +135,11 @@ public:
   // Revision advances whenever a pending body becomes Analysed, so an
   // attempt that began at an older revision may now succeed.
   [[nodiscard]] std::uint64_t revision() const { return currentRevision; }
+  // Advances only when a constexpr or procedural body becomes Analysed: a
+  // staged-evaluation snapshot depends on no other body.
+  [[nodiscard]] std::uint64_t compileTimeRevision() const {
+    return currentCompileTimeRevision;
+  }
 
   void markInProgress(const FunctionDecl &declaration) {
     const auto found = entries.find(&declaration);
@@ -131,12 +147,16 @@ public:
       found->second.state = BodyState::InProgress;
   }
   // Returns whether the body was pending or in progress before.
-  bool markAnalysed(const FunctionDecl &declaration) {
+  // `compileTime`: the body is a constexpr or procedural definition, whose
+  // facts a staged evaluation's closure may execute (compileTimeRevision).
+  bool markAnalysed(const FunctionDecl &declaration, bool compileTime) {
     const auto found = entries.find(&declaration);
     if (found == entries.end() || found->second.state == BodyState::Analysed)
       return false;
     found->second.state = BodyState::Analysed;
     ++currentRevision;
+    if (compileTime)
+      ++currentCompileTimeRevision;
     --unfinished;
     return true;
   }
@@ -163,6 +183,7 @@ public:
     forked->owner = child;
     forked->recordedNeeds.clear();
     forked->openAttempts.clear();
+    forked->requestedBodies.clear();
     forked->resolvingAttempts = 0;
     return forked;
   }
@@ -191,7 +212,19 @@ public:
     // it ends clean (see commitWrites), so a result computed while a needed
     // body was unavailable never enters a cache.
     std::vector<std::function<void()>> writes;
+    // Bodies a reader requested without needing them (see noteRequested).
+    std::vector<const FunctionDecl *> requested;
   };
+  // A closed attempt that stands (clean, or kept with its needs passed on)
+  // carries its requests to the enclosing attempt or the request; a
+  // discarded attempt's requests are dropped with it, and its repeat makes
+  // them again.
+  void carryRequests(const AttemptNeeds &attempt) {
+    for (const FunctionDecl *body : attempt.needs)
+      noteRequested(*body);
+    for (const FunctionDecl *body : attempt.requested)
+      noteRequested(*body);
+  }
   // A write to a cache that outlives the current attempt: journaled in the
   // innermost open attempt, or performed now when none is open.
   void write(std::function<void()> cacheWrite) {
@@ -200,17 +233,43 @@ public:
     else
       openAttempts.back()->writes.push_back(std::move(cacheWrite));
   }
-  // A closed attempt that ended clean passes its writes to the enclosing
-  // attempt, or performs them.
+  // A closed attempt that ended clean performs its writes now. Every need
+  // raised while it was open was recorded in it (it was the innermost open
+  // attempt), so its result depended on no unavailable body; an enclosing
+  // attempt that is later discarded or repeated for its own needs (late
+  // demand of a consulted body, say) cannot have changed that result.
+  // Deferring the write to the enclosing attempt instead hides it from every
+  // later evaluation in the same attempt and drops it when the enclosing
+  // attempt repeats, so equal closures are lowered again.
   void commitWrites(AttemptNeeds &attempt) {
     for (auto &cacheWrite : attempt.writes)
-      write(std::move(cacheWrite));
+      cacheWrite();
     attempt.writes.clear();
   }
   // Every need ever recorded in this context, monotonically. A computation
   // during which it changed depended on an unavailable body, wherever the
   // need was recorded.
   [[nodiscard]] std::uint64_t needSerial() const { return needsRecorded; }
+  // Whether a reader asked for the body before reading its facts (a need, or
+  // a request whose facts reach the reader by another route); the
+  // validation check in checkBodyFactRead reads this.
+  void noteRequested(const FunctionDecl &declaration) {
+    if (openAttempts.empty())
+      requestedBodies.insert(&declaration);
+    else
+      openAttempts.back()->requested.push_back(&declaration);
+  }
+  [[nodiscard]] bool requested(const FunctionDecl *declaration) const {
+    if (requestedBodies.contains(declaration))
+      return true;
+    for (const AttemptNeeds *attempt : openAttempts)
+      if (std::find(attempt->needs.begin(), attempt->needs.end(),
+                    declaration) != attempt->needs.end() ||
+          std::find(attempt->requested.begin(), attempt->requested.end(),
+                    declaration) != attempt->requested.end())
+        return true;
+    return false;
+  }
   void openAttempt(AttemptNeeds &attempt) {
     openAttempts.push_back(&attempt);
     if (attempt.resolving)
@@ -259,12 +318,15 @@ private:
   std::unordered_map<const FunctionDecl *, Entry> entries;
   std::unordered_map<BodyKey, const FunctionDecl *, BodyKeyHash> keys;
   std::vector<const FunctionDecl *> recordedNeeds;
+  std::vector<const FunctionDecl *> trackedCompileTime;
   std::vector<AttemptNeeds *> openAttempts;
   std::size_t resolvingAttempts = 0;
   std::size_t unfinished = 0;
   std::uint64_t needsRecorded = 0;
+  std::unordered_set<const FunctionDecl *> requestedBodies;
   std::size_t nextOrder = 0;
   std::uint64_t currentRevision = 0;
+  std::uint64_t currentCompileTimeRevision = 0;
 };
 
 } // namespace lang

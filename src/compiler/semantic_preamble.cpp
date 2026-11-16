@@ -117,7 +117,8 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
     if (const FunctionInfo *function = semanticModel.findFunction(*declaration))
       requestSession.bodyContext->track(
           *declaration, {.kind = BodyKind::Function, .id = function->id},
-          BodyState::HeldBack);
+          BodyState::HeldBack,
+          declaration->isConstexpr() || declaration->isProceduralMacro());
   requestSession.stagedConstants = std::make_shared<StagedConstantResults>();
   requestSession.stagedConstants->enabled = reuseConstantEvaluations;
   requestSession.programConcreteEffects =
@@ -332,7 +333,9 @@ auto SemanticVisitor::Impl::reachPreambleBodies(
         requestSession.bodyContext != nullptr &&
         requestSession.bodyContext->state(declaration) == BodyState::HeldBack) {
       assert(ownsBodyContext());
-      requestSession.bodyContext->markAnalysed(*declaration);
+      requestSession.bodyContext->markAnalysed(
+          *declaration,
+          declaration->isConstexpr() || declaration->isProceduralMacro());
       reached.push_back(declaration);
     }
   };

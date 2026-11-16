@@ -938,8 +938,10 @@ and `constexpr` visibility across a demand, and mutually recursive demands.
 builds and editor snapshots/completion. Function lookups during body analysis
 record demand in a scoped sink. Deferred trusted functions are analyzed to a
 fixed point, in their original declaration contexts. Declaration registration,
-all application/package bodies, entry-file bodies, constant definitions and
-virtual/interface instance methods remain checked. Ordinary static interface
+all application/package bodies, entry-file bodies and virtual/interface
+instance methods remain checked. Trusted constexpr definitions are deferred
+like other trusted bodies and are demanded by the compile-time path that needs
+them (see "Compile-Time Body Demand" below). Ordinary static interface
 helpers follow the same demand rules as other static functions. Constructors and destructors are not
 deferred. The only cross-snapshot semantic reuse is the bounded reuse of
 concrete instance analyses described under "Instance Reuse Across Snapshots";
@@ -987,6 +989,47 @@ cannot change emitted identities or macro isolation. This deliberately costs
 an additional analysis only when an optional audit is requested.
 This bounded staging avoids unchecked code generation without
 claiming that all generic dependencies are known from declaration-time calls.
+
+#### Compile-Time Body Demand
+
+Constant evaluation, concept and expression requirements, conformance
+operations and procedural macros read body-derived facts of the functions they
+reach, which may be deferred trusted bodies (#398). Readiness is one table per
+body-analysis context, `BodyContext` (`semantic_body_context.h`), keyed by
+body kind and id: a body is `Analysed`, `InProgress`, `Deferred` or `HeldBack`
+(analysed in an adopted preamble, not yet reached). The request's root
+analyzer owns its context; the program-effect worker, which completes bodies
+in a private context of its own, owns a fork and hands back what it could not
+meet; every other worker shares its creator's. Only an owner changes a state.
+
+- A compile-time path asks `requireBody`. The owner, in the body phase and
+  outside instance analysis, makes a pending body final in place (analysing a
+  deferred body or reaching a held-back one); anywhere else the need is
+  recorded and the facts are unavailable.
+- A query or staged evaluation runs as an attempt (`withBodyDemands`). Its
+  needs are the ones recorded while it is open, by any analyzer sharing the
+  context, plus the pending constexpr and procedural bodies it looked up
+  (recorded through a lookup recorder every model of the request shares). An
+  attempt with none is clean. A resolving attempt restores one
+  `AttemptCheckpoint` (diagnostics, constexpr steps and exhaustion,
+  requirement-query work, the native-layout mark), completes its needs in
+  declaration order and repeats, bounded; otherwise its needs pass to the
+  enclosing attempt, or to the request. While a resolving attempt is open a
+  sharing worker records a pending body instead of analysing it privately.
+  Concrete instance analysis after the body phase (`withLateDemand`) runs on
+  the same scope, with late demand and preamble reach as its resolvers.
+- Caches stay sound. Staged results and closures are journaled in the open
+  attempt and written only when it ends clean; class-assertion outcomes,
+  preamble concept proofs, program-effect results and retained instance
+  analyses are not recorded when a need arose while computing them. Staged
+  result keys count pending constexpr definitions as available, so demanding
+  one does not change a key; lowering uses only completed definitions.
+- A request that still has a need, valid or not, is repeated by the frontend
+  with those bodies required, before and after concrete discovery, under the
+  late-demand round bound. The trusted-body parity tests assert that the
+  example corpus, with and without a preamble, needs no such round.
+- `FrontendOptions::deferConstexprBodies = false` keeps constexpr definitions
+  eager; it exists so tests can compare both on one binary.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.

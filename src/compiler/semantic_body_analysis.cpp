@@ -4084,7 +4084,7 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
           stmt,
           {.kind = BodyKind::Function,
            .id = functionInfo == nullptr ? 0 : functionInfo->id},
-          BodyState::Deferred);
+          BodyState::Deferred, stmt.isConstexpr() || stmt.isProceduralMacro());
     deferredBodyIndex.emplace(&stmt, deferredBodies.size());
     deferredBodies.push_back(
         {.declaration = &stmt,
@@ -4281,7 +4281,8 @@ auto SemanticVisitor::Impl::analyzeFunctionBody(
     constexprDefinitionsAnalyzed.insert(&stmt);
   }
   if (completesTrackedBody)
-    requestSession.bodyContext->markAnalysed(stmt);
+    requestSession.bodyContext->markAnalysed(
+        stmt, stmt.isConstexpr() || stmt.isProceduralMacro());
   --functionDepth;
   currentReceiverMutability = enclosingReceiverMutability;
   loanFlow = std::move(enclosingLoanFlow);
@@ -4337,10 +4338,9 @@ auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
       !stmt.isStatic()) {
     return false;
   }
-  // The language requires a constexpr definition to be analysed before a
-  // constant-evaluated call to it; deferral would break that rule. The
-  // test-only deferConstexprBodies option defers them anyway, to compare
-  // eager and deferred constexpr bodies on one binary (#398).
+  // A constexpr definition must be analysed before a constant-evaluated call
+  // executes it; the compile-time path that reaches a deferred one demands it
+  // (requireBody, withBodyDemands). Tests may keep them eager to compare.
   if (stmt.isConstexpr() && !deferConstexprBodies) {
     return false;
   }
@@ -4970,11 +4970,14 @@ auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
     // Recursion: the facts are unavailable exactly as for a body analysed in
     // place, and completing the body cannot change that for this caller, so
     // it is not a need.
+    context->noteRequested(*declaration);
     return BodyReadiness::Unavailable;
   case BodyState::Deferred:
   case BodyState::HeldBack:
     break;
   }
+  // The reader asked first, whatever the answer (checkBodyFactRead).
+  context->noteRequested(*declaration);
   // A worker that analysed the body privately (outside any resolving
   // attempt; see ensureBodyAnalyzed) has its facts for its own use.
   if (!context->ownedBy(this) && analyzedBodies.contains(declaration) &&
@@ -4985,7 +4988,11 @@ auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
     if (context->state(declaration) == BodyState::Analysed)
       return BodyReadiness::Ready;
   }
-  context->need(*declaration);
+  // Only a body whose facts a compile-time path consumes is a need here; an
+  // ordinary deferred callee's facts reach concrete analysis through the
+  // demanded-function record and late demand, which repeat the instance.
+  if (declaration->isConstexpr() || declaration->isProceduralMacro())
+    context->need(*declaration);
   return BodyReadiness::Unavailable;
 }
 
@@ -5002,8 +5009,7 @@ auto SemanticVisitor::Impl::checkBodyFactRead(const FunctionDecl *body,
   if (context == nullptr || body == nullptr ||
       context->state(body) != BodyState::Deferred)
     return;
-  const auto &needs = context->needs();
-  if (std::find(needs.begin(), needs.end(), body) != needs.end())
+  if (context->requested(body))
     return;
   // An instance analysis that consulted the function is repeated by late
   // demand once the body is complete (withLateDemand).
@@ -5054,8 +5060,8 @@ auto SemanticVisitor::Impl::pendingConstexprDefinitions() const
   std::vector<const FunctionDecl *> pending;
   if (const auto &context = requestSession.bodyContext;
       context != nullptr && context->anyUnfinished())
-    for (const FunctionDecl *body : context->unfinishedBodies())
-      if ((body->isConstexpr() || body->isProceduralMacro()) &&
+    for (const FunctionDecl *body : context->compileTimeBodies())
+      if (context->state(body) != BodyState::Analysed &&
           !constexprDefinitionsAnalyzed.contains(body))
         pending.push_back(body);
   return pending;

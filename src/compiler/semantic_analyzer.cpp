@@ -78,6 +78,10 @@ bool SemanticVisitor::lateDemandFailed() const {
   return impl->lateDemandFailed;
 }
 
+std::vector<const FunctionDecl *> SemanticVisitor::unmetBodyDemands() const {
+  return impl->unmetBodyDemandList();
+}
+
 std::vector<const FunctionDecl *> SemanticVisitor::lateDemandedBodies() const {
   return impl->lateDemandedBodies;
 }

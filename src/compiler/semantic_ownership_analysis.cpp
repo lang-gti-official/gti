@@ -5194,6 +5194,7 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;
+  const std::uint64_t needsBefore = bodyNeedSerial();
   const auto analysis =
       key.kind == InstanceAnalysisKind::Constructor
           ? worker->analyzeConstructorInstance(key.declaration, key.classTypes,
@@ -5229,6 +5230,13 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   state->idleCatalogs.push_back(std::move(worker->catalog));
   entry->complete = true;
   --state->depth;
+  // A summary computed while a needed body was unavailable answers this
+  // query only; it is not kept for later ones.
+  if (bodyNeedSerial() != needsBefore) {
+    const auto result = entry->result;
+    state->entries.erase(key);
+    return result;
+  }
   state->completed.push_back(key);
   while (state->completed.size() >
          CompleteReturnQueryState::maximumRetainedResults) {

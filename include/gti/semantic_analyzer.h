@@ -178,6 +178,9 @@ public:
   // must discard this analysis and require the returned bodies instead.
   [[nodiscard]] bool lateDemandFailed() const;
   [[nodiscard]] std::vector<const FunctionDecl *> lateDemandedBodies() const;
+  // Deferred bodies a compile-time path needed where they could not be made
+  // available; a Reachable request repeats with them required (#398).
+  [[nodiscard]] std::vector<const FunctionDecl *> unmetBodyDemands() const;
 
 private:
   class Impl;

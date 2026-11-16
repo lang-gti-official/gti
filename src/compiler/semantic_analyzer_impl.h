@@ -282,9 +282,9 @@ public:
   // FrontendOptions::reuseConstantEvaluations; workers share the request's
   // StagedConstantResults, which carries it.
   bool reuseConstantEvaluations = true;
-  // FrontendOptions::deferConstexprBodies (test-only): reachableDeferrable
-  // accepts trusted constexpr definitions too.
-  bool deferConstexprBodies = false;
+  // FrontendOptions::deferConstexprBodies: reachableDeferrable accepts
+  // trusted constexpr definitions too.
+  bool deferConstexprBodies = true;
   bool analysisCancelled = false;
   void throwIfCancelled() const {
     if (cancellation != nullptr &&
@@ -484,6 +484,12 @@ public:
   };
   // Set once the complete request (body phase and finalization) is done.
   bool lateDemandReady = false;
+  // Needs left for the request (see SemanticVisitor::unmetBodyDemands).
+  [[nodiscard]] std::vector<const FunctionDecl *> unmetBodyDemandList() const {
+    return requestSession.bodyContext == nullptr
+               ? std::vector<const FunctionDecl *>{}
+               : requestSession.bodyContext->outstandingNeeds();
+  }
   // A late batch broke an equivalence condition after analysing; the
   // analysis must be repeated with lateDemandedBodies required.
   bool lateDemandFailed = false;
@@ -623,6 +629,8 @@ public:
         for (const FunctionDecl *body : needed)
           if (context->pending(body))
             context->need(*body);
+        if (context != nullptr)
+          context->carryRequests(needs);
         lateDemandResultClean = needed.empty();
         if (lateDemandResultClean && context != nullptr)
           context->commitWrites(needs);
@@ -8086,6 +8094,7 @@ private:
     const bool resolving = bodyDemandResolving();
     for (std::size_t round = 0;; ++round) {
       const AttemptCheckpoint checkpoint = captureAttemptCheckpoint();
+      const std::uint64_t startRevision = context->revision();
       BodyContext::AttemptNeeds needs{.resolving = resolving};
       std::unordered_set<FunctionId> lookups;
       auto result = [&] {
@@ -8094,11 +8103,15 @@ private:
       }();
       const std::vector<const FunctionDecl *> outstanding =
           attemptOutstandingNeeds(*context, needs, lookups);
-      if (outstanding.empty()) {
+      // Any recorded need taints the attempt, even one a nested attempt made
+      // available meanwhile: this result was computed without the body.
+      if (outstanding.empty() && needs.needs.empty()) {
         context->commitWrites(needs);
+        context->carryRequests(needs);
         return result;
       }
       const auto passOn = [&] {
+        context->carryRequests(needs);
         for (const FunctionDecl *body : outstanding)
           if (context->pending(body))
             context->need(*body);
@@ -8118,10 +8131,9 @@ private:
           std::make_move_iterator(diagnostics.end()));
       diagnostics.resize(checkpoint.diagnostics);
       restoreAttemptCheckpoint(checkpoint);
-      const std::uint64_t revision = context->revision();
       for (const FunctionDecl *body : outstanding)
         resolveBody(body);
-      if (context->revision() != revision)
+      if (context->revision() != startRevision)
         continue;
       // Nothing became available: keep the attempt as it was.
       diagnostics.insert(diagnostics.end(),

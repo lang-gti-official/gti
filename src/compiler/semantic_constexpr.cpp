@@ -814,7 +814,9 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     constructors += declaredBeforeCurrent(definition) ? 1 : 0;
   const bool reanalysis = concreteReanalysis();
   const std::uint64_t bodyRevision =
-      requestSession.bodyContext ? requestSession.bodyContext->revision() : 0;
+      requestSession.bodyContext
+          ? requestSession.bodyContext->compileTimeRevision()
+          : 0;
   StagedWorker &worker = stagedWorker;
   if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
       worker.declarationOrder != currentDeclarationOrder ||
@@ -995,7 +997,23 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const GenericSubstitution &substitution,
     const std::optional<ConstantValue> &receiver, const Token &callSite,
     ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+  // The evaluation charges its interpreter's budget, which is not always the
+  // request's (see AttemptCheckpoint): a repeat starts from what the first
+  // attempt found.
+  std::optional<
+      std::pair<std::size_t, std::optional<ConstexprWorkBudget::Exhaustion>>>
+      budgetAtStart;
   return withBodyDemands([&] {
+    // The request's own budget is restored by the attempt's checkpoint.
+    if (context.work != nullptr &&
+        context.work != requestSession.constexprWork) {
+      if (budgetAtStart) {
+        context.work->steps = budgetAtStart->first;
+        context.work->exhaustion = budgetAtStart->second;
+      } else {
+        budgetAtStart.emplace(context.work->steps, context.work->exhaustion);
+      }
+    }
     return executeStagedConstexprOnce(selected, arguments, substitution,
                                       receiver, callSite, context);
   });
