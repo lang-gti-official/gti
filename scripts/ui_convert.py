@@ -103,7 +103,7 @@ def main() -> int:
         return str(offset + index + 1)
 
     offset = 0 if arguments.section else len(header)
-    header = [re.sub(r"\{line:([^}]*)\}", line_of, line) for line in header]
+    header = [re.sub(r"\{line:(.*?)\}(?=:|\s|$)", line_of, line) for line in header]
     # `{src:N}` is line N of the source program, shifted below the header.
     header = [re.sub(r"\{src:(\d+)\}", lambda m: str(offset + int(m.group(1))), line)
               for line in header]

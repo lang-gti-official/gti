@@ -60,7 +60,9 @@ def remove_calls(text: str, name: str) -> tuple[str, int]:
 
 
 def remove_list_word(text: str, name: str) -> str:
-    """Drop a bare list item (a CMake list word or a quoted TOML string)."""
+    """Drop a bare list item (a CMake list word or a quoted TOML string),
+    with the number that pairs with it in a `name value` list."""
+    text = re.sub(r"(?m)^[ \t]*" + re.escape(name) + r"[ \t]+\d+[ \t]*\n", "", text)
     text = re.sub(r"(?m)^[ \t]*\"" + re.escape(name) + r"\",?[ \t]*\n", "", text)
     text = re.sub(r"(?m)^[ \t]*" + re.escape(name) + r"[ \t]*\n", "", text)
     text = re.sub(r"(?<=[ \t])" + re.escape(name) + r"(?=[ \t\n)])[ \t]?", "", text)

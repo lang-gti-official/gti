@@ -3466,13 +3466,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(declaration_construction_runtime PROPERTIES TIMEOUT 600)
   add_test(
-    NAME implicit_return_construction_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/implicit_return_construction_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(implicit_return_construction_runtime PROPERTIES TIMEOUT 600)
-  add_test(
     NAME conversion_operators_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/conversion_operators_runtime_test.py"
@@ -4616,13 +4609,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(polymorphic_owner_cleanup_runtime PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME polymorphic_constructor_rollback_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/polymorphic_constructor_rollback_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(polymorphic_constructor_rollback_runtime PROPERTIES TIMEOUT 180)
   add_test(
     NAME interface_static_runtime
     COMMAND "${Python3_EXECUTABLE}"

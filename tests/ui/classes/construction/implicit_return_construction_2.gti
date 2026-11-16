@@ -1,3 +1,12 @@
+// One return conversion matches explicit construction, ownership and failure (phase 2)
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: main.gti:65: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@ stdout: 88
+//@ stdout: 8
+//@ stdout: -8
+//@ stdout: -88
+//@ args: phase phase
 // Return initialization is the same selected call as explicit construction.
 import std.meta;
 import std.optional;
