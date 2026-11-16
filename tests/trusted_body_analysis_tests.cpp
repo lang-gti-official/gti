@@ -1448,7 +1448,7 @@ int main(int argc, char *argv[]) {
   std::vector<std::filesystem::path> entries;
   bool measure = false;
   // The budget cases are costly, so the corpus partitions leave them to the
-  // `--fixtures` run (trusted_body_analysis_0), which runs them with
+  // `--fixtures` run (trusted_body_analysis_fixtures), which runs them with
   // trusted constexpr definitions deferred and checks that deferral adds no
   // staging work. `--eager-constexpr-bodies` repeats them with constexpr
   // definitions analysed eagerly.

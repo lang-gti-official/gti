@@ -1,0 +1,3 @@
+// parse-pass accepts a program that only analysis would reject.
+//@ parse-pass
+int main() { return undefined_name; }

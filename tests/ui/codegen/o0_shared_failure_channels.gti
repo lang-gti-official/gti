@@ -1,0 +1,48 @@
+// At -O0, failure records whose failures are never in flight together share
+// failure channels: the recursive `parse` frame reserves three, not one per
+// fallible call (issue #397; from llvm_hosted_execution_test.py).
+//@ snapshot: llvm-ir
+// CHECK: define {{.*}} ; parse
+// CHECK: alloca %gti.failure_channel.v1
+// CHECK: alloca %gti.failure_channel.v1
+// CHECK: alloca %gti.failure_channel.v1
+// CHECK-NOT: alloca %gti.failure_channel.v1
+// CHECK: {{^}}}
+import std.string;
+import std.vector;
+
+struct Node {
+  std::size_t depth;
+  std::size_t width;
+  Node(std::size_t depth, std::size_t width) : depth(depth), width(width) {}
+};
+
+std::string label(std::size_t n) {
+  mut std::string out{};
+  out.append("n");
+  return out;
+}
+
+Node parse(std::vector<std::string>& names, std::size_t depth) {
+  mut std::size_t width = 0;
+  for (std::string& name : names) {
+    std::string a = label(depth);
+    std::string b = label(width);
+    Node probe = Node(a.size(), b.size() + name.size());
+    width = width + probe.width;
+  }
+  std::string tail = label(depth);
+  Node first = Node(depth, tail.size());
+  if (depth == 0) { return first; }
+  Node inner = parse(names, depth - std::size_t(1));
+  std::string c = label(inner.depth);
+  return Node(inner.depth + std::size_t(1), width + c.size());
+}
+
+int main() {
+  mut std::vector<std::string> names{};
+  names.push_back(std::string("a"));
+  names.push_back(std::string("bb"));
+  Node n = parse(names, std::size_t(1000));
+  return int32_t(n.depth % std::size_t(7));
+}

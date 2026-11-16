@@ -1,0 +1,36 @@
+function sum
+mir-body-v93
+body kind=3 domain=#1 entry=bb1 return=type(4;pointer-access=1)
+ places 2
+  p1 binding=3 symbol=#1 type=type(4;pointer-access=1) traits(0,0,1,1,1,1,0,1,1,2) source=v0 key=key(domain=#1;root=#1) initially-available=1
+  p2 binding=4 symbol=#2 type=type(4;pointer-access=1) traits(0,0,1,1,1,1,0,1,1,2) source=v0 key=key(domain=#1;root=#2) initially-available=1
+ loans 0
+ full-expressions 1
+  full-expression1 hir=#1 statement=2 roots=[9]
+ cleanup-boundaries 0
+ drops 0
+ failure-records 1
+  fail1 kind=producer producer=bb1:i3 parameter=bb3
+ program-constant-substitutions 0
+ range-iterations 0
+ values 3
+  %1 source=v7 info(type(4;pointer-access=1),category=1,traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i1 dependency-set=absent
+  %2 source=v8 info(type(4;pointer-access=1),category=1,traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i2 dependency-set=absent
+  %3 source=v9 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i3 dependency-set=absent
+ blocks 3
+  bb1 reachable=1 failure-parameter=fail0 active-failure=fail0
+    i1 load hir-value=#1 call-input-kind=value result=1 operands=[operand(3;place=1;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) ownership=event(place=key(domain=#1;root=#1);before=2;after=2;reachable=1) info(type(4;pointer-access=1),category=1,traits(0,0,1,1,1,1,0,1,1,2))
+    i2 load hir-value=#2 call-input-kind=value result=2 operands=[operand(3;place=2;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) ownership=event(place=key(domain=#1;root=#2);before=2;after=2;reachable=1) info(type(4;pointer-access=1),category=1,traits(0,0,1,1,1,1,0,1,1,2))
+    i3 compute hir-value=#3 call-input-kind=value result=3 operands=[operand(0;value=1;type=type(4;pointer-access=1)),operand(0;value=2;type=type(4;pointer-access=1))] operation=add failure-origins=[unit#1:4@140..141{1:integer_overflow:addition}] failure-sites=[1] dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    term 4 invoke=i3 failure=fail1 target=bb2 else=bb3
+  bb2 reachable=1 failure-parameter=fail0 active-failure=fail0
+    i4 lifecycle hir-value=#3 hir-statement=#1 call-input-kind=value dispatch-owner=type(0;pointer-access=1) full-expression-end=1 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    term 5 hir-statement=#1 value=operand(0;value=3;type=type(4;pointer-access=1)) invoke=i0 failure=fail0 target=bb0 else=bb0
+  bb3 reachable=1 failure-parameter=fail1 active-failure=fail1
+    term 6 invoke=i0 failure=fail1 target=bb0 else=bb0
+ uses 3
+  %1=[use(0;value=1;block=1;instruction=3)]
+  %2=[use(0;value=2;block=1;instruction=3;operand=1)]
+  %3=[use(2;value=3;block=2)]
+ source-debug=uncollected
+end-body
