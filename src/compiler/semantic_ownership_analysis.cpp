@@ -2111,7 +2111,14 @@ auto SemanticVisitor::Impl::textFieldContractFormal(
     -> std::optional<OwnerlessTextField> {
   const FunctionInfo *function = &scope;
   const Expr *current = &object;
-  while (const auto *group = exprAs<Grouping>(current)) {
+  while (current != nullptr) {
+    if (const Expr *alias = semanticModel.findExpressionAlias(*current)) {
+      current = alias;
+      continue;
+    }
+    const auto *group = exprAs<Grouping>(current);
+    if (group == nullptr)
+      break;
     if (!group->expression())
       return std::nullopt;
     current = group->expression().get();

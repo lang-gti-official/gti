@@ -16,6 +16,42 @@ SOURCE = """int main() {
 }
 """
 
+RECEIVER_SOURCE = """int invoke<F>(F& callback) { return callback(); }
+int invoke_mut<F>(mut F& callback) { return callback(); }
+
+class Counter<T> {
+  mut T value;
+public:
+  Counter(T value) : value(value) {}
+  T read() { return this.value; }
+  void increment() mut { this.value += 1; }
+  int shared() {
+    auto callback = [&this]() -> int { return this.read(); };
+    auto copy = callback;
+    return invoke(copy);
+  }
+  int exclusive() mut {
+    mut auto callback = [mut &this]() -> int {
+      this.increment();
+      this.value += 2;
+      return this.value;
+    };
+    int result = invoke_mut(callback);
+    // The receiver loan ends at the closure's last use.
+    this.value += 1;
+    return result;
+  }
+};
+
+int main() {
+  mut Counter<int> counter{4};
+  if (counter.shared() != 4) return 1;
+  if (counter.exclusive() != 7) return 2;
+  if (counter.read() != 8) return 3;
+  return 0;
+}
+"""
+
 REFERENCE_SOURCE = """int main() {
   // supplementary character: 😀
   auto increment = [](mut int& value) -> mut int& {
@@ -118,6 +154,29 @@ def main():
             clean(change(12, REFERENCE_SOURCE))
             assert change(13, REFERENCE_SOURCE.replace("-> mut int&", "-> mut"))
             clean(change(14, REFERENCE_SOURCE))
+            clean(change(15, RECEIVER_SOURCE))
+            for offset in (RECEIVER_SOURCE.index("&this") + 1,
+                           RECEIVER_SOURCE.index("return this.read") + len("return ")):
+                point = {"textDocument": {"uri": uri},
+                         "position": lsp_position(RECEIVER_SOURCE, offset)}
+                assert request("textDocument/prepareRename", point) is None
+            receiver_hover = request("textDocument/hover", {
+                "textDocument": {"uri": uri},
+                "position": lsp_position(RECEIVER_SOURCE,
+                                         RECEIVER_SOURCE.index("return this.read") + len("return "))})
+            assert receiver_hover and "Counter" in str(receiver_hover), receiver_hover
+            edits = request("textDocument/formatting", {
+                "textDocument": {"uri": uri},
+                "options": {"tabSize": 2, "insertSpaces": True}})
+            formatted = edits[0]["newText"] if edits else RECEIVER_SOURCE
+            assert "[&this]" in formatted and "[mut &this]" in formatted, formatted
+            clean(change(16, formatted))
+            errors = change(17, RECEIVER_SOURCE.replace("[mut &this]", "[&this]"))
+            assert any(item.get("severity", 1) == 1 for item in errors), errors
+            assert not any(item.get("code") == "GTI-B0001" for item in errors), errors
+            clean(change(18, RECEIVER_SOURCE))
+            assert change(19, RECEIVER_SOURCE.replace("[mut &this]", "[mut &]"))
+            clean(change(20, RECEIVER_SOURCE))
         finally:
             session.close()
     print("Borrowing callback LSP checks passed")

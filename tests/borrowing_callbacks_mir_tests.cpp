@@ -505,7 +505,47 @@ int main() { return 0; }
 }
 } // namespace
 
+bool receiverCaptureTests() {
+  const std::pair<std::string_view, std::string_view> rejected[] = {
+      {"shared-write", R"gti(class C { mut int n = 0; public: C() = default;
+        void run() mut { auto f = [&this]() -> void { this.n += 1; }; f(); }
+      }; int main() { mut C c{}; c.run(); })gti"},
+      {"mutable-readonly-receiver", R"gti(class C { mut int n = 0; public: C() = default;
+        void run() { mut auto f = [mut &this]() -> void { this.n += 1; }; f(); }
+      }; int main() { C c{}; c.run(); })gti"},
+      {"shared-conflict", R"gti(class C { mut int n = 0; public: C() = default;
+        int run() mut { auto f = [&this]() -> int { return this.n; }; this.n = 3; return f(); }
+      }; int main() { mut C c{}; return c.run(); })gti"},
+      {"exclusive-conflict", R"gti(class C { mut int n = 0; public: C() = default;
+        int run() mut { mut auto f = [mut &this]() -> int { return this.n; }; int n = this.n; return f() + n; }
+      }; int main() { mut C c{}; return c.run(); })gti"},
+      {"static-receiver", R"gti(class C { public: static int run() {
+        auto f = [&this]() -> int { return 1; }; return f(); }
+      }; int main() { return C::run(); })gti"},
+      {"no-receiver", R"gti(int main() { auto f = [&this]() -> int { return 1; }; return f(); })gti"},
+      {"missing-capture", R"gti(class C { int n = 0; public: C() = default;
+        int run() { auto f = []() -> int { return this.n; }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+      {"duplicate-receiver", R"gti(class C { public: C() = default;
+        int run() { auto f = [&this, &this]() -> int { return 1; }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+      {"value-receiver", R"gti(class C { public: C() = default;
+        int run() { auto f = [this]() -> int { return 1; }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+  };
+  for (const auto &[name, source] : rejected) {
+    const auto result = lang::Frontend().analyze(std::string(name), std::string(source));
+    if (result.canGenerateCode() || result.diagnostics.empty() ||
+        std::any_of(result.diagnostics.begin(), result.diagnostics.end(), [](const auto &d) { return d.code == "GTI-B0001"; })) {
+      std::cerr << "receiver rejection failed: " << name << '\n';
+      return false;
+    }
+  }
+  return true;
+}
+
 int main(int argc, char **argv) {
+  if (!receiverCaptureTests()) return 18;
   if (!callResultAliasProofTests())
     return 10;
   if (argc == 2 && std::string_view(argv[1]) == "--alias-proof-only") {

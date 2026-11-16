@@ -783,6 +783,11 @@ named bindings; a reference binding can select a disjoint field first. Capture
 defaults and arbitrary reference init-captures are not part of this spelling.
 Copy/move value captures retain their existing meanings.
 
+Receiver extension (2026-11-16): `[&this]` and `[mut &this]` use the same
+checked environment and borrow rules for an instance method receiver. This
+extends the original named-binding boundary without admitting raw-pointer
+`[this]` captures or reference capture of an enclosing lambda's captures.
+
 The outcome is scoped and stored callbacks that can use surrounding state
 without transferring its ownership, plus non-owning callable views. This is
 not permission to publish a callback after its referents die, to copy an

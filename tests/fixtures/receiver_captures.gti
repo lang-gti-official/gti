@@ -1,0 +1,34 @@
+int invoke<F>(F& callback) { return callback(); }
+int invoke_mut<F>(mut F& callback) { return callback(); }
+
+class Counter<T> {
+  mut T value;
+public:
+  Counter(T value) : value(value) {}
+  T read() { return this.value; }
+  void increment() mut { this.value += 1; }
+  int shared() {
+    auto callback = [&this]() -> int { return this.read(); };
+    auto copy = callback;
+    return invoke(copy);
+  }
+  int exclusive() mut {
+    mut auto callback = [mut &this]() -> int {
+      this.increment();
+      this.value += 2;
+      return this.value;
+    };
+    int result = invoke_mut(callback);
+    // The receiver loan ends at the closure's last use.
+    this.value += 1;
+    return result;
+  }
+};
+
+int main() {
+  mut Counter<int> counter{4};
+  if (counter.shared() != 4) return 1;
+  if (counter.exclusive() != 7) return 2;
+  if (counter.read() != 8) return 3;
+  return 0;
+}

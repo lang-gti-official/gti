@@ -1828,8 +1828,8 @@ disjoint fields use the same place-overlap rules as ordinary references.
 Inside the lambda body a by-reference capture behaves as a reference
 parameter: using it while an overlapping reference taken from it is still
 live is rejected, while references to disjoint fields stay independent. A
-capture list borrows only a named local or parameter, not a capture of an
-enclosing lambda. Copy
+capture list borrows a named local, parameter, or the current method receiver,
+not a capture of an enclosing lambda. Copy
 and move captures retain any checked dependencies already present in the
 captured value; a lambda's text over a captured view is for local use (see
 [Text a lambda captured](#text-a-lambda-captured)). Shared environments can
@@ -1837,6 +1837,33 @@ be copied when all their other fields can; an exclusive borrowed capture makes
 the environment noncopyable. Moving the environment transfers its dependencies
 without moving their referents. Borrowed environments cannot be assigned or
 relocated as independent objects.
+
+Within an instance method, `[&this]` borrows the receiver read-only and
+`[mut &this]` borrows it exclusively. The latter requires a mutable receiver
+and a mutable closure binding. Access captured members explicitly through
+`this.member`; `this` denotes the checked receiver object, not a raw pointer.
+For example:
+
+```gti
+int read_with_callback() {
+  auto callback = [&this]() -> int { return this.value; };
+  return callback();
+}
+void increment_with_callback() mut {
+  mut auto callback = [mut &this]() -> void { this.value += 1; };
+  callback();
+}
+```
+
+The capture borrows the whole receiver. While it is live, ordinary receiver
+access must respect that loan, including access outside the closure. Copying a
+shared closure preserves the borrow; an exclusive closure cannot be copied.
+Neither capture transfers ownership or extends the receiver's lifetime. The
+same escape checks apply when passing or storing these closures as for named
+reference captures. `[this]` is rejected: there is no implicit pointer copy or
+receiver ownership capture. Static methods and free functions have no receiver
+to capture. Nested capture of an enclosing closure's receiver capture follows
+the existing rejection of reference captures of enclosing captures.
 
 The restrictions last through the last proven use, or through cleanup when
 the stored type's destructor needs the dependency. An ordinary nested block

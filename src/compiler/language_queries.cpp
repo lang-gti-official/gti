@@ -2479,6 +2479,10 @@ private:
       core.failure = "Compiler-generated names cannot be renamed.";
       return core;
     }
+    if (symbol->name == "this") {
+      core.failure = "The receiver keyword cannot be renamed.";
+      return core;
+    }
     if (symbol->defaultLibrary) {
       core.failure = "Standard library declarations cannot be renamed.";
       return core;
