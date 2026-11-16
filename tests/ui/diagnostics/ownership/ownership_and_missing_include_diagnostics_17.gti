@@ -1,0 +1,11 @@
+// Ownership and missing include diagnostics: loop-carried conflicts explain the next-iteration use even when that use precedes the conflicting access in source order.
+//@ snapshot: diagnostics
+int main() {
+  mut int value = 1;
+  int& borrowed = value;
+  for (mut int i = 0; i < 2; i += 1) {
+    int copy = borrowed;
+    value = copy + 1;  //~ ERROR GTI-S2017
+  }
+  return 0;
+}

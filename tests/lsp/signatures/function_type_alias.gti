@@ -1,0 +1,29 @@
+// A function-type alias keeps hover and definition, the selected template
+// argument shows in the call's hover, and `void(void)` or an unterminated
+// signature is reported until repaired. (From function_signature_lsp_test.py.)
+//@ hover @action: void()
+//@ definition @action: @decl
+//@ hover @describe: void
+// supplementary character: 😀
+using /*@decl*/Action = void();
+class Tag<S = void> { public: Tag() = default; };
+int describe<R>(Tag<R()>& tag) { return 0; }
+int main() { Tag</*@action*/Action> tag{}; Tag<void> metadata{}; return /*@describe*/describe(tag); }
+// --- step 2
+// supplementary character: 😀
+using Action = void(void);  //~ ERROR GTI-S2093
+class Tag<S = void> { public: Tag() = default; };
+int describe<R>(Tag<R()>& tag) { return 0; }
+int main() { Tag<Action> tag{}; Tag<void> metadata{}; return describe(tag); }  //~ ERROR GTI-S2023
+// --- step 3
+// supplementary character: 😀
+using Action = void(;  //~ ERROR GTI-P0001
+class Tag<S = void> { public: Tag() = default; };
+int describe<R>(Tag<R()>& tag) { return 0; }
+int main() { Tag<Action> tag{}; Tag<void> metadata{}; return describe(tag); }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2023
+// --- step 4
+// supplementary character: 😀
+using Action = void();
+class Tag<S = void> { public: Tag() = default; };
+int describe<R>(Tag<R()>& tag) { return 0; }
+int main() { Tag<Action> tag{}; Tag<void> metadata{}; return describe(tag); }

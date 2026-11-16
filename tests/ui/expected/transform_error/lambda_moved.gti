@@ -1,0 +1,106 @@
+// Moved lambda error mappers run later and unwind their captures on failure.
+//@ run-pass
+//@ revisions: c0 c1 c2 c3 c4
+//@[c0] stdout: 1
+//@[c0] stdout: 80
+//@[c0] stdout: 3
+//@[c0] stdout: 99
+//@[c1] args: error
+//@[c1] stdout: 1
+//@[c1] stdout: 2
+//@[c1] stdout: 80
+//@[c1] stdout: 3
+//@[c1] stdout: 99
+//@[c2] args: later failure
+//@[c2] stdout: 1
+//@[c2] stdout: 2
+//@[c2] stdout: 4
+//@[c2] stdout: 80
+//@[c2] stdout: 99
+//@[c2] run-fail
+//@[c2] exit-code: 70
+//@[c2] stderr-contains: main.gti:25: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c3] args: later success cleanup
+//@[c3] stdout: 1
+//@[c3] stdout: 2
+//@[c3] stdout: 4
+//@[c3] stdout: 5
+//@[c3] stdout: 80
+//@[c3] stdout: 3
+//@[c3] stdout: 99
+//@[c4] args: receiver failure before capture
+//@[c4] stdout: 1
+//@[c4] stdout: 81
+//@[c4] stdout: 80
+//@[c4] stdout: 99
+//@[c4] run-fail
+//@[c4] exit-code: 70
+//@[c4] stderr-contains: main.gti:20: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- main.gti
+import std.string;
+import std.vector;
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(identity); }
+  int read() { return identity; }
+};
+
+expected<int, int> produce(bool fail) {
+  std::println(1);
+  if (fail) { return unexpected(7); }
+  return 42;
+}
+
+expected<int, int> receiver_failure(int divisor) {
+  std::println(1);
+  return 1 / divisor;
+}
+
+int later(int divisor) {
+  std::println(4);
+  return 1 / divisor;
+}
+
+int consume(expected<int, int> value, int after) {
+  std::println(5);
+  return (value.has_value() ? value.value() : value.error()) + after;
+}
+
+expected<int, E> generic_map<E>(expected<int, E> value) {
+  return std::move(value).transform_error([](E error) -> E { return error; });
+}
+expected<int, int> integer_error() { return unexpected(7); }
+expected<int, bool> boolean_error() { return unexpected(true); }
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource outer{99};
+  Resource resource{80};
+  if (argc == 5) {
+    Resource second{81};
+    auto result = receiver_failure(0).transform_error(
+        [owned = std::move(resource)](int error) -> int {
+          return owned.read() + error;
+        });
+    return result.value();
+  }
+  auto mapper = [owned = std::move(resource)](int error) -> int {
+    std::println(2);
+    return owned.read() + error;
+  };
+  if (argc == 3 || argc == 4) {
+    int result = consume(produce(true).transform_error(std::move(mapper)),
+                         later(argc - 3));
+    std::println(3);
+    return result == 88 ? 0 : 1;
+  }
+  auto mapped = produce(argc != 1).transform_error(std::move(mapper));
+  auto first = generic_map<int>(integer_error());
+  auto second = generic_map<bool>(boolean_error());
+  if (first.error() != 7 || !second.error()) { return 3; }
+  std::println(3);
+  return mapped.has_value() ? (mapped.value() == 42 ? 0 : 1)
+                           : (mapped.error() == 87 ? 0 : 2);
+}

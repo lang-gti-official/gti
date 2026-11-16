@@ -1,0 +1,6 @@
+// exit-signal is a failure expectation.
+//@ run-pass
+//@ exit-signal: SIGABRT
+//@ define: 9bad
+//@ env: no-equals
+int main() { return 0; }

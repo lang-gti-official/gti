@@ -1,0 +1,147 @@
+// Sparse slot publication, address stability and exact failure cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6 run7
+//@[run1] stdout: 30
+//@[run1] stdout: 20
+//@[run1] stdout: 10
+//@[run1] stdout: 90
+//@[run1] stdout: 30
+//@[run1] stdout: 20
+//@[run1] stdout: 13
+//@[run2] run-fail
+//@[run2] args: constructor
+//@[run2] exit-code: 70
+//@[run2] stdout: 20
+//@[run2] stdout: 10
+//@[run2] stdout: 90
+//@[run2] stderr-contains: storage_final_address.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: duplicate slot
+//@[run3] exit-code: 70
+//@[run3] stdout: 11
+//@[run3] stdout: 90
+//@[run3] stdout: 30
+//@[run3] stdout: 20
+//@[run3] stdout: 10
+//@[run3] stderr-contains: <std/detail/memory_storage>:
+//@[run3] stderr-contains: : runtime error[GTI-R0010]: invalid_storage_state in duplicate_construction
+//@[run4] run-fail
+//@[run4] args: outside slot range
+//@[run4] exit-code: 70
+//@[run4] stdout: 12
+//@[run4] stdout: 90
+//@[run4] stdout: 30
+//@[run4] stdout: 20
+//@[run4] stdout: 10
+//@[run4] stderr-contains: <std/detail/memory_storage>:
+//@[run4] stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in private_storage
+//@[run5] run-fail
+//@[run5] args: fail after live slot
+//@[run5] exit-code: 70
+//@[run5] stdout: 20
+//@[run5] stdout: 14
+//@[run5] stdout: 90
+//@[run5] stdout: 30
+//@[run5] stdout: 20
+//@[run5] stdout: 10
+//@[run5] stderr-contains: storage_final_address.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run6] args: release allocation before scope exit
+//@[run6] stdout: 30
+//@[run6] stdout: 20
+//@[run6] stdout: 10
+//@[run6] stdout: 30
+//@[run6] stdout: 20
+//@[run6] stdout: 13
+//@[run6] stdout: 77
+//@[run6] stdout: 90
+//@[run7] run-fail
+//@[run7] args: owner constructor allocation partial rollback failure
+//@[run7] exit-code: 70
+//@[run7] stdout: 20
+//@[run7] stdout: 16
+//@[run7] stdout: 30
+//@[run7] stdout: 20
+//@[run7] stdout: 15
+//@[run7] stdout: 90
+//@[run7] stderr-contains: storage_final_address.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- storage_final_address.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+class Resource {
+  int id;
+public:
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(this.id); }
+};
+
+class Entry {
+  Resource first;
+  Resource second;
+  int number;
+  mut const int* address = nullptr;
+public:
+  Entry(Resource input, int divisor, int& source)
+      : first(std::move(input)), second(Resource(20)), number(source) {
+    this.address = &this.number;
+    int checked = 12 / divisor; // constructor failure
+  }
+  Entry(Entry& other) = delete;
+  Entry(Entry&& other) = default;
+  ~Entry() { std::println(30); }
+  bool stable_address() {
+    return this.address == &this.number;
+  }
+};
+
+// Failure during an application-defined owner's constructor must clean its
+// already-live allocation field, but not run the incomplete owner's body.
+class EntryOwner {
+  mut std::storage<Entry> slots;
+public:
+  EntryOwner(std::storage<Entry> backing, int& source)
+      : slots(std::move(backing)) {
+    [[discard]] this.slots.emplace(std::size_t(1), Resource(15), 1, source);
+    [[discard]] this.slots.emplace(std::size_t(0), Resource(16), 0, source);
+  }
+  ~EntryOwner() { std::println(99); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<Entry>(std::size_t(2));
+  if (!allocated) { return 1; }
+  mut auto slots = std::move(allocated).value();
+  Resource caller{90};
+  int source = 42;
+  if (argc == 7) {
+    EntryOwner owner{std::move(slots), source};
+    return 0;
+  }
+  int divisor = argc == 2 ? 0 : 1;
+  [[discard]] slots.emplace(std::size_t(1), Resource(10), divisor, source);
+  if (!slots.get(std::size_t(1)).stable_address()) { return 2; }
+  if (argc == 3) {
+    [[discard]] slots.emplace(std::size_t(1), Resource(11), 1, source);
+  }
+  if (argc == 4) {
+    [[discard]] slots.emplace(std::size_t(2), Resource(12), 1, source);
+  }
+  if (argc == 5) {
+    [[discard]] slots.emplace(std::size_t(0), Resource(14), 0, source);
+  }
+  slots.destroy(std::size_t(1));
+  if (slots.initialized(std::size_t(1))) { return 3; }
+  [[discard]] slots.emplace(std::size_t(1), Resource(13), 1, source);
+  if (argc == 6) {
+    slots.release();
+    if (slots.capacity() != std::size_t(0)) { return 5; }
+    slots.release();
+    std::println(77);
+  }
+  if (argc == 6) { return 0; }
+  return slots.get(std::size_t(1)).stable_address() ? 0 : 4;
+}

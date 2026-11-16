@@ -1,0 +1,2 @@
+import "../../math/src/add.gti";
+int main() { return math::add(2, 3); }

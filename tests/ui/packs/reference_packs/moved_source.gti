@@ -1,0 +1,12 @@
+// A moved-from object cannot be passed through a reference pack.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+import std.utility;
+void observe<Args...>(Args&... args) {}
+int main() { Ticket value{}; observe(std::move(value)); observe(value); return 0; }  //~ ERROR GTI-S2018

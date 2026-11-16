@@ -1,0 +1,163 @@
+// expected::transform_error maps errors through functions, members and generic mappers.
+//@ run-pass
+mut int mapper_calls = 0;
+
+enum class source_errc {
+  None = 0,
+  Broken = 1,
+};
+
+enum class app_errc {
+  None = 0,
+  RequestFailed = 1,
+};
+
+app_errc map_source_error(source_errc error) {
+  mapper_calls += 1;
+  if (error == source_errc::Broken) {
+    return app_errc::RequestFailed;
+  }
+  return app_errc::None;
+}
+
+mut int second_mapper_calls = 0;
+int map_app_error(app_errc error) {
+  second_mapper_calls += 1;
+  return error == app_errc::RequestFailed ? 9 : 0;
+}
+
+expected<int, source_errc> read_number(bool fail) {
+  if (fail) { return unexpected(source_errc::Broken); }
+  return 42;
+}
+
+expected<int, app_errc> propagated(bool fail) {
+  return ?read_number(fail).transform_error(map_source_error);
+}
+
+expected<int, app_errc> direct_return(bool fail) {
+  return read_number(fail).transform_error(map_source_error);
+}
+
+int inspect(expected<int, app_errc> value) {
+  return value.has_value() ? value.value() : 9;
+}
+
+expected<int, app_errc> propagated_named(bool fail) {
+  mut auto result = read_number(fail);
+  return ?std::move(result).transform_error(map_source_error);
+}
+
+class Payload {
+public:
+  mut int value = 0;
+
+  Payload(int initial) : value(initial) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+public:
+  Payload() = default;
+};
+
+expected<Payload, source_errc> read_payload(bool fail) {
+  if (fail) { return unexpected(source_errc::Broken); }
+  return Payload(51);
+}
+
+expected<Payload, app_errc> propagated_payload(bool fail) {
+  return ?read_payload(fail).transform_error(map_source_error);
+}
+
+expected<void, source_errc> perform(bool fail) {
+  if (fail) { return unexpected(source_errc::Broken); }
+  return;
+}
+
+expected<void, app_errc> propagated_void(bool fail) {
+  ?perform(fail).transform_error(map_source_error);
+  return;
+}
+
+int main() {
+  auto direct_success = read_number(false).transform_error(map_source_error);
+  if (!direct_success.has_value() || direct_success.value() != 42 ||
+      mapper_calls != 0) {
+    return 1;
+  }
+
+  auto direct_failure = read_number(true).transform_error(map_source_error);
+  if (direct_failure.has_value() ||
+      direct_failure.error() != app_errc::RequestFailed ||
+      mapper_calls != 1) {
+    return 2;
+  }
+
+  auto propagated_success = propagated(false);
+  if (!propagated_success.has_value() || propagated_success.value() != 42 ||
+      mapper_calls != 1) {
+    return 3;
+  }
+
+  auto propagated_failure = propagated(true);
+  if (propagated_failure.has_value() ||
+      propagated_failure.error() != app_errc::RequestFailed ||
+      mapper_calls != 2) {
+    return 4;
+  }
+
+  auto named_success = propagated_named(false);
+  auto named_failure = propagated_named(true);
+  if (!named_success.has_value() || named_success.value() != 42 ||
+      named_failure.has_value() ||
+      named_failure.error() != app_errc::RequestFailed ||
+      mapper_calls != 3) {
+    return 5;
+  }
+
+  auto payload_success = propagated_payload(false);
+  auto payload_failure = propagated_payload(true);
+  if (!payload_success.has_value() || payload_success.value().value != 51 ||
+      payload_failure.has_value() ||
+      payload_failure.error() != app_errc::RequestFailed ||
+      mapper_calls != 4) {
+    return 6;
+  }
+
+  auto void_success = propagated_void(false);
+  auto void_failure = propagated_void(true);
+  if (!void_success.has_value() || void_failure.has_value() ||
+      void_failure.error() != app_errc::RequestFailed ||
+      mapper_calls != 5) {
+    return 7;
+  }
+  auto returned = direct_return(true);
+  if (returned.has_value() || mapper_calls != 6) { return 8; }
+  if (inspect(read_number(false).transform_error(map_source_error)) != 42 ||
+      inspect(read_number(true).transform_error(map_source_error)) != 9 ||
+      mapper_calls != 7) { return 9; }
+  auto chained_success = read_number(false).transform_error(map_source_error)
+      .transform_error(map_app_error);
+  auto chained_failure = read_number(true).transform_error(map_source_error)
+      .transform_error(map_app_error);
+  if (!chained_success.has_value() || chained_success.value() != 42 ||
+      chained_failure.has_value() || chained_failure.error() != 9 ||
+      mapper_calls != 8 || second_mapper_calls != 1) { return 10; }
+  for (mut int index = 0; index < 4; index += 1) {
+    auto repeated = read_number(index % 2 == 1).transform_error(map_source_error);
+    if (repeated.has_value() != (index % 2 == 0)) { return 11; }
+  }
+  if (mapper_calls != 10) { return 12; }
+  auto named_payload = read_payload(false);
+  auto named_payload_result = std::move(named_payload).transform_error(map_source_error);
+  auto named_payload_error = read_payload(true);
+  auto named_payload_failure = std::move(named_payload_error).transform_error(map_source_error);
+  if (!named_payload_result.has_value() || named_payload_result.value().value != 51 ||
+      named_payload_failure.has_value() || mapper_calls != 11) { return 13; }
+  for (mut int index = 0; index < 4; index += 1) {
+    auto repeated = read_payload(index % 2 == 1).transform_error(map_source_error);
+    if (repeated.has_value() != (index % 2 == 0)) { return 14; }
+    if (repeated.has_value() && repeated.value().value != 51) { return 15; }
+  }
+  if (mapper_calls != 13) { return 16; }
+  return 0;
+}

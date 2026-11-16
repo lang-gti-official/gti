@@ -1,0 +1,16 @@
+// An unavailable conditional operator that is never called does not block the class.
+//@ run-pass
+import std.map;
+class Box<T> {
+public:
+  Box() = default;
+  bool operator()(T value) requires std::numeric<T> { return true; }
+};
+
+int main() {
+  Box<bool> unused{};
+  mut std::map<int, int> values{};
+  values.get_or_insert(1) = 4;
+  int one = 1;
+  return values.at(one) == 4 ? 0 : 1;
+}

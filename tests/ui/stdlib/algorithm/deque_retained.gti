@@ -1,0 +1,12 @@
+// A min_element cursor keeps the std::deque borrowed across mutation.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { mut std::deque<int> x = {1, 2}; auto found = std::min_element(x.begin(), x.end()); x.clear(); return *found; }  //~ ERROR GTI-S2017

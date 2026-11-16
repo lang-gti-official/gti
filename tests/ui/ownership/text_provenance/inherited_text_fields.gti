@@ -1,0 +1,47 @@
+// A derived method returns an inherited view field as ownerless text.
+//@ run-pass
+//@ stdout: derived
+//@ stdout: derived
+//@ stdout: special
+//@ stdout: held
+import std.string;
+// A view field a base class declares is the derived value's field too, and a
+// class with a base keeps its text fields ownerless: a derived method,
+// virtual or not, returns an inherited view field as ownerless text.
+class Base {
+public:
+  std::string_view text;
+  Base(std::string_view text) : text(text) {}
+  virtual std::string_view name() { return "base"; }
+};
+class Derived : public Base {
+public:
+  Derived(std::string_view text) : Base(text) {}
+  std::string_view name() override { return this.text; }
+  std::string_view plain() { return this.text; }
+};
+class Holder<T> {
+public:
+  std::string_view text;
+  T value;
+  Holder(std::string_view text, T value) : text(text), value(value) {}
+  virtual std::string_view name() { return this.text; }
+};
+class Special<T> : public Holder<T> {
+public:
+  Special(T value) : Holder<T>("special", value) {}
+  std::string_view name() override { return this.text; }
+};
+Derived make(std::string_view text) { return Derived(text); }
+int main() {
+  Derived derived = make("derived");
+  Base& base = derived;
+  Special<int> special{1};
+  Holder<int>& holder = special;
+  Holder<int> plain{"held", 2};
+  std::println(base.name());
+  std::println(derived.plain());
+  std::println(holder.name());
+  std::println(plain.name());
+  return 0;
+}

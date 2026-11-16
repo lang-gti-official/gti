@@ -1,0 +1,4 @@
+// An unresolved std::set offers the canonical import std.set; fix.
+//@ slow
+//@ snapshot: diagnostics
+using dictionary = std::set<int>;  //~ ERROR GTI-S2089

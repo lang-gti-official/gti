@@ -1,0 +1,10 @@
+// Code action expectations that do not hold are each reported.
+//@ code-action @mut: "no such fix"
+//@ code-action @mut: "mut" => step 2
+//@ no-code-action @mut
+//@ code-action @clean: "mut"
+T identity<T>(T value) { /*@mut*/mut int unused = 1; return value; }  //~ WARN GTI-S2096
+int main() { return /*@clean*/identity(0); }
+// --- step 2
+T identity<T>(T value) { int unused = 2; return value; }
+int main() { return identity(0); }

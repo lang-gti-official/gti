@@ -1,0 +1,4 @@
+// A reserved identifier is one exact parser diagnostic, and parsing recovers to the next declaration.
+//@ parse-fail
+int template = 1;  //~ ERROR GTI-P0002 'template' is a reserved C++ keyword and cannot be used as a GTI identifier.
+int recovered = 2;

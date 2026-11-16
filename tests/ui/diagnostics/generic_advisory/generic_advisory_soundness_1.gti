@@ -1,0 +1,9 @@
+// Generic advisory soundness: an unrelated user-defined mutable dereference receiver retains mut.
+//@ check-pass
+struct Counter {
+  mut int value;
+  Counter(int initial) : value(initial) {}
+  mut int& operator*() mut { return this.value; }
+  int& operator*() { return this.value; }
+};
+int main() { mut Counter counter{1}; *counter = 7; return *counter == 7 ? 0 : 1; }

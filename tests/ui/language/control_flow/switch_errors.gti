@@ -1,0 +1,42 @@
+// Switch subjects must be integers, labels exact distinct constants, one default per switch and every arm explicitly terminated.
+enum class State { Idle, Running };
+enum class Alias { First = 1, Second = 1 };
+int dynamic_label() { return 1; }
+
+int invalid(uint64_t wide, int value, Alias alias) {
+  switch (true) {  //~ ERROR GTI-S2037
+  case true:
+    break;
+  default:
+    break;
+  }
+  switch (wide) {
+  case 1:  //~ ERROR GTI-S2037
+    break;
+  case uint64_t(2):
+    break;
+  case uint64_t(2):  //~ ERROR GTI-S2037
+    break;
+  default:
+    break;
+  default:  //~ ERROR GTI-S2037
+    break;
+  }
+  switch (alias) {
+  case Alias::First:
+    break;
+  case Alias::Second:  //~ ERROR GTI-S2037
+    break;
+  default:
+    break;
+  }
+  switch (value) {
+  case dynamic_label():  //~ ERROR GTI-S2037
+    break;
+  case 3:  //~ ERROR GTI-S2037
+    int missing_terminator = 3;
+  default:
+    continue;  //~ ERROR GTI-S2010
+  }
+  return 0;
+}

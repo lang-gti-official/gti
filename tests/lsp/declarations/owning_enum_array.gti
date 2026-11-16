@@ -1,0 +1,40 @@
+// An array of an owning enum is admitted as a local; as a field of a class
+// with virtual members it is the one S2067 at the field, and removing the
+// class recovers. (owning_enum_array_lsp.py, run by generic_enum_lsp_test.py)
+class Resource {
+public:
+  Resource() {}
+  ~Resource() {}
+};
+enum Event<T> { Empty, Owned(T value) };
+int main() {
+  Event<Resource> values[2] = {Event<Resource>::Owned(Resource()), Event<Resource>::Empty};
+  return 0;
+}
+// --- step 2
+class Resource {
+public:
+  Resource() {}
+  ~Resource() {}
+};
+enum Event<T> { Empty, Owned(T value) };
+int main() {
+  Event<Resource> values[2] = {Event<Resource>::Owned(Resource()), Event<Resource>::Empty};
+  return 0;
+}
+class Unsupported {
+  Event<Resource> items[2] = {Event<Resource>::Empty, Event<Resource>::Empty};  //~ ERROR GTI-S2067
+public:
+  virtual int marker() { return 0; }
+};
+// --- step 3
+class Resource {
+public:
+  Resource() {}
+  ~Resource() {}
+};
+enum Event<T> { Empty, Owned(T value) };
+int main() {
+  Event<Resource> values[2] = {Event<Resource>::Owned(Resource()), Event<Resource>::Empty};
+  return 0;
+}

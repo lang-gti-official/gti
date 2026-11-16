@@ -1,0 +1,6 @@
+// A C section that does not compile fails the test with the compiler output.
+//@ build-pass
+// --- main.gti
+int main() { return 0; }
+// --- broken.c
+int broken(void) { return missing_symbol_in_c; }

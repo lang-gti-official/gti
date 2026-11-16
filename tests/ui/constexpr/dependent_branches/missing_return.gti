@@ -1,0 +1,4 @@
+// Dependent constexpr branch deferral retains concrete flow, declaration checks and resource limits (the unselected instance must still return).
+import std.string;
+int bad<uint64_t N>() { if constexpr(N == 0) { return 1; } }  //~ ERROR GTI-S2031 without returning
+int main() { return bad<1>(); }

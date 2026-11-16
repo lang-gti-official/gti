@@ -1,0 +1,7 @@
+// Ownership and missing include diagnostics: a temporary-owner rejection locates the owner and explains its destruction boundary and the required named owner.
+import std.string;
+
+int main() {
+  auto borrowed = std::string("hello").view();  //~ ERROR GTI-S2045
+  return int(borrowed.size());
+}

@@ -1,0 +1,7 @@
+main.gti:6:7: error[GTI-S2000]: Cannot mutate through a read-only receiver.
+ 6 |   cmd.name = 1;  //~ ERROR GTI-S2000
+   |       ^~~~
+main.gti:5:11: note: 'cmd' is declared without mutable access here.
+ 5 |   Command cmd{};
+   |           ^~~
+help: Declare 'cmd' with 'mut' if mutation is intended. Mutable fields still require mutable access through their containing value.

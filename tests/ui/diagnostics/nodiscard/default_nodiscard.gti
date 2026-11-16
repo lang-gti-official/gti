@@ -1,0 +1,11 @@
+// Default nodiscard: the program is accepted.
+//@ check-pass
+int calculate() { return 7; }
+void perform() {}
+int main() {
+  [[discard]] calculate();
+  perform();
+  mut int count = 0;
+  count++;
+  return 0;
+}

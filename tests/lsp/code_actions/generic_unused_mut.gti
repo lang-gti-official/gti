@@ -1,0 +1,74 @@
+// An unnecessary `mut` in a generic body is advised once, with an edit that
+// removes it from the current document version; per-instance advisories in
+// coverage reproducers A20, A24 (either instance order) and A33 stay silent,
+// and a `mut` needed by only one instance's move is advised at the local.
+// (generic_advisory_lsp_test.py; the stale request is
+// code_actions/stale_advisory_fix.jsonl)
+//@ code-action @mut: "Remove unnecessary 'mut'" => step 2
+T identity<T>(T value) { /* 😀 */ /*@mut*/mut int unused = 1; return value; }  //~ WARN GTI-S2096
+int main() { return identity(0); }
+// --- step 2
+T identity<T>(T value) { /* 😀 */ int unused = 1; return value; }
+int main() { return identity(0); }
+// --- step 3
+// 😀 UTF-16 control
+// A20: GTI-S2096 'never used mutably' is wrong; its quick fix breaks the build.
+void bump<T>(mut int32_t& total, T& value) { total++; }
+
+int32_t count_all<Args...>(Args... args) {
+  mut int32_t total = 0;
+  (bump(total, args), ...);
+  return total;
+}
+
+int main() {
+  int32_t n = count_all(1, true, 2.5d);
+  std::println(n);
+  return n == 3 ? 0 : 1;
+}
+// --- step 4
+// 😀 UTF-16 control
+// A24: an unreachable-statement warning is decided from a single generic instance.
+int32_t adjust<uint64_t Mode>(int32_t value) {
+  if constexpr (Mode == 0) {
+    return value;
+  }
+  return value + 1;
+}
+
+int main() {
+  return adjust<0>(1) + adjust<1>(1) == 3 ? 0 : 1;
+}
+// --- step 5
+// 😀 UTF-16 control
+// A33: GTI-S2096 'never used mutably' on an overloaded dereference store; the quick fix
+// breaks the build (GTI-S2002).
+import std.memory;
+int main() {
+  mut std::unique_ptr<int> p = std::make_unique<int>(3);
+  *p = 103;
+  return *p == 103 ? 0 : 1;
+}
+// --- step 6
+// A24: an unreachable-statement warning is decided from a single generic instance.
+int32_t adjust<uint64_t Mode>(int32_t value) {
+  if constexpr (Mode == 0) {
+    return value;
+  }
+  return value + 1;
+}
+
+int main() {
+  return adjust<1>(1) + adjust<0>(1) == 3 ? 0 : 1;
+}
+// --- step 7
+//@ code-action @whole: "Remove unnecessary 'mut'" => step 8
+struct Record { Record() = default; mut int value = 4; };
+T first<T>(T left, T right) { mut T values[2] = {left, right}; return std::move(values[0]); }
+int main() { /* 😀 */ /*@whole*/mut Record whole = Record(); Record moved = std::move(whole);  //~ WARN GTI-S2096
+  return first(moved, Record()).value; }
+// --- step 8
+struct Record { Record() = default; mut int value = 4; };
+T first<T>(T left, T right) { mut T values[2] = {left, right}; return std::move(values[0]); }
+int main() { /* 😀 */  Record whole = Record(); Record moved = std::move(whole);
+  return first(moved, Record()).value; }

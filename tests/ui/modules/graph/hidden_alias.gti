@@ -1,0 +1,11 @@
+// Type aliases follow direct import visibility.
+// --- main.gti
+import "branch.gti";
+LeafId id = LeafId(1);  //~ ERROR GTI-S2024 //~ ERROR GTI-S2089
+int main() { return 0; }
+// --- branch.gti
+export module branch;
+import "leaf.gti";
+// --- leaf.gti
+export module leaf;
+export using LeafId = uint64_t;

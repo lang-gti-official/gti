@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Nested nominal types retain qualified identity, access and MIR execution."""
+"""Nested C ABI records and opaque handles cross the native boundary.
+
+The other nested-type fixtures, imports and rejections are tests/ui cases
+(tests/ui/types/nested/); this one links a C object.
+"""
 
 import os
 from pathlib import Path
@@ -22,112 +26,6 @@ def main():
     os.environ["GTI_STDLIB_PATH"] = str(repository / "stdlib")
     with tempfile.TemporaryDirectory(prefix="gti-nested-types-") as directory:
         scratch = Path(directory)
-        for mode, flags, _native in native_modes():
-            executable = scratch / f"nested-{mode}"
-            run([str(compiler), str(repository / "tests/fixtures/named_nested_types.gti"),
-                 *flags, "--progress", "never",
-                 "-o", str(executable)])
-            executed = run([str(executable)])
-            assert executed.stdout == "nested types\n" and executed.stderr == "", executed
-
-            owning = scratch / f"owning-{mode}"
-            run([str(compiler), str(repository / "tests/fixtures/named_nested_ownership.gti"),
-                 *flags, "--progress", "never",
-                 "-o", str(owning)])
-            executed = run([str(owning)])
-            assert executed.stdout == "2\n1\n" and executed.stderr == "", executed
-            failed = run([str(owning), "fail"], expected=70)
-            assert failed.stdout == "2\n1\n" and "GTI-R0006" in failed.stderr, failed
-
-        example = repository / "examples/148-nested-configuration.gti"
-        for mode, flags, _native in native_modes():
-            executable = scratch / f"config-{mode}"
-            run([str(compiler), str(example), *flags,
-                 "--progress", "never", "-o", str(executable)])
-            executed = run([str(executable)])
-            assert executed.stdout == (
-                '{"network":{"host":"example.org","port":443,"retry":{"attempts":5}},'
-                '"logging":{"enabled":true}}\n'
-            ) and executed.stderr == "", executed
-
-        negatives = {
-            "private_outer_member": (
-                "class C { static int code = 1; public: struct N { public: N() = default; };  public: C() = default; }; "
-                "int main() { return C::code; }",
-                "GTI-S2007", "is private",),
-            "private_outer_constructor": (
-                "class C { C(int value) {} public: struct N { public: N() = default; };  public: C() = default; }; "
-                "int main() { C value{1}; return 0; }",
-                "GTI-S2007", "Constructor",),
-            "private_unrelated_base_constructor": (
-                "class C { C(int value) {}  public: C() = default; }; "
-                "struct D : public C { D() : C(1) {} }; int main() { return 0; }",
-                "GTI-S2007", "Constructor of base",),
-            "no_reverse_private_access": (
-                "struct C { class N { int code = 1;  public: N() = default; }; "
-                "int read(N& value) { return value.code; }  public: C() = default; }; int main() { return 0; }",
-                "GTI-S2007", "is private",),
-            "no_sibling_private_access": (
-                "struct C { class A { int code = 1;  public: A() = default; }; "
-                "struct B { int read(A& value) { return value.code; }  public: B() = default; };  public: C() = default; }; "
-                "int main() { return 0; }",
-                "GTI-S2007", "is private",),
-            "generic_enclosing": (
-                "struct C<T> { struct N { T value; };  public: C() = default; }; int main() { return 0; }",
-                "GTI-S2030", "generic enclosing types",),
-            "exact_generic_enclosing": (
-                "namespace exact { struct C<T> { public: C() = default; }; } "
-                "struct exact::C<int> { struct N { int value = 1; };  public: C() = default; }; "
-                "int main() { return 0; }",
-                "GTI-S2030", "including exact specializations",),
-            "member_collision": (
-                "struct C { struct N { int value; }; int N = 0;  public: C() = default; }; int main() { return 0; }",
-                "GTI-S2006", "conflicts with a member",),
-            "private": (
-                "class C { struct N { int value; };  public: C() = default; }; int main() { C::N n{}; return 0; }",
-                "GTI-S2007", "Nested type 'N'",),
-            "private_constructor": (
-                "class C { struct N { int value; };  public: C() = default; }; int main() { auto n = C::N(); return 0; }",
-                "GTI-S2007", "Nested type 'N'",),
-            "private_intermediate": (
-                "class C { struct N { struct Leaf { int value; };  public: N() = default; };  public: C() = default; }; "
-                "int main() { C::N::Leaf n{}; return 0; }",
-                "GTI-S2007", "Nested type 'N'",),
-            "different_identity": (
-                "struct A { struct N { int value; };  public: A() = default; }; struct B { struct N { int value; };  public: B() = default; }; "
-                "void take(A::N value) {} int main() { B::N b{}; take(b); return 0; }",
-                "GTI-S2003", "argument",),
-            "no_outer_instance": (
-                "struct C { int value = 1; struct N { int read() { return value; }  public: N() = default; };  public: C() = default; }; "
-                "int main() { return 0; }",
-                "GTI-S2001", "value",),
-            "no_outer_assignment": (
-                "struct C { mut int value = 1; struct N { void write() mut { value = 2; }  public: N() = default; };  public: C() = default; }; "
-                "int main() { C outer{}; mut C::N inner{}; inner.write(); return 0; }",
-                "GTI-S2001", "value",),
-            "private_static": (
-                "class C { struct N { static int value() { return 1; }  public: N() = default; };  public: C() = default; }; "
-                "int main() { return C::N::value(); }",
-                "GTI-S2007", "Nested type 'N'",),
-            "private_alias_qualifier": (
-                "struct Actual { struct Child { int value = 1;  public: Child() = default; };  public: Actual() = default; }; "
-                "class Gate { using Hidden = Actual;  public: Gate() = default; }; "
-                "int main() { Gate::Hidden::Child child{}; return child.value; }",
-                "GTI-S2007", "Type alias 'Hidden'",),
-            "alias_collision": (
-                "struct C { using N = int; struct N { int value; };  public: C() = default; }; int main() { return 0; }",
-                "GTI-S2006", "conflicts with a member",),
-        }
-        for name, (text, code, fragment) in negatives.items():
-            source = scratch / f"{name}.gti"
-            source.write_text(text, encoding="utf-8")
-            result = subprocess.run([str(compiler), str(source), "--emit-mir",
-                                     "--progress", "never", "-o", str(scratch / f"{name}.mir")],
-                                    capture_output=True, text=True, timeout=60)
-            assert result.returncode != 0, name
-            assert code in result.stderr and fragment in result.stderr, result.stderr
-            assert "GTI-B0001" not in result.stderr, result.stderr
-
         native_source = scratch / "nested_native.c"
         native_source.write_text('''#include <stdint.h>
 struct Native { int32_t value; };
@@ -172,60 +70,7 @@ int main() {
             executed = run([str(executable)])
             assert executed.stdout == "" and executed.stderr == "", executed
 
-        interface = scratch / "nested_api.gti"
-        interface.write_text('''export module nested_api;
-namespace api {
-  export struct Config {
-    struct Network { int port = 80;  public: Network() = default; };
-  private:
-    struct Secret { static int code() { return 1; }  public: Secret() = default; };
-   public: Config() = default; };
-  export class Aliases {
-    struct Secret { int value = 11;  public: Secret() = default; };
-  public:
-    using Public = Secret;
-   public: Aliases() = default; };
-  export class Gate { using Hidden = Config;  public: Gate() = default; };
-  struct Hidden { struct Child { int value = 1;  public: Child() = default; };  public: Hidden() = default; };
-}
-''', encoding="utf-8")
-        consumer = scratch / "imported.gti"
-        consumer.write_text('''import "nested_api.gti";
-int main() {
-  api::Config::Network network{};
-  api::Aliases::Public value{};
-  return network.port == 80 && value.value == 11 ? 0 : 1;
-}
-''', encoding="utf-8")
-        for mode, flags, _native in native_modes():
-            executable = scratch / f"imported-{mode}"
-            run([str(compiler), str(consumer), *flags,
-                 "--progress", "never", "-o", str(executable)])
-            executed = run([str(executable)])
-            assert executed.stdout == "" and executed.stderr == "", executed
-
-        module_negatives = {
-            "module_private_type": (
-                "api::Config::Secret item{};", "GTI-S2007", "Nested type 'Secret'"),
-            "module_private_static": (
-                "return api::Config::Secret::code();", "GTI-S2007", "Nested type 'Secret'"),
-            "module_private_alias": (
-                "api::Gate::Hidden::Network item{};", "GTI-S2007", "Type alias 'Hidden'"),
-            "module_unexported_type": (
-                "api::Hidden::Child item{};", "GTI-S2024", "private to module 'nested_api'"),
-        }
-        for name, (body, code, fragment) in module_negatives.items():
-            source = scratch / f"{name}.gti"
-            source.write_text('import "nested_api.gti";\nint main() { ' + body + " }\n",
-                              encoding="utf-8")
-            result = subprocess.run([str(compiler), str(source), "--emit-mir",
-                                     "--progress", "never", "-o", str(scratch / f"{name}.mir")],
-                                    capture_output=True, text=True, timeout=60)
-            assert result.returncode != 0, name
-            assert code in result.stderr and fragment in result.stderr, result.stderr
-            assert str(interface) in result.stderr and "GTI-B0001" not in result.stderr, result.stderr
-    print(f"nested types: 18 native builds, six failure cleanups and "
-          f"{len(negatives) + len(module_negatives)} semantic rejections passed")
+    print("nested types: C ABI records, callbacks and opaque handles passed")
 
 
 if __name__ == "__main__":

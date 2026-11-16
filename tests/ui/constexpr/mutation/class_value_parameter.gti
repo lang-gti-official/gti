@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: class value parameter.
+constexpr void add(mut int& value, int amount) { value += amount; }
+class Base { public: int b = 0; }; class Derived : public Base {}; constexpr void bad(Derived value) {}  //~ ERROR GTI-S2057
+int main() { return 0; }

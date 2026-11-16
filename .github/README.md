@@ -27,7 +27,16 @@ python3 scripts/agent_workflow.py protection
 - On a pull request: lint (formatting, release version, the old-suite test
   freeze `scripts/check_test_freeze.py`, Tree-sitter), the
   workflow regression tests, and a macOS arm64 and Linux x64 build running
-  `feedback-fast` and `compiler_pipeline`. Drafts run lint only.
+  `feedback-fast` and the `gti-test` entries `gti_test_ui` with its `tests/ui`
+  shards `gti_test_ui_<i>`, `gti_test_examples` and `gti_unit_tests` (each
+  matrix row's `gate` list;
+  Linux adds `compiler_pipeline` until it drains into `tests/ui`), with
+  per-case JUnit reports uploaded as `gti-test-<platform>-<attempt>`. On Linux,
+  `gti-test --changed HEAD^1` then fails a case the pull request adds or
+  changes when it uses more than half its CPU limit. The daily slow tier runs
+  `tests/slow` and an `--isolate` run; the daily sanitizers run the `gti_test_ui`
+  entries' cases with instrumented programs. See
+  [verification](../docs/architecture/verification.md). Drafts run lint only.
 - On every push to main, full validation's `tip` job republishes that run's
   production archives as the rolling `tip` prerelease once both platforms pass
   their installed-toolchain checks, before the integration shards finish. It

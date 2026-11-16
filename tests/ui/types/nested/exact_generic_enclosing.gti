@@ -1,0 +1,3 @@
+// Nested types inside exact specializations of generic types are rejected.
+//@ check-fail
+namespace exact { struct C<T> { public: C() = default; }; } struct exact::C<int> { struct N { int value = 1; };  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2030 including exact specializations

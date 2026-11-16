@@ -1,0 +1,16 @@
+// Overloaded macros in a namespace: hover shows the selected overload, it
+// navigates to it, and macro names and the `#macro` keyword are tokens.
+// (From deferred_assertion_lsp_test.py.)
+//@ hover @use: #macro
+//@ hover @use: int32_t value
+//@ definition @use: @int_overload
+//@ token @int_overload: macro
+//@ token @use: macro
+//@ token @keyword: keyword
+//@ hover @keyword: none
+import std.assert;
+namespace application {
+  /*😀*/ /*@keyword*/#macro /*@int_overload*/check(int value) { std::assert!(value == 7); }
+  #macro check(bool value) { std::assert!(value); }
+}
+int main() { /*😀*/ application::/*@use*/check!(7); return 0; }

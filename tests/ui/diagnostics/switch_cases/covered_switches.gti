@@ -1,0 +1,6 @@
+// Complete and default-covered switches need no missing-case repair.
+//@ check-pass
+enum Message { idle, item(int value), done };
+void complete(Message& value) { switch (value) { case Message::idle: break; case Message::item: break; case Message::done: break; } }
+void defaulted(Message& value) { switch (value) { default: break; } }
+int main() { return 0; }

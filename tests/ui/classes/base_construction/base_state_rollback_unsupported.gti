@@ -1,0 +1,19 @@
+// Base construction state rolls back when a later member initialiser fails.
+//@ run-pass
+//@ stdout: 2
+// A45: a derived class whose base carries state is GTI-B0003 (constructor lacks rollback
+// authority for a state-bearing base subobject).
+class Base {
+public:
+  int32_t x = 1;
+public:
+  Base() = default;
+};
+class Derived : public Base {
+public:
+  Derived() { std::println(2); }
+};
+int main() {
+  Derived d = Derived();
+  return d.x - 1;
+}

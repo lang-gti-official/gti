@@ -1,0 +1,2 @@
+// An unresolved std::queue offers the canonical import std.queue; fix.
+using dictionary = std::queue<int>;  //~ ERROR GTI-S2089

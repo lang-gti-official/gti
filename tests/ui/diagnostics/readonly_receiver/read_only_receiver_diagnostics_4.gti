@@ -1,0 +1,17 @@
+// Read only receiver diagnostics: adding trailing mut should preserve valid receiver mutation and mutable-reference semantics.
+//@ check-pass
+struct Component { mut int offset = 0;  public: Component() = default; };
+class Path {
+public:
+  void update() mut {
+    direct_value = 1;
+    component.offset = 2;
+    mut int& alias = component.offset;
+    alias = 3;
+  }
+private:
+  mut int direct_value = 0;
+  mut Component component = Component();
+public:
+  Path() = default;
+};

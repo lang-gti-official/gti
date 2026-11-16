@@ -1,0 +1,11 @@
+// protected, consteval and = delete are GTI keywords, not reserved C++ spellings.
+//@ parse-pass
+class Value {
+public:
+  Value(Value& other) = delete;
+public:
+  Value() = default;
+protected:
+  int hidden = 0;
+};
+consteval int folded() { return 1; }
