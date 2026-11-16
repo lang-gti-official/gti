@@ -53,6 +53,19 @@ def verify_gti_test_tiers(tests):
         raise AssertionError("gti_test_slow must run tests/slow")
     if "--isolate" not in commands["gti_test_isolate"]:
         raise AssertionError("gti_test_isolate must run every case through the CLI")
+    # tests/ui runs as gti_test_ui_1..N, each `--shard i/N`, per commit; the
+    # gti_test_ui entry leaves tests/ui's cases to them.
+    shards = sorted(name for name in commands if re.match(r"^gti_test_ui_[0-9]+$", name))
+    count = len(shards)
+    if count == 0 or "--without-ui" not in commands["gti_test_ui"]:
+        raise AssertionError("tests/ui must run as gti_test_ui_<i> shards beside gti_test_ui --without-ui")
+    for index in range(1, count + 1):
+        name = f"gti_test_ui_{index}"
+        command = commands.get(name, [])
+        if f"{index}/{count}" not in command or "--shard" not in command:
+            raise AssertionError(f"{name} must run `--shard {index}/{count}`")
+        if "slow" in labels[name]:
+            raise AssertionError(f"{name} must not be in the slow tier")
 
 def inventory(build):
     # `ctest --show-only` writes LastTest.log. Query a copy of only the generated
