@@ -530,9 +530,11 @@ Outcome Engine::run(const TestFile &test) {
     Compiled compiled;
     if (test.runnerFault == "crash")
       std::raise(SIGSEGV);
-    if (test.runnerFault == "spin")
-      for (volatile unsigned long spin = 0;; spin = spin + 1) {
-      }
+    if (test.runnerFault == "spin") {
+      volatile unsigned long spin = 0;
+      while (true)
+        spin = spin + 1;
+    }
     if (test.runnerFault == "hang")
       while (true)
         pause();

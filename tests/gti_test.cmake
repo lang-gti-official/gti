@@ -14,4 +14,14 @@ add_dependencies(gti-test gti)
 add_test(NAME gti_test_ui
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
     $<TARGET_FILE:gti-test> --jobs 4)
-set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4)
+# Per-test limits are CPU seconds measured on a fast development machine;
+# hosted runners are about twice as slow, and sanitizer or other slow trees
+# scale every bound by GTI_TEST_TIMEOUT_SCALE.
+# (TestThroughput.cmake defines the cache entry after this file.)
+set(gti_test_timeout_scale "${GTI_TEST_TIMEOUT_SCALE}")
+if(NOT gti_test_timeout_scale MATCHES "^[1-9][0-9]*$")
+  set(gti_test_timeout_scale 1)
+endif()
+math(EXPR gti_test_time_scale "2 * ${gti_test_timeout_scale}")
+set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
