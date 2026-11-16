@@ -998,7 +998,6 @@ owners = [
 ]
 consumers = [
   "format_output_matrix_runtime",
-  "json_dynamic_runtime",
 ]
 
 [[area]]
@@ -1034,7 +1033,6 @@ owners = [
   "process_resource_policy",
   "process_capture_failure",
   "process_group_identity",
-  "random_engine_runtime",
   "http_runtime",
   "http_url_operators",
 ]
@@ -1052,8 +1050,6 @@ consumers = [
 area = "stdlib"
 paths = [
   "stdlib/",
-  "tests/stdlib_api_contracts_test.py",
-  "tests/fixtures/set_swap_contract.gti",
 ]
 owners = [
   "stdlib_surface",
@@ -1064,7 +1060,6 @@ owners = [
   "stdlib_include_sweep",
   "stdlib_discardable",
   "stdlib_adoption_runtime",
-  "stdlib_api_contracts",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -1214,7 +1209,6 @@ owners = [
   "reference_parameter_packs",
   "string_operations_runtime",
   "string_ordering_runtime",
-  "string_owned_output_runtime",
   "string_index_range_runtime",
   "string_c_string_runtime",
   "text_view_iterator_runtime",
@@ -1308,7 +1302,6 @@ owners = [
   "optional_compiler_contract",
   "panic_runtime",
   "panic_adoption_runtime",
-  "testing_assertions_runtime",
   "deferred_assertions_runtime",
   "source_location_runtime",
   "annotated_test_suites",
@@ -1339,7 +1332,6 @@ owners = [
   "composable_io_runtime",
   "process_runtime",
   "environment_runtime",
-  "random_engine_runtime",
   "cmath_runtime",
   "http_runtime",
   "http_url_operators",
@@ -1463,7 +1455,6 @@ owners = [
   "test_report",
   "test_command_controls",
   "annotated_test_suites",
-  "testing_assertions_runtime",
 ]
 consumers = []
 

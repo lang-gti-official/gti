@@ -2701,7 +2701,7 @@ representation fact of either the derived or the base class is cleared.
 
 ## Annotated test suites
 
-`testing_assertions_runtime` checks the source-only equality macros, scalar
+`tests/ui/stdlib/testing/assertions` checks the source-only equality macros, scalar
 capture and literal ergonomics, borrowed noncopyable objects, exactly-once
 operand/equality evaluation, lazy success messages/formatting, string byte/length
 differences, approximate comparison limits, and borrowed span mismatch/length.
@@ -4247,7 +4247,7 @@ dispatch or imply a persistent worker pool.
   initialization. The binding now retains the call's result loan itself, with
   the projected place as its address (`mir.md`). Semantics, the verifier and
   both backends are unchanged.
-- **Regression tests.** `projected_reference_bindings_runtime` runs
+- **Regression tests.** `tests/ui/borrow/projected_reference` runs
   `projected_reference_bindings.gti` under C++20 and natively at O0 and O2. It
   covers a local and a reference-parameter `std::unique_ptr`, `operator*`, an
   accessor, a user-defined pointer-like class and an n-ary fold.
@@ -7521,7 +7521,7 @@ issues #20, #23, #25, #26, #28 and #29. Permanent coverage includes unused and
 recursive concrete aliases, both expected alternatives with passive record
 errors, checked extraction of copyable class payloads, direct/generic lambdas
 returning copyable and move-only records, temporary operator arguments and
-nested receiver arrays. `type_only_alias_runtime` passes C++20/C++23 at O0/O3.
+nested receiver arrays. `tests/ui/types/aliases` passes C++20/C++23 at O0/O3.
 Its member-alias regression also instantiates two value-generic user-defined
 owners whose unused aliases name otherwise uninstantiated classes, including
 nested type arguments. `cpp_mir_representation_snapshot` requires the exact
@@ -8048,7 +8048,7 @@ UTF-16 locations, preservation of every instantiation site when identical
 primary errors are grouped, and clearing of both user and library dependency
 diagnostics after correction.
 
-`optimizer_mutable_call_runtime` protects the post-call safety-proof boundary:
+`tests/ui/optimizer/mutable_call` protects the post-call safety-proof boundary:
 direct and forwarded mutable scalar references, projected array elements,
 unrelated user-defined borrowed-state objects, local reference aliases,
 references to borrowed-state objects, and global setters must retain
@@ -9410,7 +9410,7 @@ ASan/UBSan, including the mutation/loan rejection cases. The original timeout
 is not counted as a pass; the successful retry establishes the return-cleanup
 change's container evidence.
 
-`toy_engine_initializers` covers Gitea #1/#2 and the 0.337 null-owner regression:
+`tests/ui/classes/initializers` covers Gitea #1/#2 and the 0.337 null-owner regression:
 temporary class construction in a member initializer, float/double field
 publication, direct/grouped plain-enum publication, empty and populated owners
 with fallible pointee cleanup, and
@@ -9582,7 +9582,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `compiler_ownership` / `generic_algorithm_cluster` complete-range coverage | L-RANGE-04 exact `input_range`, `range_of`, `mutable_range_of`, `sized_range`, range predicate/operation relationships; application-defined nominal and fixed-array instantiation; concrete HIR protocol/strategy replacement; checked fixed-array index arithmetic after symbolic-operator suppression; missing endpoints, wrong referent, missing mutable endpoint, wrong size result, and callable mismatch rejection; C++20/C++23 O0/O3 runtime parity |
 | `compiler_pipeline` / `mutable_stored_dependency_runtime` / `nested_borrow_fields` / `nested_borrow_fields_lsp` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; exact nominal nesting and separately mapped aggregate dependencies; assignment, mutable-copy, global borrowed storage, and unproven-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, field paths, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
-| `string_owned_output_runtime` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
+| `tests/ui/stdlib/string/owned_output.gti` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
 | `string_index_range_runtime` | independent half-open string copies, empty and endpoint ranges, embedded zero/UTF-8 code units, source lifetime independence, invalid and huge endpoints with exact public bounds category and cleanup; O0/O1/O3 under C++20/C++23 plus generated-program ASan/UBSan |
 | `string_c_string_runtime` | non-null empty and populated `std::string::c_string()` views, hidden trailing NUL maintenance across reserve/append/pop/resize/shrink/clear, unchecked embedded-NUL prefix behavior, checked `try_c_string()` null rejection, verified-MIR helper identity, and execution at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; declaration tests own live-loan invalidation, local-owner escape, and ownerless native relay, while emitter preflight mutations reject forged result and storage identities |
 | `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; snapshot-bound body revisions and bounded analysis invalidation across CFG/effect/promotion/safety/alias/loop/SCCP caches; scalar promotion, local folding, SCCP, unreachable cleanup, and dead-computation removal; O0 identity; deterministic schema-v3 reports; malformed-proof and conservative near-miss rejection |
@@ -9629,7 +9629,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `feature_interaction_model` | constrained pairwise/selected-triple and full three-way coverage, seeded typed source generation, independent value/effect/cleanup expectations, metamorphic renaming, failure classifiers, retained evidence, and predicate-preserving bounded reduction |
 | `feature_interaction_smoke` | three fixed interaction programs through the real optimized compiler at C++20/C++23 and O0/O3, original/renamed variants, repeated execution, exact destructor/call/output checks, and negative ownership admission controls |
 | `stdlib_package_runtime` | copy the real `stdlib/tests` package into isolated directories and run its module graph plus declared native C++ source with LLVM/C++ in dev/release profiles; require the complete numeric/foundation success output |
-| `stdlib_api_contracts` | execute stateful set-policy swaps on LLVM/C++ at O0/O3, reject borrowed comparator/hash/equality policies at the public swap call, and reject unformattable first/middle/last arguments across all formatting/printing/panic overloads at the caller |
+| `tests/ui/stdlib/contracts` | execute stateful set-policy swaps on LLVM/C++ at O0/O3, reject borrowed comparator/hash/equality policies at the public swap call, and reject unformattable first/middle/last arguments across all formatting/printing/panic overloads at the caller |
 | `stdlib_surface_manifest` | complete stdlib-source census and executable/scaffold/unsupported classification; injected unclassified-source, unknown-source, retired-fingerprint, missing-case, and wrong-case-kind rejection; review-script/census source agreement |
 | `stdlib_surface_review_policy` | `scripts/check_stdlib_surface_review.py` in throwaway repositories: an added or modified stdlib source needs a changed manifest entry naming it or a `Stdlib-Surface: unchanged` + `Stdlib-Surface-Reason:` trailer block; unreviewed, reason-less, split-block and reverted reviews fail, non-surface edits and deletions pass, and the range starts at the fork point |
 | `stdlib_surface` | every currently classified executable stdlib entry through the production compiler/native-driver path at O0/O3 with exact exit/stdout/stderr, including counted I/O create/write/seek/chunk-read/append/close, standard streams, and strict Base64/hexadecimal encoding and decoding over all byte values, plus bounded expected diagnostics for unsupported surfaces. Each native build has a 300-second limit unless its case records a longer one, at most 900 seconds, with a `build_timeout_reason`; no case currently does |
@@ -10139,7 +10139,7 @@ participates in the standard MIR and LoweredProgram censuses and the Tree-sitter
 shipped-source gate. This slice extends type contexts, not dependent alias
 templates or direct specialized-alias constructor expression spelling.
 
-For owning-string output, `string_owned_output_runtime` is the focused
+For owning-string output, `tests/ui/stdlib/string/owned_output.gti` is the focused
 source-defined-library gate. It keeps the existing named-owner `string&`
 selection live while proving that a fresh move-only string result directly
 initializes the by-value overload, including the motivating

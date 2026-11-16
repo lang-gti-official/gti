@@ -53,6 +53,8 @@ def main() -> int:
                         help="extra raw directive text after //@ ")
     parser.add_argument("--expect", action="append", default=[],
                         help="diagnostic code a check-fail case must report")
+    parser.add_argument("--message", action="append", default=[], metavar="CODE=TEXT",
+                        help="add a message substring to that code's blessed annotation")
     parser.add_argument("--build", type=Path, default=REPOSITORY / "build-release")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--section", action="store_true",
@@ -126,6 +128,14 @@ def main() -> int:
         print(f"stdout differs from the declared expectation: {declared}", file=sys.stderr)
         print(blessed.stdout, file=sys.stderr)
         return 1
+    for item in arguments.message:
+        code, _, message = item.partition("=")
+        written = dest.read_text()
+        annotation = re.search(r"//~[\^v|?]*\s+ERROR\s+" + re.escape(code) + r"\b", written)
+        if not annotation:
+            print(f"no {code} annotation for its message", file=sys.stderr)
+            return 1
+        dest.write_text(written[:annotation.end()] + " " + message + written[annotation.end():])
     checked = subprocess.run([str(gti_test), str(dest), "--jobs", "1"],
                              capture_output=True, text=True, env=environment)
     result = checked.stdout.strip().splitlines()[-1] if checked.stdout.strip() else ""
