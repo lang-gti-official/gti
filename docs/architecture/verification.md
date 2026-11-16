@@ -9947,7 +9947,8 @@ none moved. The gate entries' hosted times on that run (Linux, 4 vCPU, ctest
 `-j` with `PROCESSORS 4`): `gti_test_ui` 93 s, `gti_test_ui_1`..`_4` 152, 146,
 144 and 143 s, `gti_test_examples` 113 s, `gti_unit_tests` 27 s,
 `compiler_pipeline` 281 s, each against its 600 s bound (1800 s for
-`compiler_pipeline`). Measured on that machine (Apple M4 Pro) on
+`compiler_pipeline`); macOS arm64: `gti_test_ui` 97 s, the shards 147, 150,
+127 and 134 s, `gti_test_examples` 115 s, `gti_unit_tests` 34 s. Measured on that machine (Apple M4 Pro) on
 2026-11-17, the most expensive warm case of `tests/ui` used 47% of its limit
 and five used 40% or more; a pull request that edits one of those can be
 flagged if its hosted runner is more than about 2.1 to 2.5 times slower. LSP
