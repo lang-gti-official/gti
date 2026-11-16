@@ -4826,6 +4826,11 @@ void testAnalysisErrorLimit() {
                result.diagnostics.back().code == "GTI-D0002",
            "lexical and parser recovery stop at the same default limit");
   }
+  const auto prefix = lang::Frontend().analyze(
+      "prefix-limit.gti", "void completed() {}\n" + parseErrors);
+  expect(
+      prefix.program.declarations().size() == 1,
+      "parser error limits retain completed declarations for editor queries");
   auto cache = std::make_shared<lang::FrontendCache>();
   std::string imports;
   for (int index = 0; index < 40; ++index)

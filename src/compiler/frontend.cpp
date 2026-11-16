@@ -1241,8 +1241,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       collectExportRequests(unitDeclarations, *unit, options.target);
       declarations.insert(declarations.end(), unitDeclarations.begin(),
                           unitDeclarations.end());
-      if (applyErrorLimit(result.diagnostics, options.limits.errorLimit))
+      if (applyErrorLimit(result.diagnostics, options.limits.errorLimit)) {
+        // Source-unit declaration ranges still describe the completed prefix.
+        // Keep that AST alive for syntax-only editor queries.
+        result.program = Program(std::move(declarations));
         return result;
+      }
       ++completed;
       if (options.progress != nullptr) {
         progress.update(unit->path.string(), completed);
