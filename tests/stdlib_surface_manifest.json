@@ -6474,7 +6474,7 @@
         "tests/fixtures/optional_clone.gti",
         "tests/fixtures/optional_nested.gti",
         "tests/fixtures/optional_expected_composition.gti",
-        "tests/fixtures/expected_constructor_payload.gti",
+        "tests/ui/language/construction/expected_constructor_payload.gti",
         "tests/fixtures/optional_constructor_failure.gti",
         "tests/fixtures/optional_reset_failure.gti",
         "tests/optional_compiler_tests.cpp",
