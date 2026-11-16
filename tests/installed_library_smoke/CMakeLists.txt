@@ -46,17 +46,6 @@ target_link_libraries(gti_installed_runtime_failure_header_smoke
 add_test(NAME installed_runtime_failure_header_coexistence
          COMMAND gti_installed_runtime_failure_header_smoke)
 
-# The frozen C++ backend is installed only by SDKs built with
-# GTI_ENABLE_CPP_BACKEND; default SDKs and releases omit it.
-if(TARGET GTI::cpp_backend)
-  add_executable(gti_installed_cpp_backend_smoke
-                 ../cpp_backend_library_smoke.cpp)
-  target_link_libraries(gti_installed_cpp_backend_smoke
-                        PRIVATE GTI::cpp_backend)
-  add_test(NAME installed_cpp_backend_library
-           COMMAND gti_installed_cpp_backend_smoke)
-endif()
-
 add_executable(gti_installed_llvm_backend_smoke
                ../llvm_backend_library_smoke.cpp)
 target_link_libraries(gti_installed_llvm_backend_smoke

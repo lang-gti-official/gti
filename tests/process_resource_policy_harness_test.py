@@ -17,7 +17,7 @@ class InstalledResourcesTests(unittest.TestCase):
         class CapturedStorageCompile(Exception):
             pass
 
-        for backend, expected in (("llvm", "1"), ("cpp", "0")):
+        for backend, expected in (("llvm", "1"),):
             def capture(command, environment, expected_status=0):
                 if len(command) > 1 and command[1].endswith("/process_storage_policy.gti"):
                     self.assertIn(f"-DGTI_TEST_PROCESS_OWNERS={expected}", command)

@@ -62,6 +62,12 @@ GATE_POLL_SECONDS = 60
 SANITIZER_WORKFLOW = ".github/workflows/sanitizers.yml"
 SANITIZER_VERDICT = "Sanitizer verdict"
 SANITIZER_RUNS = 60
+# The daily slow tier (demoted test families and the -O3 re-run) is the same
+# kind of evidence: a cut or promotion needs both daily verdicts on its commit.
+SLOW_WORKFLOW = ".github/workflows/slow.yml"
+SLOW_VERDICT = "Slow tier verdict"
+DAILY_TIERS = {"sanitizers": (SANITIZER_WORKFLOW, SANITIZER_VERDICT),
+               "slow": (SLOW_WORKFLOW, SLOW_VERDICT)}
 STATUS_BRANCH = "release-status"
 STATUS_FILE = "release-status.json"
 STATUS_URL = (f"https://raw.githubusercontent.com/{REPOSITORY}/"
@@ -459,12 +465,13 @@ def select_cut(repository: str, ref: str, min_age: int, now: datetime,
                     f"{min_age} h old")
     if version_at(nightly) != version_at(head):
         return skip(f"a release cut landed on main after the published nightly {nightly}")
-    # Sanitizers run daily on the nightly commit, not in full validation; a
-    # nightly they have not passed (yet) waits for the next train.
+    # Sanitizers and the slow tier run daily on the nightly commit, not in
+    # full validation; a nightly they have not passed (yet) waits for the
+    # next train.
     try:
         sanitizer_run = sanitized(repository, nightly)
     except ValueError as error:
-        return skip(f"published nightly {nightly} has not passed the sanitizers: {error}")
+        return skip(f"published nightly {nightly} has not passed the daily sanitizers and slow tier: {error}")
     print(f"Release cut source {nightly}: published nightly, full CI evidence {run}, "
           f"sanitizer run {sanitizer_run}, on main for {age.total_seconds() / 3600:.1f} h")
     return {"cut": "true", "sha": nightly, "version": version_at(nightly)}
@@ -1077,27 +1084,38 @@ def nightly_publication_complete(repository: str, sha: str, request: Request) ->
 
 
 def sanitizer_evidence(repository: str, sha: str, request: Request) -> int:
-    """The sanitizers.yml run, from main's own definition, whose verdict passed on exactly sha.
+    """The sanitizers.yml run whose verdict passed on exactly sha (daily_evidence)."""
+    return daily_evidence(repository, sha, request, "sanitizers")
+
+
+def slow_evidence(repository: str, sha: str, request: Request) -> int:
+    """The slow.yml run whose verdict passed on exactly sha (daily_evidence)."""
+    return daily_evidence(repository, sha, request, "slow")
+
+
+def daily_evidence(repository: str, sha: str, request: Request, tier: str) -> int:
+    """The tier's daily workflow run, from main's own definition, whose verdict passed on exactly sha.
 
     Only scheduled and main-dispatched runs count: a dispatch from another
     branch would run that branch's copy of the workflow. The verdict job is
     read from the run's latest attempt, so a green retry of one job cannot
     combine with a red verdict."""
+    path, name = DAILY_TIERS[tier]
     if SHA.fullmatch(sha) is None:
-        raise TrainError("sanitizer evidence must name an exact commit SHA")
+        raise TrainError(f"{tier} evidence must name an exact commit SHA")
     base = source.repository_path(repository)
-    workflow = urllib.parse.quote(PurePosixPath(SANITIZER_WORKFLOW).name, safe="")
+    workflow = urllib.parse.quote(PurePosixPath(path).name, safe="")
     runs = request(f"{base}/actions/workflows/{workflow}/runs?branch=main&status=completed"
                    f"&per_page={SANITIZER_RUNS}")
     if not isinstance(runs, dict) or not isinstance(runs.get("workflow_runs"), list):
-        raise RuntimeError("GitHub returned no sanitizer run inventory")
-    verdict = f"{SANITIZER_VERDICT} ({sha})"
+        raise RuntimeError(f"GitHub returned no {tier} run inventory")
+    verdict = f"{name} ({sha})"
     for run in runs["workflow_runs"][:SANITIZER_RUNS]:
         if not isinstance(run, dict) or type(run.get("id")) is not int:
             raise RuntimeError("GitHub returned a malformed workflow run")
         owner = (run.get("repository") or {}).get("full_name", "")
         head_owner = (run.get("head_repository") or {}).get("full_name", "")
-        if (run.get("path") != SANITIZER_WORKFLOW or run.get("head_branch") != "main"
+        if (run.get("path") != path or run.get("head_branch") != "main"
                 or run.get("event") not in ("schedule", "workflow_dispatch")
                 or run.get("status") != "completed"
                 or owner.lower() != repository.lower() or head_owner.lower() != repository.lower()):
@@ -1110,7 +1128,7 @@ def sanitizer_evidence(repository: str, sha: str, request: Request) -> int:
                 and verdicts[0].get("conclusion") == "success"):
             return run["id"]
     raise ValueError(f"no successful '{verdict}' in the last {SANITIZER_RUNS} runs of "
-                     f"{SANITIZER_WORKFLOW} on main; dispatch it with commit {sha}")
+                     f"{path} on main; dispatch it with commit {sha}")
 
 
 def sanitized_source(sha: str) -> str:
@@ -1129,16 +1147,17 @@ def sanitized_source(sha: str) -> str:
 
 
 def sanitizer_source(repository: str, event: str, ref: str, requested: str,
-                     sanitized: Evidence) -> dict[str, str]:
-    """Which commit sanitizers.yml checks out, and whether it runs at all.
+                     sanitized: Evidence, tier: str = "sanitizers") -> dict[str, str]:
+    """Which commit a daily tier's workflow (sanitizers.yml, slow.yml) checks out, and whether it runs.
 
     By default the commit the nightly tag names; a dispatch may name another
     commit on main or a beta/* line. A scheduled run skips a commit that has
-    already passed, so an unchanged nightly costs no second three-hour run."""
+    already passed `sanitized` (that tier's own evidence), so an unchanged
+    nightly costs no second multi-hour run."""
     if ref != "refs/heads/main":
-        raise TrainError("sanitizer evidence comes only from main's own workflow definition")
+        raise TrainError(f"{tier} evidence comes only from main's own workflow definition")
     if event not in ("schedule", "workflow_dispatch"):
-        raise TrainError("sanitizers run only on schedule or dispatch")
+        raise TrainError(f"the {tier} tier runs only on schedule or dispatch")
     _, nightly = source.published_nightly()
     if requested:
         if event != "workflow_dispatch" or SHA.fullmatch(requested) is None:
@@ -1161,9 +1180,9 @@ def sanitizer_source(repository: str, event: str, ref: str, requested: str,
         except ValueError:
             pass
         else:
-            print(f"::notice::{sha} already passed the sanitizers in run {previous}")
+            print(f"::notice::{sha} already passed the {tier} tier in run {previous}")
             return dict(values, sanitize="false")
-    print(f"Sanitize {sha}" + (" (the published nightly)" if sha == nightly else ""))
+    print(f"Run the {tier} tier on {sha}" + (" (the published nightly)" if sha == nightly else ""))
     return values
 
 
@@ -1192,7 +1211,7 @@ def candidate(repository: str, version: str, tags: dict[str, str], status: dict[
     try:
         sanitized(repository, covered)
     except ValueError as error:
-        return None, f"{tag} has not passed the sanitizers on {covered}: {error}"
+        return None, f"{tag} has not passed the daily sanitizers and slow tier on {covered}: {error}"
     return {"tag": tag, "version": version, "sha": tags[tag], "number": str(numbers[-1]),
             "soaked": f"{soaked.total_seconds() / 3600:.1f}"}, ""
 
@@ -1500,9 +1519,23 @@ def nightly_evidence_reader() -> Evidence:
     return lambda repository, sha: release_evidence(repository, sha, request)
 
 
-def sanitizer_reader() -> Evidence:
+def tier_reader(tier: str) -> Evidence:
     request = reader()
-    return lambda repository, sha: sanitizer_evidence(repository, sha, request)
+    return lambda repository, sha: daily_evidence(repository, sha, request, tier)
+
+
+def sanitizer_reader() -> Evidence:
+    """The release requirement: both daily verdicts (sanitizers and slow tier) on the commit.
+
+    Returns the sanitizer run; a missing slow-tier verdict raises like a
+    missing sanitizer verdict."""
+    sanitizers, slow = tier_reader("sanitizers"), tier_reader("slow")
+
+    def verified(repository: str, sha: str) -> int:
+        run = sanitizers(repository, sha)
+        slow(repository, sha)
+        return run
+    return verified
 
 
 def check_repository(repository: str) -> str:
@@ -1546,7 +1579,8 @@ def main(argv: list[str] | None = None) -> int:
     command("initialize-status")
     command("rollback", "repository", "action", "target", "reason", "notes", "output")
     command("require-success", "results")
-    command("sanitizer-source", "repository", "event", "ref", "commit", "output")
+    command("sanitizer-source", "repository", "event", "ref", "commit", "output") \
+        .add_argument("--tier", choices=sorted(DAILY_TIERS), default="sanitizers")
     sub.add_parser("rulesets").add_argument(
         "--name", choices=[ruleset["name"] for ruleset in rulesets()], default="")
     arguments = parser.parse_args(argv)
@@ -1650,7 +1684,7 @@ def main(argv: list[str] | None = None) -> int:
         elif name == "sanitizer-source":
             check_repository(arguments.repository)
             values = sanitizer_source(arguments.repository, arguments.event, arguments.ref,
-                                      arguments.commit, sanitizer_reader())
+                                      arguments.commit, tier_reader(arguments.tier), arguments.tier)
         elif name == "require-success":
             require_success(arguments.results)
             return 0

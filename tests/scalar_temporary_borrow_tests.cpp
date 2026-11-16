@@ -272,6 +272,81 @@ int main() {
 }
 )gti",
            "set lookup and iterator algorithms");
+  accepted(R"gti(
+import std.regex;
+import std.string;
+bool matches(std::string& text) {
+  return std::regex_match(text.view(), std::regex("hello")) ? true : false;
+}
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }
+)gti",
+           "temporary regex does not own the match's text dependency");
+}
+
+void independentTextPublication() {
+  const std::string declarations = R"gti(
+import std.string;
+class Pattern { public: Pattern() = default; };
+class Result {
+  std::string_view text;
+public:
+  Result(std::string_view text) : text(text) {}
+  bool matched() { return this.text.size() != std::size_t(0); }
+};
+Result match(std::string_view text, Pattern& pattern) { return Result(text); }
+)gti";
+  const auto control = analyze(declarations + R"gti(
+bool matches(std::string& text) { return match(text.view(), Pattern()).matched(); }
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }
+)gti");
+  expect(control.canGenerateCode(),
+         "text publication is independent of another temporary argument");
+  if (control.canGenerateCode()) {
+    expect(lang::verifyMirProgram(control.mir).valid(),
+           "independent text publication verifies");
+    bool checked = false;
+    for (const auto &function : control.mir.functionInstances()) {
+      for (const auto &block : function.body.blocks) {
+        for (const auto &call : block.instructions) {
+          if (!call.dependentTextPublication || call.borrowFields.size() != 1 ||
+              !call.functionTarget)
+            continue;
+          const auto *target =
+              control.mir.findFunctionInstance(*call.functionTarget);
+          if (!target || target->parameterTypes.size() != 2 ||
+              target->parameterTypes[1].kind != lang::SemanticType::Reference)
+            continue;
+          auto forged = control.mir;
+          auto *changed = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(function.id));
+          for (auto &changedBlock : changed->body.blocks)
+            for (auto &instruction : changedBlock.instructions)
+              if (instruction.id == call.id) {
+                instruction.borrowArgument = 1;
+                instruction.borrowFields.front().parameter = 1;
+              }
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "text publication cannot be redirected to the temporary "
+                 "argument");
+          forged = control.mir;
+          auto *changedTarget = const_cast<lang::MirFunctionInstance *>(
+              forged.findFunctionInstance(*call.functionTarget));
+          changedTarget->publishedTextFields.clear();
+          expect(!lang::verifyMirProgram(forged).valid(),
+                 "temporary argument requires independently proved text "
+                 "publication");
+          checked = true;
+        }
+      }
+    }
+    expect(checked, "independent publication control contains the exact call");
+  }
+  rejected(declarations + R"gti(
+Result escape() { std::string owner{"hello"}; return match(owner.view(), Pattern()); }
+int main() { return 0; }
+)gti",
+           "unrelated temporary cannot allow the text owner to escape",
+           "GTI-S2045");
 }
 void verifierProofs() {
   auto frontend = analyze(scalar + "int main() { return read(42) - 42; }");
@@ -549,6 +624,7 @@ int main() {
   carrierBoundaries();
   temporaryOwnedCarriers();
   libraryClients();
+  independentTextPublication();
   verifierProofs();
   primitiveBorrowInitialization();
   sharedParentCallArguments();

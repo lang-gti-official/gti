@@ -1,0 +1,1 @@
+Fix an internal compiler error when a call returns text borrowed from one argument while borrowing an unrelated temporary argument, including `std::regex_match(text.view(), std::regex(pattern))`. The same fix applies to editor diagnostics; the text owner's lifetime and temporary cleanup remain checked.
