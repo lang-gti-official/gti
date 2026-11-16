@@ -1,0 +1,3 @@
+// Interface static methods: the invalid interface static boundary (private instance) is rejected with GTI-S2041.
+//@ require-function-definitions
+interface I { private: int invalid(); };  //~ ERROR GTI-S2041

@@ -1,0 +1,12 @@
+// Edge sensitive move flow: a moved state from a terminating if arm should not reach following statements.
+//@ check-pass
+struct Record { int32_t value = 7;  public: Record() = default; };
+int read_after(bool stop) {
+  mut Record value = Record();  //~ WARN GTI-S2096
+  if (stop) {
+    Record consumed = std::move(value);
+    return consumed.value;
+  }
+  return value.value;
+}
+int main() { return read_after(false) - 7; }

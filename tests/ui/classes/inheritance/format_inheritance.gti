@@ -1,0 +1,5 @@
+// Inheritance and interfaces: base lists, override and base initializers format idempotently.
+//@ parse-pass
+//@ snapshot: format
+class Entity{int id;public:Entity(int id):id(id){}};
+interface Renderable{int render(int frame);};class Sprite:public Entity,public Renderable{public:Sprite(int id):Entity(id){}int render(int frame)override{return frame;} public: Sprite() = default; };

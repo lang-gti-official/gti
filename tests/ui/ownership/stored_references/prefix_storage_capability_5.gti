@@ -1,0 +1,10 @@
+// Prefix storage capability: ordinary prefix mutators require a writable receiver.
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+int main() {
+  std::detail::prefix_owner<int> values{uint64_t(1)};
+  values.pop();  //~ ERROR GTI-S2000 Mutable method requires a mutable receiver
+  return 0;
+}

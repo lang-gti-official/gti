@@ -1,0 +1,22 @@
+// Structural requires and accumulate: non-polymorphic operators retain ordinary requirements through concrete selection and verified MIR without constraining unused owners.
+//@ check-pass
+class ConstrainedOperator<T> {
+public:
+  bool operator()(T value)
+    requires std::numeric<T> {
+    return true;
+  }
+
+  bool operator!=(ConstrainedOperator<T>& other)
+    requires std::numeric<T> {
+    return false;
+  }
+public:
+  ConstrainedOperator() = default;
+};
+int main() {
+  ConstrainedOperator<int> value{};
+  ConstrainedOperator<int> other{};
+  ConstrainedOperator<bool> unused{};
+  return value(4) && !(value != other) ? 0 : 1;
+}

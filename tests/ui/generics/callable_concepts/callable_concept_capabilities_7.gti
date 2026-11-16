@@ -1,0 +1,61 @@
+// Callable concept capabilities: a generic body should prove comparator, read, repeatable and consuming callable relations for dependent class instances and lambdas from their substituted operator() signatures.
+//@ check-pass
+import std.functional;
+
+class less_of<std::totally_ordered T> {
+public:
+  less_of() {}
+  bool operator()(T& left, T& right) { return left < right; }
+};
+
+class equal_counter<std::totally_ordered T> {
+  mut int32_t calls;
+
+public:
+  equal_counter() : calls(0) {}
+  bool operator()(T& value) mut {
+    this.calls++;
+    return value == value;
+  }
+};
+
+class once_equal<std::totally_ordered T> {
+public:
+  once_equal() {}
+  bool operator()(T& value) && { return value == value; }
+};
+
+bool order<T, Compare>(T& left, T& right, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  return compare(left, right);
+}
+
+bool read_value<T, Function>(T& value, Function function)
+  requires std::read_callable<Function, T, bool> {
+  return function(value);
+}
+
+bool read_twice<T, Function>(T& value, mut Function function)
+  requires std::predicate<Function, T> {
+  return function(value) && function(value);
+}
+
+bool read_once<T, Function>(T& value, Function function)
+  requires std::once_callable<Function, T, bool> {
+  return std::move(function)(value);
+}
+
+bool generic_checks<std::totally_ordered T>(T& low, T& high) {
+  return order(low, high, less_of<T>()) && !order(high, low, less_of<T>()) &&
+         order(low, high,
+               [](T& left, T& right) -> bool { return left < right; }) &&
+         read_value(low, [](T& value) -> bool { return value == value; }) &&
+         read_twice(low, equal_counter<T>()) &&
+         read_once(low, once_equal<T>());
+}
+
+int main() {
+  int32_t low = 1;
+  int32_t high = 2;
+  return generic_checks(low, high) ? 0 : 1;
+}

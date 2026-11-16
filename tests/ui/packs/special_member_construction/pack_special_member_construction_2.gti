@@ -1,0 +1,7 @@
+// Pack special member construction: special construction must not bypass whole-pack use-after-move diagnostics or their concrete-instance context.
+import std.string;
+void twice<T, Args...>(Args... args) {
+  T first = T(args...);
+  T second = T(args...);  //~ ERROR GTI-S2018 Value 'args' has already been moved
+}
+int main() { twice<std::string>(std::string("owned")); return 0; }

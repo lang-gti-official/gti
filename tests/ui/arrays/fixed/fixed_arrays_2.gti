@@ -1,0 +1,37 @@
+// Fixed arrays: invalid fixed array operations should fail semantic analysis.
+struct NoDefault {
+  int stored;
+  NoDefault(int value) : stored(value) {}
+};
+
+class ReadOnlyArrayReceiver {
+  mut int slots[1] = {0};
+
+public:
+  void write() { slots[0] = 1; }  //~ ERROR GTI-S2002
+public:
+  ReadOnlyArrayReceiver() = default;
+};
+
+int overflow_extent[18446744073709551615 + 1] = {};  //~ ERROR GTI-S2026 //~ ERROR GTI-S2015
+int negative_extent[1 - 2] = {};  //~ ERROR GTI-S2026 //~ ERROR GTI-S2015
+int zero_divisor_extent[4 / 0] = {};  //~ ERROR GTI-S2026 //~ ERROR GTI-S2015
+
+int choose(int values[2]) { return 2; }
+int choose(int values[3]) { return 3; }
+
+int main() {
+  int wrong_count[3] = {1, 2};  //~ ERROR GTI-S2015
+  int immutable[1] = {1};
+  immutable[0] = 2;  //~ ERROR GTI-S2002
+  int values[2] = {1, 2};
+  int bad_index = values[1.5];  //~ ERROR GTI-S2016
+  int negative = values[-1];  //~ ERROR GTI-S2016
+  int past_end = values[2];  //~ ERROR GTI-S2016
+  mut int missing[2];  //~ ERROR GTI-S2015
+  NoDefault objects[1] = {};  //~ ERROR GTI-S2015
+  int other[4] = {1, 2, 3, 4};
+  int mismatch = choose(other);  //~ ERROR GTI-S2012
+  uint64_t hidden = other.length();  //~ ERROR GTI-S2016
+  return 0;
+}

@@ -1,0 +1,3 @@
+// Stored reference branch invalidation: a use after an if must keep the retained loan live across an intervening invalidation.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { char first = *iterator; } value.push_back('!'); char second = *iterator; return 0; }  //~ ERROR GTI-S2017

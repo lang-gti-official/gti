@@ -1,0 +1,24 @@
+// Stored carrier return provenance: a source factory retains both its argument's physical shell and the borrowed owners inside that shell.
+//@ check-pass
+class Cell {
+  int& resource;
+  mut int value = 7;
+public:
+  Cell(int& resource) : resource(resource) {}
+  int read() { return this.value; }
+  void reset() mut { this.value = 9; }
+  ~Cell() {}
+};
+class Reference<T> {
+  T& owner;
+public:
+  Reference(T& owner) : owner(owner) {}
+  T& get() { return this.owner; }
+};
+Reference<T> bind<T>(T& owner) { return Reference<T>(owner); }
+int main() {
+  int resource = 4;
+  mut Cell owner{resource};  //~ WARN GTI-S2096
+  auto reference = bind(owner);
+  return reference.get().read() - 7;
+}

@@ -1,0 +1,19 @@
+// Expected payload range loans: moving the payload owner inside its range loop also violates loop-backedge availability.
+import std.string;
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+class box {
+public:
+  box(expected<std::string, int32_t> initial)
+      : value(std::move(initial)) {}
+  mut expected<std::string, int32_t> value;
+};
+
+void move_owner() {
+  mut auto text = make_text();
+  for (auto& byte : text.value()) { auto moved = std::move(text); }  //~ ERROR GTI-S2018
+}
+int main() { return 0; }

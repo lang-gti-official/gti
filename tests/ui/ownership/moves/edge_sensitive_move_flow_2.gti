@@ -1,0 +1,12 @@
+// Edge sensitive move flow: while and for should validate moves performed by a condition before that condition can execute again.
+struct Record { int32_t value = 7;  public: Record() = default; };
+bool consume(Record value) { return value.value == 7; }
+
+int main() {
+  mut Record while_value = Record();
+  while (consume(std::move(while_value))) {}  //~ ERROR GTI-S2018
+
+  mut Record for_value = Record();
+  for (; consume(std::move(for_value));) {}  //~ ERROR GTI-S2018
+  return 0;
+}

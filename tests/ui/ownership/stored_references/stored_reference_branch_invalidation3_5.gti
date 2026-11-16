@@ -1,0 +1,5 @@
+// Stored reference branch invalidation3: loan reachability should match MIR's two runtime successors even for a literal if condition.
+//@ check-pass
+import std.string;
+char choose(bool outer) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (outer) { if (true) { return *iterator; } } else { value.push_back('!'); } return value[0]; }
+int main() { if (choose(false) == 'g' and choose(true) == 'g') { return 0; } return 1; }

@@ -1,0 +1,5 @@
+// Borrowed callable conditionals: analysis result.
+import std.memory;
+
+int apply<F>(mut F& f) { return std::move(f)(1); }  //~ ERROR GTI-S2018
+int main() { return 0; }

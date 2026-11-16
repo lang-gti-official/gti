@@ -1,0 +1,20 @@
+main.gti:5:39: error[GTI-S2068]: Initializer for 'Globals::first' may access program-wide storage 'Globals::later' before its initialization step completes.
+ 5 |   static mut int32_t first = Globals::later;  //~ ERROR GTI-S2068
+   |                                       ^~~~~
+main.gti:6:22: note: This storage is initialized at its own later program step.
+ 6 |   static mut int32_t later = 1;
+   |                      ^~~~~
+main.gti:5:22: note: The rejected initializer is declared here.
+ 5 |   static mut int32_t first = Globals::later;  //~ ERROR GTI-S2068
+   |                      ^~~~~
+help: Move the dependency earlier in source-unit/declaration order or remove the access from this initializer's closed GTI call graph.
+main.gti:7:38: error[GTI-S2068]: Initializer for 'Globals::self' may access program-wide storage 'Globals::self' before its initialization step completes.
+ 7 |   static mut int32_t self = Globals::self;  //~ ERROR GTI-S2068
+   |                                      ^~~~
+main.gti:7:22: note: This storage is initialized at its own later program step.
+ 7 |   static mut int32_t self = Globals::self;  //~ ERROR GTI-S2068
+   |                      ^~~~
+main.gti:7:22: note: The rejected initializer is declared here.
+ 7 |   static mut int32_t self = Globals::self;  //~ ERROR GTI-S2068
+   |                      ^~~~
+help: Move the dependency earlier in source-unit/declaration order or remove the access from this initializer's closed GTI call graph.

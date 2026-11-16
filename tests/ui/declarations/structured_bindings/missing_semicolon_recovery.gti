@@ -1,0 +1,3 @@
+// Structured bindings: parser recovery resumes at a structured binding after a missing semicolon.
+//@ parse-fail
+int main() { int broken = 1 auto [left, right] = values; return left; }  //~ ERROR GTI-P0001

@@ -1,0 +1,7 @@
+// Exclusive reborrow loan graph: mutable reference parameters should enter with a parent loan that can be suspended by a local child.
+void invalid(mut int& parent) {
+  mut int& child = parent;
+  parent += 1;  //~ ERROR GTI-S2017
+  child += 1;
+}
+int main() { return 0; }

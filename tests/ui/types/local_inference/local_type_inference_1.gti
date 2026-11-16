@@ -1,0 +1,36 @@
+// Local type inference: initialized local auto bindings should pass the frontend.
+//@ check-pass
+class Box {
+  int value = 0;
+
+public:
+  Box(int value) : value(value) {}
+  int read() { return this.value; }
+public:
+  Box() = default;
+};
+
+T preserve<T>(T value) {
+  auto inferred = value;
+  return inferred;
+}
+
+int main() {
+  auto integer = 1;
+  mut auto running = preserve(integer);
+  running += 2;
+  auto truth = running == 3;
+  auto text = "gti";
+  auto box = Box(running);
+  int values[2] = {running, 4};
+  auto copied_values = values;
+  auto empty = nullptr;
+  for (mut auto index = 0; index < 2; index++) {
+    running += copied_values[index];
+  }
+  if (truth and text == "gti" and empty == nullptr and box.read() == 3 and
+      running == 10) {
+    return 0;
+  }
+  return 1;
+}

@@ -1,0 +1,46 @@
+// Variadic storage construction and vector: std::vector should exercise multi-argument emplace, growth, read-only iteration, value-initialized size construction, and move-only indexed insertion and erasure.
+//@ check-pass
+import std.vector;
+import std.memory;
+
+class Reading {
+  int32_t left;
+  int32_t right;
+
+public:
+  Reading(int32_t first, int32_t second) : left(first), right(second) {}
+
+  int32_t total() {
+    return this.left + this.right;
+  }
+};
+
+int main() {
+  mut std::vector<Reading> readings = std::vector<Reading>();
+  readings.reserve(std::size_t(1));
+  Reading& first = readings.emplace_back(2, 3);
+  int32_t observed = first.total();
+  [[discard]] readings.emplace_back(5, 7);
+
+  mut int32_t total = 0;
+  for (Reading& reading : readings) {
+    total += reading.total();
+  }
+
+  mut std::vector<int32_t> zeros =
+      std::vector<int32_t>(std::size_t(2));
+  zeros[std::size_t(1)] = 11;
+
+  mut std::vector<std::unique_ptr<Reading>> owned =
+      std::vector<std::unique_ptr<Reading>>();
+  owned.push_back(std::make_unique<Reading>(1, 1));
+  owned.insert(std::size_t(0), std::make_unique<Reading>(4, 5));
+  owned.erase(std::size_t(0));
+  if (observed == 5 and total == 17 and readings.size() == 2 and
+      readings.capacity() == 2 and zeros[std::size_t(0)] == 0 and
+      zeros[std::size_t(1)] == 11 and owned.size() == 1 and
+      owned[std::size_t(0)]->total() == 2) {
+    return 0;
+  }
+  return 1;
+}

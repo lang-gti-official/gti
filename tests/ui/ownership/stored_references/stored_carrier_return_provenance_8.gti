@@ -1,0 +1,16 @@
+// Stored carrier return provenance: a nested projection rooted in the carrier shell should be rejected at the escaping expression.
+class Shell {
+public:
+  int value = 0;
+public:
+  Shell() = default;
+};
+class ReadCarrier {
+public:
+  int& referent;
+  Shell shell = Shell();
+  ReadCarrier(int& source) : referent(source) {}
+};
+int& escape_shell_projection(ReadCarrier carrier) {
+  return carrier.shell.value;  //~ ERROR GTI-S2085
+}

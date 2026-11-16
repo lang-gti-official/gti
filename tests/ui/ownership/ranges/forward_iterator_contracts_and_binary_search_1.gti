@@ -1,0 +1,18 @@
+// Forward iterator contracts and binary search: a copied owner-tied read iterator should satisfy forward_iterator and drive std::next and std::binary_search.
+//@ check-pass
+import std.algorithm;
+import std.iterator;
+import std.vector;
+
+int main() {
+  mut std::vector<int32_t> values =  //~ WARN GTI-S2096
+      std::vector<int32_t>({1, 3, 5, 7});
+  mut auto first = values.begin();
+  mut auto copied = first;
+  ++copied;
+  std::size_t distance = std::size_t(1);
+  mut auto advanced = std::next(std::move(copied), distance);
+  int32_t sought = 5;
+  bool found = std::binary_search(values.begin(), values.end(), sought);
+  return (*first == 1 && *advanced == 5 && found) ? 0 : 1;
+}

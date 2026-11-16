@@ -1,0 +1,21 @@
+// Constructor-local generics: a constructor requirement accepts a closed exact type argument without making it part of inference.
+//@ check-pass
+import std.iterator;
+class CharacterIterator {
+  char value = 'x';
+public:
+  char& operator*() { return this.value; }
+public:
+  CharacterIterator() = default;
+};
+class CharacterOnly {
+public:
+  CharacterOnly<Iterator>(Iterator value)
+    requires std::dereferences_to<Iterator, char> {}
+public:
+  CharacterOnly() = default;
+};
+int main() {
+  CharacterOnly value = CharacterOnly(CharacterIterator());
+  return 0;
+}

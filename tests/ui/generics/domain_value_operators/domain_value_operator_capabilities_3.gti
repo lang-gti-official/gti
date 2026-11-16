@@ -1,0 +1,9 @@
+// Domain value operator capabilities: analysis result.
+class half {
+public:
+  half(float v) : v(v) {}
+  float v;
+  half operator+(half& o) { return half(this.v + o.v); }
+};
+T opposite<T>(T& a) requires std::negatable<T> { return -a; }
+int main() { half h = half(1.0); half r = opposite(h); return 0; }  //~ ERROR GTI-S2029

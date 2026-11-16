@@ -1,0 +1,14 @@
+// Fixed array pack forwarding: passive array forwarding does not erase element lifetime dependencies.
+import std.memory;
+
+class BorrowCarrier {
+  int32_t& source;
+public:
+  BorrowCarrier(int32_t& source) : source(source) {}
+};
+int32_t consume<Args...>(Args... args) { return 0; }
+int main() {
+  int32_t source = 1;
+  BorrowCarrier values[1] = {BorrowCarrier(source)};  //~ ERROR GTI-S2045 Borrowed state cannot be nested
+  return consume(values);
+}

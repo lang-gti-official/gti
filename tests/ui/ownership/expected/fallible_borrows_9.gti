@@ -1,0 +1,9 @@
+// Fallible borrows: an unsupported fallible-borrow fallback should fail semantically rather than in MIR or native C++.
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> borrow(int& value) { return value; }
+expected<int&, lookup_errc> propagate(int& value) { return ?borrow(value); }
+int fallback(int& value) {
+  expected<int&, lookup_errc> result = value;
+  return result.value_or(value);  //~ ERROR GTI-S2000
+}
+int main() { return 0; }

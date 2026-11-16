@@ -1,0 +1,7 @@
+// Type aliases: concrete aliases should qualify nested type members with canonical substitution independently of declaration order.
+//@ check-pass
+using Value = Concrete::nested_type::value_type;
+using Concrete = Outer<int>;
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
+struct Outer<T> { using nested_type = Inner<T>;  public: Outer() = default; };
+int main() { Value value = 7; return value - 7; }

@@ -1,0 +1,83 @@
+// Structural requires and accumulate: an inherited exact sentinel operation should remain valid beside a derived convertible overload and mutable-sentinel overload.
+//@ check-pass
+import std.numeric;
+import std.iterator;
+
+class BaseEnd {
+public:
+  BaseEnd() = default;
+};
+
+class DerivedEnd : public BaseEnd {
+  int limit;
+public:
+  DerivedEnd(int value) : limit(value) {}
+  int position() { return this.limit; }
+};
+
+class OtherEnd { public: OtherEnd() = default; };
+
+class GenericComparable<T, uint64_t N> {
+public:
+  bool operator!=(GenericComparable<T, N>& other) { return true; }
+  bool differs(GenericComparable<T, N>& other) { return this != other; }
+public:
+  GenericComparable() = default;
+};
+
+interface IteratorContract {
+  int& operator*();
+  void operator++() mut;
+  bool operator!=(DerivedEnd& end);
+};
+
+class DynamicIterator : public IteratorContract {
+  mut int current;
+public:
+  DynamicIterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(DerivedEnd& end) override {
+    return this.current != end.position();
+  }
+};
+
+int dynamic_step<Iterator, Sentinel>(mut Iterator& first, Sentinel& last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  ++first;
+  if (first != last) { return *first; }
+  return 0;
+}
+
+class BaseIterator {
+  mut int current;
+public:
+  BaseIterator(int value) : current(value) {}
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(DerivedEnd& end) {
+    return this.current != end.position();
+  }
+};
+
+class DerivedIterator : public BaseIterator {
+public:
+  DerivedIterator(int value) : BaseIterator(value) {}
+  bool operator!=(BaseEnd& end) { return false; }
+  bool operator!=(mut OtherEnd& end) { return true; }
+};
+
+int main() {
+  mut DerivedIterator iterator = DerivedIterator(1);  //~ WARN GTI-S2096
+  DerivedEnd end = DerivedEnd(4);
+  bool direct = iterator != end;
+  if (!direct) { return 1; }
+  GenericComparable<int, 4> generic_left = GenericComparable<int, 4>();
+  GenericComparable<int, 4> generic_right = GenericComparable<int, 4>();
+  if (!generic_left.differs(generic_right)) { return 3; }
+  mut DynamicIterator dynamic = DynamicIterator(1);
+  mut IteratorContract& view = dynamic;
+  if (dynamic_step(view, end) != 2) { return 2; }
+  return std::accumulate(DerivedIterator(1), DerivedEnd(4), 0) - 6;
+}

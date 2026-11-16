@@ -1,0 +1,67 @@
+// Structural requires and accumulate: structural requirements should diagnose missing or inexact iterator, sentinel, and element operations before backend entry.
+import std.iterator;
+import std.numeric;
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+public:
+  End() = default;
+};
+
+class MissingDereference {
+  mut int current = 0;
+public:
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+public:
+  MissingDereference() = default;
+};
+
+class WrongIncrement {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  int operator++() mut { return this.current; }  //~ ERROR GTI-S2022
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+public:
+  WrongIncrement() = default;
+};
+
+class WrongSentinelParameter {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(mut End& sentinel) {
+    return this.current != sentinel.position();
+  }
+public:
+  WrongSentinelParameter() = default;
+};
+
+class WrongElement {
+  bool value = false;
+  mut int current = 0;
+public:
+  bool& operator*() { return this.value; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+public:
+  WrongElement() = default;
+};
+
+int main() {
+  int missing = std::accumulate(MissingDereference(), End(), 0);  //~ ERROR GTI-S2029
+  int increment = std::accumulate(WrongIncrement(), End(), 0);  //~ ERROR GTI-S2029
+  int sentinel = std::accumulate(WrongSentinelParameter(), End(), 0);  //~ ERROR GTI-S2029
+  int element = std::accumulate(WrongElement(), End(), 0);  //~ ERROR GTI-S2029
+  return missing + increment + sentinel + element;
+}

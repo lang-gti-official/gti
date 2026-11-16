@@ -1,0 +1,10 @@
+// Arrow non-class referents: a member missing from an arrow referent (int, c_string, string_view) is a source error, never a backend one.
+class Cell { int value = 3; public: int& operator->() { return this.value; }  public: Cell() = default; };
+class Text { public: c_string text; Text(c_string text) : text(text) {} c_string& operator->() { return this.text; } };
+class Label { public: std::string_view text; Label(std::string_view text) : text(text) {} std::string_view& operator->() { return this.text; } };
+int read_size(Cell& c) { return c->size(); }  //~ ERROR GTI-S2000
+int read_value(Cell& c) { return c->value; }  //~ ERROR GTI-S2000
+int read_text(Text& t) { return int(t->size()); }  //~ ERROR GTI-S2000
+int read_missing(Label& l) { return int(l->missing()); }  //~ ERROR GTI-S2035
+int read_arity(Label& l) { return int(l->size(1)); }  //~ ERROR GTI-S2035
+int main() { return 0; }

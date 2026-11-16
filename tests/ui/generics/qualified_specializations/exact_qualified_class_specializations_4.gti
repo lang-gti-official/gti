@@ -1,0 +1,21 @@
+// Exact qualified class specializations: an application should be able to specialize std::hash for a nominal type owned by that application.
+//@ check-pass
+import std.functional;
+class Widget {
+  int value = 42;
+public:
+  int read() { return this.value; }
+public:
+  Widget() = default;
+};
+class std::hash<Widget> {
+public:
+  size_t operator()(Widget& value) { return size_t(value.read()); }
+public:
+  hash() = default;
+};
+int main() {
+  Widget value{};
+  std::hash<Widget> hash{};
+  return int(hash(value)) - 42;
+}

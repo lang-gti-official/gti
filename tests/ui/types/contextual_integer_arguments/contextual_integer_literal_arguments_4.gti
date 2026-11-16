@@ -1,0 +1,31 @@
+// Contextual integer literal arguments: a literal outside the parameter range, a named value, and a named constant keep the exact-type rejection with a value-specific hint for the literal.
+import std.vector;
+
+class Table {
+  mut int elements[2] = {10, 20};
+public:
+  Table() = default;
+  int operator[](uint64_t index) { return this.elements[index]; }
+};
+
+class Narrow {
+  uint8_t value;
+public:
+  Narrow(uint8_t value) : value(value) {}
+};
+
+std::size_t twice(std::size_t value) { return value * 2; }
+uint8_t narrow(uint8_t value) { return value; }
+constexpr int named = 3;
+
+int main() {
+  uint8_t overflow = narrow(300);  //~ ERROR GTI-S2003
+  std::size_t negative = twice(-1);  //~ ERROR GTI-S2003
+  int plain = 1;
+  std::size_t variable = twice(plain);  //~ ERROR GTI-S2003
+  std::size_t constant = twice(named);  //~ ERROR GTI-S2003
+  Narrow wide{256};  //~ ERROR GTI-S2012
+  Table table{};
+  int element = table[-1];  //~ ERROR GTI-S2022
+  return 0;
+}

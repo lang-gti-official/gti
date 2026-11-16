@@ -1,0 +1,13 @@
+// Callable concept capabilities: analysis result.
+import std.functional;
+class mutable_only {
+public:
+  bool operator()(int32_t& value) mut { return value > 0; }
+public:
+  mutable_only() = default;
+};
+bool inspect<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+int main() { return inspect(1, mutable_only()) ? 0 : 1; }  //~ ERROR GTI-S2029

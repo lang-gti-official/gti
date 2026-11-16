@@ -1,0 +1,5 @@
+// Stored reference branch invalidation2: an else-if merge endpoint should survive recursive HIR lowering.
+//@ check-pass
+import std.string;
+int choose(bool left, bool middle) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); mut char observed = 'x'; if (left) { value.push_back('!'); } else if (middle) { observed = *iterator; } else { observed = *iterator; } value.push_back('?'); return 0; }
+int main() { return choose(false, true); }

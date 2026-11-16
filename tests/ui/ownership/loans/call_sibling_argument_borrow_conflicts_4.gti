@@ -1,0 +1,11 @@
+// Call sibling argument borrow conflicts: an ephemeral read completed before a sibling exclusive borrow begins should stay accepted through MIR verification.
+//@ check-pass
+import std.vector;
+
+void consume<A, B>(A last, B first) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.end(), values.begin_mut());
+  return 0;
+}

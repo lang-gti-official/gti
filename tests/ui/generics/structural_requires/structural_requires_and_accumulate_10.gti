@@ -1,0 +1,26 @@
+// Structural requires and accumulate: input_iterator and accumulates_into should require a read-only dereference even when the caller owns a mutable iterator value.
+import std.numeric;
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+public:
+  End() = default;
+};
+
+class MutableOnlyDereference {
+  mut int current = 0;
+public:
+  mut int& operator*() mut { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+public:
+  MutableOnlyDereference() = default;
+};
+
+int main() {
+  return std::accumulate(MutableOnlyDereference(), End(), 0);  //~ ERROR GTI-S2029 concept 'std::input_iterator<MutableOnlyDereference>'
+}

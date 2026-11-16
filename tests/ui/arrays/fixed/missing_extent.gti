@@ -1,0 +1,3 @@
+// Fixed arrays: parser recovery continues after a missing array extent.
+//@ parse-fail
+int broken[] = {}; int recovered = 1;  //~ ERROR GTI-P0001

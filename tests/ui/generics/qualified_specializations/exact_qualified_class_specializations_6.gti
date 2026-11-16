@@ -1,0 +1,9 @@
+// Exact qualified class specializations: a nominal nested inside a foreign generic argument should not grant specialization ownership.
+import std.functional;
+import std.vector;
+class Widget { public: Widget() = default; };
+class std::hash<std::vector<Widget>> {  //~ ERROR GTI-S2078 owns neither the primary nor a top-level nominal
+public:
+  size_t operator()(std::vector<Widget>& value) { return 0; }
+};
+int main() { return 0; }

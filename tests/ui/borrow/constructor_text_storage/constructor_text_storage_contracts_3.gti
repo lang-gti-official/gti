@@ -1,0 +1,22 @@
+// Constructor text storage contracts: the owner of a value's dynamic text stays borrowed while it is live.
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  constexpr Label(std::string_view input = "default") : text((input)) {}
+};
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+struct CLabel {
+  c_string text;
+  CLabel(c_string input) : text(input) {}
+};
+struct Borrowed {
+  std::string_view& text;
+  Borrowed(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+int main() { mut std::string owner = std::string("abc"); Label saved{owner.view()}; owner.clear(); return int(saved.text.size()); }  //~ ERROR GTI-S2017

@@ -1,0 +1,2 @@
+// Default parameters: a default in an unsupported context (operator declarations) is rejected.
+class Number { public: int operator[](uint64_t value = 1) { return int(value); }  public: Number() = default; };  //~ ERROR GTI-S2077 operator declarations

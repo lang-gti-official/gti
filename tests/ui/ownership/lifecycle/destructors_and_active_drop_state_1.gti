@@ -1,0 +1,37 @@
+// Destructors and active drop state: public destructors should support mutable vector-style cleanup.
+//@ check-pass
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+class CleanupBuffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
+  mut uint64_t count = 0;
+
+public:
+  CleanupBuffer(uint64_t capacity)
+      : data(std::detail::prefix_owner<T>(capacity)) {}
+
+  ~CleanupBuffer() {
+    while (this.count > 0) {
+      this.count--;
+      this.data.pop();
+    }
+  }
+
+  void push(T value) mut {
+    this.data.append_value(std::move(value));
+    this.count++;
+  }
+};
+
+CleanupBuffer<int> transfer(CleanupBuffer<int> value) {
+  return std::move(value);
+}
+
+int main() {
+  mut CleanupBuffer<int> values = CleanupBuffer<int>(uint64_t(2));
+  values.push(7);
+  CleanupBuffer<int> moved = transfer(std::move(values));
+  return 0;
+}

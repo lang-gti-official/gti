@@ -1,0 +1,5 @@
+// Variadic generics: parser recovery continues after a non-final pack expansion.
+//@ parse-fail
+void consume<Args...>(Args... values) {}
+void bad<Args...>(Args... values) { consume(values..., 1); }  //~ ERROR GTI-P0001
+int okay = 1;

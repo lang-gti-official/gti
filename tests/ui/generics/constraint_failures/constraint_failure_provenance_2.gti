@@ -1,0 +1,12 @@
+// Constraint failure provenance: nested members preserve the terminal cause with explicit intermediate elision.
+concept readable<T> = requires(T& value) { { value.snapshot() } -> int; };
+struct Leaf<T> {
+  int snapshot() requires std::integral<T> { return 0; }
+public: Leaf() = default;
+};
+struct Outer<T> {
+  int snapshot() requires readable<T> { return 0; }
+public: Outer() = default;
+};
+int read<T>(T& value) requires readable<T> { return value.snapshot(); }
+int main() { Outer<Outer<Leaf<bool>>> value{}; return read(value); }  //~ ERROR GTI-S2029

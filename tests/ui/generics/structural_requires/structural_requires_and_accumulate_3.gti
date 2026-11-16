@@ -1,0 +1,18 @@
+// Structural requires and accumulate: a single non-generic member overload must check requirements after substituting its generic class arguments.
+class NumericBox<T> {
+public:
+  T doubled(T value) requires std::numeric<T> {
+    return T(value + value);
+  }
+public:
+  NumericBox() = default;
+};
+
+int main() {
+  NumericBox<bool> box = NumericBox<bool>();
+  bool value = box.doubled(true);  //~ ERROR GTI-S2029 Type 'bool' does not satisfy concept 'std::numeric<bool>'
+  if (value) {
+    return 0;
+  }
+  return 1;
+}

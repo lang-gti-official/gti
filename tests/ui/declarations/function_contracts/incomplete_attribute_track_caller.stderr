@@ -1,0 +1,4 @@
+main.gti:3:17: error[GTI-P0001]: Expect ']]' after declaration attributes.
+ 3 | [[track_caller] void broken() {}  //~ ERROR GTI-P0001
+   |                 ^~~~
+help: Insert ']'.

@@ -1,0 +1,2 @@
+// Contextual numeric literals: literal context must independently preserve each semantic boundary.
+T invalid<std::numeric T>(T value) { return T(value % 2); }  //~ ERROR GTI-S2004

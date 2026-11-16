@@ -1,0 +1,14 @@
+// Exact qualified class specializations: exact specialization diagnostics should reject canonical duplicates, unknown arguments, forward declarations, and nested-namespace declarations.
+namespace demo {
+class Value<T> { public: Value() = default; };
+class Nested<T> { public: Nested() = default; };
+}
+using signed_int = int32_t;
+class demo::Value<int> { public: Value() = default; };
+class demo::Value<signed_int> {};  //~ ERROR GTI-S2078 Duplicate exact specialization
+class demo::Nested<UnknownType> {};  //~ ERROR GTI-S2000 //~ ERROR GTI-S2078
+class demo::Value<int>;  //~ ERROR GTI-S2078 must provide a complete definition //~ ERROR GTI-S2078
+struct demo::Value<bool> {};  //~ ERROR GTI-S2078 must use the primary declaration's 'class'
+namespace misplaced {
+  class demo::Nested<bool> {};  //~ ERROR GTI-S2078 must be declared at package scope
+}

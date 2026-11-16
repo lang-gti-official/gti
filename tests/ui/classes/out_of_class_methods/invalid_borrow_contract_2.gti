@@ -1,0 +1,2 @@
+// Out-of-class methods: a separate definition cannot rescue a definition returning the other parameter than the declaration's region names.
+struct Relay { static int&<a> choose<lifetime a>(int&<a> input, int& unused); }; int& Relay::choose(int& value, int& other) { return other; } int main() { return 0; }  //~ ERROR GTI-S2017

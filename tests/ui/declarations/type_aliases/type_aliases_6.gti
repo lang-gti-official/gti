@@ -1,0 +1,42 @@
+// Type aliases: class-scoped aliases should enforce access, name uniqueness, and the deliberately bounded generic, inheritance, and native callback boundaries.
+class PrivateTraits {
+  using secret_type = int;
+public:
+  secret_type identity(secret_type value) { return value; }
+public:
+  PrivateTraits() = default;
+};
+using Leaked = PrivateTraits::secret_type;  //~ ERROR GTI-S2007
+
+struct DuplicateMember {
+  using value_type = int;
+  int value_type = 0;  //~ ERROR GTI-S2006
+public:
+  DuplicateMember() = default;
+};
+
+class CallbackOwner {
+public:
+  using Callback = (int) -> void;  //~ ERROR GTI-S2076
+public:
+  CallbackOwner() = default;
+};
+
+class GenericOwner<T> {
+public:
+  using value_type = T;
+public:
+  GenericOwner() = default;
+};
+using UnboundGenericMember = GenericOwner::value_type;  //~ ERROR GTI-S2030
+
+class BaseOwner {
+public:
+  using inherited_type = int;
+public:
+  BaseOwner() = default;
+};
+class DerivedOwner : public BaseOwner { public: DerivedOwner() = default; };
+using UninheritedMember = DerivedOwner::inherited_type;  //~ ERROR GTI-S2000
+
+int main() { return 0; }

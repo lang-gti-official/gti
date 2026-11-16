@@ -1,0 +1,3 @@
+main.gti:3:27: error[GTI-S2099]: A [[noreturn]] function cannot return normally or reach the end of its body.
+ 3 | [[noreturn]] void run() { return; }  //~ ERROR GTI-S2099
+   |                           ^~~~~~

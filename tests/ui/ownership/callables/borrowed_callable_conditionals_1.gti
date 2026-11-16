@@ -1,0 +1,41 @@
+// Borrowed callable conditionals: borrowed callables and deferred exact conditional joins must lower.
+//@ check-pass
+class Counter {
+public:
+  mut int value = 0;
+  Counter() {}
+  Counter(Counter& other) = delete;
+  Counter(Counter&& other) = default;
+  int operator()(int n) mut { this.value += n; return this.value; }
+};
+int call_mut<F>(mut F& f) { return f(2); }
+int relay<F>(mut F& f) { return call_mut(f); }
+int choose<F>(F& f, bool ok) {
+  auto result = ok ? f(4) : 7;
+  return result;
+}
+int choose_reverse<F>(F& f, bool ok) {
+  auto result = ok ? 7 : f(4);
+  return result;
+}
+int choose_both<F>(F& f, bool ok) {
+  auto result = ok ? f(4) : f(7);
+  return result;
+}
+void choose_void<F>(F& f, bool ok) { ok ? f(1) : f(2); }
+T choose_nested<F, T>(F& f, T fallback, bool ok) {
+  auto result = (ok ? (ok ? f(4) : fallback) : f(7));
+  return result;
+}
+int main() {
+  mut Counter counter{};
+  int value = relay(counter);
+  auto f = [](int n) -> int { return n + 1; };
+  auto noop = [](int n) -> void {};
+  choose_void(noop, true);
+  auto floating = [](int n) -> double { return 4.0d; };
+  if (choose_nested(f, 0, true) != 5 ||
+      choose_nested(floating, 0.0d, false) != 4.0d) { return 1; }
+  return value + counter.value + choose(f, true) +
+         choose_reverse(f, false) + choose_both(f, false) - 22;
+}
