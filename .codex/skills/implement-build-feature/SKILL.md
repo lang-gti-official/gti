@@ -37,9 +37,10 @@ link any relevant RFC from the existing implementation plan.
    - LSP: read-only resolved project facts and document overlays.
 6. Preserve exact argument vectors, path containment, symlink/root safety,
    deterministic ordering, target propagation, and atomic publication.
-7. Add focused model/unit tests plus direct and project CLI compatibility.
-   Test malformed manifests, unknown fields, precedence, target selection,
-   path safety, native failures, and installed resource discovery as relevant.
+7. Test CLI and project behaviour with `tests/project/<name>/test.transcript`
+   and pure model code in `tests/unit/` ([Writing Tests](../../../AGENTS.md#writing-tests)): malformed manifests, unknown
+   fields, precedence, target selection, path safety, native failures, and
+   installed resource discovery as relevant.
 8. Update current architecture when behavior lands and update the plan's
    implementation status. Keep README commands user-focused. Add a changelog
    fragment when shipped CLI/driver/project behavior changes; only the release

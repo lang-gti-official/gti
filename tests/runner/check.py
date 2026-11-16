@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""The gti_test_ui gate: gti-test's own behaviour, then tidy and tests/ui.
+"""The gti_test_ui gate: gti-test's own behaviour, then tidy and the cases.
 
-usage: check.py <gti-test> [--jobs N] [--junit FILE] [--self-test-only]
+usage: check.py <gti-test> [--jobs N] [--junit FILE]
+                [--self-test-only | --without-ui]
+
+Without options it runs the self-test, tidies every root and runs the cases
+of tests/ui, tests/project and tests/lsp. `--without-ui` leaves tests/ui's
+cases to the sharded `gti_test_ui_<i>` entries (tests/gti_test.cmake), which
+run `gti-test tests/ui --shard I/N` directly; tidy still covers tests/ui.
 
 The self-test drives gti-test over tests/runner/fixtures and checks every
 outcome class it reports: pass, wrong/missing/unmatched annotations, stdout
@@ -39,9 +45,11 @@ def run(runner, *args, env=None, cwd=ROOT, fixtures=True):
     if fixtures:
         environment["GTI_TEST_SELF_TEST"] = "1"
     environment.update(env or {})
+    # Self-test runs are small; the real runs are bounded by their CTest
+    # entry or workflow step (an instrumented run takes most of an hour).
     result = subprocess.run([str(runner), *map(str, args)], cwd=cwd,
                             env=environment, capture_output=True, text=True,
-                            timeout=600)
+                            timeout=600 if fixtures else None)
     return result.returncode, result.stdout + result.stderr
 
 
@@ -595,6 +603,8 @@ def main():
     report = []
     if "--junit" in sys.argv:
         report = ["--junit", sys.argv[sys.argv.index("--junit") + 1]]
+    if "--without-ui" in sys.argv:
+        roots.remove("tests/ui")
     code, out = run(runner, *(ROOT / root for root in roots), "--jobs",
                     jobs, *report, fixtures=False)
     sys.stdout.write(out)

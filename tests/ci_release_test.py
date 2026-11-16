@@ -641,14 +641,16 @@ def gti_test_tiers_contract(root):
     """The gti-test tiers run where docs/plans/test-suite-redesign.md section 7
     puts them: the PR gate and merge queue run gti_test_ui, gti_test_examples and
     gti_unit_tests on both platforms with per-case JUnit and hold changed cases to
-    half their limit; full validation runs them on both platforms; the daily slow
+    half their limit (gti_test_ui is the runner, tidy, tests/project and tests/lsp;
+    gti_test_ui_<i> shard tests/ui); full validation runs them on both platforms; the daily slow
     tier runs tests/slow and the --isolate run; the sanitizer verdict includes an
     instrumented gti_test_ui run."""
     workflows = root / ".github/workflows"
     ci = (workflows / "ci.yml").read_text()
     fast = jobs(ci)["fast"]
-    tiers = "gti_test_ui|gti_test_examples|gti_unit_tests"
-    rows = re.findall(r"\{os: [a-z0-9.-]+, platform: (linux|darwin), gate: '([a-z_|]+)'\}", fast)
+    # gti_test_ui and its tests/ui shards gti_test_ui_<i> (tests/gti_test.cmake).
+    tiers = "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"
+    rows = re.findall(r"\{os: [a-z0-9.-]+, platform: (linux|darwin), gate: '([a-z0-9_|()?\[\]+-]+)'\}", fast)
     assert sorted(platform for platform, _ in rows) == ["darwin", "linux"], rows
     for platform, gate in rows:
         assert gate.startswith(tiers), (platform, gate)
@@ -683,16 +685,20 @@ def gti_test_tiers_contract(root):
     assert 'set(GTI_TEST_REPORT_DIRECTORY "" CACHE PATH' in cmake
     for name in ("gti_test_ui", "gti_test_examples", "gti_test_slow", "gti_test_isolate"):
         assert f"gti_test_report({name} {name}_report)" in cmake, name
+    assert "gti_test_report(${gti_test_ui_name} gti_test_ui_shard_report)" in cmake
+    shards = int(re.search(r"set\(gti_test_ui_shards ([0-9]+)\)", cmake).group(1))
+    shard_names = {f"gti_test_ui_{index}" for index in range(1, shards + 1)}
     assert "add_test(NAME gti_test_slow" in cmake and "add_test(NAME gti_test_isolate" in cmake
     assert '"^gti_test_(slow|isolate)$"' in (root / "tests/TestThroughput.cmake").read_text(), \
         "the slow-tier gti-test entries carry the slow label"
     # Full validation: Linux runs every registered per-commit test; macOS runs
     # the gti-test entries through the darwin list.
     darwin = json.loads((root / "tests/ci_darwin_tests.json").read_text())["tests"]
-    assert {"gti_test_ui", "gti_test_examples", "gti_unit_tests"} <= set(darwin)
+    assert {"gti_test_ui", "gti_test_examples", "gti_unit_tests"} | shard_names <= set(darwin)
     assert not {"gti_test_slow", "gti_test_isolate"} & set(darwin)
     durations = json.loads((root / "tests/ci_test_durations.json").read_text())["seconds"]
-    for name in ("gti_test_ui", "gti_test_examples", "gti_unit_tests", "gti_test_slow", "gti_test_isolate"):
+    for name in ("gti_test_ui", "gti_test_examples", "gti_unit_tests", "gti_test_slow", "gti_test_isolate",
+                 *sorted(shard_names)):
         assert name in durations, f"{name} has no shard-balancing duration"
     # The slow tier reports its gti-test cases per case.
     slow = jobs((workflows / "slow.yml").read_text())["shards"]

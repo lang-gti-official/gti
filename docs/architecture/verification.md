@@ -1,5 +1,12 @@
 # Compiler Verification
 
+This document records what the existing gates cover and the evidence behind
+them. How to write and run a new test is [Writing Tests](../../AGENTS.md#writing-tests)
+in `AGENTS.md`; where a section below describes an old harness, it applies to
+that harness's existing cases until the
+[test-suite migration](../plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16)
+converts them.
+
 ## Example corpus walk
 
 `gti-corpus` (`tests/corpus/gti_corpus.cpp`, the slow-tier `gti_corpus` entry)
@@ -7525,28 +7532,14 @@ source-defined traces. `implicit_return_construction_lsp` covers unsaved modifie
 changes, exact UTF-16 error spans, reference navigation and parser recovery.
 Example 166 demonstrates concise optional returns and an unrelated result type.
 
-## Required examples for new language features
+## Examples for new language features
 
-Every new language feature **must include an accompanying runnable example
-under `examples/` in the same change**. This is a completion requirement, not
-an optional follow-up. A focused new program or an explicit extension of an
-existing example is acceptable; a regression fixture or a documentation-only
-snippet is not a substitute.
-
-The example must show the supported syntax in a useful program, explain the
-intended behavior and important boundaries, and provide a checked result where
-the feature has observable behavior. Keep intentionally invalid programs in
-negative tests rather than breaking the runnable example. Link the example
-from the applicable language documentation and update the example index,
-corpus registration, and MIR/LoweredProgram census expectations where affected.
-Compile and run it with an optimized host GTI compiler and the applicable
-backend/optimization configurations, recording the evidence before marking the
-feature complete. Examples complement, rather than replace, focused positive,
-negative, ownership, and failure tests.
-
-An internal refactor or bug fix with no new language feature does not require
-an unrelated new example; it still needs regression coverage, and affected
-existing examples must remain correct.
+A new language feature is proven by its tests ([Writing Tests](../../AGENTS.md#writing-tests)).
+A runnable program under `examples/` is welcome where it teaches the feature;
+`gti_test_examples` checks every single-file example to verified MIR per
+commit, and the slow tier's `gti_corpus` walks the whole corpus. Neither needs
+a registration, index or census edit. Keep intentionally invalid programs in
+`tests/ui/`, not in an example, and keep affected existing examples correct.
 
 ## Release bug closure after panic adoption
 
@@ -9927,15 +9920,15 @@ into the tiers of the redesign's §7:
 
 | Tier | Entries | How |
 | --- | --- | --- |
-| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/ui`, `tests/project`, `tests/lsp`), `gti_test_examples`, `gti_unit_tests`; Linux also `compiler_pipeline` until it drains | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
+| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_4` (`gti-test --shard i/4`), `gti_test_examples`, `gti_unit_tests`; Linux also `compiler_pipeline` until it drains | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
 | Pull request budget (Linux) | cases the PR adds or changes | `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`: a case whose warm CPU time exceeds half its scaled limit fails the PR with the runner's "over budget" message |
-| Per-commit full validation | the same three entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
+| Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
-| Daily sanitizers (`sanitizers.yml`) | `gti_test_ui`'s run | the library partition runs `tests/runner/check.py` with the ASan/UBSan `gti-test`, `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, under a 120-minute step bound, inside the `Sanitizer verdict` |
+| Daily sanitizers (`sanitizers.yml`) | the `gti_test_ui` entries' cases, in one run | the library partition runs `tests/runner/check.py` with the ASan/UBSan `gti-test`, `GTI_TEST_INSTRUMENTATION=address,undefined` (programs instrumented by the Clang of the linked LLVM) and `GTI_TEST_TIME_SCALE=10`, under a 120-minute step bound, inside the `Sanitizer verdict` |
 
 The over-budget rule's scale assumes a hosted Linux runner is about twice as
 slow as the development machine the limits were measured on, as the
-`gti_test_ui` entry does. Measured on that machine (Apple M4 Pro) on
+`gti_test_ui` entries do. Measured on that machine (Apple M4 Pro) on
 2026-11-17, the most expensive warm case of `tests/ui` used 47% of its limit
 and five used 40% or more; a pull request that edits one of those can be
 flagged if its hosted runner is more than about 2.1 to 2.5 times slower. LSP
