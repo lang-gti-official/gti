@@ -1021,6 +1021,13 @@ int main() {
                        result.mir.functionInstances().end(),
                        [](const auto &f) { return f.proceduralFunction; }),
           "generic discovery never publishes a procedural runtime body");
+    check(
+        std::none_of(result.mir.classInstances().begin(),
+                     result.mir.classInstances().end(),
+                     [](const auto &c) {
+                       return c.syntaxKind != lang::CompileTimeSyntaxKind::None;
+                     }),
+        "full discovery never publishes a compile-time syntax runtime layout");
   }
   for (const auto &[input, message] :
        std::array<std::pair<std::string_view, std::string_view>, 6>{

@@ -30,7 +30,9 @@ is no AST fallback or host plugin. The ordinary constant profile still rejects
 syntax capabilities, including capabilities nested inside persistent aggregates.
 Procedural bodies and syntax-dependent helpers are omitted from runtime HIR/MIR.
 HIR excludes procedural declarations by their declaration mode as well as syntax
-capability types, including discovery through concrete generic analyses.
+capability types, including discovery through concrete generic analyses. Syntax
+capability classes likewise have no runtime layout inventory, even under full
+declaration discovery.
 
 `std.syntax` declares `tokens`, `expr`, `span`, and `binding` through trusted
 `@compiler_type` identities. Its intrinsic declarations are recognized only in

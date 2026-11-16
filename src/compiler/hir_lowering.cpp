@@ -468,6 +468,12 @@ private:
     if (declaration == nullptr || declaration->declaration == nullptr) {
       return std::nullopt;
     }
+    // Syntax capabilities are request-local compile-time values, not dormant
+    // runtime layouts. Full declaration discovery must not publish them merely
+    // because an imported library exports a procedural macro.
+    if (!constantClosure &&
+        declaration->syntaxKind != CompileTimeSyntaxKind::None)
+      return std::nullopt;
     // These trusted declarations establish primitive identities in semantics;
     // they have no nominal class representation or executable lifecycle.
     if (declaration->compilerCapability ==
