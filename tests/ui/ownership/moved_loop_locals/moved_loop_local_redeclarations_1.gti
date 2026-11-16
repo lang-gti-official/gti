@@ -1,0 +1,36 @@
+// Moved loop local redeclarations: a moved trivially dropped loop-local must leave its storage re-initializable across while, for, indexed, and conditional backedge forms.
+//@ check-pass
+int32_t sink(int32_t value) { return value; }
+
+int main() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 2) {
+    int32_t element = index + 1;
+    total = total + std::move(element);
+    index++;
+  }
+
+  for (mut int32_t iteration = 0; iteration < 2; iteration++) {
+    int32_t local = iteration + 1;
+    total = total + std::move(local);
+  }
+
+  mut int32_t values[4] = {0, 0, 0, 0};
+  mut int32_t position = 0;
+  while (position < 4) {
+    int32_t element = position * 10;
+    values[position] = std::move(element);
+    position++;
+  }
+
+  mut int32_t guard = 0;
+  while (guard < 4) {
+    int32_t element = guard + 1;
+    if (guard % 2 == 0) {
+      total = total + sink(std::move(element));
+    }
+    guard++;
+  }
+  return total + values[3];
+}

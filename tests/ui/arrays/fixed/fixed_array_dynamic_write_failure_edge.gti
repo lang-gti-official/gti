@@ -1,0 +1,11 @@
+// Fixed array dynamic write failure edge: the dynamic array-write fixture should pass the frontend.
+//@ check-pass
+int main() {
+  mut int32_t cells[4] = {};
+  mut uint64_t index = uint64_t(0);
+  while (index < uint64_t(9)) {
+    index++;
+  }
+  cells[index] = 7;
+  return int(cells[uint64_t(0)]);
+}

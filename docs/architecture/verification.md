@@ -9516,7 +9516,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics and ownership/lifecycle/ranges/callables suites (the former frontend, diagnostics/formatting/queries, constexpr/configuration/numerics/static-initialization and end-to-end suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
+| `compiler_pipeline` | manifest-backed aggregate over the remaining ownership/lifecycle/ranges/callables suite (the former frontend, diagnostics/formatting/queries, constexpr/configuration/numerics/static-initialization, end-to-end and declarations/types/generics suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |
@@ -10129,10 +10129,9 @@ target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
-For class-scoped type aliases, `gti_compiler_declarations_tests` owns parsing,
-declaration-order-independent resolution, access and collision diagnostics,
-generic-owner substitution, LoweredProgram/backend shape, construction,
-formatting, and shared language queries. `lsp_protocol` owns hover, definition,
+For class-scoped type aliases, the `tests/ui/declarations/type_aliases/` cases
+own parsing, declaration-order-independent resolution, access and collision
+diagnostics, generic-owner substitution, construction and formatting. `lsp_protocol` owns hover, definition,
 completion, semantic tokens, and nested document symbols. The Tree-sitter
 corpus, highlight, and shipped-source gates own editor parsing and captures;
 example 79 is the native compile/run composition. Aliases are static type

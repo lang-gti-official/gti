@@ -1,0 +1,9 @@
+// Fixed arrays: the formatter keeps array constructor initializers compact.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+class Pair<T> {
+  T values[2];
+public:
+  Pair(T left, T right) : values({left, right}) {}
+};

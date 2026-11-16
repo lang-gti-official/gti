@@ -1,0 +1,7 @@
+// Extern c interop: namespace-scoped C declarations should resolve before their source position.
+//@ check-pass
+namespace platform {
+int32_t invoke_close(int32_t descriptor) { return close(descriptor); }
+extern "C" { int32_t close(int32_t descriptor); }
+}
+int main() { return platform::invoke_close(-1); }

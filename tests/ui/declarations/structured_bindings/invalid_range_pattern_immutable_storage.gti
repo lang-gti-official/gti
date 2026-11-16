@@ -1,0 +1,3 @@
+// Structured bindings: mutable range patterns require mutable storage.
+struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
+int main() { mut Item items[1] = {Item(1, 2)}; Item frozen[1] = {Item(1, 2)}; for (mut auto& [a, b] : frozen) {} return 0; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2017 //~ ERROR GTI-S2083

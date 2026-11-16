@@ -1,0 +1,9 @@
+// Value generics: dependent value arithmetic lookahead keeps pointer and native-function generic type arguments.
+//@ parse-pass
+class Widget { public: Widget() = default; };
+T identity<T>(T value) { return value; }
+void accept_type_arguments(Widget* pointer) {
+  identity<Widget*>(pointer);
+}
+class CallbackHolder<T> { public: CallbackHolder() = default; };
+void accept_callback(CallbackHolder<(int)->void> callback) {}

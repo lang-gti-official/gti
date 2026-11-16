@@ -918,7 +918,6 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 set(GTI_COMPILER_TEST_SUITES
-    declarations
     ownership)
 add_executable(gti_constructor_formatting_tests constructor_formatting_tests.cpp)
 target_link_libraries(gti_constructor_formatting_tests PRIVATE gti_compiler)

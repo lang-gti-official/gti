@@ -1,0 +1,2 @@
+// Default parameters: GTI-S2077 should point at a required parameter after the default suffix and explain the repair.
+int invalid(int optional = 1, int required) { return required; }  //~ ERROR GTI-S2077

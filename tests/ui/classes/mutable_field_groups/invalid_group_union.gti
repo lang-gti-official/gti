@@ -1,0 +1,2 @@
+// Mutable field groups: invalid group contents (union) get a focused parser diagnostic: Unions cannot contain mutable field groups.
+union Bad { mut { int value = 0; } };  //~ ERROR GTI-P0001 Unions cannot contain mutable field groups

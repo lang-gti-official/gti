@@ -1,0 +1,12 @@
+// Fixed array chained dynamic index: the chained array-index fixture should pass the frontend.
+//@ check-pass
+int main() {
+  mut int32_t matrix[2][3] = {};
+  mut uint64_t row = uint64_t(0);
+  while (row < uint64_t(9)) {
+    row = row + uint64_t(1);
+  }
+  uint64_t column = uint64_t(1);
+  matrix[row][column] = 7;
+  return int(matrix[row][column]);
+}
