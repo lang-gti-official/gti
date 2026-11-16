@@ -3698,7 +3698,6 @@
       "evidence": [
         "tests/deferred_assertion_tests.cpp",
         "tests/deferred_assertion_runtime_test.py",
-        "tests/deferred_assertion_lsp_test.py",
         "examples/172-deferred-assertions.gti",
         "examples/174-typed-macros.gti",
         "stdlib/std/assert.gti"
@@ -6826,7 +6825,6 @@
       "evidence": [
         "tests/fixtures/structural_relocation.gti",
         "tests/structural_relocation_tests.cpp",
-        "tests/structural_relocation_lsp_test.py",
         "examples/033-source-concepts.gti",
         "stdlib/prelude.gti"
       ]

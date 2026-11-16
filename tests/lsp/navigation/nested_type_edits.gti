@@ -1,0 +1,53 @@
+// Renaming a nested type in an edit moves its identity with it, and naming a
+// private nested type is an access error. (From nested_type_lsp_test.py.)
+//@ definition @use: @decl
+namespace demo {
+struct Config {
+  struct /*@decl*/Endpoint {
+    struct Tls {
+      bool enabled = false;
+    };
+  };
+  class Logging {
+  public:
+    int level = 1;
+  };
+  using Selected = Endpoint;
+
+private:
+  struct Secrets {
+    struct Token {
+      int code = 1;
+    };
+  };
+};
+}
+using Net = demo::Config::Endpoint;
+using Secure = demo::Config::/*@use*/Endpoint::Tls;
+int main() { return 0; }
+// --- step 2
+namespace demo {
+struct Config {
+  struct Network {
+    struct Tls {
+      bool enabled = false;
+    };
+  };
+  class Logging {
+  public:
+    int level = 1;
+  };
+  using Selected = Network;
+
+private:
+  struct Secrets {
+    struct Token {
+      int code = 1;
+    };
+  };
+};
+}
+using Net = demo::Config::Network;
+using Secure = demo::Config::Network::Tls;
+int main() { return 0; }
+using Forbidden = demo::Config::Secrets;  //~ ERROR GTI-S2007

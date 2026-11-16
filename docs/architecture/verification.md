@@ -168,7 +168,7 @@ on LLVM at O0/O1/O3, verifies the C++ GTI-B0003 boundary, and checks rejected
 literals without replacing existing outputs. It includes a 300-character/16-field
 pattern, a custom formatter validator, owning arguments with exactly-once cleanup,
 ordinary generic/function-item forwarding, owner-backed dynamic views, and checked
-formatted panic cleanup. `consteval_lsp` checks hover, library messages, UTF-16
+formatted panic cleanup. `tests/lsp/consteval` checks hover, library messages, UTF-16
 argument spans and repair. Runtime formatting, integral-enum/custom formatters,
 panic adoption, deferred assertions and their editor tests retain the explicit
 runtime API as the C++ oracle. No comparator expectation is removed.
@@ -425,7 +425,7 @@ field schedule despite retaining an explicit source constructor identity.
 
 The TLS slice has distinct source, independent MIR, runtime and native gates:
 
-- `thread_local_syntax`, `thread_local_semantic` and `thread_local_lsp` cover
+- `thread_local_syntax`, `thread_local_semantic` and `tests/lsp/declarations/thread_local_variable.gti` cover
   namespace/static/local declarations, placement diagnostics, exact origin and
   access checks, hidden helper/callback/destructor effects, scoped lending,
   escaping tasks/results, constant-context rejection and unsaved editor state.
@@ -521,7 +521,7 @@ equivalent policy. Runtime statements in an iteration query are rejected.
 
 `lowered_program_contract` checks the corresponding non-executable requirement
 inventory and rejects malformed result/access/origin records.
-`general_requires_lsp` covers recovery, queries and formatting;
+`tests/lsp/generics/general_requirements.gti` covers recovery, queries and formatting;
 `general_requires_runtime` executes the expanded
 `examples/173-general-requires.gti` across native optimization/standard modes.
 The callable, generic-algorithm, iterator, reflection and compiler-pipeline
@@ -1106,7 +1106,7 @@ lifetime, synthesized fallback without owner consumption or loans,
 UTF-8/comments/newlines and ordinary generic definition-site spelling
 at C++20/C++23 O0/O1/O3 plus ASan/UBSan. The stdlib surface manifest registers
 the same public operation and focused O0/O3 fixture.
-`expression_text_lsp` checks value-result hover signatures and exact helper
+`tests/lsp/macros/expression_text_*.gti` checks value-result hover signatures and exact helper
 definition identities, UTF-16 argument diagnostic spans, synthetic-source
 diagnostics, explicit fallback recovery, dynamic-fallback diagnostic clearing,
 incomplete source and reopen.
@@ -1154,7 +1154,7 @@ cleaning the pending result, and ordinary cleanup failure after publication.
 The matrix uses C++20/C++23 at O0/O3, disabled elision and native ASan/UBSan;
 failure cases require status 70 and the original primary/secondary sites.
 
-`deferred_assertions_lsp` covers unsaved/incomplete text, UTF-16 spans, static
+`tests/lsp/macros` covers unsaved/incomplete text, UTF-16 spans, static
 argument errors, macro hover/definition identity, qualified overload selection
 and recovery from the removed attribute. `macro_expansion_queries` checks
 bounded deterministic inspection, hygiene labels and exact local rename identity;
@@ -2398,7 +2398,7 @@ callback escape rejection. It rejects malformed projection declarations,
 substituted MIR result types and incompatible class-publication destinations.
 Reference relay tests also reject substituted or missing MIR origins,
 unrelated callback arguments, dangling owners and overlapping mutation.
-`callable_return_type_lsp` checks the diagnostic's UTF-16 range and repair.
+`tests/lsp/diagnostics/callable_return_type_recovery.gti` checks the diagnostic's UTF-16 range and repair.
 `callable_return_type_runtime` runs example 167 and an owned source-class/result
 enum client with `transform`, `transform_error` and `and_then`, plus native
 pointer, read-only-pointer, scalar and void callback results in retained
@@ -2823,7 +2823,7 @@ aliases, nested types, constructors, generic substitutions, out-of-class bodies,
 public overrides and unchanged mutation restrictions, with `GTI-S2007` on the
 offending line and a formatter fixed point. `tests/ui/language/protected/` executes
 example 150 through the existing MIR backend in C++20/C++23 at O0/O1/O3,
-without elision and with ASan/UBSan. `protected_member_lsp` checks protected
+without elision and with ASan/UBSan. `tests/lsp/access` checks protected
 keyword tokens, hover/definition, receiver-aware completion, UTF-16 diagnostic
 locations and clearing after an unsaved edit. The example is registered by the
 ordinary shipped-source corpus and reviewed MIR/LoweredProgram inventories.
@@ -3183,7 +3183,7 @@ not establish parity for GTI's complete failure and cleanup contract.
 
 ## Named nested types (0.413.0)
 
-`nested_type_syntax`, `nested_type_runtime` and `nested_type_lsp` cover named
+`nested_type_syntax`, `nested_type_runtime` and `tests/lsp/navigation/nested_type*.gti` cover named
 classes/structs, recursive scopes, enclosing constructor recovery, qualified
 identity, private intermediate types/aliases, imported export visibility,
 shadowing, generic children and the explicit generic-owner boundary. Native
@@ -5999,7 +5999,7 @@ forged field addresses and actual borrow-access upgrades. Twelve SSA view
 observers reject forged receiver type, operand category, identity and failure
 contract. Semantic negatives retain local/temporary owner escape, wrong
 borrowed-from owner, a temporary owner's view escaping into a binding, and
-mutation with a live view. `operator_relay_lsp` verifies versioned
+mutation with a live view. `tests/lsp/borrows/indexed_owner_relay.gti` verifies versioned
 diagnostics, UTF-16 source positions, related origins, hover and definition
 queries during an error, and recovery after the edit is removed. Example 127
 runs at C++20/C++23 O0/O3. The new generated C++ also compiles with GCC 15.
@@ -6663,7 +6663,7 @@ controls cover safe resource reset (directly, beneath a live growable
 container, and through a shared binding), moving a bound provider, escaping a
 local provider, forged bindings, assignment between retained resources, element
 references against growth and mutable access, element escape, and immovable
-elements in growable or relocating paths. `resource_protocol_lsp` checks the
+elements in growable or relocating paths. `tests/lsp/resources` checks the
 same unsafe-call and borrow-conflict diagnostics, navigation to the library
 declarations and member completion through the language server.
 `resource_memory_runtime` independently checks the process-memory
@@ -7291,7 +7291,7 @@ prefix/postfix results, mixed-width compounds, read-before-RHS ordering,
 one invocation of a mutable-only user subscript and a side-effecting index,
 borrowed nested array reads/writes, exact first-failure locations, unchanged
 destinations after failed checks, reverse-order cleanup and move-only error
-construction/relay. `issues_30_33_lsp` checks CLI/LSP agreement, exact Unicode
+construction/relay. `tests/lsp/expected/unexpected_payload_copy.gti` checks CLI/LSP agreement, exact Unicode
 UTF-16 payload ranges, explicit-move advice without unsafe fixes, corrected
 overlays and stale-action rejection. This focused evidence uses a Release
 compiler on macOS arm64; it does not claim Linux or Windows execution.
@@ -7688,7 +7688,7 @@ user's active installation remain deliberately unchanged.
 These gates supplement the existing full optimized CTest, corpus,
 optimization-report/replay, staged-consumer, and editor/package completion
 checks below. The subsequent public formatter slice adds
-`tests/ui/stdlib/format/` and `extensible_formatting_lsp`: unrelated
+`tests/ui/stdlib/format/` and `tests/lsp/formatting/formatter_specialization_contract.gti`: unrelated
 source-defined identifier/record formatters, exact mutable receiver/parameter
 signature concepts, generic symbolic calls, owned argument cleanup, repeated
 indexed fields, error-category preservation, transactional destination output,
@@ -7994,7 +7994,7 @@ use after explicit movement, and production MIR emission. HIR mutations reject
 lost, reordered, missing, duplicated and misplaced eager inputs. MIR mutations
 reject wrong callable identities/signatures, missing receivers, erased capture
 or lifetime records, and forged prepared receiver roles/call sites.
-`expected_transform_error_lsp` checks lambda success, precise invalid-parameter
+`tests/lsp/expected/transform_error_*.gti` checks lambda success, precise invalid-parameter
 diagnostics, and recovery in successive document generations.
 
 `expected_transform_error_runtime` retains namespace-function cases and covers
@@ -8142,7 +8142,7 @@ Outstanding source/destination loans and self-aliasing remain semantic errors.
 The standard-library surface sweep independently exercises relocation at
 O0/O3; fingerprints and API coverage include both constraints and the method.
 
-`structural_relocation_lsp` verifies shared compiler hover/definition facts,
+`tests/lsp/generics/bitwise_relocatable.gti` verifies shared compiler hover/definition facts,
 constraint diagnostics and related information, unsaved cleanup changes,
 incomplete-source recovery, and formatting followed by reanalysis. No grammar
 or editor-specific semantic rule is added.
@@ -9350,7 +9350,7 @@ function-item and call-operator consumers, explicit outer generic arguments,
 earlier-argument overload selection, and stored callable fields. It rejects
 wrong concrete results, ambiguous contexts, use after consuming invocation,
 forged prepared-receiver call-site identity, and malformed local-closure
-capture metadata. `function_signature_lsp` checks the valid nested expression,
+capture metadata. `tests/lsp/signatures` checks the valid nested expression,
 its hover, an unsaved use-after-move edit, and diagnostic clearing. The focused
 backend text suite also passes after the shared staging/frozen-closure repairs.
 `consuming_receiver_types`
@@ -9518,7 +9518,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/signature_pack_deduction.gti` | exact empty, multi-argument, reference, explicit, repeated, prefixed and value-pack deductions; symbolic forwarding and returned nominal metadata under C++20/C++23 at O0/O1/O3; separated from the ownership/dispatch fixture to keep focused native matrices bounded |
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
-| `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
+| `tests/lsp/signatures` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
 | `compiler_pipeline` | manifest-backed aggregate across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
@@ -9577,7 +9577,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `mutex_move_cleanup_runtime` | C++20/23 O0/O3 moved trivial/nontrivial mutex owners and moved guards; exactly-once reverse payload cleanup; inactive moved-from native shells leave primary records unchanged; active secondary failure preserves the emergency envelope and abandons later cleanup. A retained-C++ oracle repair, not native LLVM mutex acceptance. |
 | `expected_wrong_state_runtime` | wrong-state `expected.value()` and `expected.error()` terminate through `GTI-R0009` at O0/O3 under C++20/C++23 rather than inheriting native-library behavior |
 | `expected_propagation_runtime` | exact once-only, left-to-right `?` evaluation; `expected<void, E>` forwarding; named-operand copy versus prvalue/`std::move` move behavior; active-alternative error transport; and ordinary branch/return cleanup at O0/O3 under C++20/C++23 |
-| `expected_transform_error` / `expected_transform_error_lsp` | exact namespace mapper selection, consuming receiver and owned-result diagnostics with source/UTF-16 spans and related declarations, HIR branch/call lowering, verified MIR return and join ownership, fail-closed mutation tests, and compiler-backed completion/hover/definition and recovery |
+| `expected_transform_error` / `tests/lsp/expected/transform_error_*.gti` | exact namespace mapper selection, consuming receiver and owned-result diagnostics with source/UTF-16 spans and related declarations, HIR branch/call lowering, verified MIR return and join ownership, fail-closed mutation tests, and compiler-backed completion/hover/definition and recovery |
 | `expected_transform_error_runtime` | scalar, void, passive noncopyable and owning alternatives; named/prvalue receivers, chaining, loop re-entry, onward calls, prefix `?`, once-only mapping, reverse-order cleanup, and mapper/later-argument/destructor failures; C++20/C++23 at O0/O1/O3, disabled elision, and ASan/UBSan |
 | `expected_payload_range_runtime` | payload iteration with named and by-value `expected` owners, nested loops, continue/break/early return, local and parameter wrong-state failures, and cstdio payload integration under C++20/C++23 at O0/O3; explicit lifetime slots execute their MIR drops rather than deferring to native parameter scope |
 | `optional_compiler_contract` | exact declaration-bound optional capability identity; inline storage instance policy; semantic, HIR, MIR, lifecycle-transfer, and backend-intrinsic retention; move-only source unavailability; live-borrow rejection; private representation isolation; and fail-closed forged intrinsic and transfer evidence |
@@ -9593,7 +9593,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `carrier_shell_references` / `shared_accessor_range_runtime` | borrowed-success carrier to reference accessor to read-only element traversal, reduced from Tea's JSON decoder and repeated with an unrelated application owner and noncopyable elements; exact retained call-result identity, nested iteration, continue/break/return and failure cleanup; forged local/access metadata and premature range retirement rejected; owner invalidation and escaping-local negatives; C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan |
 | `compiler_pipeline` / `mutable_range_runtime` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
 | `compiler_ownership` / `generic_algorithm_cluster` complete-range coverage | L-RANGE-04 exact `input_range`, `range_of`, `mutable_range_of`, `sized_range`, range predicate/operation relationships; application-defined nominal and fixed-array instantiation; concrete HIR protocol/strategy replacement; checked fixed-array index arithmetic after symbolic-operator suppression; missing endpoints, wrong referent, missing mutable endpoint, wrong size result, and callable mismatch rejection; C++20/C++23 O0/O3 runtime parity |
-| `compiler_pipeline` / `mutable_stored_dependency_runtime` / `nested_borrow_fields` / `nested_borrow_fields_lsp` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; exact nominal nesting and separately mapped aggregate dependencies; assignment, mutable-copy, global borrowed storage, and unproven-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, field paths, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
+| `compiler_pipeline` / `mutable_stored_dependency_runtime` / `nested_borrow_fields` / `tests/lsp/borrows/nested_borrow_fields.gti` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; exact nominal nesting and separately mapped aggregate dependencies; assignment, mutable-copy, global borrowed storage, and unproven-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, field paths, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
 | `tests/ui/stdlib/string/owned_output.gti` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |
 | `string_index_range_runtime` | independent half-open string copies, empty and endpoint ranges, embedded zero/UTF-8 code units, source lifetime independence, invalid and huge endpoints with exact public bounds category and cleanup; O0/O1/O3 under C++20/C++23 plus generated-program ASan/UBSan |
@@ -10144,7 +10144,7 @@ members, so HIR and MIR intentionally gain no operation.
 `qualified_type_members` extends that static contract to written specialized
 owners, nested alias qualifiers, owner defaults/value arguments, exact-definition
 alias restrictions, private/cyclic/missing aliases, generic signatures, retained iterator
-loans and move-only targets. `qualified_type_member_lsp` checks completion,
+loans and move-only targets. `tests/lsp/types/specialized_member_*.gti` checks completion,
 hover, definition, references, tokens, precise diagnostic ranges, recovery and
 format/reanalysis. `qualified_type_member_runtime` compiles and runs example 132
 at O0/O1/O3 under C++20/C++23, including unique-owner cleanup. The example also
@@ -10580,7 +10580,7 @@ and mutable reborrows through a read-only receiver. Multiple explicitly mapped
 paths and custom destruction are not blanket language prohibitions; cleanup-
 bound dependency gates own their additional lifecycle obligations. MIR
 mutations independently reject forged/truncated paths, access modes,
-constructor sources and endpoints. `nested_borrow_fields_lsp` checks field
+constructor sources and endpoints. `tests/lsp/borrows/nested_borrow_fields.gti` checks field
 hover/definition, UTF-16 diagnostic spans, related information, recovery and
 diagnostic clearing. The associative-container suites exercise the same rule
 through insertion results rather than a compiler-recognized result wrapper.
@@ -11131,7 +11131,7 @@ existing C++ comparator limitations, never silent comparator skips.
 rollback and prepared-return cleanup after local destruction fails at O0-O3.
 It also observes completed-row cleanup after an immovable nested-array element
 fails and completed-field cleanup when a reference initializer fails before
-publication. `array_publication_lsp` checks shared frontend acceptance, exact
+publication. `tests/lsp/diagnostics/array_publication_recovery.gti` checks shared frontend acceptance, exact
 ownership diagnostics and unsaved-version recovery, without editor-only rules.
 
 O-LLVM-02 adds the following independent checks while full-language LLVM support

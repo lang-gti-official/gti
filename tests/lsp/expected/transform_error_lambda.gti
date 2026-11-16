@@ -1,0 +1,28 @@
+// A lambda mapper of the wrong parameter type fails inside the library
+// instance and is reported at the member call. (From expected_transform_error_lsp_test.py.)
+enum class Error { failed };
+Error map(int error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = std::move(source).transform_error([](int error) -> Error { return Error::failed; });
+  return mapped.has_value() ? 1 : 0;
+}
+// --- step 2
+enum class Error { failed };
+Error map(int error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = std::move(source).transform_error([](bool error) -> Error { return Error::failed; });  //~ ERROR GTI-S2003 requires 'bool'
+  return mapped.has_value() ? 1 : 0;
+}
+// --- step 3
+enum class Error { failed };
+Error map(int error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = std::move(source).transform_error([](int error) -> Error { return Error::failed; });
+  return mapped.has_value() ? 1 : 0;
+}

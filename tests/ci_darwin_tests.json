@@ -145,7 +145,6 @@
     "source_debug_lldb",
     "thread_confined_callback_runtime",
     "thread_local_end_to_end",
-    "thread_local_lsp",
     "thread_local_owner_assignment",
     "thread_local_semantic",
     "thread_local_syntax",
