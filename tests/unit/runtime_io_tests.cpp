@@ -1,4 +1,5 @@
 #include "gti/runtime.h"
+#include "unit_test.h"
 
 #include <array>
 #include <chrono>
@@ -33,7 +34,7 @@ gti_c_string_view view(std::string_view value) {
 
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(runtime_io_boundary) {
   const auto nonce =
       std::chrono::steady_clock::now().time_since_epoch().count();
   const std::filesystem::path path =

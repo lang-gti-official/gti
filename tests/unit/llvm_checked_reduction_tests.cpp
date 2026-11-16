@@ -1,4 +1,5 @@
-#include "../src/compiler/llvm/checked_reductions.h"
+#include "../../src/compiler/llvm/checked_reductions.h"
+#include "unit_test.h"
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -847,7 +848,7 @@ void differential(const Shape &shape, bool expectChange) {
 }
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(llvm_checked_reductions) {
   try {
     {
       llvm::LLVMContext context;

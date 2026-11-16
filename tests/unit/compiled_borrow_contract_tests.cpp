@@ -1,5 +1,6 @@
 #include "gti/compiled_scalar_unit.h"
 #include "gti/persistent_declaration.h"
+#include "unit_test.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -18,7 +19,7 @@ template <class F> void rejects(F action) {
   throw std::runtime_error("accepted malformed compiled borrow contract");
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(compiled_borrow_contract) {
   try {
     const auto read = SemanticType::referenceTo(SemanticType::Int32);
     const auto write =
@@ -103,4 +104,5 @@ int main() {
     std::cerr << error.what() << '\n';
     return 1;
   }
+  return 0;
 }

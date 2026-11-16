@@ -1,5 +1,6 @@
 #undef NDEBUG // This target-facts test must also execute checks in Release.
 #include "gti/target.h"
+#include "unit_test.h"
 
 #include <array>
 #include <cassert>
@@ -8,7 +9,7 @@
 #include <limits>
 #include <type_traits>
 
-int main() {
+GTI_UNIT_TEST(native_c_scalar_target) {
   using C = lang::NativeCScalarKind;
   using V = lang::TargetScalarKind;
   for (const char *triple :
@@ -106,4 +107,5 @@ int main() {
          (std::is_same_v<std::int64_t, long>));
   assert((host.fixedCScalarIdentity(V::UInt64) == C::UnsignedLong) ==
          (std::is_same_v<std::uint64_t, unsigned long>));
+  return 0;
 }

@@ -15,6 +15,19 @@ per-entry census and CPU times in its `--json` report are information only.
 `--only`, `--shard I/N`, `--jobs N` and entry substrings narrow a run. Those
 binaries' own fixtures stay as the `*_fixtures` entries.
 
+## C++ unit tests
+
+C++ tests of library code that need no GTI program (runtime ABI boundaries,
+driver helpers, LLVM pass units, formatter checks) live in `tests/unit/` and
+link into one executable, `gti_unit_tests`, registered once in
+`tests/gti_test.cmake`. A file declares `GTI_UNIT_TEST(name)` cases
+(`tests/unit/unit_test.h`); each case runs in its own child process, and 77
+skips. The cases keep the names of the CTest entries they replaced, so a name
+below such as `runtime_failure_boundary` or `test_runner` is now
+`gti_unit_tests --test <name>`; `--list` shows them all. Outside that target a
+file's case is its `main`, which is how the installed-library smoke and the
+native cthread harnesses still compile single files.
+
 ## Isolated native test fixtures
 
 C++ test executables that write source/module fixtures use

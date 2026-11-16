@@ -1,4 +1,5 @@
-#include "../src/compiler/llvm/checked_ranges.h"
+#include "../../src/compiler/llvm/checked_ranges.h"
+#include "unit_test.h"
 
 #include <llvm/ADT/DenseMap.h>
 #include <llvm/Analysis/LoopInfo.h>
@@ -462,7 +463,7 @@ void differential(const Shape &shape, const char *name) {
 }
 } // namespace
 
-int main() {
+GTI_UNIT_TEST(llvm_checked_ranges) {
   try {
     {
       llvm::LLVMContext context;

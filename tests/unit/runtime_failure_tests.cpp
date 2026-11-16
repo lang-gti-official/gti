@@ -1,4 +1,5 @@
 #include "gti/runtime_failure.h"
+#include "unit_test.h"
 
 #include "failure_internal.h"
 
@@ -378,7 +379,7 @@ static_assert(
                             const gti_failure_artifact_descriptor_v1 *,
                             gti_failure_observer_v1, void *)>);
 
-int main() {
+GTI_UNIT_TEST(runtime_failure_boundary) {
   testCleanupContext();
   testWriteAll();
   testUnicodeTableBoundaries();

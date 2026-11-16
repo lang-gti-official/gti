@@ -1,5 +1,6 @@
 #include "gti/driver/process.h"
 #include "gti/driver/test_runner.h"
+#include "unit_test.h"
 #include <algorithm>
 #include <csignal>
 #include <cstdlib>
@@ -22,7 +23,7 @@ void check(bool value, const char *message) {
   }
 }
 } // namespace
-int main(int argc, char **argv) {
+GTI_UNIT_TEST(test_runner) {
 #if defined(_WIN32)
   std::cout << "isolated test runner requires POSIX process groups\n";
   return 77;

@@ -1,5 +1,6 @@
 #include "cthread_internal.h"
 #include "gti/cthread.h"
+#include "unit_test.h"
 #include <atomic>
 #include <cstdlib>
 #include <exception>
@@ -52,7 +53,7 @@ void throws() { throw 7; }
 void incomplete() { gti_rt_once_enter_v1(incomplete); }
 } // namespace
 
-int main(int argc, char **argv) {
+GTI_UNIT_TEST(cthread_once_boundary) {
   std::set_terminate([] { std::_Exit(86); });
   expect(!enterCOnceInitializer(checked), "no invocation cannot enter");
   expect(beginCThreadRuntime() == CThreadStatus::Success, "runtime begins");

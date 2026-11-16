@@ -1,6 +1,7 @@
 #include "cthread_condition_internal.h"
 #include "cthread_mutex_internal.h"
 #include "gti/cthread.h"
+#include "unit_test.h"
 
 #include <array>
 #include <atomic>
@@ -172,7 +173,7 @@ void terminal(bool reacquireFailure) {
 }
 } // namespace
 
-int main(int argc, char **argv) {
+GTI_UNIT_TEST(cthread_condition_boundary) {
   if (argc == 2 && std::string_view(argv[1]) == "destroy-waiting") {
     terminal(false);
   }

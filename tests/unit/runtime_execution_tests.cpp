@@ -1,5 +1,6 @@
 #include "gti/runtime_execution.h"
 #include "gti/runtime_thread.hpp"
+#include "unit_test.h"
 
 #include <cstring>
 #include <thread>
@@ -98,7 +99,7 @@ bool explicitPrimaryAcrossThreads() {
   return valid[0] && valid[1];
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(runtime_execution_boundary) {
   if (gti_rt_thread_locals_attached_v1() || gti_rt_thread_locals_closing_v1())
     return 1;
   gti_rt_thread_locals_begin_v1();

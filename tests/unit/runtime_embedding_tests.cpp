@@ -1,9 +1,10 @@
 #include "embedding_internal.h"
+#include "unit_test.h"
 #include <cassert>
 #include <cstring>
 #include <thread>
 
-int main() {
+GTI_UNIT_TEST(runtime_embedding_context) {
   gti_failure_record_v1 failure;
   std::memset(&failure, 0x57, sizeof failure);
   const auto original = failure;
@@ -37,4 +38,5 @@ int main() {
   assert(gti_rt_embed_enter_v1(context, &failure) == 7);
   assert(gti_rt_embed_destroy_v1(context, &failure) == 7);
   assert(std::memcmp(&failure, &original, sizeof failure) == 0);
+  return 0;
 }

@@ -1,5 +1,6 @@
 #include "gti/formatter.h"
 #include "gti/lexer.h"
+#include "unit_test.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -36,7 +37,7 @@ void check(std::string_view source, std::string_view signature) {
          "generic owner formatting preserves source tokens");
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(generic_method_tooling) {
   check("T Box < T >::read(){return this.value;}", "T Box<T>::read()");
   check("U n::Box < T >::convert < U >(U value){return value;}",
         "U n::Box<T>::convert<U>(U value)");
@@ -50,4 +51,5 @@ int main() {
   check("bool compare(){return left<middle>limits::value<int>();}",
         "return left < middle > limits::value<int>();");
   std::cout << "generic method tooling checks passed\n";
+  return 0;
 }

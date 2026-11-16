@@ -1,4 +1,5 @@
 #include "gti/memory.h"
+#include "unit_test.h"
 
 #include <cerrno>
 #include <cstddef>
@@ -7,7 +8,7 @@
 #include <iostream>
 #include <limits>
 
-int main() {
+GTI_UNIT_TEST(resource_memory_runtime) {
   int failures = 0;
   const auto expect = [&](bool okay, const char *message) {
     if (!okay) {

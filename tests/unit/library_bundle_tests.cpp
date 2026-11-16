@@ -1,5 +1,6 @@
-#include "../src/driver/sha256.h"
+#include "../../src/driver/sha256.h"
 #include "gti/driver/library_bundle.h"
+#include "unit_test.h"
 #include <algorithm>
 #include <cstdlib>
 #include <functional>
@@ -35,7 +36,7 @@ void put(std::string &s, std::size_t offset, std::uint32_t value) {
     s[offset + i] = static_cast<char>((value >> (8 * i)) & 255);
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(library_bundle) {
   using K = LibraryBundleErrorKind;
   expect(hash("abc") ==
              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
@@ -183,4 +184,5 @@ int main() {
   }
   std::cout << "library bundle round-trip, determinism, compatibility and "
                "rejection checks passed\n";
+  return 0;
 }

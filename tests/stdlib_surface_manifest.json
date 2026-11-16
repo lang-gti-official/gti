@@ -3870,7 +3870,7 @@
         "runtime/src/chrono.cpp",
         "stdlib/std/chrono.gti",
         "tests/fixtures/stdlib_surface_chrono.gti",
-        "tests/runtime_chrono_tests.cpp"
+        "tests/unit/runtime_chrono_tests.cpp"
       ]
     },
     {
@@ -4497,7 +4497,7 @@
       ],
       "evidence": [
         "tests/filesystem_operations_runtime_test.py",
-        "tests/runtime_filesystem_tests.cpp",
+        "tests/unit/runtime_filesystem_tests.cpp",
         "docs/language/filesystem.md"
       ]
     },
@@ -5086,7 +5086,7 @@
       ],
       "evidence": [
         "tests/composable_io_runtime_test.py",
-        "tests/runtime_io_tests.cpp",
+        "tests/unit/runtime_io_tests.cpp",
         "docs/language/io.md"
       ]
     },
@@ -5553,7 +5553,7 @@
       "evidence": [
         "tests/c_string_import_runtime_test.py",
         "tests/fixtures/c_string_import.gti",
-        "tests/resource_memory_runtime_tests.cpp"
+        "tests/unit/resource_memory_runtime_tests.cpp"
       ]
     },
     {
@@ -6635,7 +6635,7 @@
       ],
       "evidence": [
         "tests/native_c_scalar_tests.cpp",
-        "tests/native_c_scalar_target_tests.cpp",
+        "tests/unit/native_c_scalar_target_tests.cpp",
         "tests/native_c_scalar_runtime_test.py",
         "examples/123-native-c-scalars.gti",
         "docs/language/native-c-interop.md"
@@ -6844,7 +6844,7 @@
         "stdlib/std/process.gti",
         "tests/fixtures/stdlib_surface_process.gti",
         "tests/process_runtime_test.py",
-        "tests/runtime_process_tests.cpp"
+        "tests/unit/runtime_process_tests.cpp"
       ]
     },
     {
@@ -7132,7 +7132,7 @@
         "stdlib/std/resource.gti",
         "examples/allocator-support/arena.gti",
         "tests/resource_protocol_tests.cpp",
-        "tests/resource_memory_runtime_tests.cpp",
+        "tests/unit/resource_memory_runtime_tests.cpp",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/fixtures/raw_resource_movement.gti",
         "tests/programmable_allocators_runtime_test.py",

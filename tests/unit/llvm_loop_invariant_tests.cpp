@@ -1,4 +1,5 @@
-#include "../src/compiler/llvm/loop_invariants.h"
+#include "../../src/compiler/llvm/loop_invariants.h"
+#include "unit_test.h"
 #include <iostream>
 #include <llvm/AsmParser/Parser.h>
 #include <llvm/IR/Module.h>
@@ -93,7 +94,7 @@ entry_b:
     throw std::runtime_error("non-idempotent small fixture: " + name);
 }
 } // namespace
-int main() {
+GTI_UNIT_TEST(llvm_loop_invariants) {
   check("constant", "@first", "", "%state", "", 1);
   check("mutable table", "@mutable", "", "%state", "", 0);
   check("unknown table", "@external", "", "%state", "", 0);
@@ -121,4 +122,5 @@ int main() {
   check("mixed entry constants", "@first", "", "%state", "", 0,
         "mixed-entries");
   std::cout << "17 inductive pointer controls passed\n";
+  return 0;
 }

@@ -1,5 +1,6 @@
 #include "gti/formatter.h"
 #include "gti/lexer.h"
+#include "unit_test.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -8,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-int main() {
+GTI_UNIT_TEST(lambda_formatting) {
   const std::vector<std::pair<std::string, std::string>> cases = {
       {"start( []() -> void {});", "start([]() -> void {}"},
       {"start(\n[]() -> void {}\n);", "start([]() -> void {}"},
@@ -82,4 +83,5 @@ int main() {
   }
   std::cout << "Lambda spacing: " << cases.size()
             << " cases, token preservation and idempotence passed\n";
+  return 0;
 }
