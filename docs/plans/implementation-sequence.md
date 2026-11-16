@@ -451,7 +451,7 @@ full performance evidence remain incomplete. Release snapshot
 passes `mutex_semantic_ir` (including passive-closure malformed-MIR controls),
 `scoped_thread_c_header`, `scoped_thread_runtime`,
 `scoped_thread_join_boundary`, `managed_thread_runtime`, and
-`shared_ownership_threads`. The latter executes shared owners, shared mutexes
+`tests/ui/concurrency/`. The latter executes shared owners, shared mutexes
 and transferable read/mut/once jobs in C++20/C++23 at O0/O1/O3, no-elide and
 ASan/UBSan modes (24 fixture/mode combinations). This is focused checkpoint
 evidence, not final current-head validation or a TSan/performance claim.
@@ -9246,7 +9246,7 @@ prerequisite checkpoints as full acceptance.
   explicitly accepted on 2026-10-28. Measured optimized retain/release,
   contended-count and allocation workloads remain within the accepted budget;
   performance reports distinguish wall-time evidence from isolated-host claims.
-- **Concurrency evidence:** `shared_ownership_threads`,
+- **Concurrency evidence:** `tests/ui/concurrency/`,
   `weak_ownership_threads` and `shared_ownership_release_race` also run
   as instrumented LLVM objects under ThreadSanitizer (`*_tsan`). The release
   race writes the payload in its destructor while other owners read it, so

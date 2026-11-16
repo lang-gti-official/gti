@@ -85,6 +85,22 @@ AREAS = (
     (r"^extensible_formatting", "stdlib/format"),
     (r"^composable_io", "stdlib/io"),
     (r"^charconv", "stdlib/charconv"),
+    (r"^aggregate_std", "language/modules"),
+    (r"^associative_ownership", "stdlib/map"),
+    (r"^(cleanup_bound_borrow|inherited_cleanup_context)", "ownership/cleanup"),
+    (r"^(discarded_nominal_result|interface_static)", "language/classes"),
+    (r"^enum_replacement", "language/assignment"),
+    (r"^generic_contract", "generics"),
+    (r"^(immovable_storage|storage_final_address|uninitialized_carrier|"
+     r"native_c_scalar|nested_raw_pointer)", "memory"),
+    (r"^integral_enum_formatting", "stdlib/format"),
+    (r"^lambda_owning_transport", "language/callables"),
+    (r"^literal_call_arguments", "language/temporaries"),
+    (r"^owner_chain", "ownership/borrow"),
+    (r"^protected_member", "language/protected"),
+    (r"^prvalue_direct_initialization", "language/construction"),
+    (r"^(shared_getter_worker_loans|shared_ownership_threads|conditional_capability)", "concurrency"),
+    (r"^shared_ownership_runtime", "stdlib/memory/shared_owner"),
 )
 
 
@@ -102,8 +118,11 @@ def capture(wrapper: pathlib.Path) -> tuple[list[dict], str | None]:
     calls: list[dict] = []
 
     def record(*positional, **keywords):
-        if positional:
-            keywords = dict(keywords, names=positional[0])
+        # The harness's parameters, in order, for positional arguments.
+        order = ("names", "cases", "execution_profile", "stdin_by_name", "fixture_paths",
+                 "native_inputs_by_name", "native_arguments_by_case", "llvm_modes",
+                 "cpp_unsupported", "private_modules_by_name", "llvm_unsupported")
+        keywords = dict(keywords, **dict(zip(order, positional)))
         calls.append(keywords)
 
     stub = types.ModuleType(HARNESS)
@@ -146,6 +165,16 @@ def ctest_names() -> dict[str, str]:
         script = re.search(r"tests/([A-Za-z0-9_]+_test\.py)", statement)
         if name and script and "$" not in name.group(1):
             names[script.group(1)] = name.group(1)
+    # foreach(var IN ITEMS a b ...) add_test(NAME "${var}" ... tests/${var}_test.py)
+    for match in re.finditer(r"foreach\(\s*(\w+)\s+IN\s+ITEMS\b", text):
+        end = statement_end(text, match.start())
+        variable = match.group(1)
+        body_end = text.find("endforeach()", end)
+        body = text[end:body_end]
+        if (re.search(r'NAME\s+"?\$\{' + variable + r'\}"?\s', body)
+                and f"tests/${{{variable}}}_test.py" in body):
+            for item in text[match.end():end - 1].split():
+                names.setdefault(f"{item}_test.py", item)
     return names
 
 
@@ -219,6 +248,8 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
              if pathlib.PurePath(user).name not in selected]
     if users:
         result.reasons.append("imported by " + ", ".join(users) + "; convert them together")
+    if f'"{result.test_name}"' in (ROOT / "scripts/example_gates.py").read_text():
+        result.reasons.append("a required example gate (scripts/example_gates.py)")
     calls, error = capture(wrapper)
     if error:
         result.reasons.append(f"does more than call the harness ({error})")
@@ -246,11 +277,19 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
                      (call.get("fixture_paths") or {}).items()}
     for name in names:
         source = fixture_paths.get(name, FIXTURES / f"{name}.gti")
-        if not source.is_file() or not source.resolve().is_relative_to(TESTS):
+        example = source.resolve().is_relative_to(ROOT / "examples")
+        if not source.is_file() or not (example or source.resolve().is_relative_to(TESTS)):
             result.reasons.append(f"{name}: fixture {source} is not a file under tests/")
             continue
         runs = cases.get(name, [((), (0, "", ""))])
         stdin = stdin_by_name.get(name)
+        if (example and list(runs) == [((), (0, "", ""))] and not stdin
+                and source.resolve() in analysed_examples()):
+            # gti_test_examples analyses the example to verified MIR; only the
+            # bare successful run, which observes nothing more, is dropped.
+            result.notes.append(f"{name}: {source.resolve().relative_to(ROOT)} is left to "
+                                "gti_test_examples (analysis); its bare run is dropped")
+            continue
         seeded = seeded_case(source, runs, stdin)
         if seeded:
             # A stdlib surface case seeded from this fixture, with its sibling
@@ -280,10 +319,20 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
         result.files[target] = text
         for suffix, content in stdout_files.items():
             result.files[target.with_name(f"{name}{suffix}.stdout")] = content
-        (result.copies if shared(source, name, wrapper) else result.moves).append((source, target))
+        # An example stays where it is; its observed output becomes a test.
+        (result.copies if example or shared(source, name, wrapper) else result.moves).append((source, target))
         result.fixtures.append(name)
         result.signatures[name] = repr((runs, stdin))
     return result
+
+
+def analysed_examples() -> set[pathlib.Path]:
+    """The examples gti_test_examples checks: top-level ones not excluded in
+    tests/gti_test.cmake."""
+    text = "\n".join(line.split("#")[0] for line in (TESTS / "gti_test.cmake").read_text().split("\n"))
+    excluded = set(re.search(r"set\(gti_examples_excluded(.*?)\)", text, re.S).group(1).split())
+    return {path.resolve() for path in (ROOT / "examples").glob("*.gti")
+            if path.stem not in excluded}
 
 
 def seeded_case(source: pathlib.Path, runs, stdin) -> pathlib.Path | None:
@@ -324,6 +373,15 @@ def stderr_expectations(name: str, stderr: str, plan_: Plan) -> list[str]:
     needles = []
     for line in stderr.splitlines():
         if not line.strip():
+            continue
+        absolute = re.search(re.escape(str(ROOT)) + r"/(?:[\w.-]+/)*", line)
+        if absolute:
+            # A source path where the old harness compiled the fixture; the
+            # test compiles a copy elsewhere. Keep the text around the
+            # directory.
+            needles += [piece.strip() for piece in (line[:absolute.start()], line[absolute.end():])
+                        if piece.strip()]
+            plan_.reductions.append(f"{name}: compile directory dropped from '{line}'")
             continue
         if STD_LINE.search(line):
             # The old wrapper read this standard-library line number from the
@@ -406,11 +464,31 @@ def shows_nothing(text: str) -> bool:
     return not re.search(r"^\s*import\b", code, re.M) and not RUNTIME_SIGNALS.search(code)
 
 
+def sibling_sections(source: pathlib.Path, plan_, name) -> list[pathlib.Path] | None:
+    """Files `source` imports by a plain sibling file name, transitively, in
+    first-import order; None (with a reason) for a module the runner cannot
+    supply as a section."""
+    found: list[pathlib.Path] = []
+    pending = [source]
+    while pending:
+        current = pending.pop(0)
+        for match in re.finditer(r"^\s*import\s+(\"[^\"]+\"|(?!std\b)[\w.]+)", current.read_text(), re.M):
+            module = match.group(1)
+            relative = module.strip('"')
+            sibling = source.parent / relative
+            if (not module.startswith('"') or "/" in relative or not sibling.is_file()):
+                plan_.reasons.append(f"{name}: imports {module}, which is not a sibling file")
+                return None
+            if sibling not in found and sibling != source:
+                found.append(sibling)
+                pending.append(sibling)
+    return found
+
+
 def convert(name, source, runs, stdin, description, plan_, profile=None):
     text = source.read_text()
-    module = re.search(r"^\s*import\s+(\"[^\"]+\"|(?!std\b)[\w.]+)", text, re.M)
-    if module:
-        plan_.reasons.append(f"{name}: imports the sibling module {module.group(1)}")
+    siblings = sibling_sections(source, plan_, name)
+    if siblings is None:
         return None
     if not runs:
         plan_.reasons.append(f"{name}: no execution observations")
@@ -477,11 +555,14 @@ def convert(name, source, runs, stdin, description, plan_, profile=None):
             pass
     plan_.modes[name] = file_mode if not revisions else f"{file_mode} ({len(runs)} revisions)"
     lines = text.split("\n")
-    if mentions_self:
-        # Expectations name the fixture's file and lines: keep both exactly by
-        # giving the source its own section, as the old harness compiled it.
+    if mentions_self or siblings:
+        # Expectations name the fixture's file and lines, or the fixture
+        # imports sibling files: keep names and lines exactly by giving each
+        # file its own section, as the old harness compiled them.
         header = [f"// {description}", *directives, f"// --- {source.name}"]
-        return "\n".join(header) + "\n" + text, stdout_files
+        sections = "".join(f"// --- {file.name}\n" + file.read_text() for file in siblings)
+        body = text if text.endswith("\n") or not sections else text + "\n"
+        return "\n".join(header) + "\n" + body + sections, stdout_files
     if lines and lines[0].startswith("// ") and not lines[0].startswith("// ---"):
         return "\n".join([lines[0], *directives, *lines[1:]]), stdout_files
     return "\n".join([f"// {description}", *directives, text]), stdout_files
@@ -566,7 +647,24 @@ def edit_registries(test: str, script: str, moves, report, dry_run: bool):
         text, count = remove_foreach_item(text, test)
     if count == 0:
         report.append(f"warning: {test}: no CMake registration removed")
-    text2, extra = remove_word_lists(text, test)
+    # A foreach list names fixtures or partitions, not this entry (a
+    # registering foreach was handled above).
+    protected = [(match.start(), statement_end(text, match.start()))
+                 for match in re.finditer(r"foreach\(", text)]
+    pieces, last = [], 0
+    for start, end in protected:
+        pieces.append(("edit", text[last:start]))
+        pieces.append(("keep", text[start:end]))
+        last = end
+    pieces.append(("edit", text[last:]))
+    extra = 0
+    edited = []
+    for kind, piece in pieces:
+        if kind == "edit":
+            piece, removed = remove_word_lists(piece, test)
+            extra += removed
+        edited.append(piece)
+    text2 = "".join(edited)
     if extra:
         report.append(f"{test}: removed {extra} further CMake list mention(s)")
     write(path, text2, dry_run)

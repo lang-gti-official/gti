@@ -2820,7 +2820,7 @@ another call site and an edge re-entering the preparation.
 derived, transitive, nested, base and sibling access; fields, methods, statics,
 aliases, nested types, constructors, generic substitutions, out-of-class bodies,
 public overrides and unchanged mutation restrictions, with `GTI-S2007` on the
-offending line and a formatter fixed point. `protected_member_runtime` executes
+offending line and a formatter fixed point. `tests/ui/language/protected/` executes
 example 150 through the existing MIR backend in C++20/C++23 at O0/O1/O3,
 without elision and with ASan/UBSan. `protected_member_lsp` checks protected
 keyword tokens, hover/definition, receiver-aware completion, UTF-16 diagnostic
@@ -2846,7 +2846,7 @@ borrowed object and temporary scoped workers combining shared getter results
 with distinct mutable local/owned-field outputs. It verifies exact input
 identity, access, parent and dependency mappings with malformed MIR, and keeps
 overlapping mutable outputs and writes during a retained borrow rejected.
-`shared_getter_worker_loans_runtime` runs sequential, concurrent, reordered and
+`tests/ui/concurrency/shared_getter_worker_loans.gti` runs sequential, concurrent, reordered and
 projected-input cases in C++20/23 at O0/O1/O3, no-elide and ASan/UBSan.
 
 ## Mixed constructor parameter publication (#114)
@@ -3149,7 +3149,7 @@ with forged receiver, owner, virtual/pure/override flags or virtual roots for
 both unrelated ordinary classes and interfaces. No new MIR operation is needed:
 resolved static calls use the existing direct-call and failure-cleanup paths.
 
-`interface_static_runtime` runs example 149 and the owned-factory cleanup
+`tests/ui/language/classes/` runs example 149 and the owned-factory cleanup
 fixture under C++20/C++23 at O0/O1/O3, disabled copy elision, and ASan/UBSan.
 It checks implementation selection, defaults, inherited static generics,
 recoverable failure, exact reverse cleanup, and defined-failure status and
@@ -3227,7 +3227,7 @@ The allocator audit-independence gate also compares the aggregate example and
 all existing allocator fixtures with auditing off, warning, and library findings.
 Audits retain a complete diagnostic pass without influencing emitted artifacts.
 
-`aggregate_std_runtime` validates example 147 in all eight standard/optimization,
+`tests/slow/language/modules/aggregate_std.gti` validates example 147 in all eight standard/optimization,
 no-elision and sanitizer modes. After reconciliation with the promoted JSON
 library, safe atomic waiting and introsort, its reviewed inventory is 386 MIR
 bodies, 3,174 LoweredProgram declarations and 218 generated items. The aggregate LSP
@@ -3925,7 +3925,7 @@ feedback and must not be presented as clean-head integration evidence.
   The borrowed-callable/conditional-result slice subsequently supports direct
   checked-reference parameters and deferred inferred conditional arms. Its
   owning test is `testBorrowedCallableConditionals`; its native gate is
-  `borrowed_callable_conditionals_runtime` (C++20/C++23 O0/O1/O3, no-elide,
+  `tests/ui/ownership/borrow/borrowed_callable_conditionals.gti` (C++20/C++23 O0/O1/O3, no-elide,
   ASan/UBSan), including move-only state, exact results and cleanup on failure.
   Example 028 adds eight MIR bodies, eight declarations and four generated
   items (one callable and three concrete-instance adapters); only that
@@ -5160,7 +5160,7 @@ remains under investigation, with an exact private-path vector baseline still
 required. The benchmark semantic twin now reflects ADR 022's revised elision
 permission instead of forcing the old observable-allocation model.
 
-`uninitialized_carrier_runtime` covers all four fixtures in eight modes,
+`tests/ui/memory/` covers all four fixtures in eight modes,
 including direct bulk relocation and the extended runnable manual-lifetimes
 example. The 32-case matrix preserves move-only bitwise values, vacant source
 reuse, immovable inline owners, reverse cleanup and sanitizer behavior.
@@ -5230,7 +5230,7 @@ factories and a dependent generic branch whose primary has no selection),
 verified MIR and both C++ backend
 standards. It also checks field-wise mixed borrowed factories/relays and rejects
 owner mutation before last use, conflicting exclusive inputs, and local-owner
-escape. `prvalue_direct_initialization_runtime` runs example 130, method,
+escape. `tests/ui/language/construction/` runs example 130, method,
 operator and lambda factories, mixed borrowed results, and owning constructor
 failure rollback in the shared eight-mode matrix: C++20/C++23 at
 O0/O1/O3, no-elide and generated-program ASan/UBSan. Final-address self-pointers
@@ -6410,7 +6410,7 @@ hover and formatting preserve the annotation. `discardable_result_lsp` checks
 the default diagnostic's UTF-16 range, unsaved annotation edits, hover,
 incomplete-source recovery and explicit call-site discard.
 
-`discarded_nominal_result_runtime` covers explicit and implicit discard,
+`tests/ui/language/classes/` covers explicit and implicit discard,
 defined-failure propagation, owning-result destruction at the semicolon, and
 example 115 under C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan. No new
 MIR operation or backend path is introduced: both spellings use the existing
@@ -6471,7 +6471,7 @@ propagation. Mutations are rejected by both MIR verification and independent
 backend admission. Negative public calls reject escaping emplaced references
 and destruction during a retained element borrow.
 
-`storage_final_address_runtime` checks construction address stability, slot
+`tests/ui/memory/` checks construction address stability, slot
 reuse, partial-member rollback, preflight failure cleanup of prepared owners,
 and cleanup of an earlier live slot when a later construction fails. It runs
 C++20/C++23 at O0/O1/O3, disabled elision and ASan/UBSan. Original constructor
@@ -6681,7 +6681,7 @@ or attach an unrelated same-typed parameter; these must remain rejected.
 The complete ownership partition remains an adjacent gate: iterator and
 fallible-reference results must not accidentally borrow the wrapper's storage.
 
-`cleanup_bound_borrow_runtime` checks source-defined guards, raw bookkeeping,
+`tests/ui/ownership/cleanup/` checks source-defined guards, raw bookkeeping,
 nested movement, reverse cleanup, failure during constructor/return cleanup,
 and double failure. The generic destructor-receiver fixture independently
 checks caller-owned entry dependencies and exact normal, primary-failure,
@@ -8724,7 +8724,7 @@ the package checks dev/release profiles. `mir_hosted_startup` checks shared
 constructor identity and rejects forged constructor-local generic arguments
 in both HIR and MIR hosted plans.
 
-`discarded_nominal_result_runtime` covers discarded cleanup-free class results
+`tests/ui/language/classes/` covers discarded cleanup-free class results
 from member and free calls, loop-slot reuse, and failure with exact caller
 cleanup across the same eight native modes. Its `branch_temporary_call_result`
 fixture keeps a failure-free call's branch-only receiver result, which MIR
@@ -11664,7 +11664,7 @@ common disjunction facts, missing/branch-local facts, unknown types, and
 concrete rejection. `function_item_semantic_ir` also covers deduced value
 packs, exact/ambiguous overloads, open forwarding, access boundaries, verified
 HIR/MIR, target mutation, and production representation preflight.
-`generic_contract_runtime` runs the pack fixture, A19, and updated examples 33
+`tests/ui/generics/` runs the pack fixture, A19, and updated examples 33
 and 80 through the unchanged eight-mode native matrix.
 
 `testGenericAdvisorySoundness` and `generic_advisory_lsp` cover A20/A24/A33,

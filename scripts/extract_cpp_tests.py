@@ -736,7 +736,8 @@ SPECS: dict[str, FileSpec] = {
         format_stable=("dde3e00b6d43086c",),
         reviewed={
             "main:77": "drop: examples/150-protected-events.gti is compiled "
-                       "and run by protected_member_runtime",
+                       "and its output checked by "
+                       "tests/ui/language/protected/protected_events.gti",
             "main:199": "drop: the formatted example; protected-section "
                         "formatting is carried by //@ format-stable on "
                         "protected_1, which shares the Base class",

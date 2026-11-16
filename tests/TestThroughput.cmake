@@ -80,47 +80,32 @@ if(Python3_Interpreter_FOUND)
     consteval_runtime
     callable_return_type_runtime
     consuming_range_runtime
-    enum_replacement_runtime
-    protected_member_runtime
-    aggregate_std_runtime
     ordered_search_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
-    associative_ownership_runtime owner_chain_runtime borrowing_composition
-    cleanup_bound_borrow_runtime complete_containers composable_io_runtime
-    conditional_capability_runtime
-    borrowed_callable_conditionals_runtime
+    owner_chain_runtime borrowing_composition
+    complete_containers composable_io_runtime
     constructor_null_native_runtime
     contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
-    discarded_nominal_result_runtime
-    literal_call_arguments_runtime
     dormant_capability_runtime
-    shared_getter_worker_loans_runtime
     expected_payload_pair_arguments_runtime
-    generic_contract_runtime
     generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     returned_field_address_runtime
-    http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
-    lambda_owning_transport_runtime lambda_pack_invocation_runtime
+    http_url_operators
+    lambda_pack_invocation_runtime
     nested_borrow_fields
-    native_c_scalar_runtime nested_raw_pointer_runtime
-    programmable_allocators_runtime prvalue_direct_initialization_runtime
+    programmable_allocators_runtime
     shared_accessor_range_runtime
-    shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
-    scalar_temporary_borrow_runtime
+    scoped_parallel_threads
     source_prefix_owner_runtime source_resource_prefix_runtime
     source_text_address_runtime source_prefix_string_runtime
     many_fallible_scope_guards_runtime
     optimizer_raw_context_runtime optimizer_object_context_runtime
-    inherited_cleanup_context_runtime
     cleanup_context_scope_runtime
-    storage_final_address_runtime
     unordered_map
-    interface_static_runtime
-    uninitialized_carrier_runtime
     vector_empty_constructor_runtime
     stdlib_modules
     stdlib_surface
