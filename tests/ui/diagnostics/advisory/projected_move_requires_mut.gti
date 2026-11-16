@@ -1,0 +1,43 @@
+// Moving a field or constant-index element out of a binding is a mutable use: the binding's mut is required and not warned.
+//@ check-pass
+struct Record {
+  mut int value = 4;
+public:
+  Record() = default;
+};
+struct Holder {
+  mut Record record = Record();
+  mut Record slots[2] = {Record(), Record()};
+public:
+  Holder() = default;
+};
+struct Token {
+  mut int value = 2;
+  int take() && { return this.value; }
+public:
+  Token() = default;
+};
+int element() {
+  mut Record records[2] = {Record(), Record()};
+  Record taken = std::move(records[1]);
+  return taken.value;
+}
+int field() {
+  mut Holder holder = Holder();
+  Record taken = std::move(holder.record);
+  return taken.value;
+}
+int field_element() {
+  mut Holder holder = Holder();
+  Record taken = std::move(holder.slots[0]);
+  return taken.value;
+}
+int consumed_element() {
+  mut Token tokens[2] = {Token(), Token()};
+  return std::move(tokens[1]).take();
+}
+T first<T>(T left, T right) {
+  mut T values[2] = {left, right};
+  return std::move(values[0]);
+}
+int main() { return element() + field() + field_element() + consumed_element() + first(Record(), Record()).value; }

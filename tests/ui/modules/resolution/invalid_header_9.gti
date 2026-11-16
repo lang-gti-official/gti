@@ -1,0 +1,2 @@
+// A malformed or misplaced module import or header fails during source loading: a module declaration without export.
+module nope;  //~ ERROR GTI-I0012 must be registered with its matching interface

@@ -1,0 +1,9 @@
+// Ownership and missing include diagnostics: control-flow joins preserve both transfer causes in source order.
+import std.string;
+
+void examine(bool condition) {
+  mut std::string original = std::string("hello");
+  if (condition) { std::string first = std::move(original); }
+  else { std::string second = std::move(original); }
+  std::println(original.view());  //~ ERROR GTI-S2018
+}

@@ -1,0 +1,21 @@
+// A direct import makes the case spellings of an enum reached through another module valid.
+//@ check-pass
+// --- main.gti
+import "types.gti";
+import "api.gti";
+int main() {
+  auto value = get();
+  switch (value) {
+  case sample::Value::item(auto& number): return number;
+  case sample::Value::none: return 0;
+  }
+}
+// --- api.gti
+export module api;
+import "types.gti";
+export sample::Value get() { return sample::Value::item(42); }
+// --- types.gti
+export module types;
+export namespace sample {
+  enum Value { none, item(int value) };
+}

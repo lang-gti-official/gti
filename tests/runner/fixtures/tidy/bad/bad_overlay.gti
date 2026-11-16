@@ -1,0 +1,3 @@
+// stdlib-overlay names a section.
+//@ stdlib-overlay: missing.gti
+int main() { return 0; }

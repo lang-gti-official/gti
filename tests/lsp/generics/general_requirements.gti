@@ -1,0 +1,47 @@
+// Concept and requirement signatures hover with their written contract,
+// meta predicates hover as bool, and requirement parameters navigate and
+// rename like locals. (From general_requires_lsp_test.py.)
+//@ hover @sums: left + right
+//@ hover @sums: -> T
+//@ hover @integer_value: std::meta::is_integral<T>()
+//@ hover @is_integral: is_integral
+//@ hover @is_integral: bool
+//@ hover @has_object_layout: bool
+//@ hover @is_borrow_free: bool
+//@ hover @has_active_cleanup: bool
+//@ hover @is_polymorphic: bool
+//@ hover @twice: is_integral<int32_t>()
+//@ hover @raw_read: unsafe { value.raw() }
+//@ hover @editable: -> mut T&<owner>
+//@ hover @iterable: for (auto& element : range) {}
+//@ hover @loop_checked: static_assert(requires { { function(element) } -> Result; });
+//@ hover @observes: *cursor };
+//@ hover @changes: -> mut auto&<cursor>
+//@ hover @views: -> Window<view_source>
+//@ hover @infers_view: -> auto<carrier_source>
+//@ definition @range_use: @range_decl
+//@ rename @range_use input: @range_decl @range_use
+//@ definition @left_use: @left_decl
+//@ rename @left_use lhs: @left_decl @left_use
+import std.meta;
+// UTF-16 positioning: 🧮
+concept sums<T> = requires(T& /*@left_decl*/left, T& right) { { /*@left_use*/left + right } -> T; };
+concept /*@integer_value*/integer_value<T> = std::meta::/*@is_integral*/is_integral<T>();
+concept complete_object<T> = std::meta::/*@has_object_layout*/has_object_layout<T>();
+concept detached_object<T> = complete_object<T> && std::meta::/*@is_borrow_free*/is_borrow_free<T>();
+concept cleanup_needed<T> = std::meta::/*@has_active_cleanup*/has_active_cleanup<T>();
+concept dynamic_object<T> = std::meta::/*@is_polymorphic*/is_polymorphic<T>();
+concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T increment<T>(T value) requires integer_domain<T> { return value + 1; }
+T add</*@sums*/sums T>(T& left, T& right) { return left + right; }
+T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
+concept /*@raw_read*/raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
+concept /*@editable*/editable<C, T> = requires(mut C&<owner> owner) { { owner.edit() } -> mut T&<owner>; };
+concept /*@iterable*/iterable<R> = requires(R& /*@range_decl*/range) { for (auto& element : /*@range_use*/range) {} };
+concept /*@loop_checked*/loop_checked<F, R, Result> = requires(mut F& function, R& range) { for (auto& element : range) { static_assert(requires { { function(element) } -> Result; }); } };
+concept /*@observes*/observes<I> = requires(I& cursor) { { *cursor }; };
+concept /*@changes*/changes<I> = requires(mut I&<cursor> cursor) { { *cursor } -> mut auto&<cursor>; };
+class Window { int& first; public: Window(int& first) : first(first) {} };
+concept /*@views*/views<S> = requires(S&<view_source> view_source) { { view_source.view() } -> Window<view_source>; };
+concept /*@infers_view*/infers_view<S> = requires(S&<carrier_source> carrier_source) { { carrier_source.view() } -> auto<carrier_source>; };
+int main() { int left = 3; int right = 4; return add(left, right) == /*@twice*/twice(left) + 1 ? 0 : 1; }

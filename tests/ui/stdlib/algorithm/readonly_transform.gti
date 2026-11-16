@@ -1,0 +1,12 @@
+// std::transform rejects a read-only output range.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { std::vector<int> x = {1}; std::vector<int> y = {0}; std::transform(x, y, [](int& n) -> int { return n; }); return 0; }  //~ ERROR GTI-S2017

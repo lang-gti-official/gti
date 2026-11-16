@@ -1,0 +1,19 @@
+// A payload and a tag-only case naming an enum the entry did not import report its visibility, with import guidance, for both cases.
+// --- main.gti
+import "api.gti";
+int main() {
+  auto value = get();
+  switch (value) {
+  case sample::Value::item(auto& number): return number;  //~ ERROR GTI-S2024 not visible //~ ERROR GTI-S2001
+  case sample::Value::none: return 0;  //~ ERROR GTI-S2024 not visible
+  }
+}
+// --- api.gti
+export module api;
+import "types.gti";
+export sample::Value get() { return sample::Value::item(42); }
+// --- types.gti
+export module types;
+export namespace sample {
+  enum Value { none, item(int value) };
+}

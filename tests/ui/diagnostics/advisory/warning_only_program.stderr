@@ -1,0 +1,7 @@
+main.gti:9:3: warning[GTI-S2095]: Statement is unreachable.
+ 9 |   int unreachable = 4;  //~ WARN GTI-S2095
+   |   ^~~~~~~~~~~~~~~~~~~~
+main.gti:5:3: warning[GTI-S2096]: Mutable binding 'read_only' is never used mutably.
+ 5 |   mut int read_only = 1;  //~ WARN GTI-S2096
+   |   ^~~
+help: Remove unnecessary 'mut'

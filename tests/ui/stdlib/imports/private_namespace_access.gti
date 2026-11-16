@@ -1,0 +1,6 @@
+// Application code cannot declare into, alias, name types of or call into the compiler-private gti_internal namespace.
+import std.memory;
+namespace gti_internal { class forged { public: forged() = default; }; }  //~ ERROR GTI-S2058
+namespace private_alias = gti_internal;  //~ ERROR GTI-S2058
+using forged_storage = gti_internal::unique_owner<int>;  //~ ERROR GTI-S2058
+int main() { gti_internal::runtime::write_stdout("x"); return 0; }  //~ ERROR GTI-S2058

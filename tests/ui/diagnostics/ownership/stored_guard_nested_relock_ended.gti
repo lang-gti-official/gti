@@ -1,0 +1,19 @@
+// Ending the scope of a guard published from a stored (nested) mutex reference permits a second lock.
+//@ execution-profile: concurrent
+//@ check-pass
+import std.mutex;
+void see(std::mutex<int32_t>& value) {}
+class Holder { public:
+  std::mutex<int32_t>& owner;
+  Holder(std::mutex<int32_t>& owner) : owner(owner) {}
+};
+class User {
+  Holder& holder;
+public:
+  User(Holder& holder) : holder(holder) {}
+  void use() {
+    { auto guard = this.holder.owner.lock(); }
+    auto second = this.holder.owner.lock();
+  }
+};
+int main() { return 0; }

@@ -164,7 +164,7 @@ integration is complete contributor work; report it as deferred, never as passed
    - tier: T2 (MIR cleanup publication for a new borrow shape)
    - T0: gti_test_ui
    - T1: gti_test_ui, mir_full_expression, compiler_pipeline
-   - T2: llvm_cleanup_context_execution, mir_census_profile_controls
+   - T2: llvm_place_execution, mir_census_profile_controls
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
    - expectations: tests/ui/borrow/carrier.gti now accepted; the rule changed
    - T3: deferred to post-integration full validation

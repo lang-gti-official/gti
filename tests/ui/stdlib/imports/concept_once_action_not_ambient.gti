@@ -1,0 +1,2 @@
+// The module-owned concept std::once_action is not ambient.
+concept selected<T> = std::once_action<T>;  //~ ERROR GTI-S2089 Unknown concept 'std::once_action'

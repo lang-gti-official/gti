@@ -1,0 +1,3 @@
+// A missing colon in a conditional expression is one parse error.
+//@ parse-fail
+int recover(bool value) { return value ? 1 2; }  //~ ERROR GTI-P0001

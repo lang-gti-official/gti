@@ -1,0 +1,1 @@
+Convert 28 Python LSP scripts into `gti-test` marker tests and transcripts under `tests/lsp/` (two `import std`/depth-limit cases under `tests/slow/lsp/`), deleting their CTest entries and registry lines.

@@ -1,0 +1,12 @@
+// Ending a guard's scope releases its lifecycle-bound loan.
+//@ execution-profile: concurrent
+//@ check-pass
+import std.mutex;
+int main() {
+  std::mutex<int32_t> owner{1};
+  {
+  std::mutex_guard<int32_t> first = owner.lock();
+  }
+  std::mutex_guard<int32_t> second = owner.lock();
+  return 0;
+}

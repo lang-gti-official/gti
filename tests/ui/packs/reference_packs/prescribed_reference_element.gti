@@ -1,0 +1,15 @@
+// A class pack prescribed with a reference element type rejects the call.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+class Reader<Args...> {
+public:
+  Reader() = default;
+  void observe(Args&... args) {}
+};
+int main() { Reader<int&> reader{}; int value = 3; reader.observe(value); return 0; }  //~ ERROR GTI-S2003

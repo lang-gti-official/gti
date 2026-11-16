@@ -1,0 +1,15 @@
+// Payload borrow chains into locals cannot escape.
+//@ check-fail
+enum Shade { plain(int32_t level), mixed(int32_t level, int32_t tint) };
+enum Paint { coat(Shade shade, int32_t layers) };
+int32_t& bad(Paint& paint) {
+  Paint copy = paint;
+  switch (copy) {
+  case Paint::coat(auto& shade, layers):
+    switch (shade) {
+    case Shade::plain(auto& level): return level;  //~ ERROR GTI-S2017
+    case Shade::mixed(auto& level, tint): return level;  //~ ERROR GTI-S2017
+    }
+  }
+}
+int main() { Paint p = Paint::coat(Shade::plain(3), 2); return bad(p); }

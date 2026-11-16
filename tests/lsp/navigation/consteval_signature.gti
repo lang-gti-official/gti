@@ -1,0 +1,14 @@
+// An immediate function keeps its identity in the editor: hover, definition
+// and signature help name it as consteval. (consteval_lsp_test.py, queries.)
+//@ hover @call: consteval
+//@ hover @call: !constexpr
+//@ definition @call: @decl
+//@ signature @args: consteval
+//@ signature @args: square
+consteval int /*@decl*/square(int value) { return value * value; }
+struct Port {
+  int value;
+  consteval Port(int number) : value(number) {}
+};
+int use(int runtime) { /* 😀 */ return /*@call*/square(/*@args*/3) + Port(80).value + runtime; }
+int main() { return use(0) - 89; }

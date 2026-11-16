@@ -1,0 +1,4 @@
+main.gti:3:148: error[GTI-S2067]: Payload-enum switch is not exhaustive; missing sample::Value::empty, sample::Value::item.
+ 3 | namespace sample { enum Value { empty, item(int value) }; namespace sample { enum Value { empty, item(int value) }; } void inspect(Value& value) { switch (value) {} } } int main() { return 0; }  //~ ERROR GTI-S2067
+   |                                                                                                                                                    ^~~~~~
+help: Handle every variant explicitly or add a 'default' arm.

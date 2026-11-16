@@ -1,0 +1,4 @@
+// import std.iterator exposes its compiler concept std::input_iterator.
+//@ check-pass
+import std.iterator;
+concept selected<T> = std::input_iterator<T>;

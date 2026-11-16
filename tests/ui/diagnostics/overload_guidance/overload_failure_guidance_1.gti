@@ -1,0 +1,15 @@
+// Overload failure guidance: a read-only operator parameter accepts the corresponding class temporary without reference-mismatch guidance.
+//@ check-pass
+class Value {
+public:
+  int value;
+  Value(int value) : value(value) {}
+  Value operator+(Value& other) { return Value(this.value + other.value); }
+  bool operator==(Value& other) { return this.value == other.value; }
+};
+int main() {
+  Value first{1};
+  Value second{2};
+  Value total{3};
+  return total == first + second ? 0 : 1;
+}

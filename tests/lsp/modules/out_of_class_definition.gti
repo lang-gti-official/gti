@@ -1,0 +1,30 @@
+// One method identity across an interface, its out-of-class body in a
+// module implementation unit, and a call: the call navigates to the body
+// and references span all three files. (out_of_class_lsp_test.py, first part.)
+//@ disk-only: api.gti body.gti
+//@ definition @call: @body.gti:make
+//@ hover @call: make
+//@ references @call: @api.gti:make @body.gti:make @call
+// --- main.gti
+import api;
+int main() { return Factory::/*@call*/make() - 7; }
+// --- api.gti
+export module api;
+export struct Parcel<T> { T value; };
+export interface Factory { static int /*@make*/make(int number = 7); static Parcel<int> parcel(); };
+// --- body.gti
+module api;
+/* UTF-16: 🦉 */ int Factory::/*@make*/make(int value) { return value; }
+Parcel < int > Factory::parcel() { Parcel<int> result = {.value = 7}; return result; }
+// --- gti.toml
+manifest-version = 1
+[package]
+name = "split"
+version = "0.1.0"
+[modules]
+api = "api.gti"
+[module-implementations]
+api = ["body.gti"]
+[targets.split]
+kind = "executable"
+root = "main.gti"

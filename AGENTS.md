@@ -375,8 +375,12 @@ one-off implementation-note or redesign files when an existing category fits.
   one-line reason in the PR body (`- expectations:` in its `Validation:`
   block).
 - In the PR's `Validation:` block, a new-style test is covered by
-  `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). Do not run sanitizers,
-  `-O3`, corpus walks or the complete suite to finish a task.
+  `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). That entry is the
+  runner's self-test, tidy, `tests/project` and `tests/lsp`; `tests/ui` runs
+  in its shards `gti_test_ui_1` to `gti_test_ui_N`, which CI's gate runs with
+  it. Run them all with `ctest --test-dir build-release -R '^gti_test_ui'`.
+  Do not run sanitizers, `-O3`, corpus walks or the complete suite to finish
+  a task.
 
 Until the migration completes, the old suite still runs in full validation,
 `compiler_pipeline` still gates PRs and belongs in focused checks, and the

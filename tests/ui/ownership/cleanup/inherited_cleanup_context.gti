@@ -1,0 +1,116 @@
+// An inherited primary forbids callee-local cleanup after a second failure.
+//@ run-pass
+//@ execution-profile: concurrent
+//@ revisions: run1 run2 run3 run4 run5 run6 run7
+//@[run1] stdout: 2
+//@[run1] stdout: 3
+//@[run1] stdout: 1
+//@[run2] run-fail
+//@[run2] args: phase
+//@[run2] exit-code: 70
+//@[run2] stdout: 2
+//@[run2] stdout: 3
+//@[run2] stdout: 1
+//@[run2] stderr-contains: inherited_cleanup_context.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: phase phase
+//@[run3] exit-code: 70
+//@[run3] stdout: 2
+//@[run3] stderr-contains: inherited_cleanup_context.gti:16: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at inherited_cleanup_context.gti:62; secondary [GTI-R0002]
+//@[run4] run-fail
+//@[run4] args: phase phase phase
+//@[run4] exit-code: 70
+//@[run4] stdout: 2
+//@[run4] stdout: 3
+//@[run4] stdout: 1
+//@[run4] stderr-contains: inherited_cleanup_context.gti:67: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: phase phase phase phase
+//@[run5] exit-code: 70
+//@[run5] stdout: 2
+//@[run5] stderr-contains: inherited_cleanup_context.gti:16: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0003] at inherited_cleanup_context.gti:41; secondary [GTI-R0002]
+//@[run6] run-fail
+//@[run6] args: phase phase phase phase phase
+//@[run6] exit-code: 70
+//@[run6] stdout: 2
+//@[run6] stdout: 3
+//@[run6] stdout: 1
+//@[run6] stderr-contains: inherited_cleanup_context.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run7] run-fail
+//@[run7] args: phase phase phase phase phase phase
+//@[run7] exit-code: 70
+//@[run7] stdout: 2
+//@[run7] stdout: 3
+//@[run7] stdout: 1
+//@[run7] stderr-contains: inherited_cleanup_context.gti:67: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- inherited_cleanup_context.gti
+import std.thread;
+import std.vector;
+import std.string;
+
+class Marker {
+  int tag;
+public:
+  Marker(int tag) : tag(tag) {}
+  ~Marker() { std::println(this.tag); }
+};
+
+void nested_cleanup(bool fail) {
+  Marker inner{3};
+  if (fail) {
+    int zero = 0;
+    int secondary = 11 / zero;
+  }
+}
+
+class Owner {
+  bool fail;
+public:
+  Owner(bool fail) : fail(fail) {}
+  ~Owner() {
+    std::println(2);
+    nested_cleanup(this.fail);
+  }
+};
+
+[[unsafe_transfer]] class Task {
+  bool fail_body;
+  bool fail_cleanup;
+public:
+  Task(bool fail_body, bool fail_cleanup)
+      : fail_body(fail_body), fail_cleanup(fail_cleanup) {}
+  Task(Task& other) = delete;
+  Task(Task&& other) = default;
+  void operator()() && {
+    if (this.fail_body) {
+      int zero = 0;
+      int worker_primary = 7 % zero;
+    }
+  }
+  ~Task() {
+    std::println(2);
+    nested_cleanup(this.fail_cleanup);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int phase = argc - 1;
+  Marker outer{1};
+  if (phase >= 4) {
+    auto started = std::thread::start(Task(phase == 4, phase != 6));
+    if (!started) { return 1; }
+    mut auto worker = std::move(started).value();
+    [[discard]] worker.join();
+  } else {
+    Owner owner{phase == 1 || phase == 2};
+    if (phase == 2) {
+      int zero = 0;
+      int primary = 17 / zero;
+    }
+  }
+  if (phase == 3 || phase == 6) {
+    int zero = 0;
+    int after_success = 19 / zero;
+  }
+  return 0;
+}

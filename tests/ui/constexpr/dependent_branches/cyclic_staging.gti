@@ -1,0 +1,7 @@
+// A definition staged inside its own staging is named cyclic and bounded at 64 nested stagings, apart from the call-depth limit.
+constexpr bool cycle<uint64_t N>() {  //~ ERROR GTI-S2031
+  if constexpr (cycle<N>()) { return true; }  //~ ERROR GTI-S2057 Nested constexpr staging depth (64) exceeded: 'cycle' is staged again while its own staging is in progress //~ ERROR GTI-S2057
+  else { return false; }
+}
+static_assert(cycle<0>());  //~ ERROR GTI-S2057
+int main() { return 0; }

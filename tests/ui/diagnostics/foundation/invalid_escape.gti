@@ -1,0 +1,4 @@
+// An invalid escape is reported at its own line inside a multi-line string literal.
+//@ parse-fail
+std::string_view value = "first
+bad\q";  //~ ERROR GTI-L0005

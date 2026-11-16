@@ -1,0 +1,9 @@
+// Read-only constant observations retain lifetime, type and bounds diagnostics: class reference parameter.
+import std.array;
+import std.string;
+constexpr int inspect(int& value) { return value + 1; }
+class Base { public: int x = 0; };
+class Derived : public Base { public: int y = 0; };
+constexpr std::array<int, 3> values = std::array<int, 3>({1,2,3});
+constexpr int bad(Derived& owner) { return owner.x; }  //~ ERROR GTI-S2057 parameters must be
+int main() { return 0; }

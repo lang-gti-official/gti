@@ -1,0 +1,17 @@
+// A cursor moved into std::copy cannot be used again.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() {
+  std::vector<int> source = {1}; mut std::vector<int> destination = {0, 0};
+  mut auto original = destination.begin_mut();
+  mut auto next = std::copy(source.begin(), source.end(), std::move(original));
+  *original = 2; *next = 3; return 0;  //~ ERROR GTI-S2018
+}

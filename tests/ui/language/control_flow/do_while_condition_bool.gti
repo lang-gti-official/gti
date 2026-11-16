@@ -1,0 +1,2 @@
+// A do-while condition must be exactly bool.
+void run() { do {} while (1); }  //~ ERROR GTI-S2003 Do-while condition must be bool

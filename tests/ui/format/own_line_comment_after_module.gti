@@ -1,0 +1,10 @@
+// An own-line comment after a module declaration stays on its own line.
+//@ check-pass
+//@ snapshot: format
+// --- main.gti
+import "api.gti";
+int main() { return 0; }
+// --- api.gti
+export module api;
+// The public surface.
+export int answer();

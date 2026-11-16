@@ -1,0 +1,21 @@
+// A library panic during an implicit consteval conversion fails the
+// invocation; a valid argument clears it. (From consteval_lsp_test.py.)
+import std.panic;
+struct Pattern {
+  std::string_view text;
+  implicit consteval Pattern(std::string_view value) : text(value) {
+    if (value.empty()) { std::panic("Pattern must not be empty"); }
+  }
+};
+void report(Pattern pattern) {}
+int main() { /* 😀 */ report(""); return 0; }  //~ ERROR GTI-S2057 Consteval invocation
+// --- step 2
+import std.panic;
+struct Pattern {
+  std::string_view text;
+  implicit consteval Pattern(std::string_view value) : text(value) {
+    if (value.empty()) { std::panic("Pattern must not be empty"); }
+  }
+};
+void report(Pattern pattern) {}
+int main() { /* 😀 */ report("ok"); return 0; }

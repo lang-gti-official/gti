@@ -1,0 +1,3 @@
+// A sibling directory this file imports from is copied beside the case.
+import "lib/helper.gti";
+int main() { return helper_value() - 3; }

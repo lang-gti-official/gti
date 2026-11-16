@@ -1,0 +1,4 @@
+// Dependent constexpr branch deferral retains concrete flow, declaration checks and resource limits (a static_assert outside the branch is checked in the primary).
+import std.string;
+int unused<uint64_t N>() { if constexpr(N == 0) { return 1; } static_assert(false, "independent assertion"); return 2; }  //~ ERROR GTI-S2079 independent assertion
+int main() { return 0; }

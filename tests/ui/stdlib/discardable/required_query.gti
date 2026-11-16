@@ -1,0 +1,4 @@
+// A container query result is not discardable: ignoring it is rejected.
+//@ check-fail
+import std.vector;
+int main() { mut std::vector<int> values{}; values.size(); return 0; }  //~ ERROR GTI-S2009

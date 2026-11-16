@@ -1,0 +1,12 @@
+// A generic instance required only by unreachable code is still analysed and reports its error.
+class Plain {
+public:
+  Plain() {}
+};
+T twice<T>(T value) { return value + value; }  //~ ERROR GTI-S2004
+int never_called() {
+  Plain plain = Plain();
+  Plain doubled = twice(plain);
+  return 0;
+}
+int main() { return 0; }
