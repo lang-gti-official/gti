@@ -1,5 +1,6 @@
 // Source-class expected results produced through prelude vocabulary run without an experimental carrier.
 //@ run-pass
+//@ slow
 import std.meta;
 import std.string;
 import std.panic;

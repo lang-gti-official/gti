@@ -6242,7 +6242,7 @@
         "tests/reflection_runtime_test.py",
         "tests/reflection_tests.cpp",
         "stdlib/std/meta.gti",
-        "tests/ui/reflection/attributes.gti",
+        "tests/slow/reflection/attributes.gti",
         "tests/ui/reflection/construct.gti",
         "tests/ui/reflection/callables.gti",
         "tests/ui/reflection/deferred_range.gti",

@@ -1,5 +1,6 @@
 // Owning pack fixture pack owning enum values runs to completion.
 //@ run-pass
+//@ slow
 import std.string;
 import std.memory;
 import std.unordered_map;

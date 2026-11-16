@@ -1,5 +1,6 @@
 // Reflection over attributes with constexpr for and std.meta runs with its compile-time facts checked at run time.
 //@ run-pass
+//@ slow
 // Declared attributes read by three structurally different clients written in
 // ordinary GTI on top of <std/meta>: a JSON-shaped text encoder, an XML-like
 // encoder and a binary writer. The compiler stores each `[[ns::name(args)]]`
