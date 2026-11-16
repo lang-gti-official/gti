@@ -1,0 +1,37 @@
+// Named nested types keep compiler-owned editor identities: hover,
+// definition, references, semantic tokens and the outline all see them.
+// (From nested_type_lsp_test.py.)
+//@ hover @use_config: Config
+//@ definition @use_config: @config
+//@ references @use_config: @config @use_config @use_config2
+//@ token @use_config: struct
+//@ hover @use_tls: Tls
+//@ definition @use_tls: @tls
+//@ token @use_tls: struct
+//@ symbols: demo Config Network Tls Logging
+//@ rename @use_config Settings: error function-local
+//@ formatting: struct Network {
+namespace demo {
+struct /*@config*/Config {
+  struct Network {
+    struct /*@tls*/Tls {
+      bool enabled = false;
+    };
+  };
+  class Logging {
+  public:
+    int level = 1;
+  };
+  using Selected = Network;
+
+private:
+  struct Secrets {
+    struct Token {
+      int code = 1;
+    };
+  };
+};
+}
+using Net = demo::/*@use_config2*/Config::Network;
+using Secure = demo::/*@use_config*/Config::Network::/*@use_tls*/Tls;
+int main() { return 0; }

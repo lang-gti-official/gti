@@ -1,0 +1,72 @@
+// Pointer results and owning Expected extraction compose with existing storage.
+//@ run-pass
+//@ revisions: default cleanup cleanup-secondary
+//@[default] stdout: 1
+//@[default] stdout: 2
+//@[default] stdout: 9
+//@[cleanup] run-fail
+//@[cleanup] args: cleanup
+//@[cleanup] exit-code: 70
+//@[cleanup] stdout: 1
+//@[cleanup] stdout: 2
+//@[cleanup] stdout: 9
+//@[cleanup] stderr-contains: getter_owned_field_replacement.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[cleanup-secondary] run-fail
+//@[cleanup-secondary] args: cleanup secondary
+//@[cleanup-secondary] exit-code: 70
+//@[cleanup-secondary] stdout: 1
+//@[cleanup-secondary] stdout: 2
+//@[cleanup-secondary] stderr-contains: getter_owned_field_replacement.gti:16: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at getter_owned_field_replacement.gti:16; secondary [GTI-R0002]
+//@ slow
+// --- getter_owned_field_replacement.gti
+import std.memory;
+import std.string;
+import std.vector;
+import std.format;
+
+mut int cleanup_mode = 0;
+class Probe {
+public:
+  int identity;
+  Probe(int value) : identity(value) {}
+  ~Probe() {
+    std::runtime_println("{}", this.identity);
+    if ((this.identity == 1 && cleanup_mode >= 1) ||
+        (this.identity == 2 && cleanup_mode >= 2)) {
+      int divisor = 0;
+      int checked = 1 / divisor;
+    }
+  }
+};
+struct Item {
+  mut std::unique_ptr<Probe> owner;
+  Item(int value) : owner(std::make_unique<Probe>(value)) {}
+};
+struct Spec {
+  mut Item item{1};
+  mut std::string name{"old"};
+public:
+  Spec() = default;
+};
+class Config {
+  mut Spec spec{};
+public:
+  Config() = default;
+  mut Spec& Get() mut { return this.spec; }
+};
+class Owner {
+  mut Config config{};
+public:
+  Owner() = default;
+  mut Config& Get() mut { return this.config; }
+};
+int main(int argc, std::vector<std::string> args) {
+  Probe outer{9};
+  mut Owner owner{};
+  owner.Get().Get().name = std::string("new");
+  if (owner.Get().Get().name.view() != "new") { return 1; }
+  if (args.size() == std::size_t(2)) { cleanup_mode = 1; }
+  if (args.size() == std::size_t(3)) { cleanup_mode = 2; }
+  owner.Get().Get().item = Item(2);
+  return 0;
+}

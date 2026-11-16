@@ -1,6 +1,0 @@
-import std.memory;
-struct HeapValue { public: int read() { return 1; }  public: HeapValue() = default; };
-int main() {
-  std::unique_ptr<HeapValue> value = std::unique_ptr<HeapValue>();
-  return value->read();
-}

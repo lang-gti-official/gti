@@ -1,0 +1,2 @@
+// A cheap test.
+int main() { return 0; }

@@ -1,0 +1,26 @@
+// Mutation through a staged direct call invalidates a stale arithmetic proof.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: main.gti:25: runtime error[GTI-R0001]: integer_overflow in addition
+//@ stdout: cleaned
+import std.string;
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println("cleaned"); }
+};
+void setmax(mut int& value) { value = 2147483647; }
+void relay(mut int& value) { setmax(value); }
+mut int shared = 0;
+void setglobal() { shared = 2147483647; }
+class Writer {
+  mut int& value;
+public:
+  Writer(mut int& source) : value(source) {}
+  void setmax() mut { mut int& target = this.value; target = 2147483647; }
+};
+int main() {
+  Guard guard{};
+  mut int total = 0; setmax(total);
+  return total + 1;
+}
