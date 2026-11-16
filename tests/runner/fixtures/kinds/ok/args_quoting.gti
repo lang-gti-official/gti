@@ -1,0 +1,17 @@
+// Arguments are shell-like words: "" is empty, quotes keep blanks.
+//@ run-pass
+//@ args: "" 'a b' c\ d "e\"f"
+//@ stdout: 5
+//@ stdout: []
+//@ stdout: [a b]
+//@ stdout: [c d]
+//@ stdout: [e"f]
+import std.string;
+import std.vector;
+int main(int argc, std::vector<std::string> argv) {
+  std::println(argc);
+  for (mut std::size_t i = 1; i < argv.size(); i += 1) {
+    std::print("["); std::print(argv[i]); std::println("]");
+  }
+  return 0;
+}

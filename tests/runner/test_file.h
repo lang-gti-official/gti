@@ -20,6 +20,10 @@ enum class Mode {
   // Stop after the lexer and parser: syntax and recovery tests.
   ParsePass,
   ParseFail,
+  // Stop after semantic analysis (FrontendOptions::stopAfter = Semantics):
+  // no HIR, MIR or lowering.
+  AnalyzePass,
+  AnalyzeFail,
   // A `.gti` file under an `lsp` directory: requests at markers against a
   // language server (tests/lsp/README.md).
   Lsp,
@@ -34,6 +38,7 @@ enum class Mode {
 [[nodiscard]] bool modeRuns(Mode mode);
 [[nodiscard]] bool modeBuilds(Mode mode);
 [[nodiscard]] bool modeParses(Mode mode);
+[[nodiscard]] bool modeAnalyzes(Mode mode);
 [[nodiscard]] bool modeFails(Mode mode);
 
 // Output a test asserts besides diagnostics and run results (`//@ snapshot:`).
@@ -107,14 +112,27 @@ struct RunSpec {
 enum class NativeKind { None, C, Cpp, Header };
 [[nodiscard]] NativeKind nativeKind(const std::string &sectionName);
 
+// An LSP edit step's section name, `step N` or `step N path.gti`: its number
+// and the file it replaces (empty: the entry file).
+struct LspStep {
+  int number = 0;
+  std::string file;
+};
+[[nodiscard]] std::optional<LspStep> lspStep(const std::string &sectionName);
+
 // `//@ hover @a: text` and the other LSP expectations: the request, its
 // arguments (marker, new name) and the expected value.
 struct LspDirective {
   std::vector<std::string> words;
   std::string value;
   int writtenLine = 0;
-  // The section (`// --- step N`, 0 for the first version) it is asked of.
+  // The edit step it is asked of: 0 once every file is open, k after the
+  // k-th `// --- step N` section.
   int step = 0;
+  // The section the directive is written in (its home document); a bare
+  // `@marker` is looked up there first. Directives above the first section
+  // belong to the entry file.
+  int section = 0;
 };
 
 struct TestFile {
@@ -139,6 +157,14 @@ struct TestFile {
   std::optional<std::string> stdinText;
   std::vector<std::pair<std::string, std::string>> env;
   bool optimize = false; // `//@ opt: O3`
+  // `//@ opt:` was written, so a global `--opt`/GTI_TEST_OPT leaves it.
+  bool optPinned = false;
+  // Compile limits named as the compiler's options (`//@ constexpr-depth:
+  // 16` is `gti --constexpr-depth 16`), in written order.
+  std::vector<std::pair<std::string, std::size_t>> compileLimits;
+  // `//@ target: x86_64-unknown-linux-gnu`: analyse for another target
+  // (check and analyze modes; nothing is linked).
+  std::string target;
   bool slow = false;
   // `//@ format-stable`: formatting the test is idempotent and the formatted
   // program also checks (check-pass tests without annotations only).
@@ -175,6 +201,13 @@ struct TestFile {
   // else the mir snapshot.
   std::vector<CheckPattern> checks;
   std::vector<LspDirective> lspDirectives;
+  // LSP tests: the `gti_lsp` options of `//@ execution-profile:` and
+  // `//@ raw-pointer-audit:`, in that order. A worker keeps one server per
+  // distinct list.
+  std::vector<std::string> serverArguments;
+  // `//@ disk-only: lib.gti ...`: sections written beside the test but not
+  // opened as documents.
+  std::vector<std::string> diskOnly;
   std::string reason;
   std::vector<std::string> only;
   // Self-test fault injection (`//@ runner-fault:`); honoured only when

@@ -22,7 +22,10 @@ namespace gti_test {
 
 class LspServer {
 public:
-  LspServer(std::filesystem::path executable, std::filesystem::path log);
+  // `arguments` follow the executable on its command line (`//@
+  // execution-profile:` and `//@ raw-pointer-audit:`).
+  LspServer(std::filesystem::path executable, std::filesystem::path log,
+            std::vector<std::string> arguments = {});
   ~LspServer();
   LspServer(const LspServer &) = delete;
   LspServer &operator=(const LspServer &) = delete;
@@ -48,6 +51,16 @@ public:
   waitFor(const std::function<bool(const llvm::json::Object &)> &predicate,
           double deadline);
   [[nodiscard]] std::string logTail() const;
+  // Moves every message already readable without waiting into the queue
+  // waitFor and latest search.
+  void drain();
+  // The newest queued message that satisfies `predicate` (removing it and
+  // any older match), after draining.
+  std::optional<llvm::json::Object>
+  latest(const std::function<bool(const llvm::json::Object &)> &predicate);
+  // CPU seconds the server process has used so far, or a negative value
+  // where that cannot be measured.
+  [[nodiscard]] double cpuSeconds() const;
 
   std::vector<std::string> tokenTypes;
   // Whether this server has already analysed a test (its standard library
@@ -59,6 +72,7 @@ public:
 private:
   std::filesystem::path executable;
   std::filesystem::path log;
+  std::vector<std::string> arguments;
   pid_t pid = -1;
   int input = -1;
   int output = -1;
@@ -78,19 +92,28 @@ struct LspResult {
   bool crashed = false;
 };
 
-// Opens the test's text as a document in `directory` and checks each
-// expectation directive. `deadline` is an absolute wall-clock second.
+// Writes the test's file sections into `directory`, opens each `.gti` one
+// (except `//@ disk-only:` ones) as a document, applies the edit steps and
+// checks each expectation directive. `standardLibrary` is the root that
+// `@std:path` expectations are relative to. `deadline` is an absolute
+// wall-clock second.
 [[nodiscard]] LspResult runLspTest(LspServer &server, const TestFile &test,
                                    const std::filesystem::path &directory,
+                                   const std::filesystem::path &standardLibrary,
                                    double deadline);
 
-// Runs a `.jsonl` transcript against a fresh server. Once the server has
-// published diagnostics, an expectation fails after `quiet` seconds without
-// any message.
+// Runs a `.jsonl` transcript against a fresh server. An expectation fails,
+// naming what it awaited, once the server has been silent and idle (no CPU)
+// for a second, or, after it has published diagnostics, silent for `quiet`
+// seconds.
 [[nodiscard]] LspResult
 runLspTranscript(const std::filesystem::path &executable, const TestFile &test,
                  const std::filesystem::path &directory, double deadline,
                  double quiet);
+
+// Whether these `gti_lsp` options run the raw-pointer audit, which publishes
+// each version's diagnostics twice: the edit path's, then the audit's.
+[[nodiscard]] bool auditing(const std::vector<std::string> &serverArguments);
 
 // Wall-clock seconds, the clock deadlines use.
 [[nodiscard]] double lspClock();
