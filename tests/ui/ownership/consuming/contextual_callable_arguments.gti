@@ -1,0 +1,46 @@
+// Moved closure environments use MIR full-expression cleanup, including failure.
+//@ run-pass
+//@ revisions: default first second-argument
+//@[default] stdout: 3
+//@[default] stdout: 2
+//@[default] stdout: 9
+//@[first] run-fail
+//@[first] args: first
+//@[first] exit-code: 70
+//@[first] stdout: 0
+//@[first] stdout: 9
+//@[first] stderr-contains: contextual_callable_arguments.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[second-argument] run-fail
+//@[second-argument] args: second argument
+//@[second-argument] exit-code: 70
+//@[second-argument] stdout: 3
+//@[second-argument] stdout: 0
+//@[second-argument] stdout: 9
+//@[second-argument] stderr-contains: contextual_callable_arguments.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- contextual_callable_arguments.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+class Invoke {
+public:
+  ~Invoke() { std::println(9); }
+  int operator()(int value) { return value; }
+public:
+  Invoke() = default;
+};
+
+int invoke<Callable>(Callable callback, int first_divisor, int second_divisor) {
+  auto sink = [](int value) -> int { return value; };
+  Invoke object{};
+  int first = sink(callback(first_divisor));
+  return first + object(callback(second_divisor));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  auto callback = [](int value) -> int {
+    std::println(value);
+    return 6 / value;
+  };
+  return invoke(std::move(callback), argc == 2 ? 0 : 3, argc == 3 ? 0 : 2) - 5;
+}

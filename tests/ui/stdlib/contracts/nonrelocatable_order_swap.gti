@@ -1,0 +1,30 @@
+// Swapping containers with a non-relocatable order policy is rejected at the public contract.
+//@ check-fail
+import std.set;
+import std.unordered_set;
+import std.functional;
+class borrowed_order {
+  int& bias;
+public:
+  borrowed_order(int& bias) : bias(bias) {}
+  bool operator()(int& a, int& b) { return a + this.bias < b + this.bias; }
+};
+class borrowed_hash {
+  int& salt;
+public:
+  borrowed_hash(int& salt) : salt(salt) {}
+  std::size_t operator()(int& value) { return std::size_t(value + this.salt); }
+};
+class borrowed_equal {
+  int& bias;
+public:
+  borrowed_equal(int& bias) : bias(bias) {}
+  bool operator()(int& a, int& b) { return a + this.bias == b + this.bias; }
+};
+int main() {
+  int state = 0;
+  mut std::set<int, borrowed_order> a{borrowed_order(state)};
+  mut std::set<int, borrowed_order> b{borrowed_order(state)};
+  a.swap(b);  //~ ERROR GTI-S2029 std::relocatable<borrowed_order>
+  return 0;
+}

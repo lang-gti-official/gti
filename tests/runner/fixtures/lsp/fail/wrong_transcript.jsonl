@@ -1,0 +1,3 @@
+// A transcript whose expected response never arrives.
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"noSuchProvider": true}}}}

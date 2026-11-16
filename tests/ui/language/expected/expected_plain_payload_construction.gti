@@ -1,0 +1,73 @@
+// Passive expected payload copies and call-result publication preserve MIR storage.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4
+//@[run2] run-fail
+//@[run2] args: argument
+//@[run2] exit-code: 70
+//@[run2] stdout: 1
+//@[run2] stdout: 2
+//@[run2] stdout: 99
+//@[run2] stderr-contains: expected_plain_payload_construction.gti:32: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: primary failure
+//@[run3] exit-code: 70
+//@[run3] stderr-contains: expected_plain_payload_construction.gti:45: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: primary secondary failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 1
+//@[run4] stdout: 2
+//@[run4] stdout: 3
+//@[run4] stdout: 4
+//@[run4] stdout: published
+//@[run4] stdout: 3
+//@[run4] stdout: 4
+//@[run4] stderr-contains: expected_plain_payload_construction.gti:20: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at expected_plain_payload_construction.gti:45; secondary [GTI-R0002]
+// --- expected_plain_payload_construction.gti
+import std.string;
+import std.vector;
+
+mut int constructed = 0;
+
+class Ticket {
+  int first;
+  int second;
+  int cleanup_divisor;
+public:
+  Ticket(int first, int second, int cleanup_divisor) :
+      first(first), second(second), cleanup_divisor(cleanup_divisor) {
+    constructed = first;
+  }
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  ~Ticket() {
+    std::println(this.first);
+    std::println(this.second);
+    int checked = 1 / this.cleanup_divisor; // cleanup failure
+  }
+};
+
+class Caller {
+public:
+  Caller() {}
+  ~Caller() { std::println(99); }
+};
+
+int argument(int value, int divisor) {
+  std::println(value);
+  int checked = 1 / divisor; // argument failure
+  return value;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  expected<Ticket, int> first =
+      Ticket(argument(1, 1), argument(2, argc == 2 ? 0 : 1), 1);
+  if (constructed != 1) { return 1; }
+  expected<Ticket, int> second =
+      Ticket(argument(3, 1), argument(4, 1), argc == 4 ? 0 : 1);
+  if (constructed != 3) { return 2; }
+  std::println("published");
+  int checked = 1 / (argc >= 3 ? 0 : 1); // primary failure
+  return 0;
+}

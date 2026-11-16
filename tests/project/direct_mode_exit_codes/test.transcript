@@ -1,0 +1,16 @@
+// Direct mode separates usage errors (64) from compile errors (65), and
+// emits into the requested file. (From cli_smoke_test.py.)
+$ gti --no-such-flag
+? 64
+stderr: gti: unknown option '--no-such-flag'
+$ gti main.gti --emit-mir --emit-llvm -o out
+? 64
+stderr: cannot be used together
+$ gti broken.gti --emit-mir -o out.mir
+? 65
+stderr: $DIR/broken.gti:1:21: error[GTI-S2001]: Undefined name 'missing'.
+stdout: Diagnostics: 1 error, 0 warnings
+$ gti main.gti --emit-mir -o out.mir
+stdout: Emitted "out.mir"
+$ cat out.mir
+stdout: mir-v

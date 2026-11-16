@@ -1,0 +1,10 @@
+// Lifetime contracts and the existing attribute families parse together.
+// (From borrow_origin_syntax_tests.cpp.)
+//@ parse-pass
+[[track_caller]] int&<a> borrow<lifetime a>(int&<a> owner) { return owner; }
+struct Holder {
+  int value;
+  int&<this> get() { return this.value; }
+};
+[[noreturn, track_caller]] void stop() { while (true) {} }
+[[c_abi]] struct Native { int value; };
