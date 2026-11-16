@@ -45,6 +45,11 @@ extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
   (void)bytes;
   std::abort();
 }
+extern "C" void *gti_rt_realloc_v1(void *address, std::uint64_t bytes) {
+  (void)address;
+  (void)bytes;
+  std::abort();
+}
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
                                           std::uint64_t alignment,
                                           std::int32_t *status) {

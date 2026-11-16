@@ -162,6 +162,28 @@ extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
   remember(address);
   return address;
 }
+extern "C" void *gti_rt_realloc_v1(void *address, std::uint64_t bytes) {
+  // Deterministic exhaustion after the old live prefix has been populated.
+  // The source caller must abort without publishing a null region or cleanup.
+  if (std::getenv("GTI_TEST_FAIL_GROWTH"))
+    return nullptr;
+  if (observing) {
+    ++calls;
+    ++ordinary_calls;
+    requested_bytes.at(calls - 1) = bytes;
+  }
+  if (mode >= 2 || (observing && fail_on_call > 0 && calls == fail_on_call))
+    return nullptr;
+  for (auto &region : regions) {
+    if (region.address == address) {
+      void *result = std::realloc(address, static_cast<std::size_t>(bytes));
+      if (result)
+        region.address = result;
+      return result;
+    }
+  }
+  std::abort();
+}
 extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
                                           std::uint64_t alignment,
                                           std::int32_t *status) {

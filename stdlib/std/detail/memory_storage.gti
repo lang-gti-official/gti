@@ -188,18 +188,25 @@ public:
   // and over-aligned storage retain the allocate/relocate/release path.
   // The caller proves bitwise relocation of every live object and exclusive
   // access to the region. Failure leaves this lease and all objects intact.
-  unsafe constexpr void* grow_bytes_if_supported(uint64_t bytes) mut {
-    if (gti_internal::constant_evaluation()) { return nullptr; }
+  constexpr bool supports_byte_growth() {
+    if (gti_internal::constant_evaluation()) { return false; }
 #if target.os != "windows"
     uint64_t alignment = this.allocation.alignment;
-    if (this.allocation.address == nullptr || bytes <= this.allocation.bytes) { return nullptr; }
-    if (!(alignment == uint64_t(1) ||
-          (alignment <= std::layout_of<void*>().alignment &&
-           this.allocation.bytes >= std::layout_of<void*>().bytes))) { return nullptr; }
+    return this.allocation.address != nullptr &&
+           (alignment == uint64_t(1) ||
+            (alignment <= std::layout_of<void*>().alignment &&
+             this.allocation.bytes >= std::layout_of<void*>().bytes));
+#else
+    return false;
+#endif
+  }
+  unsafe constexpr void* grow_bytes_if_supported(uint64_t bytes) mut {
+    if (!this.supports_byte_growth() || bytes <= this.allocation.bytes) { return nullptr; }
+#if target.os != "windows"
     unsafe {
       void* replacement = gti_internal::runtime::gti_rt_realloc_v1(this.allocation.address, bytes);
       if (replacement == nullptr) { gti_internal::fail_allocation(std::alloc_errc::resource_exhausted); }
-      this.allocation = std::detail::raw_allocation(replacement, bytes, alignment, this.allocation.id);
+      this.allocation = std::detail::raw_allocation(replacement, bytes, this.allocation.alignment, this.allocation.id);
       return replacement;
     }
 #else
@@ -800,6 +807,7 @@ public:
   constexpr bool grow_bytes_if_supported(uint64_t count) mut {
     if constexpr (std::bitwise_relocatable<T> && !std::meta::is_text<T>()) {
       if (count <= this.data.capacity()) { return true; }
+      if (!this.data.buffer.lease.supports_byte_growth()) { return false; }
       std::layout object = std::layout_of<T>();
       uint64_t maximum = gti_internal::native_size_limit();
       if (count > maximum / object.bytes) { gti_internal::fail_allocation(std::alloc_errc::size_overflow); }

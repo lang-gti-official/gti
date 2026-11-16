@@ -1,0 +1,1 @@
+Reduce repeated vector-growth copying for bitwise-relocatable elements by resizing eligible process allocations, while preserving checked borrowing, allocation failure, alignment and compile-time behavior.
