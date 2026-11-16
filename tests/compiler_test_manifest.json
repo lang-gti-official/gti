@@ -18,10 +18,6 @@
       "suite": "ownership"
     },
     {
-      "name": "testProjectedFieldMoves",
-      "suite": "ownership"
-    },
-    {
       "name": "testIndexedPlaceMovesAndInitialization",
       "suite": "ownership"
     },
@@ -46,10 +42,6 @@
       "suite": "ownership"
     },
     {
-      "name": "testPrefixStorageCapability",
-      "suite": "ownership"
-    },
-    {
       "name": "testReceiverTiedReferenceReturns",
       "suite": "ownership"
     },
@@ -62,47 +54,11 @@
       "suite": "ownership"
     },
     {
-      "name": "testStoredReferenceStandardStringRanges",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation2",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation3",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation4",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceLoopInvalidation",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceLoopInvalidation2",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceScopedStorage",
-      "suite": "ownership"
-    },
-    {
       "name": "testMutableStoredDependencies",
       "suite": "ownership"
     },
     {
       "name": "testComposedCarrierFunctionTransfer",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredCarrierReturnProvenance",
       "suite": "ownership"
     },
     {
@@ -122,51 +78,11 @@
       "suite": "ownership"
     },
     {
-      "name": "testCallSiblingArgumentBorrowConflicts",
-      "suite": "ownership"
-    },
-    {
-      "name": "testForwardIteratorContractsAndBinarySearch",
-      "suite": "ownership"
-    },
-    {
-      "name": "testCompleteRangeConceptsAndAlgorithms",
-      "suite": "ownership"
-    },
-    {
-      "name": "testGeneralOwnerDependentReturns",
-      "suite": "ownership"
-    },
-    {
-      "name": "testSwitchAndBreakLoanFlow",
-      "suite": "ownership"
-    },
-    {
-      "name": "testSharedReadOnlyLoanAliases",
-      "suite": "ownership"
-    },
-    {
-      "name": "testUniqueOwnershipAndAllocation",
-      "suite": "ownership"
-    },
-    {
       "name": "testUniqueOwnerSwap",
       "suite": "ownership"
     },
     {
       "name": "testPolymorphicUniqueOwnerUpcast",
-      "suite": "ownership"
-    },
-    {
-      "name": "testSourceDefinedStorage",
-      "suite": "ownership"
-    },
-    {
-      "name": "testFixedArrayPackForwarding",
-      "suite": "ownership"
-    },
-    {
-      "name": "testVariadicStorageConstructionAndVector",
       "suite": "ownership"
     },
     {
@@ -186,10 +102,6 @@
       "suite": "ownership"
     },
     {
-      "name": "testArrowNonClassReferents",
-      "suite": "ownership"
-    },
-    {
       "name": "testCallableMemberOperators",
       "suite": "ownership"
     },
@@ -206,19 +118,11 @@
       "suite": "ownership"
     },
     {
-      "name": "testReadOnlyRangeLoans",
-      "suite": "ownership"
-    },
-    {
       "name": "testPassiveCleanupRangeTemporary",
       "suite": "ownership"
     },
     {
       "name": "testSharedPayloadSiblingReborrows",
-      "suite": "ownership"
-    },
-    {
-      "name": "testExpectedPayloadRangeLoans",
       "suite": "ownership"
     },
     {
@@ -239,10 +143,6 @@
     },
     {
       "name": "testConfinedCallableResults",
-      "suite": "ownership"
-    },
-    {
-      "name": "testBorrowedCallableConditionals",
       "suite": "ownership"
     },
     {
@@ -327,10 +227,6 @@
     },
     {
       "name": "testUseBasedAccessorSelection",
-      "suite": "ownership"
-    },
-    {
-      "name": "testMoveOnlyAssignmentResultUse",
       "suite": "ownership"
     }
   ]

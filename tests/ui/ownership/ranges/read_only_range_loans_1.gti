@@ -1,0 +1,64 @@
+// Read only range loans: fixed arrays and move-only owned temporary ranges should lower through verified semantic, HIR, and MIR range plans.
+//@ check-pass
+interface IteratorContract<T> {
+  T& operator*();
+  void operator++() mut;
+};
+
+class CounterIterator : public IteratorContract<int> {
+  mut int current;
+public:
+  CounterIterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(CounterIterator& other) {
+    return this.current != other.current;
+  }
+};
+
+class OwnedRange {
+  int first;
+  int last;
+public:
+  OwnedRange(int first, int last) : first(first), last(last) {}
+  OwnedRange(OwnedRange& other) = delete;
+  OwnedRange(OwnedRange&& other) = default;
+  ~OwnedRange() {}
+  CounterIterator begin() { return CounterIterator(this.first); }
+  CounterIterator end() { return CounterIterator(this.last); }
+};
+
+int nested_arrays() {
+  int first[3] = {1, 2, 3};
+  int second[2] = {4, 5};
+  mut int total = 0;
+  for (auto& left : first) {
+    for (int right : second) {
+      if (right == 4) { continue; }
+      total += left + right;
+    }
+  }
+  return total - 21;
+}
+
+int temporary_complete() {
+  mut int total = 0;
+  for (auto& value : OwnedRange(1, 5)) {
+    if (value == 2) { continue; }
+    if (value == 4) { break; }
+    total += value;
+  }
+  for (auto& value : OwnedRange(0, 0)) { return value; }
+  return total - 4;
+}
+
+int temporary_return() {
+  for (auto& value : OwnedRange(3, 6)) {
+    if (value == 4) { return value - 4; }
+  }
+  return 1;
+}
+
+int main() {
+  return nested_arrays() + temporary_complete() + temporary_return();
+}

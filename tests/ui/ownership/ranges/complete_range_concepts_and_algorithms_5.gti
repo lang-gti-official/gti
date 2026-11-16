@@ -1,0 +1,11 @@
+// Complete range concepts and algorithms: input_range should reject a type without the exact complete-range protocol and explain the missing endpoints.
+import std.iterator;
+class not_a_range { public: not_a_range() = default; };
+bool accepts<Range>(Range& values) requires std::input_range<Range> {
+  for (auto& value : values) {}
+  return true;
+}
+int main() {
+  not_a_range values{};
+  return accepts(values) ? 0 : 1;  //~ ERROR GTI-S2029
+}

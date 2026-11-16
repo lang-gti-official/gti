@@ -1,0 +1,4 @@
+// Stored reference loop invalidation: classic for-loop increment and continue edges should preserve a pre-existing retained loan until cleanup exits the loop.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); for (mut int count = 0; count < 2; count++) { char current = *iterator; if (count == 0) { continue; } } value.push_back('!'); return 0; }

@@ -1,0 +1,3 @@
+// Switch and break loan flow: continue must keep a loop-carried loan active for the next backedge.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); mut int count = 0; while (count < 2) { char current = *iterator; value.push_back('!'); count++; continue; } return 0; }  //~ ERROR GTI-S2017

@@ -879,13 +879,14 @@ constructor, and mutating the owner while a copy is live (`GTI-S2045`,
 `testDerivedCarriers`.
 ## Text members through checked `operator->` (0.467.1)
 
-`testArrowNonClassReferents` in the `ownership` suite analyzes a class with
+`tests/ui/ownership/member_operators/arrow_text_referents.gti` analyzes a class with
 `std::string_view& operator->()` and a `std::optional<std::string_view>`.
 `label->size()`, `maybe->size()`, `label->end()` and `label->empty()` verify,
 lower to the `StringViewSize` and `StringViewEmpty` intrinsics, and leave no
-MIR value of unknown type, which was the backend's refusal before the fix.
-`->` through an `int&` or `c_string&` result, as a call or a field read, is
-`GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
+MIR value of unknown type, which was the backend's refusal before the fix
+(the case checks both intrinsics in its MIR).
+In `arrow_rejected_referents.gti`, `->` through an `int&` or `c_string&`
+result, as a call or a field read, is `GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
 none reports `GTI-B`.
 
 `operator_relay_runtime` runs `arrow_text_members.gti` in all eight native
@@ -1214,8 +1215,8 @@ verification. The emitted text constructs every copy from the destination
 after the store, stages the first argument before the second store, and calls
 the receiver through the temporary's slot before ending it.
 `testAssignmentResultFieldView` now expects the move-only read to be rejected
-by semantics. In `compiler_pipeline`, `testMoveOnlyAssignmentResultUse`
-reports exactly one `GTI-S2003` at the `=` of a used move-only result, with
+by semantics. `tests/ui/ownership/moves/move_only_assignment_result_*.gti`
+report exactly one `GTI-S2003` at the `=` of a used move-only result, with
 its hint and no fix-it, for initialization, return, by-value argument,
 receiver, field read, chained assignment, a comma's right operand, a
 conditional arm, field, element and reference destinations, `std::unique_ptr`
@@ -3937,7 +3938,7 @@ feedback and must not be presented as clean-head integration evidence.
   typed binding, are covered.
   The borrowed-callable/conditional-result slice subsequently supports direct
   checked-reference parameters and deferred inferred conditional arms. Its
-  owning test is `testBorrowedCallableConditionals`; its native gate is
+  owning cases are `tests/ui/ownership/callables/borrowed_callable_conditionals_*.gti`; its native gate is
   `borrowed_callable_conditionals_runtime` (C++20/C++23 O0/O1/O3, no-elide,
   ASan/UBSan), including move-only state, exact results and cleanup on failure.
   Example 028 adds eight MIR bodies, eight declarations and four generated

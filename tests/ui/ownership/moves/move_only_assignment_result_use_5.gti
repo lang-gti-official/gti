@@ -1,0 +1,18 @@
+// Move only assignment result use: a discarded move-only store or a copyable result should be accepted.
+//@ check-pass
+import std.memory;
+import std.utility;
+class Tracked {
+public:
+  int32_t x;
+  Tracked(int32_t x) : x(x) {}
+  ~Tracked() {}
+  int32_t get() { return this.x; }
+};
+struct Holder {
+  mut Tracked t;
+  Holder(Tracked t) : t(std::move(t)) {}
+};
+int32_t take(Tracked t) { return t.x; }
+T relay<T>(mut T a, T b) { return (a = std::move(b)); }
+int32_t f(mut Tracked p) { for (mut int32_t i = 0; i < 2; p = Tracked(i)) { i++; } return p.x; }

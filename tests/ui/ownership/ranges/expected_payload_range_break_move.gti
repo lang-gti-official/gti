@@ -1,0 +1,19 @@
+// Expected payload range loans: a breaking move of the payload owner still conflicts with the live element loan.
+import std.string;
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+class box {
+public:
+  box(expected<std::string, int32_t> initial)
+      : value(std::move(initial)) {}
+  mut expected<std::string, int32_t> value;
+};
+
+void move_owner() {
+  mut auto text = make_text();
+  for (auto& byte : text.value()) { auto moved = std::move(text); break; }  //~ ERROR GTI-S2017
+}
+int main() { return 0; }

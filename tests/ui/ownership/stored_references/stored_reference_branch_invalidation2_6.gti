@@ -1,0 +1,5 @@
+// Stored reference branch invalidation2: a terminating nested arm should clean up its loan while the fallthrough arm ends at the nested merge before mutation.
+//@ check-pass
+import std.string;
+int consume(bool stop) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { if (stop) { char first = *iterator; return 1; } value.push_back('!'); } return 0; }
+int main() { return consume(false); }
