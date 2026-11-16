@@ -281,6 +281,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (hasValue)
         error(lineNumber, "'slow' takes no value");
       test.slow = true;
+    } else if (name == "format-stable") {
+      if (hasValue)
+        error(lineNumber, "'format-stable' takes no value");
+      test.formatStable = true;
     } else if (name == "reason") {
       if (trimmed.empty())
         error(lineNumber, "reason needs text");
@@ -394,6 +398,9 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     error(0, "run-fail cannot expect exit code 0");
   if ((test.optimize || !test.only.empty()) && test.reason.empty())
     error(0, "`opt: O3` and `only:` need a `//@ reason:` line");
+  if (test.formatStable &&
+      (test.mode != Mode::CheckPass || !test.annotations.empty()))
+    error(0, "format-stable needs a check-pass test without annotations");
   if (test.slow && !underSlowDirectory(path))
     error(0, "`slow` is only legal under a slow/ directory");
 

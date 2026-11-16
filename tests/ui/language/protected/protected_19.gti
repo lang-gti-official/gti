@@ -1,0 +1,3 @@
+// Protected members: rejected with GTI-S2007.
+class Converted { protected: implicit Converted(int value) {}  public: Converted() = default; };
+int main() { Converted value = 1; return 0; }  //~ ERROR GTI-S2007

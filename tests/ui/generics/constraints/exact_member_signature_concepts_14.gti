@@ -1,0 +1,8 @@
+// Exact member signature concepts: dependent receiver/result compounds must substitute through nested concepts.
+//@ check-pass
+struct Box<T> { T value; };
+struct Adapter<T> { Box<T> adapt(T& value) { Box<T> b{.value = value}; return b; }  public: Adapter() = default; };
+concept adapted<T> = requires(Adapter<T>& a, T& v) { { a.adapt(v) } -> Box<T>; };
+concept indirect<T> = adapted<T>;
+Box<T> get<T>(T& value) requires indirect<T> { Adapter<T> a{}; return a.adapt(value); }
+int main() { int x = 7; auto result = get(x); return result.value - 7; }

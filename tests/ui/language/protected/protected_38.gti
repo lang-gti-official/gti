@@ -1,0 +1,4 @@
+// Protected members: rejected with GTI-S2012.
+class Base<T, uint64_t N> { protected: T value; public: Base(T x) : value(x) {} };
+struct Derived<T, uint64_t N> : public Base<T, N> { Derived(T x) : Base<T, N>(x) {} };
+int main() { Derived<int, 7> d{}; return 0; }  //~ ERROR GTI-S2012

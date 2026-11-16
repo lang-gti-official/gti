@@ -1,0 +1,5 @@
+// Exact member signature concepts: unsupported format arguments, including unused later pack elements, must fail statically.
+import std.format;
+import std.string;
+struct Item { public: Item() = default; };
+int main() { [[discard]] std::runtime_format("{0}", 1, Item()); return 0; }  //~ ERROR GTI-S2029 formattable

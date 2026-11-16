@@ -1,0 +1,9 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+class Base { public: virtual int read() { return 1; }  public: Base() = default; };
+         class Other { public: int read() { return 2; }  public: Other() = default; };
+         int main() {
+           auto owner = std::make_shared<Other>();
+           auto base = std::upcast_shared<Base, Other>(std::move(owner));  //~ ERROR GTI-S2079
+           return base->read();
+         }

@@ -58,6 +58,9 @@ struct TestFile {
   std::optional<std::string> stdinText;
   bool optimize = false; // `//@ opt: O3`
   bool slow = false;
+  // `//@ format-stable`: formatting the test is idempotent and the formatted
+  // program also checks (check-pass tests without annotations only).
+  bool formatStable = false;
   std::string reason;
   std::vector<std::string> only;
   // Self-test fault injection (`//@ runner-fault:`); honoured only when

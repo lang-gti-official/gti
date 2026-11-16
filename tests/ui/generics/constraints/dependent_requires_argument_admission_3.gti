@@ -1,0 +1,11 @@
+// Dependent requires argument admission: compound clause arguments use complete guaranteed facts independent of conjunct order.
+//@ check-pass
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+int read<T>(Box<T>& box) requires (std::copyable<T> && boxed_int<Box<T>>) || (boxed_int<Box<T>> && std::copyable<T>) { return box.get(); }
+int main() { Box<int> box{7}; return read(box) == 7 ? 0 : 1; }

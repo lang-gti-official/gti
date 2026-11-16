@@ -1,0 +1,18 @@
+// Exact member signature concepts: compound signature types must resolve enclosing namespace aliases.
+//@ check-pass
+namespace app {
+using count = int;
+struct Result<T> { T value; };
+namespace nested {
+struct Reader {
+  Result<count> read() mut { Result<count> r = {.value = 3}; return r; }
+public:
+  Reader() = default;
+};
+concept reader<R> = requires(mut R& stream) {
+  { stream.read() } -> Result<count>;
+};
+Result<count> call<R>(mut R& stream) requires reader<R> { return stream.read(); }
+}
+}
+int main() { mut app::nested::Reader r{}; auto result = app::nested::call(r); return 0; }
