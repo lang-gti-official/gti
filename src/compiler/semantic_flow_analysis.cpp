@@ -592,6 +592,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                 target, sourceGraph, false, workMetrics, sources,
                 rawPointerAudit, requireFunctionDefinitions, trustedBodies,
                 sourceDebugProfile, compileLimits);
+            worker->deferConstexprBodies = deferConstexprBodies;
             worker->catalog = catalog.snapshotForInstanceAnalysis();
             worker->semanticModel = semanticModel;
             worker->macroLookup = macroLookup;
@@ -624,7 +625,15 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
             worker->lateDemandReady =
                 trustedBodies == TrustedBodyAnalysis::Reachable;
             worker->adoptedPreamble = adoptedPreamble;
-            worker->reachedPreambleBodies = reachedPreambleBodies;
+            // The worker completes bodies in a private context of its own
+            // (its copies of the deferred set above, completed by its own
+            // late demand), so it owns a fork of the readiness table: a body
+            // it completes is ready for it and for the workers it creates,
+            // while this context is unchanged. Needs it leaves unmet are
+            // handed back after each query.
+            if (requestSession.bodyContext != nullptr)
+              worker->requestSession.bodyContext =
+                  requestSession.bodyContext->fork(worker.get());
             worker->countsPreambleReach = false;
             worker->requestSession.preambleBodies =
                 requestSession.preambleBodies;
@@ -676,6 +685,20 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
                              // analysis.
                 }
               });
+          // Needs the worker could not meet in its own context are handed
+          // to this one, and the query's result is not shared.
+          bool unmetDemand = false;
+          if (const auto &workerContext = worker->requestSession.bodyContext;
+              workerContext != nullptr &&
+              requestSession.bodyContext != nullptr) {
+            for (const FunctionDecl *body : workerContext->outstandingNeeds())
+              if (requestSession.bodyContext->state(body) !=
+                  BodyState::Analysed) {
+                requestSession.bodyContext->need(*body);
+                unmetDemand = true;
+              }
+            workerContext->dropNeedsFrom(0);
+          }
           if (worker->lateDemandFailed && !worker->lateDemandedBodies.empty()) {
             // The pending-body batch changed facts used by this attempt. Use
             // the frontend's bounded required-body retry before certifying any
@@ -700,7 +723,7 @@ auto SemanticVisitor::Impl::closeConcreteProgramEffects(
           const std::size_t rootEdgesBefore =
               programEffects[owner].edges.size();
           const bool cleanWorker =
-              !worker->lateDemandFailed && !worker->hadError();
+              !worker->lateDemandFailed && !worker->hadError() && !unmetDemand;
           if (!analysis.valid()) {
             // Effect demand is not ordinary concrete discovery. Publishing its
             // errors here would preempt HIR's independent type/assertion
@@ -10890,6 +10913,7 @@ auto SemanticVisitor::Impl::runRawResultQuery(
   // Source-summary analysis can require staged constants. Keep their bounded
   // work account across this isolated worker instead of restarting it.
   worker->requestSession.constexprWork = requestSession.constexprWork;
+  worker->requestSession.bodyContext = requestSession.bodyContext;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.rawResultQueries = state;
   worker->requestSession.collectingRawResult = entry;

@@ -9950,6 +9950,16 @@ follow-ups:
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
+- **Deferred constexpr library bodies (#398, draft):** unused trusted
+  constexpr definitions are deferred like other trusted bodies and demanded
+  by the compile-time path that reaches them through one body-readiness
+  table and attempt scope (semantic-analysis.md, "Compile-Time Body Demand").
+  The staged evaluator remains the execution authority; no execution rule
+  moved or was added. Follow-ups: narrow demand from function lookup to body
+  fact use; make program-effect closure demand-driven (the largest remaining
+  cost in programs that use what they import); defer trusted constructor and
+  destructor bodies through the same table (`BodyKey` already names them).
+
 - **Immediate declarations:** General `consteval` functions and ordinary
   constructors use the staged MIR evaluator and publish passive values before
   runtime lowering. This supplies a general required-call facility for source

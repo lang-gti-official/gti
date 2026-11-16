@@ -3781,6 +3781,8 @@ auto SemanticVisitor::Impl::publishTextReturnResult(const Call &call,
                                                     ResolvedCallInfo &resolved,
                                                     const FunctionInfo &callee)
     -> void {
+  checkBodyFactRead(callee.bodyDeclaration(), callee.id,
+                    "a text return publication");
   if (!callee.dependentTextReturn || callee.returnBorrowFields.size() != 1 ||
       resolved.returnType.kind == SemanticType::Reference)
     return;
@@ -3801,6 +3803,7 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
   // not recorded yet into a text field of its result, so text passed to it
   // must be ownerless here.
   const FunctionDecl *body = callee.bodyDeclaration();
+  checkBodyFactRead(body, callee.id, "a text call publication");
   const bool provisional =
       body != nullptr && bodiesInProgress.contains(body) &&
       !directTextFieldSymbols(resolved.returnType, true).empty();
@@ -5276,9 +5279,11 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   worker->defaultArgumentDependencies = defaultArgumentDependencies;
   worker->nextLambdaId = nextLambdaId;
   worker->requestSession.constexprWork = requestSession.constexprWork;
+  worker->requestSession.bodyContext = requestSession.bodyContext;
   worker->requestSession.stagedConstants = requestSession.stagedConstants;
   worker->requestSession.rawResultQueries = requestSession.rawResultQueries;
   worker->requestSession.completeReturnQueries = state;
+  const std::uint64_t needsBefore = bodyNeedSerial();
   const auto analysis =
       key.kind == InstanceAnalysisKind::Constructor
           ? worker->analyzeConstructorInstance(key.declaration, key.classTypes,
@@ -5314,6 +5319,13 @@ auto SemanticVisitor::Impl::completeBorrowQuery(
   state->idleCatalogs.push_back(std::move(worker->catalog));
   entry->complete = true;
   --state->depth;
+  // A summary computed while a needed body was unavailable answers this
+  // query only; it is not kept for later ones.
+  if (bodyNeedSerial() != needsBefore) {
+    const auto result = entry->result;
+    state->entries.erase(key);
+    return result;
+  }
   state->completed.push_back(key);
   while (state->completed.size() >
          CompleteReturnQueryState::maximumRetainedResults) {

@@ -952,8 +952,10 @@ and `constexpr` visibility across a demand, and mutually recursive demands.
 builds and editor snapshots/completion. Function lookups during body analysis
 record demand in a scoped sink. Deferred trusted functions are analyzed to a
 fixed point, in their original declaration contexts. Declaration registration,
-all application/package bodies, entry-file bodies, constant definitions and
-virtual/interface instance methods remain checked. Ordinary static interface
+all application/package bodies, entry-file bodies and virtual/interface
+instance methods remain checked. Trusted constexpr definitions are deferred
+like other trusted bodies and are demanded by the compile-time path that needs
+them (see "Compile-Time Body Demand" below). Ordinary static interface
 helpers follow the same demand rules as other static functions. Constructors and destructors are not
 deferred. The only cross-snapshot semantic reuse is the bounded reuse of
 concrete instance analyses described under "Instance Reuse Across Snapshots";
@@ -1001,6 +1003,82 @@ cannot change emitted identities or macro isolation. This deliberately costs
 an additional analysis only when an optional audit is requested.
 This bounded staging avoids unchecked code generation without
 claiming that all generic dependencies are known from declaration-time calls.
+
+#### Compile-Time Body Demand
+
+Constant evaluation, concept and expression requirements, conformance
+operations and procedural macros read body-derived facts of the functions they
+reach, which may be deferred trusted bodies (#398). Readiness is one table per
+body-analysis context, `BodyContext` (`semantic_body_context.h`), keyed by
+body kind and id: a body is `Analysed`, `InProgress`, `Deferred` or `HeldBack`
+(analysed in an adopted preamble, not yet reached). The request's root
+analyzer owns its context; the program-effect worker, which completes bodies
+in a private context of its own, owns a fork and hands back what it could not
+meet; every other worker shares its creator's. Only an owner changes a state.
+
+- A compile-time path asks `requireBody`. The owner, in the body phase and
+  outside instance analysis, makes a pending body final in place (analysing a
+  deferred body or reaching a held-back one); anywhere else the need is
+  recorded and the facts are unavailable.
+- A query or staged evaluation runs as an attempt (`withBodyDemands`). Its
+  needs are the ones recorded while it is open, by any analyzer sharing the
+  context. A need arises only where a body-derived fact is read or a body
+  would execute: `requireBody` at the readers, a staged closure's pending
+  primary body, a pending constexpr callee the staged evaluator reaches at run
+  time, and, when a staged closure cannot be lowered or verified, each pending
+  constexpr callee it would have executed. Looking a function up, for example
+  as an overload candidate, is not a need. An attempt with none is clean. A
+  resolving attempt restores one
+  `AttemptCheckpoint` (diagnostics, constexpr steps and exhaustion,
+  requirement-query work, the native-layout mark), completes its needs in
+  declaration order and repeats, bounded; otherwise its needs pass to the
+  enclosing attempt, or to the request. While a resolving attempt is open a
+  sharing worker records a pending body instead of analysing it privately.
+  Concrete instance analysis after the body phase (`withLateDemand`) runs on
+  the same scope, with late demand and preamble reach as its resolvers.
+- Caches stay sound. Staged results and closures are journaled in the open
+  attempt and written only when it ends clean; class-assertion outcomes,
+  preamble concept proofs, program-effect results and retained instance
+  analyses are not recorded when a need arose while computing them. Staged
+  result keys count pending constexpr definitions as available, so demanding
+  one does not change a key; lowering uses only completed definitions.
+- A request that still has a need, valid or not, is repeated by the frontend
+  with those bodies required, before and after concrete discovery, under the
+  late-demand round bound. The trusted-body parity tests assert that the
+  example corpus, with and without a preamble, needs no such round.
+- `FrontendOptions::deferConstexprBodies = false` keeps constexpr definitions
+  eager; it exists so tests can compare both on one binary.
+
+Transitional state and scope. This is a first step toward demand-driven
+analysis, not a query system:
+
+- Readiness is being consolidated, not yet unified. `BodyContext` is the
+  authority for whether a deferred or held-back body's facts may be read in a
+  context, and the only state compile-time paths and the request net consult.
+  Three older records remain beside it, each with its own role:
+  - `deferredBodies` and `deferredBodyIndex` hold a deferred declaration's
+    context, which the drain and late demand use to analyse it in place;
+  - `analyzedBodies` records which bodies this analyzer has run
+    `analyzeFunctionBody` for (`pendingDeferredBody` reads both);
+  - `constexprDefinitionsAnalyzed` gates execution of a completed constexpr
+    definition.
+
+  The obligation that keeps them consistent is checked under
+  `GTI_COMPILER_VALIDATION`: for the context's owner, a tracked body is
+  `Deferred` exactly when it is in `deferredBodyIndex` and not in
+  `analyzedBodies`. A worker that shares a context but is not its owner may
+  hold a private analysis outside resolving attempts. That analysis serves
+  only that worker, and the shared table does not record it.
+- Attempts record which unavailable bodies a computation needed and keep
+  provisional results out of caches. They are not a general dependency graph:
+  nothing here tracks dependencies across source edits or invalidates results
+  incrementally.
+- `BodyKey` is an extension point, not a persistent identity. Bodies are still
+  found by AST pointer, and ids are session-local. A stored (pre-analysed)
+  state would also need stable identities, serialisation, validity checks and
+  a defined per-body semantic record.
+- Only analysis scheduling changes. Constant-evaluation semantics and the
+  staged MIR evaluator, which executes them, are unchanged.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.

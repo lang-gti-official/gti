@@ -1441,9 +1441,15 @@ foreach(gti_trusted_partition RANGE 0 3)
   if(NOT gti_trusted_partition_entries)
     message(FATAL_ERROR "trusted-body analysis partition is empty")
   endif()
+  # Partition 0 also runs the compile-limit boundary parity and staging
+  # checks inside trusted constexpr bodies (--fixtures).
+  set(gti_trusted_partition_flags)
+  if(gti_trusted_partition EQUAL 0)
+    set(gti_trusted_partition_flags --fixtures)
+  endif()
   add_test(NAME trusted_body_analysis_${gti_trusted_partition}
     COMMAND "${CMAKE_COMMAND}" -E env $<TARGET_FILE:gti_trusted_body_analysis_tests>
-            "${PROJECT_SOURCE_DIR}"
+            "${PROJECT_SOURCE_DIR}" ${gti_trusted_partition_flags}
             ${gti_trusted_partition_entries})
   set_tests_properties(trusted_body_analysis_${gti_trusted_partition}
     PROPERTIES TIMEOUT 600 RUN_SERIAL TRUE)

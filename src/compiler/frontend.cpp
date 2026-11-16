@@ -962,6 +962,7 @@ struct SemanticPreambleBuild::State {
   SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
   CompileLimits limits;
   bool reuseConstantEvaluations = true;
+  bool deferConstexprBodies = true;
   std::shared_ptr<SemanticPreambleCache> cache;
   // A deferred build first looks for a preamble another build stored since
   // the analysis that deferred it missed the cache.
@@ -999,6 +1000,7 @@ SemanticPreambleBuild::run(const std::atomic<bool> *cancellation,
       &state->sources, RawPointerAuditMode::Off, state->requireDefinitions,
       TrustedBodyAnalysis::Complete, state->sourceDebugProfile, state->limits);
   builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
+  builder.setConstexprBodyDeferral(state->deferConstexprBodies);
   builder.setCancellation(cancellation);
   // The preamble owns the prefix program; this build no longer needs it.
   std::shared_ptr<const SemanticPreamble> preamble =
@@ -1123,6 +1125,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       semanticCacheContext(options) +
       "\nlimits:" + compileLimitsIdentity(options.limits) +
       (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
+      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
       "\nsource-owners:" +
       (result.sourceGraph.sourceOwners()
            ? result.sourceGraph.sourceOwners()->resolutionIdentity()
@@ -1339,6 +1342,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                     .limits = options.limits,
                     .reuseConstantEvaluations =
                         options.reuseConstantEvaluations,
+                    .deferConstexprBodies = options.deferConstexprBodies,
                     .cache = options.preambleCache,
                     .deferred = options.deferPreambleBuild}));
         if (options.deferPreambleBuild) {
@@ -1382,6 +1386,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
+    semantic.setConstexprBodyDeferral(options.deferConstexprBodies);
     if (preamble != nullptr) {
       semantic.adoptPreamble(preamble, preambleDeclarations);
       if (options.workMetrics != nullptr)
@@ -1556,6 +1561,27 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         result.semanticValid = false;
       }
     }
+    // Request-level net (#398): a compile-time path that needed a deferred
+    // body where it could not be completed leaves a need behind. Whatever
+    // the request's validity, it is repeated with those bodies required,
+    // under the same bounded rounds as late demand, so a missed demand site
+    // costs time rather than correctness. The corpus asserts it never fires.
+    if (result.sourceValid && !options.completionOffset &&
+        trustedBodies == TrustedBodyAnalysis::Reachable) {
+      const std::size_t previousCount = requiredBodies.size();
+      for (const FunctionDecl *body : semantic.unmetBodyDemands())
+        requiredBodies.insert(body);
+      if (requiredBodies.size() != previousCount) {
+        if (options.workMetrics != nullptr)
+          ++options.workMetrics->semanticDemandRounds;
+        if (attempt >= 2) {
+          trustedBodies = TrustedBodyAnalysis::Complete;
+          if (options.workMetrics != nullptr)
+            ++options.workMetrics->semanticDemandFallbacks;
+        }
+        continue;
+      }
+    }
     if (!result.sourceValid || !result.semanticValid ||
         options.completionOffset ||
         options.stopAfter == FrontendPhase::Semantics) {
@@ -1648,6 +1674,11 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       for (const FunctionDecl *body : semantic.lateDemandedBodies())
         hir.requiredSemanticBodies.push_back(body);
     }
+    // The net again: concrete discovery can leave a need that late demand
+    // could not meet.
+    if (trustedBodies == TrustedBodyAnalysis::Reachable)
+      for (const FunctionDecl *body : semantic.unmetBodyDemands())
+        hir.requiredSemanticBodies.push_back(body);
     if (hir.requiredSemanticBodies.empty()) {
       // Final HIR: only now may its instance analyses serve later snapshots.
       semantic.publishInstanceAnalyses();

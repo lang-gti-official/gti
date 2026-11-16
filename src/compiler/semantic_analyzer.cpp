@@ -25,6 +25,7 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
                                       sourceDebugProfile, compileLimits);
   fresh->cancellation = cancellation;
   fresh->reuseConstantEvaluations = reuseConstantEvaluations;
+  fresh->deferConstexprBodies = deferConstexprBodies;
   fresh->requiredFunctionBodies = requiredFunctionBodies;
   return fresh;
 }
@@ -72,6 +73,10 @@ void SemanticVisitor::setConstantEvaluationReuse(bool reuse) {
   impl->reuseConstantEvaluations = reuse;
 }
 
+void SemanticVisitor::setConstexprBodyDeferral(bool defer) {
+  impl->deferConstexprBodies = defer;
+}
+
 bool SemanticVisitor::cancelled() const { return impl->analysisCancelled; }
 
 void SemanticVisitor::requireFunctionBodies(
@@ -88,6 +93,10 @@ bool SemanticVisitor::analyzeDemandedPrimaryBody(const FunctionDecl &body) {
 
 bool SemanticVisitor::lateDemandFailed() const {
   return impl->lateDemandFailed;
+}
+
+std::vector<const FunctionDecl *> SemanticVisitor::unmetBodyDemands() const {
+  return impl->unmetBodyDemandList();
 }
 
 std::vector<const FunctionDecl *> SemanticVisitor::lateDemandedBodies() const {
