@@ -243,6 +243,12 @@ The numbered examples run without arguments or external services. The HTTP
 recipe opts into networking only when you supply a URL. Its local test server
 is a teaching helper, not a production server.
 
+Every top-level `examples/*.gti` must analyse to verified MIR with no
+diagnostics: the per-commit `gti_test_examples` entry in
+`tests/gti_test.cmake` checks them with `gti-test` and lists the few it
+excludes, each with its reason. Subdirectories hold project-style examples and
+the modules other examples import.
+
 ## Numerical index
 
 | Example | Focus |
