@@ -1,0 +1,7 @@
+// Mistakes in limits, targets and analyze modes are invalid tests.
+//@ analyze-pass
+//@ opt: O3
+//@ reason: analyze tests have no optimization level
+//@ constexpr-depth: 0
+//@ target: nonsense
+int main() { return 0; }

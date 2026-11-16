@@ -8,12 +8,14 @@
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
 #include "gti/formatter.h"
+#include "gti/frontend.h"
 #include "gti/frontend_cache.h"
 #include "gti/lexer.h"
 #include "gti/lowered_program.h"
 #include "gti/parser.h"
 #include "gti/semantic_preamble.h"
 #include "gti/standard_library.h"
+#include "gti/target.h"
 
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
@@ -155,6 +157,18 @@ std::string diff(const std::string &expected, const std::string &actual) {
   if (!inlineSafe(expected + actual))
     return lineDiff(visibleBytes(expected), visibleBytes(actual), 40);
   return lineDiff(expected, actual, 40);
+}
+
+// The `//@` lines of a test's text, which bless leaves alone unless
+// --bless-directives is given.
+std::vector<std::string> directiveLines(const std::string &text) {
+  std::vector<std::string> result;
+  for (const std::string &line : lines(text)) {
+    const std::size_t first = line.find_first_not_of(" \t");
+    if (first != std::string::npos && line.compare(first, 3, "//@") == 0)
+      result.push_back(line);
+  }
+  return result;
 }
 
 struct ProcessRun {
@@ -827,14 +841,19 @@ Outcome Engine::run(const TestFile &test) {
                 .preambles = std::make_shared<lang::SemanticPreambleCache>()};
   const auto requestFor = [&](const TestFile &file, const Materialized &files) {
     const lang::TargetInfo target =
-        file.defines.empty()
+        file.defines.empty() && file.target.empty()
             ? (file.concurrent ? state->concurrentTarget : state->target)
             : lang::driver::AnalysisConfiguration(
-                  lang::TargetInfo::host(),
+                  file.target.empty() ? lang::TargetInfo::host()
+                                      : lang::parseTargetTriple(file.target)
+                                            .value_or(lang::TargetInfo::host()),
                   file.concurrent ? lang::ExecutionProfile::Concurrent
                                   : lang::ExecutionProfile::SingleThreaded,
                   lang::driver::RuntimeProfile::Hosted, file.defines)
                   .target();
+    lang::CompileLimitOverrides limits;
+    for (const auto &[name, value] : file.compileLimits)
+      limits.set(*lang::findCompileLimit(name), value);
     auto request =
         lang::driver::CompilationRequest(
             files.entry,
@@ -846,7 +865,7 @@ Outcome Engine::run(const TestFile &test) {
             lang::parseRawPointerAuditMode(file.rawPointerAudit)
                 .value_or(lang::RawPointerAuditMode::Off),
             {}, {}, file.rawPointerAuditLibraryFindings)
-            .withCompileLimits(lang::resolveCompileLimits({}, {}))
+            .withCompileLimits(lang::resolveCompileLimits({}, limits))
             .withFrontendReuse(reuse);
     return file.requireFunctionDefinitions ? request.withDefinitionClosure()
                                            : request;
@@ -866,6 +885,10 @@ Outcome Engine::run(const TestFile &test) {
       argv.push_back("--raw-pointer-audit=" + test.rawPointerAudit);
     if (test.rawPointerAuditLibraryFindings)
       argv.push_back("--raw-pointer-audit-library-findings");
+    for (const auto &[name, value] : test.compileLimits) {
+      argv.push_back("--" + name);
+      argv.push_back(std::to_string(value));
+    }
     Environment environment;
     if (files.standardLibrary)
       environment.emplace_back("GTI_STDLIB_PATH",
@@ -1042,7 +1065,32 @@ Outcome Engine::run(const TestFile &test) {
             "GTI-B0001 at main.gti:1: Internal compiler error: injected";
       } else if (modeParses(test.mode)) {
         parseOnly(compiled, files, test);
-      } else if (options.isolate && files.cSources.empty()) {
+      } else if (modeAnalyzes(test.mode)) {
+        // In-process even under --isolate: `gti` has no semantic-only stop.
+        const lang::driver::CompilationRequest request =
+            requestFor(test, files);
+        lang::FrontendOptions frontend{
+            .target = request.target(),
+            .configurationFlags = request.configurationFlags(),
+            .declaredConfigurationFlags = request.declaredConfigurationFlags(),
+            .stopAfter = lang::FrontendPhase::Semantics,
+            .toolingOccurrences = false};
+        frontend.rawPointerAudit = request.rawPointerAudit();
+        frontend.reportLibraryAuditFindings =
+            request.rawPointerAuditLibraryFindings();
+        frontend.limits = request.compileLimits();
+        frontend.program = request.program();
+        frontend.cache = request.frontendReuse().parses;
+        frontend.preambleCache = request.frontendReuse().preambles;
+        const lang::StandardLibraryLayout &library = request.standardLibrary();
+        const lang::FrontendResult analysis = lang::Frontend(frontend).analyze(
+            files.entry, std::nullopt, {library.prelude}, {}, {library.root});
+        collect(compiled, files, analysis.diagnostics);
+        compiled.succeeded = analysis.sourceValid && analysis.syntaxValid &&
+                             analysis.semanticValid;
+      } else if (options.isolate && files.cSources.empty() &&
+                 test.target.empty()) {
+        // (Direct `gti` has no --target; target tests stay in-process.)
         // `gti main.gti -- helper.cpp ...` builds C++ sections as the command
         // line does; C sections need a project (`c-sources`), so a test with
         // them builds in-process even under --isolate.
@@ -1203,10 +1251,22 @@ Outcome Engine::run(const TestFile &test) {
       const bool blessable =
           !(errors && test.modeExplicit && !modeFails(test.mode));
       if (!problems.empty()) {
-        if (bless && blessable) {
-          const std::string text = blessAnnotations(test, compiled.diagnostics);
+        const std::string text =
+            bless && blessable ? blessAnnotations(test, compiled.diagnostics)
+                               : std::string();
+        const bool directivesKept =
+            !bless || options.blessDirectives ||
+            directiveLines(text) ==
+                directiveLines(readFile(test.path).value_or(""));
+        if (bless && blessable && directivesKept) {
           writeFile(test.path, text);
           result.blessed.push_back(test.display);
+        } else if (bless && blessable) {
+          result.status = Status::Fail;
+          for (const std::string &problem : problems)
+            result.detail += problem + "\n";
+          result.detail += "not blessed: it would change `//@` lines; review "
+                           "and rerun with --bless --bless-directives\n";
         } else {
           result.status = Status::Fail;
           for (const std::string &problem : problems)
@@ -1277,6 +1337,27 @@ Outcome Engine::run(const TestFile &test) {
           const bool stdoutDiffers = program.started && !program.timedOut &&
                                      program.out != expectedOut;
           if (result.status == Status::Timeout) {
+          } else if (stdoutDiffers && problems.empty() && bless &&
+                     !options.blessDirectives) {
+            // `//@ stdout:` lines are directives: without
+            // --bless-directives, output goes to the sibling file, and
+            // inline expectations stay as written.
+            if (run.hasInlineStdout) {
+              result.status = Status::Fail;
+              result.detail +=
+                  label + "stdout differs (-expected +actual):\n" +
+                  diff(expectedOut, program.out) + label +
+                  "not blessed: the expected output is `//@ stdout:` "
+                  "lines; rerun with --bless --bless-directives\n";
+            } else {
+              const fs::path stdoutPath =
+                  stdoutPathFor(test.path, run.revision);
+              if (program.out.empty())
+                fs::remove(stdoutPath);
+              else
+                writeFile(stdoutPath, program.out);
+              result.blessed.push_back(stdoutPath.string());
+            }
           } else if (stdoutDiffers && problems.empty() && bless) {
             // NUL, other control bytes and invalid UTF-8 cannot be written
             // as `//@ stdout:` lines; they go to the sibling file.
@@ -1336,6 +1417,23 @@ Outcome Engine::run(const TestFile &test) {
   };
 
   outcome = attempt(options.bless);
+  // Rendered snapshots quote the test's lines: once bless has rewritten the
+  // file (annotations, inline stdout), they are blessed again from the new
+  // text, so one --bless leaves a passing test.
+  if (options.bless && !test.snapshots.empty() &&
+      std::find(outcome.blessed.begin(), outcome.blessed.end(), test.display) !=
+          outcome.blessed.end()) {
+    TestFile rewritten = parseTestFile(test.path, test.display);
+    rewritten.optimize = test.optimize;
+    if (rewritten.errors.empty()) {
+      Outcome second = run(rewritten);
+      for (const std::string &file : outcome.blessed)
+        if (std::find(second.blessed.begin(), second.blessed.end(), file) ==
+            second.blessed.end())
+          second.blessed.push_back(file);
+      return second;
+    }
+  }
   // The limit applies to warm execution: a case that paid for analysing a
   // standard-library prefix is measured again once that prefix is cached.
   // The verdict stays the first run's.
@@ -1349,7 +1447,8 @@ Outcome Engine::run(const TestFile &test) {
   }
   outcome.inProcess =
       options.isolate &&
-      (modeParses(test.mode) || hasSnapshot(test, Snapshot::Mir) ||
+      (modeParses(test.mode) || modeAnalyzes(test.mode) ||
+       !test.target.empty() || hasSnapshot(test, Snapshot::Mir) ||
        std::any_of(test.sections.begin(), test.sections.end(),
                    [](const Section &section) {
                      return nativeKind(section.name) == NativeKind::C;

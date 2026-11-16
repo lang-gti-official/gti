@@ -20,6 +20,10 @@ enum class Mode {
   // Stop after the lexer and parser: syntax and recovery tests.
   ParsePass,
   ParseFail,
+  // Stop after semantic analysis (FrontendOptions::stopAfter = Semantics):
+  // no HIR, MIR or lowering.
+  AnalyzePass,
+  AnalyzeFail,
   // A `.gti` file under an `lsp` directory: requests at markers against a
   // language server (tests/lsp/README.md).
   Lsp,
@@ -34,6 +38,7 @@ enum class Mode {
 [[nodiscard]] bool modeRuns(Mode mode);
 [[nodiscard]] bool modeBuilds(Mode mode);
 [[nodiscard]] bool modeParses(Mode mode);
+[[nodiscard]] bool modeAnalyzes(Mode mode);
 [[nodiscard]] bool modeFails(Mode mode);
 
 // Output a test asserts besides diagnostics and run results (`//@ snapshot:`).
@@ -152,6 +157,14 @@ struct TestFile {
   std::optional<std::string> stdinText;
   std::vector<std::pair<std::string, std::string>> env;
   bool optimize = false; // `//@ opt: O3`
+  // `//@ opt:` was written, so a global `--opt`/GTI_TEST_OPT leaves it.
+  bool optPinned = false;
+  // Compile limits named as the compiler's options (`//@ constexpr-depth:
+  // 16` is `gti --constexpr-depth 16`), in written order.
+  std::vector<std::pair<std::string, std::size_t>> compileLimits;
+  // `//@ target: x86_64-unknown-linux-gnu`: analyse for another target
+  // (check and analyze modes; nothing is linked).
+  std::string target;
   bool slow = false;
   // `//@ format-stable`: formatting the test is idempotent and the formatted
   // program also checks (check-pass tests without annotations only).

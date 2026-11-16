@@ -64,6 +64,9 @@ struct EngineOptions {
   std::filesystem::path workDirectory;
   bool isolate = false;
   bool bless = false;
+  // `--bless-directives`: bless may rewrite `//@` lines (inline stdout);
+  // without it such a bless is refused and new output goes to a file.
+  bool blessDirectives = false;
   // A cold case is re-measured warm when it uses more than this fraction of
   // its limit (half under --changed, whose budget rule needs a warm figure).
   double budgetFraction = 1.0;

@@ -1,7 +1,9 @@
 #include "test_file.h"
 
+#include "gti/compile_limits.h"
 #include "gti/configuration_flags.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/target.h"
 
 #include <algorithm>
 #include <cctype>
@@ -48,6 +50,50 @@ std::vector<std::string> splitLines(const std::string &text) {
     start = end + 1;
   }
   return lines;
+}
+
+// Shell-like words: blanks separate; '...' is literal; "..." takes \" and
+// \\ escapes; a backslash outside quotes escapes the next character. `""`
+// is an empty word. False on an unterminated quote.
+bool shellWords(const std::string &text, std::vector<std::string> &words) {
+  std::string word;
+  bool inWord = false;
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const char c = text[index];
+    if (c == ' ' || c == '\t') {
+      if (inWord)
+        words.push_back(std::move(word));
+      word.clear();
+      inWord = false;
+      continue;
+    }
+    inWord = true;
+    if (c == '\'') {
+      const std::size_t close = text.find('\'', index + 1);
+      if (close == std::string::npos)
+        return false;
+      word += text.substr(index + 1, close - index - 1);
+      index = close;
+    } else if (c == '"') {
+      for (++index;; ++index) {
+        if (index >= text.size())
+          return false;
+        if (text[index] == '"')
+          break;
+        if (text[index] == '\\' && index + 1 < text.size() &&
+            (text[index + 1] == '"' || text[index + 1] == '\\'))
+          ++index;
+        word += text[index];
+      }
+    } else if (c == '\\' && index + 1 < text.size()) {
+      word += text[++index];
+    } else {
+      word += c;
+    }
+  }
+  if (inWord)
+    words.push_back(std::move(word));
+  return true;
 }
 
 std::vector<std::string> splitWords(const std::string &text) {
@@ -263,6 +309,10 @@ const char *modeName(Mode mode) {
     return "parse-pass";
   case Mode::ParseFail:
     return "parse-fail";
+  case Mode::AnalyzePass:
+    return "analyze-pass";
+  case Mode::AnalyzeFail:
+    return "analyze-fail";
   case Mode::Lsp:
     return "lsp";
   case Mode::LspTranscript:
@@ -277,8 +327,13 @@ bool modeParses(Mode mode) {
   return mode == Mode::ParsePass || mode == Mode::ParseFail;
 }
 
+bool modeAnalyzes(Mode mode) {
+  return mode == Mode::AnalyzePass || mode == Mode::AnalyzeFail;
+}
+
 bool modeFails(Mode mode) {
-  return mode == Mode::CheckFail || mode == Mode::ParseFail;
+  return mode == Mode::CheckFail || mode == Mode::ParseFail ||
+         mode == Mode::AnalyzeFail;
 }
 
 const char *snapshotName(Snapshot snapshot) {
@@ -538,8 +593,9 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       else
         target.exitCode = static_cast<int>(code);
     } else if (name == "args") {
-      for (std::string &word : splitWords(trimmed))
-        target.args.push_back(std::move(word));
+      // Shell-like quoting: `//@ args: "" 'a b' c\ d` is three arguments.
+      if (!shellWords(trimmed, target.args))
+        error(lineNumber, "args has an unterminated quote");
     } else if (name == "stdin") {
       std::string line =
           !value.empty() && value.front() == ' ' ? value.substr(1) : value;
@@ -628,7 +684,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
          (name != "allow-warnings" && name != "execution-profile" &&
           name != "define" && name != "raw-pointer-audit" &&
           name != "raw-pointer-audit-library-findings" &&
-          name != "require-function-definitions"))) {
+          name != "require-function-definitions" &&
+          lang::findCompileLimit(name) == nullptr))) {
       error(lineNumber, "a defaults file sets only analysis options and "
                         "allow-warnings, not '" +
                             name + "'");
@@ -684,7 +741,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     }
     if (name == "check-pass" || name == "check-fail" || name == "build-pass" ||
         name == "run-pass" || name == "run-fail" || name == "parse-pass" ||
-        name == "parse-fail") {
+        name == "parse-fail" || name == "analyze-pass" ||
+        name == "analyze-fail") {
       if (hasValue)
         error(lineNumber, "'" + name + "' takes no value");
       modes.push_back(name);
@@ -709,10 +767,29 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (test.revisions.size() < 2)
         error(lineNumber, "revisions needs at least two names");
     } else if (name == "opt") {
+      test.optPinned = true;
       if (trimmed == "O3")
         test.optimize = true;
       else if (trimmed != "O0")
         error(lineNumber, "opt must be O0 or O3");
+    } else if (const lang::CompileLimitInfo *limit =
+                   lang::findCompileLimit(name)) {
+      std::string message;
+      const std::optional<std::size_t> parsed =
+          lang::parseCompileLimitValue(*limit, trimmed, message);
+      if (!parsed)
+        error(lineNumber, message);
+      else if (std::any_of(
+                   test.compileLimits.begin(), test.compileLimits.end(),
+                   [&](const auto &entry) { return entry.first == name; }))
+        error(lineNumber, "duplicate " + name);
+      else
+        test.compileLimits.emplace_back(name, *parsed);
+    } else if (name == "target") {
+      if (!lang::parseTargetTriple(trimmed))
+        error(lineNumber, "target '" + trimmed + "' is not a supported triple");
+      else
+        test.target = trimmed;
     } else if (name == "slow") {
       if (hasValue)
         error(lineNumber, "'slow' takes no value");
@@ -972,7 +1049,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         test.exitSignal || !test.args.empty() || test.stdinText ||
         !test.env.empty() || !test.defines.empty() ||
         test.rawPointerAudit != "off" || test.rawPointerAuditLibraryFindings ||
-        !test.nativeArgs.empty() || !test.stdlibOverlay.empty())
+        !test.nativeArgs.empty() || !test.stdlibOverlay.empty() ||
+        !test.compileLimits.empty() || !test.target.empty())
       error(0, "LSP tests take only LSP expectations, annotations, "
                "disk-only and the server's options (execution-profile, "
                "raw-pointer-audit)");
@@ -995,13 +1073,15 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   if (!modes.empty()) {
     test.modeExplicit = true;
     const std::string &mode = modes.front();
-    test.mode = mode == "check-pass"   ? Mode::CheckPass
-                : mode == "check-fail" ? Mode::CheckFail
-                : mode == "build-pass" ? Mode::BuildPass
-                : mode == "run-pass"   ? Mode::RunPass
-                : mode == "run-fail"   ? Mode::RunFail
-                : mode == "parse-pass" ? Mode::ParsePass
-                                       : Mode::ParseFail;
+    test.mode = mode == "check-pass"     ? Mode::CheckPass
+                : mode == "check-fail"   ? Mode::CheckFail
+                : mode == "build-pass"   ? Mode::BuildPass
+                : mode == "run-pass"     ? Mode::RunPass
+                : mode == "run-fail"     ? Mode::RunFail
+                : mode == "parse-pass"   ? Mode::ParsePass
+                : mode == "parse-fail"   ? Mode::ParseFail
+                : mode == "analyze-pass" ? Mode::AnalyzePass
+                                         : Mode::AnalyzeFail;
   } else {
     test.mode = hasErrors ? Mode::CheckFail : Mode::CheckPass;
   }
@@ -1011,15 +1091,33 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   if (!modeFails(test.mode) && hasErrors)
     error(0, std::string(modeName(test.mode)) +
                  " test cannot expect errors; use " +
-                 (modeParses(test.mode) ? "parse-fail" : "check-fail"));
+                 (modeParses(test.mode)     ? "parse-fail"
+                  : modeAnalyzes(test.mode) ? "analyze-fail"
+                                            : "check-fail"));
   if (modeParses(test.mode) &&
       (test.concurrent || test.requireFunctionDefinitions || test.optimize ||
        !test.defines.empty() || test.rawPointerAudit != "off" ||
+       !test.compileLimits.empty() || !test.target.empty() ||
        test.rawPointerAuditLibraryFindings || !test.stdlibOverlay.empty() ||
        std::any_of(test.snapshots.begin(), test.snapshots.end(),
                    [](Snapshot s) { return s != Snapshot::Format; })))
     error(0, "parse tests take no analysis directives or mir, llvm-ir or "
              "diagnostics snapshots");
+  if (modeAnalyzes(test.mode) &&
+      (test.requireFunctionDefinitions || test.optimize ||
+       std::any_of(test.snapshots.begin(), test.snapshots.end(),
+                   [](Snapshot s) {
+                     return s == Snapshot::Mir || s == Snapshot::LlvmIr;
+                   })))
+    error(0, "analyze tests stop before HIR: no require-function-definitions, "
+             "opt or mir/llvm-ir snapshots");
+  if (!test.target.empty() && test.mode != Mode::CheckPass &&
+      test.mode != Mode::CheckFail && !modeAnalyzes(test.mode))
+    error(0, "target is for check and analyze tests (nothing is linked)");
+  if (!test.target.empty() &&
+      std::any_of(test.snapshots.begin(), test.snapshots.end(),
+                  [](Snapshot s) { return s != Snapshot::Format; }))
+    error(0, "target takes no mir, llvm-ir or diagnostics snapshot");
   for (const Snapshot kind : {Snapshot::Mir, Snapshot::LlvmIr})
     if (hasSnapshot(test, kind) && modeFails(test.mode))
       error(0, std::string("snapshot: ") + snapshotName(kind) +
@@ -1170,9 +1268,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
 
   // Everything that changes the analysis is part of the key, so tests that
   // can share a standard-library preamble run back to back.
-  test.groupKey = std::string(modeParses(test.mode)   ? "parse"
-                              : modeBuilds(test.mode) ? "build"
-                                                      : "check") +
+  test.groupKey = std::string(modeParses(test.mode)     ? "parse"
+                              : modeAnalyzes(test.mode) ? "analyze"
+                              : modeBuilds(test.mode)   ? "build"
+                                                        : "check") +
                   (test.optimize ? ":O3" : ":O0") +
                   (test.concurrent ? ":concurrent" : "") +
                   (test.requireFunctionDefinitions ? ":definitions" : "") +
@@ -1182,6 +1281,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   std::sort(defines.begin(), defines.end());
   for (const std::string &flag : defines)
     test.groupKey += ":D" + flag;
+  for (const auto &[limit, value] : test.compileLimits)
+    test.groupKey += ":" + limit + "=" + std::to_string(value);
+  if (!test.target.empty())
+    test.groupKey += ":target=" + test.target;
   for (const Section &section : test.sections)
     if (overlay.contains(section.name))
       test.groupKey += ":overlay=" + section.name + "#" +
