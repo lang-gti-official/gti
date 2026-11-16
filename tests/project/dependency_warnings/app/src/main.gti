@@ -1,0 +1,2 @@
+import library.value;
+int main() { mut int own = 0; return library::value() + own; }

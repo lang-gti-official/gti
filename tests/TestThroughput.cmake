@@ -38,7 +38,6 @@ endif()
 set(gti_long_gate_timeouts
   failure_metadata 2400
   operator_relay_pipeline 2400
-  body_analysis_order 1800
   compiler_pipeline 1800
   reflection_semantics 1800
   view_fields 900)
@@ -112,63 +111,34 @@ if(Python3_Interpreter_FOUND)
     conditional_moved_local_join_runtime
     moved_local_field_read_runtime
     conditional_prepared_input_result_runtime
-    constructed_callback_argument_runtime constructor_argument_staging_runtime
-    constructor_field_publication_runtime constructor_member_call_field_runtime
-    constructor_nested_argument_runtime
-    constructor_virtual_call_field_runtime virtual_temporary_receiver_runtime
-    constructor_null_native_runtime constructor_passive_field_rollback_runtime
+    virtual_temporary_receiver_runtime
+    constructor_null_native_runtime
     contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
     class_conditional_join_runtime
     comma_class_results_runtime
-    construction_assignment_runtime
-    consuming_call_assignment_runtime consuming_lambda_runtime consuming_methods_runtime consuming_owned_pointee_runtime
-    consuming_prepared_receiver_runtime
-    consuming_receiver_runtime consuming_retained_field_replace_runtime
-    consuming_conditional_receiver_runtime consuming_returned_result_runtime
-    consuming_generic_owner_receiver_runtime
-    consuming_retained_field_runtime consuming_retained_lambda_runtime
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     literal_call_arguments_runtime
     dormant_capability_runtime
-    expected_class_argument_runtime expected_class_assignment_runtime
-    expected_boundary_replacement_runtime
     raw_receiver_owned_argument_runtime
-    expected_cleanup_free_copy_runtime expected_cleanup_free_move_runtime
-    expected_call_reassignment_runtime expected_lambda_class_argument_runtime
-    expected_member_argument_runtime
-    expected_conditional_assignment_runtime expected_conditional_arms_runtime
-    expected_class_return_runtime expected_constructor_return_runtime expected_consuming_return_runtime
-    mixed_constructor_parameter_runtime
-    moved_passive_constructor_field_runtime
     deferred_bound_field_runtime
-    borrowed_field_publication_runtime owning_expression_transfers
+    borrowed_field_publication_runtime
     llvm_borrowed_dispatch_regressions
     passive_text_view_class_runtime
     passive_function_item_class_runtime
-    passive_class_move_and_copy_runtime
     view_fields_runtime text_reference_accessors_runtime
     view_field_payloads_runtime view_field_conversions_runtime
     dependent_reference_results_runtime
     view_field_nesting_runtime
     recursive_text_relays_runtime
-    declaration_owned_defaults_runtime
-    base_rollback_record_runtime virtual_expected_owning_return_runtime
     reference_owned_field_replacement_runtime
     payload_enum_reference_assignment_runtime
     raw_owned_field_replacement_runtime
     shared_getter_worker_loans_runtime
-    expected_field_and_join_runtime expected_scoped_return_runtime
-    expected_temporary_observation_runtime
-    expected_filesystem_prerequisites_runtime expected_passive_publication_runtime
-    expected_payload_pair_arguments_runtime expected_payload_pending_cleanup_runtime
-    expected_payload_short_circuit_runtime
+    expected_payload_pair_arguments_runtime
     extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
-    failure_free_passive_constructors_runtime
-    failure_free_passive_moves_runtime
-    generated_base_constructor_runtime generated_constructor_order_runtime
     generic_algorithm_breadth
     generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
     coverage_composition_runtime
@@ -179,34 +149,26 @@ if(Python3_Interpreter_FOUND)
     grouped_lambda_runtime
     lambda_base_reference_runtime lambda_owning_transport_runtime lambda_pack_invocation_runtime
     lambda_class_result_consumers_runtime
-    nested_borrow_fields nested_guarded_expected_runtime
+    nested_borrow_fields
     native_c_scalar_runtime nested_raw_pointer_runtime
-    nested_nominal_result_runtime operator_place_composition_runtime owned_expected_error_runtime
-    object_construction_runtime object_relocation_runtime
-    owned_pointee_projection_runtime owned_unexpected_pending_cleanup_runtime
-    owning_function_resource_result_runtime owning_function_runtime
-    owned_argument_member_initializer_runtime
+    nested_nominal_result_runtime operator_place_composition_runtime
+    object_relocation_runtime
+    owned_pointee_projection_runtime
     owning_expected_field_runtime
     owning_conditional_join_runtime
     owning_temporary_field_read_runtime
-    plain_call_member_initializer_runtime
     short_circuit_field_view_runtime
     short_circuit_temporary_argument_runtime
     short_circuit_payload_enum_argument_runtime
-    pack_prefix_constructor_failure_runtime private_constructor_placement_runtime
     programmable_allocators_runtime prvalue_direct_initialization_runtime
     raw_owner_witness_runtime raw_pointer_conversion_runtime
     reference_class_assignment_runtime
-    constructor_borrow_replacement_runtime
-    constructor_text_reference_runtime
-    constructor_copy_after_formal_write_runtime
     assignment_result_projection_runtime
     class_store_destinations_runtime
-    array_field_constructor_elements_runtime
     assignment_result_whole_value_runtime
     allocation_default_argument_runtime
     restoring_exchange_runtime restoring_exchange_shapes_runtime restoring_indexed_runtime
-    retained_owner_member_pack_runtime shared_accessor_range_runtime
+    shared_accessor_range_runtime
     accessor_text_carrier_runtime
     shared_ownership_runtime shared_ownership_threads scoped_parallel_threads
     scalar_temporary_borrow_runtime
@@ -301,7 +263,6 @@ if(Python3_Interpreter_FOUND)
     mir_cutover_corpus_oracle 85
     constructor_pack_field_runtime 85
     expected_transform_error_runtime 85
-    pack_parameter_runtime 85
     simd_runtime 85)
   list(LENGTH gti_long_gate_costs gti_long_gate_count)
   math(EXPR gti_long_gate_last "${gti_long_gate_count} - 1")
@@ -371,10 +332,12 @@ endforeach()
 # pattern that matches no registered test is an error, so the list cannot rot.
 set(gti_slow_test_patterns
   # Whole-corpus walks over examples/ and the census baselines.
-  "^body_analysis_order(_[0-9]+)?$"
-  "^instance_reuse(_[0-9]+)?$"
-  "^trusted_body_analysis(_[0-9]+)?$"
-  "^mir_census_regression$"
+  "^gti_corpus$"
+  # The corpus binaries' own fixtures (40-50 s of std-importing analyses
+  # each) until they move to tests/ui.
+  "^body_analysis_order_fixtures$"
+  "^instance_reuse_fixtures$"
+  "^trusted_body_analysis_fixtures$"
   "^mir_cutover_corpus_oracle$"
   "^language_coverage_corpus$"
   "^lowered_program_corpus_census$"

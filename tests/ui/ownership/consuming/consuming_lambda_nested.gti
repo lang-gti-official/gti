@@ -1,0 +1,56 @@
+// Moved closure environments use MIR full-expression cleanup, including failure.
+//@ run-pass
+//@ revisions: default body later-argument
+//@[default] stdout: 2
+//@[default] stdout: 3
+//@[default] stdout: 4
+//@[default] stdout: 1
+//@[default] stdout: 5
+//@[default] stdout: 9
+//@[body] run-fail
+//@[body] args: body
+//@[body] exit-code: 70
+//@[body] stdout: 2
+//@[body] stdout: 1
+//@[body] stdout: 9
+//@[body] stderr-contains: consuming_lambda_nested.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-argument] run-fail
+//@[later-argument] args: later argument
+//@[later-argument] exit-code: 70
+//@[later-argument] stdout: 2
+//@[later-argument] stdout: 3
+//@[later-argument] stdout: 1
+//@[later-argument] stdout: 9
+//@[later-argument] stderr-contains: consuming_lambda_nested.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- consuming_lambda_nested.gti
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int later(int divisor) { std::println(3); return 6 / divisor; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int invoke<Callable>(Callable callback, int body_divisor, int later_divisor) {
+  return combine(std::move(callback)(body_divisor), later(later_divisor));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  Token captured{1};
+  auto callback = [captured = std::move(captured)](int divisor) -> int {
+    std::println(2);
+    return captured.read() * 12 / divisor;
+  };
+  int body_divisor = argc == 2 ? 0 : 1;
+  int later_divisor = argc == 3 ? 0 : 1;
+  int value = invoke(std::move(callback), body_divisor, later_divisor);
+  std::println(5);
+  return value - 18;
+}

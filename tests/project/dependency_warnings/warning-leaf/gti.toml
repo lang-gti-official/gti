@@ -1,0 +1,7 @@
+manifest-version = 1
+[package]
+name = "warning_leaf"
+version = "1.0.0"
+
+[modules]
+value = "src/value.gti"

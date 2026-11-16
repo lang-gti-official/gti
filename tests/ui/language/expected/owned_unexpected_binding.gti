@@ -1,0 +1,48 @@
+// An activated Unexpected remains local until fallible cleanup succeeds.
+//@ run-pass
+//@ revisions: default factory-fails later-fails
+//@[default] stdout: 1
+//@[default] stdout: 2
+//@[default] stdout: 3
+//@[default] stdout: 4
+//@[factory-fails] run-fail
+//@[factory-fails] args: factory-fails
+//@[factory-fails] exit-code: 70
+//@[factory-fails] stdout: 1
+//@[factory-fails] stderr-contains: owned_unexpected_binding.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-fails] run-fail
+//@[later-fails] args: later fails
+//@[later-fails] exit-code: 70
+//@[later-fails] stdout: 1
+//@[later-fails] stdout: 2
+//@[later-fails] stdout: 4
+//@[later-fails] stderr-contains: owned_unexpected_binding.gti:20: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- owned_unexpected_binding.gti
+import std.string;
+import std.vector;
+
+class Error {
+  int value;
+public:
+  Error(int value) : value(value) {}
+  ~Error() { std::println(4); }
+};
+
+Error make(int divisor) {
+  std::println(1);
+  int checked = 12 / divisor;
+  return Error(checked);
+}
+
+expected<int, Error> publish(int factory_divisor, int later_divisor) {
+  expected<int, Error> local = unexpected(make(factory_divisor));
+  std::println(2);
+  int checked = 12 / later_divisor;
+  return std::move(local);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  auto result = publish(argc == 2 ? 0 : 1, argc == 3 ? 0 : 1);
+  std::println(3);
+  return result.has_value() ? 1 : 0;
+}

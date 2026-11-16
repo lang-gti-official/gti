@@ -1,0 +1,7 @@
+// The concurrent execution profile rejects a mutable global.
+//@ execution-profile: concurrent
+mut int counter = 0;  //~ ERROR GTI-S2060
+int main() {
+  counter += 1;
+  return counter - 1;
+}

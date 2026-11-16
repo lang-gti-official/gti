@@ -1,0 +1,6 @@
+// The missing-definition error renders its note at the bodyless declaration
+// and a help line naming the extern "C" alternative.
+//@ require-function-definitions
+//@ snapshot: diagnostics
+int helper(int value);
+int main() { return helper(7); }  //~ ERROR GTI-S2106

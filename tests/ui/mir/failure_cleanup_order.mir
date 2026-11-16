@@ -1,0 +1,134 @@
+function caller
+mir-body-v93
+body kind=3 domain=#1 entry=bb1 return=type(4;pointer-access=1)
+ places 3
+  p1 binding=3 symbol=#1 type=type(4;pointer-access=1) access=1 traits(0,0,1,1,1,1,0,1,1,2) source=v0 key=key(domain=#1;root=#1) initially-available=1
+  p2 binding=4 symbol=#2 type=type(19;class=#1;pointer-access=1) traits(0,1,0,1,0,1,0,0,0,1) source=v0 key=key(domain=#1;root=#2)
+  p3 root=#3 value=3 type=type(19;class=#1;pointer-access=1) access=1 traits(0,1,0,1,0,1,0,0,0,1) source=v5
+ loans 0
+ full-expressions 2
+  full-expression1 hir=#1 statement=2 roots=[5]
+  full-expression2 hir=#2 statement=3 roots=[8]
+ cleanup-boundaries 2
+  cleanup-boundary1 obligations=[2]
+  cleanup-boundary2 kind=1 obligations=[2]
+ drops 2
+  drop1 hir=#2 construction-order=1 kind=1 place=p3 value=v5 generated-value=%0 hir-full-expression=#1 full-expression=1 type=type(19;class=#1;pointer-access=1) class=#2 destructor=#1 active-cleanup=1
+  drop2 hir=#1 construction-order=2 place=p2 binding=4 value=v0 generated-value=%0 type=type(19;class=#1;pointer-access=1) class=#2 destructor=#1 active-cleanup=1
+ failure-records 1
+  fail1 kind=producer producer=bb1:i8 parameter=bb3
+ program-constant-substitutions 0
+ range-iterations 0
+ values 6
+  %1 source=v4 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i1 dependency-set=absent
+  %2 source=v4 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i2 dependency-set=absent
+  %3 source=v5 info(type(19;class=#1;pointer-access=1),traits(0,1,0,1,0,1,0,0,0,1)) defined=bb1:i3 dependency-set=absent
+  %4 source=v7 info(type(4;pointer-access=1),category=1,access=1,traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i6 dependency-set=absent
+  %5 source=v7 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i7 dependency-set=absent
+  %6 source=v8 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i8 dependency-set=absent
+ blocks 3
+  bb1 reachable=1 failure-parameter=fail0 active-failure=fail0
+    i1 compute hir-value=#1 call-input-kind=value result=1 operation=literal literal=u64:3 literal-provenance=source dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i2 call-input hir-value=#1 call-site=#1 call-input-role=argument call-input-kind=value result=2 operands=[operand(0;value=1;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i3 construct hir-value=#2 call-site=#1 call-input-kind=value result=3 operands=[operand(0;value=2;type=type(4;pointer-access=1))] parameters=[type(4;pointer-access=1)] dispatch-owner=type(0;pointer-access=1) constructor=#1 lifecycle=[lifecycle(source=drop0;target=drop1)] info(type(19;class=#1;pointer-access=1),traits(0,1,0,1,0,1,0,0,0,1))
+    i4 initialize hir-statement=#1 call-input-kind=value destination=2 operands=[operand(0;value=3;type=type(19;class=#1;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=2;source=drop1;target=drop2)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i5 lifecycle hir-value=#2 hir-statement=#1 call-input-kind=value dispatch-owner=type(0;pointer-access=1) full-expression-end=1 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    i6 load hir-value=#3 call-input-kind=value result=4 operands=[operand(3;place=1;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) ownership=event(place=key(domain=#1;root=#1);before=2;after=2;reachable=1) info(type(4;pointer-access=1),category=1,access=1,traits(0,0,1,1,1,1,0,1,1,2))
+    i7 call-input hir-value=#3 call-site=#2 call-input-role=argument call-input-kind=value result=5 operands=[operand(0;value=4;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) ownership=event(place=key(domain=#1;root=#1);before=2;after=2;reachable=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i8 call hir-value=#4 call-site=#2 call-input-kind=value result=6 operands=[operand(0;value=5;type=type(4;pointer-access=1))] parameters=[type(4;pointer-access=1)] failure-propagation=direct-call dispatch-owner=type(0;pointer-access=1) function=#1 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    term 4 invoke=i8 failure=fail1 target=bb2 else=bb3
+  bb2 reachable=1 failure-parameter=fail0 active-failure=fail0
+    i9 lifecycle hir-value=#4 hir-statement=#2 call-input-kind=value dispatch-owner=type(0;pointer-access=1) full-expression-end=2 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    i10 drop call-input-kind=value destination=2 dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=5;source=drop2;target=drop0)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i11 lifecycle call-input-kind=value dispatch-owner=type(0;pointer-access=1) cleanup-boundary-end=1 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    term 5 hir-statement=#2 value=operand(0;value=6;type=type(4;pointer-access=1)) invoke=i0 failure=fail0 target=bb0 else=bb0
+  bb3 reachable=1 failure-parameter=fail1 active-failure=fail1
+    i12 drop call-input-kind=value destination=2 dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=5;source=drop2;target=drop0;failure-cleanup=1)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i13 lifecycle call-input-kind=value dispatch-owner=type(0;pointer-access=1) cleanup-boundary-end=2 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    term 6 invoke=i0 failure=fail1 target=bb0 else=bb0
+ uses 6
+  %1=[use(0;value=1;block=1;instruction=2)]
+  %2=[use(0;value=2;block=1;instruction=3)]
+  %3=[use(4;value=3;place=3),use(0;value=3;block=1;instruction=4)]
+  %4=[use(0;value=4;block=1;instruction=7)]
+  %5=[use(0;value=5;block=1;instruction=8)]
+  %6=[use(2;value=6;block=2)]
+ source-debug=uncollected
+end-body
+function leaf
+mir-body-v93
+body kind=3 domain=#2 entry=bb1 return=type(4;pointer-access=1)
+ places 5
+  p1 binding=5 symbol=#3 type=type(4;pointer-access=1) access=1 traits(0,0,1,1,1,1,0,1,1,2) source=v0 key=key(domain=#2;root=#4) initially-available=1
+  p2 binding=6 symbol=#4 type=type(19;class=#1;pointer-access=1) traits(0,1,0,1,0,1,0,0,0,1) source=v0 key=key(domain=#2;root=#5)
+  p3 root=#3 value=3 type=type(19;class=#1;pointer-access=1) access=1 traits(0,1,0,1,0,1,0,0,0,1) source=v10
+  p4 binding=7 symbol=#5 type=type(19;class=#1;pointer-access=1) traits(0,1,0,1,0,1,0,0,0,1) source=v0 key=key(domain=#2;root=#6)
+  p5 root=#3 value=6 type=type(19;class=#1;pointer-access=1) access=1 traits(0,1,0,1,0,1,0,0,0,1) source=v12
+ loans 0
+ full-expressions 3
+  full-expression1 hir=#1 statement=4 roots=[10]
+  full-expression2 hir=#2 statement=5 roots=[12]
+  full-expression3 hir=#3 statement=6 roots=[15]
+ cleanup-boundaries 3
+  cleanup-boundary1 obligations=[4]
+  cleanup-boundary2 obligations=[2]
+  cleanup-boundary3 kind=1 obligations=[4,2]
+ drops 4
+  drop1 hir=#3 construction-order=1 kind=1 place=p3 value=v10 generated-value=%0 hir-full-expression=#1 full-expression=1 type=type(19;class=#1;pointer-access=1) class=#2 destructor=#1 active-cleanup=1
+  drop2 hir=#1 construction-order=2 place=p2 binding=6 value=v0 generated-value=%0 type=type(19;class=#1;pointer-access=1) class=#2 destructor=#1 active-cleanup=1
+  drop3 hir=#4 construction-order=3 kind=1 place=p5 value=v12 generated-value=%0 hir-full-expression=#2 full-expression=2 type=type(19;class=#1;pointer-access=1) class=#2 destructor=#1 active-cleanup=1
+  drop4 hir=#2 construction-order=4 place=p4 binding=7 value=v0 generated-value=%0 type=type(19;class=#1;pointer-access=1) class=#2 destructor=#1 active-cleanup=1
+ failure-records 1
+  fail1 kind=producer producer=bb1:i13 parameter=bb3
+ program-constant-substitutions 0
+ range-iterations 0
+ values 9
+  %1 source=v9 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i1 dependency-set=absent
+  %2 source=v9 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i2 dependency-set=absent
+  %3 source=v10 info(type(19;class=#1;pointer-access=1),traits(0,1,0,1,0,1,0,0,0,1)) defined=bb1:i3 dependency-set=absent
+  %4 source=v11 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i6 dependency-set=absent
+  %5 source=v11 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i7 dependency-set=absent
+  %6 source=v12 info(type(19;class=#1;pointer-access=1),traits(0,1,0,1,0,1,0,0,0,1)) defined=bb1:i8 dependency-set=absent
+  %7 source=v13 info(type(4;pointer-access=1),category=1,access=1,traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i11 dependency-set=absent
+  %8 source=v14 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i12 dependency-set=absent
+  %9 source=v15 info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2)) defined=bb1:i13 dependency-set=absent
+ blocks 3
+  bb1 reachable=1 failure-parameter=fail0 active-failure=fail0
+    i1 compute hir-value=#5 call-input-kind=value result=1 operation=literal literal=u64:1 literal-provenance=source dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i2 call-input hir-value=#5 call-site=#3 call-input-role=argument call-input-kind=value result=2 operands=[operand(0;value=1;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i3 construct hir-value=#6 call-site=#3 call-input-kind=value result=3 operands=[operand(0;value=2;type=type(4;pointer-access=1))] parameters=[type(4;pointer-access=1)] dispatch-owner=type(0;pointer-access=1) constructor=#1 lifecycle=[lifecycle(source=drop0;target=drop1)] info(type(19;class=#1;pointer-access=1),traits(0,1,0,1,0,1,0,0,0,1))
+    i4 initialize hir-statement=#3 call-input-kind=value destination=2 operands=[operand(0;value=3;type=type(19;class=#1;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=2;source=drop1;target=drop2)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i5 lifecycle hir-value=#6 hir-statement=#3 call-input-kind=value dispatch-owner=type(0;pointer-access=1) full-expression-end=1 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    i6 compute hir-value=#7 call-input-kind=value result=4 operation=literal literal=u64:2 literal-provenance=source dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i7 call-input hir-value=#7 call-site=#4 call-input-role=argument call-input-kind=value result=5 operands=[operand(0;value=4;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i8 construct hir-value=#8 call-site=#4 call-input-kind=value result=6 operands=[operand(0;value=5;type=type(4;pointer-access=1))] parameters=[type(4;pointer-access=1)] dispatch-owner=type(0;pointer-access=1) constructor=#1 lifecycle=[lifecycle(source=drop0;target=drop3)] info(type(19;class=#1;pointer-access=1),traits(0,1,0,1,0,1,0,0,0,1))
+    i9 initialize hir-statement=#4 call-input-kind=value destination=4 operands=[operand(0;value=6;type=type(19;class=#1;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=2;source=drop3;target=drop4)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i10 lifecycle hir-value=#8 hir-statement=#4 call-input-kind=value dispatch-owner=type(0;pointer-access=1) full-expression-end=2 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    i11 load hir-value=#9 call-input-kind=value result=7 operands=[operand(3;place=1;type=type(4;pointer-access=1))] dispatch-owner=type(0;pointer-access=1) ownership=event(place=key(domain=#2;root=#4);before=2;after=2;reachable=1) info(type(4;pointer-access=1),category=1,access=1,traits(0,0,1,1,1,1,0,1,1,2))
+    i12 compute hir-value=#10 call-input-kind=value result=8 operation=literal literal=u64:1 literal-provenance=source dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    i13 compute hir-value=#11 call-input-kind=value result=9 operands=[operand(0;value=7;type=type(4;pointer-access=1)),operand(0;value=8;type=type(4;pointer-access=1))] operation=add failure-origins=[unit#1:19@530..531{1:integer_overflow:addition}] failure-sites=[1] dispatch-owner=type(0;pointer-access=1) info(type(4;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,2))
+    term 4 invoke=i13 failure=fail1 target=bb2 else=bb3
+  bb2 reachable=1 failure-parameter=fail0 active-failure=fail0
+    i14 lifecycle hir-value=#11 hir-statement=#5 call-input-kind=value dispatch-owner=type(0;pointer-access=1) full-expression-end=3 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    i15 drop call-input-kind=value destination=4 dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=5;source=drop4;target=drop0)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i16 lifecycle call-input-kind=value dispatch-owner=type(0;pointer-access=1) cleanup-boundary-end=1 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    i17 drop call-input-kind=value destination=2 dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=5;source=drop2;target=drop0)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i18 lifecycle call-input-kind=value dispatch-owner=type(0;pointer-access=1) cleanup-boundary-end=2 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    term 5 hir-statement=#5 value=operand(0;value=9;type=type(4;pointer-access=1)) invoke=i0 failure=fail0 target=bb0 else=bb0
+  bb3 reachable=1 failure-parameter=fail1 active-failure=fail1
+    i19 drop call-input-kind=value destination=4 dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=5;source=drop4;target=drop0;failure-cleanup=1)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i20 drop call-input-kind=value destination=2 dispatch-owner=type(0;pointer-access=1) lifecycle=[lifecycle(kind=5;source=drop2;target=drop0;failure-cleanup=1)] info(type(19;class=#1;pointer-access=1),category=1,traits(0,1,0,1,0,1,0,0,0,1))
+    i21 lifecycle call-input-kind=value dispatch-owner=type(0;pointer-access=1) cleanup-boundary-end=3 info(type(0;pointer-access=1),traits(0,0,1,1,1,1,0,1,1,0))
+    term 6 invoke=i0 failure=fail1 target=bb0 else=bb0
+ uses 9
+  %1=[use(0;value=1;block=1;instruction=2)]
+  %2=[use(0;value=2;block=1;instruction=3)]
+  %3=[use(4;value=3;place=3),use(0;value=3;block=1;instruction=4)]
+  %4=[use(0;value=4;block=1;instruction=7)]
+  %5=[use(0;value=5;block=1;instruction=8)]
+  %6=[use(4;value=6;place=5),use(0;value=6;block=1;instruction=9)]
+  %7=[use(0;value=7;block=1;instruction=13)]
+  %8=[use(0;value=8;block=1;instruction=13;operand=1)]
+  %9=[use(2;value=9;block=2)]
+ source-debug=uncollected
+end-body

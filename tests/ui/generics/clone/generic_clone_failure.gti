@@ -1,0 +1,34 @@
+// A failure during generic duplication destroys the completed clones in reverse order.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0002
+//@ stderr-contains: division_by_zero
+//@ stdout: 1
+//@ stdout: 2
+//@ stdout: 3
+//@ stdout: 101
+//@ stdout: 11
+//@ stdout: 102
+//@ stdout: -11
+//@ stdout: -3
+//@ stdout: -2
+//@ stdout: -1
+import std.vector;
+
+class Item {
+public:
+  int value;
+  Item(int n) : value(n) { std::println(n); }
+  ~Item() { std::println(0 - this.value); }
+  Item clone() {
+    std::println(100 + this.value);
+    int checked = 10 / (this.value - 2);
+    return Item(this.value + 10);
+  }
+};
+
+int main() {
+  std::vector<Item> items = {Item(1), Item(2), Item(3)};
+  auto copies = items.clone();
+  return 1;
+}
