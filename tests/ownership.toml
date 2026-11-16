@@ -989,7 +989,7 @@ paths = [
   "cmake/RuntimeCharconv.cmake",
 ]
 owners = [
-  "gti_unit_tests",
+  "charconv_runtime_boundary",
   "charconv_runtime",
   "float_text_runtime",
   "c_string_import_runtime",
@@ -1023,6 +1023,7 @@ paths = [
 owners = [
   "gti_unit_tests",
   "constexpr_chrono_runtime",
+  "environment_runtime_boundary",
   "environment_c_header",
   "environment_runtime",
   "filesystem_operations_runtime",
@@ -1030,6 +1031,8 @@ owners = [
   "composable_io_runtime",
   "process_runtime",
   "process_resource_policy",
+  "process_capture_failure",
+  "process_group_identity",
   "random_engine_runtime",
   "http_runtime",
   "http_url_operators",
@@ -1496,7 +1499,8 @@ owners = [
   "llvm_cache_project_workflows",
   "llvm_cache_component_mapping",
   "llvm_embedding_project",
-  "gti_unit_tests",
+  "process_capture_failure",
+  "process_group_identity",
   "embedding_foundation",
 ]
 consumers = [
