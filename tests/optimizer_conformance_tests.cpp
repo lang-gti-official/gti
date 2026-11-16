@@ -261,6 +261,71 @@ void testComputeEffects(const lang::FrontendResult &frontend) {
          "interpretation");
 }
 
+void testOwnedPassiveConstructionProfile() {
+  using namespace lang;
+  const auto stdlib =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
+  const auto frontend =
+      Frontend().analyze("optimizer-owned-passive.gti", R"(
+import std.vector;
+struct Item { int value; Item(int value) : value(value) {} };
+int main() {
+  mut std::vector<int> numbers{std::size_t(1)};
+  numbers.push_back(7);
+  mut std::vector<Item> items{};
+  items.push_back(Item(9));
+  return numbers[1] + items[0].value - 16;
+}
+)",
+                         {stdlib / "prelude.gti"}, {}, {stdlib});
+  expect(frontend.canGenerateCode(),
+         "owned passive construction fixture lowers");
+  if (!frontend.canGenerateCode())
+    return;
+  std::size_t defaults = 0, scalarValues = 0, recordValues = 0;
+  for (const auto address : enumerateMirBodyAddresses(frontend.mir))
+    for (const auto &block : findMirBody(frontend.mir, address)->blocks)
+      for (const auto &instruction : block.instructions) {
+        const bool initialize =
+            instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned;
+        if ((!initialize &&
+             instruction.intrinsic != IntrinsicKind::ObjectConstructOwned) ||
+            !isMirStructuralFinalAddressConstruction(frontend.mir, instruction))
+          continue;
+        if (!initialize)
+          ++defaults;
+        else if (instruction.operands.back().type.kind == SemanticType::Class)
+          ++recordValues;
+        else
+          ++scalarValues;
+        auto malformed = instruction;
+        malformed.operands[1].type.referenceAccess = AccessMode::ReadOnly;
+        malformed.parameterTypes[1] = malformed.operands[1].type;
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "a read-only owner is not a writable placement witness");
+        malformed = instruction;
+        malformed.parameterTypes[1].referenceAccess = AccessMode::ReadOnly;
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "an owner signature mismatch cannot acquire a passive profile");
+        malformed = instruction;
+        malformed.operands.erase(malformed.operands.begin() + 1);
+        malformed.parameterTypes.erase(malformed.parameterTypes.begin() + 1);
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "omitting the owner cannot shift a payload into its place");
+        malformed = instruction;
+        malformed.lifecycle.push_back({.kind = MirLifecycleEventKind::Replace});
+        expect(
+            !isMirStructuralFinalAddressConstruction(frontend.mir, malformed),
+            "replacement cannot claim the vacant-storage profile");
+      }
+  expect(defaults && scalarValues && recordValues,
+         "profiles cover default, scalar-value and generated record "
+         "initialization");
+}
+
 void testInPlaceConstructorEffects() {
   using namespace lang;
   const auto stdlib =
@@ -526,6 +591,7 @@ void testKnownBarriers(const lang::FrontendResult &frontend) {
 
 int main() {
   testCensus();
+  testOwnedPassiveConstructionProfile();
   testInPlaceConstructorEffects();
   testCallableBodySignatures();
   const auto frontend =

@@ -963,8 +963,12 @@ namespace {
 // constructor, cleanup, adapter or lifecycle event. Returns its pointee type.
 const SemanticType *
 scalarFinalAddressPointee(const MirInstruction &instruction) {
+  const bool owned =
+      instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ||
+      instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned;
+  const std::size_t offset = owned ? 2 : 1;
   if (instruction.tombstone || instruction.kind != MirInstructionKind::Call ||
-      instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
+      (!owned && instruction.intrinsic != IntrinsicKind::ObjectConstruct) ||
       instruction.constructorTarget || instruction.elementCleanup ||
       instruction.receiver || instruction.nativeCallbackAdapter ||
       instruction.threadTaskAdapter || instruction.result ||
@@ -975,13 +979,28 @@ scalarFinalAddressPointee(const MirInstruction &instruction) {
       instruction.constructorKind != ConstructorKind::Ordinary ||
       instruction.operation != MirOperation::None ||
       instruction.synchronization.kind != SynchronizationOperationKind::None ||
-      instruction.operands.empty() || instruction.operands.size() > 2)
+      instruction.operands.size() < offset ||
+      instruction.operands.size() > offset + 1 ||
+      (instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned &&
+       instruction.operands.size() != 3))
     return nullptr;
+  if (owned) {
+    const auto &owner = instruction.operands[1].type;
+    if (owner.kind != SemanticType::Reference ||
+        owner.referenceAccess != AccessMode::Mutable ||
+        owner.arguments.size() != 1 ||
+        instruction.parameterTypes.size() != instruction.operands.size())
+      return nullptr;
+  }
+  if (owned)
+    for (std::size_t index = 0; index < instruction.operands.size(); ++index)
+      if (instruction.operands[index].type != instruction.parameterTypes[index])
+        return nullptr;
   const auto &address = instruction.operands.front().type;
   if (address.kind != SemanticType::RawPointer ||
       address.arguments.size() != 1 ||
       address.pointerAccess != AccessMode::Mutable ||
-      (instruction.operands.size() == 2 &&
+      (instruction.operands.size() == offset + 1 &&
        instruction.operands.back().type != address.arguments.front()))
     return nullptr;
   return &address.arguments.front();
@@ -1065,10 +1084,28 @@ bool isMirStructuralValueType(const MirProgram &program,
 
 bool isMirStructuralFinalAddressConstruction(
     const MirProgram &program, const MirInstruction &instruction) {
+  if (instruction.intrinsic == IntrinsicKind::ObjectInitializeOwned) {
+    if (!mir_detail::objectInitializeOwned(program, instruction) ||
+        std::any_of(instruction.lifecycle.begin(), instruction.lifecycle.end(),
+                    [](const MirLifecycleEvent &event) {
+                      return event.kind != MirLifecycleEventKind::TransferOut;
+                    }))
+      return false;
+    const auto &element = instruction.operands.back().type;
+    return isMirScalarValueType(&program, element) ||
+           isMirStructuralValueType(program, element,
+                                    MirStructuralValueOperation::Move);
+  }
+  if (instruction.intrinsic == IntrinsicKind::ObjectConstructOwned &&
+      !mir_detail::objectConstruct(program, instruction))
+    return false;
   if (const auto *pointee = scalarFinalAddressPointee(instruction);
       pointee && isMirScalarValueType(&program, *pointee))
     return true;
-  if (instruction.constructorTarget || instruction.operands.size() != 2 ||
+  const std::size_t offset =
+      instruction.intrinsic == IntrinsicKind::ObjectConstructOwned ? 2 : 1;
+  if (instruction.constructorTarget ||
+      instruction.operands.size() != offset + 1 ||
       (instruction.constructorKind != ConstructorKind::Copy &&
        instruction.constructorKind != ConstructorKind::Move) ||
       !mir_detail::objectConstruct(program, instruction) ||

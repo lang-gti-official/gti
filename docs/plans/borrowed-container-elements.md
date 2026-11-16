@@ -229,8 +229,19 @@ separate capability.
 Optimizer checks cover both raw and owner-aware selected constructors. The
 shared effect analysis now includes the selected constructor for both forms,
 preserving its allocation, memory, synchronization and escape effects in
-instruction and caller summaries. Missing-target and coherence checks remain. Text
-field initialization now has an explicit MIR `Initialize`; tests require its
+instruction and caller summaries. The same construction families now
+participate in alias/capture and closed-call range analysis: the destination
+address and lifetime-only owner witness are excluded from source constructor
+arguments, while passive scalar/record value initialization retains its checked
+value facts. Borrowed payloads and transfers that execute user code do not
+acquire that passive profile. Existing positive bounds/arithmetic proof counts and negative
+alias/invalidation controls remain unchanged; new malformed-owner controls reject
+missing witnesses, read-only witnesses, signature mismatches and replacement.
+The scalar-fill fixture explicitly states the move-construction requirement of
+the storage operation it calls. Runtime initializer checks retain all four
+programs at O0/O1/O3 and their output assertions, without requiring obsolete
+metadata-only optimization remarks. Missing-target and coherence checks remain.
+Text field initialization now has an explicit MIR `Initialize`; tests require its
 producer and unique publication to survive optimization and reject removal of
 the stage. They no longer demand the obsolete metadata-only text initializer
 shape, which independent MIR verification rejects.
