@@ -1,0 +1,32 @@
+// Expected values: expected construction and observers should pass semantic checks.
+//@ check-pass
+class MutableValue {
+  mut int stored = 0;
+public:
+  void set(int value) mut { this.stored = value; }
+  int get() { return this.stored; }
+public:
+  MutableValue() = default;
+};
+
+expected<int, std::string_view> calculate(bool fail) {
+  if (fail) { return unexpected("calculation failed"); }
+  return 42;
+}
+expected<void, std::string_view> render(bool fail) {
+  if (fail) { return unexpected("render failed"); }
+  return;
+}
+int main() {
+  expected<int, std::string_view> result = calculate(false);
+  if (!result.has_value()) { return 1; }
+  int value = result.value_or(0);
+  expected<void, std::string_view> rendered = render(false);
+  if (!rendered) { return 2; }
+  rendered.value();
+  mut expected<MutableValue, int> mutable_result = MutableValue();
+  mutable_result.value().set(42);
+  if (mutable_result.value().get() != 42) { return 3; }
+  [[discard]] calculate(false);
+  return value - 42;
+}

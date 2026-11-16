@@ -1,0 +1,35 @@
+// Exclusive reborrow loan graph: a transient borrowed receiver should remain compatible with a mutation of a disjoint sibling place.
+//@ check-pass
+class Inner {
+public:
+  mut int value = 1;
+  int inspect(int changed) { return this.value + changed; }
+public:
+  Inner() = default;
+};
+class Side {
+public:
+  mut Inner inner = Inner();
+  mut int count = 1;
+  Inner& get() { return this.inner; }
+  int bump() mut {
+    this.count += 1;
+    return this.count;
+  }
+public:
+  Side() = default;
+};
+class Pair {
+public:
+  mut Side left = Side();
+  mut Side right = Side();
+public:
+  Pair() = default;
+};
+int run(mut Pair& parent) {
+  return parent.left.get().inspect(parent.right.bump());
+}
+int main() {
+  mut Pair pair = Pair();
+  return run(pair) - 3;
+}

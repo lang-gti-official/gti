@@ -1,0 +1,60 @@
+// Fallible borrows: receiver-, parameter-, and global-tied fallible borrows should reach verified MIR, including local copy, move, and forwarding.
+//@ check-pass
+enum class lookup_errc { missing };
+int32_t global_value = 19;
+
+class Box {
+  int32_t value;
+public:
+  Box(int32_t value) : value(value) {}
+  expected<int32_t&, lookup_errc> find(bool present) {
+    if (!present) { return unexpected(lookup_errc::missing); }
+    return this.value;
+  }
+};
+
+class owning_error {
+  int32_t code;
+public:
+  owning_error(int32_t code) : code(code + 1) {}
+  owning_error(owning_error& other) = delete;
+  owning_error(owning_error&& other) = default;
+  ~owning_error() {}
+};
+
+expected<int32_t&, lookup_errc> borrow_parameter(int32_t& value,
+                                                  bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  return value;
+}
+
+expected<int32_t&, lookup_errc> borrow_global(bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  return global_value;
+}
+
+expected<int32_t&, lookup_errc> forward(Box& box, bool present) {
+  auto result = box.find(present);
+  return result;
+}
+
+expected<int32_t&, owning_error> borrow_with_owning_error(int32_t& value,
+                                                           bool present) {
+  if (!present) { return unexpected(owning_error(0)); }
+  return value;
+}
+
+int main() {
+  Box box{7};
+  auto found = forward(box, true);
+  int32_t& alias = found.value();
+  int32_t local = 13;
+  expected<int32_t&, lookup_errc> direct = local;
+  auto copied = direct;
+  auto moved = std::move(copied);
+  auto parameter = borrow_parameter(local, true);
+  auto global = borrow_global(true);
+  auto owned = borrow_with_owning_error(local, true);
+  return alias + moved.value() + parameter.value() + global.value() +
+         owned.value() - 65;
+}

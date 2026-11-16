@@ -10740,12 +10740,12 @@ and empty arguments through C++20/C++23 executables and `gti run --`, while
 `lsp_protocol` checks publication of the shared invalid-signature diagnostic.
 The optional audit retains a compact execution snapshot.
 
-`testExclusiveReborrowLoanGraph` also checks returns through local receiver,
+`tests/ui/ownership/loans/exclusive_reborrow_loan_graph_*.gti` also check returns through local receiver,
 reference-parameter, generic, projected and accessor-result aliases, including
 read-only children and borrowed carrier results. Local storage, wrong-owner
-returns, and caller-side invalidation remain negative cases. MIR mutations
-remove an accessor parent or the returned child's retirement and must fail
-verification. Example 042 executes receiver and generic return chains through
+returns, and caller-side invalidation remain negative cases (the C++ MIR
+mutations that removed an accessor parent or the returned child's retirement
+were dropped with the suite). Example 042 executes receiver and generic return chains through
 the existing corpus gates; its reviewed census adds two accessors and one
 concrete generic body. Owning callable coverage separately rejects borrowed
 heap environments before MIR while retaining tracked locals and owned targets.
@@ -11957,13 +11957,11 @@ cmake --build build --target gti_function_signature_tests --parallel "$GTI_BUILD
 ctest --test-dir build --output-on-failure -R '^function_signature_types$'
 ```
 
-The partitioned compiler suites also support `--list` and `--test NAME`, so a
-callable ownership edit can be checked without running unrelated compiler
-cases:
+A callable ownership edit can be checked without running unrelated compiler
+cases, since the callable ownership cases are `gti-test` files:
 
 ```sh
-cmake --build build --target gti_compiler_ownership_tests --parallel "$GTI_BUILD_JOBS"
-build/gti_compiler_ownership_tests --test testOwnedCallableTransport
+build/gti-test tests/ui/ownership/callables
 ```
 
 Runtime scripts using the shared callable matrix accept repeatable `--mode`

@@ -1,0 +1,15 @@
+// Fallible borrows: a live fallible borrow should block mutation of its owner and identify the producing call.
+enum class lookup_errc { missing };
+class Box {
+  mut int value;
+public:
+  Box(int value) : value(value) {}
+  expected<int&, lookup_errc> find() { return this.value; }
+  void set(int value) mut { this.value = value; }
+};
+int main() {
+  mut Box box{7};
+  auto found = box.find();
+  box.set(9);  //~ ERROR GTI-S2017
+  return found.value();
+}

@@ -1548,6 +1548,16 @@ def plan(cases: list[Case], spec: FileSpec, existing: dict[str, str]):
             continue
         if body in by_source:
             kept = by_source[body]
+            # A source edited in place (`text.insert(...)`) is read as its
+            # unedited base; a second, different expectation is a lost case.
+            if "unknown" not in (kept.case.expect, case.expect) and \
+                    (kept.case.expect, sorted(kept.case.codes)) != \
+                    (case.expect, sorted(case.codes)):
+                case.flags.append(
+                    f"same source as {kept.relative} with a different "
+                    "expectation (edited in place?)")
+                flagged.append(case)
+                continue
             kept.duplicates.append(case)
             if case.format_stable:
                 kept.case.format_stable = True

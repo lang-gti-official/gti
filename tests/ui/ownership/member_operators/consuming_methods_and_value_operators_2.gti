@@ -1,0 +1,10 @@
+// Consuming methods and value operators: generic methods and generic owner instances must preserve consuming receivers.
+//@ check-pass
+class Box<T> {
+public:
+  mut T value;
+  Box(T value) : value(std::move(value)) {}
+  T take() && { return std::move(this.value); }
+  Box<T> identity<U>(U ignored) && { return std::move(this); }
+};
+int main() { return Box<int>(4).identity<int>(0).take() - 4; }

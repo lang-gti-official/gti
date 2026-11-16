@@ -1,0 +1,25 @@
+// Lambdas: AST, semantics, and HIR should retain ordered copy and owned-move closure-environment initialization.
+//@ check-pass
+import std.memory;
+
+class Owner {
+  int value = 5;
+
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+
+  int read() { return this.value; }
+};
+
+int main() {
+  int offset = 2;
+  Owner source{};
+  auto operation = [offset, owned = std::move(source)]() -> int {
+    return offset + owned.read();
+  };
+  auto relocated = std::move(operation);
+  return relocated() - 7;
+}

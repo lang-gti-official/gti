@@ -1,0 +1,23 @@
+// Owned parameter stage arms rollback: the owned-parameter constructor fixture should pass the frontend.
+//@ check-pass
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+
+class Holder {
+  Resource moved;
+  int32_t checked;
+
+public:
+  Holder(Resource moved, int32_t bump)
+      : moved(std::move(moved)), checked(bump + bump) {}
+  int32_t total() { return this.moved.value + this.checked; }
+};
+
+int main() {
+  Holder holder = Holder(Resource(3), 4);
+  return holder.total() - 11;
+}

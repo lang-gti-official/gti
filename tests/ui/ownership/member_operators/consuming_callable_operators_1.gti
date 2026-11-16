@@ -1,0 +1,101 @@
+// Consuming callable operators: operator() && and confined once-callable clients should lower.
+//@ check-pass
+class OnceValue {
+  mut int value;
+
+public:
+  OnceValue(int initial) : value(initial) {}
+
+  int operator()() && {
+    return std::move(this.value);
+  }
+};
+
+class ReadValue {
+  int value;
+
+public:
+  ReadValue(int initial) : value(initial) {}
+  int operator()() { return this.value; }
+};
+
+class MutableValue {
+  mut int value;
+
+public:
+  MutableValue(int initial) : value(initial) {}
+  int operator()() mut {
+    this.value++;
+    return this.value;
+  }
+};
+
+class DualValue {
+  mut int value;
+
+public:
+  DualValue(int initial) : value(initial) {}
+  int operator()() { return this.value; }
+  int operator()() && { return std::move(this.value); }
+};
+
+class MutableFallback {
+  mut int value;
+
+public:
+  MutableFallback(int initial) : value(initial) {}
+  int operator()(int amount) { return this.value - amount; }
+  int operator()(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+  int operator()() && { return std::move(this.value); }
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int invoke_once_with<Operation>(Operation operation, int amount) {
+  return std::move(operation)(amount);
+}
+
+int relay_once<Operation>(Operation operation) {
+  return invoke_once(std::move(operation));
+}
+
+int choose_relay_once<Operation>(Operation operation, bool first) {
+  if (first) {
+    return invoke_once(std::move(operation));
+  }
+  return invoke_once(std::move(operation));
+}
+
+int choose_once<Operation>(Operation operation, bool first) {
+  if (first) {
+    return std::move(operation)();
+  }
+  return std::move(operation)();
+}
+
+int main() {
+  OnceValue once = OnceValue(7);
+  ReadValue read = ReadValue(3);
+  MutableValue mutate = MutableValue(4);
+  DualValue dual = DualValue(6);
+  MutableFallback fallback = MutableFallback(4);
+  MutableFallback generic_fallback = MutableFallback(8);
+  int consumed = invoke_once(once);
+  int observed = invoke_once(read);
+  int changed = invoke_once(mutate);
+  int selected = choose_once(OnceValue(2), false);
+  int relayed = relay_once(OnceValue(5));
+  int branch_relayed = choose_relay_once(OnceValue(6), true);
+  int peeked = dual();
+  int taken = std::move(dual)();
+  int changed_after_move = std::move(fallback)(3);
+  int generic_changed_after_move = invoke_once_with(generic_fallback, 2);
+  return consumed + observed + changed + selected + relayed + branch_relayed +
+             peeked + taken + changed_after_move + generic_changed_after_move -
+         57;
+}
