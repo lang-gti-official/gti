@@ -494,11 +494,6 @@ if(TARGET gti_lsp)
       "$<TARGET_FILE:gti_lsp>")
   set_tests_properties(conditional_capability_lsp PROPERTIES TIMEOUT 90)
 endif()
-add_test(NAME cpp_mir_source_sparse_storage
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_sparse_storage_runtime_test.py"
-    "$<TARGET_FILE:gti_cpp_mir_source_sparse_storage_emitter>" "${CMAKE_CXX_COMPILER}"
-    "$<TARGET_FILE:gti_runtime>")
-set_tests_properties(cpp_mir_source_sparse_storage PROPERTIES TIMEOUT 300)
 add_executable(gti_resource_protocol_tests resource_protocol_tests.cpp)
 target_link_libraries(gti_resource_protocol_tests PRIVATE gti_compiler gti_llvm_backend)
 add_test(NAME resource_protocol_contract COMMAND gti_resource_protocol_tests)
@@ -693,13 +688,6 @@ if(TARGET gti_lsp_state)
   add_test(NAME frontend_cache_invalidation COMMAND gti_frontend_cache_tests)
 endif()
 
-add_executable("gti_cpp_backend_library_smoke"
-               "${PROJECT_SOURCE_DIR}/tests/cpp_backend_library_smoke.cpp")
-target_link_libraries("gti_cpp_backend_library_smoke"
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_backend_library_boundary
-         COMMAND gti_cpp_backend_library_smoke)
-
 add_executable("gti_llvm_backend_library_smoke"
                "${PROJECT_SOURCE_DIR}/tests/llvm_backend_library_smoke.cpp")
 target_link_libraries("gti_llvm_backend_library_smoke"
@@ -759,13 +747,6 @@ add_test(NAME llvm_debug_artifacts
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py" "$<TARGET_FILE:gti>")
 set_tests_properties(llvm_debug_artifacts PROPERTIES TIMEOUT 240)
-if(APPLE)
-  add_test(NAME cpp_debug_artifacts
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/llvm_debug_artifacts_test.py"
-            "$<TARGET_FILE:gti>" --backend cpp)
-  set_tests_properties(cpp_debug_artifacts PROPERTIES TIMEOUT 240)
-endif()
 # Explicit matching-runtime evidence, separate from default/rejection coverage.
 set(GTI_LLVM_RUNTIME_TEST_COMPILER "" CACHE FILEPATH
     "Matching Clang++ for the native runtime identity fixture")
@@ -2666,48 +2647,10 @@ if(Python3_Interpreter_FOUND)
                    "${CMAKE_BINARY_DIR}/gti_runtime_abi_inventory.json")
 endif()
 
-add_executable("gti_cpp_mir_program_plan_tests"
-               "${PROJECT_SOURCE_DIR}/tests/cpp_mir_program_plan_tests.cpp")
-target_link_libraries("gti_cpp_mir_program_plan_tests"
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_program_plan COMMAND gti_cpp_mir_program_plan_tests)
-
-add_executable("gti_cpp_mir_control_flow_tests"
-               "${PROJECT_SOURCE_DIR}/tests/cpp_mir_control_flow_tests.cpp")
-target_link_libraries("gti_cpp_mir_control_flow_tests"
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_control_flow COMMAND gti_cpp_mir_control_flow_tests)
-
-set(GTI_CPP_MIR_BODY_EMITTER_TEST_SUITES
-    preflight
-    text
-    lifecycle
-    corpus)
-set(GTI_CPP_MIR_BODY_EMITTER_TEST_TARGETS)
-set(GTI_CPP_MIR_BODY_EMITTER_CENSUS_ARGUMENTS)
-foreach(suite IN LISTS GTI_CPP_MIR_BODY_EMITTER_TEST_SUITES)
-  set(target "gti_cpp_mir_body_emitter_${suite}_tests")
-  add_executable("${target}"
-                 "${PROJECT_SOURCE_DIR}/tests/cpp_mir_body_emitter_${suite}_tests.cpp")
-  target_link_libraries("${target}" PRIVATE gti_cpp_backend)
-  list(APPEND GTI_CPP_MIR_BODY_EMITTER_TEST_TARGETS "${target}")
-  list(APPEND GTI_CPP_MIR_BODY_EMITTER_CENSUS_ARGUMENTS
-       "${suite}=$<TARGET_FILE:${target}>")
-endforeach()
-add_custom_target(
-  gti_cpp_mir_body_emitter_tests
-  DEPENDS ${GTI_CPP_MIR_BODY_EMITTER_TEST_TARGETS}
-)
-add_test(NAME cpp_mir_body_emitter_preflight
-         COMMAND gti_cpp_mir_body_emitter_preflight_tests)
-add_test(NAME cpp_mir_body_emitter_text
-         COMMAND gti_cpp_mir_body_emitter_text_tests)
 add_test(NAME native_opaque_pointer_results
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/native_opaque_pointer_results_test.py" $<TARGET_FILE:gti>)
 add_test(NAME declaration_field_failure
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/declaration_field_failure_test.py" $<TARGET_FILE:gti>)
-add_test(NAME cpp_mir_body_emitter_lifecycle
-         COMMAND gti_cpp_mir_body_emitter_lifecycle_tests)
 add_test(NAME implicit_receiver_owned_assignment_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/implicit_receiver_owned_assignment_runtime_test.py"
@@ -2890,27 +2833,6 @@ add_test(NAME restoring_indexed_runtime
           "${PROJECT_SOURCE_DIR}/tests/restoring_indexed_runtime_test.py"
           $<TARGET_FILE:gti>)
 set_tests_properties(restoring_indexed_runtime PROPERTIES TIMEOUT 600)
-if(Python3_Interpreter_FOUND)
-  add_test(
-    NAME cpp_mir_body_emitter_census
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/named_test_census.py"
-            "${PROJECT_SOURCE_DIR}/tests/cpp_mir_body_emitter_test_manifest.json"
-            ${GTI_CPP_MIR_BODY_EMITTER_CENSUS_ARGUMENTS}
-  )
-else()
-  message(FATAL_ERROR
-          "Python 3 is required to enforce the emitter-test census")
-endif()
-
-add_executable(
-  "gti_cpp_mir_representation_snapshot_tests"
-  "${PROJECT_SOURCE_DIR}/tests/cpp_mir_representation_snapshot_tests.cpp"
-)
-target_link_libraries("gti_cpp_mir_representation_snapshot_tests"
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_representation_snapshot
-         COMMAND gti_cpp_mir_representation_snapshot_tests)
 add_test(NAME type_only_alias_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/type_only_alias_runtime_test.py"
@@ -3126,30 +3048,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti_runtime_cthread_tests>"
   )
   set_tests_properties(cthread_runtime_firewall PROPERTIES TIMEOUT 60)
-  add_test(
-    NAME cpp_mir_body_emitter_corpus
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_test.py"
-            "$<TARGET_FILE:gti_cpp_mir_body_emitter_corpus_tests>"
-            "${PROJECT_SOURCE_DIR}"
-            "${PROJECT_SOURCE_DIR}/tests/census"
-            --jobs=4
-  )
-  set_tests_properties(cpp_mir_body_emitter_corpus PROPERTIES PROCESSORS 4)
-  add_test(
-    NAME cpp_mir_text_borrow_boundary
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/cpp_text_borrow_boundary_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(cpp_mir_text_borrow_boundary PROPERTIES
-                      LABELS "cpp-backend" TIMEOUT 900)
-  add_test(
-    NAME cpp_mir_body_emitter_corpus_protocol
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_coordinator_test.py"
-            "${PROJECT_SOURCE_DIR}/tests/cpp_mir_body_emitter_corpus_test.py"
-  )
   add_test(
     NAME backend_lowered_program_boundary
     COMMAND "${Python3_EXECUTABLE}"
@@ -3598,13 +3496,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(source_optional_protocol_runtime PROPERTIES TIMEOUT 900)
   add_test(
-    NAME cpp_mir_payload_enum_carrier
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/payload_enum_carrier_runtime_test.py"
-            "$<TARGET_FILE:gti>")
-  set_tests_properties(cpp_mir_payload_enum_carrier PROPERTIES TIMEOUT 900)
-
-  add_test(
     NAME composed_payload_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/composed_payload_runtime_test.py"
@@ -3883,8 +3774,8 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/removal_algorithms_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(removal_algorithms PROPERTIES TIMEOUT 900)
-  # One entry: the harness runs the backends GTI_TEST_BACKENDS selects
-  # (tests/backend_modes.py). The former c++20, no-elide and sanitized
+  # One entry: the harness runs the LLVM modes tests/backend_modes.py
+  # selects. The former c++20, no-elide and sanitized
   # variants were C++-backend-only configurations nothing ships.
   add_test(
     NAME generic_algorithm_breadth
@@ -4381,25 +4272,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/tests/fixtures/global_class_storage.gti"
   )
-  add_test(
-    NAME cpp_mir_failure_descriptor_backend_compile
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/failure_descriptor_backend_compile_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/failure_descriptor_backend.gti"
-            "${CMAKE_CXX_COMPILER}"
-            "${PROJECT_SOURCE_DIR}"
-  )
-  add_test(
-    NAME cpp_mir_program_linkage
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/cpp_program_linkage_test.py"
-            "$<TARGET_FILE:gti>"
-            "${CMAKE_CXX_COMPILER}"
-            "${PROJECT_SOURCE_DIR}"
-            "$<TARGET_FILE:gti_runtime>"
-  )
-  set_tests_properties(cpp_mir_program_linkage PROPERTIES TIMEOUT 120)
   add_test(
     NAME mir_backend_scalar_cfg_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5239,9 +5111,8 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(structural_relocation_runtime PROPERTIES TIMEOUT 600)
 
-  # One entry: the shared harness runs the backends GTI_TEST_BACKENDS selects
-  # (tests/backend_modes.py) and asserts the declared C++ limitation under the
-  # C++ profile, so no separate C++-only boundary registration remains.
+  # One entry: the shared harness runs the LLVM modes tests/backend_modes.py
+  # selects; no separate C++-only boundary registration remains.
   add_test(NAME consuming_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/consuming_range_runtime_test.py"
@@ -6309,320 +6180,10 @@ target_link_libraries(gti_reference_parameter_pack_mir_tests PRIVATE gti_compile
 add_test(NAME reference_parameter_pack_mir COMMAND gti_reference_parameter_pack_mir_tests)
 set_tests_properties(reference_parameter_pack_mir PROPERTIES TIMEOUT 120)
 
-# Frozen C++ backend suites split out of general tests: each case asserts C++
-# representation or C++ emitter planning, which has no backend-neutral meaning.
-# Their CTest names carry the cpp_mir_ prefix, so TestThroughput.cmake labels
-# them cpp-backend and broad runs exclude them.
-add_executable(gti_cpp_mir_ownership_emission_tests
-               cpp_mir_ownership_emission_tests.cpp)
-target_link_libraries(gti_cpp_mir_ownership_emission_tests
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_ownership_emission
-         COMMAND gti_cpp_mir_ownership_emission_tests)
-add_executable(gti_cpp_mir_declarations_emission_tests
-               cpp_mir_declarations_emission_tests.cpp)
-target_link_libraries(gti_cpp_mir_declarations_emission_tests
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_declarations_emission
-         COMMAND gti_cpp_mir_declarations_emission_tests)
-add_executable(gti_cpp_mir_compiler_emission_tests cpp_mir_compiler_emission_tests.cpp)
-target_link_libraries(gti_cpp_mir_compiler_emission_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_compiler_emission COMMAND gti_cpp_mir_compiler_emission_tests)
-add_executable(gti_cpp_mir_generic_payload_enum_tests cpp_mir_generic_payload_enum_tests.cpp)
-target_link_libraries(gti_cpp_mir_generic_payload_enum_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_generic_payload_enum COMMAND gti_cpp_mir_generic_payload_enum_tests)
-add_executable(gti_cpp_mir_stored_callable_tests cpp_mir_stored_callable_tests.cpp)
-target_link_libraries(gti_cpp_mir_stored_callable_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_stored_callable COMMAND gti_cpp_mir_stored_callable_tests)
-add_executable(gti_cpp_mir_user_dual_range_tests cpp_mir_user_dual_range_tests.cpp)
-target_link_libraries(gti_cpp_mir_user_dual_range_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_user_dual_range COMMAND gti_cpp_mir_user_dual_range_tests)
-add_executable(gti_cpp_mir_scalar_cfg_tests cpp_mir_scalar_cfg_tests.cpp)
-target_link_libraries(gti_cpp_mir_scalar_cfg_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_scalar_cfg
-         COMMAND gti_cpp_mir_scalar_cfg_tests
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_cfg.gti")
-add_executable(gti_cpp_mir_scalar_failure_callgraph_tests
-               cpp_mir_scalar_failure_callgraph_tests.cpp)
-target_link_libraries(gti_cpp_mir_scalar_failure_callgraph_tests
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_scalar_failure_callgraph
-         COMMAND gti_cpp_mir_scalar_failure_callgraph_tests
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_failure.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_reverse_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_recursive_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_cleanup_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_checked_ctor_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_checked_dtor_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_virtual_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_lambda_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_dynamic_global_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_failure_free_helper_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_c_linkage_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_class_field_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_lifecycle_user_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_array_user_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_generic_owner_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_no_detector_entry_near_miss.gti"
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_failure_callgraph_nonowning_user.gti")
-add_executable(gti_cpp_mir_scalar_direct_call_tests
-               cpp_mir_scalar_direct_call_tests.cpp)
-target_link_libraries(gti_cpp_mir_scalar_direct_call_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_scalar_direct_call
-         COMMAND gti_cpp_mir_scalar_direct_call_tests
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_scalar_direct_call.gti")
-add_executable(gti_cpp_mir_owned_lifecycle_tests cpp_mir_owned_lifecycle_tests.cpp)
-target_link_libraries(gti_cpp_mir_owned_lifecycle_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_owned_lifecycle
-         COMMAND gti_cpp_mir_owned_lifecycle_tests
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_owned_lifecycle.gti")
-add_executable(gti_cpp_mir_class_default_cleanup_tests
-               cpp_mir_class_default_cleanup_tests.cpp)
-target_link_libraries(gti_cpp_mir_class_default_cleanup_tests
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_class_default_cleanup
-         COMMAND gti_cpp_mir_class_default_cleanup_tests
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/mir_backend_class_default_cleanup.gti")
-add_executable(gti_cpp_mir_first_family_tests cpp_mir_first_family_tests.cpp)
-target_link_libraries(gti_cpp_mir_first_family_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_first_family COMMAND gti_cpp_mir_first_family_tests)
 # prefix_storage_native_evidence links its LLVM-instrumented objects with the
 # configured LLVM's clang++ so the sanitizer runtime matches the instrumentation.
 target_compile_definitions(gti_prefix_storage_evidence PRIVATE
   GTI_TEST_LLVM_CLANGXX="${LLVM_TOOLS_BINARY_DIR}/clang++")
-add_executable(gti_cpp_mir_prefix_storage_evidence
-               cpp_mir_prefix_storage_native_evidence.cpp)
-target_link_libraries(gti_cpp_mir_prefix_storage_evidence PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_prefix_storage_native_evidence
-         COMMAND gti_cpp_mir_prefix_storage_evidence "${CMAKE_CXX_COMPILER}")
-set_tests_properties(
-  cpp_mir_prefix_storage_native_evidence
-  PROPERTIES TIMEOUT 600
-             ENVIRONMENT
-               "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
-)
-add_executable(gti_cpp_mir_optimizer_safety_native_evidence
-               cpp_mir_optimizer_safety_native_evidence.cpp)
-target_link_libraries(gti_cpp_mir_optimizer_safety_native_evidence
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_optimizer_safety_native_evidence
-         COMMAND gti_cpp_mir_optimizer_safety_native_evidence
-                 "${CMAKE_CXX_COMPILER}")
-set_tests_properties(
-  cpp_mir_optimizer_safety_native_evidence
-  PROPERTIES TIMEOUT 600
-             ENVIRONMENT
-               "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
-)
-add_executable(gti_cpp_mir_failure_descriptor_tests
-               cpp_mir_failure_descriptor_tests.cpp)
-target_link_libraries(gti_cpp_mir_failure_descriptor_tests
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_failure_descriptor
-         COMMAND gti_cpp_mir_failure_descriptor_tests
-                 "${PROJECT_SOURCE_DIR}/tests/fixtures/failure_descriptor_backend.gti")
-add_executable(gti_cpp_mir_backend_lowered_program_rejection_tests
-               cpp_mir_backend_lowered_program_rejection_tests.cpp)
-target_link_libraries(gti_cpp_mir_backend_lowered_program_rejection_tests
-                      PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_backend_lowered_program_rejection
-         COMMAND gti_cpp_mir_backend_lowered_program_rejection_tests)
-add_executable(gti_cpp_mir_base_constructor_stage_tests cpp_mir_base_constructor_stage_tests.cpp)
-target_link_libraries(gti_cpp_mir_base_constructor_stage_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_base_constructor_stage COMMAND gti_cpp_mir_base_constructor_stage_tests)
-add_executable(gti_cpp_mir_borrow_origin_tests cpp_mir_borrow_origin_tests.cpp)
-target_link_libraries(gti_cpp_mir_borrow_origin_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_borrow_origin COMMAND gti_cpp_mir_borrow_origin_tests)
-add_executable(gti_cpp_mir_native_record_tests cpp_mir_native_record_tests.cpp)
-target_link_libraries(gti_cpp_mir_native_record_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_native_record COMMAND gti_cpp_mir_native_record_tests)
-add_executable(gti_cpp_mir_native_header_tests cpp_mir_native_header_tests.cpp)
-target_link_libraries(gti_cpp_mir_native_header_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_native_header COMMAND gti_cpp_mir_native_header_tests)
-add_executable(gti_cpp_mir_retained_generic_lifecycle_tests cpp_mir_retained_generic_lifecycle_tests.cpp)
-target_link_libraries(gti_cpp_mir_retained_generic_lifecycle_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_retained_generic_lifecycle COMMAND gti_cpp_mir_retained_generic_lifecycle_tests)
-add_executable(gti_cpp_mir_owned_unexpected_pending_cleanup_tests cpp_mir_owned_unexpected_pending_cleanup_tests.cpp)
-target_link_libraries(gti_cpp_mir_owned_unexpected_pending_cleanup_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_owned_unexpected_pending_cleanup COMMAND gti_cpp_mir_owned_unexpected_pending_cleanup_tests)
-add_executable(gti_cpp_mir_conditional_class_publication_tests cpp_mir_conditional_class_publication_tests.cpp)
-target_link_libraries(gti_cpp_mir_conditional_class_publication_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_conditional_class_publication COMMAND gti_cpp_mir_conditional_class_publication_tests)
-add_executable(gti_cpp_mir_optional_empty_prefix_tests cpp_mir_optional_empty_prefix_tests.cpp)
-target_link_libraries(gti_cpp_mir_optional_empty_prefix_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_optional_empty_prefix COMMAND gti_cpp_mir_optional_empty_prefix_tests)
-add_executable(gti_cpp_mir_aggregate_projection_tests cpp_mir_aggregate_projection_tests.cpp)
-target_link_libraries(gti_cpp_mir_aggregate_projection_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_aggregate_projection COMMAND gti_cpp_mir_aggregate_projection_tests)
-add_executable(gti_cpp_mir_expected_constructor_field_tests cpp_mir_expected_constructor_field_tests.cpp)
-target_link_libraries(gti_cpp_mir_expected_constructor_field_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_expected_constructor_field COMMAND gti_cpp_mir_expected_constructor_field_tests)
-add_executable(gti_cpp_mir_native_identity_tests cpp_mir_native_identity_tests.cpp)
-target_link_libraries(gti_cpp_mir_native_identity_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_native_identity COMMAND gti_cpp_mir_native_identity_tests)
-add_executable(gti_cpp_mir_raw_pointer_tests cpp_mir_raw_pointer_tests.cpp)
-target_link_libraries(gti_cpp_mir_raw_pointer_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_raw_pointer COMMAND gti_cpp_mir_raw_pointer_tests)
-add_executable(gti_cpp_mir_function_item_tests cpp_mir_function_item_tests.cpp)
-target_link_libraries(gti_cpp_mir_function_item_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_function_item COMMAND gti_cpp_mir_function_item_tests)
-add_executable(gti_cpp_mir_mutex_tests cpp_mir_mutex_tests.cpp)
-target_link_libraries(gti_cpp_mir_mutex_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_mutex COMMAND gti_cpp_mir_mutex_tests)
-add_executable(gti_cpp_mir_sum_type_tests cpp_mir_sum_type_tests.cpp)
-target_link_libraries(gti_cpp_mir_sum_type_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_sum_type COMMAND gti_cpp_mir_sum_type_tests)
-add_executable(gti_cpp_mir_polymorphic_storage_tests cpp_mir_polymorphic_storage_tests.cpp)
-target_link_libraries(gti_cpp_mir_polymorphic_storage_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_polymorphic_storage COMMAND gti_cpp_mir_polymorphic_storage_tests)
-add_executable(gti_cpp_mir_consuming_receiver_tests cpp_mir_consuming_receiver_tests.cpp)
-target_link_libraries(gti_cpp_mir_consuming_receiver_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_consuming_receiver COMMAND gti_cpp_mir_consuming_receiver_tests)
-add_executable(gti_cpp_mir_managed_thread_tests cpp_mir_managed_thread_tests.cpp)
-target_link_libraries(gti_cpp_mir_managed_thread_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_managed_thread COMMAND gti_cpp_mir_managed_thread_tests)
-add_executable(gti_cpp_mir_passive_fixed_array_tests cpp_mir_passive_fixed_array_tests.cpp)
-target_link_libraries(gti_cpp_mir_passive_fixed_array_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_passive_fixed_array COMMAND gti_cpp_mir_passive_fixed_array_tests)
-add_executable(gti_cpp_mir_call_result_publication_tests cpp_mir_call_result_publication_tests.cpp)
-target_link_libraries(gti_cpp_mir_call_result_publication_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_call_result_publication COMMAND gti_cpp_mir_call_result_publication_tests)
-add_executable(gti_cpp_mir_expected_passive_publication_tests cpp_mir_expected_passive_publication_tests.cpp)
-target_link_libraries(gti_cpp_mir_expected_passive_publication_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_expected_passive_publication COMMAND gti_cpp_mir_expected_passive_publication_tests)
-add_executable(gti_cpp_mir_restoring_exchange_tests cpp_mir_restoring_exchange_tests.cpp)
-target_link_libraries(gti_cpp_mir_restoring_exchange_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_restoring_exchange COMMAND gti_cpp_mir_restoring_exchange_tests)
-add_executable(gti_cpp_mir_operator_relay_tests cpp_mir_operator_relay_tests.cpp)
-target_link_libraries(gti_cpp_mir_operator_relay_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_operator_relay COMMAND gti_cpp_mir_operator_relay_tests)
-add_executable(gti_cpp_mir_prvalue_direct_initialization_tests cpp_mir_prvalue_direct_initialization_tests.cpp)
-target_link_libraries(gti_cpp_mir_prvalue_direct_initialization_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_prvalue_direct_initialization COMMAND gti_cpp_mir_prvalue_direct_initialization_tests)
-add_executable(gti_cpp_mir_collection_initialization_tests cpp_mir_collection_initialization_tests.cpp)
-target_link_libraries(gti_cpp_mir_collection_initialization_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_collection_initialization COMMAND gti_cpp_mir_collection_initialization_tests)
-add_executable(gti_cpp_mir_optional_compiler_tests cpp_mir_optional_compiler_tests.cpp)
-target_link_libraries(gti_cpp_mir_optional_compiler_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_optional_compiler COMMAND gti_cpp_mir_optional_compiler_tests)
-add_executable(gti_cpp_mir_unsafe_function_tests cpp_mir_unsafe_function_tests.cpp)
-target_link_libraries(gti_cpp_mir_unsafe_function_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_unsafe_function COMMAND gti_cpp_mir_unsafe_function_tests)
-add_executable(gti_cpp_mir_native_callback_tests cpp_mir_native_callback_tests.cpp)
-target_link_libraries(gti_cpp_mir_native_callback_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_native_callback COMMAND gti_cpp_mir_native_callback_tests)
-add_executable(gti_cpp_mir_native_c_scalar_tests cpp_mir_native_c_scalar_tests.cpp)
-target_link_libraries(gti_cpp_mir_native_c_scalar_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_native_c_scalar COMMAND gti_cpp_mir_native_c_scalar_tests)
-add_executable(gti_cpp_mir_layout_query_tests cpp_mir_layout_query_tests.cpp)
-target_link_libraries(gti_cpp_mir_layout_query_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_layout_query COMMAND gti_cpp_mir_layout_query_tests)
-add_executable(gti_cpp_mir_atomic_tests cpp_mir_atomic_tests.cpp)
-target_link_libraries(gti_cpp_mir_atomic_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_atomic COMMAND gti_cpp_mir_atomic_tests)
-add_executable(gti_cpp_mir_cthread_tests cpp_mir_cthread_tests.cpp)
-target_link_libraries(gti_cpp_mir_cthread_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_cthread COMMAND gti_cpp_mir_cthread_tests)
-add_executable(gti_cpp_mir_object_lifetime_tests cpp_mir_object_lifetime_tests.cpp)
-target_link_libraries(gti_cpp_mir_object_lifetime_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_object_lifetime COMMAND gti_cpp_mir_object_lifetime_tests)
-add_executable(gti_cpp_mir_storage_adoption_tests cpp_mir_storage_adoption_tests.cpp)
-target_link_libraries(gti_cpp_mir_storage_adoption_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_storage_adoption COMMAND gti_cpp_mir_storage_adoption_tests)
-add_executable(gti_cpp_mir_nested_guarded_expected_tests cpp_mir_nested_guarded_expected_tests.cpp)
-target_link_libraries(gti_cpp_mir_nested_guarded_expected_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_nested_guarded_expected COMMAND gti_cpp_mir_nested_guarded_expected_tests)
-add_executable(gti_cpp_mir_expected_payload_pending_cleanup_tests cpp_mir_expected_payload_pending_cleanup_tests.cpp)
-target_link_libraries(gti_cpp_mir_expected_payload_pending_cleanup_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_expected_payload_pending_cleanup COMMAND gti_cpp_mir_expected_payload_pending_cleanup_tests)
-add_executable(gti_cpp_mir_class_field_value_tests cpp_mir_class_field_value_tests.cpp)
-target_link_libraries(gti_cpp_mir_class_field_value_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_class_field_value COMMAND gti_cpp_mir_class_field_value_tests)
-add_executable(gti_cpp_mir_owned_expected_error_tests cpp_mir_owned_expected_error_tests.cpp)
-target_link_libraries(gti_cpp_mir_owned_expected_error_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_owned_expected_error COMMAND gti_cpp_mir_owned_expected_error_tests)
-add_executable(gti_cpp_mir_prefix_constructor_tests cpp_mir_prefix_constructor_tests.cpp)
-target_link_libraries(gti_cpp_mir_prefix_constructor_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_prefix_constructor COMMAND gti_cpp_mir_prefix_constructor_tests)
-add_executable(gti_cpp_mir_consuming_owned_pointee_tests cpp_mir_consuming_owned_pointee_tests.cpp)
-target_link_libraries(gti_cpp_mir_consuming_owned_pointee_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_consuming_owned_pointee COMMAND gti_cpp_mir_consuming_owned_pointee_tests)
-add_executable(gti_cpp_mir_cleanup_bound_backend_mutation_tests cpp_mir_cleanup_bound_backend_mutation_tests.cpp)
-target_link_libraries(gti_cpp_mir_cleanup_bound_backend_mutation_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_cleanup_bound_backend_mutation COMMAND gti_cpp_mir_cleanup_bound_backend_mutation_tests)
-add_executable(gti_cpp_mir_constructor_pack_field_tests cpp_mir_constructor_pack_field_tests.cpp)
-target_link_libraries(gti_cpp_mir_constructor_pack_field_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_constructor_pack_field COMMAND gti_cpp_mir_constructor_pack_field_tests)
-add_executable(gti_cpp_mir_integral_enum_tests cpp_mir_integral_enum_tests.cpp)
-target_link_libraries(gti_cpp_mir_integral_enum_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_integral_enum COMMAND gti_cpp_mir_integral_enum_tests)
-add_executable(gti_cpp_mir_abstract_generic_failure_contract_tests cpp_mir_abstract_generic_failure_contract_tests.cpp)
-target_link_libraries(gti_cpp_mir_abstract_generic_failure_contract_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_abstract_generic_failure_contract COMMAND gti_cpp_mir_abstract_generic_failure_contract_tests)
-add_executable(gti_cpp_mir_enum_selector_tests cpp_mir_enum_selector_tests.cpp)
-target_link_libraries(gti_cpp_mir_enum_selector_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_enum_selector COMMAND gti_cpp_mir_enum_selector_tests)
-add_executable(gti_cpp_mir_field_array_empty_state_tests cpp_mir_field_array_empty_state_tests.cpp)
-target_link_libraries(gti_cpp_mir_field_array_empty_state_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_field_array_empty_state COMMAND gti_cpp_mir_field_array_empty_state_tests)
-add_executable(gti_cpp_mir_expected_payload_pair_emitter_tests cpp_mir_expected_payload_pair_emitter_tests.cpp)
-target_link_libraries(gti_cpp_mir_expected_payload_pair_emitter_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_expected_payload_pair_emitter COMMAND gti_cpp_mir_expected_payload_pair_emitter_tests)
-add_executable(gti_cpp_mir_enum_replacement_tests cpp_mir_enum_replacement_tests.cpp)
-target_link_libraries(gti_cpp_mir_enum_replacement_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_enum_replacement COMMAND gti_cpp_mir_enum_replacement_tests)
-add_executable(gti_cpp_mir_callable_return_type_tests cpp_mir_callable_return_type_tests.cpp)
-target_link_libraries(gti_cpp_mir_callable_return_type_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_callable_return_type COMMAND gti_cpp_mir_callable_return_type_tests)
-add_executable(gti_cpp_mir_borrowing_composition_tests cpp_mir_borrowing_composition_tests.cpp)
-target_link_libraries(gti_cpp_mir_borrowing_composition_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_borrowing_composition COMMAND gti_cpp_mir_borrowing_composition_tests)
-add_executable(gti_cpp_mir_binary64_tests cpp_mir_binary64_tests.cpp)
-target_link_libraries(gti_cpp_mir_binary64_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_binary64 COMMAND gti_cpp_mir_binary64_tests)
-add_executable(gti_cpp_mir_local_reference_inference_tests cpp_mir_local_reference_inference_tests.cpp)
-target_link_libraries(gti_cpp_mir_local_reference_inference_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_local_reference_inference COMMAND gti_cpp_mir_local_reference_inference_tests)
-add_executable(gti_cpp_mir_borrowed_expected_extraction_tests cpp_mir_borrowed_expected_extraction_tests.cpp)
-target_link_libraries(gti_cpp_mir_borrowed_expected_extraction_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_borrowed_expected_extraction COMMAND gti_cpp_mir_borrowed_expected_extraction_tests)
-add_executable(gti_cpp_mir_defined_integer_tests cpp_mir_defined_integer_tests.cpp)
-target_link_libraries(gti_cpp_mir_defined_integer_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_defined_integer COMMAND gti_cpp_mir_defined_integer_tests)
-add_executable(gti_cpp_mir_expected_ergonomics_tests cpp_mir_expected_ergonomics_tests.cpp)
-target_link_libraries(gti_cpp_mir_expected_ergonomics_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_expected_ergonomics COMMAND gti_cpp_mir_expected_ergonomics_tests)
-add_executable(gti_cpp_mir_driver_tests cpp_mir_driver_tests.cpp)
-target_link_libraries(gti_cpp_mir_driver_tests PRIVATE gti_driver)
-target_compile_definitions(gti_cpp_mir_driver_tests PRIVATE
-  GTI_LLVM_CACHE_FIXTURE="${PROJECT_SOURCE_DIR}/tests/fixtures/llvm_cache")
-add_test(NAME cpp_mir_driver COMMAND gti_cpp_mir_driver_tests)
-set_tests_properties(cpp_mir_driver PROPERTIES TIMEOUT 300)
-add_executable(gti_cpp_mir_operator_place_composition_tests cpp_mir_operator_place_composition_tests.cpp)
-target_link_libraries(gti_cpp_mir_operator_place_composition_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_operator_place_composition COMMAND gti_cpp_mir_operator_place_composition_tests)
-add_executable(gti_cpp_mir_owning_function_tests cpp_mir_owning_function_tests.cpp)
-target_link_libraries(gti_cpp_mir_owning_function_tests PRIVATE gti_cpp_backend gti_llvm_backend)
-add_test(NAME cpp_mir_owning_function COMMAND gti_cpp_mir_owning_function_tests)
-add_executable(gti_cpp_mir_private_constructor_placement_tests cpp_mir_private_constructor_placement_tests.cpp)
-target_link_libraries(gti_cpp_mir_private_constructor_placement_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_private_constructor_placement COMMAND gti_cpp_mir_private_constructor_placement_tests)
-add_executable(gti_cpp_mir_runtime_object_layout_tests cpp_mir_runtime_object_layout_tests.cpp)
-target_link_libraries(gti_cpp_mir_runtime_object_layout_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_runtime_object_layout COMMAND gti_cpp_mir_runtime_object_layout_tests)
-add_executable(gti_cpp_mir_source_prefix_owner_tests cpp_mir_source_prefix_owner_tests.cpp)
-target_link_libraries(gti_cpp_mir_source_prefix_owner_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_source_prefix_owner COMMAND gti_cpp_mir_source_prefix_owner_tests)
-# Emission driver for tests/source_sparse_storage_runtime_test.py
-# (cpp_mir_source_sparse_storage); not a test by itself.
-add_executable(gti_cpp_mir_source_sparse_storage_emitter cpp_mir_source_sparse_storage_emitter.cpp)
-target_link_libraries(gti_cpp_mir_source_sparse_storage_emitter PRIVATE gti_cpp_backend)
-add_executable(gti_cpp_mir_structural_relocation_tests cpp_mir_structural_relocation_tests.cpp)
-target_link_libraries(gti_cpp_mir_structural_relocation_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_structural_relocation COMMAND gti_cpp_mir_structural_relocation_tests)
-add_executable(gti_cpp_mir_uninitialized_carrier_tests cpp_mir_uninitialized_carrier_tests.cpp)
-target_link_libraries(gti_cpp_mir_uninitialized_carrier_tests PRIVATE gti_cpp_backend)
-add_test(NAME cpp_mir_uninitialized_carrier COMMAND gti_cpp_mir_uninitialized_carrier_tests)
 
 include("${PROJECT_SOURCE_DIR}/tests/gti_test.cmake")
 include("${PROJECT_SOURCE_DIR}/tests/TestThroughput.cmake")

@@ -41,8 +41,7 @@ set(gti_long_gate_timeouts
   body_analysis_order 1800
   compiler_pipeline 1800
   reflection_semantics 1800
-  view_fields 900
-  cpp_mir_body_emitter_lifecycle 900)
+  view_fields 900)
 list(LENGTH gti_long_gate_timeouts gti_long_timeout_count)
 math(EXPR gti_long_timeout_last "${gti_long_timeout_count} - 1")
 foreach(index RANGE 0 ${gti_long_timeout_last} 2)
@@ -71,25 +70,11 @@ foreach(suite IN LISTS gti_bounded_tests)
   set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
     "GTI_TEST_TIMEOUT_SCALE=${GTI_TEST_TIMEOUT_SCALE}")
 endforeach()
-# Which backends the runtime harnesses exercise (tests/backend_modes.py).
-# The shipped backend is the default; the deprecated C++ backend runs only
-# in the hand-dispatched C++ job. A developer may override GTI_TEST_BACKENDS in
-# the environment of a direct harness run; under CTest the ENVIRONMENT
-# property below overrides the caller's environment, so a tree selects its
-# policy at configure time (`cmake -DGTI_TEST_BACKENDS=cpp <build>`).
-set(GTI_TEST_BACKENDS "llvm" CACHE STRING
-  "Backends the runtime harnesses exercise: llvm, cpp or both")
-if(NOT GTI_TEST_BACKENDS MATCHES "^(llvm|cpp|both)$")
-  message(FATAL_ERROR "GTI_TEST_BACKENDS must be llvm, cpp or both")
-endif()
-if(NOT GTI_TEST_BACKENDS STREQUAL "llvm" AND NOT GTI_ENABLE_CPP_BACKEND)
-  message(FATAL_ERROR
-          "GTI_TEST_BACKENDS=${GTI_TEST_BACKENDS} needs -DGTI_ENABLE_CPP_BACKEND=ON")
-endif()
-foreach(suite IN LISTS gti_bounded_tests)
-  set_property(TEST "${suite}" APPEND PROPERTY ENVIRONMENT
-    "GTI_TEST_BACKENDS=${GTI_TEST_BACKENDS}")
-endforeach()
+# Runtime harnesses run on LLVM only (tests/backend_modes.py); the frozen C++
+# backend's tests were removed. Their optimisation levels come from the
+# caller's GTI_TEST_LLVM_LEVELS (default O0), which the daily slow tier sets
+# through scripts/validation_checks.py; CTest passes it through, so no test
+# pins it here.
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
@@ -266,7 +251,6 @@ if(Python3_Interpreter_FOUND)
   # order; no case, assertion or timeout changes.
   set(gti_long_gate_costs
     failure_metadata 520
-    cpp_mir_body_emitter_corpus 500
     allocator_raw_audit_independence 290
     operator_relay_pipeline 285
     filesystem_operations_runtime 220
@@ -339,28 +323,47 @@ foreach(suite IN LISTS gti_throughput_tests)
   if(suite MATCHES "(runtime|end_to_end|corpus|oracle|workflow|^stdlib_surface$)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "end-to-end")
   endif()
-  # The frozen C++ backend's own tests (scripts/validation_checks.py
-  # CPP_ONLY_PREFIXES, which test_throughput_registration keeps in step) run
-  # only in a build with GTI_ENABLE_CPP_BACKEND, which only the hand-dispatched
-  # C++ job configures; elsewhere they are disabled.
-  if(suite MATCHES "^(cpp_mir_|cpp_debug_artifacts|lowered_program_corpus_census)")
-    set_property(TEST "${suite}" APPEND PROPERTY LABELS "cpp-backend")
-    if(NOT GTI_ENABLE_CPP_BACKEND)
-      set_property(TEST "${suite}" PROPERTY DISABLED TRUE)
-    endif()
-  endif()
 endforeach()
 
-# Without the frozen C++ backend, the targets that link it are left out of
-# the default build, so a configured tree builds and its C++-only entries above
-# are reported as disabled rather than as missing executables. Only C++-only
-# entries may use such a target.
-if(NOT GTI_ENABLE_CPP_BACKEND)
-  get_property(gti_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-  foreach(test_target IN LISTS gti_test_targets)
-    get_target_property(test_target_links "${test_target}" LINK_LIBRARIES)
-    if(test_target_links AND "gti_cpp_backend" IN_LIST test_target_links)
-      set_target_properties("${test_target}" PROPERTIES EXCLUDE_FROM_ALL TRUE)
+# The daily slow tier: tests too slow, load-sensitive or corpus-wide for every
+# commit. Each pattern below labels its matches `slow`; per-commit full
+# validation excludes the label and .github/workflows/slow.yml runs it daily
+# on the nightly commit, whose verdict the release train requires before a
+# beta cut or stable promotion (docs/plans/test-suite-redesign.md, phase 0).
+# Labels change only the tier; no case, assertion or timeout changes. A
+# pattern that matches no registered test is an error, so the list cannot rot.
+set(gti_slow_test_patterns
+  # Whole-corpus walks over examples/ and the census baselines.
+  "^body_analysis_order(_[0-9]+)?$"
+  "^instance_reuse(_[0-9]+)?$"
+  "^trusted_body_analysis(_[0-9]+)?$"
+  "^mir_census_regression$"
+  "^mir_cutover_corpus_oracle$"
+  "^language_coverage_corpus$"
+  "^lowered_program_corpus_census$"
+  # Raw-pointer-audit independence, including the >20-minute std import.
+  "^allocator_raw_audit_independence(_.+)?$"
+  # Whole-program MIR mutation loops.
+  "^failure_metadata$"
+  "^operator_relay_pipeline$"
+  "^view_fields$"
+  "^optimizer_prefix_relocation$"
+  # LLVM execution matrices over 100 seconds; the cheaper ones stay per commit
+  # as each family's LLVM execution smoke.
+  "^llvm_(atomic|callable|class|dispatch|hosted|memory|native_c_aggregate|payload|place|placement|scalar|thread)_execution$"
+  # The LLVM execution-evidence audit over the whole registered inventory.
+  "^llvm_coverage_evidence$"
+  # A CPU-ratio measurement that fails under runner load.
+  "^single_body_compile_scaling$")
+foreach(pattern IN LISTS gti_slow_test_patterns)
+  set(gti_slow_matched FALSE)
+  foreach(suite IN LISTS gti_throughput_tests)
+    if(suite MATCHES "${pattern}")
+      set_property(TEST "${suite}" APPEND PROPERTY LABELS "slow")
+      set(gti_slow_matched TRUE)
     endif()
   endforeach()
-endif()
+  if(NOT gti_slow_matched)
+    message(FATAL_ERROR "Slow-tier pattern matches no registered test: ${pattern}")
+  endif()
+endforeach()

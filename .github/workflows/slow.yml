@@ -1,0 +1,211 @@
+name: Slow tier
+
+# The daily slow tier, run once a day on the commit the `nightly` tag names,
+# beside the sanitizers (sanitizers.yml). Per-commit full validation
+# (full-validation.yml) runs runtime harnesses at -O0 only and leaves out the
+# tests labelled `slow` in tests/TestThroughput.cmake: whole-corpus walks,
+# raw-pointer-audit independence, the MIR mutation loops, the large LLVM
+# execution matrices and load-sensitive measurements. This workflow runs
+# that slow set at -O0 and -O3 and re-runs every per-commit level-sensitive
+# harness at -O3 (scripts/validation_checks.py test sets `slow` and `o3`,
+# and their `darwin-` counterparts on macOS). It never gates main, `tip` or
+# `nightly`. The release train (scripts/release_train.py) cuts and promotes
+# only a commit with a passing `Slow tier verdict` here and a passing
+# sanitizer verdict, so beta and stable wait for it. A failure on the
+# nightly commit opens (or updates) a `main-broken` issue. A dispatch may
+# name another commit on main or a beta/* line; a scheduled run skips a
+# nightly commit that has already passed. See
+# docs/plans/test-suite-redesign.md and docs/architecture/verification.md.
+on:
+  schedule:
+    - cron: "15 3 * * *"
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full commit SHA on main or a beta/* line to run the slow tier on (default - the commit the nightly tag names)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# A slow-tier run is never cancelled by a later one: its verdict is release
+# evidence for the commit it names.
+concurrency:
+  group: gti-slow-tier
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Slow tier source
+    if: github.repository == 'lang-gti-official/gti'
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      selected: ${{ steps.source.outputs.sanitize }}
+      nightly: ${{ steps.source.outputs.nightly }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the commit to test
+        id: source
+        env:
+          GTI_GITHUB_TOKEN: ${{ github.token }}
+          GTI_REPOSITORY: ${{ github.repository }}
+          GTI_EVENT_NAME: ${{ github.event_name }}
+          GTI_REF: ${{ github.ref }}
+          GTI_REQUESTED_COMMIT: ${{ inputs.commit }}
+        run: >-
+          python3 scripts/release_train.py sanitizer-source --tier slow --repository "${GTI_REPOSITORY}"
+          --event "${GTI_EVENT_NAME}" --ref "${GTI_REF}" --commit "${GTI_REQUESTED_COMMIT}"
+          --output "${GITHUB_OUTPUT}"
+
+  shards:
+    name: Slow tier (${{ matrix.platform }} ${{ matrix.set }} ${{ matrix.index }}/${{ matrix.shards }})
+    needs: [source]
+    if: needs.source.outputs.selected == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, platform: linux, set: slow, shards: 4, index: 0}
+          - {os: ubuntu-24.04, platform: linux, set: slow, shards: 4, index: 1}
+          - {os: ubuntu-24.04, platform: linux, set: slow, shards: 4, index: 2}
+          - {os: ubuntu-24.04, platform: linux, set: slow, shards: 4, index: 3}
+          - {os: ubuntu-24.04, platform: linux, set: o3, shards: 2, index: 0}
+          - {os: ubuntu-24.04, platform: linux, set: o3, shards: 2, index: 1}
+          # macOS repeats only the platform-specific (`darwin`) part of each set.
+          - {os: macos-26, platform: darwin, set: darwin-slow, shards: 1, index: 0}
+          - {os: macos-26, platform: darwin, set: darwin-o3, shards: 1, index: 0}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Configure runner resources
+        shell: bash
+        env:
+          GTI_CONFIGURED_JOBS: ${{ vars.GTI_JOBS }}
+          GTI_CONFIGURED_TEST_JOBS: ${{ vars.GTI_TEST_JOBS }}
+          GTI_MEMORY_PER_JOB_MIB: 3072
+          GTI_MEMORY_PER_TEST_MIB: 3072
+        run: bash scripts/configure_ci_resources.sh
+      - name: Install the reviewed compiler, Ninja and LLVM
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure compiler object cache
+        env:
+          GTI_CACHE_DIRECTORY: ${{ runner.temp }}/gti-ccache/release
+        run: bash scripts/configure_ci_cache.sh
+      - name: Restore the prebuilt LLVM/Clang and release object cache
+        continue-on-error: true
+        timeout-minutes: 10
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'scripts/configure_ci_toolchain.sh') }}
+          restore-keys: |
+            gti-ccache-v2-release-${{ runner.os }}-${{ runner.arch }}-
+      - name: Configure release build
+        # The same bundled-release configuration full validation tests.
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DGTI_RELEASE_BUILD=ON
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_TIMEOUT_SCALE=3
+      - name: Run this shard of the slow tier
+        # The shard runner sets GTI_TEST_LLVM_LEVELS for its test set:
+        # O0,O3 for the slow sets and O3 for the re-run sets.
+        env:
+          GTI_SHARDS: ${{ matrix.shards }}
+          GTI_SHARD_INDEX: ${{ matrix.index }}
+          GTI_SHARD_PLATFORM: ${{ matrix.platform }}
+          GTI_SHARD_TEST_SET: ${{ matrix.set }}
+        run: >-
+          python3 scripts/validation_checks.py shard --build build
+          --test-set "${GTI_SHARD_TEST_SET}"
+          --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
+          --jobs "${GTI_TEST_JOBS}"
+          --report "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.json"
+          --log "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.log"
+      - name: Show the shard log on failure
+        if: failure()
+        env:
+          GTI_SHARD_INDEX: ${{ matrix.index }}
+          GTI_SHARD_PLATFORM: ${{ matrix.platform }}
+          GTI_SHARD_TEST_SET: ${{ matrix.set }}
+        run: tail -n 400 "${RUNNER_TEMP}/shard/${GTI_SHARD_PLATFORM}-${GTI_SHARD_TEST_SET}-${GTI_SHARD_INDEX}.log" || true
+      - name: Upload shard evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slow-shard-${{ matrix.platform }}-${{ matrix.set }}-${{ matrix.index }}
+          path: |
+            ${{ runner.temp }}/shard/*.json
+            ${{ runner.temp }}/shard/*.xml
+          retention-days: 30
+          if-no-files-found: ignore
+
+  verdict:
+    # Its name carries the tested commit: a scheduled or dispatched run's own
+    # head_sha is main's tip when it started, not the commit it checked out,
+    # so the release train identifies the evidence by this job's name.
+    name: Slow tier verdict (${{ needs.source.outputs.sha }})
+    if: always() && needs.source.outputs.selected == 'true'
+    needs: [source, shards]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Require every slow-tier shard to pass
+        env:
+          GTI_RESULTS: ${{ toJSON(needs) }}
+        run: python3 scripts/release_train.py require-success --results "${GTI_RESULTS}"
+      - name: Collect shard evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: slow-shard-*
+          path: ${{ runner.temp }}/shards
+      - name: Prove every test set ran its whole inventory once on the tested commit
+        env:
+          GTI_SHA: ${{ needs.source.outputs.sha }}
+        run: >-
+          python3 scripts/validation_checks.py merge-shards
+          --shard-reports "${RUNNER_TEMP}/shards"
+          --platforms linux:slow,linux:o3,darwin:darwin-slow,darwin:darwin-o3
+          --head "${GTI_SHA}"
+
+  report:
+    # The same broken-main reporting the sanitizers use, with its own title.
+    # A cancelled run, or a dispatch for a beta-line commit, reports nothing.
+    name: Report slow tier status
+    if: always() && needs.source.outputs.nightly == 'true' && needs.verdict.result != 'cancelled' && needs.verdict.result != 'skipped'
+    needs: [source, verdict]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Open, update or close the slow-tier main-broken issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GTI_SHA: ${{ needs.source.outputs.sha }}
+          GTI_STATUS: ${{ needs.verdict.result == 'success' && 'passed' || 'failed' }}
+        run: >-
+          python3 scripts/full_validation_report.py --run-url "${GTI_RUN_URL}"
+          --sha "${GTI_SHA}" --status "${GTI_STATUS}" --label main-broken
+          --title "Slow tier on the nightly commit is failing"
