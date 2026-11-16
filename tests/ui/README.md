@@ -19,6 +19,12 @@ int main() {
 - Run tests: `//@ stdout: line` (repeat per line; or a sibling `name.stdout`),
   `//@ exit-code: N`, `//@ stderr-contains: text`, `//@ args: a b`,
   `//@ stdin: line`. Stdout is always compared; absent means empty.
+- Several runs of one program: `//@ revisions: a b`, then `//@[a] args: x`
+  and the like. The program is built once and run once per revision. Only
+  `run-pass`, `run-fail`, `stdout`, `stderr-contains`, `exit-code`, `args`
+  and `stdin` take a revision; a revision's directive replaces the shared
+  (unprefixed) one of that name. A revision's expected-output file is
+  `name.<revision>.stdout`.
 - `//@ opt: O3` and `//@ only: linux|macos|arm64|x86_64` need `//@ reason: …`.
 - `//@ format-stable` (check-pass without annotations): formatting the test is
   a fixed point and the formatted program also checks.

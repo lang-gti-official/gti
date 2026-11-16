@@ -266,9 +266,52 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     return false;
   };
 
-  // Directives.
+  // Directives. Run inputs and expectations are parsed into a RunSpec: the
+  // shared one, or a revision's overrides (`//@[name] directive`).
   std::vector<std::string> modes;
   std::string imports;
+  RunSpec shared;
+  struct Override {
+    RunSpec spec;
+    std::set<std::string> given; // directive names the revision sets
+    std::optional<Mode> mode;
+    int line = 0;
+  };
+  std::map<std::string, Override> overrides;
+  bool revisionsDeclared = false;
+  const auto runDirective = [&](RunSpec &target, const std::string &name,
+                                const std::string &value,
+                                const std::string &trimmed, int lineNumber) {
+    if (name == "stdout") {
+      target.hasInlineStdout = true;
+      // Exactly one separating space is dropped; the rest is literal.
+      target.stdoutLines.push_back(
+          !value.empty() && value.front() == ' ' ? value.substr(1) : value);
+    } else if (name == "stderr-contains") {
+      if (trimmed.empty())
+        error(lineNumber, "stderr-contains needs text");
+      target.stderrContains.push_back(trimmed);
+    } else if (name == "exit-code") {
+      char *end = nullptr;
+      const long code = std::strtol(trimmed.c_str(), &end, 10);
+      if (trimmed.empty() || *end != '\0' || code < 0 || code > 255)
+        error(lineNumber, "exit-code must be an integer from 0 to 255");
+      else if (target.exitCode)
+        error(lineNumber, "duplicate exit-code");
+      else
+        target.exitCode = static_cast<int>(code);
+    } else if (name == "args") {
+      for (std::string &word : splitWords(trimmed))
+        target.args.push_back(std::move(word));
+    } else if (name == "stdin") {
+      std::string line =
+          !value.empty() && value.front() == ' ' ? value.substr(1) : value;
+      target.stdinText = target.stdinText.value_or("") + line + "\n";
+    } else {
+      return false;
+    }
+    return true;
+  };
   for (std::size_t index = 0; index < lines.size(); ++index) {
     const int lineNumber = static_cast<int>(index) + 1;
     const std::string text = trim(lines[index]);
@@ -277,6 +320,18 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     if (text.rfind("//@", 0) != 0)
       continue;
     std::string body = text.substr(3);
+    std::string revision;
+    bool revisionPrefixed = false;
+    if (!body.empty() && body.front() == '[') {
+      const std::size_t close = body.find(']');
+      if (close == std::string::npos) {
+        error(lineNumber, "revision directives are written `//@[name] ...`");
+        continue;
+      }
+      revision = body.substr(1, close - 1);
+      revisionPrefixed = true;
+      body = body.substr(close + 1);
+    }
     if (body.empty() || body.front() != ' ') {
       error(lineNumber,
             "directives are written `//@ name` or `//@ name: value`");
@@ -293,37 +348,51 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     }
     name = trim(name);
     const std::string trimmed = trim(value);
+    if (revisionPrefixed) {
+      Override &entry = overrides[revision];
+      if (entry.line == 0)
+        entry.line = lineNumber;
+      if (name == "run-pass" || name == "run-fail") {
+        if (hasValue)
+          error(lineNumber, "'" + name + "' takes no value");
+        if (entry.mode)
+          error(lineNumber,
+                "more than one mode for revision '" + revision + "'");
+        entry.mode = name == "run-pass" ? Mode::RunPass : Mode::RunFail;
+      } else if (runDirective(entry.spec, name, value, trimmed, lineNumber)) {
+        entry.given.insert(name);
+      } else {
+        error(lineNumber, "only run-pass, run-fail, stdout, stderr-contains, "
+                          "exit-code, args and stdin vary by revision");
+      }
+      continue;
+    }
     if (name == "check-pass" || name == "check-fail" || name == "build-pass" ||
         name == "run-pass" || name == "run-fail" || name == "parse-pass" ||
         name == "parse-fail") {
       if (hasValue)
         error(lineNumber, "'" + name + "' takes no value");
       modes.push_back(name);
-    } else if (name == "stdout") {
-      test.hasInlineStdout = true;
-      // Exactly one separating space is dropped; the rest is literal.
-      test.stdoutLines.push_back(
-          !value.empty() && value.front() == ' ' ? value.substr(1) : value);
-    } else if (name == "stderr-contains") {
-      if (trimmed.empty())
-        error(lineNumber, "stderr-contains needs text");
-      test.stderrContains.push_back(trimmed);
-    } else if (name == "exit-code") {
-      char *end = nullptr;
-      const long code = std::strtol(trimmed.c_str(), &end, 10);
-      if (trimmed.empty() || *end != '\0' || code < 0 || code > 255)
-        error(lineNumber, "exit-code must be an integer from 0 to 255");
-      else if (test.exitCode)
-        error(lineNumber, "duplicate exit-code");
-      else
-        test.exitCode = static_cast<int>(code);
-    } else if (name == "args") {
-      for (std::string &word : splitWords(trimmed))
-        test.args.push_back(std::move(word));
-    } else if (name == "stdin") {
-      std::string line =
-          !value.empty() && value.front() == ' ' ? value.substr(1) : value;
-      test.stdinText = test.stdinText.value_or("") + line + "\n";
+    } else if (runDirective(shared, name, value, trimmed, lineNumber)) {
+    } else if (name == "revisions") {
+      if (revisionsDeclared)
+        error(lineNumber, "duplicate revisions");
+      revisionsDeclared = true;
+      std::set<std::string> seen;
+      for (std::string &word : splitWords(trimmed)) {
+        const bool valid = std::all_of(word.begin(), word.end(), [](char c) {
+          return std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                 c == '-';
+        });
+        if (!valid)
+          error(lineNumber, "revision names use letters, digits, '_' and '-'");
+        else if (!seen.insert(word).second)
+          error(lineNumber, "duplicate revision '" + word + "'");
+        else
+          test.revisions.push_back(std::move(word));
+      }
+      if (test.revisions.size() < 2)
+        error(lineNumber, "revisions needs at least two names");
     } else if (name == "opt") {
       if (trimmed == "O3")
         test.optimize = true;
@@ -385,6 +454,17 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       error(lineNumber, "unknown directive '" + name + "'");
     }
   }
+  for (const auto &[revision, entry] : overrides)
+    if (std::find(test.revisions.begin(), test.revisions.end(), revision) ==
+        test.revisions.end())
+      error(entry.line,
+            "revision '" + revision + "' is not declared by `//@ revisions:`");
+  test.stdoutLines = shared.stdoutLines;
+  test.hasInlineStdout = shared.hasInlineStdout;
+  test.stderrContains = shared.stderrContains;
+  test.exitCode = shared.exitCode;
+  test.args = shared.args;
+  test.stdinText = shared.stdinText;
 
   // FileCheck-style patterns.
   for (std::size_t index = 0; index < lines.size(); ++index) {
@@ -531,10 +611,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
        !test.args.empty() || test.stdinText))
     error(0, "stdout/stderr-contains/exit-code/args/stdin need run-pass or "
              "run-fail");
-  if (test.mode == Mode::RunPass && test.exitCode && *test.exitCode != 0)
-    error(0, "run-pass expects exit code 0; use run-fail");
-  if (test.mode == Mode::RunFail && test.exitCode && *test.exitCode == 0)
-    error(0, "run-fail cannot expect exit code 0");
+  if (!test.revisions.empty() && !modeRuns(test.mode))
+    error(0, "revisions need run-pass or run-fail");
   if ((test.optimize || !test.only.empty()) && test.reason.empty())
     error(0, "`opt: O3` and `only:` need a `//@ reason:` line");
   if (test.formatStable &&
@@ -543,14 +621,66 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   if (test.slow && !underSlowDirectory(path))
     error(0, "`slow` is only legal under a slow/ directory");
 
-  std::filesystem::path stdoutFile = path;
-  stdoutFile.replace_extension(".stdout");
-  if (std::filesystem::exists(stdoutFile)) {
+  // The executions: one per revision, each the shared directives with the
+  // revision's own replacing any it repeats.
+  const std::filesystem::path sharedStdout = stdoutPathFor(path, "");
+  if (std::filesystem::exists(sharedStdout)) {
     if (!modeRuns(test.mode))
       error(0, "an expected .stdout file needs run-pass or run-fail");
+    else if (!test.revisions.empty())
+      error(0, "a test with revisions keeps expected output in "
+               "name.<revision>.stdout");
     if (test.hasInlineStdout)
       error(0, "stdout is given both inline and in a .stdout file");
-    test.stdoutFile = stdoutFile;
+    test.stdoutFile = sharedStdout;
+  }
+  if (modeRuns(test.mode)) {
+    const std::vector<std::string> names =
+        test.revisions.empty() ? std::vector<std::string>{""} : test.revisions;
+    for (const std::string &revision : names) {
+      RunSpec run = shared;
+      run.revision = revision;
+      run.mode = test.mode;
+      run.stdoutFile = test.stdoutFile;
+      if (const auto found = overrides.find(revision);
+          !revision.empty() && found != overrides.end()) {
+        const Override &entry = found->second;
+        if (entry.mode)
+          run.mode = *entry.mode;
+        if (entry.given.contains("stdout")) {
+          run.stdoutLines = entry.spec.stdoutLines;
+          run.hasInlineStdout = true;
+        }
+        if (entry.given.contains("stderr-contains"))
+          run.stderrContains = entry.spec.stderrContains;
+        if (entry.given.contains("exit-code"))
+          run.exitCode = entry.spec.exitCode;
+        if (entry.given.contains("args"))
+          run.args = entry.spec.args;
+        if (entry.given.contains("stdin"))
+          run.stdinText = entry.spec.stdinText;
+      }
+      const std::string where =
+          revision.empty() ? "" : "revision '" + revision + "': ";
+      if (!revision.empty()) {
+        // A revision's own .stdout file replaces shared inline stdout.
+        const std::filesystem::path file = stdoutPathFor(path, revision);
+        const auto found = overrides.find(revision);
+        if (std::filesystem::exists(file)) {
+          if (found != overrides.end() &&
+              found->second.given.contains("stdout"))
+            error(0, where + "stdout is given both inline and in " +
+                         file.filename().string());
+          run.hasInlineStdout = false;
+          run.stdoutFile = file;
+        }
+      }
+      if (run.mode == Mode::RunPass && run.exitCode && *run.exitCode != 0)
+        error(0, where + "run-pass expects exit code 0; use run-fail");
+      if (run.mode == Mode::RunFail && run.exitCode && *run.exitCode == 0)
+        error(0, where + "run-fail cannot expect exit code 0");
+      test.runs.push_back(std::move(run));
+    }
   }
 
   test.groupKey = std::string(modeParses(test.mode)   ? "parse"
@@ -665,9 +795,21 @@ blessAnnotations(const TestFile &test,
   return result;
 }
 
-std::string blessInlineStdout(const TestFile &test, const std::string &output) {
+std::filesystem::path stdoutPathFor(const std::filesystem::path &test,
+                                    const std::string &revision) {
+  std::filesystem::path result = test;
+  result.replace_extension(revision.empty() ? ".stdout"
+                                            : "." + revision + ".stdout");
+  return result;
+}
+
+std::string blessInlineStdout(const TestFile &test, const std::string &output,
+                              const std::string &revision) {
   const std::optional<std::string> contents = readFile(test.path);
   const std::vector<std::string> lines = splitLines(contents.value_or(""));
+  const std::string prefix =
+      revision.empty() ? std::string("//@") : "//@[" + revision + "]";
+  const std::string marker = prefix + " stdout:";
   std::vector<std::string> replacement;
   std::string remaining = output;
   if (!remaining.empty() && remaining.back() == '\n')
@@ -676,7 +818,7 @@ std::string blessInlineStdout(const TestFile &test, const std::string &output) {
     std::size_t start = 0;
     while (true) {
       const std::size_t end = remaining.find('\n', start);
-      replacement.push_back("//@ stdout: " +
+      replacement.push_back(marker + " " +
                             remaining.substr(start, end == std::string::npos
                                                         ? end
                                                         : end - start));
@@ -686,21 +828,27 @@ std::string blessInlineStdout(const TestFile &test, const std::string &output) {
     }
   }
   // Inline lines replace the first existing `stdout:` directive, or follow
-  // the last header directive.
+  // the last header directive (the revision's own last one, if any).
   std::size_t insertAt = lines.size();
   std::size_t lastDirective = 0;
   bool sawDirective = false;
+  std::size_t lastOwn = 0;
+  bool sawOwn = false;
   for (std::size_t index = 0; index < lines.size(); ++index) {
     const std::string text = trim(lines[index]);
-    if (text.rfind("//@ stdout:", 0) == 0 && insertAt == lines.size())
+    if (text.rfind(marker, 0) == 0 && insertAt == lines.size())
       insertAt = index;
     if (text.rfind("//@", 0) == 0) {
       lastDirective = index;
       sawDirective = true;
     }
+    if (!revision.empty() && text.rfind(prefix + " ", 0) == 0) {
+      lastOwn = index;
+      sawOwn = true;
+    }
   }
   if (insertAt == lines.size())
-    insertAt = sawDirective ? lastDirective + 1 : 1;
+    insertAt = sawOwn ? lastOwn + 1 : sawDirective ? lastDirective + 1 : 1;
   std::string result;
   for (std::size_t index = 0; index <= lines.size(); ++index) {
     if (index == insertAt)
@@ -708,7 +856,7 @@ std::string blessInlineStdout(const TestFile &test, const std::string &output) {
         result += line + "\n";
     if (index == lines.size())
       break;
-    if (trim(lines[index]).rfind("//@ stdout:", 0) == 0)
+    if (trim(lines[index]).rfind(marker, 0) == 0)
       continue;
     result += lines[index] + "\n";
   }

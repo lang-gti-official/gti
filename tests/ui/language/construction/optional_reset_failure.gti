@@ -1,0 +1,42 @@
+// Constructor field placement/replacement preserves success and failure cleanup.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 3
+//@[default] stdout: done
+//@[default] stdout: 9
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 3
+//@[fail] stdout: 9
+//@[fail] stderr-contains: optional_reset_failure.gti:18: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- optional_reset_failure.gti
+import std.optional;
+import std.vector;
+import std.string;
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+
+class Payload {
+  int divisor;
+public:
+  Payload(int divisor) : divisor(divisor) {}
+  ~Payload() {
+    std::println(3);
+    int divisor = this.divisor;
+    int checked = 12 / divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{};
+  mut std::optional<Payload> slot{Payload(2 - argc)};
+  slot.reset();
+  slot.reset();
+  std::println("done");
+  return 0;
+}

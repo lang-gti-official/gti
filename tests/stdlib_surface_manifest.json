@@ -4921,7 +4921,6 @@
         "tests/fixtures/owning_function_policy_failure.gti",
         "tests/fixtures/inline_polymorphic_lifecycle.gti",
         "tests/owning_function_tests.cpp",
-        "tests/owning_function_runtime_test.py",
         "tests/owning_function_policy_failure_test.py",
         "tests/inline_polymorphic_runtime_test.py",
         "stdlib/std/functional.gti",
@@ -5841,7 +5840,6 @@
         "tests/uninitialized_carrier_tests.cpp",
         "tests/uninitialized_carrier_runtime_test.py",
         "tests/object_lifetime_tests.cpp",
-        "tests/object_construction_runtime_test.py",
         "tests/object_relocation_runtime_test.py",
         "docs/language/raw-pointers.md"
       ]
@@ -6476,10 +6474,9 @@
         "tests/fixtures/optional_clone.gti",
         "tests/fixtures/optional_nested.gti",
         "tests/fixtures/optional_expected_composition.gti",
-        "tests/fixtures/expected_constructor_payload.gti",
+        "tests/ui/language/construction/expected_constructor_payload.gti",
         "tests/fixtures/optional_constructor_failure.gti",
         "tests/fixtures/optional_reset_failure.gti",
-        "tests/constructor_field_publication_test.py",
         "tests/optional_compiler_tests.cpp",
         "tests/optional_runtime_test.py",
         "stdlib/std/optional.gti"

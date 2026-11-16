@@ -131,9 +131,17 @@ int tidy(const fs::path &root) {
       continue;
     }
     if (extension == ".stdout") {
-      fs::path test = file;
-      test.replace_extension(".gti");
-      if (!fs::exists(test))
+      // name.stdout, or name.<revision>.stdout for a declared revision.
+      const std::string stem = file.stem().string();
+      const std::size_t dot = stem.find('.');
+      const fs::path test = file.parent_path() / (stem.substr(0, dot) + ".gti");
+      bool known = fs::exists(test);
+      if (known && dot != std::string::npos) {
+        const TestFile parsed = parseTestFile(test, display);
+        known = std::find(parsed.revisions.begin(), parsed.revisions.end(),
+                          stem.substr(dot + 1)) != parsed.revisions.end();
+      }
+      if (!known)
         problems.push_back(display + ": expected output without a test");
       else if (fs::file_size(file) == 0)
         problems.push_back(display + ": empty expected file");
