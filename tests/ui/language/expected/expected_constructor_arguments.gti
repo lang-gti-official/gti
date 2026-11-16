@@ -1,0 +1,112 @@
+// An activated Unexpected remains local until fallible cleanup succeeds.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6 run7
+//@[run2] run-fail
+//@[run2] args: later
+//@[run2] exit-code: 70
+//@[run2] stdout: 3
+//@[run2] stdout: 1
+//@[run2] stdout: 10
+//@[run2] stdout: 30
+//@[run2] stdout: 20
+//@[run2] stdout: 110
+//@[run2] stdout: 90
+//@[run2] stderr-contains: expected_constructor_arguments.gti:39: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] args: error alternative
+//@[run3] stdout: 3
+//@[run3] stdout: 1
+//@[run3] stdout: 30
+//@[run3] stdout: 4
+//@[run3] stdout: 0
+//@[run3] stdout: 5
+//@[run3] stdout: 90
+//@[run4] run-fail
+//@[run4] args: later and cleanup
+//@[run4] exit-code: 70
+//@[run4] stdout: 3
+//@[run4] stdout: 1
+//@[run4] stdout: 10
+//@[run4] stdout: 30
+//@[run4] stdout: 20
+//@[run4] stderr-contains: expected_constructor_arguments.gti:20: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at expected_constructor_arguments.gti:39; secondary [GTI-R0002]
+//@[run5] args: other conditional argument branch
+//@[run6] run-fail
+//@[run6] args: earlier argument fails before producer
+//@[run6] exit-code: 70
+//@[run6] stdout: 3
+//@[run6] stdout: 90
+//@[run6] stderr-contains: expected_constructor_arguments.gti:33: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run7] run-fail
+//@[run7] args: constructor body fails after all arguments
+//@[run7] exit-code: 70
+//@[run7] stdout: 3
+//@[run7] stdout: 1
+//@[run7] stdout: 10
+//@[run7] stdout: 30
+//@[run7] stdout: 4
+//@[run7] stdout: 20
+//@[run7] stdout: 110
+//@[run7] stdout: 90
+//@[run7] stderr-contains: expected_constructor_arguments.gti:49: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- expected_constructor_arguments.gti
+import std.string;
+import std.vector;
+
+mut int stage = 0;
+
+class Marker {
+  int identity;
+public:
+  Marker(int value) : identity(value) {}
+  ~Marker() { std::println(this.identity); }
+};
+
+class Value {
+  Marker tail;
+public:
+  Value() : tail(Marker(110)) { std::println(10); }
+  ~Value() {
+    std::println(20);
+    int divisor = stage == 3 ? 0 : 1;
+    int checked = 3 / divisor;
+  }
+};
+
+expected<Value, int> produce() {
+  std::println(1);
+  if (stage == 2) { return unexpected(7); }
+  return Value();
+}
+
+int before() {
+  std::println(3);
+  int divisor = stage == 5 ? 0 : 1;
+  return 5 / divisor;
+}
+
+int later(int marker) {
+  std::println(marker);
+  int divisor = stage == 1 || stage == 3 ? 0 : 1;
+  return 2 / divisor;
+}
+
+class Envelope {
+  expected<Value, int> item;
+public:
+  Envelope(int first, expected<Value, int> value, int last)
+      : item(std::move(value)) {
+    std::println(4);
+    int divisor = stage == 6 ? 0 : 1;
+    int checked = 6 / divisor;
+  }
+  ~Envelope() { std::println(5); }
+  bool has_value() { return this.item.has_value(); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Marker caller{90};
+  Envelope result{before(), produce(), stage == 4 ? later(31) : later(30)};
+  std::println(result.has_value() ? 1 : 0);
+  return 0;
+}

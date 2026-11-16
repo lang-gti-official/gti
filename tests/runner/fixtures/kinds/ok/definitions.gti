@@ -1,0 +1,4 @@
+// The definition-closure requirement rejects a called bodyless declaration.
+//@ require-function-definitions
+int helper(int value);
+int main() { return helper(7); }  //~ ERROR GTI-S2106

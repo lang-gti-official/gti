@@ -1,0 +1,29 @@
+// General expected-value control flow used by filesystem wrappers.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: caller cleaned
+//@ stderr-contains: expected_passive_failure.gti:14: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- expected_passive_failure.gti
+enum class inspect_error { failed };
+class Record {
+  int value;
+public:
+  Record(int value) : value(value) {}
+};
+class Guard {
+public:
+  ~Guard() { std::println("caller cleaned"); }
+public:
+  Guard() = default;
+};
+expected<Record, inspect_error> inspect(int divisor) {
+  return Record(12 / divisor);
+}
+expected<Record, inspect_error> relay(int divisor) {
+  return inspect(divisor);
+}
+int main() {
+  Guard guard = Guard();
+  auto result = relay(0);
+  return result.has_value() ? 0 : 1;
+}
