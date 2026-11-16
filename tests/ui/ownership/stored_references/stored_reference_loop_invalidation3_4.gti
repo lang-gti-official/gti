@@ -1,0 +1,4 @@
+// Stored reference loop invalidation3: nested-if endpoints should remain available to iteration-local loans and reach the backedge inactive.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut int count = 0; while (count < 2) { mut auto iterator = value.begin(); if (count == 0) { char current = *iterator; } else { char current = *iterator; } value.push_back('!'); count++; } return 0; }

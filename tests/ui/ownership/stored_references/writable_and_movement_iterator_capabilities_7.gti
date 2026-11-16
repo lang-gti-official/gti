@@ -1,0 +1,45 @@
+// Writable and movement iterator capabilities: symbolic mutable dereference and subscript writes should instantiate against a user cursor and reach valid MIR.
+//@ check-pass
+import std.iterator;
+
+class grid_cursor {
+  mut int32_t[6] cells = {};
+  mut std::ptrdiff_t position = 0;
+
+public:
+  grid_cursor() {}
+
+  mut int32_t& operator*() mut {
+    return this.cells[std::size_t(this.position)];
+  }
+
+  void operator++() mut { this.position++; }
+
+  mut int32_t& operator[](std::ptrdiff_t offset) mut {
+    return this.cells[std::size_t(this.position + offset)];
+  }
+
+  int32_t read(std::size_t index) { return this.cells[index]; }
+};
+
+void stamp<Cursor, T>(mut Cursor& cursor, T& value)
+  requires std::writes_to<Cursor, T> {
+  *cursor = value;
+}
+
+void poke<Cursor, T>(mut Cursor& cursor, std::ptrdiff_t offset, T& value)
+  requires std::subscripts_to_mut<Cursor, T> {
+  cursor[offset] = value;
+}
+
+int main() {
+  mut grid_cursor cursor = grid_cursor();
+  int32_t five = 5;
+  stamp(cursor, five);
+  int32_t seven = 7;
+  poke(cursor, std::ptrdiff_t(1), seven);
+  return (cursor.read(std::size_t(0)) == 5 &&
+          cursor.read(std::size_t(1)) == 7)
+             ? 0
+             : 1;
+}
