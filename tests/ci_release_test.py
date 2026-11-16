@@ -171,6 +171,58 @@ def artifact_contract(root):
         archive.write_bytes(b"fixture")
         artifacts.verify(directory, sha, 7, 2, repository, consume=True)
         assert not list(directory.glob("provenance-*"))
+    tip_contract(artifacts, sha, repository)
+
+
+def tip_contract(artifacts, sha, repository):
+    """Tip republishes one run's exact archive bytes under its own asset names."""
+    import io
+    environment = {"GITHUB_SHA": sha, "GITHUB_REPOSITORY": repository,
+                   "GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "2"}
+
+    def packages(directory, identity=sha):
+        directory.mkdir()
+        for platform in artifacts.PLATFORMS:
+            name = f"gti-nightly-{platform}.tar.gz"
+            with tarfile.open(directory / name, "w:gz") as archive:
+                data = (identity + "\n").encode()
+                entry = tarfile.TarInfo("./share/gti/BUILD_ID")
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+            (directory / f"{name}.sha256").write_text(f"{artifacts.digest(directory / name)}  {name}\n")
+            artifacts.record(directory, platform, environment)
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = pathlib.Path(temporary)
+        packages(root / "nightly")
+        artifacts.tip_assets(root / "nightly", root / "tip", sha, 7, 2, repository)
+        expected = {"BUILD_ID"}
+        for platform in artifacts.PLATFORMS:
+            name = f"gti-tip-{platform}.tar.gz"
+            expected |= {name, f"{name}.sha256"}
+            assert (root / "tip" / name).read_bytes() == \
+                (root / "nightly" / f"gti-nightly-{platform}.tar.gz").read_bytes(), "tip serves nightly's bytes"
+            assert (root / "tip" / f"{name}.sha256").read_text() == \
+                f"{artifacts.digest(root / 'tip' / name)}  {name}\n", "the checksum line names the tip asset"
+        assert {item.name for item in (root / "tip").iterdir()} == expected
+        assert (root / "tip/BUILD_ID").read_text() == sha + "\n"
+        assert (root / "nightly/provenance-linux-x64.json").is_file(), "nightly still consumes the provenance"
+        packages(root / "foreign", identity="b" * 40)
+        (root / "unrecorded").mkdir()
+        refused = (
+            (root / "nightly", root / "other-run", sha, 8, 2),
+            (root / "nightly", root / "other-attempt", sha, 7, 1),
+            (root / "foreign", root / "other-identity", sha, 7, 2),
+            (root / "unrecorded", root / "no-provenance", sha, 7, 2),
+        )
+        for directory, output, source, run_id, attempt in refused:
+            try:
+                artifacts.tip_assets(directory, output, source, run_id, attempt, repository)
+            except (OSError, ValueError):
+                pass
+            else:
+                raise AssertionError(("tip accepted unverified packages", output.name))
+            assert not (output / "BUILD_ID").exists(), output.name
 
 
 def editor_contract(root):
@@ -298,7 +350,30 @@ def nightly_contract(root):
         "full validation runs queue; a superseded head's verdict is still channel evidence"
     integration = jobs(full)
     # The sanitizers run daily on the nightly commit (sanitizers.yml), not here.
-    assert list(integration) == ["plan", "package", "integration", "verdict", "report"], list(integration)
+    assert list(integration) == ["plan", "package", "tip", "integration", "verdict", "report"], list(integration)
+    tip = integration["tip"]
+    assert "needs: [package]\n" in tip, "tip waits for both packages and nothing else"
+    assert "continue-on-error: true" in tip, "a tip failure never changes the run nightly selects by"
+    assert "if: github.event_name == 'push' && github.repository == 'lang-gti-official/gti'" in tip
+    assert "group: gti-tip-publication\n      cancel-in-progress: false" in tip
+    assert "contents: write" in tip and "contents: write" not in full.replace(tip, ""), \
+        "only tip publication writes from full validation"
+    assert "pattern: gti-nightly-*-${{ github.run_attempt }}" in tip
+    assert "cmake" not in tip and "validation_checks.py" not in tip and "ctest" not in tip, \
+        "tip republishes the packaged archives; it builds and tests nothing"
+    order = ["release_artifacts.py tip", "admit-tip",
+             "--force-with-lease=refs/tags/tip:${GTI_TIP_LEASE}", "gh release create tip",
+             "--clobber dist/tip/BUILD_ID"]
+    positions = [tip.index(item) for item in order]
+    assert positions == sorted(positions), "tip must verify, admit, lease the tag, then upload BUILD_ID last"
+    assert tip.count("if: steps.admission.outputs.publish == 'true'") == 2
+    assert "--force " not in tip and "push --force" not in tip and "+refs/tags" not in tip
+    assert "git tag" not in tip and "nightly\"" not in tip and "refs/tags/nightly" not in tip
+    assert "--prerelease" in tip and "--verify-tag" in tip and "--latest=false" in tip
+    assert "tip" not in integration["verdict"].split("steps:", 1)[0], "the verdict never depends on tip"
+    for line in tip.splitlines():
+        if line.lstrip().startswith(("run:", "python3", "git ", "gh ")):
+            assert "${{" not in line, line
     assert "merge_group" not in jobs(ci).get("gate", "") or "package" not in jobs(ci)["gate"]
     assert "package" not in jobs(ci) and "integration" not in jobs(ci) and "sanitizers" not in jobs(ci), \
         "the merge gate proves build and fast checks only"
@@ -758,10 +833,11 @@ def change_review_contract(root):
     assert "fetch-depth: 0" in job, "diff-based reviews need the full history"
     ordered(job, ["- name: Find where the candidate forked\n        id: range\n",
                   'python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
+                  'python3 scripts/check_test_freeze.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"',
                   'python3 scripts/check_stdlib_surface_review.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}" --advisory'],
-            "both reviews follow the one fork computation")
-    assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 2
-    assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 3
+            "every review follows the one fork computation")
+    assert job.count("GTI_FORK_SHA: ${{ steps.range.outputs.base }}") == 3
+    assert job.count("GTI_HEAD_SHA: ${{ github.sha }}") == 4
     assert ("GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || "
             "github.event.merge_group.base_sha }}") in job
     assert "merge_group:" in ci.split("\njobs:\n", 1)[0]
@@ -799,6 +875,63 @@ def change_review_contract(root):
                                     text=True, capture_output=True, timeout=10)
             assert result.returncode == 0, result.stderr
             assert output.read_text() == f"base={expected}\n", (base, output.read_text())
+
+
+def freeze_contract(root):
+    """The old suite is frozen: a candidate adding a test file or an add_test(
+    registration fails, with the two-line guidance; edits, deletions, renames,
+    moved registrations and the new runner's directories pass."""
+    script = root / "scripts/check_test_freeze.py"
+    with tempfile.TemporaryDirectory(prefix="gti-test-freeze-") as directory:
+        work = pathlib.Path(directory)
+        run(["git", "init", "--quiet", "-b", "main"], work)
+        run(["git", "config", "user.name", "GTI Test"], work)
+        run(["git", "config", "user.email", "test@example.invalid"], work)
+
+        def write(name, text):
+            (work / name).parent.mkdir(parents=True, exist_ok=True)
+            (work / name).write_text(text)
+
+        def commit():
+            run(["git", "add", "-A"], work)
+            run(["git", "commit", "--quiet", "--allow-empty", "-m", "change"], work)
+            return run(["git", "rev-parse", "HEAD"], work)
+
+        def check(base, head):
+            result = subprocess.run([sys.executable, str(script), base, head, "--root", str(work)],
+                                    capture_output=True, text=True, timeout=30, check=False)
+            return result.returncode, result.stdout
+
+        registrations = "add_test(NAME old COMMAND old_tests)\nadd_test(NAME moved COMMAND moved)\n"
+        write("tests/CMakeLists.txt", registrations)
+        write("tests/old_test.py", "old\n")
+        write("tests/old_tests.cpp", "old\n")
+        base = commit()
+        # Editing, renaming and deleting old tests, moving a registration and
+        # adding a helper module are all allowed.
+        write("tests/old_test.py", "edited\n")
+        run(["git", "mv", "tests/old_tests.cpp", "tests/renamed_tests.cpp"], work)
+        write("tests/CMakeLists.txt", "add_test(NAME moved COMMAND moved)\n# old removed\n")
+        write("tests/helper_support.py", "helper\n")
+        allowed = commit()
+        assert check(base, allowed) == (0, "test freeze: the candidate adds no old-suite tests\n")
+        # The new runner's directories and registration file are exempt.
+        for name in ("tests/ui/borrow/x_test.py", "tests/unit/arena_tests.cpp",
+                     "tests/runner/runner_test.py", "tests/runner/CMakeLists.txt"):
+            write(name, "add_test(NAME runner COMMAND runner)\n")
+        write("tests/gti_test.cmake", "add_test(NAME gti_test COMMAND gti-test)\n")
+        exempt = commit()
+        assert check(allowed, exempt)[0] == 0
+        for name, text in (("tests/new_test.py", "x\n"), ("tests/nested/new_tests.cpp", "x\n"),
+                           ("tests/CMakeLists.txt", registrations + "add_test(NAME fresh COMMAND fresh)\n"),
+                           ("tests/TestThroughput.cmake", "add_test(\n")):
+            run(["git", "checkout", "--quiet", "-B", "candidate", exempt], work)
+            write(name, text)
+            code, output = check(exempt, commit())
+            assert code == 1 and name in output, (name, output)
+            guidance = output.strip().splitlines()[-2:]
+            assert guidance[0].startswith("The old test suite is frozen") and "tests/ui/" in guidance[1] \
+                and "existing harness" in guidance[1], output
 
 
 def installed_system_command_contract(root):
@@ -926,6 +1059,17 @@ def source_contract(root):
         run(["git", "push", "--quiet", "--force", "origin", f"{stray}:refs/tags/nightly"], work)
         run(["git", "checkout", "--quiet", "main"], work)
         query(newest, mode="admit-nightly", success=False)
+        # Tip uses the same newer-wins admission against its own tag, so the
+        # diverged nightly above does not affect it and its lease is separate.
+        assert query(newest, mode="admit-tip") == {"publish": "true", "lease": ""}
+        run(["git", "push", "--quiet", "origin", f"{newest}:refs/tags/tip"], work)
+        assert query(newest, mode="admit-tip") == {"publish": "true", "lease": newest}
+        run(["git", "checkout", "--quiet", "--detach", latest], work)
+        assert query(latest, mode="admit-tip") == {"publish": "false", "lease": ""}, \
+            "a slower package job never moves tip back"
+        run(["git", "checkout", "--quiet", "--detach", stray], work)
+        assert query(stray, mode="admit-tip") == {"publish": "false", "lease": ""}, "tip names main commits only"
+        run(["git", "checkout", "--quiet", "main"], work)
         selection_contract(script, work, newest, latest, advanced, stray)
         run(["git", "remote", "remove", "origin"], work)
         query(advanced, mode="admit-nightly", success=False)
@@ -1203,6 +1347,7 @@ def main():
     workflow_contract(root)
     installed_system_command_contract(root)
     change_review_contract(root)
+    freeze_contract(root)
     artifact_contract(root)
     editor_contract(root)
     nightly_contract(root)

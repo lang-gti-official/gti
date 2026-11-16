@@ -322,6 +322,11 @@ one-off implementation-note or redesign files when an existing category fits.
    language meaning in semantics, concrete instances in HIR, body-local control
    flow and effects in MIR, and representation choices in backends.
 4. Add focused positive and negative tests at the layer that owns the rule.
+   The old suite is frozen (`scripts/check_test_freeze.py` in PR CI): add no
+   new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`. New tests go in
+   the new runner's `tests/ui/` once it lands
+   ([test-suite redesign](docs/plans/test-suite-redesign.md)); until then, add
+   cases to an existing harness.
    Run broader relevant CTest, CLI, LSP, Tree-sitter, formatter, or installed
    toolchain checks in proportion to the change. Use a GTI compiler executable
    built with host optimization for every test that compiles or analyzes GTI
@@ -363,6 +368,10 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
   toolchains plus linked local builds (`gtiup link`); Neovim managed mode uses
   the selected matching compiler/LSP/parser without downloading its own tools.
   Installation remains opt-in.
+- **Tip** is the fastest channel: full validation's `tip` job republishes one
+  rolling `tip` prerelease from each run's production archives as soon as both
+  platforms pass their installed-toolchain checks, before the complete suite
+  finishes. It claims nothing about that suite and needs no agent action.
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
   selected `main` commit with successful release-producing integration CI and retained production
   artifacts. It verifies exact source/run/attempt, platform, configuration and

@@ -24,9 +24,15 @@ python3 scripts/agent_workflow.py protection
 
 `workflows/ci.yml` reports the single required check, `CI gate`:
 
-- On a pull request: lint (formatting, release version, Tree-sitter), the
+- On a pull request: lint (formatting, release version, the old-suite test
+  freeze `scripts/check_test_freeze.py`, Tree-sitter), the
   workflow regression tests, and a macOS arm64 and Linux x64 build running
   `feedback-fast` and `compiler_pipeline`. Drafts run lint only.
+- On every push to main, full validation's `tip` job republishes that run's
+  production archives as the rolling `tip` prerelease once both platforms pass
+  their installed-toolchain checks, before the integration shards finish. It
+  builds nothing, never affects the run's verdict, and nightly still publishes
+  only a commit that passed the complete suite.
 - On manual dispatch from main: full integration and production packaging,
   without PR-body declarations, for release commissioning or artifact recovery.
 - In the merge queue: system-LLVM fast checks plus production packaging and
@@ -151,7 +157,8 @@ One-time owner setup, in this order:
    It applies only to releases published after it is enabled, so the rolling
    `nightly` release keeps replacing its assets and moving its tag; never
    delete and recreate the `nightly` release afterwards, or it becomes
-   immutable and stops rolling. Beta and stable releases are published from
+   immutable and stops rolling. The rolling `tip` release has the same
+   constraint: let full validation publish it once before enabling this. Beta and stable releases are published from
    drafts, so their assets are complete before they lock.
 5. Apply the three proposed rulesets. Review them first:
 
