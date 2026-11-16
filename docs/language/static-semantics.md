@@ -601,8 +601,11 @@ the value -128, and is not a negation of the unrepresentable `int8_t` value
 128. The signed value must fit the suffix type; `256u8`, `128i8`, `-129i8`
 and `-1u8` are `GTI-S2004` errors spanning the whole signed literal, never a
 truncation. Suffixed literals are valid wherever integer literals are:
-`constexpr` initializers and `static_assert`, array extents, value-generic
-arguments, switch labels and enumerator values. `f32` and `f64` give a
+`constexpr` initializers and `static_assert`, switch labels and enumerator
+values, and fixed array extents and value-generic arguments. Those last two
+are `uint64_t` constants, so a suffixed literal there must be `u64`
+(`int32_t values[4u64]`, `width<8u64>()`); another suffix is a parse error.
+`f32` and `f64` give a
 floating literal type `float` or `double`; a floating literal has no
 contextual typing, so `float f = 2.5f64;` needs `float(...)` like any
 `double` value. Unsuffixed literals keep their existing typing.

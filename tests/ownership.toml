@@ -107,6 +107,8 @@ paths = [
   "include/gti/token.h",
   "include/gti/configuration_flags.h",
   "tests/source_text_tests.cpp",
+  "tests/lexical_literal_tests.cpp",
+  "tests/lexical_literal_lsp_test.py",
 ]
 owners = [
   "concept_conditions",

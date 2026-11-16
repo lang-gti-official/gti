@@ -2957,6 +2957,18 @@ private:
 
   ArrayExtentExprPtr arrayExtentPrimary() {
     if (match({TokenKind::INT_LITERAL, TokenKind::IDENTIFIER})) {
+      // Extents and generic values are uint64_t constants. A suffixed
+      // literal keeps its written type, so only `u64` names this type.
+      const Token &literal = previous();
+      if (literal.kind == TokenKind::INT_LITERAL &&
+          literal.numericSuffix != NumericSuffix::None &&
+          literal.numericSuffix != NumericSuffix::U64) {
+        diagnostics.push_back(makeDiagnostic(
+            "GTI-P0001", DiagnosticPhase::Parsing, literal,
+            "Fixed array extents and generic value arguments have type "
+            "'uint64_t'; a suffixed literal here must use 'u64', not '" +
+                std::string(to_string(literal.numericSuffix)) + "'."));
+      }
       return std::make_shared<ArrayExtentExpr>(previous());
     }
     if (match({TokenKind::LEFT_PAREN})) {

@@ -355,6 +355,21 @@ int main() {
                std::string(entry.code) + " at its literal");
   }
 
+  for (const std::string_view use :
+       {"uint8_t values[4u8] = {};", "uint64_t n = width<4i32>();"}) {
+    const std::string source =
+        "uint64_t width<uint64_t N>() { return N; }\nint main() {\n  " +
+        std::string(use) + "\n  return 0;\n}\n";
+    const lang::FrontendResult rejected =
+        analyze("suffixed-extent.gti", source);
+    const std::vector<std::string> found = codes(rejected);
+    expect(!found.empty() && found.front() == "GTI-P0001" &&
+               rejected.diagnostics.front().message.find("must use 'u64'") !=
+                   std::string::npos,
+           "'" + std::string(use) +
+               "' needs a u64 literal in a uint64_t constant context");
+  }
+
   const lang::FrontendResult call =
       analyze("suffixed-call.gti", "void take(uint8_t value) {}\n"
                                    "int main() { take(7i32); return 0; }\n");
