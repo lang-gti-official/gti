@@ -51,10 +51,10 @@ int main() {
   Snapshot original{7};
   Snapshot copied = Snapshot(original);
 
-  mut Snapshot movable{9};
+  Snapshot movable{9};
   Snapshot moved = Snapshot(std::move(movable));
 
-  mut Ticket ticket{42};
+  Ticket ticket{42};
   Ticket transferred = Ticket(std::move(ticket));
 
   if (structural.read() == 5 and copied.read() == 7 and moved.read() == 9 and

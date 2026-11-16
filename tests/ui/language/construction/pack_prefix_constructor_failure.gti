@@ -1,0 +1,71 @@
+// Fresh class prefixes before packs retain exact failure and staged cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4
+//@[run1] stdout: 10
+//@[run1] stdout: 7
+//@[run1] stdout: 2
+//@[run1] stdout: 9
+//@[run2] run-fail
+//@[run2] args: first
+//@[run2] exit-code: 70
+//@[run2] stdout: 10
+//@[run2] stdout: 2
+//@[run2] stdout: 9
+//@[run2] stderr-contains: pack_prefix_constructor_failure.gti:15: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] args: prior success
+//@[run3] stdout: 10
+//@[run3] stdout: 8
+//@[run3] stdout: 2
+//@[run3] stdout: 1
+//@[run3] stdout: 9
+//@[run4] run-fail
+//@[run4] args: prior constructor failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 10
+//@[run4] stdout: 1
+//@[run4] stdout: 2
+//@[run4] stdout: 9
+//@[run4] stderr-contains: pack_prefix_constructor_failure.gti:15: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- pack_prefix_constructor_failure.gti
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+};
+
+class Passive {
+public:
+  Passive(int divisor) {
+    std::println(10);
+    int checked = 12 / divisor;
+  }
+public:
+  Passive() = default;
+};
+
+void accept<Args...>(Passive value, Args... args) { std::println(7); }
+void accept_prior<Args...>(Token prior, Passive value, Args... args) {
+  std::println(8);
+}
+
+void forward<Args...>(int divisor, Args... args) {
+  accept(Passive(divisor), args...);
+}
+void forward_prior<Args...>(int divisor, Args... args) {
+  accept_prior(Token(1), Passive(divisor), args...);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  int divisor = argc == 2 || argc == 4 ? 0 : 1;
+  if (argc <= 2) {
+    forward(divisor, Token(2), 3, true);
+  } else {
+    forward_prior(divisor, Token(2), 3, true);
+  }
+  return 0;
+}

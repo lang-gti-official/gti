@@ -1,0 +1,88 @@
+// Constructor field placement/replacement preserves success and failure cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 1
+//@[run1] stdout: second
+//@[run1] stdout: second
+//@[run1] stdout: 12
+//@[run1] stdout: first
+//@[run1] stdout: holder
+//@[run1] stdout: first
+//@[run1] stdout: guard
+//@[run2] run-fail
+//@[run2] args: argument
+//@[run2] exit-code: 70
+//@[run2] stdout: second
+//@[run2] stdout: first
+//@[run2] stdout: guard
+//@[run2] stderr-contains: constructor_owning_call_inputs.gti:25: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: inside call
+//@[run3] exit-code: 70
+//@[run3] stdout: second
+//@[run3] stdout: first
+//@[run3] stdout: guard
+//@[run3] stderr-contains: constructor_owning_call_inputs.gti:14: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: later field fails
+//@[run4] exit-code: 70
+//@[run4] stdout: 1
+//@[run4] stdout: second
+//@[run4] stdout: second
+//@[run4] stdout: first
+//@[run4] stdout: guard
+//@[run4] stderr-contains: constructor_owning_call_inputs.gti:26: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: constructor body now fails
+//@[run5] exit-code: 70
+//@[run5] stdout: 1
+//@[run5] stdout: second
+//@[run5] stdout: second
+//@[run5] stdout: first
+//@[run5] stdout: guard
+//@[run5] stderr-contains: constructor_owning_call_inputs.gti:27: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- constructor_owning_call_inputs.gti
+import std.string;
+import std.vector;
+
+// The field producer is ordinary user code, not a collection intrinsic.
+class Token {
+  std::string text;
+public:
+  Token(std::string_view value) : text(std::string(value)) {}
+  void show() { std::println(this.text); }
+  ~Token() { std::println(this.text); }
+};
+
+Token relay(Token first, Token second, int divisor) {
+  std::println(12 / divisor);
+  second.show();
+  return std::move(first);
+}
+
+class Holder {
+  Token token;
+  int later;
+public:
+  Holder(int argument_divisor, int call_divisor, int field_divisor, int body_divisor)
+      : token(relay(Token("first"), Token("second"),
+                    (12 / argument_divisor) * call_divisor)),
+        later(12 / field_divisor) {
+    std::println(12 / body_divisor);
+    this.token.show();
+  }
+  ~Holder() { std::println("holder"); }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println("guard"); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  Holder holder{argc == 2 ? 0 : 1, argc == 3 ? 0 : 1,
+                argc == 4 ? 0 : 1, argc == 5 ? 0 : 1};
+  return 0;
+}

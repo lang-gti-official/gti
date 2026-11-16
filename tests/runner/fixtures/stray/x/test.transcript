@@ -1,0 +1,2 @@
+// A transcript outside a project directory is not a project test.
+$ gti --version

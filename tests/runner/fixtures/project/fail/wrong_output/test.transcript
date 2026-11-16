@@ -1,0 +1,4 @@
+// Missing and forbidden output both fail.
+$ gti main.gti --emit-mir -o out.mir
+stdout: no such text
+!stdout: Diagnostics

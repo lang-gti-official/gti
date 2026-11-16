@@ -1,0 +1,1 @@
+Sixty-six shared-harness runtime wrappers become `gti-test` run tests under `tests/ui` (six under `tests/slow`), converted by `scripts/convert_runtime_wrappers.py`; `gti-test` gains `//@ revisions:` so one program runs with several argument sets.

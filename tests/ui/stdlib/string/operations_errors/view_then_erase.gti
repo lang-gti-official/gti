@@ -1,0 +1,4 @@
+// A retained or aliased string view excludes editing: view_then_erase.
+//@ check-fail
+import std.string;
+int main() { mut std::string text{"abc"}; auto view = text.view(); text.erase(); return int(view.size());}  //~ ERROR GTI-S2017

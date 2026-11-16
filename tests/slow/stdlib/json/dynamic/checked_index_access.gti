@@ -1,0 +1,22 @@
+// Checked dynamic JSON access fails at run time on an out-of-range array index.
+//@ run-fail
+//@ slow
+//@ exit-code: 70
+//@ stderr-contains: GTI-R
+//@ args: index
+import std.json;
+import std.string;
+import std.vector;
+int main(int argc, std::vector<std::string> argv) {
+  if (argv[std::size_t(1)] == "kind") {
+    auto value = std::json::value();
+    return value.as_bool() ? 1 : 2;
+  }
+  if (argv[std::size_t(1)] == "key") {
+    auto value = std::json::value::object();
+    std::string key{"missing"};
+    return value.at(key).is_null() ? 1 : 2;
+  }
+  auto value = std::json::value::array();
+  return value.at(std::size_t(0)).is_null() ? 1 : 2;
+}

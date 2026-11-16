@@ -1,0 +1,6 @@
+// The default single-threaded profile accepts the same mutable global.
+mut int counter = 0;
+int main() {
+  counter += 1;
+  return counter - 1;
+}

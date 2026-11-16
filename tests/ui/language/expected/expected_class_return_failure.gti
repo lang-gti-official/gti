@@ -1,0 +1,91 @@
+// Checked payloads publish directly at Return without losing failure cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6 run7
+//@[run1] stdout: 1
+//@[run1] stdout: 2
+//@[run1] stdout: 4
+//@[run1] stdout: 3
+//@[run2] run-fail
+//@[run2] args: wrong-value
+//@[run2] exit-code: 70
+//@[run2] stdout: 2
+//@[run2] stderr-contains: expected_class_return_failure.gti:41: runtime error[GTI-R0009]: invalid_expected_access in value_on_error
+//@[run3] run-fail
+//@[run3] args: guard fail
+//@[run3] exit-code: 70
+//@[run3] stdout: 1
+//@[run3] stdout: 2
+//@[run3] stdout: 3
+//@[run3] stderr-contains: expected_class_return_failure.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: guard payload fail
+//@[run4] exit-code: 70
+//@[run4] stdout: 1
+//@[run4] stdout: 2
+//@[run4] stdout: 3
+//@[run4] stderr-contains: expected_class_return_failure.gti:14: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at expected_class_return_failure.gti:24; secondary [GTI-R0002]
+//@[run5] args: named success return value
+//@[run5] stdout: 1
+//@[run5] stdout: 2
+//@[run5] stdout: 4
+//@[run5] stdout: 3
+//@[run6] run-fail
+//@[run6] args: named wrong state return value
+//@[run6] exit-code: 70
+//@[run6] stdout: 2
+//@[run6] stderr-contains: expected_class_return_failure.gti:38: runtime error[GTI-R0009]: invalid_expected_access in value_on_error
+//@[run7] run-fail
+//@[run7] args: wrong error state return payload value
+//@[run7] exit-code: 70
+//@[run7] stdout: 2
+//@[run7] stderr-contains: expected_class_return_failure.gti:40: runtime error[GTI-R0009]: invalid_expected_access in error_on_value
+// --- expected_class_return_failure.gti
+import std.string;
+import std.vector;
+
+mut int stage = 0;
+
+class Value {
+  int divisor;
+public:
+  Value() : divisor(stage == 3 ? 0 : 1) { std::println(1); }
+  Value(Value& other) = delete;
+  Value(Value&& other) = default;
+  ~Value() {
+    std::println(3);
+    int checked = 1 / this.divisor;
+  }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    std::println(2);
+    int divisor = stage == 2 || stage == 3 ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+};
+
+expected<Value, int> source(bool fail) {
+  if (fail) { return unexpected(41); }
+  return Value();
+}
+expected<int, Value> error_source() { return 42; }
+
+Value extract() {
+  Guard guard{};
+  if (stage == 4 || stage == 5) {
+    mut auto result = source(stage == 5);
+    return std::move(result).value();
+  }
+  if (stage == 6) { return error_source().error(); }
+  return source(stage == 1).value();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Value result = extract();
+  std::println(4);
+  return 0;
+}

@@ -1,0 +1,63 @@
+// Consuming instance methods and operator chains preserve owned lifetimes.
+//@ run-pass
+//@ revisions: default fail fail-double
+//@[default] stdout: 2
+//@[default] stdout: 9
+//@[default] stdout: 7
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 2
+//@[fail] stdout: 7
+//@[fail] stdout: 9
+//@[fail] stderr-contains: consuming_return_composition.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[fail-double] run-fail
+//@[fail-double] args: fail double
+//@[fail-double] exit-code: 70
+//@[fail-double] stdout: 2
+//@[fail-double] stdout: 7
+//@[fail-double] stderr-contains: consuming_return_composition.gti:9: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at consuming_return_composition.gti:9; secondary [GTI-R0002]
+// --- consuming_return_composition.gti
+import std.string;
+import std.vector;
+
+class Owner {
+public:
+  Owner(int value, int divisor) : value(value), divisor(divisor) {}
+  ~Owner() {
+    std::println(this.value);
+    int checked = 1 / this.divisor;
+  }
+  int get() { return this.value; }
+private:
+  int value;
+  int divisor;
+};
+
+class Builder {
+public:
+  Builder() {}
+  ~Builder() { std::println(9); }
+  Owner finish(int guard_divisor, int result_divisor) && {
+    Owner guard{2, guard_divisor};
+    Owner result{7, result_divisor};
+    return result;
+  }
+  Builder identity() && { return std::move(this); }
+};
+
+struct Copyable {
+  int value = 3;
+public:
+  Copyable() = default;
+};
+
+Copyable copy_result(Copyable value) { return value; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Owner result = Builder().identity().finish(argc == 1 ? 1 : 0, argc == 3 ? 0 : 1);
+  Copyable original{};
+  Copyable copied = copy_result(original);
+  if (copied.value != original.value || result.get() != 7) { return 1; }
+  return 0;
+}
