@@ -376,7 +376,6 @@ set(gti_slow_test_patterns
   "^body_analysis_order_fixtures$"
   "^instance_reuse_fixtures$"
   "^trusted_body_analysis_fixtures$"
-  "^mir_census_regression$"
   "^mir_cutover_corpus_oracle$"
   "^language_coverage_corpus$"
   "^lowered_program_corpus_census$"

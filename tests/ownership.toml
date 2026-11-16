@@ -376,7 +376,6 @@ consumers = [
   "mir_cutover_corpus_oracle",
   "language_coverage_corpus",
   "lowered_program_corpus_census",
-  "mir_census_regression",
   "typed_differential_smoke",
   "feature_interaction_smoke",
 ]
@@ -478,7 +477,6 @@ consumers = [
   "mir_cutover_corpus_oracle",
   "language_coverage_corpus",
   "lowered_program_corpus_census",
-  "mir_census_regression",
 ]
 
 [[area]]
@@ -1076,7 +1074,6 @@ owners = [
 consumers = [
   "language_coverage_corpus",
   "practical_examples",
-  "mir_census_regression",
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
   "trusted_body_analysis_fixtures",
@@ -1953,7 +1950,6 @@ paths = [
 ]
 owners = [
   "practical_examples",
-  "mir_census_regression",
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
 ]

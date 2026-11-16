@@ -651,7 +651,6 @@
   "mir_backend_scalar_failure_callgraph_runtime_2of3": 2.1,
   "mir_backend_scalar_failure_callgraph_runtime_3of3": 0.0,
   "mir_census_profile_controls": 0.3,
-  "mir_census_regression": 551.7,
   "mir_class_value_lifecycle_runtime": 1.2,
   "mir_cutover_corpus_oracle": 402.2,
   "mir_field_determinism": 4.7,

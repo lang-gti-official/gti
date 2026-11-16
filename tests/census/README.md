@@ -5,8 +5,10 @@ count (`mir`) and the LoweredProgram inventory (`lowered`: bodies, generated
 items and generated items by kind) for both target profiles
 (`arm64-apple-macos`, `x86_64-unknown-linux`).
 
-The default `mir_census_regression` uses sealed LoweredProgram bodies, so new
-LLVM features do not depend on the deprecated C++ emitter. The corpus oracle
+`lowered_program_corpus_census` (slow tier) checks the `lowered` rows. The
+`mir` rows are no longer checked by a registered test: on the LLVM profile the
+retired `mir_census_regression` counted exactly the `lowered` `bodies`, and
+`tests/mir_census_test.py` remains only as a module and a manual tool. The corpus oracle
 executes every example on LLVM O0/O3. The hand-dispatched C++ profile (only in
 a build with `GTI_ENABLE_CPP_BACKEND`) retains its emitted-text inventory and
 single C++23/O3 execution mode.

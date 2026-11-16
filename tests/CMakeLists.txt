@@ -3812,15 +3812,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/mir_census_profile_test.py"
   )
   add_test(
-    NAME mir_census_regression
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/mir_census_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}"
-            "${PROJECT_SOURCE_DIR}/tests/census"
-            --lowered-census "$<TARGET_FILE:gti_lowered_program_census>"
-  )
-  add_test(
     NAME mir_cutover_corpus_oracle
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/mir_cutover_corpus_oracle_test.py"
