@@ -1,0 +1,13 @@
+// Complete pipeline: a function with checked multiplication, called from main, computes its result at run time.
+//@ run-pass
+int twice(int value) {
+  return value * 2;
+}
+
+int main() {
+  int result = twice(4);
+  if (result == 8) {
+    return 0;
+  }
+  return 1;
+}

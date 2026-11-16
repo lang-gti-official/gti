@@ -1,0 +1,73 @@
+// Mir control flow and ownership effects: valid typed HIR should lower to a validated MIR program.
+//@ run-pass
+class Resource {
+  int32_t value;
+
+public:
+  Resource(int32_t initial) : value(initial) {}
+  ~Resource() {}
+
+  int32_t& read() {
+    return this.value;
+  }
+};
+
+class Bundle {
+  Resource first;
+  Resource second;
+
+public:
+  Bundle() : first(Resource(1)), second(Resource(2)) {}
+};
+
+class Gate {
+  bool open;
+
+public:
+  Gate(bool value) : open(value) {}
+  operator bool() { return this.open; }
+};
+
+int32_t inspect(int32_t& value) { return value; }
+
+expected<int32_t, int32_t> checked(bool fail) {
+  if (fail) {
+    return unexpected(1);
+  }
+  return 2;
+}
+
+int32_t flow(bool stop) {
+  Resource original = Resource(1);
+  Resource moved = std::move(original);
+  mut int32_t count = 0;
+  while (count < 3) {
+    count++;
+    if (count == 1) {
+      continue;
+    }
+    if (stop) {
+      break;
+    }
+  }
+  switch (count) {
+  case 2:
+    count += 1;
+    break;
+  default:
+    break;
+  }
+  int32_t& value_ref = moved.read();
+  Gate gate = Gate(stop);
+  if (gate and inspect(count) > 0) {
+    count += 1;
+  }
+  expected<int32_t, int32_t> result = checked(stop);
+  if (result) {
+    count += 1;
+  }
+  int32_t& count_ref = count;
+  return inspect(count_ref) + inspect(value_ref);
+}
+
+int main() { [[discard]] flow(true); }

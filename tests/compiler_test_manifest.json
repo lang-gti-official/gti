@@ -540,50 +540,6 @@
     {
       "name": "testMoveOnlyAssignmentResultUse",
       "suite": "ownership"
-    },
-    {
-      "name": "testFrontendBackendAndOptimizationPipeline",
-      "suite": "e2e"
-    },
-    {
-      "name": "testMirControlFlowAndOwnershipEffects",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedOrdinaryCallInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedRawReceiverInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedClassValueCallInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedOrdinaryConstructorInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testMirTemporaryAndDropObligations",
-      "suite": "e2e"
-    },
-    {
-      "name": "testProgramArgumentsEntryPoint",
-      "suite": "e2e"
-    },
-    {
-      "name": "testProgramInitializationPlans",
-      "suite": "e2e"
-    },
-    {
-      "name": "testTypedHirGenericInstances",
-      "suite": "e2e"
-    },
-    {
-      "name": "testCompletePipeline",
-      "suite": "e2e"
     }
   ]
 }

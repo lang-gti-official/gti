@@ -1,0 +1,23 @@
+// Typed hir generic instances: invalid ownership in a concrete generic instance should fail in HIR lowering.
+import std.memory;
+
+struct Widget { public: Widget() = default; };
+
+T accidental_copy<T>(T value) {
+  return value;
+}
+
+class BadHolder<T> {
+  T value;
+public:
+  BadHolder(T value) : value(value) {}  //~ ERROR GTI-S2003 Cannot initialize field 'value' by copying move-only type
+};
+
+int main() {
+  mut std::unique_ptr<Widget> first = std::make_unique<Widget>();  //~ WARN GTI-S2096
+  std::unique_ptr<Widget> copied = accidental_copy(std::move(first));
+  mut std::unique_ptr<Widget> second = std::make_unique<Widget>();  //~ WARN GTI-S2096
+  BadHolder<std::unique_ptr<Widget>> holder =
+      BadHolder<std::unique_ptr<Widget>>(std::move(second));
+  return 0;
+}

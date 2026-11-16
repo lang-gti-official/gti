@@ -1,6 +1,438 @@
-#include "compiler_test_fixture.h"
+// HIR and MIR verifier checks over forged programs, with the structural
+// assertions of the same fixtures: ordered receiver/constructor inputs,
+// temporary and drop obligations, hosted entry plans, program initialization
+// plans and typed generic instances. The forged programs (a valid program's
+// HIR/MIR copied and corrupted) have no source-level observable. (Moved
+// unchanged from the former compiler_e2e_tests.cpp; its GTI sources also
+// became tests/ui/mir cases.)
+#include "gti/ast_printer.h"
+#include "gti/backend.h"
+#include "gti/binary_float.h"
+#include "gti/executable_path.h"
+#include "gti/format_config.h"
+#include "gti/formatter.h"
+#include "gti/frontend.h"
+#include "gti/language_queries.h"
+#include "gti/lexer.h"
+#include "gti/lowered_program_printer.h"
+#include "gti/mir_printer.h"
+#include "gti/mir_verifier.h"
+#include "gti/optimizer.h"
+#include "gti/parser.h"
+#include "gti/semantic_analyzer.h"
+#include "gti/source_loader.h"
+#include "gti/standard_library.h"
+#include "gti/support.h"
+#include "unit_test.h"
+
+#include "../llvm_backend_test_support.h"
+#include "../lowered_program_test_support.h"
+
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <unordered_map>
+#include <utility>
 
 namespace {
+
+int failures = 0;
+
+[[maybe_unused]] void expect(bool condition, const std::string &message) {
+  if (!condition) {
+    std::cerr << "FAIL: " << message << '\n';
+    ++failures;
+  }
+}
+
+[[maybe_unused]] bool containsMangledFunction(std::string_view text,
+                                              std::string_view prefix,
+                                              std::string_view sourceName,
+                                              std::string_view suffix) {
+  constexpr std::string_view legacyMarker = "__gti_fn_";
+  constexpr std::string_view concreteMarker = "__gti_inst_";
+  std::size_t search = 0;
+  while (true) {
+    const std::size_t legacy = text.find(legacyMarker, search);
+    const std::size_t concrete = text.find(concreteMarker, search);
+    const bool concreteName =
+        concrete != std::string_view::npos &&
+        (legacy == std::string_view::npos || concrete < legacy);
+    const std::size_t function = concreteName ? concrete : legacy;
+    if (function == std::string_view::npos) {
+      return false;
+    }
+    const std::string_view marker =
+        concreteName ? concreteMarker : legacyMarker;
+    search = function + marker.size();
+    if (function < prefix.size() ||
+        text.substr(function - prefix.size(), prefix.size()) != prefix) {
+      continue;
+    }
+    std::size_t tail = search;
+    if (concreteName) {
+      while (tail < text.size() && tail - search < 64 &&
+             ((text[tail] >= '0' && text[tail] <= '9') ||
+              (text[tail] >= 'a' && text[tail] <= 'f'))) {
+        ++tail;
+      }
+      if (tail - search != 64) {
+        continue;
+      }
+    } else {
+      while (tail < text.size() && text[tail] >= '0' && text[tail] <= '9') {
+        ++tail;
+      }
+      if (tail == search) {
+        continue;
+      }
+    }
+    if (tail >= text.size() || text[tail] != '_') {
+      continue;
+    }
+    ++tail;
+    if (text.substr(tail, sourceName.size()) != sourceName) {
+      continue;
+    }
+    tail += sourceName.size();
+    if (text.substr(tail, suffix.size()) == suffix) {
+      return true;
+    }
+  }
+}
+
+[[maybe_unused]] std::unordered_set<std::string>
+concreteBackendSymbols(std::string_view text, std::string_view marker,
+                       std::string_view sourceName) {
+  std::unordered_set<std::string> result;
+  std::size_t search = 0;
+  while ((search = text.find(marker, search)) != std::string_view::npos) {
+    const std::size_t digest = search + marker.size();
+    std::size_t tail = digest;
+    while (tail < text.size() && tail - digest < 64 &&
+           ((text[tail] >= '0' && text[tail] <= '9') ||
+            (text[tail] >= 'a' && text[tail] <= 'f'))) {
+      ++tail;
+    }
+    if (tail - digest == 64 && tail < text.size() && text[tail] == '_' &&
+        text.substr(tail + 1, sourceName.size()) == sourceName) {
+      const std::size_t end = tail + 1 + sourceName.size();
+      result.emplace(text.substr(search, end - search));
+    }
+    search = digest;
+  }
+  return result;
+}
+
+// Analyzes a backend-neutral emission fixture and requires that it completes
+// verified MIR lowering. Assert on the returned MIR/HIR/semantics, or on
+// gti_test::llvmEmits for native emission.
+[[maybe_unused]] lang::FrontendResult
+analyzeEmissionFixture(std::string_view source,
+                       lang::TargetInfo target = lang::TargetInfo::host()) {
+  lang::FrontendResult frontend =
+      lang::Frontend({.target = target})
+          .analyze("compiler-emission-fixture.gti", std::string(source));
+  expect(frontend.canGenerateCode(),
+         "a semantically valid emission fixture should complete MIR "
+         "lowering");
+  if (!frontend.canGenerateCode()) {
+    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
+      std::cerr << "Unexpected emission-fixture diagnostic: "
+                << diagnostic.message << '\n';
+    }
+  } else {
+    expect(lang::verifyMirProgram(frontend.mir).valid(),
+           "an emission fixture should produce verified MIR");
+  }
+  return frontend;
+}
+
+[[maybe_unused]] bool hasDiagnostic(const lang::SemanticVisitor &semantic,
+                                    const std::string &text) {
+  for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
+    if (diagnostic.message.find(text) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+[[maybe_unused]] bool
+hasDiagnostic(const std::vector<lang::Diagnostic> &diagnostics,
+              const std::string &text) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.message.find(text) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+[[maybe_unused]] bool
+hasDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
+                  const std::string &code) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.code == code) {
+      return true;
+    }
+  }
+  return false;
+}
+
+[[maybe_unused]] const lang::Diagnostic *
+findDiagnosticByCode(const std::vector<lang::Diagnostic> &diagnostics,
+                     const std::string &code) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.code == code) {
+      return &diagnostic;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] bool
+hasDiagnosticAt(const std::vector<lang::Diagnostic> &diagnostics,
+                std::string_view code, std::string_view source,
+                std::size_t start, std::string_view reason) {
+  const bool matched =
+      std::any_of(diagnostics.begin(), diagnostics.end(),
+                  [&](const lang::Diagnostic &diagnostic) {
+                    const std::string_view actualSource =
+                        diagnostic.primary.source;
+                    const std::string actualFile =
+                        std::filesystem::path(diagnostic.primary.source)
+                            .filename()
+                            .string();
+                    return diagnostic.code == code &&
+                           (actualSource == source || actualFile == source) &&
+                           diagnostic.primary.start == start &&
+                           diagnostic.message.find(reason) != std::string::npos;
+                  });
+  if (!matched) {
+    std::cerr << "Expected diagnostic " << code << " at " << source << ':'
+              << start << " containing '" << reason << "'.\n";
+    for (const lang::Diagnostic &diagnostic : diagnostics) {
+      std::cerr << "  found " << diagnostic.code << " at "
+                << diagnostic.primary.source << ':' << diagnostic.primary.start
+                << ": " << diagnostic.message << '\n';
+    }
+  }
+  return matched;
+}
+
+[[maybe_unused]] bool
+hasMirVerificationError(const lang::MirVerificationResult &result,
+                        std::string_view reason) {
+  return std::any_of(result.errors.begin(), result.errors.end(),
+                     [&](const lang::MirVerificationError &error) {
+                       return error.message.find(reason) != std::string::npos;
+                     });
+}
+
+[[maybe_unused]] bool
+hasRelatedDiagnostic(const std::vector<lang::Diagnostic> &diagnostics,
+                     const std::string &text) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    for (const lang::RelatedDiagnostic &related : diagnostic.related) {
+      if (related.message.find(text) != std::string::npos) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+[[maybe_unused]] bool
+hasDiagnosticHint(const std::vector<lang::Diagnostic> &diagnostics,
+                  const std::string &text) {
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    for (const std::string &hint : diagnostic.hints) {
+      if (hint.find(text) != std::string::npos) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+[[maybe_unused]] std::size_t
+countDiagnosticCode(const lang::SemanticVisitor &semantic,
+                    const std::string &code) {
+  std::size_t count = 0;
+  for (const lang::SemanticDiagnostic &diagnostic : semantic.errors()) {
+    if (diagnostic.code == code) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+[[maybe_unused]] std::size_t
+countDiagnosticCode(const std::vector<lang::Diagnostic> &diagnostics,
+                    const std::string &code) {
+  std::size_t count = 0;
+  for (const lang::Diagnostic &diagnostic : diagnostics) {
+    if (diagnostic.code == code) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+[[maybe_unused]] std::size_t
+countDiagnosticContaining(const std::vector<lang::Diagnostic> &diagnostics,
+                          const std::string &text) {
+  return static_cast<std::size_t>(
+      std::count_if(diagnostics.begin(), diagnostics.end(),
+                    [&](const lang::Diagnostic &item) {
+                      return item.message.find(text) != std::string::npos;
+                    }));
+}
+
+[[maybe_unused]] std::filesystem::path standardLibraryPrelude() {
+  return std::filesystem::path(__FILE__)
+             .parent_path()
+             .parent_path()
+             .parent_path() /
+         "stdlib/prelude.gti";
+}
+
+[[maybe_unused]] std::filesystem::path standardLibraryRoot() {
+  return standardLibraryPrelude().parent_path();
+}
+
+[[maybe_unused]] lang::FrontendResult
+analyzeTrustedPreludeFixture(const std::string &name, const std::string &source,
+                             lang::FrontendOptions options = {}) {
+  const std::filesystem::path entry =
+      std::filesystem::temp_directory_path() / ("gti-trusted-" + name);
+  const std::string entryKey =
+      std::filesystem::weakly_canonical(entry).string();
+  return lang::Frontend(std::move(options))
+      .analyze(entry, source, {standardLibraryPrelude(), entry},
+               {{entryKey, source}}, {standardLibraryRoot()});
+}
+
+[[maybe_unused]] lang::FrontendResult
+analyzeTrustedMemoryFixture(const std::string &name, const std::string &source,
+                            lang::FrontendOptions options = {}) {
+  const auto entry = standardLibraryRoot() / "__trusted_tests__" /
+                     std::filesystem::path(name).filename();
+  const std::string body =
+      "import std.memory; import \"../std/detail/memory_capabilities.gti\";\n" +
+      source;
+  return lang::Frontend(std::move(options))
+      .analyze(entry, body, {standardLibraryPrelude(), entry},
+               {{std::filesystem::weakly_canonical(entry).string(), body}},
+               {standardLibraryRoot()});
+}
+
+[[maybe_unused]] lang::FrontendResult
+analyzeTrustedStandalonePreludeFixture(const std::string &name,
+                                       const std::string &source,
+                                       lang::FrontendOptions options = {}) {
+  const std::filesystem::path entry = std::filesystem::temp_directory_path() /
+                                      ("gti-trusted-standalone-" + name);
+  const std::string entryKey =
+      std::filesystem::weakly_canonical(entry).string();
+  return lang::Frontend(std::move(options))
+      .analyze(entry, source, {entry}, {{entryKey, source}});
+}
+
+[[maybe_unused]] const lang::FunctionDecl *
+findTopLevelFunction(const lang::Program &program, const std::string &name) {
+  for (const lang::StmtPtr &declaration : program.declarations()) {
+    const auto *function =
+        dynamic_cast<const lang::FunctionDecl *>(declaration.get());
+    if (function != nullptr && function->name().lexeme == name) {
+      return function;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::ClassDecl *
+findTopLevelClass(const lang::Program &program, const std::string &name) {
+  for (const lang::StmtPtr &declaration : program.declarations()) {
+    const auto *classDecl =
+        dynamic_cast<const lang::ClassDecl *>(declaration.get());
+    if (classDecl != nullptr && classDecl->name().lexeme == name) {
+      return classDecl;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::ClassDecl *
+findClassRecursive(const lang::StmtList &statements, const std::string &name) {
+  for (const lang::StmtPtr &statement : statements) {
+    const auto *classDecl =
+        dynamic_cast<const lang::ClassDecl *>(statement.get());
+    if (classDecl != nullptr && classDecl->name().lexeme == name) {
+      return classDecl;
+    }
+    const auto *namespaceDecl =
+        dynamic_cast<const lang::NamespaceDecl *>(statement.get());
+    if (namespaceDecl != nullptr) {
+      if (const lang::ClassDecl *nested =
+              findClassRecursive(namespaceDecl->declarations(), name)) {
+        return nested;
+      }
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] const lang::VariableDecl *
+findDirectLocal(const lang::FunctionDecl *function, const std::string &name) {
+  if (function == nullptr || !function->body()) {
+    return nullptr;
+  }
+  for (const lang::StmtPtr &statement : function->body()->statements()) {
+    const auto *variable =
+        dynamic_cast<const lang::VariableDecl *>(statement.get());
+    if (variable != nullptr && variable->name().lexeme == name) {
+      return variable;
+    }
+  }
+  return nullptr;
+}
+
+[[maybe_unused]] std::string nonNullReferenceSource() {
+  return R"(
+struct Counter {
+public:
+  Counter() = default;
+  mut int value = 0;
+  void bump() mut { this.value += 1; }
+};
+
+int read(Counter& counter) { return counter.value; }
+void increment(mut Counter& counter) { counter.bump(); }
+
+int main() {
+  mut Counter counter = Counter();
+  mut Counter& writable = counter;
+  increment(writable);
+  Counter& read_only = counter;
+
+  mut int value = 1;
+  mut int& alias = value;
+  alias += 2;
+  if (read(read_only) == 1 and value == 3) {
+    return 0;
+  }
+  return 1;
+}
+)";
+}
 
 // Backend-neutral oracles: assertions about emitted programs are made on the
 // verified MIR (and the shipped LLVM backend), never on generated C++ text.
@@ -243,740 +675,6 @@ llvmAccepts(const lang::FrontendResult &frontend,
   return emitted;
 }
 
-void testFrontendBackendAndOptimizationPipeline() {
-  const std::string source = R"(
-int main() {
-  bool folded = (1 < 2) and !false;
-  int arithmetic = 1 + 2;
-  if (arithmetic == 3) {
-    return 0;
-  }
-  return arithmetic;
-}
-)";
-  lang::FrontendResult frontend =
-      lang::Frontend().analyze("frontend.gti", source);
-  expect(frontend.canGenerateCode(),
-         "the shared frontend should produce a checked program");
-  expect(frontend.diagnostics.empty(),
-         "valid frontend input should not produce diagnostics");
-  expect(frontend.semantics.expressionCount() > 0,
-         "the frontend should retain expression type information");
-
-  const lang::HirFunctionInstance *mainInstance = nullptr;
-  for (const lang::HirFunctionInstance &instance :
-       frontend.hir.functionInstances()) {
-    if (instance.source != nullptr &&
-        instance.source->name().lexeme == "main") {
-      mainInstance = &instance;
-      break;
-    }
-  }
-  expect(mainInstance != nullptr && mainInstance->body.roots.size() == 4 &&
-             mainInstance->body.statements.size() >= 5,
-         "typed HIR should retain an executable function body");
-  const lang::HirStatement *conditional =
-      mainInstance == nullptr
-          ? nullptr
-          : mainInstance->body.findStatement(mainInstance->body.roots[2]);
-  expect(conditional != nullptr &&
-             conditional->kind == lang::HirStatementKind::If &&
-             conditional->condition.has_value() &&
-             conditional->body.has_value(),
-         "typed HIR should retain explicit branch and condition edges");
-
-  const lang::HirValue *logicalValue = nullptr;
-  if (mainInstance != nullptr) {
-    for (const lang::HirValue &value : mainInstance->body.values) {
-      if (value.kind == lang::HirValueKind::Logical) {
-        logicalValue = &value;
-        break;
-      }
-    }
-  }
-  expect(logicalValue != nullptr && logicalValue->operands.size() == 2,
-         "typed HIR values should retain stable operand IDs");
-
-  const lang::OptimizationResult unoptimized = lang::OptimizationPipeline().run(
-      frontend.hir, lang::OptimizationLevel::O0);
-  expect(unoptimized.foldedExpressionCount() == 0,
-         "-O0 should not rewrite expressions");
-
-  const lang::OptimizationResult optimized = lang::OptimizationPipeline().run(
-      frontend.hir, lang::OptimizationLevel::O1);
-  expect(optimized.foldedExpressionCount() > 0,
-         "-O1 should record safe constant expressions");
-  const lang::ConstantValue *foldedLogical =
-      logicalValue == nullptr ? nullptr
-                              : optimized.replacement(logicalValue->id);
-  expect(
-      foldedLogical != nullptr && std::get_if<bool>(foldedLogical) != nullptr &&
-          *std::get_if<bool>(foldedLogical),
-      "constant folding should consume typed HIR and key results by value ID");
-
-  // The backend consumes the verified optimized MIR exactly as the
-  // production pipeline supplies it; the fold evidence is the MIR
-  // authority's spelling.
-  const lang::OptimizedProgram optimizedProgram =
-      lang::OptimizationPipeline().run(
-          lang::OptimizationRequest{.hir = frontend.hir,
-                                    .mir = frontend.mir,
-                                    .level = lang::OptimizationLevel::O1,
-                                    .compatibility = &optimized});
-  expect(optimizedProgram.valid(),
-         "the owned MIR pipeline should optimize the fixture");
-  std::unique_ptr<lang::Backend> backend =
-      std::make_unique<lang::LlvmBackend>();
-  const lang::LoweredProgram lowered = gti_test::lowerProgram(
-      frontend, optimizedProgram.sourceMir, optimizedProgram.mir,
-      lang::TargetInfo::host(), optimizedProgram.report.transformations);
-  const lang::BackendArtifact artifact = backend->generate(lowered);
-  expect(backend->name() == "llvm" &&
-             artifact.kind == lang::BackendArtifactKind::Object &&
-             !artifact.contents.empty(),
-         "the native emitter should be available through the backend contract");
-  const lang::MirFunctionInstance *optimizedMain =
-      mirFunctionNamed(frontend, optimizedProgram.mir, "main");
-  expect(optimizedMain != nullptr &&
-             !anyMirInstruction(optimizedMain->body,
-                                [](const lang::MirInstruction &item) {
-                                  return item.operation ==
-                                         lang::MirOperation::Less;
-                                }) &&
-             anyMirInstruction(
-                 optimizedMain->body,
-                 [](const lang::MirInstruction &item) {
-                   const bool *value = item.literal
-                                           ? std::get_if<bool>(&*item.literal)
-                                           : nullptr;
-                   return value != nullptr && *value &&
-                          item.literalProvenance.kind ==
-                              lang::MirLiteralProvenanceKind::ComputeFold &&
-                          item.literalProvenance.sourceOperation ==
-                              lang::MirOperation::Less;
-                 }),
-         "the backend's optimized MIR should replace the constant comparison "
-         "with its folded literal");
-  const lang::HirValue *arithmeticValue = nullptr;
-  if (mainInstance != nullptr) {
-    for (const lang::HirValue &value : mainInstance->body.values) {
-      if (value.kind == lang::HirValueKind::Binary &&
-          value.operation == lang::TokenKind::PLUS) {
-        arithmeticValue = &value;
-        break;
-      }
-    }
-  }
-  const lang::ConstantValue *foldedArithmetic =
-      arithmeticValue == nullptr ? nullptr
-                                 : optimized.replacement(arithmeticValue->id);
-  const auto *foldedInteger =
-      foldedArithmetic == nullptr
-          ? nullptr
-          : std::get_if<lang::ConstantInteger>(foldedArithmetic);
-  expect(foldedInteger != nullptr && !foldedInteger->negative &&
-             foldedInteger->magnitude == 3,
-         "proven in-range integer arithmetic should fold to a typed constant");
-
-  const lang::FrontendResult invalid = lang::Frontend().analyze(
-      "invalid-frontend.gti", "int main() { return 0 }");
-  expect(!invalid.canGenerateCode() && !invalid.syntaxValid,
-         "the frontend should block code generation after syntax errors");
-  expect(hasDiagnosticCode(invalid.diagnostics, "GTI-P0001"),
-         "the shared frontend should retain parser diagnostics");
-
-  const std::filesystem::path overlayDirectory =
-      std::filesystem::temp_directory_path();
-  const std::filesystem::path overlayEntry =
-      overlayDirectory / "gti-source-overlay-entry.gti";
-  const std::filesystem::path overlayDependency =
-      overlayDirectory / "gti-source-overlay-dependency.gti";
-  const std::string dependencyKey =
-      std::filesystem::weakly_canonical(overlayDependency).string();
-  const lang::FrontendResult overlaid = lang::Frontend().analyze(
-      overlayEntry,
-      "import \"gti-source-overlay-dependency.gti\";\n"
-      "int main() { return dependency_value; }\n",
-      {},
-      {{dependencyKey, R"GTIMODULE(export module gti_source_overlay_dependency;
-export int dependency_value = 0;
-)GTIMODULE"}});
-  expect(overlaid.canGenerateCode() && overlaid.diagnostics.empty(),
-         "the frontend should analyze unsaved included-source overlays");
-}
-
-void testMirControlFlowAndOwnershipEffects() {
-  const std::string source = R"(
-class Resource {
-  int32_t value;
-
-public:
-  Resource(int32_t initial) : value(initial) {}
-  ~Resource() {}
-
-  int32_t& read() {
-    return this.value;
-  }
-};
-
-class Bundle {
-  Resource first;
-  Resource second;
-
-public:
-  Bundle() : first(Resource(1)), second(Resource(2)) {}
-};
-
-class Gate {
-  bool open;
-
-public:
-  Gate(bool value) : open(value) {}
-  operator bool() { return this.open; }
-};
-
-int32_t inspect(int32_t& value) { return value; }
-
-expected<int32_t, int32_t> checked(bool fail) {
-  if (fail) {
-    return unexpected(1);
-  }
-  return 2;
-}
-
-int32_t flow(bool stop) {
-  Resource original = Resource(1);
-  Resource moved = std::move(original);
-  mut int32_t count = 0;
-  while (count < 3) {
-    count++;
-    if (count == 1) {
-      continue;
-    }
-    if (stop) {
-      break;
-    }
-  }
-  switch (count) {
-  case 2:
-    count += 1;
-    break;
-  default:
-    break;
-  }
-  int32_t& value_ref = moved.read();
-  Gate gate = Gate(stop);
-  if (gate and inspect(count) > 0) {
-    count += 1;
-  }
-  expected<int32_t, int32_t> result = checked(stop);
-  if (result) {
-    count += 1;
-  }
-  int32_t& count_ref = count;
-  return inspect(count_ref) + inspect(value_ref);
-}
-
-int main() { [[discard]] flow(true); }
-)";
-
-  const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "mir-foundation.gti", source, {standardLibraryPrelude()}, {},
-      {standardLibraryRoot()});
-  if (!frontend.canGenerateCode()) {
-    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
-      std::cerr << "Unexpected MIR diagnostic: " << diagnostic.message << '\n';
-    }
-  }
-  expect(frontend.canGenerateCode() && frontend.mirValid &&
-             frontend.mir.valid(),
-         "valid typed HIR should lower to a validated MIR program");
-
-  const lang::HirClassInstance *bundle = nullptr;
-  for (const lang::HirClassInstance &instance : frontend.hir.classInstances()) {
-    if (instance.source != nullptr &&
-        instance.source->name().lexeme == "Bundle") {
-      bundle = &instance;
-      break;
-    }
-  }
-  const lang::MirClassInstance *loweredBundle =
-      bundle == nullptr ? nullptr : frontend.mir.findClassInstance(bundle->id);
-  expect(
-      loweredBundle != nullptr && bundle->fields.size() == 2 &&
-          loweredBundle->fieldDropOrder.size() == 2 &&
-          loweredBundle->fieldDropOrder[0].field == bundle->fields[1].binding &&
-          loweredBundle->fieldDropOrder[1].field == bundle->fields[0].binding &&
-          loweredBundle->fieldDropOrder[0].symbol != 0 &&
-          loweredBundle->fieldDropOrder[1].symbol != 0,
-      "MIR class metadata should retain stable field symbols and reverse "
-      "lexical drop order");
-
-  const auto findBody = [&](std::string_view name) -> const lang::MirBody * {
-    for (const lang::HirFunctionInstance &instance :
-         frontend.hir.functionInstances()) {
-      if (instance.source == nullptr ||
-          instance.source->name().lexeme != name) {
-        continue;
-      }
-      const lang::MirFunctionInstance *lowered =
-          frontend.mir.findFunctionInstance(instance.id);
-      return lowered == nullptr ? nullptr : &lowered->body;
-    }
-    return nullptr;
-  };
-  const lang::MirBody *flow = findBody("flow");
-  const lang::MirBody *read = findBody("read");
-  const lang::MirBody *mainBody = findBody("main");
-  expect(flow != nullptr && read != nullptr && mainBody != nullptr,
-         "MIR should preserve stable links to global and member functions");
-  if (flow == nullptr || read == nullptr || mainBody == nullptr) {
-    return;
-  }
-
-  const auto instructionCount = [](const lang::MirBody &body,
-                                   lang::MirInstructionKind kind) {
-    std::size_t count = 0;
-    for (const lang::MirBlock &block : body.blocks) {
-      count += static_cast<std::size_t>(
-          std::count_if(block.instructions.begin(), block.instructions.end(),
-                        [kind](const lang::MirInstruction &instruction) {
-                          return instruction.kind == kind;
-                        }));
-    }
-    return count;
-  };
-  const auto terminatorCount = [](const lang::MirBody &body,
-                                  lang::MirTerminatorKind kind) {
-    return static_cast<std::size_t>(
-        std::count_if(body.blocks.begin(), body.blocks.end(),
-                      [kind](const lang::MirBlock &block) {
-                        return block.terminator.kind == kind;
-                      }));
-  };
-
-  const lang::MirBlock *entryBlock = flow->findBlock(flow->entry);
-  expect(entryBlock != nullptr &&
-             std::all_of(flow->blocks.begin(), flow->blocks.end(),
-                         [](const lang::MirBlock &block) {
-                           return block.terminator.kind !=
-                                  lang::MirTerminatorKind::None;
-                         }) &&
-             entryBlock->reachable,
-         "MIR bodies should form validated CFGs with a reachable entry and "
-         "explicit terminators");
-  expect(terminatorCount(*flow, lang::MirTerminatorKind::Branch) >= 3 &&
-             terminatorCount(*flow, lang::MirTerminatorKind::Switch) == 1 &&
-             terminatorCount(*flow, lang::MirTerminatorKind::Goto) >= 3 &&
-             terminatorCount(*flow, lang::MirTerminatorKind::Return) == 1,
-         "if, loop, break, continue, and switch flow should lower to explicit "
-         "MIR edges");
-  bool hasImplicitZeroReturn = false;
-  for (const lang::MirBlock &block : mainBody->blocks) {
-    if (block.terminator.kind != lang::MirTerminatorKind::Return ||
-        !block.terminator.value ||
-        block.terminator.value->kind != lang::MirOperandKind::Constant ||
-        !block.terminator.value->literal) {
-      continue;
-    }
-    const std::uint64_t *value =
-        std::get_if<std::uint64_t>(&*block.terminator.value->literal);
-    hasImplicitZeroReturn = value != nullptr && *value == 0;
-  }
-  expect(hasImplicitZeroReturn,
-         "MIR should preserve main's defined implicit zero return");
-  expect(instructionCount(*flow, lang::MirInstructionKind::Move) >= 1 &&
-             instructionCount(*flow, lang::MirInstructionKind::Borrow) >= 1 &&
-             instructionCount(*flow, lang::MirInstructionKind::Call) >= 3 &&
-             instructionCount(*flow, lang::MirInstructionKind::EndBorrow) >=
-                 2 &&
-             instructionCount(*flow, lang::MirInstructionKind::Drop) >= 2,
-         "MIR should make moves, borrows, calls, borrow ends, and lexical "
-         "drops explicit");
-
-  const auto operationCount = [&](lang::MirInstructionKind kind,
-                                  lang::MirOperation operation) {
-    std::size_t count = 0;
-    for (const lang::MirBlock &block : flow->blocks) {
-      count += static_cast<std::size_t>(
-          std::count_if(block.instructions.begin(), block.instructions.end(),
-                        [&](const lang::MirInstruction &instruction) {
-                          return instruction.kind == kind &&
-                                 instruction.operation == operation;
-                        }));
-    }
-    return count;
-  };
-  // The result's state test is an ordinary call of the prelude class's
-  // contextual operator bool, not a compiler-known operation.
-  const auto resultStateTests = std::count_if(
-      flow->blocks.begin(), flow->blocks.end(),
-      [&](const lang::MirBlock &block) {
-        return std::any_of(
-            block.instructions.begin(), block.instructions.end(),
-            [&](const lang::MirInstruction &instruction) {
-              const lang::ClassTypeInfo *receiver =
-                  instruction.receiver && instruction.receiver->type.kind ==
-                                              lang::SemanticType::Class
-                      ? frontend.semantics.findClassType(
-                            instruction.receiver->type.classId)
-                      : nullptr;
-              return instruction.kind == lang::MirInstructionKind::Call &&
-                     instruction.info.type == lang::SemanticType::Bool &&
-                     receiver != nullptr &&
-                     receiver->qualifiedName == "expected";
-            });
-      });
-  // A compound update is an ordered read/operate/commit schedule rather than
-  // one closed mutation operation, so its arithmetic appears as an ordinary
-  // Compute and its commit as an ordinary Assign.
-  expect(operationCount(lang::MirInstructionKind::Compute,
-                        lang::MirOperation::Add) >= 1 &&
-             operationCount(lang::MirInstructionKind::Compute,
-                            lang::MirOperation::Less) >= 1 &&
-             resultStateTests >= 1 &&
-             operationCount(lang::MirInstructionKind::Assign,
-                            lang::MirOperation::Assign) >= 1 &&
-             instructionCount(*flow, lang::MirInstructionKind::Load) >= 1,
-         "MIR should use backend-neutral scalar and mutation operations");
-
-  const bool hasLogicalTemporary =
-      std::any_of(flow->places.begin(), flow->places.end(),
-                  [](const lang::MirPlace &place) {
-                    return place.root == lang::MirPlaceRootKind::Temporary;
-                  });
-  const bool hasContextualBoolCall = std::any_of(
-      flow->blocks.begin(), flow->blocks.end(),
-      [](const lang::MirBlock &block) {
-        return std::any_of(
-            block.instructions.begin(), block.instructions.end(),
-            [](const lang::MirInstruction &instruction) {
-              return instruction.kind == lang::MirInstructionKind::Call &&
-                     instruction.receiver && instruction.result &&
-                     instruction.info.type == lang::SemanticType::Bool;
-            });
-      });
-  expect(hasLogicalTemporary && hasContextualBoolCall,
-         "short-circuiting should use explicit CFG storage and the selected "
-         "contextual bool call");
-
-  bool validUseDef = flow->values.size() == flow->valueUses.size();
-  bool hasInstructionUse = false;
-  bool hasTerminatorUse = false;
-  for (const lang::MirValue &value : flow->values) {
-    const lang::MirBlock *definitionBlock =
-        flow->findBlock(value.definitionBlock);
-    validUseDef = validUseDef && definitionBlock != nullptr &&
-                  value.definition != 0 &&
-                  std::any_of(definitionBlock->instructions.begin(),
-                              definitionBlock->instructions.end(),
-                              [&](const lang::MirInstruction &instruction) {
-                                return instruction.id == value.definition &&
-                                       instruction.result == value.id;
-                              });
-    for (const lang::MirValueUse &use : flow->usesOf(value.id)) {
-      validUseDef = validUseDef && use.value == value.id;
-      hasInstructionUse = hasInstructionUse ||
-                          use.kind == lang::MirValueUseKind::InstructionOperand;
-      hasTerminatorUse =
-          hasTerminatorUse || use.kind == lang::MirValueUseKind::Terminator;
-    }
-  }
-  expect(validUseDef && hasInstructionUse && hasTerminatorUse,
-         "every MIR value should have one definition and indexed instruction "
-         "and terminator uses");
-
-  bool cleanupBeforeReturn = false;
-  for (const lang::MirBlock &block : flow->blocks) {
-    if (block.terminator.kind != lang::MirTerminatorKind::Return) {
-      continue;
-    }
-    const bool endsBorrow = std::any_of(
-        block.instructions.begin(), block.instructions.end(),
-        [](const lang::MirInstruction &instruction) {
-          return instruction.kind == lang::MirInstructionKind::EndBorrow;
-        });
-    const bool dropsOwner =
-        std::any_of(block.instructions.begin(), block.instructions.end(),
-                    [](const lang::MirInstruction &instruction) {
-                      return instruction.kind == lang::MirInstructionKind::Drop;
-                    });
-    cleanupBeforeReturn = endsBorrow && dropsOwner;
-  }
-  expect(cleanupBeforeReturn,
-         "return blocks should end active borrows and drop lexical owners "
-         "before transferring control");
-
-  const auto escapingLoan = std::find_if(
-      read->loans.begin(), read->loans.end(), [](const lang::MirLoan &loan) {
-        return loan.kind == lang::MirLoanKind::Return && loan.escapes;
-      });
-  const lang::MirPlace *borrowedPlace =
-      escapingLoan == read->loans.end() ? nullptr
-                                        : read->findPlace(escapingLoan->source);
-  expect(borrowedPlace != nullptr &&
-             borrowedPlace->root == lang::MirPlaceRootKind::This &&
-             std::any_of(borrowedPlace->projections.begin(),
-                         borrowedPlace->projections.end(),
-                         [](const lang::MirPlaceProjection &projection) {
-                           return projection.kind ==
-                                  lang::MirProjectionKind::Field;
-                         }),
-         "receiver-tied reference returns should retain an escaping loan from "
-         "a projected 'this' place");
-}
-
-void testOrderedOrdinaryCallInputs() {
-  const lang::FrontendResult frontend =
-      lang::Frontend().analyze("ordered-call-inputs.gti", R"(
-extern "C" {
-  void ordered_native_close(void* value);
-}
-
-class OrderedReceiver {
-  mut void* handle = nullptr;
-
-public:
-  OrderedReceiver() {}
-
-  int ordered_member(int scalar, int& observed, mut int& changed) mut {
-    changed += scalar;
-    return observed + changed;
-  }
-
-  void ordered_close() mut {
-    unsafe { ordered_native_close(this.handle); }
-  }
-};
-
-int ordered_free(int scalar, int& observed, mut int& changed) {
-  changed += scalar;
-  return observed + changed;
-}
-
-int main() {
-  mut OrderedReceiver receiver = OrderedReceiver();
-  mut int observed = 2;
-  mut int changed = 3;
-  int first = ordered_free(1, observed, changed);
-  int second = receiver.ordered_member(4, observed, changed);
-  receiver.ordered_close();
-  return first + second;
-}
-)");
-  if (!frontend.canGenerateCode()) {
-    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
-      std::cerr << "Unexpected ordered-call diagnostic: " << diagnostic.message
-                << '\n';
-    }
-  }
-  expect(frontend.canGenerateCode() && frontend.mirValid &&
-             lang::verifyMirProgram(frontend.mir).valid(),
-         "ordinary scalar/reference calls should lower to verified ordered "
-         "call inputs");
-  if (!frontend.canGenerateCode()) {
-    return;
-  }
-
-  const auto hirFunction =
-      [&](std::string_view name) -> const lang::HirFunctionInstance * {
-    const auto found =
-        std::find_if(frontend.hir.functionInstances().begin(),
-                     frontend.hir.functionInstances().end(),
-                     [&](const lang::HirFunctionInstance &instance) {
-                       return instance.source != nullptr &&
-                              instance.source->name().lexeme == name;
-                     });
-    return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
-  };
-  const lang::HirFunctionInstance *freeTarget = hirFunction("ordered_free");
-  const lang::HirFunctionInstance *memberTarget = hirFunction("ordered_member");
-  const lang::HirFunctionInstance *nativeTarget =
-      hirFunction("ordered_native_close");
-  const lang::HirFunctionInstance *closeTarget = hirFunction("ordered_close");
-  const lang::HirFunctionInstance *mainTarget = hirFunction("main");
-  const lang::MirFunctionInstance *mirMain =
-      mainTarget == nullptr ? nullptr
-                            : frontend.mir.findFunctionInstance(mainTarget->id);
-  expect(freeTarget != nullptr && memberTarget != nullptr &&
-             nativeTarget != nullptr && closeTarget != nullptr &&
-             mainTarget != nullptr && mirMain != nullptr,
-         "the ordered-call fixture should retain exact HIR and MIR targets");
-  if (freeTarget == nullptr || memberTarget == nullptr ||
-      nativeTarget == nullptr || closeTarget == nullptr ||
-      mainTarget == nullptr || mirMain == nullptr) {
-    return;
-  }
-
-  const auto hirCallTo = [&](lang::HirFunctionInstanceId target) {
-    const auto found = std::find_if(
-        mainTarget->body.values.begin(), mainTarget->body.values.end(),
-        [&](const lang::HirValue &value) {
-          return value.kind == lang::HirValueKind::Call &&
-                 value.functionTarget == target;
-        });
-    return found == mainTarget->body.values.end() ? nullptr : &*found;
-  };
-  const lang::HirValue *freeCall = hirCallTo(freeTarget->id);
-  const lang::HirValue *memberCall = hirCallTo(memberTarget->id);
-  const auto nativeCall = std::find_if(
-      closeTarget->body.values.begin(), closeTarget->body.values.end(),
-      [&](const lang::HirValue &value) {
-        return value.kind == lang::HirValueKind::Call &&
-               value.functionTarget == nativeTarget->id;
-      });
-  const auto validArguments = [&](const lang::HirValue *call) {
-    if (call == nullptr || !call->callPlan ||
-        call->callPlan->arguments.size() != 3 || call->operands.size() < 3) {
-      return false;
-    }
-    const std::array kinds{lang::HirCallInputKind::Value,
-                           lang::HirCallInputKind::ReadBorrow,
-                           lang::HirCallInputKind::MutableBorrow};
-    for (std::size_t index = 0; index < kinds.size(); ++index) {
-      const lang::HirCallArgument &argument = call->callPlan->arguments[index];
-      if (argument.parameterIndex != index || argument.kind != kinds[index] ||
-          argument.parameterType != call->parameterTypes[index] ||
-          argument.value != call->operands[call->operands.size() - 3 + index]) {
-        return false;
-      }
-    }
-    return true;
-  };
-  const lang::HirValue *memberCallee =
-      memberCall == nullptr || memberCall->operands.empty()
-          ? nullptr
-          : mainTarget->body.findValue(memberCall->operands.front());
-  expect(freeCall != nullptr && freeCall->callPlan &&
-             !freeCall->callPlan->receiver && validArguments(freeCall) &&
-             memberCall != nullptr && memberCall->callPlan &&
-             memberCall->callPlan->receiver &&
-             memberCall->callPlan->receiver->kind ==
-                 lang::HirCallInputKind::MutableBorrow &&
-             memberCallee != nullptr && !memberCallee->operands.empty() &&
-             memberCall->callPlan->receiver->value ==
-                 memberCallee->operands.front() &&
-             validArguments(memberCall) &&
-             nativeCall != closeTarget->body.values.end() &&
-             nativeCall->callPlan && !nativeCall->callPlan->receiver &&
-             nativeCall->callPlan->arguments.size() == 1,
-         "HIR should retain the exact receiver and source-ordered scalar, "
-         "read-borrow, and mutable-borrow inputs without inventing a receiver "
-         "for a free native call inside a method");
-
-  const lang::MirFunctionInstance *mirClose =
-      frontend.mir.findFunctionInstance(closeTarget->id);
-  const lang::MirInstruction *nativeMirCall = nullptr;
-  if (mirClose != nullptr) {
-    for (const lang::MirBlock &block : mirClose->body.blocks) {
-      const auto found = std::find_if(
-          block.instructions.begin(), block.instructions.end(),
-          [&](const lang::MirInstruction &instruction) {
-            return instruction.kind == lang::MirInstructionKind::Call &&
-                   instruction.functionTarget == nativeTarget->id;
-          });
-      if (found != block.instructions.end()) {
-        nativeMirCall = &*found;
-        break;
-      }
-    }
-  }
-  expect(mirClose != nullptr && nativeMirCall != nullptr &&
-             !nativeMirCall->receiver && nativeMirCall->operands.size() == 1 &&
-             nativeMirCall->callSite != 0,
-         "MIR should materialize a raw-pointer argument conversion without "
-         "falling back to the enclosing method receiver");
-
-  const auto instructionForValue =
-      [&](const lang::MirOperand &operand) -> const lang::MirInstruction * {
-    if (operand.kind != lang::MirOperandKind::Value) {
-      return nullptr;
-    }
-    const lang::MirValue *value = mirMain->body.findValue(operand.value);
-    const lang::MirBlock *block =
-        value == nullptr ? nullptr
-                         : mirMain->body.findBlock(value->definitionBlock);
-    if (block == nullptr) {
-      return nullptr;
-    }
-    const auto found =
-        std::find_if(block->instructions.begin(), block->instructions.end(),
-                     [&](const lang::MirInstruction &instruction) {
-                       return instruction.id == value->definition;
-                     });
-    return found == block->instructions.end() ? nullptr : &*found;
-  };
-  const auto mirCallTo = [&](lang::HirFunctionInstanceId target) {
-    for (const lang::MirBlock &block : mirMain->body.blocks) {
-      const auto found = std::find_if(
-          block.instructions.begin(), block.instructions.end(),
-          [&](const lang::MirInstruction &instruction) {
-            return instruction.kind == lang::MirInstructionKind::Call &&
-                   instruction.functionTarget == target;
-          });
-      if (found != block.instructions.end()) {
-        return &*found;
-      }
-    }
-    return static_cast<const lang::MirInstruction *>(nullptr);
-  };
-  const auto orderedMirCall = [&](const lang::HirValue *hirCall,
-                                  const lang::MirInstruction *call,
-                                  bool hasReceiver) {
-    if (hirCall == nullptr || call == nullptr ||
-        call->callSite != hirCall->id || call->hirValue != hirCall->id ||
-        call->operands.size() != 3 ||
-        call->receiver.has_value() != hasReceiver) {
-      return false;
-    }
-    const std::array inputKinds{lang::HirCallInputKind::Value,
-                                lang::HirCallInputKind::ReadBorrow,
-                                lang::HirCallInputKind::MutableBorrow};
-    const std::array operandKinds{lang::MirOperandKind::Value,
-                                  lang::MirOperandKind::BorrowRead,
-                                  lang::MirOperandKind::BorrowWrite};
-    const lang::MirInstruction *previous = nullptr;
-    if (call->receiver) {
-      previous = instructionForValue(*call->receiver);
-      if (previous == nullptr ||
-          previous->kind != lang::MirInstructionKind::CallInput ||
-          previous->callSite != call->callSite ||
-          previous->callInputRole != lang::MirCallInputRole::Receiver ||
-          previous->callInputKind != lang::HirCallInputKind::MutableBorrow ||
-          previous->operands.size() != 1 ||
-          previous->operands.front().kind !=
-              lang::MirOperandKind::BorrowWrite) {
-        return false;
-      }
-    }
-    for (std::size_t index = 0; index < call->operands.size(); ++index) {
-      const lang::MirInstruction *input =
-          instructionForValue(call->operands[index]);
-      if (input == nullptr ||
-          input->kind != lang::MirInstructionKind::CallInput ||
-          input->callSite != call->callSite ||
-          input->callInputRole != lang::MirCallInputRole::Argument ||
-          input->callInputIndex != index ||
-          input->callInputKind != inputKinds[index] ||
-          input->info.type != call->parameterTypes[index] ||
-          input->operands.size() != 1 ||
-          input->operands.front().kind != operandKinds[index] ||
-          mirMain->body.usesOf(*input->result).size() != 1 ||
-          (previous != nullptr && previous->id >= input->id)) {
-        return false;
-      }
-      previous = input;
-    }
-    return previous != nullptr && previous->id < call->id;
-  };
-  const lang::MirInstruction *freeMirCall = mirCallTo(freeTarget->id);
-  const lang::MirInstruction *memberMirCall = mirCallTo(memberTarget->id);
-  expect(orderedMirCall(freeCall, freeMirCall, false) &&
-             orderedMirCall(memberCall, memberMirCall, true),
-         "MIR should form a one-use receiver, argument-zero, argument-one, "
-         "argument-two, invocation chain");
-}
-
 void testOrderedRawReceiverInputs() {
   const lang::FrontendResult frontend = lang::Frontend().analyze(
       "ordered-raw-receiver.gti", R"(
@@ -1093,250 +791,6 @@ int main() {
            "both raw receiver access modes have explicit MIR stages");
   }
   expect(plans == 2, "both raw member calls have ordered HIR plans");
-}
-
-void testOrderedClassValueCallInputs() {
-  const lang::FrontendResult frontend = lang::Frontend().analyze(
-      "ordered-class-value-inputs.gti", R"(
-class CopiedValue {
-  int value;
-
-public:
-  CopiedValue(int input) : value(input) {}
-  int read() { return this.value; }
-};
-
-class MovedValue {
-  int value;
-
-public:
-  MovedValue(int input) : value(input) {}
-  MovedValue(MovedValue& other) = delete;
-  MovedValue(MovedValue&& other) = default;
-  ~MovedValue() {}
-  int read() { return this.value; }
-};
-
-class BorrowedValue {
-  int& value;
-
-public:
-  BorrowedValue(int& input) : value(input) {}
-  int read() { return this.value; }
-};
-
-int ordered_values(CopiedValue copied, MovedValue moved,
-                   MovedValue temporary) {
-  return copied.read() + moved.read() + temporary.read();
-}
-
-int observe_borrowed(BorrowedValue view) { return view.read(); }
-
-int main() {
-  mut int observed = 4;
-  CopiedValue copied = CopiedValue(1);
-  MovedValue moved = MovedValue(2);
-  int total = ordered_values(copied, std::move(moved), MovedValue(3));
-  return total + observe_borrowed(BorrowedValue(observed)) - 10;
-}
-)",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-  if (!frontend.canGenerateCode()) {
-    for (const lang::Diagnostic &diagnostic : frontend.diagnostics) {
-      std::cerr << "Unexpected class-value call diagnostic: "
-                << diagnostic.message << '\n';
-    }
-  }
-  expect(frontend.canGenerateCode() && frontend.mirValid &&
-             lang::verifyMirProgram(frontend.mir).valid(),
-         "copyable and explicitly moved class arguments should lower to "
-         "verified ordered parameter inputs");
-  if (!frontend.canGenerateCode()) {
-    return;
-  }
-
-  const auto function = [&](std::string_view name) {
-    const auto found =
-        std::find_if(frontend.hir.functionInstances().begin(),
-                     frontend.hir.functionInstances().end(),
-                     [&](const lang::HirFunctionInstance &instance) {
-                       return instance.source != nullptr &&
-                              instance.source->name().lexeme == name;
-                     });
-    return found == frontend.hir.functionInstances().end() ? nullptr : &*found;
-  };
-  const lang::HirFunctionInstance *ordered = function("ordered_values");
-  const lang::HirFunctionInstance *observe = function("observe_borrowed");
-  const lang::HirFunctionInstance *main = function("main");
-  const lang::MirFunctionInstance *mirMain =
-      main == nullptr ? nullptr : frontend.mir.findFunctionInstance(main->id);
-  expect(ordered != nullptr && observe != nullptr && main != nullptr &&
-             mirMain != nullptr,
-         "the class-value fixture should retain exact HIR and MIR functions");
-  if (ordered == nullptr || observe == nullptr || main == nullptr ||
-      mirMain == nullptr) {
-    return;
-  }
-
-  const auto hirCallTo = [&](lang::HirFunctionInstanceId target) {
-    const auto found =
-        std::find_if(main->body.values.begin(), main->body.values.end(),
-                     [&](const lang::HirValue &value) {
-                       return value.kind == lang::HirValueKind::Call &&
-                              value.functionTarget == target;
-                     });
-    return found == main->body.values.end() ? nullptr : &*found;
-  };
-  const lang::HirValue *orderedCall = hirCallTo(ordered->id);
-  const lang::HirValue *borrowedCall = hirCallTo(observe->id);
-  const std::array expectedKinds{lang::HirCallInputKind::CopyValue,
-                                 lang::HirCallInputKind::MoveValue,
-                                 lang::HirCallInputKind::MoveValue};
-  bool exactHirPlan =
-      orderedCall != nullptr && orderedCall->callPlan &&
-      !orderedCall->callPlan->receiver &&
-      orderedCall->callPlan->arguments.size() == expectedKinds.size();
-  for (std::size_t index = 0; exactHirPlan && index < expectedKinds.size();
-       ++index) {
-    const lang::HirCallArgument &argument =
-        orderedCall->callPlan->arguments[index];
-    const lang::HirValue *source = main->body.findValue(argument.value);
-    exactHirPlan =
-        argument.parameterIndex == index &&
-        argument.kind == expectedKinds[index] &&
-        argument.parameterType == orderedCall->parameterTypes[index] &&
-        source != nullptr &&
-        source->info.category == (index == 0 ? lang::ValueCategory::Place
-                                             : lang::ValueCategory::Value);
-  }
-  expect(exactHirPlan && borrowedCall != nullptr && borrowedCall->callPlan &&
-             borrowedCall->callPlan->arguments.size() == 1 &&
-             borrowedCall->callPlan->arguments.front().kind ==
-                 lang::HirCallInputKind::MoveValue,
-         "HIR should distinguish class copy and move parameter setup while "
-         "using the same exact input plan for constructed borrowed carriers");
-
-  const auto definitionFor = [&](const lang::MirOperand &operand) {
-    if (operand.kind != lang::MirOperandKind::Value) {
-      return static_cast<const lang::MirInstruction *>(nullptr);
-    }
-    const lang::MirValue *value = mirMain->body.findValue(operand.value);
-    const lang::MirBlock *block =
-        value == nullptr ? nullptr
-                         : mirMain->body.findBlock(value->definitionBlock);
-    if (block == nullptr) {
-      return static_cast<const lang::MirInstruction *>(nullptr);
-    }
-    const auto found =
-        std::find_if(block->instructions.begin(), block->instructions.end(),
-                     [&](const lang::MirInstruction &instruction) {
-                       return instruction.id == value->definition;
-                     });
-    return found == block->instructions.end() ? nullptr : &*found;
-  };
-  const auto mirCallTo = [&](lang::HirFunctionInstanceId target) {
-    for (const lang::MirBlock &block : mirMain->body.blocks) {
-      const auto found = std::find_if(
-          block.instructions.begin(), block.instructions.end(),
-          [&](const lang::MirInstruction &instruction) {
-            return instruction.kind == lang::MirInstructionKind::Call &&
-                   instruction.functionTarget == target;
-          });
-      if (found != block.instructions.end()) {
-        return &*found;
-      }
-    }
-    return static_cast<const lang::MirInstruction *>(nullptr);
-  };
-  const lang::MirInstruction *call = mirCallTo(ordered->id);
-  const lang::MirInstruction *borrowedMirCall = mirCallTo(observe->id);
-  std::array<const lang::MirInstruction *, 3> inputs{};
-  if (call != nullptr && call->operands.size() == inputs.size()) {
-    for (std::size_t index = 0; index < inputs.size(); ++index) {
-      inputs[index] = definitionFor(call->operands[index]);
-    }
-  }
-  const auto exactPreparedParameter =
-      [&](const lang::MirInstruction *input,
-          lang::MirLifecycleEventKind expectedLifecycle) {
-        if (input == nullptr || !input->preparedParameterDrop ||
-            !input->destination || input->lifecycle.size() != 1 ||
-            input->lifecycle.front().kind != expectedLifecycle ||
-            input->lifecycle.front().target != *input->preparedParameterDrop) {
-          return false;
-        }
-        const lang::MirDropObligation *obligation =
-            mirMain->body.findDropObligation(*input->preparedParameterDrop);
-        const lang::MirPlace *place =
-            obligation == nullptr ? nullptr
-                                  : mirMain->body.findPlace(obligation->place);
-        const std::size_t transfers =
-            call == nullptr
-                ? 0
-                : static_cast<std::size_t>(std::count_if(
-                      call->lifecycle.begin(), call->lifecycle.end(),
-                      [&](const lang::MirLifecycleEvent &event) {
-                        return event.kind ==
-                                   lang::MirLifecycleEventKind::TransferOut &&
-                               event.source == *input->preparedParameterDrop;
-                      }));
-        return obligation != nullptr && place != nullptr &&
-               obligation->kind ==
-                   lang::MirDropObligationKind::PreparedParameter &&
-               obligation->dropType.type == input->info.type &&
-               place->root == lang::MirPlaceRootKind::Temporary &&
-               *input->destination == place->id && transfers == 1;
-      };
-  const lang::MirPlace *copySource =
-      inputs[0] == nullptr || inputs[0]->operands.empty()
-          ? nullptr
-          : mirMain->body.findPlace(inputs[0]->operands.front().place);
-  const lang::MirInstruction *explicitMoveSource =
-      inputs[1] == nullptr || inputs[1]->operands.empty()
-          ? nullptr
-          : definitionFor(inputs[1]->operands.front());
-  const lang::MirInstruction *temporarySource =
-      inputs[2] == nullptr || inputs[2]->operands.empty()
-          ? nullptr
-          : definitionFor(inputs[2]->operands.front());
-  expect(call != nullptr && call->callSite != 0 &&
-             call->operands.size() == inputs.size() && inputs[0] != nullptr &&
-             inputs[1] != nullptr && inputs[2] != nullptr &&
-             inputs[0]->callInputKind == lang::HirCallInputKind::CopyValue &&
-             inputs[0]->operands.size() == 1 &&
-             inputs[0]->operands.front().kind == lang::MirOperandKind::Copy &&
-             copySource != nullptr &&
-             exactPreparedParameter(inputs[0],
-                                    lang::MirLifecycleEventKind::Initialize) &&
-             inputs[1]->callInputKind == lang::HirCallInputKind::MoveValue &&
-             inputs[2]->callInputKind == lang::HirCallInputKind::MoveValue &&
-             exactPreparedParameter(inputs[1],
-                                    lang::MirLifecycleEventKind::Reparent) &&
-             exactPreparedParameter(inputs[2],
-                                    lang::MirLifecycleEventKind::Reparent) &&
-             explicitMoveSource != nullptr &&
-             explicitMoveSource->kind == lang::MirInstructionKind::Move &&
-             temporarySource != nullptr &&
-             temporarySource->kind == lang::MirInstructionKind::Construct &&
-             inputs[0]->id < inputs[1]->id && inputs[1]->id < inputs[2]->id &&
-             inputs[2]->id < call->id && call->lifecycle.size() == 3 &&
-             borrowedMirCall != nullptr && borrowedMirCall->callSite != 0 &&
-             borrowedMirCall->operands.size() == 1 &&
-             definitionFor(borrowedMirCall->operands.front()) != nullptr &&
-             definitionFor(borrowedMirCall->operands.front())->kind ==
-                 lang::MirInstructionKind::CallInput &&
-             definitionFor(borrowedMirCall->operands.front())
-                 ->preparedParameterDrop.has_value(),
-         "MIR should stage each class-value parameter in caller-owned storage, "
-         "and transfer both owning and borrowed-carrier shells exactly once "
-         "when the callee begins");
-
-  const std::string dump = lang::MirPrinter().print(mirMain->body);
-  expect(dump.starts_with("mir-body-v93\n") &&
-             dump.find("call-input-kind=copy-value") != std::string::npos &&
-             dump.find("call-input-kind=move-value") != std::string::npos &&
-             dump.find("prepared-parameter-drop=") != std::string::npos,
-         "MIR v24 should serialize staged class-value parameter ownership");
 }
 
 void testOrderedOrdinaryConstructorInputs() {
@@ -4178,76 +3632,34 @@ int main() {
          "reporting the invalid field copy and instantiation site");
 }
 
-void testCompletePipeline() {
-  lang::Lexer lexer;
-  const std::string source = R"(
-int twice(int value) {
-  return value * 2;
-}
-
-int main() {
-  int result = twice(4);
-  if (result == 8) {
-    return 0;
-  }
-  return 1;
-}
-)";
-  auto tokens = lexer.scan(source);
-  expect(!lexer.hadError(), "valid source should lex");
-
-  lang::Parser parser(std::move(tokens));
-  lang::Program program = parser.parse();
-  expect(!parser.hadError(), "valid source should parse");
-  expect(program.declarations().size() == 2,
-         "program should contain both functions");
-
-  lang::SemanticVisitor semantic;
-  expect(semantic.check(program), "valid program should pass semantic checks");
-
-  const lang::FrontendResult frontend = analyzeEmissionFixture(source);
-  const lang::MirFunctionInstance *twice = mirFunctionNamed(frontend, "twice");
-  const lang::MirFunctionInstance *mainFunction =
-      mirFunctionNamed(frontend, "main");
-  expect(twice != nullptr &&
-             twice->definitionKind == lang::MirDefinitionKind::Source &&
-             twice->returnType == lang::SemanticType::Int32 &&
-             twice->parameterTypes.size() == 1 &&
-             twice->parameterTypes.front() == lang::SemanticType::Int32 &&
-             hasCheckedMirOperation(frontend.mir, twice->body,
-                                    lang::MirOperation::Multiply,
-                                    lang::DefinedFailureCode::IntegerOverflow,
-                                    lang::DefinedFailureDetail::Multiplication,
-                                    lang::SemanticType::Int32),
-         "MIR should lower function signatures and checked arithmetic");
-  expect(twice != nullptr && twice->mayRaiseDefinedFailure &&
-             mainFunction != nullptr &&
-             callsMirFunction(mainFunction->body, twice) &&
-             llvmAccepts(frontend),
-         "the failure-propagating call should lower through MIR-owned places "
-         "and reach the shipped backend");
-}
-
-constexpr NamedTest kTests[] = {
-    {"testFrontendBackendAndOptimizationPipeline",
-     testFrontendBackendAndOptimizationPipeline},
-    {"testMirControlFlowAndOwnershipEffects",
-     testMirControlFlowAndOwnershipEffects},
-    {"testOrderedOrdinaryCallInputs", testOrderedOrdinaryCallInputs},
-    {"testOrderedRawReceiverInputs", testOrderedRawReceiverInputs},
-    {"testOrderedClassValueCallInputs", testOrderedClassValueCallInputs},
-    {"testOrderedOrdinaryConstructorInputs",
-     testOrderedOrdinaryConstructorInputs},
-    {"testMirTemporaryAndDropObligations", testMirTemporaryAndDropObligations},
-    {"testProgramArgumentsEntryPoint", testProgramArgumentsEntryPoint},
-    {"testProgramInitializationPlans", testProgramInitializationPlans},
-    {"testTypedHirGenericInstances", testTypedHirGenericInstances},
-    {"testCompletePipeline", testCompletePipeline},
-};
-
 } // namespace
 
-int main(int argc, char **argv) {
-  lang::installCrashHandlers("gti_compiler_e2e_tests");
-  return runNamedTests(argc, argv, kTests, "e2e");
+GTI_UNIT_TEST(ordered_raw_receiver_inputs) {
+  testOrderedRawReceiverInputs();
+  return failures == 0 ? 0 : 1;
+}
+
+GTI_UNIT_TEST(ordered_constructor_inputs) {
+  testOrderedOrdinaryConstructorInputs();
+  return failures == 0 ? 0 : 1;
+}
+
+GTI_UNIT_TEST(mir_temporary_and_drop_obligations) {
+  testMirTemporaryAndDropObligations();
+  return failures == 0 ? 0 : 1;
+}
+
+GTI_UNIT_TEST(program_arguments_entry_point) {
+  testProgramArgumentsEntryPoint();
+  return failures == 0 ? 0 : 1;
+}
+
+GTI_UNIT_TEST(program_initialization_plans) {
+  testProgramInitializationPlans();
+  return failures == 0 ? 0 : 1;
+}
+
+GTI_UNIT_TEST(typed_hir_generic_instances) {
+  testTypedHirGenericInstances();
+  return failures == 0 ? 0 : 1;
 }
