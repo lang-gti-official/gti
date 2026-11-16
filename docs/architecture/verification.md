@@ -312,7 +312,7 @@ parameter kinds, unproved result operations and bounded recursive expansion.
 Compiler query checks cover member/binder navigation, concrete hover,
 incomplete-type completion, and formatter stability. Tree-sitter's protocol
 corpus and query checks cover the corresponding syntax and binder scopes.
-`associated_type_families_lsp` checks those compiler facts through the protocol,
+`tests/lsp/types/associated_type_families.gti` checks those compiler facts through the protocol,
 including references, independent binder scopes, semantic tokens, the existing
 cross-file rename guard, exact diagnostic spans, and malformed-edit recovery.
 
@@ -2384,7 +2384,7 @@ captured escapes, access upgrades, conflicting owner use and unsupported
 signature erasure. `borrow_origin` additionally mutates return loans, parent
 links, summary access and selected formal indices. `borrow_origin_syntax` and
 `lambda_formatting` preserve result-access tokens and formatting;
-`borrowing_callbacks_lsp` checks accepted forms, hover, formatting, conflict
+`tests/lsp/borrows` (`capture_borrow`, `reference_returning_lambdas`, `receiver_capture*`) checks accepted forms, hover, formatting, conflict
 diagnostics and recovery. The `lambda_parameter_reference_results` fixture in
 `llvm_callable_execution` exercises scalar, record and string composition
 through the existing MIR backends, including LLVM O0–O3. Example 156 demonstrates
@@ -6406,7 +6406,7 @@ generic, static, virtual and call-operator declarations, exact function items,
 extern-C/link-name composition, overload-specific policy and static virtual
 selection. It retains rejection for unannotated calls/lambdas, invalid
 attributes, escaping references and conflicting live loans. Compiler-owned
-hover and formatting preserve the annotation. `discardable_result_lsp` checks
+hover and formatting preserve the annotation. `tests/lsp/declarations/discardable_result.gti` checks
 the default diagnostic's UTF-16 range, unsaved annotation edits, hover,
 incomplete-source recovery and explicit call-site discard.
 
@@ -7515,7 +7515,7 @@ with constructors, optional string-chain rejection and named-owner copy checks.
 `tests/ui/classes/construction/implicit_return_construction_*.gti` compares implicit and explicit forms at
 O0/O1/O2/O3 under C++20/C++23 and ASan/UBSan: result ownership, temporary receiver
 lifetime, local cleanup and partial construction failure retain identical
-source-defined traces. `implicit_return_construction_lsp` covers unsaved modifier
+source-defined traces. `tests/lsp/declarations/implicit_return_construction.gti` covers unsaved modifier
 changes, exact UTF-16 error spans, reference navigation and parser recovery.
 Example 166 demonstrates concise optional returns and an unrelated result type.
 
@@ -8196,7 +8196,7 @@ publication. Negative checks preserve member-name identity and reject absent,
 wrong-result, unsafe, mutable, consuming, static, inaccessible, and non-nullary
 members. A disjunction does not grant a method missing from another alternative;
 self-referential requirements fail closed and reference results are not owned
-results. `//@ format-stable` keeps formatter round trips. `member_requirement_lsp`
+results. `//@ format-stable` keeps formatter round trips. `tests/lsp/generics/member_requirement.gti`
 checks compiler-owned hover, receiver definition, malformed-source recovery,
 shared diagnostic codes, and formatting/reanalysis.
 `testCompilerPrivateMemberRequirements` proves that trusted source selects a
@@ -9541,10 +9541,10 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `documentation_index` | deterministic, pointer-free standard-library declaration projection; exact signatures, retained documentation, source-facing operator names, stable source identities, visibility filtering, schema serialization, and fail-closed frontend/tooling prerequisites |
 | `block_comment_pipeline` | line tracking, literal exclusion, non-nesting block-comment lexing, unterminated diagnostics, frontend composition, and formatter preservation/idempotence |
 | `constructor_formatting` | constructor-list packing, colon placement and indentation configuration; exact default/opt-in layouts; nested argument/lambda/collection isolation, comments, conditional declarations, tabs, malformed input, token preservation and idempotence; `lsp_protocol` additionally covers configuration discovery and reload |
-| `block_comment_lsp` | multiline UTF-16 semantic tokens, literal exclusion, formatting, and publication of the shared unterminated-comment diagnostic |
-| `comment_placement_lsp` | document formatting with client indentation keeps own-line line and block comments on their own lines after statements and closing braces, keeps trailing comments trailing, and returns no edit for already formatted comments |
+| `tests/lsp/formatting/block_comment_*` | multiline UTF-16 semantic tokens, literal exclusion, formatting, and publication of the shared unterminated-comment diagnostic |
+| `tests/lsp/formatting/comment_placement.jsonl` | document formatting with client indentation keeps own-line line and block comments on their own lines after statements and closing braces, keeps trailing comments trailing, and returns no edit for already formatted comments |
 | `source_text_pipeline` | strict UTF-8 validation and no-cascade recovery, leading-BOM offsets, ASCII token boundaries, Unicode string/comment preservation, LF/CRLF line identity, lone-CR rejection, source locations, and formatter preservation/idempotence |
-| `source_text_lsp` | BOM-aware UTF-16 token positions, Unicode and CRLF document acceptance, LF formatter output, exact lone-CR diagnostic publication, and next-generation clearing |
+| `tests/lsp/formatting/source_text.jsonl` | BOM-aware UTF-16 token positions, Unicode and CRLF document acceptance, LF formatter output, exact lone-CR diagnostic publication, and next-generation clearing |
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
 | `native_record_pipeline` | `[[c_abi]]` declaration rules, computed field layout, diagnostics, extern-C signatures, unsafe classification, HIR/MIR retention, formatter, and backend assertions |
@@ -10309,7 +10309,7 @@ bindings, projected fields, checked receiver returns, and owning enum field
 exchange. Both include C++20/C++23, optimized/unoptimized, disabled-elision,
 and ASan/UBSan execution. The semantic/MIR suite rejects direct layout cycles,
 forged active-variant cleanup selectors, unguarded extractions, and upgraded
-loans. `borrowed_payload_pattern_lsp` checks navigation, tokens, exact
+loans. `tests/lsp/patterns/borrowed_payload_binding.gti` checks navigation, tokens, exact
 diagnostic locations, and versioned recovery. `<std/json>` (0.408 and earlier) was the end-to-end
 library client of recursive enum storage, without a privileged lowering path;
 the payload-enum suites keep that coverage.
@@ -11647,7 +11647,7 @@ user-defined Cell/Row/Grid trace and unique-owner/optional clients through the
 eight-mode native matrix (48 cases). `operator_place_failure_runtime` checks 12
 unchanged target-before-RHS and callee/caller cleanup observations at the native
 endpoints; an indexed reference failure must report R0007/70, not terminal abort.
-`operator_place_composition_lsp` checks semantic-error publication, symbol queries
+`tests/lsp/places/operator_place_composition.gti` checks semantic-error publication, symbol queries
 and recovery. These are focused gates, not the full campaign acceptance run.
 
 Example14 explicitly demonstrates the repaired forms. Its reviewed inventory
@@ -11670,7 +11670,7 @@ and 80 through the unchanged eight-mode native matrix.
 `testGenericAdvisorySoundness` and `generic_advisory_lsp` cover A20/A24/A33,
 unresolved callable arguments, an unrelated mutable operator receiver,
 declaration-independent warnings, exact safe edits, UTF-16 positions, current
-versions and stale-fix rejection. `generic_contract_lsp` checks contextual
+versions and stale-fix rejection. `tests/lsp/generics/{pack_function_item,trailing_clause_facts}.gti` checks contextual
 function hover/definition, dependent-clause publication and error recovery.
 Focused passes do not replace the campaign's combined full-suite acceptance.
 

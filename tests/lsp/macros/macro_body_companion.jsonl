@@ -1,0 +1,9 @@
+// An error inside a macro body is reported at the invocation, and each one
+// gains an informational companion "A macro expansion fails here: ..." at the
+// body line whose related location leads back to the invocation (issue #265).
+// (lsp_macro_body_diagnostic_test.py; companions are severity 3, so a transcript.)
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "import std.source_location;\nimport std.string;\n#macro check_value(int value, std::source_location loc) {\n  std::string hidden = loc.file;\n}\nint main() {\n  check_value!(1, std::source_location::current());\n  return 0;\n}\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [{"severity": 1, "code": "GTI-S2007", "range": {"start": {"line": 6}}}, {"severity": 3, "code": "GTI-S2007", "range": {"start": {"line": 3}}, "message": "A macro expansion fails here: Member 'file' of 'source_location' is private.", "relatedInformation": [{"location": {"uri": "$URI", "range": {"start": {"line": 6}}}}]}, {"severity": 1, "code": "GTI-S2003", "range": {"start": {"line": 6}}}, {"severity": 3, "code": "GTI-S2003", "range": {"start": {"line": 3}}, "message": "A macro expansion fails here: Cannot initialize 'hidden' of type 'std::string' with a value of type 'std::string'.", "relatedInformation": [{"location": {"uri": "$URI", "range": {"start": {"line": 6}}}}]}]}}}

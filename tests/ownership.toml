@@ -31,10 +31,6 @@ schema = 1
 reason = "registered only on some hosts or with optional tools or build options"
 tests = [
   # GTI_BUILD_LSP=OFF omits these registrations.
-  "scalar_temporary_borrow_lsp",
-  "reference_parameter_packs_lsp",
-  "block_comment_lsp",
-  "comment_placement_lsp",
   "concurrency_composition_lsp",
   "diagnostic_explanations",
   "diagnostic_recovery_lsp",
@@ -56,7 +52,6 @@ tests = [
   "raw_pointer_audit_policy",
   "source_modules_lsp",
   "module_discovery_lsp",
-  "source_text_lsp",
 
   "compact_owner_layout_instrumented",
   "llvm_atomic_wait_service",
@@ -124,12 +119,9 @@ owners = [
   "scoped_configuration_defines",
 ]
 consumers = [
-  "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
-  "block_comment_lsp",
-  "source_text_lsp",
   "module_editor_recovery",
   "tree_sitter_queries",
   "constructor_formatting",
@@ -152,11 +144,8 @@ owners = [
   "nested_type_syntax",
 ]
 consumers = [
-  "reference_parameter_packs_lsp",
   "lsp_protocol",
-  "comment_placement_lsp",
   "export_placement_lsp",
-  "block_comment_lsp",
   "cli_workflow",
 ]
 
@@ -286,7 +275,6 @@ owners = [
   "reference_parameter_pack_mir",
   "scalar_temporary_borrow",
   "scalar_temporary_borrow_runtime",
-  "scalar_temporary_borrow_lsp",
   "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
@@ -324,7 +312,6 @@ owners = [
   "consuming_receiver_types",
 ]
 consumers = [
-  "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
