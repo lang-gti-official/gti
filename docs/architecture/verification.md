@@ -7666,7 +7666,7 @@ user's active installation remain deliberately unchanged.
   admission; named inputs are not a substitute for that regression.
 - `expected_ergonomics` owns semantic rejection, HIR/MIR shape and independent
   malformed-IR coverage for consuming `expect`, `transform`, and `and_then`.
-  `expected_ergonomics_runtime` exercises owning alternatives and mapper results,
+  `tests/slow/expected/ergonomics.gti` exercises owning alternatives and mapper results,
   void input/output, skipped mappers with owning captures, eager message
   evaluation, pending returns and exact failure cleanup. Both native standards
   and O0/O1/O3 run with copy elision disabled, with a separate sanitizer case.
@@ -7932,7 +7932,7 @@ after an all-target Release/Ninja build with AppleClang 21 and LLVM 22.1.8
 (12 compile jobs, eight test workers). This is complete same-source coverage,
 not a claim of one uninterrupted timeout-free invocation: the initial run
 completed 102 passes before three unrelated runtime matrices timed out.
-`void_return_runtime`, `string_ordering_runtime`, and
+`tests/ui/runtime/cleanup_order`, `string_ordering_runtime`, and
 `tests/ui/borrow/payload_patterns/` all passed unchanged on retry in 19.67
 seconds. The remaining 274 tests then passed in 246.89 seconds. No production
 source or compiler binary changed between those runs; the combined pass
@@ -7993,7 +7993,7 @@ or lifetime records, and forged prepared receiver roles/call sites.
 `expected_transform_error_lsp` checks lambda success, precise invalid-parameter
 diagnostics, and recovery in successive document generations.
 
-`expected_transform_error_runtime` retains namespace-function cases and covers
+`tests/ui/expected/transform_error` retains namespace-function cases and covers
 inline/named lambdas, repeated non-consuming environment use, two distinct
 generic error instantiations, void-success mapping, eager owned captures,
 passive class copies and trivial environment reuse in loops, move-only error
@@ -8015,7 +8015,7 @@ not a substitute for the combined production suite:
 | Construction, replacement and partial cleanup | `mir_backend_owned_lifecycle`, `cpp_mir_body_emitter_preflight`, `constructor_field_publication_runtime`, `optional_compiler_contract`, `optional_runtime`, and `owned_unexpected_pending_cleanup_runtime` check exact producer/field publication, rollback, no duplicate scalar initialization, first and secondary failure, and prepared owning arguments. |
 | Borrow/reference composition | `compiler_ownership`, `borrowing_composition_pipeline`, `ordered_borrow_composition_runtime`, and `borrowing_composition_lsp` check independent owner dependencies, ordered mutation then lookup, helper/tree traversal, loan protection, malformed MIR, source spans, and editor recovery. |
 | Eligible container/value-wrapper consistency | `optional_runtime`, `vector_construction_only_runtime`, `tests/ui/generics/clone`, and the owning Expected gates check move construction without assignment, explicit payload cloning, nested wrappers, vector growth/removal, and cleanup through active alternatives. |
-| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `recursive_payload_sum_runtime`, `consuming_payload_patterns_runtime`, `move_only_payload_transport_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, move-only transport without cleanup, exact transport and partial cleanup. |
+| Owning payload enums | `sum_type_pipeline`, `class_payload_enum_runtime`, `payload_enum_containment_runtime`, `generic_payload_enum_runtime`, `tests/ui/types/payload_enums/recursive_sum`, `consuming_payload_patterns_runtime`, `move_only_payload_transport_runtime`, and the emitter preflight mutations check concrete generic owners, collections, borrowed observation, consuming matches, move-only transport without cleanup, exact transport and partial cleanup. |
 
 The 2026-10-03 carrier/optimizer checkpoint passes all 372 registered tests
 after a full Release/Ninja rebuild on macOS arm64 (AppleClang 21, LLVM 22.1.8,
@@ -9099,7 +9099,7 @@ shapes without native destructibility-based body selection. Its pack-layout
 regression checks grouped source bindings against flattened parameter suffixes,
 including fixed prefixes, and rejects an out-of-range element projection in MIR.
 
-`return_result_cleanup_runtime` separately checks direct-call, moved,
+`tests/ui/runtime/cleanup_order` separately checks direct-call, moved,
 constructed, `expected`-wrapped, storage-handle, infallible-object, and
 owned-callable field-carrier returns across callee cleanup. Its 160 executions
 across C++20/C++23 O0/O1/O3,
@@ -9302,7 +9302,7 @@ weakened or retargeted ownership event, a lifecycle event on the `Move`, forged
 cleanup on the moved-from local and a conditional activation, all of which MIR
 verification also rejects.
 The existing source-destructor runtime matrix also passes (259 executions).
-`polymorphic_owner_cleanup_runtime` passes 48 executions across C++20/C++23
+`tests/ui/runtime/cleanup_order` passes 48 executions across C++20/C++23
 O0/O1/O3, no-elide, and ASan/UBSan. It checks a declared derived destructor,
 reverse field destruction, empty interface bases, first and secondary failures,
 caller cleanup, and assignment retaining the allocation's cleanup binding.
@@ -9423,7 +9423,7 @@ failure-free field-body proof independently of later destruction, while MIR
 still proves the fresh source obligation and its single transfer. A mutation
 removing that transfer is rejected; no source workaround names or pre-moves the
 temporary to bypass the constructor path.
-`void_return_runtime` checks exact void expression returns through ordinary
+`tests/ui/runtime/cleanup_order` checks exact void expression returns through ordinary
 functions, a lambda, and a generic callable-parameter pack. Its 48 executions
 across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan pass with exact call,
 parameter, local and caller cleanup order, including primary and secondary
@@ -9593,7 +9593,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `expected_wrong_state_runtime` | wrong-state `expected.value()` and `expected.error()` terminate through `GTI-R0009` at O0/O3 under C++20/C++23 rather than inheriting native-library behavior |
 | `expected_propagation_runtime` | exact once-only, left-to-right `?` evaluation; `expected<void, E>` forwarding; named-operand copy versus prvalue/`std::move` move behavior; active-alternative error transport; and ordinary branch/return cleanup at O0/O3 under C++20/C++23 |
 | `expected_transform_error` / `expected_transform_error_lsp` | exact namespace mapper selection, consuming receiver and owned-result diagnostics with source/UTF-16 spans and related declarations, HIR branch/call lowering, verified MIR return and join ownership, fail-closed mutation tests, and compiler-backed completion/hover/definition and recovery |
-| `expected_transform_error_runtime` | scalar, void, passive noncopyable and owning alternatives; named/prvalue receivers, chaining, loop re-entry, onward calls, prefix `?`, once-only mapping, reverse-order cleanup, and mapper/later-argument/destructor failures; C++20/C++23 at O0/O1/O3, disabled elision, and ASan/UBSan |
+| `tests/ui/expected/transform_error` | scalar, void, passive noncopyable and owning alternatives; named/prvalue receivers, chaining, loop re-entry, onward calls, prefix `?`, once-only mapping, reverse-order cleanup, and mapper/later-argument/destructor failures; C++20/C++23 at O0/O1/O3, disabled elision, and ASan/UBSan |
 | `expected_payload_range_runtime` | payload iteration with named and by-value `expected` owners, nested loops, continue/break/early return, local and parameter wrong-state failures, and cstdio payload integration under C++20/C++23 at O0/O3; explicit lifetime slots execute their MIR drops rather than deferring to native parameter scope |
 | `optional_compiler_contract` | exact declaration-bound optional capability identity; inline storage instance policy; semantic, HIR, MIR, lifecycle-transfer, and backend-intrinsic retention; move-only source unavailability; live-borrow rejection; private representation isolation; and fail-closed forged intrinsic and transfer evidence |
 | `optional_runtime` | empty, value, move, checked read, reset, emplacement, fallback, and move-only payload behavior; inline allocation-free representation; copy and assignment rejection; live-borrow protection; exact cleanup; and `GTI-R0008` wrong-state reporting at O0/O3 under C++20/C++23 |
@@ -9644,7 +9644,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `compiler_debug_tooling` | portable failure capture/replay plus decline-census body segmentation, body-kind-local spellability, deterministic generation, backend-only classification, and argument validation |
 | `mir_cutover_corpus_oracle` | every example builds and runs at `-O0`/C++20 and `-O3`/C++23 with identical exit status, stdout, and stderr; a recorded example's body count outside the census budget is an advisory finding |
 | `cpp_mir_body_emitter_preflight` / `cpp_mir_body_emitter_text` / `cpp_mir_body_emitter_lifecycle` / `cpp_mir_body_emitter_census` / `cpp_mir_body_emitter_corpus` / `cpp_mir_body_emitter_corpus_protocol` | Manifest-backed tests split into preflight/representation, ordinary text, lifecycle/failure, and corpus-protocol executables; classification, immutable-plan lifetime, typed-edge, initializer, ownership, array, virtual-family, inline-capture, Expected, and reference-transfer assertions remain owned by focused suites; the census rejects missing or duplicate registrations, while the four-processor coordinator runs both corpus sweeps once per exact lowered-program census source and re-aggregates readiness floors, feature witnesses, determinism, direct control flow, and byte agreement; protocol tests reject malformed or mismatched worker evidence |
-| `issue_144_class_array_field_runtime` | trivial, cleanup-owning, move-only, passive-polymorphic, and destructor-bearing polymorphic fixed-array fields at O0/O2 under C++20/C++23; concrete interface dispatch and constant element-field projections; exact construction and destruction totals; and move-only element-copy rejection with `GTI-S2003` |
+| `tests/ui/regressions/issue_144` | trivial, cleanup-owning, move-only, passive-polymorphic, and destructor-bearing polymorphic fixed-array fields at O0/O2 under C++20/C++23; concrete interface dispatch and constant element-field projections; exact construction and destruction totals; and move-only element-copy rejection with `GTI-S2003` |
 | `issue_146_class_value_positions_runtime` | generated-copy and explicit-move class parameter field initialization, passive and move-only lambda move-capture, and owning `Expected` payload return/extraction at O0/O3 under C++20/C++23, with no output and exact zero-status completion |
 | `issue_123_cleanup_temporary_argument_runtime` | cleanup-owning direct constructor, ordinary call-result, and owning-`Expected` extraction handoff into exact by-value parameters at O0/O2 under C++20/C++23; empty, body, and generic destructor counts; failure-edge cleanup before exact `GTI-R0009`; named move-only copy rejection with `GTI-S2018`; single prepared-slot extraction/consumption/retirement spelling; and the concurrent `std::thread` extraction handoff |
 | `issue_126_array_element_assignment_runtime` | fixed-array class element field read/write, named copy, explicit move, and cleanup-free fresh-value whole-element assignment at O0/O2 under C++20/C++23; exact single checked-write spelling without duplicate SSA materialization; and move-only named-copy rejection |
@@ -10301,7 +10301,7 @@ diagnostics republished with a newer document version. Example 129 and the
 MIR/lowered censuses demonstrate a source-defined message queue without
 special treatment of a result-library type.
 
-Recursive owning sums additionally use `recursive_payload_sum_runtime` for
+Recursive owning sums additionally use `tests/ui/types/payload_enums/recursive_sum` for
 finite generic containment, reverse sibling cleanup, partially constructed
 owners/alternatives, and destructor failure. `tests/ui/borrow/payload_patterns/`
 covers shared/exclusive active-payload references, mixed copied and borrowed

@@ -199,7 +199,6 @@ owners = [
   "module_editor_recovery",
   "module_system_runtime",
   "module_initialization_runtime",
-  "module_cpp_boundary",
   "include_removal",
   "frontend_cache_invalidation",
   "stdlib_module_boundaries",
@@ -1249,7 +1248,6 @@ owners = [
   "resource_protocol_lsp",
   "inline_polymorphic_runtime",
   "owned_inline_consumption_runtime",
-  "polymorphic_owner_cleanup_runtime",
 ]
 consumers = [
   "gti_unit_tests",

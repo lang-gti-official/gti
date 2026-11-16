@@ -1,0 +1,11 @@
+// Forwarding-reference packs (`Args&&...`) are rejected.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+void observe<Args...>(Args&&... args) {}  //~ ERROR GTI-S2023 //~ ERROR GTI-S2020
+int main() { return 0; }

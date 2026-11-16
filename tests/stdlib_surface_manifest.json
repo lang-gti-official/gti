@@ -6781,7 +6781,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/expected_ergonomics_tests.cpp",
-        "tests/expected_ergonomics_runtime_test.py"
+        "tests/slow/expected/ergonomics.gti"
       ]
     },
     {
