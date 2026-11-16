@@ -1,0 +1,2 @@
+// Consteval statement completion: invalid immediate statement or bare return rejects in semantics.
+consteval void recurse(int n){recurse(n+1);} int main(){recurse(0);return 0;}  //~ ERROR GTI-S2057

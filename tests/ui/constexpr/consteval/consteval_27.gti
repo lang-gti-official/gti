@@ -1,0 +1,5 @@
+// Consteval: void immediate helpers execute within an immediate frame that publishes a supported value.
+//@ check-pass
+consteval void set(mut int& value) { value = 2; }
+consteval int result() { mut int value = 0; set(value); return value; }
+int main() { return result() - 2; }

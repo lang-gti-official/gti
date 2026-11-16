@@ -1,0 +1,21 @@
+// Characters and string views: character values and literal-backed string views should validate.
+//@ check-pass
+char letter = 'G';
+char newline = '\n';
+std::string_view text = "GTI\0text";
+bool chars_match = letter == 'G' and newline == '\n';
+bool literal_chars_match = 'G' == 'G';
+bool text_matches = text == "GTI\0text";
+std::size_t text_size = text.size();
+bool text_not_empty = !text.empty();
+char first = text[0];
+char embedded_zero = text[3];
+uint8_t letter_code = uint8_t(letter);
+
+int main() {
+  if (chars_match and text_matches and text_size == 8 and text_not_empty and
+      first == 'G' and embedded_zero == '\0' and letter_code == 71) {
+    return 0;
+  }
+  return 1;
+}

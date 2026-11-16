@@ -654,9 +654,27 @@ public:
          "DisableFormat should leave source byte-for-byte unchanged");
 }
 
+// An incomplete directive marker followed by a word (recovered from invalid
+// input) must keep its separator: gluing '#' to 'case' would re-lex as the
+// single directive token '#case', flipping the following colon's spacing on
+// the next pass and breaking idempotence. Every such directive+word pair
+// must format to a fixed point. (Moved unchanged from the former
+// compiler_constexpr_tests.cpp testComparisonOperatorFormattingStability.)
+void testDirectiveMarkerSeparation() {
+  for (const std::string source :
+       {"# case:", "# case :", "#\tcase:", "# default:", "# return :"}) {
+    const std::string first = lang::Formatter().format(source);
+    expect(lang::Formatter().format(first) == first,
+           "formatting a directive marker glued to a word must be idempotent");
+    expect(first.find("#case") == std::string::npos,
+           "the formatter must not merge a lone '#' with a following word");
+  }
+}
+
 } // namespace
 
 GTI_UNIT_TEST(formatter) {
   testFormatting();
+  testDirectiveMarkerSeparation();
   return failures == 0 ? 0 : 1;
 }

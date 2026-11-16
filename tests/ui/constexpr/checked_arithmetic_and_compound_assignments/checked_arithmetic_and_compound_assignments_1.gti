@@ -1,0 +1,45 @@
+// Checked arithmetic and compound assignments: checked arithmetic and every compound assignment (including through an indexed place with a side effect and a member) compute the expected values at run time.
+//@ run-pass
+struct Meter {
+  mut int value = 1;
+public:
+  Meter() = default;
+};
+
+int calculate(int left, int right) {
+  return ((left + right) * (left - right)) / right;
+}
+
+int folded_arithmetic() { return ((40 + 2) * 3 - 42) / 2; }
+bool checked_addition() { return 2147483647 + 1 == 0; }
+bool checked_unsigned_subtraction() {
+  return 1 - 18446744073709551615 == 0;
+}
+bool checked_negation() { return -(-9223372036854775808) == 0; }
+
+int main() {
+  mut int value = 6;
+  value *= 7;
+  value /= 6;
+  value %= 5;
+  value &= 3;
+  value |= 8;
+  value ^= 1;
+  value <<= 2;
+  value >>= 1;
+  value += 2;
+  value -= 2;
+
+  mut int values[2] = {3, 4};
+  mut int index = 0;
+  values[index++] *= 2;
+  mut Meter meter{};
+  meter.value += 2;
+  int negative = -1;
+  int arithmetic = calculate(7, 2);
+  if (value == 22 and index == 1 and values[0] == 6 and
+      meter.value == 3 and negative == -1 and arithmetic == 22) {
+    return 0;
+  }
+  return 1;
+}

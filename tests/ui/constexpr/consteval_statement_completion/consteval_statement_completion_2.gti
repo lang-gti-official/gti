@@ -1,0 +1,10 @@
+// Consteval statement completion: dependent void completion and implicit construction are checked for each concrete generic instance.
+//@ check-pass
+struct Port<uint64_t N> {
+  int value;
+  implicit consteval Port() : value(int(N)) {}
+};
+Port<N> make<uint64_t N>() { return; }
+consteval void validate(int n) { int checked = 100 / n; }
+void call<uint64_t N>() { validate(int(N)); }
+int main() { call<2>(); return make<42>().value - 42; }

@@ -1,0 +1,10 @@
+// Consteval: an exact overload wins over a checked argument, and the declaration warns that validation can be bypassed.
+//@ check-pass
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) { int proof = 1 / (value > 0 ? 1 : 0); }
+};
+int consume(Checked checked, int runtime) { return checked.value + runtime; }
+int choose(Checked p) { return p.value; }
+int choose(int p) { return p; }  //~ WARN GTI-S2125
+int main() { return choose(0); }

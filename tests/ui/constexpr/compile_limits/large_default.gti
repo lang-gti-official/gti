@@ -1,0 +1,18 @@
+// Compile limits: a request beyond the default limit fails by default.
+struct Tally {
+  uint64_t count;
+  uint64_t sum;
+  constexpr Tally(uint64_t c, uint64_t s) : count(c), sum(s) {}
+};
+constexpr Tally accumulate(uint64_t n, uint64_t seed) {
+  mut uint64_t count = 0;
+  mut uint64_t sum = seed;
+  while (count < n) {  //~ ERROR GTI-S2057 used all 1048576 steps
+    count = count + 1;
+    sum = sum + count;
+  }
+  return Tally(count, sum);
+}
+constexpr uint64_t spin(uint64_t n) { return accumulate(n, uint64_t(0)).count; }
+static_assert(spin(uint64_t(70000)) == uint64_t(70000));
+int main() { return 0; }

@@ -1,0 +1,2 @@
+// Consteval: the checked-argument fence rejects this program in semantics.
+struct A{implicit consteval operator int(){return 1;}}; void f(int p){} int main(){A a{};f(a);return 0;}  //~ ERROR GTI-S2012 //~ ERROR GTI-S2003

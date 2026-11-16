@@ -1,0 +1,8 @@
+// Compile-time depth: The hard cap itself is enforced.
+//@ constexpr-depth: 16384
+constexpr int32_t descend(int32_t n) {
+  if (n == 0) { return 0; }
+  return descend(n - 1) + 1;
+}
+static_assert(descend(16384) == 16384);  //~ ERROR GTI-S2057 call depth exceeded
+int main() { return 0; }

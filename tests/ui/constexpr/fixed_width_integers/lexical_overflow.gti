@@ -1,0 +1,3 @@
+// Fixed-width integers: an integer literal larger than uint64_t fails during lexing.
+//@ parse-fail
+uint64_t too_large = 18446744073709551616;  //~ ERROR GTI-L0007
