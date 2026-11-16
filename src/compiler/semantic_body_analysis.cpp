@@ -178,8 +178,6 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.unionStates.clear();
   resumeDeclarations.clear();
   requestSession.bodyContext = std::make_shared<BodyContext>(this);
-  semanticModel.setFunctionLookupRecorder(
-      std::make_shared<SemanticModel::FunctionLookupRecorder>());
   registrationFloor = {};
   stagedWorker = {};
   primitiveRequirementProofs.clear();
@@ -5115,56 +5113,25 @@ auto SemanticVisitor::Impl::reapplyAttemptCharges(const AttemptCheckpoint &from,
 }
 
 SemanticVisitor::Impl::BodyAttemptScope::BodyAttemptScope(
-    const Impl &impl, BodyContext &context, BodyContext::AttemptNeeds &needs,
-    std::unordered_set<FunctionId> &lookups)
-    : context(context), needs(needs), lookups(lookups),
-      recorder(impl.semanticModel.functionLookupRecorder()) {
+    BodyContext &context, BodyContext::AttemptNeeds &needs)
+    : context(context), needs(needs) {
   context.openAttempt(needs);
-  if (recorder != nullptr) {
-    previous = recorder->active;
-    recorder->active = &lookups;
-  }
 }
 
 SemanticVisitor::Impl::BodyAttemptScope::~BodyAttemptScope() {
-  if (recorder != nullptr) {
-    recorder->active = previous;
-    // An enclosing attempt depends on what this one looked up as well.
-    if (previous != nullptr)
-      previous->insert(lookups.begin(), lookups.end());
-  }
   context.closeAttempt(needs);
 }
 
 auto SemanticVisitor::Impl::attemptOutstandingNeeds(
-    const BodyContext &context, const BodyContext::AttemptNeeds &needs,
-    const std::unordered_set<FunctionId> &lookups) const
+    const BodyContext &context, const BodyContext::AttemptNeeds &needs) const
     -> std::vector<const FunctionDecl *> {
+  // Only explicit needs count: a body whose facts were read (requireBody) or
+  // that a compile-time path would execute (noteBodyNeed). Looking a function
+  // up, for example to consider it as a candidate, is not a need.
   std::vector<const FunctionDecl *> outstanding;
   for (const FunctionDecl *body : needs.needs)
     if (context.pending(body))
       outstanding.push_back(body);
-  // A lookup is a demand only for a body whose facts a compile-time path
-  // consumes; other bodies' facts are demanded through the ordinary
-  // demanded-function record and late demand.
-  SemanticModel::FunctionLookupRecorder *const recorder =
-      semanticModel.functionLookupRecorder();
-  std::unordered_set<FunctionId> *const paused =
-      recorder == nullptr ? nullptr : std::exchange(recorder->active, nullptr);
-  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
-  for (const FunctionId id : lookups)
-    if (const FunctionInfo *function = semanticModel.findFunction(id))
-      if (const FunctionDecl *body = function->bodyDeclaration();
-          body != nullptr &&
-          (body->isConstexpr() || body->isProceduralMacro()) &&
-          // Pending now, or completed while the attempt was open (by a nested
-          // attempt): either way a lookup during it may have read the body's
-          // facts before they were final.
-          (context.pending(body) ||
-           context.completedSince(needs.startRevision, body)))
-        outstanding.push_back(body);
-  if (recorder != nullptr)
-    recorder->active = paused;
   return context.inResolutionOrder(std::move(outstanding));
 }
 

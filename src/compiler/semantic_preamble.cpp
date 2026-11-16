@@ -111,8 +111,6 @@ auto SemanticVisitor::Impl::adoptPreambleState() -> void {
   // Readiness is per analysis: a held-back body is not ready until this
   // analysis reaches it.
   requestSession.bodyContext = std::make_shared<BodyContext>(this);
-  semanticModel.setFunctionLookupRecorder(
-      std::make_shared<SemanticModel::FunctionLookupRecorder>());
   for (const FunctionDecl *declaration : requestSession.preambleBodyOrder)
     if (const FunctionInfo *function = semanticModel.findFunction(*declaration))
       requestSession.bodyContext->track(

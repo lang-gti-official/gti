@@ -2770,21 +2770,6 @@ public:
     return functionDemandSink != nullptr && functionDemandSink->contains(id);
   }
 
-  // One analysis request's record of function lookups, shared by every
-  // model of the request (copies and deltas carry it), so a lookup answered
-  // at any delta level reaches the attempt that is recording. An attempt
-  // sets `active` for its duration and restores the previous record.
-  struct FunctionLookupRecorder {
-    std::unordered_set<FunctionId> *active = nullptr;
-  };
-  void
-  setFunctionLookupRecorder(std::shared_ptr<FunctionLookupRecorder> recorder) {
-    lookupRecorder = std::move(recorder);
-  }
-  [[nodiscard]] FunctionLookupRecorder *functionLookupRecorder() const {
-    return lookupRecorder.get();
-  }
-
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const;
 
   [[nodiscard]] const LambdaInfo *findLambda(LambdaId id) const;
@@ -3467,7 +3452,6 @@ private:
   const SemanticModel *base = nullptr;
   std::unordered_set<const FunctionDecl *> analyzedFunctionBodies;
   mutable std::unordered_set<FunctionId> *functionDemandSink = nullptr;
-  std::shared_ptr<FunctionLookupRecorder> lookupRecorder;
   std::unordered_set<const Call *> *callJournal = nullptr;
   struct InstanceReuseJournal {
     std::unordered_set<LambdaId> lambdas;

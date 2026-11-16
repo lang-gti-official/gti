@@ -594,12 +594,11 @@ public:
       // bodies its compile-time paths needed are taken before anything below
       // makes them available, and it is repeated once any of them is.
       BodyContext::AttemptNeeds needs;
-      std::unordered_set<FunctionId> lookups;
       const std::size_t diagnosticMark = diagnostics.size();
       {
         const FunctionDemandScope probe(semanticModel, &consulted);
         if (context != nullptr && context->anyUnfinished()) {
-          const BodyAttemptScope scope(*this, *context, needs, lookups);
+          const BodyAttemptScope scope(*context, needs);
           result = analyze();
         } else {
           result = analyze();
@@ -609,7 +608,7 @@ public:
       const std::vector<const FunctionDecl *> needed =
           context == nullptr
               ? std::vector<const FunctionDecl *>{}
-              : attemptOutstandingNeeds(*context, needs, lookups);
+              : attemptOutstandingNeeds(*context, needs);
       // A failure the attempt reported may be an artefact of a missing body;
       // its diagnostics are set aside so they cannot refuse the late demand
       // that completes it, and return unless the attempt is repeated.
@@ -8032,13 +8031,10 @@ private:
   // the current state (an attempt kept after its needs could not be met).
   void reapplyAttemptCharges(const AttemptCheckpoint &from,
                              const AttemptCheckpoint &to);
-  // Opens an attempt on the context and records the request's function
-  // lookups into `lookups` while it is open.
+  // Opens an attempt on the context for the scope's duration.
   class BodyAttemptScope {
   public:
-    BodyAttemptScope(const Impl &impl, BodyContext &context,
-                     BodyContext::AttemptNeeds &needs,
-                     std::unordered_set<FunctionId> &lookups);
+    BodyAttemptScope(BodyContext &context, BodyContext::AttemptNeeds &needs);
     ~BodyAttemptScope();
     BodyAttemptScope(const BodyAttemptScope &) = delete;
     BodyAttemptScope &operator=(const BodyAttemptScope &) = delete;
@@ -8046,17 +8042,12 @@ private:
   private:
     BodyContext &context;
     BodyContext::AttemptNeeds &needs;
-    std::unordered_set<FunctionId> &lookups;
-    SemanticModel::FunctionLookupRecorder *recorder = nullptr;
-    std::unordered_set<FunctionId> *previous = nullptr;
   };
   // The bodies a closed attempt needed that are still pending here, in
-  // resolution order: its recorded needs and the constexpr and procedural
-  // bodies it looked up.
+  // resolution order.
   [[nodiscard]] std::vector<const FunctionDecl *>
   attemptOutstandingNeeds(const BodyContext &context,
-                          const BodyContext::AttemptNeeds &needs,
-                          const std::unordered_set<FunctionId> &lookups) const;
+                          const BodyContext::AttemptNeeds &needs) const;
   // Repeats are bounded: every repeat follows progress (a body became
   // final), and a request has finitely many pending bodies, so the bound is
   // only a guard against a wrong progress test.
@@ -8096,13 +8087,12 @@ private:
       const AttemptCheckpoint checkpoint = captureAttemptCheckpoint();
       const std::uint64_t startRevision = context->revision();
       BodyContext::AttemptNeeds needs{.resolving = resolving};
-      std::unordered_set<FunctionId> lookups;
       auto result = [&] {
-        const BodyAttemptScope scope(*this, *context, needs, lookups);
+        const BodyAttemptScope scope(*context, needs);
         return attempt();
       }();
       const std::vector<const FunctionDecl *> outstanding =
-          attemptOutstandingNeeds(*context, needs, lookups);
+          attemptOutstandingNeeds(*context, needs);
       // Any recorded need taints the attempt, even one a nested attempt made
       // available meanwhile: this result was computed without the body.
       if (outstanding.empty() && needs.needs.empty()) {

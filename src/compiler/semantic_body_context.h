@@ -135,14 +135,6 @@ public:
   // Revision advances whenever a pending body becomes Analysed, so an
   // attempt that began at an older revision may now succeed.
   [[nodiscard]] std::uint64_t revision() const { return currentRevision; }
-  // Whether `declaration` became Analysed after `since` (a revision).
-  [[nodiscard]] bool completedSince(std::uint64_t since,
-                                    const FunctionDecl *declaration) const {
-    return since < completions.size() &&
-           std::find(completions.begin() + static_cast<std::ptrdiff_t>(since),
-                     completions.end(),
-                     declaration) != completions.end();
-  }
   // Advances only when a constexpr or procedural body becomes Analysed: a
   // staged-evaluation snapshot depends on no other body.
   [[nodiscard]] std::uint64_t compileTimeRevision() const {
@@ -163,7 +155,6 @@ public:
       return false;
     found->second.state = BodyState::Analysed;
     ++currentRevision;
-    completions.push_back(&declaration);
     if (compileTime)
       ++currentCompileTimeRevision;
     --unfinished;
@@ -221,8 +212,6 @@ public:
     // it ends clean (see commitWrites), so a result computed while a needed
     // body was unavailable never enters a cache.
     std::vector<std::function<void()>> writes;
-    // The context revision when the attempt opened.
-    std::uint64_t startRevision = 0;
     // Bodies a reader requested without needing them (see noteRequested).
     std::vector<const FunctionDecl *> requested;
   };
@@ -282,7 +271,6 @@ public:
     return false;
   }
   void openAttempt(AttemptNeeds &attempt) {
-    attempt.startRevision = currentRevision;
     openAttempts.push_back(&attempt);
     if (attempt.resolving)
       ++resolvingAttempts;
@@ -338,8 +326,6 @@ private:
   std::unordered_set<const FunctionDecl *> requestedBodies;
   std::size_t nextOrder = 0;
   std::uint64_t currentRevision = 0;
-  // Bodies in the order they became Analysed; index = revision before.
-  std::vector<const FunctionDecl *> completions;
   std::uint64_t currentCompileTimeRevision = 0;
 };
 

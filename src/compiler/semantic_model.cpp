@@ -1398,8 +1398,6 @@ SemanticModel::findFunction(const FunctionDecl &declaration) const {
     if (functionDemandSink != nullptr) {
       functionDemandSink->insert(found->second.id);
     }
-    if (lookupRecorder != nullptr && lookupRecorder->active != nullptr)
-      lookupRecorder->active->insert(found->second.id);
     return &found->second;
   }
   return base == nullptr ? nullptr : base->findFunction(canonical);
@@ -2450,7 +2448,6 @@ void SemanticModel::beginInstanceDelta(const SemanticModel &baseModel,
   placeSnapshot_ = baseModel.placeSnapshot();
   programKind_ = baseModel.programKind();
   embeddingPlan_ = baseModel.embeddingPlan();
-  lookupRecorder = baseModel.lookupRecorder;
   base = &baseModel;
   semanticDatabase.beginInstanceDelta(baseModel.semanticDatabase,
                                       reservedIdentityCeiling);

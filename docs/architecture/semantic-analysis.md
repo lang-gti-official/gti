@@ -1008,9 +1008,12 @@ meet; every other worker shares its creator's. Only an owner changes a state.
   recorded and the facts are unavailable.
 - A query or staged evaluation runs as an attempt (`withBodyDemands`). Its
   needs are the ones recorded while it is open, by any analyzer sharing the
-  context, plus the pending constexpr and procedural bodies it looked up
-  (recorded through a lookup recorder every model of the request shares). An
-  attempt with none is clean. A resolving attempt restores one
+  context. A need arises only where a body-derived fact is read or a body
+  would execute: `requireBody` at the readers, a staged closure's pending
+  primary body, a pending constexpr callee the staged evaluator reaches at run
+  time, and, when a staged closure cannot be lowered or verified, each pending
+  constexpr callee it would have executed. Looking a function up, for example
+  as an overload candidate, is not a need. An attempt with none is clean. A resolving attempt restores one
   `AttemptCheckpoint` (diagnostics, constexpr steps and exhaustion,
   requirement-query work, the native-layout mark), completes its needs in
   declaration order and repeats, bounded; otherwise its needs pass to the

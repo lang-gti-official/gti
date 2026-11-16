@@ -1103,11 +1103,6 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   // Building keys reads every definition's record; that is not a demand.
   std::vector<FunctionId> keyCompleted;
   {
-    SemanticModel::FunctionLookupRecorder *const recorder =
-        semanticModel.functionLookupRecorder();
-    std::unordered_set<FunctionId> *const paused =
-        recorder == nullptr ? nullptr
-                            : std::exchange(recorder->active, nullptr);
     const FunctionDemandScope pauseStaging(stagingModel, nullptr);
     const FunctionDemandScope pauseCanonical(semanticModel, nullptr);
     for (const auto *declaration : constexprDefinitionsAnalyzed) {
@@ -1119,8 +1114,6 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     for (const FunctionDecl *declaration : pendingConstexprDefinitions())
       if (const auto *candidate = stagingModel.findFunction(*declaration))
         keyCompleted.push_back(candidate->id);
-    if (recorder != nullptr)
-      recorder->active = paused;
   }
   // A success this request already proved is replayed (see
   // StagedConstantResults), unless the outer authority has since closed a
@@ -1230,7 +1223,25 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
                                                  info->id, completed,
                                                  substitution, constructors);
     }();
+    // The closure lowers a callee whose constexpr body is still pending as a
+    // declaration only (it is outside `completed`). When the closure cannot
+    // be lowered or verified, such a callee may be the cause, and evaluation
+    // would have executed it: each one is a need of the enclosing attempt,
+    // which repeats once the body is complete. A closure that lowers is
+    // executed instead, and an executed pending callee is a need there
+    // (RuntimeOnlyCall below).
+    const auto needPendingCallees = [&] {
+      for (const HirFunctionInstance &instance :
+           hir.program.functionInstances())
+        if (const FunctionInfo *callee =
+                stagingModel.findFunction(instance.declaration))
+          if (const FunctionDecl *body = callee->bodyDeclaration();
+              body != nullptr &&
+              (body->isConstexpr() || body->isProceduralMacro()))
+            noteBodyNeed(body);
+    };
     if (!hir.valid()) {
+      needPendingCallees();
       if (hasErrorDiagnostics(hir.diagnostics)) {
         diagnostics.insert(diagnostics.end(), hir.diagnostics.begin(),
                            hir.diagnostics.end());
@@ -1253,6 +1264,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
                                             entry->path);
     }();
     if (!metadata.valid()) {
+      needPendingCallees();
       return std::nullopt;
     }
     auto mir = [&] {
@@ -1260,6 +1272,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
       return MirLowerer().lower(hir.program, metadata.metadata);
     }();
     if (!mir.valid()) {
+      needPendingCallees();
       return std::nullopt;
     }
     MirBodyAddress root;
