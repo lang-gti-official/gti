@@ -1,0 +1,31 @@
+// Constexpr conditional temporaries: temporaries borrowed in conditional arms and short-circuit operands execute through staged MIR with exact results.
+//@ check-pass
+struct box {
+  int v;
+  constexpr box(int value) : v(value) {}
+  constexpr int get() { return this.v; }
+};
+struct guard {
+  int v;
+  constexpr guard(int value) : v(value) {}
+  ~guard() {}
+};
+constexpr box make(int v) { return box(v); }
+constexpr guard make_guard(int v) { return guard(v); }
+constexpr int read(box& b) { return b.v; }
+constexpr int held(guard& g) { return g.v; }
+constexpr int sum(bool a, bool b) {
+  mut int total = 0;
+  if (a && read(make(10)) == 10) { total += 1; }
+  if (b && read(box(20)) == 20) { total += 2; }
+  if (!a || read(make(30)) == 30) { total += 4; }
+  total += a ? read(make(100)) : read(box(1000));
+  total += (b && make(7).get() == 7) ? 8 : 0;
+  total += (a || held(make_guard(9)) == 9) ? 16 : 0;
+  return total;
+}
+static_assert(sum(true, true) == 131);
+static_assert(sum(true, false) == 121);
+static_assert(sum(false, true) == 1030);
+static_assert(sum(false, false) == 1020);
+int main() { return sum(true, false) == 121 ? 0 : 1; }

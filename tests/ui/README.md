@@ -20,6 +20,8 @@ int main() {
   `//@ exit-code: N`, `//@ stderr-contains: text`, `//@ args: a b`,
   `//@ stdin: line`. Stdout is always compared; absent means empty.
 - `//@ opt: O3` and `//@ only: linux|macos|arm64|x86_64` need `//@ reason: …`.
+- `//@ format-stable` (check-pass without annotations): formatting the test is
+  a fixed point and the formatted program also checks.
 - Annotations: `//~ ERROR GTI-S2001 [message text]`, `//~ WARN …`; `//~^`
   (line above, `^^` two), `//~v` (below), `//~|` (same line as the previous
   annotation), `//~?` (outside the test's files, e.g. in std). Every error and

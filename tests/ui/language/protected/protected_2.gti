@@ -1,0 +1,4 @@
+// Protected members: the program is accepted.
+//@ check-pass
+class Base { protected: Base() {} }; struct D : public Base { public: D() = default; };
+int main() { D value{}; return 0; }

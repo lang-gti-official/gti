@@ -14,10 +14,6 @@
       "suite": "frontend"
     },
     {
-      "name": "testDefiniteReturnAnalysis",
-      "suite": "frontend"
-    },
-    {
       "name": "testSourceUnitDependencyGraph",
       "suite": "frontend"
     },
@@ -102,14 +98,6 @@
       "suite": "frontend"
     },
     {
-      "name": "testDependentRequiresArgumentAdmission",
-      "suite": "declarations"
-    },
-    {
-      "name": "testStructuralClassConstraints",
-      "suite": "declarations"
-    },
-    {
       "name": "testFunctionContracts",
       "suite": "declarations"
     },
@@ -123,10 +111,6 @@
     },
     {
       "name": "testMovedLoopLocalRedeclarations",
-      "suite": "declarations"
-    },
-    {
-      "name": "testInferredVoidGenericArguments",
       "suite": "declarations"
     },
     {
@@ -159,10 +143,6 @@
     },
     {
       "name": "testInterfaceStaticMethods",
-      "suite": "declarations"
-    },
-    {
-      "name": "testInterfaceStaticAmbiguity",
       "suite": "declarations"
     },
     {
@@ -222,15 +202,7 @@
       "suite": "declarations"
     },
     {
-      "name": "testMemberRequirementConcepts",
-      "suite": "declarations"
-    },
-    {
       "name": "testCompilerPrivateMemberRequirements",
-      "suite": "declarations"
-    },
-    {
-      "name": "testExactMemberSignatureConcepts",
       "suite": "declarations"
     },
     {
@@ -267,10 +239,6 @@
     },
     {
       "name": "testValueGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testDependentTypeDefaultConstraints",
       "suite": "declarations"
     },
     {
@@ -426,14 +394,6 @@
       "suite": "ownership"
     },
     {
-      "name": "testStoredReferenceLoopInvalidation3",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceLoopInvalidation4",
-      "suite": "ownership"
-    },
-    {
       "name": "testStoredReferenceScopedStorage",
       "suite": "ownership"
     },
@@ -471,10 +431,6 @@
     },
     {
       "name": "testForwardIteratorContractsAndBinarySearch",
-      "suite": "ownership"
-    },
-    {
-      "name": "testWritableAndMovementIteratorCapabilities",
       "suite": "ownership"
     },
     {
@@ -751,10 +707,6 @@
     },
     {
       "name": "testMirConstantRecords",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprConditionalTemporaries",
       "suite": "constexpr"
     },
     {

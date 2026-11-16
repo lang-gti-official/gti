@@ -1,0 +1,56 @@
+// Definite return analysis: every non-void function, method, expected result, and lambda path should return before backend entry.
+int branch(bool value) {  //~ ERROR GTI-S2031 can reach the end without returning a value
+  if (value) {
+    return 1;
+  }
+}
+
+int conditional_loop(bool value) {  //~ ERROR GTI-S2031
+  while (value) {
+    return 1;
+  }
+}
+
+int breakable_loop(bool leave) {  //~ ERROR GTI-S2031
+  while (true) {
+    if (leave) {
+      break;
+    }
+  }
+}
+
+int post_test_once() {  //~ ERROR GTI-S2031
+  do {
+    continue;
+  } while (false);
+}
+
+expected<void, int> expected_result(bool ready) {  //~ ERROR GTI-S2031
+  if (ready) {
+    return;
+  }
+}
+
+int missing_target_return() {  //~ ERROR GTI-S2031
+#if target.os == "never"
+  return 1;
+#else
+  int selected = 1;
+#endif
+}
+
+class Broken {
+public:
+  int value() {}  //~ ERROR GTI-S2031
+public:
+  Broken() = default;
+};
+
+int main() {
+  auto incomplete = [](bool ready) -> int {  //~ ERROR GTI-S2031
+    if (ready) {
+      return 1;
+    }
+  };
+  return 0;
+}

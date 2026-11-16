@@ -310,7 +310,6 @@ owners = [
   "reference_payload_semantics",
   "borrowing_capture_semantics",
   "protocol_concepts",
-  "protected_members",
   "qualified_type_members",
   "instance_reuse",
   "^trusted_body_analysis_[0-3]$",
@@ -370,7 +369,6 @@ owners = [
   "temporary_owner_borrow",
   "fresh_callable_borrow",
   "foreign_variable_borrow",
-  "shared_ownership_pipeline",
 ]
 consumers = [
   "procedural_syntax",

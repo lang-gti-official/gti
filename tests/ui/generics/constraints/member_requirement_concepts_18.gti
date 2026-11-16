@@ -1,0 +1,8 @@
+// Member requirement concepts: cloning must not make exclusive owners implicitly copyable.
+import std.memory;
+import std.vector;
+int main() {
+  std::vector<std::unique_ptr<int>> owners{};
+  auto copy = owners.clone();  //~ ERROR GTI-S2029
+  return 0;
+}

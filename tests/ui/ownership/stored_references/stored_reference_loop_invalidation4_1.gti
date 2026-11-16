@@ -1,0 +1,4 @@
+// Stored reference loop invalidation4: a final use before owner invalidation on an immediately-breaking path should end the retained loan on that path.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (true) { char current = *iterator; value.push_back('!'); break; } return 0; }
