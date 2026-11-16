@@ -1389,8 +1389,7 @@ def render(case: Case, header: str) -> str:
     source = case.source or ""
     if source.startswith("\n"):
         source = source[1:]
-    if not source.endswith("\n"):
-        source += "\n"
+    source = source.rstrip() + "\n"
     lines = [header]
     if case.expect == "accept":
         lines.append("//@ check-pass")

@@ -13,4 +13,3 @@ int main() {
   first.swap(second);
   return value + int(first.use_count()) - 8;
 }
-

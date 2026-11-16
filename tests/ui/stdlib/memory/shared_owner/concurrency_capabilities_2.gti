@@ -9,4 +9,3 @@ int main() {
   auto locked = weak.lock();
   return int(value.use_count()) - 2;
 }
-
