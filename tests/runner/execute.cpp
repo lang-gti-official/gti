@@ -343,7 +343,9 @@ struct Engine::State {
   lang::TargetInfo concurrentTarget;
   lang::driver::FrontendReuse reuse;
   std::set<std::string> warmGroups;
-  std::unique_ptr<LspServer> lsp;
+  // One language server per distinct argument list (`//@
+  // execution-profile:` and the like), each kept for every test using it.
+  std::map<std::string, std::unique_ptr<LspServer>> lspServers;
   int lspDocuments = 0;
   fs::path caseDirectory;
 };
@@ -417,22 +419,31 @@ Outcome Engine::runLsp(const TestFile &test) {
         runLspTranscript(options.lsp, test, directory,
                          start + limit + options.limits.coldAllowance, limit);
   } else {
-    if (!state->lsp || !state->lsp->running()) {
-      state->lsp = std::make_unique<LspServer>(
-          options.lsp, options.workDirectory / "gti_lsp.log");
+    std::string key;
+    for (const std::string &argument : test.serverArguments)
+      key += argument + "\n";
+    std::unique_ptr<LspServer> &server = state->lspServers[key];
+    if (!server || !server->running()) {
+      server = std::make_unique<LspServer>(
+          options.lsp,
+          options.workDirectory /
+              ("gti_lsp" + std::to_string(state->lspServers.size()) + ".log"),
+          test.serverArguments);
       std::string failure;
-      if (!state->lsp->startInitialized(limit + options.limits.coldAllowance,
-                                        failure)) {
+      if (!server->startInitialized(limit + options.limits.coldAllowance,
+                                    failure)) {
         outcome.status = Status::Fail;
-        outcome.detail =
-            "could not start " + options.lsp.string() + ": " + failure + "\n";
+        std::string command = options.lsp.string();
+        for (const std::string &argument : test.serverArguments)
+          command += " " + argument;
+        outcome.detail = "could not start " + command + ": " + failure + "\n";
         return outcome;
       }
     }
-    cold = !state->lsp->warm;
-    result =
-        runLspTest(*state->lsp, test, directory,
-                   start + limit + (cold ? options.limits.coldAllowance : 0.0));
+    cold = !server->warm;
+    result = runLspTest(
+        *server, test, directory, state->toolchain.standardLibrary.root,
+        start + limit + (cold ? options.limits.coldAllowance : 0.0));
   }
   outcome.wall = lspClock() - start;
   outcome.cpu = outcome.wall;

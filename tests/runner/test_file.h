@@ -107,14 +107,27 @@ struct RunSpec {
 enum class NativeKind { None, C, Cpp, Header };
 [[nodiscard]] NativeKind nativeKind(const std::string &sectionName);
 
+// An LSP edit step's section name, `step N` or `step N path.gti`: its number
+// and the file it replaces (empty: the entry file).
+struct LspStep {
+  int number = 0;
+  std::string file;
+};
+[[nodiscard]] std::optional<LspStep> lspStep(const std::string &sectionName);
+
 // `//@ hover @a: text` and the other LSP expectations: the request, its
 // arguments (marker, new name) and the expected value.
 struct LspDirective {
   std::vector<std::string> words;
   std::string value;
   int writtenLine = 0;
-  // The section (`// --- step N`, 0 for the first version) it is asked of.
+  // The edit step it is asked of: 0 once every file is open, k after the
+  // k-th `// --- step N` section.
   int step = 0;
+  // The section the directive is written in (its home document); a bare
+  // `@marker` is looked up there first. Directives above the first section
+  // belong to the entry file.
+  int section = 0;
 };
 
 struct TestFile {
@@ -175,6 +188,13 @@ struct TestFile {
   // else the mir snapshot.
   std::vector<CheckPattern> checks;
   std::vector<LspDirective> lspDirectives;
+  // LSP tests: the `gti_lsp` options of `//@ execution-profile:` and
+  // `//@ raw-pointer-audit:`, in that order. A worker keeps one server per
+  // distinct list.
+  std::vector<std::string> serverArguments;
+  // `//@ disk-only: lib.gti ...`: sections written beside the test but not
+  // opened as documents.
+  std::vector<std::string> diskOnly;
   std::string reason;
   std::vector<std::string> only;
   // Self-test fault injection (`//@ runner-fault:`); honoured only when

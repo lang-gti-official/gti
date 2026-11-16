@@ -176,7 +176,15 @@ def self_test(runner):
                     "allow_warnings.gti: line 2: allow-warnings is only for a "
                     "gti-test.defaults file",
                     "tidy/bad/gti-test.defaults: defaults files are for "
-                    "directive-less roots"):
+                    "directive-less roots",
+                    "bad_option.jsonl: line 2: a transcript takes only "
+                    "`//@ execution-profile:` and `//@ raw-pointer-audit:`",
+                    "bad_sections.gti: line 3: execution-profile must be",
+                    "bad_sections.gti: line 0: `step 2 other.gti` edits "
+                    "'other.gti', which is not a .gti file section",
+                    "bad_sections.gti: line 0: disk-only names 'missing.gti'",
+                    "bad_sections.gti: line 9: annotations belong in opened "
+                    ".gti documents"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -402,18 +410,55 @@ def project_self_test(runner):
 def lsp_self_test(runner):
     """LSP marker tests and transcripts against a per-worker gti_lsp."""
     code, out = run(runner, FIXTURES / "lsp/ok", "--jobs", "2")
-    expect(code == 0 and "RESULT ok: 4 passed, 0 failed" in out,
-           "LSP fixtures pass, edit steps included", out)
+    expect(code == 0 and "RESULT ok: 10 passed, 0 failed" in out,
+           "LSP fixtures pass: edit steps, server options, code actions, "
+           "several files, a project, cursor markers", out)
+    # One worker keeps a server per option list: the same call is checked
+    # under the concurrent and the default profile in turn.
+    code, out = run(runner, FIXTURES / "lsp/ok/server_concurrent.gti",
+                    FIXTURES / "lsp/ok/server_single_threaded.gti",
+                    FIXTURES / "lsp/ok/server_concurrent.gti", "--jobs", "1")
+    expect(code == 0 and "RESULT ok: 2 passed" in out,
+           "tests with different server options share a worker", out)
     code, out = run(runner, FIXTURES / "lsp/fail", "--jobs", "3")
-    expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
+    expect(code == 1 and "RESULT fail: 0 passed, 9 failed" in out,
            "failing LSP fixtures fail without timing out", out)
+    actions = block(out, "FAIL", "wrong_code_actions.gti")
+    for problem in ('line 2 (code-action): no code action titled "no such fix"; '
+                    "offered: ",
+                    "line 3 (code-action): the edited document differs from "
+                    "step 2",
+                    "-T identity<T>(T value) { int unused = 2; return value; }",
+                    "line 4 (no-code-action): expected no code action",
+                    "line 5 (code-action): no published diagnostic covers "
+                    "@clean"):
+        expect(problem in actions, f"code action failure reported: {problem}",
+               out)
+    navigation = block(out, "FAIL", "wrong_navigation.gti")
+    for problem in ("line 2 (definition): expected @twin; got @lib.gti:twin",
+                    "line 3 (definition): expected @std:std/thread.gti; got "
+                    "@std:std/cthread.gti:",
+                    "line 4 (definition): expected "
+                    "@std:std/cthread.gti#no_such_symbol; got",
+                    'line 5 (hover): hover contains "answer"',
+                    'line 6 (signature): signature help does not contain '
+                    '"double scale"',
+                    "line 7 (completion-detail): detail of 'level' does not "
+                    'contain "bool"',
+                    "line 8 (hover): no marker @lib.gti:nosuch"):
+        expect(problem in navigation, f"navigation failure reported: {problem}",
+               out)
     expect("actual:   ERROR GTI-S2001 at step 2:2" in
            block(out, "FAIL", "wrong_step.gti"),
            "a step's diagnostic is located in that step", out)
     never = block(out, "FAIL", "never_arrives.jsonl")
-    expect("line 8: no message for" in never and "window/showMessage" in never
-           and float(never.split("] ")[1].split("s")[0]) < 10,
+    expect("line 8: gti_lsp fell idle" in never and "window/showMessage" in never
+           and float(never.split("] ")[1].split("s")[0]) < 5,
            "an awaited message that never comes fails fast, naming it", out)
+    never = block(out, "FAIL", "never_published.jsonl")
+    expect("line 5: gti_lsp fell idle" in never and "window/logMessage" in never
+           and float(never.split("] ")[1].split("s")[0]) < 5,
+           "before any publication an idle server fails the wait fast", out)
     wrong = block(out, "FAIL", "wrong_answers.gti")
     for problem in ('line 2 (hover): hover does not contain "no such text"',
                     "line 3 (definition): expected @local; got @twice",

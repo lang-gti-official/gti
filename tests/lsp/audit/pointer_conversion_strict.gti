@@ -1,0 +1,21 @@
+// A strict raw-pointer audit rejects a conversion to an unrelated pointee
+// and clears once the alias is restored. (raw_pointer_conversion_lsp_test.py)
+//@ raw-pointer-audit: strict
+using Erased = const void*;
+using Pointer = const int*;
+int main() { int value = 42; Erased address = Erased(&value);
+Pointer restored = Pointer(address);
+unsafe { return *restored - 42; } }
+// --- step 2
+using Erased = const void*;
+using Pointer = const uint64_t*;
+int main() { int value = 42; Erased address = Erased(&value);
+Pointer restored = Pointer(address);  //~ ERROR GTI-S2101 known pointee type //~ ERROR GTI-S2101
+unsafe { return *restored - 42; } }  //~ ERROR GTI-S2003
+// --- step 3
+//@ definition @alias: @decl
+using Erased = const void*;
+using /*@decl*/Pointer = const int*;
+int main() { int value = 42; Erased address = Erased(&value);
+Pointer restored = /*@alias*/Pointer(address);
+unsafe { return *restored - 42; } }

@@ -419,6 +419,8 @@ int tidy(const fs::path &root) {
       if (!text || text->rfind("// ", 0) != 0)
         problems.push_back(display + ": the first line must be a `// ` comment "
                                      "saying what the transcript checks");
+      for (const std::string &error : parseTestFile(file, display).errors)
+        problems.push_back(display + ": " + error);
       continue;
     }
     if (extension != ".gti") {
