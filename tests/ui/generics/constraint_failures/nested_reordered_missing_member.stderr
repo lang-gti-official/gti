@@ -1,0 +1,16 @@
+main.gti:14:35: error[GTI-S2029]: Argument 2 has type 'Item', which does not satisfy concept 'library::readable<Item>'.
+ 14 |   return library::read(unrelated, target);  //~ ERROR GTI-S2029
+    |                                   ^~~~~~
+main.gti:4:58: note: Required here as 'snapshot() -> R' on 'T&'.
+ 4 | concept snapshot_as<R, T> = requires(T& value) { { value.snapshot() } -> R; };
+   |                                                          ^~~~~~~~
+main.gti:6:49: note: Required application 'library::readable<Item>'.
+ 6 | int read<A, B>(A& unrelated, B& value) requires readable<B> {
+   |                                                 ^~~~~~~~
+main.gti:5:23: note: Required application 'library::snapshot_as<int32_t, Item>'.
+ 5 | concept readable<T> = snapshot_as<int, T>;
+   |                       ^~~~~~~~~~~
+main.gti:4:58: note: Type 'Item' has no member 'snapshot()'.
+ 4 | concept snapshot_as<R, T> = requires(T& value) { { value.snapshot() } -> R; };
+   |                                                          ^~~~~~~~
+help: Provide a public, safe, read-only 'snapshot()' member with the exact required owned result type.

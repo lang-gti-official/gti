@@ -2,18 +2,6 @@
   "schema_version": 1,
   "tests": [
     {
-      "name": "testFunctionContracts",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstructorTextStorageContracts",
-      "suite": "declarations"
-    },
-    {
-      "name": "testContainerScaffoldSurfaces",
-      "suite": "declarations"
-    },
-    {
       "name": "testMovedLoopLocalRedeclarations",
       "suite": "declarations"
     },
@@ -39,10 +27,6 @@
     },
     {
       "name": "testInheritanceAndInterfaces",
-      "suite": "declarations"
-    },
-    {
-      "name": "testOutOfClassMethods",
       "suite": "declarations"
     },
     {
@@ -78,18 +62,6 @@
       "suite": "declarations"
     },
     {
-      "name": "testExactQualifiedClassSpecializations",
-      "suite": "declarations"
-    },
-    {
-      "name": "testContextualNumericLiterals",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstrainedGenerics",
-      "suite": "declarations"
-    },
-    {
       "name": "testMoveConstructionCapability",
       "suite": "declarations"
     },
@@ -98,47 +70,7 @@
       "suite": "declarations"
     },
     {
-      "name": "testConcurrencyTypeCapabilities",
-      "suite": "declarations"
-    },
-    {
-      "name": "testSourceDefinedConcepts",
-      "suite": "declarations"
-    },
-    {
       "name": "testCompilerPrivateMemberRequirements",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstraintFailureProvenance",
-      "suite": "declarations"
-    },
-    {
-      "name": "testRequiresDisjunction",
-      "suite": "declarations"
-    },
-    {
-      "name": "testStructuralRequiresAndAccumulate",
-      "suite": "declarations"
-    },
-    {
-      "name": "testDomainValueOperatorCapabilities",
-      "suite": "declarations"
-    },
-    {
-      "name": "testCallableConceptCapabilities",
-      "suite": "declarations"
-    },
-    {
-      "name": "testSymbolicAutoLocalBinding",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstructorLocalTypeGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testPackSpecialMemberConstruction",
       "suite": "declarations"
     },
     {
@@ -147,10 +79,6 @@
     },
     {
       "name": "testContextualArrayArguments",
-      "suite": "declarations"
-    },
-    {
-      "name": "testVariadicGenerics",
       "suite": "declarations"
     },
     {
@@ -171,10 +99,6 @@
     },
     {
       "name": "testFixedArrayChainedDynamicIndex",
-      "suite": "declarations"
-    },
-    {
-      "name": "testLocalTypeInference",
       "suite": "declarations"
     },
     {
@@ -203,10 +127,6 @@
     },
     {
       "name": "testDefaultParameters",
-      "suite": "declarations"
-    },
-    {
-      "name": "testContextualIntegerLiteralArguments",
       "suite": "declarations"
     },
     {

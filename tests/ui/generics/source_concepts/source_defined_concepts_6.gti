@@ -1,0 +1,16 @@
+// Source defined concepts: a concept's explanation leads its unsatisfied requirements, the named concept's replaces a nested one, and documentation explains no failure.
+//@ snapshot: diagnostics
+[[unsatisfied("A gauge has 'int read()'.")]]
+concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+[[unsatisfied("A dial is a gauge.")]]
+concept dial<T> = gauge<T>;
+/// A meter is a gauge.
+concept meter<T> = gauge<T>;
+int sample<T>(T& item) requires gauge<T> { return 0; }
+int turn<T>(T& item) requires dial<T> { return 0; }
+int measure<T>(T& item) requires meter<T> { return 0; }
+class Plank { public: Plank() = default; };
+int main() {
+  Plank plank{};
+  return sample(plank) + turn(plank) + measure(plank);  //~ ERROR GTI-S2029 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029
+}

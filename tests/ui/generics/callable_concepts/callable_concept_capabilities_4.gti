@@ -1,0 +1,13 @@
+// Callable concept capabilities: analysis result.
+import std.functional;
+class integer_result {
+public:
+  int32_t operator()(int32_t& value) { return value; }
+public:
+  integer_result() = default;
+};
+bool inspect<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+int main() { return inspect(1, integer_result()) ? 0 : 1; }  //~ ERROR GTI-S2029

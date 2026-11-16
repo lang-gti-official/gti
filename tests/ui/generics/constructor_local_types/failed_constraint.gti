@@ -1,0 +1,11 @@
+// Constructor-local generics: constructor constraints are evaluated after exact argument inference and before candidate admission.
+class IntegralOnly {
+public:
+  IntegralOnly<std::integral T>(T value) {}
+public:
+  IntegralOnly() = default;
+};
+int main() {
+  IntegralOnly value = IntegralOnly(true);  //~ ERROR GTI-S2029
+  return 0;
+}

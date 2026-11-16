@@ -1,0 +1,7 @@
+// Structural requires: a bodyless declaration releases the requires indent at its semicolon.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+import std.iterator;
+T probe<I,std::numeric T>(I first,T init)requires std::input_iterator<I>;
+int32_t after() { return 0; }

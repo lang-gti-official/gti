@@ -1,0 +1,16 @@
+// Local type inference: auto should retain ownership traits after an explicit move.
+//@ check-pass
+import std.memory;
+
+class Value {
+public:
+  int number = 1;
+public:
+  Value() = default;
+};
+
+int main() {
+  auto owner = std::make_unique<Value>();
+  auto moved = std::move(owner);
+  return moved->number - 1;
+}

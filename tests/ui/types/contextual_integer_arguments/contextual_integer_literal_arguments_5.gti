@@ -1,0 +1,33 @@
+// Contextual integer literal arguments: signed minima, unsigned maxima, grouped signs, range-filtered multiple arguments and literal/temporary-borrow composition preserve valid typed MIR.
+//@ check-pass
+int8_t s8(int8_t value) { return value; }
+int16_t s16(int16_t value) { return value; }
+int32_t s32(int32_t value) { return value; }
+int64_t s64(int64_t value) { return value; }
+uint8_t u8(uint8_t value) { return value; }
+uint16_t u16(uint16_t value) { return value; }
+uint32_t u32(uint32_t value) { return value; }
+uint64_t u64(uint64_t value) { return value; }
+int pair(uint8_t a, uint16_t b) { return 1; }
+int pair(uint16_t a, uint8_t b) { return 2; }
+int reverse(uint16_t a, uint8_t b) { return 2; }
+int reverse(uint8_t a, uint16_t b) { return 1; }
+class Owner { public: Owner() = default; };
+int borrow(Owner& owner, uint8_t count) { return int(count); }
+int exact(Owner owner, int count) { return 1; }
+int exact(Owner& owner, uint8_t count) { return 2; }
+int main() {
+  int8_t a = s8(-128);
+  int16_t b = s16(-32768);
+  int32_t c = s32(-2147483648);
+  int64_t d = s64(-9223372036854775808);
+  int64_t groupedMinimum = s64(-((9223372036854775808)));
+  uint8_t e = u8(255);
+  uint16_t f = u16(65535);
+  uint32_t g = u32(4294967295);
+  uint64_t h = u64(18446744073709551615);
+  uint8_t grouped = u8(+(255));
+  int8_t negative = s8((-(128)));
+  return pair(255, 256) + reverse(255, 256) + pair(256, 255) +
+         borrow(Owner(), 5) + exact(Owner(), 5) - 10;
+}

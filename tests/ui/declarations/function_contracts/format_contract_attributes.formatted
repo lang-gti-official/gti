@@ -1,0 +1,10 @@
+// Function contracts: the formatter preserves and spaces general function-contract attributes, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+[[noreturn, track_caller]] void stop() {
+  while (true) {}
+}
+int main() {
+  return 0;
+}

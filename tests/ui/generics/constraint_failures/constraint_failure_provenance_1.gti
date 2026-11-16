@@ -1,0 +1,9 @@
+// Constraint failure provenance: a rejected member retains the concrete failure of its own contract.
+concept readable<T> = requires(T& value) { { value.snapshot() } -> int; };
+struct Wrapper<T> {
+  int snapshot() requires std::integral<T> { return 7; }
+public:
+  Wrapper() = default;
+};
+int read<T>(T& value) requires readable<T> { return value.snapshot(); }
+int main() { Wrapper<bool> value{}; return read(value); }  //~ ERROR GTI-S2029

@@ -1,0 +1,17 @@
+// Callable concept capabilities: analysis result.
+import std.functional;
+class distance_of<std::totally_ordered T> {
+public:
+  distance_of() {}
+  int32_t operator()(T& left, T& right) { return 0; }
+};
+
+bool order<T, Compare>(T& left, T& right, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  return compare(left, right);
+}
+
+bool generic_order<std::totally_ordered T>(T& left, T& right) {
+  return order(left, right, distance_of<T>());  //~ ERROR GTI-S2029
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }

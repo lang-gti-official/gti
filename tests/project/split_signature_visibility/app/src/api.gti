@@ -1,0 +1,3 @@
+export module api;
+import "types.gti";
+namespace demo { export interface Factory { static Parcel<int> make(); }; }

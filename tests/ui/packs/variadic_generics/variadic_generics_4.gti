@@ -1,0 +1,11 @@
+// Variadic generics: invalid variadic declarations and expansions should be rejected.
+void fixed(int value) {}
+void nonfinal_generic<Args..., T>(Args... values, T tail) {}  //~ ERROR GTI-S2023 //~ ERROR GTI-S2023
+void missing_parameter<Args...>() {}  //~ ERROR GTI-S2023
+void wrong_type<Args...>(int... values) {}  //~ ERROR GTI-S2023
+void mutable_pack<Args...>(mut Args... values) {}  //~ ERROR GTI-S2023
+void forwarding_pack<Args...>(Args&&... values) {}  //~ ERROR GTI-S2023 //~ ERROR GTI-S2020
+int& borrowed_result<Args...>(int& first, Args&... values) { return first; }  //~ ERROR GTI-S2023
+void direct_use<Args...>(Args... values) { values; }  //~ ERROR GTI-S2023
+void local_pack<Args...>(Args... values) { Args local; }  //~ ERROR GTI-S2023 //~ ERROR GTI-S2000
+void not_a_pack(int value) { absorb_values(value...); }  //~ ERROR GTI-S2001 //~ ERROR GTI-S2023

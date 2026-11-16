@@ -751,24 +751,109 @@ SPECS: dict[str, FileSpec] = {
     "shared_ownership_tests.cpp": FileSpec(
         area="stdlib/memory/shared_owner", topic="Shared ownership"),
     "compiler_declarations_tests.cpp": FileSpec(
-        area="generics/constraints", topic="Constraints",
-        # testInterfaceStaticMethods stays C++: it asserts GTI-S2106 under
-        # requireFunctionDefinitions, which check mode does not apply.
-        only=("testInferredVoidGenericArguments",
-              "testDependentTypeDefaultConstraints",
-              "testStructuralClassConstraints",
-              "testDependentRequiresArgumentAdmission",
-              "testMemberRequirementConcepts",
-              "testExactMemberSignatureConcepts",
-              "testInterfaceStaticAmbiguity"),
+        area="declarations", topic="Declarations",
+        helpers={
+            # testCallableConceptCapabilities and
+            # testDomainValueOperatorCapabilities: (name, source, concept,
+            # hint fragment, message), asserting a concept failure.
+            "rejects": Helper(
+                "reject", source_arg=1, name_arg=0, dropped=(
+                    "the concept named in the message and the hint "
+                    "fragment",)),
+        },
+        # Every named test lands in its own directory; leftovers the tool
+        # flags (loops over computed strings, fixtures, MIR forgeries) are
+        # written by hand from the same file.
+        areas={
+            "testContainerScaffoldSurfaces": "borrow/container_views",
+            "testConstructorTextStorageContracts":
+                "borrow/constructor_text_storage",
+            "testConstructorLocalTypeGenerics":
+                "generics/constructor_local_types",
+            "testStructuralRequiresAndAccumulate":
+                "generics/structural_requires",
+            "testCallableConceptCapabilities": "generics/callable_concepts",
+            "testPackSpecialMemberConstruction":
+                "packs/special_member_construction",
+            "testConcurrencyTypeCapabilities": "concurrency/type_capabilities",
+            "testFunctionContracts": "declarations/function_contracts",
+            "testOutOfClassMethods": "classes/out_of_class_methods",
+            "testContextualIntegerLiteralArguments":
+                "types/contextual_integer_arguments",
+            "testExactQualifiedClassSpecializations":
+                "generics/qualified_specializations",
+            "testSymbolicAutoLocalBinding": "generics/symbolic_auto_locals",
+            "testConstrainedGenerics": "generics/constrained",
+            "testSourceDefinedConcepts": "generics/source_concepts",
+            "testConstraintFailureProvenance": "generics/constraint_failures",
+            "testDomainValueOperatorCapabilities":
+                "generics/domain_value_operators",
+            "testRequiresDisjunction": "generics/disjunction",
+            "testVariadicGenerics": "packs/variadic_generics",
+            "testLocalTypeInference": "types/local_inference",
+            "testContextualNumericLiterals":
+                "types/contextual_numeric_literals",
+            "testRecursiveClassLayouts": "classes/recursive_layouts",
+            "testMoveConstructionCapability": "generics/move_construction",
+            "testConstructorsAndReceiverMutability":
+                "classes/constructors_and_receivers",
+            "testCompilerPrivateMemberRequirements":
+                "generics/private_member_requirements",
+            "testMovedLoopLocalRedeclarations": "ownership/moved_loop_locals",
+            "testNamedGenerics": "generics/named",
+            "testInterfaceStaticMethods": "classes/interface_static_methods",
+            "testFiniteWrapperTraits": "generics/finite_wrapper_traits",
+            "testExternCInterop": "declarations/extern_c",
+            "testDependentCarrierRepresentationClosure":
+                "generics/carrier_closure",
+            "testConcreteApplicationSpecialMembers":
+                "generics/concrete_special_members",
+            "testTypeAliases": "declarations/type_aliases",
+            "testThisReceiverKeyword": "classes/this_receiver",
+            "testValueGenerics": "generics/value_generics",
+            "testStructuredBindings": "declarations/structured_bindings",
+            "testClassesStructsAndAccess": "classes/access",
+            "testTrustedIntrinsicDeclarations":
+                "declarations/trusted_intrinsics",
+            "testNativeGenericCarrierClosure": "generics/carrier_closure",
+            "testFixedArrays": "arrays/fixed",
+            "testDirectBraceConstruction": "classes/brace_construction",
+            "testContextualArrayArguments": "arrays/contextual_arguments",
+            "testUninstantiatedGenericSignatureClosure":
+                "generics/carrier_closure",
+            "testMutableFieldGroups": "classes/mutable_field_groups",
+            "testInheritanceAndInterfaces": "classes/inheritance",
+            "testExactFunctionOverloadsAndConversions":
+                "declarations/exact_overloads",
+            "testScopedEnums": "declarations/scoped_enums",
+            "testNamespacesAndAliases": "declarations/namespaces",
+            "testInheritedGenericTargetInstances":
+                "generics/inherited_targets",
+            "testFreshArrayOwnership": "arrays/fresh_ownership",
+            "testFixedArrayDynamicWriteFailureEdge": "arrays/fixed",
+            "testFixedArrayChainedDynamicIndex": "arrays/fixed",
+            "testDefaultParameters": "declarations/default_parameters",
+        },
         review_policy={
             name: "the C++ test asserts rejection (or one code of it); the "
                   "compiler's complete code set was read and matches the "
                   "case's stated reason"
-            for name in ("testInterfaceStaticAmbiguity",
-                         "testMemberRequirementConcepts",
-                         "testExactMemberSignatureConcepts",
-                         "testStructuralClassConstraints")}),
+            for name in (
+                "testStructuralRequiresAndAccumulate",
+                "testPackSpecialMemberConstruction",
+                "testExactQualifiedClassSpecializations",
+                "testContextualNumericLiterals",
+                "testConstrainedGenerics",
+                "testConstraintFailureProvenance",
+                "testSourceDefinedConcepts",
+                "testRequiresDisjunction",
+                "testDomainValueOperatorCapabilities",
+                "testCallableConceptCapabilities",
+                "testVariadicGenerics",
+                "testLocalTypeInference",
+                "testFunctionContracts",
+                "testOutOfClassMethods",
+            )}),
     "compiler_ownership_tests.cpp": FileSpec(
         area="ownership/stored_references", topic="Ownership",
         # Most named ownership tests assert MIR loan/cleanup structure and

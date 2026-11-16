@@ -1,0 +1,13 @@
+// Out-of-class methods: a separate method must not mutate a receiver with a live borrowed result.
+struct Cell {
+  mut int number = 3;
+  int& read();
+  void set(int value) mut;
+  int take() &&;
+public:
+  Cell() = default;
+};
+int& Cell::read() { return this.number; }
+void Cell::set(int value) mut { this.number = value; }
+int Cell::take() && { return this.number; }
+int main() { mut Cell c{}; auto& b = c.read(); c.set(4); return b; }  //~ ERROR GTI-S2017

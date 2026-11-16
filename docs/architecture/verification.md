@@ -3068,7 +3068,7 @@ are local observations, not portable thresholds or a claim of failure-path parit
 
 ## Optional out-of-class method definitions (0.416.0)
 
-`testOutOfClassMethods` covers canonical declaration/body association, private
+The `tests/ui/classes/out_of_class_methods/` cases cover canonical declaration/body association, private
 member access, static factories, renamed parameters, default arguments,
 constexpr calls, consuming receivers and borrowed-result contracts. Negative
 cases reject unmatched and duplicate definitions, altered signatures and
@@ -7313,7 +7313,7 @@ repairs in bindings, compile-time branches and static assertions.
 `diagnostic_explanations` checks terminal/LSP call-trace agreement across an
 included file, Unicode UTF-16 locations and repair in an unsaved overlay.
 
-`testConstraintFailureProvenance` also checks member-owned `requires` leaf
+The `tests/ui/generics/constraint_failures/` cases also check member-owned `requires` leaf
 causes, exact requirement source ranges, repaired valid MIR, representative
 disjunction evidence and nested member-step elision. Producer tests retain one
 shared immutable leaf across 64 nested member steps and bound concept context
@@ -7409,8 +7409,8 @@ or every platform matrix was rerun.
 
 The 0.367.1 fix gives an implicit instance-field text accessor the same
 predeclared receiver summary as an explicit `this` path. Body validation still
-owns the actual origin proof. `testContainerScaffoldSurfaces` verifies MIR for
-valid relays and rejects local/by-value shadowing, static instance access,
+owns the actual origin proof. The `tests/ui/borrow/container_views/` cases accept
+valid relays and reject local/by-value shadowing, static instance access,
 temporary/local escape and live-view invalidation or movement. A same-named
 read-only parameter retains its own dependency; literal-backed static fields
 do not gain a receiver loan.
@@ -10067,7 +10067,7 @@ cache bypass. It is bounded branch evidence, not a substitute for full Linux CI.
 
 ## Cross-Phase Feature Coverage
 
-`testContextualNumericLiterals` checks broad and composed numeric constraints,
+The `tests/ui/types/contextual_numeric_literals/` cases check broad and composed numeric constraints,
 signed/grouped literals, concrete HIR literal domains, checked range diagnostics,
 and independent negatives for mixed variables, unconstrained types, call
 matching, narrow arithmetic results, and integral-only operations. The

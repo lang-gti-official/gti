@@ -1,0 +1,4 @@
+// Function contracts: the contract-bearing signature queries print (contracts before the unsafe keyword) parses and keeps valid semantics.
+//@ check-pass
+[[noreturn]] [[track_caller]] unsafe void halt() { while (true) {} }
+int main() { return 0; }

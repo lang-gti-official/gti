@@ -1,0 +1,15 @@
+// Constraint failure provenance: a nested reordered contract keeps its concrete public application, exact second argument and leaf reason (missing member).
+//@ snapshot: diagnostics
+namespace library {
+concept snapshot_as<R, T> = requires(T& value) { { value.snapshot() } -> R; };
+concept readable<T> = snapshot_as<int, T>;
+int read<A, B>(A& unrelated, B& value) requires readable<B> {
+  return value.snapshot();
+}
+}
+struct Item { public: Item() = default; };
+int main() {
+  Item unrelated{};
+  Item target{};
+  return library::read(unrelated, target);  //~ ERROR GTI-S2029
+}
