@@ -305,15 +305,15 @@ def selected_tests(entries, inventory, paths, root=ROOT):
     for row in inventory["tests"]:
         if changed_files.intersection(row.get("command", [])):
             selected.add(row["name"])
-    # The frozen C++ backend is not built here (ADR 031); its tests are
-    # registered disabled and run only in the hand-dispatched C++ job. Drop
-    # them, but keep rejecting any other disabled or required example gate.
-    selected -= {row["name"] for row in inventory["tests"] if CPP_BACKEND_LABEL in labels(row)}
+    # Tests labelled `slow` run only in the daily slow tier (slow.yml), never
+    # per change. Drop them, but keep rejecting any disabled or required
+    # example gate.
+    selected -= {row["name"] for row in inventory["tests"] if SLOW_LABEL in labels(row)}
     example_gates.validate_inventory(inventory, selected)
     return selected
 
 
-CPP_BACKEND_LABEL = "cpp-backend"
+SLOW_LABEL = "slow"
 
 
 def labels(row):

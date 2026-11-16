@@ -272,18 +272,19 @@ the per-target defaults of the two promotions above.
   builds, a usage error for direct invocations. There is no silent fallback.
 - No general test may build or run the C++ backend. Tests assert language
   behaviour through backend-neutral oracles: diagnostics, semantic facts, MIR,
-  and LLVM execution. Assertions about C++ representation live only in the
-  C++-only entries (`cpp_mir_*`, `cpp_debug_artifacts`,
-  `lowered_program_corpus_census`).
-- `cpp-backend.yml` runs only when dispatched by hand. It never runs on a
-  schedule, gates a change, opens an issue or blocks a channel.
+  and LLVM execution. The C++-only entries (`cpp_mir_*`, `cpp_debug_artifacts`)
+  and the hand-dispatched `cpp-backend.yml` were deleted on 2026-11-16 (owner
+  decision: the backend "is deprecated and has no active development"; see the
+  [test-suite redesign](../plans/test-suite-redesign.md)). The backend-neutral
+  `lowered_program_corpus_census` moved to the daily slow tier.
 - Shared compiler changes carry no obligation to keep the C++ backend
   compiling or passing. Accept that it will drift from MIR: reintroducing it is
   a future owner decision and a port, not a toggle.
 
 Cross-backend comparison is no longer part of validation. LLVM O0 and O3 must
-still agree on every shipped example (`mir_cutover_corpus_oracle`), alongside
-native execution, sanitizer and installed-toolchain evidence.
+still agree on every shipped example (`mir_cutover_corpus_oracle`, in the daily
+slow tier since 2026-11-16), alongside native execution, sanitizer and
+installed-toolchain evidence.
 
 ## Current Status
 

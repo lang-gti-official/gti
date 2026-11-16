@@ -12,16 +12,28 @@ from backend_execution import Endpoint, execute, policy_endpoints
 
 
 def main() -> None:
-    # Endpoint harnesses must honor the same selection as flag-based harnesses:
-    # default LLVM, one frozen C++23/O3 profile, no implicit C++20 differential.
-    for selected in ("llvm", "cpp", "both"):
-        with patch.dict(os.environ, {"GTI_TEST_BACKENDS": selected}):
+    # Endpoint harnesses honor the same selection as flag-based harnesses:
+    # LLVM only, at GTI_TEST_LLVM_LEVELS' levels (default O0).
+    for levels, expected in (("", ("O0",)), ("O0,O3", ("O0", "O3")), ("O3", ("O3",))):
+        with patch.dict(os.environ, {"GTI_TEST_BACKENDS": "llvm", "GTI_TEST_LLVM_LEVELS": levels}):
             endpoints = policy_endpoints()
-            expected = (() if selected == "cpp" else
-                        (Endpoint("llvm", "O0"), Endpoint("llvm", "O3")))
-            if selected != "llvm":
-                expected += (Endpoint("cpp", "O3", "c++23"),)
-            assert endpoints == expected, (selected, endpoints)
+            assert endpoints == tuple(Endpoint("llvm", level) for level in expected), (levels, endpoints)
+    for stale in ("cpp", "both"):
+        with patch.dict(os.environ, {"GTI_TEST_BACKENDS": stale}):
+            try:
+                policy_endpoints()
+            except ValueError as error:
+                assert "removed" in str(error), error
+            else:
+                raise AssertionError(f"GTI_TEST_BACKENDS={stale} must be rejected")
+    for invalid in ("O4", "O0,O0", "O0;O3"):
+        with patch.dict(os.environ, {"GTI_TEST_LLVM_LEVELS": invalid}):
+            try:
+                policy_endpoints()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"GTI_TEST_LLVM_LEVELS={invalid} must be rejected")
     assert policy_endpoints(("O0", "O1", "O2", "O3"), backends="llvm") == tuple(
         Endpoint("llvm", level) for level in ("O0", "O1", "O2", "O3"))
     with tempfile.TemporaryDirectory(prefix="gti-backend-execution-") as raw:
@@ -52,7 +64,7 @@ def main() -> None:
                 [sys.executable, str(Path(__file__).parent / harness),
                  str(root / "must-not-be-invoked-gti"), "--list-modes"],
                 capture_output=True, text=True, timeout=20,
-                env={**os.environ, "GTI_TEST_BACKENDS": "llvm",
+                env={**os.environ, "GTI_TEST_BACKENDS": "llvm", "GTI_TEST_LLVM_LEVELS": "O0,O3",
                      "CC": str(root / "must-not-be-invoked-cc"),
                      "CXX": str(root / "must-not-be-invoked-cxx")})
             assert listed.returncode == 0 and not listed.stderr, (harness, listed)

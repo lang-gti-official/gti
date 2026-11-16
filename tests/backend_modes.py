@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
-"""Which backends a runtime harness exercises, from the environment.
+"""Which execution modes a runtime harness exercises, from the environment.
 
-GTI's shipped backend is LLVM. The C++ backend is deprecated and frozen; it
-runs on its own schedule under one profile (the shipped default's standard
-at -O3), as rustc tests its non-primary codegen backends: never per change,
-never as a per-feature differential against the primary backend.
+LLVM is GTI's only tested backend. The frozen C++ backend's tests and CI were
+removed (owner decision, 2026-11-16; docs/plans/test-suite-redesign.md); its
+source stays and builds only with GTI_ENABLE_CPP_BACKEND. GTI_TEST_BACKENDS
+therefore has one value, ``llvm``; any other value is a stale configuration
+and fails loudly. The C++ helpers below (``cpp_modes``, ``keep_cpp``, ...)
+remain only so existing harness call sites need no edit: under the
+environment policy they plan no C++ mode. A manual oracle may still pass
+``backends="cpp"`` explicitly; no registered test does.
 
-GTI_TEST_BACKENDS selects the set: ``llvm`` (the default, and what every CI
-gate and full validation run uses), ``cpp`` (the hand-dispatched C++ job) or
-``both`` (local differential runs). Harness mode tables call ``native_modes``
-instead of listing standards and optimisation levels themselves, so this
-policy has one definition. A harness never spells ``--std``, a C++ standard
-or ``--backend cpp`` itself: tests/execution_coverage_test.py rejects a
-runtime harness that does, because a hard-coded table is how a fixture loses
-its LLVM execution modes without anyone noticing.
+GTI_TEST_LLVM_LEVELS selects the LLVM optimisation levels a harness runs when
+it does not name its own: a comma-separated subset of O0, O1, O2 and O3. The
+default is ``O0``, which is what pull requests and per-commit full validation
+run. The daily slow tier (.github/workflows/slow.yml, through
+``scripts/validation_checks.py shard --test-set``) sets it to add ``O3``. A
+harness whose subject is an optimisation level names its levels explicitly
+(``native_modes(levels=("O0", "O2", "O3"))``) and is unaffected.
 
-Assertions on the emitted C++ text belong to the C++ profile only: guard them
-with ``is_cpp_mode(flags)`` and request the text with ``keep_cpp(flags)``,
-which is empty for an LLVM mode (the LLVM backend rejects ``--keep-cpp``).
+Harness mode tables call ``native_modes`` instead of listing levels and flags
+themselves, so this policy has one definition. A harness never spells
+``--std``, a C++ standard or ``--backend cpp`` itself:
+tests/execution_coverage_test.py rejects a runtime harness that does, because
+a hard-coded table is how a fixture loses its LLVM execution modes without
+anyone noticing.
 
 A fixture the LLVM backend cannot execute yet is declared, never skipped:
 ``unsupported(name, flags, llvm_unsupported=...)`` returns the declared
 limitation and ``check_unsupported`` asserts the compiler reports exactly it
 (a ``GTI-B0003`` rejection) or, for a declared bug symptom, that the fixture
-still fails, so a stale declaration is an error. The C++ profile keeps that
-fixture's execution evidence until the LLVM backend accepts it.
+still fails, so a stale declaration is an error.
 """
 
 from __future__ import annotations
@@ -32,28 +37,41 @@ from __future__ import annotations
 import os
 
 BACKENDS = ("llvm", "cpp", "both")
-# The one C++ profile. c++23 is the shipped default's standard; -O3 is the
-# production configuration. Other standards and levels, no-elide and the
-# GCC-instrumented "sanitized" mode are not run anywhere: the backend is
-# frozen, so they could only report drift in a configuration nothing ships.
+# The one C++ profile, for explicit manual oracles only (see above).
 CPP_PROFILE = ("cpp-c++23-O3", ["--std", "c++23", "-O3"], [])
-LLVM_LEVELS = ("O0", "O3")
+LEVELS = ("O0", "O1", "O2", "O3")
+LEVELS_ENVIRONMENT = "GTI_TEST_LLVM_LEVELS"
+DEFAULT_LEVELS = ("O0",)
 
 
 def selected_backends() -> str:
+    """The environment's backend policy: always LLVM."""
     value = os.environ.get("GTI_TEST_BACKENDS", "llvm")
-    if value not in BACKENDS:
-        raise ValueError("GTI_TEST_BACKENDS must be one of " + ", ".join(BACKENDS))
+    if value != "llvm":
+        raise ValueError("GTI_TEST_BACKENDS must be llvm: the C++ backend's tests were removed "
+                         "(docs/plans/test-suite-redesign.md)")
     return value
 
 
-def llvm_modes(levels=LLVM_LEVELS):
-    """LLVM execution modes: the unoptimised and the production level."""
-    return [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], []) for level in levels]
+def selected_levels() -> tuple[str, ...]:
+    """The LLVM levels GTI_TEST_LLVM_LEVELS selects (default O0)."""
+    value = os.environ.get(LEVELS_ENVIRONMENT, "")
+    if not value.strip():
+        return DEFAULT_LEVELS
+    levels = tuple(level.strip() for level in value.split(","))
+    if not levels or any(level not in LEVELS for level in levels) or len(set(levels)) != len(levels):
+        raise ValueError(f"{LEVELS_ENVIRONMENT} must be a comma-separated subset of " + ", ".join(LEVELS))
+    return levels
+
+
+def llvm_modes(levels=None):
+    """LLVM execution modes: GTI_TEST_LLVM_LEVELS' levels unless `levels` names them."""
+    return [(f"llvm-{level}", ["--backend", "llvm", f"-{level}"], [])
+            for level in (selected_levels() if levels is None else levels)]
 
 
 def cpp_modes(backends: str | None = None):
-    """The C++ profile, only when GTI_TEST_BACKENDS selects the C++ backend."""
+    """The C++ profile, only when a caller explicitly asks for the C++ backend."""
     selected = backends or selected_backends()
     return [CPP_PROFILE] if selected in ("cpp", "both") else []
 
@@ -61,22 +79,21 @@ def cpp_modes(backends: str | None = None):
 def cpp_text_modes(backends: str | None = None):
     """The C++ profile without an optimisation level, for ``--emit-cpp`` text probes.
 
-    Empty unless GTI_TEST_BACKENDS selects the C++ backend: a probe of the
-    emitted text proves nothing about the shipped backend.
+    Empty unless a caller explicitly asks for the C++ backend.
     """
     return [("cpp-c++23", ["--std", "c++23"], [])] if cpp_modes(backends) else []
 
 
 def cpp_variant_mode(label, level="O1", native=()):
-    """A C++ profile variant for a harness's own C++-text check (thread sanitizer
-    evidence or host-macro hygiene that only the C++ text carries); the caller
-    appends it only when ``cpp_modes()`` is nonempty."""
+    """A C++ profile variant; callers append it only when ``cpp_modes()`` is nonempty."""
     return (label, ["--std", CPP_PROFILE[1][1], f"-{level}"], list(native))
 
 
-def native_modes(levels=LLVM_LEVELS, backends: str | None = None):
+def native_modes(levels=None, backends: str | None = None):
     """The (label, compiler flags, native flags) modes a harness runs."""
     selected = backends or selected_backends()
+    if selected not in BACKENDS:
+        raise ValueError("backends must be one of " + ", ".join(BACKENDS))
     modes = []
     if selected in ("llvm", "both"):
         modes += llvm_modes(levels)

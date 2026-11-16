@@ -108,7 +108,6 @@ jobs:
           GTI_SHARD_PLATFORM: ${{ matrix.platform }}
           GTI_SHARD_TEST_SET: ${{ matrix.platform == 'darwin' && 'darwin' || 'full' }}
         run: >-
-          GTI_TEST_BACKENDS=llvm
           python3 scripts/validation_checks.py shard --build build
           --test-set "${GTI_SHARD_TEST_SET}"
           --shards "${GTI_SHARDS}" --index "${GTI_SHARD_INDEX}"
