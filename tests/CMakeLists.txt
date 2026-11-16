@@ -2413,8 +2413,6 @@ add_test(NAME compact_owner_layout COMMAND gti_compact_owner_layout_tests)
 add_executable(gti_restoring_exchange_tests restoring_exchange_tests.cpp)
 target_link_libraries(gti_restoring_exchange_tests PRIVATE gti_llvm_backend)
 add_test(NAME restoring_exchange COMMAND gti_restoring_exchange_tests)
-# Its GCC sanitized build may take minutes under a parallel suite;
-# see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
 
 add_test(NAME nested_receiver_array_runtime
          COMMAND "${Python3_EXECUTABLE}"
@@ -3303,9 +3301,6 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/removal_algorithms_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(removal_algorithms PROPERTIES TIMEOUT 900)
-  # One entry: the harness runs the LLVM modes tests/backend_modes.py
-  # selects. The former c++20, no-elide and sanitized
-  # variants were C++-backend-only configurations nothing ships.
   add_test(
     NAME ordered_search_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -3912,10 +3907,6 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties("${associative_suite}" PROPERTIES TIMEOUT 600)
   endforeach()
-  # Its GCC sanitized build may take minutes under a parallel suite;
-  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
-  # Its GCC sanitized build may take minutes under a parallel suite;
-  # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
   add_test(NAME complete_containers
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/complete_containers_test.py" "$<TARGET_FILE:gti>")
   set_tests_properties(complete_containers PROPERTIES TIMEOUT 900)
