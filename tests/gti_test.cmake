@@ -4,6 +4,7 @@
 add_executable(gti-test
   "${PROJECT_SOURCE_DIR}/tests/runner/main.cpp"
   "${PROJECT_SOURCE_DIR}/tests/runner/execute.cpp"
+  "${PROJECT_SOURCE_DIR}/tests/runner/snapshot.cpp"
   "${PROJECT_SOURCE_DIR}/tests/runner/test_file.cpp")
 target_link_libraries(gti-test PRIVATE gti_driver)
 target_include_directories(gti-test SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})

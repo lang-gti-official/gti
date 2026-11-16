@@ -4,6 +4,7 @@
 // tests/ui/README.md and docs/plans/test-suite-redesign.md.
 
 #include "execute.h"
+#include "snapshot.h"
 #include "test_file.h"
 
 #include <poll.h>
@@ -138,6 +139,39 @@ int tidy(const fs::path &root) {
         problems.push_back(display + ": empty expected file");
       continue;
     }
+    if (extension == ".mir" || extension == ".stderr" ||
+        extension == ".formatted") {
+      fs::path testPath = file;
+      testPath.replace_extension(".gti");
+      const Snapshot kind = extension == ".mir"      ? Snapshot::Mir
+                            : extension == ".stderr" ? Snapshot::Diagnostics
+                                                     : Snapshot::Format;
+      if (!fs::exists(testPath)) {
+        problems.push_back(display + ": expected output without a test");
+        continue;
+      }
+      const TestFile owner = parseTestFile(testPath, display);
+      if (!hasSnapshot(owner, kind) ||
+          (kind == Snapshot::Mir && !owner.checks.empty() &&
+           !hasSnapshot(owner, Snapshot::LlvmIr)))
+        problems.push_back(display + ": expected file without `//@ snapshot: " +
+                           snapshotName(kind) + "` in its test");
+      const std::optional<std::string> text = readFile(file);
+      const std::size_t lineCount =
+          text ? static_cast<std::size_t>(
+                     std::count(text->begin(), text->end(), '\n'))
+               : 0;
+      if (text && text->empty())
+        problems.push_back(display + ": empty expected file");
+      else if (text && (lineCount > snapshotLineLimit ||
+                        text->size() > snapshotByteLimit))
+        problems.push_back(
+            display + ": snapshot is " + std::to_string(lineCount) +
+            " lines, over the " + std::to_string(snapshotLineLimit) +
+            "-line limit; narrow it (`//@ mir-function:`, `// CHECK:` "
+            "patterns, or a smaller test)");
+      continue;
+    }
     if (extension != ".gti") {
       problems.push_back(display + ": not a test or expected-output file");
       continue;
@@ -147,6 +181,16 @@ int tidy(const fs::path &root) {
       problems.push_back(display + ": " + error);
     if (!test.runnerFault.empty())
       problems.push_back(display + ": runner-fault is not allowed in tests");
+    for (const Snapshot kind : test.snapshots) {
+      const bool patterns = kind == Snapshot::LlvmIr ||
+                            (kind == Snapshot::Mir && !test.checks.empty() &&
+                             !hasSnapshot(test, Snapshot::LlvmIr));
+      if (!patterns && !fs::exists(snapshotPath(test, kind)))
+        problems.push_back(display + ": no " +
+                           snapshotPath(test, kind).filename().string() +
+                           " for `//@ snapshot: " + snapshotName(kind) +
+                           "`; run with --bless");
+    }
     const std::optional<std::string> text = readFile(file);
     if (!text || text->rfind("// ", 0) != 0 || text->rfind("//@", 0) == 0 ||
         text->rfind("// ---", 0) == 0)

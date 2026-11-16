@@ -108,8 +108,59 @@ const char *modeName(Mode mode) {
     return "run-pass";
   case Mode::RunFail:
     return "run-fail";
+  case Mode::ParsePass:
+    return "parse-pass";
+  case Mode::ParseFail:
+    return "parse-fail";
   }
   return "?";
+}
+
+bool modeParses(Mode mode) {
+  return mode == Mode::ParsePass || mode == Mode::ParseFail;
+}
+
+bool modeFails(Mode mode) {
+  return mode == Mode::CheckFail || mode == Mode::ParseFail;
+}
+
+const char *snapshotName(Snapshot snapshot) {
+  switch (snapshot) {
+  case Snapshot::Mir:
+    return "mir";
+  case Snapshot::LlvmIr:
+    return "llvm-ir";
+  case Snapshot::Diagnostics:
+    return "diagnostics";
+  case Snapshot::Format:
+    return "format";
+  }
+  return "?";
+}
+
+std::string snapshotExtension(Snapshot snapshot) {
+  switch (snapshot) {
+  case Snapshot::Mir:
+    return ".mir";
+  case Snapshot::Diagnostics:
+    return ".stderr";
+  case Snapshot::Format:
+    return ".formatted";
+  case Snapshot::LlvmIr:
+    break;
+  }
+  return "";
+}
+
+bool hasSnapshot(const TestFile &test, Snapshot snapshot) {
+  return std::find(test.snapshots.begin(), test.snapshots.end(), snapshot) !=
+         test.snapshots.end();
+}
+
+std::filesystem::path snapshotPath(const TestFile &test, Snapshot snapshot) {
+  std::filesystem::path path = test.path;
+  path.replace_extension(snapshotExtension(snapshot));
+  return path;
 }
 
 bool modeRuns(Mode mode) {
@@ -243,7 +294,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     name = trim(name);
     const std::string trimmed = trim(value);
     if (name == "check-pass" || name == "check-fail" || name == "build-pass" ||
-        name == "run-pass" || name == "run-fail") {
+        name == "run-pass" || name == "run-fail" || name == "parse-pass" ||
+        name == "parse-fail") {
       if (hasValue)
         error(lineNumber, "'" + name + "' takes no value");
       modes.push_back(name);
@@ -285,6 +337,35 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (hasValue)
         error(lineNumber, "'format-stable' takes no value");
       test.formatStable = true;
+    } else if (name == "execution-profile") {
+      if (trimmed == "concurrent")
+        test.concurrent = true;
+      else if (trimmed != "single-threaded")
+        error(lineNumber,
+              "execution-profile must be single-threaded or concurrent");
+    } else if (name == "require-function-definitions") {
+      if (hasValue)
+        error(lineNumber, "'require-function-definitions' takes no value");
+      test.requireFunctionDefinitions = true;
+    } else if (name == "snapshot") {
+      const std::optional<Snapshot> kind =
+          trimmed == "mir"           ? std::optional(Snapshot::Mir)
+          : trimmed == "llvm-ir"     ? std::optional(Snapshot::LlvmIr)
+          : trimmed == "diagnostics" ? std::optional(Snapshot::Diagnostics)
+          : trimmed == "format"      ? std::optional(Snapshot::Format)
+                                     : std::nullopt;
+      if (!kind)
+        error(lineNumber,
+              "snapshot must be mir, llvm-ir, diagnostics or format");
+      else if (hasSnapshot(test, *kind))
+        error(lineNumber, "duplicate snapshot: " + trimmed);
+      else
+        test.snapshots.push_back(*kind);
+    } else if (name == "mir-function") {
+      if (trimmed.empty() || trimmed.find_first_of(" \t") != std::string::npos)
+        error(lineNumber, "mir-function takes one function name");
+      else
+        test.mirFunctions.push_back(trimmed);
     } else if (name == "reason") {
       if (trimmed.empty())
         error(lineNumber, "reason needs text");
@@ -303,6 +384,39 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     } else {
       error(lineNumber, "unknown directive '" + name + "'");
     }
+  }
+
+  // FileCheck-style patterns.
+  for (std::size_t index = 0; index < lines.size(); ++index) {
+    const std::string text = trim(lines[index]);
+    if (text.rfind("// CHECK:", 0) != 0 && text.rfind("// CHECK-", 0) != 0)
+      continue;
+    const std::size_t colon = text.find(':');
+    const std::string kind =
+        colon == std::string::npos ? text.substr(3) : text.substr(3, colon - 3);
+    CheckPattern pattern;
+    pattern.writtenLine = static_cast<int>(index) + 1;
+    if (kind == "CHECK")
+      pattern.kind = CheckPattern::Kind::Check;
+    else if (kind == "CHECK-NEXT")
+      pattern.kind = CheckPattern::Kind::Next;
+    else if (kind == "CHECK-NOT")
+      pattern.kind = CheckPattern::Kind::Not;
+    else {
+      error(pattern.writtenLine,
+            "patterns are `// CHECK:`, `// CHECK-NEXT:` or `// CHECK-NOT:`");
+      continue;
+    }
+    pattern.pattern =
+        colon == std::string::npos ? "" : trim(text.substr(colon + 1));
+    if (pattern.pattern.empty())
+      error(pattern.writtenLine, kind + " needs a pattern");
+    else if (pattern.kind == CheckPattern::Kind::Next &&
+             (test.checks.empty() ||
+              test.checks.back().kind == CheckPattern::Kind::Not))
+      error(pattern.writtenLine,
+            "CHECK-NEXT must follow a CHECK or CHECK-NEXT line");
+    test.checks.push_back(std::move(pattern));
   }
 
   // Annotations.
@@ -378,15 +492,40 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
                 : mode == "check-fail" ? Mode::CheckFail
                 : mode == "build-pass" ? Mode::BuildPass
                 : mode == "run-pass"   ? Mode::RunPass
-                                       : Mode::RunFail;
+                : mode == "run-fail"   ? Mode::RunFail
+                : mode == "parse-pass" ? Mode::ParsePass
+                                       : Mode::ParseFail;
   } else {
     test.mode = hasErrors ? Mode::CheckFail : Mode::CheckPass;
   }
-  if (test.mode == Mode::CheckFail && !hasErrors)
-    error(0, "check-fail test has no `//~ ERROR` expectation");
-  if (test.mode != Mode::CheckFail && hasErrors)
+  if (modeFails(test.mode) && !hasErrors)
     error(0, std::string(modeName(test.mode)) +
-                 " test cannot expect errors; use check-fail");
+                 " test has no `//~ ERROR` expectation");
+  if (!modeFails(test.mode) && hasErrors)
+    error(0, std::string(modeName(test.mode)) +
+                 " test cannot expect errors; use " +
+                 (modeParses(test.mode) ? "parse-fail" : "check-fail"));
+  if (modeParses(test.mode) &&
+      (test.concurrent || test.requireFunctionDefinitions || test.optimize ||
+       std::any_of(test.snapshots.begin(), test.snapshots.end(),
+                   [](Snapshot s) { return s != Snapshot::Format; })))
+    error(0, "parse tests take no analysis directives or mir, llvm-ir or "
+             "diagnostics snapshots");
+  for (const Snapshot kind : {Snapshot::Mir, Snapshot::LlvmIr})
+    if (hasSnapshot(test, kind) && modeFails(test.mode))
+      error(0, std::string("snapshot: ") + snapshotName(kind) +
+                   " needs a program that compiles");
+  if (!test.mirFunctions.empty() && !hasSnapshot(test, Snapshot::Mir))
+    error(0, "mir-function needs `//@ snapshot: mir`");
+  if (!test.checks.empty() && !hasSnapshot(test, Snapshot::Mir) &&
+      !hasSnapshot(test, Snapshot::LlvmIr))
+    error(0, "CHECK patterns need `//@ snapshot: llvm-ir` or `mir`");
+  if (hasSnapshot(test, Snapshot::LlvmIr) && test.checks.empty())
+    error(0, "snapshot: llvm-ir is checked by `// CHECK:` patterns; add some");
+  if (hasSnapshot(test, Snapshot::LlvmIr) && hasSnapshot(test, Snapshot::Mir) &&
+      !test.checks.empty())
+    error(0, "CHECK patterns apply to one output; snapshot mir or llvm-ir, "
+             "not both");
   if (!modeRuns(test.mode) &&
       (test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
        !test.args.empty() || test.stdinText))
@@ -414,8 +553,12 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     test.stdoutFile = stdoutFile;
   }
 
-  test.groupKey = std::string(modeBuilds(test.mode) ? "build" : "check") +
-                  (test.optimize ? ":O3" : ":O0");
+  test.groupKey = std::string(modeParses(test.mode)   ? "parse"
+                              : modeBuilds(test.mode) ? "build"
+                                                      : "check") +
+                  (test.optimize ? ":O3" : ":O0") +
+                  (test.concurrent ? ":concurrent" : "") +
+                  (test.requireFunctionDefinitions ? ":definitions" : "");
   for (const Section &section : test.sections)
     test.groupKey += "|" + section.name;
   test.groupKey += "\n" + imports;

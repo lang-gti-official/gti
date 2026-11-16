@@ -6,7 +6,9 @@ usage: check.py <gti-test> [--jobs N] [--self-test-only]
 The self-test drives gti-test over tests/runner/fixtures and checks every
 outcome class it reports: pass, wrong/missing/unmatched annotations, stdout
 mismatch, internal compiler error, crash, CPU and wall-clock limits, bless
-(including its refusals), tidy, sharding, JSON and --isolate.
+(including its refusals), tidy, sharding, JSON and --isolate; and the other
+test kinds: parse-only modes, analysis options, and the mir, llvm-ir,
+diagnostics and format snapshots with their failure and bless paths.
 """
 
 import json
@@ -124,12 +126,19 @@ def self_test(runner):
     code, out = run(runner, FIXTURES / "format")
     expect(code == 1 and "is not idempotent" in block(out, "FAIL", "drift.gti"),
            "format-stable fails when formatting is not a fixed point", out)
+    kinds_self_test(runner)
 
     code, out = run(runner, "--tidy", "--root", FIXTURES / "tidy")
     for problem in ("unknown directive 'check-pas'", "no_purpose.gti: the first line",
                     "format-stable needs a check-pass test without annotations",
                     "orphan.stdout: expected output without a test",
-                    "top_level.gti: tests live in a subdirectory"):
+                    "top_level.gti: tests live in a subdirectory",
+                    "orphan_snapshot.mir: expected file without `//@ snapshot: mir`",
+                    "unblessed.gti: no unblessed.stderr",
+                    "oversized.formatted: snapshot is 450 lines, over the 400-line "
+                    "limit; narrow it",
+                    "bad_check.gti: line 0: CHECK patterns need",
+                    "bad_check_kind.gti: line 3: patterns are"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -148,6 +157,54 @@ def self_test(runner):
         rows = [json.loads(line) for line in report.read_text().splitlines()]
         expect(len(rows) == 7 and all("cpu" in row for row in rows),
                "the JSON report has one row per test", report.read_text())
+
+
+def kinds_self_test(runner):
+    """Parse-only modes, analysis options and snapshot kinds."""
+    for isolate in ((), ("--isolate",)):
+        code, out = run(runner, FIXTURES / "kinds", "--jobs", "4", *isolate)
+        expect(code == 0 and "RESULT ok: 11 passed, 0 failed" in out,
+               f"the other test kinds pass {isolate}", out)
+    code, out = run(runner, "--tidy", "--root", FIXTURES / "kinds")
+    expect(code == 0, "tidy accepts the kind fixtures", out)
+
+    code, out = run(runner, FIXTURES / "snapshot", "--jobs", "4")
+    expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
+           "drifted snapshots fail", out)
+    mir = block(out, "FAIL", "mir_drift.gti")
+    expect("snapshot mir differs from mir_drift.mir (-expected +actual)" in mir
+           and "-stale" in mir and "+body kind=3" in mir,
+           "a MIR snapshot mismatch shows a diff", out)
+    expect("no function 'nosuch' has a MIR body" in
+           block(out, "FAIL", "mir_unknown_function.gti"),
+           "an unknown mir-function fails", out)
+    expect("+main.gti:4:10: error[GTI-S2001]: Undefined name 'missing'." in
+           block(out, "FAIL", "diagnostics_drift.gti"),
+           "a rendered-diagnostics mismatch shows a diff", out)
+    expect("no format_new.formatted yet; bless" in
+           block(out, "FAIL", "format_new.gti"),
+           "a missing snapshot file asks for a bless", out)
+    expect("CHECK at line 4: `@llvm.smul.with.overflow` not found" in
+           block(out, "FAIL", "llvm_missing.gti"),
+           "a missing CHECK pattern fails", out)
+    expect(re.search(r"CHECK-NOT at line 4: `@llvm.sadd.with.overflow` matched "
+                     r"output line \d+", block(out, "FAIL", "llvm_not.gti")),
+           "a matching CHECK-NOT fails", out)
+
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory) / "snapshot"
+        shutil.copytree(FIXTURES / "snapshot", work)
+        code, out = run(runner, work, "--bless", "--jobs", "4")
+        expect(code == 1 and out.count("BLESSED") == 3,
+               "bless writes snapshot files but not CHECK patterns", out)
+        expect((work / "drift/format_new.formatted").read_text() ==
+               "// A format snapshot not blessed yet.\n//@ snapshot: format\n"
+               "int main() {\n  return 0;\n}\n",
+               "the format snapshot is the formatter's output",
+               (work / "drift/format_new.formatted").read_text())
+        code, out = run(runner, work, "--jobs", "4")
+        expect("RESULT fail: 3 passed, 3 failed" in out,
+               "blessed snapshots pass", out)
 
 
 def main():
