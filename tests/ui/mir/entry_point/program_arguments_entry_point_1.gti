@@ -1,0 +1,13 @@
+// Program arguments entry point: semantics should accept the resolved owned program-argument entry contract and retain its exact startup targets and failure origins.
+//@ run-pass
+import std.string;
+import std.vector;
+using arguments_type = std::vector<std::string>;
+
+int main(mut int argc, mut arguments_type argv) {
+  if (argc > 0 and argv.size() == uint64_t(argc) and
+      argv[std::size_t(0)].size() > 0) {
+    return 0;
+  }
+  return 1;
+}

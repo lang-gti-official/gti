@@ -1,0 +1,2 @@
+// Ownership and missing include diagnostics: owning callback types should offer the canonical functional include.
+using callback = std::function<void()>;  //~ ERROR GTI-S2089

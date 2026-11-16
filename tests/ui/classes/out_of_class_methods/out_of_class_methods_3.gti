@@ -1,0 +1,14 @@
+// Out of class methods: a split borrow contract names the declaration parameter position, not a matching name in the definition.
+//@ check-pass
+struct Relay {
+  static int&<a> choose<lifetime a>(int& other, int&<a> selected);
+public:
+  Relay() = default;
+};
+int& Relay::choose(int& selected, int& other) { return other; }
+int main() {
+  int first = 3;
+  int second = 7;
+  auto& result = Relay::choose(first, second);
+  return result - 7;
+}

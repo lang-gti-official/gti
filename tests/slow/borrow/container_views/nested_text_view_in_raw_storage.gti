@@ -1,0 +1,14 @@
+// Container scaffold surfaces: a dynamic string_view must not be hidden in source-defined storage without a nested dependency representation.
+//@ slow
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.detail.memory_storage;
+import std.string;
+import std.memory;
+
+int main() {
+  mut std::string text = std::string("abc");  //~ WARN GTI-S2096
+  mut std::detail::prefix_owner<std::string_view> stored =
+      std::detail::prefix_owner<std::string_view>(uint64_t(1));
+  stored.append_value(text.view());  //~ ERROR GTI-S2045
+  return 0;
+}

@@ -1,0 +1,8 @@
+// Ownership and missing include diagnostics: mutable fields through immutable values explain the binding restriction.
+//@ snapshot: diagnostics
+struct Command { mut int name = 0;  public: Command() = default; };
+int main() {
+  Command cmd{};
+  cmd.name = 1;  //~ ERROR GTI-S2000
+  return 0;
+}

@@ -1,0 +1,9 @@
+// A callable-result query error is reported at the query and clears once
+// the edit names a callable type. (Converted from callable_return_type_lsp_test.)
+import std.meta;
+/*😀*/ using Result = std::meta::callable_return_type<int>;  //~ ERROR GTI-S2023 does not select an overloaded operator()
+int main() { return 0; }
+// --- step 2
+import std.meta;
+/*😀*/ using Result = std::meta::callable_return_type<int()>;
+int main() { return 0; }

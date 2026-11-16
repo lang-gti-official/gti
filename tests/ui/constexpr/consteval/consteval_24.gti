@@ -1,0 +1,2 @@
+// Consteval: invalid immediate declaration, invocation or escape rejects.
+consteval int value = 3;  //~ ERROR GTI-P0001

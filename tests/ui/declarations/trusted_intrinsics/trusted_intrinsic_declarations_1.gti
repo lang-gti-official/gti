@@ -1,0 +1,9 @@
+// Trusted intrinsic declarations: a namespace alias should retain the trusted move declaration's intrinsic identity.
+//@ check-pass
+namespace utility = std;
+
+int main() {
+  int source = 1;
+  int moved = utility::move(source);
+  return moved;
+}

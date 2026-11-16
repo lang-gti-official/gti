@@ -1,0 +1,8 @@
+// Structured bindings: an owned iteration projection cannot escape its element.
+struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
+
+int& escape(Item& fallback) {
+  Item items[1] = {Item(1, 2)};
+  for (auto [a, b] : items) { return a; }  //~ ERROR GTI-S2017
+  return fallback.first;
+}

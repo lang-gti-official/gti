@@ -1,0 +1,16 @@
+main.gti:4:5: error[GTI-S2006]: Duplicate declaration of 'duplicate'.
+ 4 | int duplicate = 2;  //~ ERROR GTI-S2006
+   |     ^~~~~~~~~
+main.gti:3:5: note: Previous declaration is here.
+ 3 | int duplicate = 1;
+   |     ^~~~~~~~~
+main.gti:7:3: error[GTI-S2002]: Cannot assign to immutable binding 'fixed'.
+ 7 |   fixed = 2;  //~ ERROR GTI-S2002
+   |   ^~~~~
+main.gti:6:7: note: Binding declared here.
+ 6 |   int fixed = 1;
+   |       ^~~~~
+help: Bindings are immutable by default; add 'mut' to the declaration if mutation is required.
+main.gti:8:15: error[GTI-S2003]: Cannot initialize 'value' of type 'int32_t' with a value of type 'std::string_view'.
+ 8 |   int value = "text";  //~ ERROR GTI-S2003
+   |               ^~~~~~

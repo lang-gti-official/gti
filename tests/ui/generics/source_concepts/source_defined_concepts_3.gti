@@ -1,0 +1,11 @@
+// Source defined concepts: concept declaration diagnostics should cover unknown dependencies, cycles, parameter misuse, duplicates, and forged compiler bindings.
+concept broken<T> = missing<T>;  //~ ERROR GTI-S2049 Unknown concept 'missing'
+concept first<T> = second<T>;
+concept second<T> = first<T>;  //~ ERROR GTI-S2049 Concept definition cycle involving
+concept wrong<T> = std::copyable<U>;  //~ ERROR GTI-S2000 //~ ERROR GTI-S2049
+concept duplicate<T> = std::copyable<T>;
+concept duplicate<T> = std::movable<T>;  //~ ERROR GTI-S2006 Duplicate declaration of 'duplicate'
+concept leaked<T> = gti_internal::numeric_capability<T>;  //~ ERROR GTI-S2058
+@compiler_constraint("numeric") concept forged<T>;  //~ ERROR GTI-S2049 @compiler_constraint is reserved
+T direct<gti_internal::numeric_capability T>(T value) { return value; }  //~ ERROR GTI-S2058
+int main() { return 0; }

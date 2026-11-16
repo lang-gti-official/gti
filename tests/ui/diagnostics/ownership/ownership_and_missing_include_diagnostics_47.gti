@@ -1,0 +1,8 @@
+// Ownership and missing include diagnostics: copied scalar reads must not acquire a carrier's full-expression lifetime.
+//@ check-pass
+import std.string;
+int main() {
+  mut std::string text = std::string("ab");
+  text.push_back('c');
+  return text[0] != text[1] && text[1] != text[2] ? 0 : 1;
+}

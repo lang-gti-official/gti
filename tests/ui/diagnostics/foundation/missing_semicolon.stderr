@@ -1,0 +1,4 @@
+main.gti:4:1: error[GTI-P0001]: Expect ';' after variable declaration.
+ 4 | int second = 2;  //~ ERROR GTI-P0001
+   | ^~~
+help: Insert ';'.

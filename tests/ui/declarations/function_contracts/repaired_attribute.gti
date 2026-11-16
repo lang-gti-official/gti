@@ -1,0 +1,5 @@
+// Function contracts: the supplied missing-bracket fix restores the complete declaration without changing its function contract.
+//@ check-pass
+[[track_caller]] void broken() {}
+int recovered() { return 0; }
+int main() { return 0; }

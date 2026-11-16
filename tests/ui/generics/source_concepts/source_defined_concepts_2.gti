@@ -1,0 +1,7 @@
+// Source defined concepts: concrete arguments should be checked against composed concepts with owned public application context and no compiler-private leaf context in diagnostics.
+concept signed_value<T> = std::signed_numeric<T> && std::copyable<T>;
+T require_signed<signed_value T>(T value) { return value; }
+int main() {
+  uint64_t value = require_signed(uint64_t(1));  //~ ERROR GTI-S2029 does not satisfy concept 'signed_value<uint64_t>'
+  return 0;
+}

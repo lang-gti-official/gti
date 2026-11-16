@@ -1,0 +1,11 @@
+// Constructor-local generics: dependent compound requirements keep their exact type identity without participating in generic deduction.
+//@ check-pass
+class Wrapper<T> { public: Wrapper() = default; };
+concept copyable_wrapper<T> = std::copyable<T>;
+class Invalid {
+public:
+  Invalid<T>(T value) requires copyable_wrapper<Wrapper<T>> {}
+public:
+  Invalid() = default;
+};
+int main() { return 0; }

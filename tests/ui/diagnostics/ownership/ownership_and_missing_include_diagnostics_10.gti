@@ -1,0 +1,8 @@
+// Ownership and missing include diagnostics: use-after-move must explain the actual transfer without guessing a repair.
+import std.string;
+
+int main() {
+  std::string original = std::string("hello");
+  std::string destination = std::move(original);
+  return int(original.size());  //~ ERROR GTI-S2018
+}

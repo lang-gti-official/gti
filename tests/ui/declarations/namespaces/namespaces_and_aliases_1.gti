@@ -1,0 +1,21 @@
+// Namespaces and aliases: the program is accepted.
+//@ check-pass
+namespace engine {
+namespace graphics {
+class Renderer { public: Renderer() = default; };
+void render() {}
+void renderTwice() {
+  render();
+  render();
+}
+}
+}
+
+namespace gfx = engine::graphics;
+gfx::Renderer createRenderer();
+
+int main() {
+  engine::graphics::render();
+  gfx::renderTwice();
+  return 0;
+}

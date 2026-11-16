@@ -1,0 +1,2 @@
+// Characters and string views: invalid character conversion must reject operand.
+char convert(int runtime) { return char(1.0); }  //~ ERROR GTI-S2014

@@ -1,0 +1,46 @@
+// Direct brace construction: class direct initialization should pass the shared frontend.
+//@ check-pass
+class Box<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() { return this.value; }
+};
+
+using IntBox = Box<int>;
+
+class Holder {
+  Box<int> box{3};
+
+public:
+  int read() { return this.box.read(); }
+public:
+  Holder() = default;
+};
+
+class Pair {
+  int left;
+  int right;
+
+public:
+  Pair(int left, int right) : left(left), right(right) {}
+  int sum() { return this.left + this.right; }
+};
+
+struct Point {
+  int x = 4;
+public:
+  Point() = default;
+};
+
+int main() {
+  Box<int> boxed{1};
+  mut Box<int> changing{2};  //~ WARN GTI-S2096
+  IntBox aliased{3,};
+  Holder holder{};
+  Point point{};
+  Pair pair{5, 6,};
+  return boxed.read() + changing.read() + aliased.read() + holder.read() +
+         point.x + pair.sum();
+}

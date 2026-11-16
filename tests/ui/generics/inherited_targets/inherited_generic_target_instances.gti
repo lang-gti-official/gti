@@ -1,0 +1,33 @@
+// Inherited generic target instances: inherited methods should retain their resolved generic base instance through HIR and MIR.
+//@ check-pass
+class Base<T> {
+public:
+  T echo(T value) { return value; }
+public:
+  Base() = default;
+};
+
+class Derived<First, Second> : public Base<Second> {
+public:
+  Second indirect(Second value) { return echo(value); }
+public:
+  Derived() = default;
+};
+
+class SizedBase<T, uint64_t N> {
+public:
+  uint64_t extent() { return N; }
+public:
+  SizedBase() = default;
+};
+
+class SizedDerived<T, uint64_t N> : public SizedBase<T, N> { public: SizedDerived() = default; };
+
+int main() {
+  Derived<int32_t, uint64_t> value{};
+  SizedDerived<int32_t, 3> sized{};
+  uint64_t direct = value.echo(uint64_t(7));
+  uint64_t indirect = value.indirect(uint64_t(8));
+  uint64_t extent = sized.extent();
+  return int32_t(direct + indirect + extent) - 18;
+}

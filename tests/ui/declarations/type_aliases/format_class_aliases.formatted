@@ -1,0 +1,11 @@
+// Type aliases: the formatter indents class-scoped aliases as ordinary members and keeps access-label spacing, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+class Traits {
+  using hidden = int;
+public:
+  using value_type = hidden;
+public:
+  Traits() = default;
+};

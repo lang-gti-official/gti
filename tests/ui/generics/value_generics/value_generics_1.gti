@@ -1,0 +1,45 @@
+// Value generics: uint64_t value parameters should support class identity and array extents.
+//@ check-pass
+constexpr uint64_t default_array_base = 2;
+constexpr uint64_t default_array_size = default_array_base + 1;
+
+class StaticArray<T, uint64_t N> {
+  T values[N] = {};
+
+public:
+  uint64_t size() { return N; }
+  T first() { return this.values[0]; }
+public:
+  StaticArray() = default;
+};
+
+class WrappedArray<T, uint64_t N> {
+  StaticArray<T, N> value = StaticArray<T, N>();
+
+public:
+  uint64_t size() { return this.value.size(); }
+public:
+  WrappedArray() = default;
+};
+
+class DefaultArray<T = int, uint64_t N = default_array_size> {
+  T values[N] = {};
+
+public:
+  uint64_t size() { return N; }
+public:
+  DefaultArray() = default;
+};
+
+int main() {
+  StaticArray<int, 4> four = StaticArray<int, 4>();
+  StaticArray<int, 2 + 2> arithmetic = StaticArray<int, 2 + 2>();
+  StaticArray<int, 8> eight = StaticArray<int, 8>();
+  WrappedArray<int, 4> wrapped = WrappedArray<int, 4>();
+  DefaultArray defaulted = DefaultArray();
+  if (four.size() == 4 and arithmetic.size() == 4 and eight.size() == 8 and
+      wrapped.size() == 4 and four.first() == 0 and defaulted.size() == 3) {
+    return 0;
+  }
+  return 1;
+}

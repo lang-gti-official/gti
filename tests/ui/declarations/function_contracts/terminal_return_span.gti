@@ -1,0 +1,4 @@
+// Function contracts: the terminal normal-return diagnostic points at the actual return without inventing a fix.
+//@ snapshot: diagnostics
+[[noreturn]] void run() { return; }  //~ ERROR GTI-S2099
+int main() { return 0; }

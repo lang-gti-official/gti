@@ -1,0 +1,22 @@
+// Constructor text storage contracts: a dynamic caller cannot satisfy the ownerless input obligation of ctext.
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  constexpr Label(std::string_view input = "default") : text((input)) {}
+};
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+struct CLabel {
+  c_string text;
+  CLabel(c_string input) : text(input) {}
+};
+struct Borrowed {
+  std::string_view& text;
+  Borrowed(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+void ctext(c_string input) { CLabel saved{input}; } int main() { std::string owner = std::string("abc"); ctext(owner.c_string()); return 0; }  //~ ERROR GTI-S2045

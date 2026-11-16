@@ -1,0 +1,2 @@
+// Characters and string views: out-of-range character diagnostic must identify the operand without a lossy fix.
+char value = char(256);  //~ ERROR GTI-S2014 0..255

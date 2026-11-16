@@ -1,0 +1,10 @@
+main.gti:3:6: error[GTI-S2017]: The returned reference's elided region is ambiguous among 2 borrowed parameters; name the suppliers with a lifetime parameter.
+ 3 | int& choose(int& first, int& second, bool condition) {  //~ ERROR GTI-S2017
+   |      ^~~~~~
+main.gti:3:18: note: Parameter 'first' can supply a borrow to the result.
+ 3 | int& choose(int& first, int& second, bool condition) {  //~ ERROR GTI-S2017
+   |                  ^~~~~
+main.gti:3:30: note: Parameter 'second' can supply a borrow to the result.
+ 3 | int& choose(int& first, int& second, bool condition) {  //~ ERROR GTI-S2017
+   |                              ^~~~~~
+help: Declare a lifetime parameter and use it on the result and its intended input supplier or suppliers. The signature must describe which inputs the returned borrow depends on.

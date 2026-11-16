@@ -1,0 +1,15 @@
+// Variadic generics: invalid pack folds should fail with bounded shape diagnostics before HIR or native emission and point at the non-repeatable argument.
+void overloaded<T>(T& value) {}
+void overloaded<U>(U& value) {}  //~ ERROR GTI-S2011
+int returns_value<T>(T& value) { return 0; }
+void takes_value<T>(T value) {}
+int make_value() { return 1; }
+
+void invalid<Values...>(Values... values) {
+  (overloaded(values), ...);  //~ ERROR GTI-S2023 must name exactly one function declaration
+  (returns_value(values), ...);  //~ ERROR GTI-S2023 returning void, with one inferred type parameter
+  (takes_value(values), ...);  //~ ERROR GTI-S2023
+  (takes_value(make_value()), ...);  //~ ERROR GTI-S2023 must be named local values //~ ERROR GTI-S2023 must name the current function's parameter pack
+}
+
+void not_a_pack(int value) { (takes_value(value), ...); }  //~ ERROR GTI-S2023

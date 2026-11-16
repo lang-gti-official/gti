@@ -1,0 +1,4 @@
+// Unknown function attribute classification: an unknown function attribute should have one owning diagnostic.
+[[noretrun]]  //~ ERROR GTI-S2099
+void stop() {}
+int main() { return 0; }

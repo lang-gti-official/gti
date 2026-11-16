@@ -1,0 +1,3 @@
+// A missing relative import is a source-loading error on the importer.
+import "missing-include-never-created.gti";  //~ ERROR GTI-I0012
+int main() { return 0; }

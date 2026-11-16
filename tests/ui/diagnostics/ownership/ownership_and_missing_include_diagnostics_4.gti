@@ -1,0 +1,6 @@
+// Ownership and missing include diagnostics: ambiguous return explains both possible suppliers, excluding the non-borrowing condition, without guessing a lifetime fix.
+//@ snapshot: diagnostics
+int& choose(int& first, int& second, bool condition) {  //~ ERROR GTI-S2017
+  if (condition) { return first; }
+  return second;
+}

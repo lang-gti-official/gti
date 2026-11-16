@@ -1,0 +1,5 @@
+// Constraint failure provenance: a closed requirement must not blame an unrelated inferred argument or replace the failed leaf type with the enclosing concept argument.
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept impossible<T> = snapshots<int>;
+int read<T>(T value) requires impossible<T> { return 0; }
+int main() { return read(true); }  //~ ERROR GTI-S2029

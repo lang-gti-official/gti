@@ -1,0 +1,17 @@
+// Ownership and missing include diagnostics: an unrestored receiver explains its transfer and restoration duty.
+//@ snapshot: diagnostics
+struct Ticket {
+  mut int code = 7;
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+struct Holder { mut Ticket field = Ticket();  public: Holder() = default; };
+
+class Owner {
+  mut Ticket field = Ticket();
+public:
+  void remove() mut { Ticket previous = std::move(this.field); }  //~ ERROR GTI-S2018
+public:
+  Owner() = default;
+};

@@ -1,0 +1,5 @@
+// Value generics: invalid constrained defaults and closed value expressions should remain precisely anchored GTI diagnostics rather than native substitution failures.
+T constrained<std::integral T = double>() { return T(); }  //~ ERROR GTI-S2029
+uint64_t selected<uint64_t N>() { return N; }
+uint64_t dependent_underflow<uint64_t N, uint64_t M = N - 2>() { return M; }  //~ ERROR GTI-S2026
+int main() { return int(selected<1 / 0>() + dependent_underflow<1>()); }  //~ ERROR GTI-S2026 //~ ERROR GTI-S2026

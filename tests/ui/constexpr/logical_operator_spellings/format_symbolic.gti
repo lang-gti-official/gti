@@ -1,0 +1,4 @@
+// Logical operator spellings: the formatter treats symbolic logical operators as binary operators.
+//@ check-pass
+//@ snapshot: format
+int main(){bool value=true&&false||true;if(value||false&&true){return 0;}return 1;}

@@ -1,0 +1,2 @@
+// Constexpr results: results and constructors preserve constant eligibility.
+enum class E { invalid }; constexpr expected<int, E> fail() { return unexpected(E::invalid); } constexpr expected<int, E> succeed() { return 7; } constexpr int divide(int denominator) { return 1 / denominator; } int runtime() { return 3; } struct P { int x = runtime();  public: P() = default; }; constexpr P bad = P(); int main() { return 0; }  //~ ERROR GTI-S2057

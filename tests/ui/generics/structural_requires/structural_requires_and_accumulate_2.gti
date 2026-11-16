@@ -1,0 +1,15 @@
+// Structural requires and accumulate: an ordinary non-generic method of a generic class should be able to use an atomic trailing requirement as its symbolic proof.
+//@ check-pass
+class NumericBox<T> {
+public:
+  T doubled(T value) requires std::numeric<T> {
+    return T(value + value);
+  }
+public:
+  NumericBox() = default;
+};
+
+int main() {
+  NumericBox<int> box = NumericBox<int>();
+  return box.doubled(2) - 4;
+}

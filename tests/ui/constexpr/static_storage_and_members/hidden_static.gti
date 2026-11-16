@@ -1,0 +1,7 @@
+// Static storage and members: namespace static declarations do not leak into importers.
+// --- main.gti
+import "left.gti";
+int main() { return hidden_count; }  //~ ERROR GTI-S2001 Undefined name 'hidden_count'
+// --- left.gti
+export module left;
+static int hidden_count = 1;

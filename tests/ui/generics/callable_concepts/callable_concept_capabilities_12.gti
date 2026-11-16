@@ -1,0 +1,17 @@
+// Callable concept capabilities: a dependent callable class should still require its own generic constraints from the enclosing facts.
+import std.functional;
+class less_of<std::totally_ordered T> {
+public:
+  less_of() {}
+  bool operator()(T& left, T& right) { return left < right; }
+};
+
+bool order<T, Compare>(T& left, T& right, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  return compare(left, right);
+}
+
+bool generic_order<T>(T& left, T& right) {
+  return order(left, right, less_of<T>());  //~ ERROR GTI-S2029 concept 'std::totally_ordered'
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }

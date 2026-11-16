@@ -1,0 +1,15 @@
+// Static assertions: dependent assertions in generic methods should evaluate with the combined owner and method substitution.
+class Validator<T> {
+public:
+  int validate<uint64_t N>(int values[N]) {
+    static_assert(sizeof(T) == uint64_t(4) && N <= uint64_t(2),  //~ ERROR GTI-S2079
+                  "unsupported method instance");
+    return values[0];
+  }
+public:
+  Validator() = default;
+};
+int main() {
+  Validator<int64_t> validator{};
+  return validator.validate({1, 2, 3});
+}

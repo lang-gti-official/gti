@@ -1,0 +1,32 @@
+// Concurrency type capabilities: generic constraints should reject raw pointers, cleanup, explicit affinity, owners, borrowed views, captures, and expected alternatives.
+import std.memory;
+
+class RawBox { int* address = nullptr;  public: RawBox() = default; };
+class Cleanup {
+  int value = 0;
+public:
+  ~Cleanup() {}
+public:
+  Cleanup() = default;
+};
+[[no_transfer, no_share]] class Affine { int token = 0;  public: Affine() = default; };
+
+T require_transfer<std::transferable T>(T value) { return value; }
+void require_share<std::shareable T>(T& value) {}
+void inspect_transfer<std::transferable T>(T value) {}
+
+int main() {
+  RawBox raw = require_transfer(RawBox());  //~ ERROR GTI-S2029 'std::transferable<
+  Cleanup cleanup = require_transfer(Cleanup());  //~ ERROR GTI-S2029
+  Affine affine = require_transfer(Affine());  //~ ERROR GTI-S2029
+  std::unique_ptr<Affine> owner = nullptr;
+  std::unique_ptr<Affine> moved = require_transfer(std::move(owner));  //~ ERROR GTI-S2029
+  std::string_view view = "view";
+  require_share(view);  //~ ERROR GTI-S2029 'std::shareable<
+  RawBox captured = RawBox();
+  auto blocked = [captured]() -> int { return 0; };
+  inspect_transfer(blocked);  //~ ERROR GTI-S2029
+  expected<int, RawBox> result = unexpected(RawBox());
+  expected<int, RawBox> moved_result = require_transfer(result);  //~ ERROR GTI-S2029
+  return 0;
+}

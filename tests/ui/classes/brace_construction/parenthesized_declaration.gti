@@ -1,0 +1,10 @@
+// Direct brace construction: a block-scope parenthesized declaration points at the unambiguous brace form.
+//@ parse-fail
+class Sample {
+public:
+  Sample(int value) {}
+};
+int main() {
+  mut Sample value(1);  //~ ERROR GTI-P0001
+  return 0;
+}

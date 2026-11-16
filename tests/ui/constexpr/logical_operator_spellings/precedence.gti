@@ -1,0 +1,6 @@
+// Logical operator spellings: && binds tighter than || in both spellings (`true || false && false` is true, `(true || false) && false` is not).
+//@ check-pass
+static_assert(true || false && false);
+static_assert(true or false and false);
+static_assert(!((true || false) && false));
+int main() { return 0; }

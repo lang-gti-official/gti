@@ -1,0 +1,3 @@
+// Ownership and missing include diagnostics: mutable method calls explain both binding and callable contracts.
+struct Command { void update() mut {}  public: Command() = default; };
+void examine() { Command cmd{}; cmd.update(); }  //~ ERROR GTI-S2000

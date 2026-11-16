@@ -1,0 +1,7 @@
+// Ownership and missing include diagnostics: an exact named move-only return should move implicitly without publishing the former copy diagnostic.
+//@ check-pass
+import std.string;
+
+std::string return_named(std::string result) {
+  return result;
+}

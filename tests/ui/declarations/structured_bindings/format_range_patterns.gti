@@ -1,0 +1,4 @@
+// Structured bindings: range patterns format consistently and idempotently.
+//@ parse-pass
+//@ snapshot: format
+int main(){for(auto[a,b]:items){use(a,b);}for(auto&[a,b]:items){use(a,b);}for(mut auto&[a,b]:items){a+=b;}}

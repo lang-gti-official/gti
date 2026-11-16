@@ -1,0 +1,8 @@
+// Namespaces and aliases: an exported shorthand namespace exports its ordinary nested declarations.
+//@ check-pass
+// --- main.gti
+import "api.gti"; int main() { return public_api::nested::value(); }
+// --- api.gti
+export module api;
+export namespace public_api::nested { int value() { return 3; } }
+namespace private_api::nested { int secret() { return 4; } }

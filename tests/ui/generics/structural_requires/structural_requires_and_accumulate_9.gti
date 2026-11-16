@@ -1,0 +1,25 @@
+// Structural requires and accumulate: input_iterator should reject an otherwise exact iterator that is missing prefix increment.
+import std.numeric;
+
+class End {
+  int limit = 1;
+public:
+  int position() { return this.limit; }
+public:
+  End() = default;
+};
+
+class MissingIncrement {
+  mut int current = 0;
+public:
+  int& operator*() { return this.current; }
+  bool operator!=(End& sentinel) {
+    return this.current != sentinel.position();
+  }
+public:
+  MissingIncrement() = default;
+};
+
+int main() {
+  return std::accumulate(MissingIncrement(), End(), 0);  //~ ERROR GTI-S2029 concept 'std::input_iterator<MissingIncrement>'
+}

@@ -1,0 +1,2 @@
+import hidden.value;
+int main() { return hidden::value(); }

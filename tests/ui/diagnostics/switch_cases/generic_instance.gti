@@ -1,0 +1,6 @@
+// A concrete instance's missing cases get no scaffold inside the shared generic definition.
+//@ snapshot: diagnostics
+import std.meta;
+enum Packet<T> { empty, filled(T value) };
+void inspect<T>(Packet<T>& value) { if constexpr (std::meta::is_same<T, bool>()) { switch (value) {} } }  //~ ERROR GTI-S2067
+int main() { Packet<bool> value = Packet<bool>::empty; inspect(value); return 0; }

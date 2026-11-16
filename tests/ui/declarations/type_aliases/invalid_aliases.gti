@@ -1,0 +1,8 @@
+// Type aliases: cycles, reference aliases, missing targets and duplicates are rejected with focused diagnostics.
+using First = Second;
+using Second = First;  //~ ERROR GTI-S2030
+using Borrow = int&;  //~ ERROR GTI-S2030
+using Missing = MissingType;  //~ ERROR GTI-S2000
+using Duplicate = int;
+using Duplicate = uint64_t;  //~ ERROR GTI-S2006
+int main() { return 0; }

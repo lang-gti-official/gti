@@ -1,0 +1,9 @@
+// Constraint failure provenance: multiple rejected overloads must retain their contract explanations rather than replace all causes with a conversion suggestion.
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+int read<T>(T& value) requires snapshots<T> { return value.snapshot(); }
+int read<T>(T& value, int mode = 0) requires serializes<T> {
+  return value.serialize();
+}
+struct Item { public: Item() = default; };
+int main() { Item value{}; return read(value); }  //~ ERROR GTI-S2012

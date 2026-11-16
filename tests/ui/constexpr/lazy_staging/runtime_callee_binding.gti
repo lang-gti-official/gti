@@ -1,0 +1,9 @@
+// An executed runtime-only callee fails through a constexpr binding, naming the callee at its call.
+//@ snapshot: diagnostics
+int runtime_only(int v) { return v - 1; }
+constexpr int clamp_positive(int v) {
+  if (v < 0) { return runtime_only(v); }  //~ ERROR GTI-S2057
+  return v;
+}
+constexpr int c = clamp_positive(-5);
+int main() { return c; }

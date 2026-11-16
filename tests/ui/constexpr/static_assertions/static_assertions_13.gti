@@ -1,0 +1,16 @@
+// Static assertions: the later helper should be evaluated for each concrete instance.
+class Narrow<uint64_t N> {
+  static_assert(admits<N>(), "class instance is too wide");  //~ ERROR GTI-S2079 Static assertion failed. class instance is too wide
+public:
+  Narrow() {}
+};
+void check<uint64_t N>() {
+  static_assert(admits<N>(), "function instance is too wide");  //~ ERROR GTI-S2079 Static assertion failed. function instance is too wide
+}
+constexpr bool admits<uint64_t N>() { return N <= uint64_t(4); }
+
+int main() {
+  Narrow<8> narrow = Narrow<8>();
+  check<8>();
+  return 0;
+}

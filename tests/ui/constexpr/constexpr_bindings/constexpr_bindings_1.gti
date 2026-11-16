@@ -1,0 +1,101 @@
+// Constexpr bindings: bounded scalar constexpr bindings should compile and provide array and value-generic extents.
+//@ check-pass
+constexpr uint64_t factorial(mut uint64_t value) {
+  mut uint64_t result = 1;
+  while (value > 1) {
+    result *= value;
+    value--;
+  }
+  return result;
+}
+
+constexpr uint64_t fibonacci(uint64_t value) {
+  if (value < uint64_t(2)) {
+    return value;
+  }
+  return fibonacci(value - 1) + fibonacci(value - 2);
+}
+
+constexpr int32_t classify(int32_t value) {
+  switch (value) {
+  case 0:
+    return 10;
+  case 1:
+    return 20;
+  default:
+    return 30;
+  }
+}
+
+enum class BuildMode : uint8_t {
+  debug = 1,
+  release = 2,
+};
+
+class ConstantBox<T> {
+  T value;
+
+public:
+  constexpr ConstantBox(T initial) : value(initial) {}
+  constexpr T get() { return this.value; }
+};
+
+constexpr T preserve<T>(T value) { return value; }
+
+constexpr uint64_t extent = uint64_t(2 + 2);
+constexpr int32_t base = 6 * 7;
+constexpr bool selected = base == 42 and true;
+constexpr uint64_t factorial_value = factorial(uint64_t(5));
+constexpr uint64_t fibonacci_value = fibonacci(uint64_t(10));
+constexpr int32_t raw_values[3] = {2, 4, 6};
+constexpr ConstantBox<int32_t> signed_box = ConstantBox<int32_t>(7);
+constexpr ConstantBox<uint64_t> wide_box =
+    ConstantBox<uint64_t>(uint64_t(9));
+constexpr BuildMode selected_mode = BuildMode::release;
+constexpr int32_t preserved = preserve<int32_t>(11);
+
+static_assert(raw_values[1] == 4);
+static_assert(signed_box.get() == 7);
+static_assert(wide_box.get() == uint64_t(9));
+static_assert(selected_mode == BuildMode::release);
+static_assert(preserved == 11);
+
+namespace values {
+constexpr char marker = 'G';
+}
+
+class Limits {
+public:
+  static constexpr uint64_t count = extent;
+  static constexpr uint64_t twice(uint64_t value) { return value * 2; }
+public:
+  Limits() = default;
+};
+
+constexpr uint64_t doubled = Limits::twice(uint64_t(21));
+
+class Block<T, uint64_t N> {
+public:
+  T values[N] = {};
+public:
+  Block() = default;
+};
+
+int main() {
+  constexpr auto local = selected ? base : 0;
+  int32_t data[extent] = {1, 2, 3, 4};
+  Block<int32_t, extent> block{};
+  if constexpr (factorial_value == uint64_t(120) and
+                fibonacci_value == uint64_t(55) and
+                doubled == uint64_t(42)) {
+    if (local == 42 and Limits::count == 4 and data[3] == 4 and
+        values::marker == 'G' and raw_values[2] == 6 and
+        signed_box.get() == 7 and wide_box.get() == uint64_t(9) and
+        selected_mode == BuildMode::release and preserved == 11) {
+      return classify(0) - 10;
+    }
+    return 1;
+  } else {
+    return inactive_branch_is_not_analyzed;
+  }
+}

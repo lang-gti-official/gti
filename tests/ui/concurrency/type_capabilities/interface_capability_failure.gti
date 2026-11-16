@@ -1,0 +1,4 @@
+// Concurrency type capabilities: an interface capability proof failure uses a deterministic implementation span and a related requirement span.
+//@ snapshot: diagnostics
+[[transfer, share]] interface Concurrent {};
+[[no_transfer]] class Broken : public Concurrent { int value = 0;  public: Broken() = default; };  //~ ERROR GTI-S2059

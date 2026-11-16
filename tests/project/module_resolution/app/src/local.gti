@@ -1,0 +1,1 @@
+export module local; export int local_value() { return 2; }

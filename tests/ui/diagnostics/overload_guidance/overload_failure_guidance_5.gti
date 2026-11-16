@@ -1,0 +1,25 @@
+// Overload failure guidance: a named move-only argument to a deduced by-value overload names its deleted copy, not every overload.
+class Ticket {
+  int id;
+public:
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  std::string_view view() { return "ticket"; }
+};
+class Point {
+  int x;
+public:
+  Point(int value) : x(value) {}
+};
+void sink(int value) {}
+void sink(char value) {}
+void sink<Args...>(std::string_view label, Args... args) {}
+void only<Args...>(Args... args) {}
+void show(int value) {}
+void show<T>(std::string_view label, T value) {}
+int main() {
+  Ticket t{1};
+  show("x", t);  //~ ERROR GTI-S2018
+  return 0;
+}

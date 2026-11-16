@@ -1,0 +1,14 @@
+// Out of class methods: a separately defined accessor retains its receiver origin.
+//@ check-pass
+struct Cell {
+  mut int number = 3;
+  int& read();
+  void set(int value) mut;
+  int take() &&;
+public:
+  Cell() = default;
+};
+int& Cell::read() { return this.number; }
+void Cell::set(int value) mut { this.number = value; }
+int Cell::take() && { return this.number; }
+int main() { mut Cell c{}; c.set(4); auto& b = c.read(); return b - 4; }

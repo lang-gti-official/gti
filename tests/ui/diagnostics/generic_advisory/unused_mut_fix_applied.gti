@@ -1,0 +1,4 @@
+// Applying the removal fix of a declaration-wide unused mut in a generic keeps the program valid.
+//@ check-pass
+T identity<T>(T value) { int unused = 1; return value; }
+int main() { return identity(0); }

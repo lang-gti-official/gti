@@ -1,0 +1,16 @@
+manifest-version = 1
+
+[package]
+name = "split-signature"
+version = "1.0.0"
+
+[modules]
+api = "src/api.gti"
+types = "src/types.gti"
+
+[module-implementations]
+api = ["src/api_impl.gti"]
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

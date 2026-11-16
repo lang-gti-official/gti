@@ -1,0 +1,7 @@
+// Extern C interop: the formatter normalizes extern C blocks idempotently.
+//@ parse-pass
+//@ snapshot: format
+extern "C" {
+  [[c_array(count)]][[link_name("native_values")]] int32_t* values(int32_t* count);
+  int32_t close(int32_t descriptor);
+}

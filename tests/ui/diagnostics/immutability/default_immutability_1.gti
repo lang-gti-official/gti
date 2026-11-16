@@ -1,0 +1,9 @@
+// Default immutability: the program is accepted.
+//@ check-pass
+int identity(int value) { return value; }
+int main() {
+  int fixed = 1;
+  mut int moving = 1;
+  moving++;
+  return identity(fixed);
+}

@@ -1,0 +1,4 @@
+// Constrained generics: non-literal mixed generic operands should remain exact-match errors.
+bool mixed_value<std::integral T>(T value, int other) {
+  return value == other;  //~ ERROR GTI-S2000 Equality operands have incompatible types
+}

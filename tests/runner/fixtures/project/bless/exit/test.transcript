@@ -1,0 +1,3 @@
+// Bless records exit codes and the diagnostics of commands without
+// expectations.
+$ gti main.gti --emit-mir -o out.mir

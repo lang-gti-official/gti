@@ -1,0 +1,17 @@
+// Type aliases: struct, interface, and union aliases should follow their public default access and remain usable as direct type members.
+//@ check-pass
+struct RecordTraits { using value_type = int;  public: RecordTraits() = default; };
+interface ContractTraits { using value_type = int; };
+union UnionTraits {
+  using value_type = int;
+  int value;
+};
+using RecordValue = RecordTraits::value_type;
+using ContractValue = ContractTraits::value_type;
+using UnionValue = UnionTraits::value_type;
+int main() {
+  RecordValue record = 1;
+  ContractValue contract = 2;
+  UnionValue variant = 3;
+  return record + contract + variant - 6;
+}
