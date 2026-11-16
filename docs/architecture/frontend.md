@@ -517,7 +517,7 @@ segment propagate to the caller. Depth is therefore a language limit, never a
 property of the host thread: one level of nested staging or macro expansion
 measured 64 KiB of stack in an optimized arm64 build (160 KiB under
 AddressSanitizer), so the default limits alone would need tens of MiB.
-`testNativeStackSegmentsAreInvisible` forces a switch at every boundary and
+The `constant_evaluation_api` case of `gti_unit_tests` forces a switch at every boundary and
 requires byte-identical MIR and diagnostics.
 
 ## Frontend Result And Gates

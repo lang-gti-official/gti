@@ -1,0 +1,7 @@
+// Ownership and missing include diagnostics: concurrent global mutation advice must preserve the immutable-storage policy.
+//@ execution-profile: concurrent
+//@ snapshot: diagnostics
+struct Command { mut int name = 0;  public: Command() = default; };
+Command cmd{};
+int count = 0;
+void examine() { cmd.name = 1; count = 1; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2002

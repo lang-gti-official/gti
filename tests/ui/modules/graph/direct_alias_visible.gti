@@ -1,0 +1,9 @@
+// A type alias exported by a direct dependency is visible.
+//@ check-pass
+// --- main.gti
+import "branch.gti";
+BranchId id = BranchId(1);
+int main() { return 0; }
+// --- branch.gti
+export module branch;
+export using BranchId = uint64_t;

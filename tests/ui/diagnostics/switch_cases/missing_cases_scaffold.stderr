@@ -1,0 +1,5 @@
+main.gti:5:3: error[GTI-S2067]: Payload-enum switch is not exhaustive; missing Message::item, Message::done.
+ 5 |   switch (value) {  //~ ERROR GTI-S2067
+   |   ^~~~~~
+help: Handle every variant explicitly or add a 'default' arm.
+help: Insert missing switch cases

@@ -1,0 +1,2 @@
+export module add;
+export namespace math { int add(int left, int right) { return left + right; } }

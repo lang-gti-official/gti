@@ -1,0 +1,28 @@
+// Advisory diagnostics: a whole-binding move and an unused sibling keep the unnecessary mut warning while a projected move does not.
+//@ check-pass
+struct Record {
+  mut int value = 4;
+public:
+  Record() = default;
+};
+struct Holder {
+  mut Record record = Record();
+  mut Record slots[2] = {Record(), Record()};
+public:
+  Holder() = default;
+};
+struct Token {
+  mut int value = 2;
+  int take() && { return this.value; }
+public:
+  Token() = default;
+};
+
+int main() {
+  mut Record whole = Record();  //~ WARN GTI-S2096
+  mut Record kept[2] = {Record(), Record()};  //~ WARN GTI-S2096
+  mut Record moved[2] = {Record(), Record()};
+  Record transferred = std::move(whole);
+  Record element = std::move(moved[0]);
+  return transferred.value + element.value + kept[0].value;
+}

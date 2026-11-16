@@ -1,0 +1,26 @@
+// Parser recovery stops at the default limit of twenty errors with a terminal GTI-D0002.
+int bad_0 = ;  //~ ERROR GTI-P0001
+int bad_1 = ;  //~ ERROR GTI-P0001
+int bad_2 = ;  //~ ERROR GTI-P0001
+int bad_3 = ;  //~ ERROR GTI-P0001
+int bad_4 = ;  //~ ERROR GTI-P0001
+int bad_5 = ;  //~ ERROR GTI-P0001
+int bad_6 = ;  //~ ERROR GTI-P0001
+int bad_7 = ;  //~ ERROR GTI-P0001
+int bad_8 = ;  //~ ERROR GTI-P0001
+int bad_9 = ;  //~ ERROR GTI-P0001
+int bad_10 = ;  //~ ERROR GTI-P0001
+int bad_11 = ;  //~ ERROR GTI-P0001
+int bad_12 = ;  //~ ERROR GTI-P0001
+int bad_13 = ;  //~ ERROR GTI-P0001
+int bad_14 = ;  //~ ERROR GTI-P0001
+int bad_15 = ;  //~ ERROR GTI-P0001
+int bad_16 = ;  //~ ERROR GTI-P0001
+int bad_17 = ;  //~ ERROR GTI-P0001
+int bad_18 = ;  //~ ERROR GTI-P0001
+int bad_19 = ;  //~ ERROR GTI-P0001 //~ ERROR GTI-D0002
+int bad_20 = ;
+int bad_21 = ;
+int bad_22 = ;
+int bad_23 = ;
+int bad_24 = ;

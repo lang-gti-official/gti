@@ -1,0 +1,12 @@
+// Static assertions: a dependent class assertion should run once per canonical instance and identify substitutions plus the first requiring use.
+class Bound<T, uint64_t N> {
+  static_assert(N <= uint64_t(4), "capacity too large");  //~ ERROR GTI-S2079
+public:
+  Bound() = default;
+};
+
+int main() {
+  Bound<int32_t, 5> first{};
+  Bound<int32_t, 5> second{};
+  return 0;
+}

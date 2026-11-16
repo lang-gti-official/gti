@@ -1,0 +1,12 @@
+// An application module may share a standard-library module name.
+//@ check-pass
+// --- main.gti
+import std.vector;
+import "vector.gti";
+int main() {
+  std::vector<int32_t> values{};
+  return int32_t(values.size()) + local_vector() - 1;
+}
+// --- vector.gti
+export module vector;
+export int local_vector() { return 1; }

@@ -1,0 +1,2 @@
+// Static storage and members: block-scope static should fail with a focused parser diagnostic.
+int main() { static int value = 1; return value; }  //~ ERROR GTI-P0001 Block-scope static declarations are not supported

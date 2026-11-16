@@ -1,0 +1,13 @@
+// Ownership and missing include diagnostics: owned RHS values should retain valid dereference move assignment.
+//@ check-pass
+import std.string;
+class Slot {
+  mut std::string value = std::string("old");
+public:
+  Slot() = default;
+  mut std::string& operator*() mut { return value; }
+};
+int main() {
+  mut Slot slot{};
+  std::string source = std::string("new");
+  *slot = std::string("fresh"); return 0; }

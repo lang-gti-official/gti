@@ -1,0 +1,20 @@
+// A built-in type cannot be qualified with '::'; each is one parser diagnostic and the next declaration is kept.
+//@ parse-fail
+constexpr custom::int value_0 = 1;  //~ ERROR GTI-P0001 Built-in type 'int' cannot be qualified with '::'.
+constexpr custom::int8_t value_1 = 1;  //~ ERROR GTI-P0001 Built-in type 'int8_t' cannot be qualified with '::'.
+constexpr custom::int16_t value_2 = 1;  //~ ERROR GTI-P0001 Built-in type 'int16_t' cannot be qualified with '::'.
+constexpr custom::int32_t value_3 = 1;  //~ ERROR GTI-P0001 Built-in type 'int32_t' cannot be qualified with '::'.
+constexpr custom::int64_t value_4 = 1;  //~ ERROR GTI-P0001 Built-in type 'int64_t' cannot be qualified with '::'.
+constexpr custom::uint value_5 = 1;  //~ ERROR GTI-P0001 Built-in type 'uint' cannot be qualified with '::'.
+constexpr custom::uint8_t value_6 = 1;  //~ ERROR GTI-P0001 Built-in type 'uint8_t' cannot be qualified with '::'.
+constexpr custom::uint16_t value_7 = 1;  //~ ERROR GTI-P0001 Built-in type 'uint16_t' cannot be qualified with '::'.
+constexpr custom::uint32_t value_8 = 1;  //~ ERROR GTI-P0001 Built-in type 'uint32_t' cannot be qualified with '::'.
+constexpr custom::uint64_t value_9 = 1;  //~ ERROR GTI-P0001 Built-in type 'uint64_t' cannot be qualified with '::'.
+constexpr custom::float value_10 = 1;  //~ ERROR GTI-P0001 Built-in type 'float' cannot be qualified with '::'.
+constexpr custom::double value_11 = 1;  //~ ERROR GTI-P0001 Built-in type 'double' cannot be qualified with '::'.
+constexpr custom::bool value_12 = 1;  //~ ERROR GTI-P0001 Built-in type 'bool' cannot be qualified with '::'.
+constexpr custom::char value_13 = 1;  //~ ERROR GTI-P0001 Built-in type 'char' cannot be qualified with '::'.
+constexpr custom::nullptr_t value_14 = 1;  //~ ERROR GTI-P0001 Built-in type 'nullptr_t' cannot be qualified with '::'.
+constexpr custom::void value_15 = 1;  //~ ERROR GTI-P0001 Built-in type 'void' cannot be qualified with '::'.
+constexpr custom::auto value_16 = 1;  //~ ERROR GTI-P0001 Built-in type 'auto' cannot be qualified with '::'.
+int recovered = 2;

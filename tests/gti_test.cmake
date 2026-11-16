@@ -35,31 +35,19 @@ set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
 
 # Every single-file example (`examples/*.gti`) must analyse to verified MIR
 # with no diagnostics: gti-test treats a directive-less file as check-pass.
-# Subdirectories hold project-style examples and the modules that top-level
-# examples import; project tests own those. Running and census belong to the
-# slow tier's corpus tool. Each exclusion names what keeps the example out.
+# examples/gti-test.defaults holds the few per-example analysis options;
+# imports of sibling directories (`import "demo/html.gti"`) are copied beside
+# the case. Subdirectories hold project-style examples and those modules;
+# project tests own them. Running and census belong to the slow tier's corpus
+# tool.
 file(GLOB gti_examples CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.gti")
-set(gti_examples_excluded
-  # These need `//@ execution-profile: concurrent`, which the examples do not
-  # carry yet.
-  066-managed-threads 076-scalar-atomics 175-thread-local-storage
-  # They import modules from sibling directories, which the runner does not
-  # copy beside the case.
-  121-programmable-allocators procedural-html procedural-macros
-  # Unannotated GTI-S2096 warnings (unneeded `mut`). In 065 it looks like a
-  # false positive: the array is mutated through a `mut auto&` range loop.
-  016-move-generics 027-copy-move-policies 046-defined-integer-arithmetic
-  065-mutable-ranges 067-forward-iterators 080-function-items)
-foreach(gti_example IN LISTS gti_examples_excluded)
-  list(REMOVE_ITEM gti_examples "${PROJECT_SOURCE_DIR}/examples/${gti_example}.gti")
-endforeach()
 add_test(NAME gti_test_examples
   COMMAND gti-test --root "${PROJECT_SOURCE_DIR}/examples" --jobs 4 ${gti_examples})
 # Examples are whole programs, several above the 2 s check budget; the scaled
 # limit here only catches hangs.
 math(EXPR gti_examples_time_scale "8 * ${gti_test_timeout_scale}")
 set_tests_properties(gti_test_examples PROPERTIES PROCESSORS 4
-  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale}")
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-examples.last-run")
 
 # gti-corpus: one walk of the example corpus checking the whole-program
 # analysis invariants (body-analysis order, trusted-body parity, instance

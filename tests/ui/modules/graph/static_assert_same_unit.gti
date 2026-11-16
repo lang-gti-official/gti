@@ -1,0 +1,5 @@
+// A file-scope static assertion resolves constants declared in its own source unit.
+//@ check-pass
+constexpr int32_t limit = 8;
+static_assert(limit == 8, "limit must be 8");
+int main() { return limit - 8; }

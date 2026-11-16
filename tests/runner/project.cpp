@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 #include <regex>
 #include <sstream>
 #include <thread>
@@ -224,11 +225,19 @@ parseProjectTranscript(const std::string &text,
 }
 
 ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
-                             const fs::path &work, double limit) {
+                             const fs::path &work, double limit, bool bless) {
   ProjectResult result;
   std::vector<std::string> errors;
+  const std::string transcript = readFile(test.path).value_or("");
   const std::vector<ProjectCommand> commands =
-      parseProjectTranscript(readFile(test.path).value_or(""), errors);
+      parseProjectTranscript(transcript, errors);
+  // What --bless learns per command line: the exit code and diagnostics.
+  struct Observed {
+    int exitCode = 0;
+    std::vector<std::string> diagnostics;
+  };
+  std::map<int, Observed> observed;
+  std::string unblessable;
   for (const std::string &error : errors)
     result.failure += "invalid test: " + error + "\n";
   if (!errors.empty())
@@ -298,9 +307,19 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
     const std::string out = normalize(run.out);
     const std::string err = normalize(run.err);
     std::vector<std::string> problems;
+    if (bless && run.signal == 0) {
+      Observed &seen = observed[command.writtenLine];
+      seen.exitCode = run.exitCode;
+      std::istringstream lines(err);
+      for (std::string line; std::getline(lines, line);)
+        if ((line.find("error[GTI-") != std::string::npos ||
+             line.find("warning[GTI-") != std::string::npos) &&
+            seen.diagnostics.size() < 5)
+          seen.diagnostics.push_back(trim(line));
+    }
     if (run.signal != 0)
       problems.push_back("terminated by signal " + std::to_string(run.signal));
-    else if (run.exitCode != command.exitCode)
+    else if (run.exitCode != command.exitCode && !bless)
       problems.push_back("exit code " + std::to_string(run.exitCode) +
                          ", expected " + std::to_string(command.exitCode));
     for (const std::string &needle : command.stdoutContains)
@@ -316,15 +335,50 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
       if (err.find(needle) != std::string::npos)
         problems.push_back("stderr contains \"" + needle + "\"");
     if (!problems.empty()) {
-      result.failure += where + shown + "\n";
+      std::string &target = bless ? unblessable : result.failure;
+      target += where + shown + "\n";
       for (const std::string &problem : problems)
-        result.failure += "  " + problem + "\n";
-      result.failure += "  stdout (normalised):\n" + excerpt(out) +
-                        "  stderr (normalised):\n" + excerpt(err);
-      break;
+        target += "  " + problem + "\n";
+      target += "  stdout (normalised):\n" + excerpt(out) +
+                "  stderr (normalised):\n" + excerpt(err);
+      if (!bless)
+        break;
     }
   }
   result.cpu = childCpu() - cpuStart;
+  if (bless && !result.timedOut) {
+    std::map<int, const ProjectCommand *> byLine;
+    for (const ProjectCommand &command : commands)
+      byLine[command.writtenLine] = &command;
+    std::string blessed;
+    std::istringstream lines(transcript);
+    int number = 0;
+    for (std::string raw; std::getline(lines, raw);) {
+      ++number;
+      if (trim(raw).rfind("? ", 0) == 0)
+        continue;
+      blessed += raw + "\n";
+      const auto command = byLine.find(number);
+      const auto seen = observed.find(number);
+      if (command == byLine.end() || seen == observed.end())
+        continue;
+      if (seen->second.exitCode != 0)
+        blessed += "? " + std::to_string(seen->second.exitCode) + "\n";
+      const ProjectCommand &written = *command->second;
+      if (written.stdoutContains.empty() && written.stderrContains.empty() &&
+          written.stdoutLacks.empty() && written.stderrLacks.empty())
+        for (const std::string &diagnostic : seen->second.diagnostics)
+          blessed += "stderr: " + diagnostic + "\n";
+    }
+    if (blessed != transcript) {
+      writeFile(test.path, blessed);
+      result.blessed = true;
+    }
+    if (!unblessable.empty())
+      result.failure = unblessable +
+                       "not blessed: stdout/stderr expectations are written "
+                       "by hand\n";
+  }
   return result;
 }
 

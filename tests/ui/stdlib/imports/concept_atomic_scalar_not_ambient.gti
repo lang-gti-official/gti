@@ -1,0 +1,2 @@
+// The module-owned concept std::atomic_scalar is not ambient.
+concept selected<T> = std::atomic_scalar<T>;  //~ ERROR GTI-S2089 Unknown concept 'std::atomic_scalar'

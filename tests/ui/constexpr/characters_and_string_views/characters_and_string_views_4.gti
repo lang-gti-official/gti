@@ -1,0 +1,3 @@
+// Characters and string views: char and uint8_t should support an explicit, lossless code-unit bridge in both directions.
+//@ check-pass
+static_assert(char(uint8_t(65)) == 'A'); static_assert(uint8_t('B') == uint8_t(66)); int main() { mut uint8_t byte = uint8_t(67); char value = char(byte); return value == 'C' ? 0 : 1; }  //~ WARN GTI-S2096

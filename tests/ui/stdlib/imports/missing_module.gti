@@ -1,0 +1,3 @@
+// Importing a standard module that does not exist fails during source loading.
+import std.not_present;  //~ ERROR GTI-I0012 does not declare public module 'not_present'
+int main() { return 0; }

@@ -1,0 +1,4 @@
+// Missing punctuation carries an insertion fix-it.
+//@ snapshot: diagnostics
+int first = 1
+int second = 2;  //~ ERROR GTI-P0001

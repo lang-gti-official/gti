@@ -1,0 +1,7 @@
+main.gti:4:17: error[GTI-S2057]: The condition of 'static_assert' reads a binding that is not constexpr.
+ 4 |   static_assert(value <= 10, "too large");  //~ ERROR GTI-S2057
+   |                 ^~~~~
+main.gti:4:3: note: Static assertion declared here.
+ 4 |   static_assert(value <= 10, "too large");  //~ ERROR GTI-S2057
+   |   ^~~~~~~~~~~~~
+help: Use literals, earlier constexpr bindings, supported target layout queries, aggregate observation, or calls to available constexpr functions. To check a parameter at each compile-time call, write 'if (!condition) { std::panic("message"); }' in the function body instead.

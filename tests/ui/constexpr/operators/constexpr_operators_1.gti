@@ -1,0 +1,5 @@
+// Constexpr operators: constexpr operator bounds failures retain the original library index location.
+import std.array;
+constexpr std::array<int, 2> a = std::array<int, 2>({1, 2});
+constexpr int invalid = a[2];  //~ ERROR GTI-S2057
+int main() { return 0; }

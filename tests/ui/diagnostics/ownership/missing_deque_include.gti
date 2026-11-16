@@ -1,0 +1,3 @@
+// An unresolved std::deque offers the canonical import std.deque; fix.
+//@ snapshot: diagnostics
+using dictionary = std::deque<int>;  //~ ERROR GTI-S2089

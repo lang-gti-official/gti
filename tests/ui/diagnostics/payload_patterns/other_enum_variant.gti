@@ -1,0 +1,10 @@
+// A visible variant of another enum is an identity error, not a visibility error.
+enum Value { none, item(int value) };
+enum Other { none, item(int value) };
+int main() {
+  Value value = Value::item(42);
+  switch (value) {
+  case Other::item(auto& number): return number;  //~ ERROR GTI-S2067 //~ ERROR GTI-S2001
+  default: return 0;
+  }
+}

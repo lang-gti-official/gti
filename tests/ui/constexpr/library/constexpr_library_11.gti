@@ -1,0 +1,8 @@
+// Constexpr library: runtime generic admission must not permit invalid constexpr declarations or required constant calls.
+import std.string;
+import std.numeric;
+import std.utility;
+class Base { public: int x = 0; };
+class Derived : public Base { public: int y = 0; };
+constexpr int invalid(Derived value) { return 7; }  //~ ERROR GTI-S2057
+int main() { return 0; }

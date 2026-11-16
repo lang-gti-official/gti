@@ -1,0 +1,6 @@
+// A lowered constexpr-depth rejects one nested call more than it allows.
+//@ constexpr-depth: 16
+constexpr int32_t down(int32_t n) { return n == 0 ? 0 : down(n - 1) + 1; }
+static_assert(down(15) == 15);
+static_assert(down(16) == 16);  //~ ERROR GTI-S2057 limit of 16 nested calls
+int main() { return 0; }

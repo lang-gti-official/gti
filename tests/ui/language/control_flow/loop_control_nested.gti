@@ -1,0 +1,15 @@
+// continue advances the outer for loop and break leaves only the inner while loop.
+//@ run-pass
+int main() {
+  mut int total = 0;
+  for (mut int outer = 0; outer < 4; outer++) {
+    if (outer == 1) {
+      continue;
+    }
+    while (true) {
+      total += outer;
+      break;
+    }
+  }
+  return total == 5 ? 0 : 1;
+}

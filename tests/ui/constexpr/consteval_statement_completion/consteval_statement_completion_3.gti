@@ -1,0 +1,10 @@
+// Consteval statement completion: immediate void methods use their exact constant receiver in the statement completion profile.
+//@ check-pass
+struct Validator {
+  int limit;
+  constexpr Validator(int value) : limit(value) {}
+  consteval void check(int value) {
+    int proof = 100 / (value == this.limit ? 1 : 0);
+  }
+};
+int main() { Validator(5).check(5); return 0; }

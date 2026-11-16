@@ -1,0 +1,2 @@
+// Default immutability: method, lambda, constexpr and generic bodies obey the same local-initialization rule.
+int compute<T>() { mut T value; return 0; }  //~ ERROR GTI-S2000 requires an initializer

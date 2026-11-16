@@ -1,0 +1,28 @@
+// A call of a nested passive result is an invoke: its value is published only on success and its defined failure has an explicit edge.
+//@ snapshot: mir
+//@ mir-function: main
+// CHECK: failure-records 1
+// CHECK-NEXT: fail1 kind=producer producer=bb1:{{i[0-9]+}}
+// CHECK: {{i[0-9]+}} call {{.*}}success-result-drop=1
+// CHECK-NEXT: term 4 invoke={{i[0-9]+}} failure=fail1 target=bb2 else=bb3
+// CHECK: bb3 reachable=1 failure-parameter=fail1
+enum class parse_error { empty, invalid };
+constexpr expected<int, parse_error> parse_digit(std::string_view text) {
+  if (text.empty()) { return unexpected(parse_error::empty); }
+  if (text[0] == '7') { return 7; }
+  return unexpected(parse_error::invalid);
+}
+
+constexpr expected<int, parse_error> twice(std::string_view text) {
+  int digit = ?parse_digit(text);
+  return digit * 2;
+}
+
+constexpr expected<expected<int, parse_error>, parse_error> nested_result(bool valid) {
+  if (!valid) { return unexpected(parse_error::invalid); }
+  return twice("");
+}
+int main() {
+  if (!nested_result(true)) { return 1; }
+  return 0;
+}

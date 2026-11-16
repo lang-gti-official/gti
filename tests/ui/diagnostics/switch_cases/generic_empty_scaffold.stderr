@@ -1,0 +1,5 @@
+main.gti:4:79: error[GTI-S2067]: Payload-enum switch is not exhaustive; missing nested::Packet::empty, nested::Packet::filled.
+ 4 | int main() { nested::Packet<bool> value = nested::Packet<bool>::filled(true); switch (value) {} return 0; }  //~ ERROR GTI-S2067
+   |                                                                               ^~~~~~
+help: Handle every variant explicitly or add a 'default' arm.
+help: Insert missing switch cases

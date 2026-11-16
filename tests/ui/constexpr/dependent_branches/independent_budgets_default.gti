@@ -1,0 +1,11 @@
+// Independent constant requests each receive a fresh work budget (each request alone fits the default budget).
+//@ check-pass
+constexpr int cost<uint64_t N>() {
+  mut int total = 0;
+  for (mut int i = 0; i < 20000; i++) { total += 1; }
+  return total;
+}
+static_assert(cost<1>() == 20000);
+static_assert(cost<1>() == 20000);
+static_assert(cost<1>() == 20000);
+int main() { return 0; }

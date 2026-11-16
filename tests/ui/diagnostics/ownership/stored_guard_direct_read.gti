@@ -1,0 +1,15 @@
+// A guard published from a stored (direct) mutex reference conflicts once with a read of the ancestor while it lives; the explanation is its destruction.
+//@ execution-profile: concurrent
+//@ snapshot: diagnostics
+import std.mutex;
+void see(std::mutex<int32_t>& value) {}
+class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+  void use() {
+    auto guard = this.owner.lock();
+    see(this.owner);  //~ ERROR GTI-S2017
+  }
+};
+int main() { return 0; }

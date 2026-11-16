@@ -1,0 +1,6 @@
+// define selects source as `gti -D` does.
+//@ define: RUNNER_FLAG
+#ifndef RUNNER_FLAG
+#error "RUNNER_FLAG is not defined"
+#endif
+int main() { return 0; }
