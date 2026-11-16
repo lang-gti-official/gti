@@ -226,7 +226,9 @@ exact arity, public direct fields or fixed-array elements, then records checked
 read-only reference declarations for each projection. Those declarations retain
 field/index identity, parent loans, stored-owner dependencies and iteration scope.
 HIR flattens them into the same iteration block, avoiding a second hidden owner
-or a shorter nested scope. MIR and LLVM use ordinary reference/place lowering;
+or a shorter nested scope. Its existing synthetic-statement ownership inventory
+retains these roots after concrete semantic deltas expire, including the source
+anchors used by verification and debug information. MIR and LLVM use ordinary reference/place lowering;
 no backend decomposition or independent lifetime rule is introduced.
 
 ## Generic payload enum signatures

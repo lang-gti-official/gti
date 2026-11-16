@@ -11493,6 +11493,16 @@ int main() {
   expect(projectedDebugLocals == 4 &&
              rangePattern.semantics.verifySourceDebug().empty(),
          "range pattern names retain ordinary lexical debug-local records");
+  const auto retainedProjections = std::count_if(
+      rangePattern.hir.sourceStatementOwners().begin(),
+      rangePattern.hir.sourceStatementOwners().end(), [](const auto &owner) {
+        const auto *declaration = lang::stmtAs<lang::VariableDecl>(owner.get());
+        return declaration != nullptr &&
+               (declaration->name().lexeme == "key" ||
+                declaration->name().lexeme == "value");
+      });
+  expect(retainedProjections == 4,
+         "HIR owns projection syntax after concrete semantic models expire");
 
   const std::string rangePrelude = R"(
 struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
