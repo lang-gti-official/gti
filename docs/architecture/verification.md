@@ -554,7 +554,7 @@ failure-propagation marker; the native initializer fusion contract is unchanged.
 
 ## Carriers of returned references (0.468.3)
 
-`accessor_text_carrier_runtime` runs `accessor_text_carriers.gti` in all
+`tests/ui/language/views/accessor_text_carriers.gti` runs `accessor_text_carriers.gti` in all
 eight native modes, including the sanitized one. It builds text iterators
 directly from `Box::get()`'s returned `std::string_view&` over literal and
 `std::string`-owned text (`begin()`, `rbegin()`, a counted walk to `end()`),
@@ -583,7 +583,7 @@ unchanged, so it is a conservative source rather than a forged one. With the
 verifier's ownerless-accessor clause disabled, every literal-backed form fails
 again with that same message and the owner-backed forms still build.
 
-Since PR #298 merged first, `arrow_text_members.gti` in `operator_relay_runtime`
+Since PR #298 merged first, `arrow_text_members.gti` in `tests/ui/language/operators/`
 also builds iterators directly through a checked `operator->`:
 `literal->begin()`, `owned->rbegin()`, `maybe->begin()`, `viewed->begin()`
 and the mutable step `changing->begin()`. Before that merge, a `gti`
@@ -767,7 +767,7 @@ it escaped the same way. `testPayloadFieldUses` covers each shape.
 
 ## Payload enums replaced through references (0.467.4)
 
-`payload_enum_reference_assignment_runtime` runs
+`tests/ui/language/assignment/payload_enum_reference_assignment.gti` runs
 `payload_enum_reference_assignment.gti`.
 - A payload enum whose alternatives own cleanup (a noisy class, a
   `std::string`) is replaced through a member call's `mut slot&` result, a
@@ -878,7 +878,7 @@ MIR value of unknown type, which was the backend's refusal before the fix.
 `GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
 none reports `GTI-B`.
 
-`operator_relay_runtime` runs `arrow_text_members.gti` in all eight native
+`tests/ui/language/operators/` runs `arrow_text_members.gti` in all eight native
 modes, including the sanitized one. It covers literal-backed and owner-backed
 views behind a user class, a paired read-only/`mut` arrow, a reference
 parameter, `end()`/`rend()` (which take the arrow's view as their first
@@ -1033,7 +1033,7 @@ class emit the same C++ as before.
 
 ## Class stores into named places and element fields (0.465.1)
 
-`class_store_destinations_runtime` runs `class_store_destinations.gti`.
+`tests/ui/language/assignment/class_store_destinations.gti` runs `class_store_destinations.gti`.
 User-defined structs are copied into, and constructed directly into, a
 class-typed global and the referent of a `[mut &p]` capture, and copied from a
 global and from a by-value capture; copied and read back through
@@ -1178,7 +1178,7 @@ compilation-cost parity. The current structural/forcing bounds are recorded in
 
 ## Whole assignment results (0.464.2)
 
-`assignment_result_whole_value_runtime` runs
+`tests/ui/language/assignment/assignment_result_whole_value.gti` runs
 `assignment_result_whole_value.gti`. User-defined structs use a class
 assignment's whole result as a binding initializer (`Point r = (p = q);`), a
 return, by-value arguments, a method receiver, a constructor field initializer
@@ -1422,7 +1422,7 @@ missing cleanup obligations.
   does not name the moved formal, and a carrier whose destructor runs source
   code, are both refused.
 
-`deferred_bound_field_runtime` runs `deferred_bound_fields.gti` in all eight
+`tests/ui/language/views/deferred_bound_fields.gti` runs `deferred_bound_fields.gti` in all eight
 native modes (C++20/C++23 at O0/O1/O3, no-elide, ASan/UBSan) with eight
 observations. The fixture moves, copies and constructs carriers after a
 fallible ledger, including a carrier constructor that checks its input and
@@ -1607,7 +1607,7 @@ census changes only for example 165: one more function body and declaration.
 
 ## Assignment result field reads (0.459.3)
 
-`assignment_result_projection_runtime` runs `assignment_result_projection.gti`.
+`tests/ui/language/assignment/assignment_result_projection.gti` runs `assignment_result_projection.gti`.
 User-defined structs read a field of a class assignment's result in a function
 (`(p = q).x`, after which `p` holds `q`), in a constructor initializer
 (`first((p = q).x)`), nested (`(s = t).start.y`, also in a constructor), as a
@@ -1665,7 +1665,7 @@ capture.
 
 ## Classes holding text views (0.459.1)
 
-`passive_text_view_class_runtime` runs `passive_text_view_classes.gti`.
+`tests/ui/language/views/passive_text_view_classes.gti` runs `passive_text_view_classes.gti`.
 - The reported program moves a `Name` holding one `std::string_view` into a
   field after a `std::vector` field; its copy variant copies it. Both return 7.
 - `Shelved` moves a `Tagged` (a view, a C string and a rank) and a nested
@@ -2788,7 +2788,7 @@ temporaries are destroyed exactly once, in C++20/C++23 at O0–O3 with disabled
 elision and at O1 with ASan/UBSan. The emitted C++ reads all 18 views through
 MIR's own result slots, the base argument's through its preparation carrier,
 and none through a cleanup-free value slot.
-`owning_temporary_field_read_runtime` adds plain, nested and by-value-argument
+`tests/ui/language/temporaries/owning_temporary_field_read.gti` adds plain, nested and by-value-argument
 constructions in its eight native modes. It observes that a failure after the
 read destroys the constructed temporary once, and that a failed construction is
 never destroyed.
@@ -2829,7 +2829,7 @@ ordinary shipped-source corpus and reviewed MIR/LoweredProgram inventories.
 
 ## Owning field replacement through raw pointers (#122)
 
-`raw_owned_field_replacement_runtime` covers returned, direct, indexed and nested
+`tests/ui/memory/raw_owned_field_replacement.gti` covers returned, direct, indexed and nested
 raw pointers to user-defined owning fields. Eight native modes check successful
 replacement, construction failure, old-value cleanup failure, secondary cleanup
 failure and a failing receiver call before replacement construction.
@@ -2906,7 +2906,7 @@ conversion or a special rule for `unique_ptr`.
 
 ## Allocation constructor defaults
 
-`allocation_default_argument_runtime` exercises passive and owning default
+`tests/ui/memory/` exercises passive and owning default
 constructor arguments through unique allocation in eight native modes, including
 disabled copy elision and sanitizers. It retains explicit-pack and stack
 controls, and checks observable parameter/caller cleanup after later-default
@@ -2939,7 +2939,7 @@ mutations remain active after unifying base-only and field-default schedules.
 
 ## Expected pointer boundaries and owning field replacement
 
-`raw_receiver_owned_argument_runtime` runs raw-pointee receiver calls with
+`tests/ui/memory/raw_receiver_owned_argument.gti` runs raw-pointee receiver calls with
 owning user-defined argument records across C++20/C++23 at O0/O1/O3, disabled
 copy elision, and ASan/UBSan. Observable traces cover read-only and mutable
 receivers, consuming value/error payload extraction, receiver evaluation,
@@ -3071,7 +3071,7 @@ LoweredProgram; definitions never add a second callable or backend row.
 the `examples/window-factory` package. It checks transitive package loading,
 implementation privacy, changed-body cache invalidation, unused implementation
 registrations, missing definitions, and invalid or escaping manifest paths.
-`out_of_class_cleanup` checks owning factory results and separately defined
+`tests/ui/ownership/cleanup/out_of_class_cleanup.gti` checks owning factory results and separately defined
 virtual overrides under those modes, disabled copy elision and ASan/UBSan:
 successful and defined-failure paths retain exactly-once reverse cleanup, exit
 status and source attribution. `out_of_class_lsp` covers definition/references,
@@ -3126,7 +3126,7 @@ C++ and disassembly are retained under `Testing/out-of-class-performance`.
 
 ## Implicit receiver owning-field replacement (0.414.2)
 
-`implicit_receiver_owned_assignment_runtime` exercises nested unqualified
+`tests/ui/language/assignment/` exercises nested unqualified
 receiver-field replacement in constructors and mutable virtual methods, with
 fresh string construction, call-produced and explicitly moved unique owners,
 and dispatch through an owning interface pointer. Its failure fixture checks
@@ -5968,7 +5968,7 @@ acceptance remain required.
 The optimized Release/Ninja macOS arm64 candidate with LLVM 22.1.8 repairs
 the indexed text relay in #78, the generated same-type allocation path in #97,
 range-element field addresses in #73 and direct observation of call-produced
-views in #74. `operator_relay_runtime` builds and runs four stronger fixtures
+views in #74. `tests/ui/language/operators/` builds and runs four stronger fixtures
 and eight original reproducers at C++20/C++23 O0/O1/O3, with disabled elision
 and ASan/UBSan (96 observations). Eight injected allocation observations
 separately prove exact success output and exhaustion cleanup of the prepared
@@ -6580,7 +6580,7 @@ installed evidence recorded above.
 arguments, source-wrapper pointer aliases, unrelated witnesses, expired origins,
 loop-carried witness changes, const-preserving access and malformed MIR loan
 contracts. The shared backend-admission query and whole-program verifier reject
-mutations independently of source validation. `raw_owner_witness_runtime` runs
+mutations independently of source validation. `tests/ui/memory/raw_owner_witness.gti` runs
 C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan. Example 112 demonstrates a
 raw-backed view that separately retains a checked reference to its owner.
 These focused gates pass on the optimized macOS compiler, alongside the broad
@@ -6637,7 +6637,7 @@ not evidence that every source call/container transport route is closed.
 
 ## Programmable allocation and cleanup-bound resource leases
 
-The S-ALLOC-06 migration prerequisite `source_storage_drain_runtime` proves
+The S-ALLOC-06 migration prerequisite `tests/ui/ownership/cleanup/source_storage_drain.gti` proves
 source-defined cleanup-guard traversal over the existing storage surface. An
 unrelated guard drains immovable owning elements in reverse order, continues
 after a first destructor failure, preserves member cleanup and the original
@@ -7684,7 +7684,7 @@ user's active installation remain deliberately unchanged.
 These gates supplement the existing full optimized CTest, corpus,
 optimization-report/replay, staged-consumer, and editor/package completion
 checks below. The subsequent public formatter slice adds
-`extensible_formatting_runtime` and `extensible_formatting_lsp`: unrelated
+`tests/ui/stdlib/format/` and `extensible_formatting_lsp`: unrelated
 source-defined identifier/record formatters, exact mutable receiver/parameter
 signature concepts, generic symbolic calls, owned argument cleanup, repeated
 indexed fields, error-category preservation, transactional destination output,
@@ -7932,7 +7932,7 @@ after an all-target Release/Ninja build with AppleClang 21 and LLVM 22.1.8
 (12 compile jobs, eight test workers). This is complete same-source coverage,
 not a claim of one uninterrupted timeout-free invocation: the initial run
 completed 102 passes before three unrelated runtime matrices timed out.
-`void_return_runtime`, `string_ordering_runtime`, and
+`void_return_runtime`, `tests/ui/stdlib/string/string_ordering.gti`, and
 `borrowed_payload_pattern_runtime` all passed unchanged on retry in 19.67
 seconds. The remaining 274 tests then passed in 246.89 seconds. No production
 source or compiler binary changed between those runs; the combined pass
@@ -8126,7 +8126,7 @@ calls must select the verified bitwise candidate for passive types and the
 generated-transfer path for resource owners. MIR traits serialize as textual
 integers, including the unavailable value, never byte-sized control characters.
 
-`structural_relocation_runtime` runs C++20/C++23 at O0/O1/O3, no-elide, and
+`tests/ui/memory/structural_relocation.gti` runs C++20/C++23 at O0/O1/O3, no-elide, and
 ASan/UBSan. It checks zero-count and zero-capacity operations, source slot
 reuse, vector growth/shrink, values, and exactly-once resource cleanup.
 Capacity, occupied destination, incomplete source prefix, and consumed-source
@@ -8603,11 +8603,11 @@ replacement metadata; a source negative retains read-only referent rejection.
 
 The library-completion gates cover the following public workflows:
 
-- `string_operations_runtime` exercises counted search, independent slices,
+- `tests/ui/stdlib/string/` exercises counted search, independent slices,
   capacity-preserving and reallocating edits, embedded NULs, bounds failure,
   and nested owner-to-view relays. `tests/ui/stdlib/string/operations_errors` rejects aliased
   mutation and mutation/movement with a live view before backend entry.
-- `charconv_runtime` covers fixed-width integer boundaries, bases, malformed
+- `tests/ui/stdlib/charconv/` covers fixed-width integer boundaries, bases, malformed
   prefixes, binary32/binary64 parsing, preserved outputs on failure, and
   owning-string convenience overloads. `charconv_runtime_boundary` checks
   the counted C ABI directly, including target-width rounding and invalid
@@ -8792,7 +8792,7 @@ unique-owner invocation: four concrete read/mutable accessors (including a
 differently named source owner), exact HIR/MIR summary preservation, and 69
 independent forged-summary/body/declaration checks. Ordinary reference,
 extra-statement, and parameterized accessors remain outside the bounded proof.
-`owned_pointee_projection_runtime` passes eight C++20/C++23, O0/O1/O3,
+`tests/ui/memory/owned_pointee_accessor.gti` passes eight C++20/C++23, O0/O1/O3,
 no-elide, and ASan/UBSan executions of ordinary checked read/mutable accessors.
 The caller-side `consuming_owned_pointee` gate now checks exact retained owner
 anchors and executable temporary loans, eighteen malformed capability/alias
@@ -8952,7 +8952,7 @@ cleanup. Structural production-output checks require explicit concrete method
 arguments and arity-discarded indexed closure predicates. The same-arity
 cleanup/body grouping proof remains unchanged.
 
-`nested_nominal_result_runtime` covers member, free, and erased callback class
+`tests/ui/language/classes/` covers member, free, and erased callback class
 results passed directly to another call or constructor, conditional arguments,
 an omitted default, and a named result binding. It observes producer and later
 argument failure before outer invocation, caller cleanup, and exactly-once
@@ -9678,7 +9678,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `constructor_owned_call_runtime` | ordinary owning calls inside a status constructor; success, later-argument failure, callee failure, later constructor failure, owning-field replacement, local cleanup failure, and secondary destructor failure, with exact cleanup order and source sites in 70 cases across C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` checks constructor and field-initializer admission and rejects missing, duplicate, misidentified, and cross-call parameter transfers |
 | `constructor_member_call_field_runtime` | member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: failure-free borrowed receivers (by-value, read-only reference and `mut` reference parameters), consuming receivers moved from a parameter (including a cleanup-free one, which the call transfers) or a fresh temporary, a generic owner, field declaration defaults, and two member-call fields; a failing consuming call publishes nothing and cleans up its named or fresh receiver, a failing call on a transferred cleanup-free receiver rolls back the earlier published field, a later initializer failure rolls the published field back, and a consumed receiver whose destructor fails after publication rolls the field back, with the secondary failure reported when that rollback fails too |
 | `constructor_virtual_call_field_runtime` | virtual member-call results published into constructor fields across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan through the transformed status ABI: a family no member of which fails, a base and a derived override through a base reference, an override selected through a derived reference, an interface contract root through a `mut` reference, a raising override, consuming members on a moved parameter, a moved cleanup-free parameter (a prepared input) and a fresh temporary, a generic owner, a field declaration default on a namespace-scope object, and two virtual-call fields; a failing override publishes nothing and a later initializer failure rolls the published field back |
-| `virtual_temporary_receiver_runtime` | non-consuming virtual member calls on fresh temporary receivers across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a generated-default producer in a function body, a member initializer, a field declaration default and a constructor-body assignment, an override, an inherited virtual and an inherited non-virtual member on a derived temporary, a virtual `operator()`, receivers in conditional arms and a conditional-joined receiver, a mutable interface override and a raising override in a function body and in a member initializer; every receiver is destroyed once at the end of its full expression in reverse construction order, and a failing override destroys its receiver and publishes nothing |
+| `tests/ui/language/temporaries/virtual_temporary_receiver.gti` | non-consuming virtual member calls on fresh temporary receivers across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a generated-default producer in a function body, a member initializer, a field declaration default and a constructor-body assignment, an override, an inherited virtual and an inherited non-virtual member on a derived temporary, a virtual `operator()`, receivers in conditional arms and a conditional-joined receiver, a mutable interface override and a raising override in a function body and in a member initializer; every receiver is destroyed once at the end of its full expression in reverse construction order, and a failing override destroys its receiver and publishes nothing |
 | `tests/ui/ownership/borrow/borrowed_argument_fallible_condition.gti` | a borrowed argument or receiver kept across a later conditional argument whose test or arm is a call that can fail, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a free function, a constructor, a method on the borrowed receiver and a local lambda consume the arguments; the test borrows another local, reads the borrowed local itself, runs a read or `mut` method on another receiver, or compares a returned text view; arms that select a text view; a `mut` borrowed argument and two borrowed arguments; a failing test or arm destroys each live local once, in reverse order, and nothing that was not yet constructed |
 | `tests/ui/ownership/borrow/borrowed_argument_nested_owning_argument.gti` | a borrowed argument kept across a later conditional argument whose test or arm calls a function that takes a class argument by value, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a user class constructed from a nested call's result, a standard string built from a text view, a moved or copied local, the argument of a method on another local, and a construction followed by an argument that can fail, plus an owning argument of the outer call built from a text view; a failing nested call destroys its argument once, a failing construction publishes nothing, a later failing argument destroys the prepared argument, and each live local is destroyed once, in reverse order; `cpp_mir_body_emitter_preflight` rejects a doubled handoff and an abandoned failure-edge cleanup |
 | `tests/ui/ownership/borrow/borrowed_argument_inner_temporary.gti` | a borrowed argument kept across a later conditional argument, an arm of `?:` or the right operand of `&&` or `||`, that creates a class object for a nested call to borrow, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a function result and a construction as receivers, a `mut` receiver and a reference argument in the arms of `?:`, a borrowed local before a construction passed by reference, objects with nothing to destroy, also in a body that cannot fail, a producer that can fail and calls that can fail, and a later argument that fails; each object is destroyed once after the outer call, before the borrowed temporary, and never when its operand was skipped, a failing producer publishes nothing, and each live local is destroyed once; `cpp_mir_body_emitter_preflight` rejects such a producer that also takes the borrowed object and an operand that ends the outer borrow |
@@ -10089,7 +10089,7 @@ cache bypass. It is bounded branch evidence, not a substitute for full Linux CI.
 signed/grouped literals, concrete HIR literal domains, checked range diagnostics,
 and independent negatives for mixed variables, unconstrained types, call
 matching, narrow arithmetic results, and integral-only operations. The
-`contextual_numeric_literals_runtime` matrix exercises every primitive numeric
+`tests/ui/generics/contextual_numeric_literals.gti` matrix exercises every primitive numeric
 width, constant evaluation, and midpoint boundaries through verified MIR at
 C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan. The contextual-literal LSP test
 checks an unsigned instance's diagnostic and clearing after floating-instance
@@ -11642,7 +11642,7 @@ stored view fail in semantics.
 nested unretained receiver reservations, checked scalar/class reference
 publication, genuine read-only and retained-loan rejections, malformed MIR,
 O0/O1/O3 optimization and production C++20/C++23 body admission.
-`operator_place_composition_runtime` runs A26/A27/both A46 originals, an unrelated
+`tests/ui/language/operators/` runs A26/A27/both A46 originals, an unrelated
 user-defined Cell/Row/Grid trace and unique-owner/optional clients through the
 eight-mode native matrix (48 cases). `operator_place_failure_runtime` checks 12
 unchanged target-before-RHS and callee/caller cleanup observations at the native

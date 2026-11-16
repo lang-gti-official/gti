@@ -3489,7 +3489,6 @@
         "tests/fixtures/complete_range_probe.gti",
         "tests/generic_algorithm_cluster_test.py",
         "tests/generic_callable_concepts_runtime_test.py",
-        "tests/generic_algorithm_breadth_test.py",
         "tests/generic_algorithm_errors_test.py",
         "tests/ordered_search_runtime_test.py",
         "tests/fixtures/ordered_search.gti",
@@ -3634,7 +3633,6 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_indexed_runtime_test.py",
         "tests/restoring_exchange_tests.cpp",
         "examples/104-move-only-ordering.gti"
       ]
@@ -3803,7 +3801,6 @@
         "double"
       ],
       "evidence": [
-        "tests/charconv_runtime_test.py",
         "tests/runtime_charconv_tests.cpp"
       ]
     },
@@ -3826,7 +3823,6 @@
         "double"
       ],
       "evidence": [
-        "tests/charconv_runtime_test.py",
         "tests/runtime_charconv_tests.cpp"
       ]
     },
@@ -5652,7 +5648,6 @@
         "tests/fixtures/allocator_storage.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
-        "tests/structural_relocation_runtime_test.py",
         "examples/120-immovable-storage.gti",
         "tests/fixtures/programmable_allocators.gti",
         "tests/fixtures/resource_region_contracts.gti",
@@ -5743,7 +5738,6 @@
         "tests/fixtures/allocator_storage.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
-        "tests/structural_relocation_runtime_test.py",
         "examples/120-immovable-storage.gti",
         "tests/fixtures/programmable_allocators.gti",
         "tests/fixtures/resource_region_contracts.gti",
@@ -5837,7 +5831,6 @@
         "tests/uninitialized_carrier_tests.cpp",
         "tests/uninitialized_carrier_runtime_test.py",
         "tests/object_lifetime_tests.cpp",
-        "tests/object_relocation_runtime_test.py",
         "docs/language/raw-pointers.md"
       ]
     },
@@ -7699,7 +7692,6 @@
         "tests/fixtures/string_c_string.cpp",
         "tests/string_c_string_runtime_test.py",
         "tests/fixtures/string_ordering.gti",
-        "tests/string_ordering_runtime_test.py",
         "tests/fixtures/associative_hash_contracts.gti",
         "stdlib/std/string.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
@@ -7735,7 +7727,6 @@
         "nested owner relay"
       ],
       "evidence": [
-        "tests/string_operations_runtime_test.py",
         "tests/ui/stdlib/string/operations_errors",
         "tests/compiler_declarations_tests.cpp",
         "tests/fixtures/string_view_assignment.gti",
@@ -7768,7 +7759,6 @@
         "constant evaluation of the string_view integer forms"
       ],
       "evidence": [
-        "tests/charconv_runtime_test.py",
         "docs/language/standard-library.md"
       ]
     },
@@ -8365,9 +8355,7 @@
       "evidence": [
         "examples/103-resource-exchange.gti",
         "tests/fixtures/restoring_exchange_shapes.gti",
-        "tests/restoring_exchange_tests.cpp",
-        "tests/restoring_exchange_runtime_test.py",
-        "tests/restoring_exchange_shapes_runtime_test.py"
+        "tests/restoring_exchange_tests.cpp"
       ]
     },
     {
@@ -8543,7 +8531,6 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_indexed_runtime_test.py",
         "tests/restoring_exchange_tests.cpp"
       ]
     },

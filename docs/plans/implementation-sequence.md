@@ -5279,7 +5279,7 @@ The initial source inventory identifies these reuse/retirement boundaries:
 | `StorageCapacity/Initialized/Read/ReadMut`, `StorageTryAdopt/TryAllocate`, `AllocateStorage` | Migrate observers, validation, allocation publication and checked access into source; use the existing owner-witness bridge for element loans. |
 | Prefix storage, optional storage, unique/shared owners | Preserve as separate current clients: initialized-prefix/NUL policy, active-alternative policy, and allocation/control-block ownership differ from sparse bookkeeping. They must share general lifecycle facts where applicable; wholesale public-policy migration is not claimed. |
 
-`source_storage_drain_runtime` establishes a prerequisite without changing the
+`tests/ui/ownership/cleanup/source_storage_drain.gti` establishes a prerequisite without changing the
 compiler: an ordinary GTI cleanup guard resumes reverse slot traversal after
 the first destructor failure, preserves its record, and stops according to the
 existing secondary-failure contract. It covers immovable owning elements,

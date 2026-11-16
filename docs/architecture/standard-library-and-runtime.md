@@ -1898,7 +1898,7 @@ comparison borrows end before mutation, and no element is copied or cloned.
 Buffers allocate no heap storage. The same depth budget, smaller-side traversal
 and heapsort fallback retain the O(n log n) worst-case comparison bound;
 comparator or relocation failure retains the original-element permutation.
-`restoring_indexed_runtime` checks exact monotonic comparison traces and
+`tests/ui/stdlib/utility/` checks exact monotonic comparison traces and
 move-only block-partition failure cleanup. `stdlib_adoption_runtime` checks
 both comparator overloads, distributions, allocation counts and the adaptive
 comparison adversary. This algorithm choice still requires measured performance

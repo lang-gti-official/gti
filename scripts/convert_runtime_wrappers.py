@@ -31,6 +31,7 @@ import re
 import runpy
 import subprocess
 import sys
+import tempfile
 import types
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -44,7 +45,10 @@ REGISTRIES = ("tests/CMakeLists.txt", "tests/TestThroughput.cmake",
 # Documents a conversion may not edit (owned by other work); stale mentions
 # there are reported instead.
 UNTOUCHABLE: tuple[str, ...] = ()
-SUPPORTED_ARGUMENTS = {"names", "cases", "llvm_modes", "stdin_by_name", "fixture_paths"}
+SUPPORTED_ARGUMENTS = {"names", "cases", "llvm_modes", "stdin_by_name", "fixture_paths",
+                       "execution_profile", "cpp_unsupported"}
+# `cpp_unsupported` declared a C++-backend limitation; that backend is no
+# longer tested, so the declaration is dropped.
 
 # Area of a wrapper, by the first matching pattern on its CTest name. The
 # layout follows tests/ui/README.md: language/, ownership/, generics/,
@@ -80,6 +84,7 @@ AREAS = (
     (r"^string_(operations|ordering)", "stdlib/string"),
     (r"^extensible_formatting", "stdlib/format"),
     (r"^composable_io", "stdlib/io"),
+    (r"^charconv", "stdlib/charconv"),
 )
 
 
@@ -246,7 +251,14 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
             continue
         runs = cases.get(name, [((), (0, "", ""))])
         stdin = stdin_by_name.get(name)
-        converted = convert(name, source, runs, stdin, description, result)
+        seeded = seeded_case(source, runs, stdin)
+        if seeded:
+            # A stdlib surface case seeded from this fixture, with its sibling
+            # modules as sections, already makes the same observations.
+            result.notes.append(f"{name}: {seeded.relative_to(ROOT)} already checks it")
+            continue
+        converted = convert(name, source, runs, stdin, description, result,
+                            call.get("execution_profile"))
         if converted is None:
             continue
         target = TESTS / "ui" / area / f"{name}.gti"
@@ -259,6 +271,12 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
                 continue
             result.reasons.append(f"{name}: {target.relative_to(ROOT)} already exists")
             continue
+        namesakes = [path for root in ("ui", "slow") for path in (TESTS / root).rglob(f"{name}.gti")
+                     if path != target]
+        if namesakes:
+            # Usually a stdlib surface case seeded from the same fixture.
+            result.notes.append(f"{name}: compare with " + ", ".join(
+                str(path.relative_to(ROOT)) for path in namesakes))
         result.files[target] = text
         for suffix, content in stdout_files.items():
             result.files[target.with_name(f"{name}{suffix}.stdout")] = content
@@ -266,6 +284,24 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
         result.fixtures.append(name)
         result.signatures[name] = repr((runs, stdin))
     return result
+
+
+def seeded_case(source: pathlib.Path, runs, stdin) -> pathlib.Path | None:
+    """An existing stdlib surface case seeded from `source` that makes the
+    default observation (exit 0, no output) the wrapper also expects."""
+    if stdin or list(runs) != [((), (0, "", ""))]:
+        return None
+    body = source.read_text()
+    if body.startswith("// "):
+        body = body.split("\n", 1)[1]
+    for root in ("ui", "slow"):
+        for path in (TESTS / root).rglob(source.name):
+            text = path.read_text()
+            directives = {line for line in text.split("\n") if line.startswith("//@")}
+            if (text.startswith("// stdlib surface case") and body.strip() in text
+                    and directives - {"//@ slow"} == {"//@ run-pass"}):
+                return path
+    return None
 
 
 def same_test(existing: str, generated: str) -> bool:
@@ -370,8 +406,12 @@ def shows_nothing(text: str) -> bool:
     return not re.search(r"^\s*import\b", code, re.M) and not RUNTIME_SIGNALS.search(code)
 
 
-def convert(name, source, runs, stdin, description, plan_):
+def convert(name, source, runs, stdin, description, plan_, profile=None):
     text = source.read_text()
+    module = re.search(r"^\s*import\s+(\"[^\"]+\"|(?!std\b)[\w.]+)", text, re.M)
+    if module:
+        plan_.reasons.append(f"{name}: imports the sibling module {module.group(1)}")
+        return None
     if not runs:
         plan_.reasons.append(f"{name}: no execution observations")
         return None
@@ -384,11 +424,22 @@ def convert(name, source, runs, stdin, description, plan_):
         if any(not argument or any(c.isspace() for c in argument) for argument in arguments):
             plan_.reasons.append(f"{name}: an argument contains whitespace or is empty")
             return None
+        if any(argument.startswith(tempfile.gettempdir()) or "/gti-" in argument
+               for argument in arguments):
+            plan_.reasons.append(f"{name}: an argument names a temporary file the wrapper creates")
+            return None
+        if "\0" in _stdout + stderr + (stdin or ""):
+            plan_.reasons.append(f"{name}: NUL bytes in stdin, stdout or stderr")
+            return None
     if stdin is not None and stdin and not stdin.endswith("\n"):
         plan_.reasons.append(f"{name}: stdin without a final newline")
         return None
+    if profile not in (None, "single-threaded", "concurrent"):
+        plan_.reasons.append(f"{name}: execution profile {profile}")
+        return None
+    analysis = [f"//@ execution-profile: {profile}"] if profile == "concurrent" else []
     if (len(runs) == 1 and not runs[0][0] and tuple(runs[0][1]) == (0, "", "")
-            and not stdin and shows_nothing(text)):
+            and not stdin and not analysis and shows_nothing(text)):
         plan_.modes[name] = "check-pass"
         lines = text.split("\n")
         if lines and lines[0].startswith("// ") and not lines[0].startswith("// ---"):
@@ -397,6 +448,7 @@ def convert(name, source, runs, stdin, description, plan_):
     codes = {code for _, (code, _, _) in runs}
     file_mode = "run-pass" if 0 in codes else "run-fail"
     directives.append(f"//@ {file_mode}")
+    directives += analysis
     if stdin:
         directives += [f"//@ stdin: {line}" for line in stdin[:-1].split("\n")]
     revisions = len(runs) > 1
