@@ -1,1 +1,1 @@
-Converted 38 more shared-harness runtime wrappers (memory, cleanup, assignment, temporaries, operators, views, generics and standard-library areas) into `gti-test` files under `tests/ui` and `tests/slow`.
+Converted 62 more shared-harness runtime wrappers (memory, cleanup, assignment, temporaries, operators, views, generics, concurrency and standard-library areas) into `gti-test` files under `tests/ui` and `tests/slow`.
