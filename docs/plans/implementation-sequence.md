@@ -451,7 +451,7 @@ full performance evidence remain incomplete. Release snapshot
 passes `mutex_semantic_ir` (including passive-closure malformed-MIR controls),
 `scoped_thread_c_header`, `scoped_thread_runtime`,
 `scoped_thread_join_boundary`, `managed_thread_runtime`, and
-`shared_ownership_threads`. The latter executes shared owners, shared mutexes
+`tests/ui/concurrency/`. The latter executes shared owners, shared mutexes
 and transferable read/mut/once jobs in C++20/C++23 at O0/O1/O3, no-elide and
 ASan/UBSan modes (24 fixture/mode combinations). This is focused checkpoint
 evidence, not final current-head validation or a TSan/performance claim.
@@ -5279,7 +5279,7 @@ The initial source inventory identifies these reuse/retirement boundaries:
 | `StorageCapacity/Initialized/Read/ReadMut`, `StorageTryAdopt/TryAllocate`, `AllocateStorage` | Migrate observers, validation, allocation publication and checked access into source; use the existing owner-witness bridge for element loans. |
 | Prefix storage, optional storage, unique/shared owners | Preserve as separate current clients: initialized-prefix/NUL policy, active-alternative policy, and allocation/control-block ownership differ from sparse bookkeeping. They must share general lifecycle facts where applicable; wholesale public-policy migration is not claimed. |
 
-`source_storage_drain_runtime` establishes a prerequisite without changing the
+`tests/ui/ownership/cleanup/source_storage_drain.gti` establishes a prerequisite without changing the
 compiler: an ordinary GTI cleanup guard resumes reverse slot traversal after
 the first destructor failure, preserves its record, and stops according to the
 existing secondary-failure contract. It covers immovable owning elements,
@@ -9246,7 +9246,7 @@ prerequisite checkpoints as full acceptance.
   explicitly accepted on 2026-10-28. Measured optimized retain/release,
   contended-count and allocation workloads remain within the accepted budget;
   performance reports distinguish wall-time evidence from isolated-host claims.
-- **Concurrency evidence:** `shared_ownership_threads`,
+- **Concurrency evidence:** `tests/ui/concurrency/`,
   `weak_ownership_threads` and `shared_ownership_release_race` also run
   as instrumented LLVM objects under ThreadSanitizer (`*_tsan`). The release
   race writes the payload in its destructor while other owners read it, so
@@ -9425,7 +9425,7 @@ prerequisite checkpoints as full acceptance.
     rule. Their destructor or dispatched methods would read the field as
     ownerless text outside the creating body.
   - Evidence: `view_fields` (semantic rejections and verifier mutations),
-    `view_fields_runtime` (C++20/C++23 at O0/O1/O3, no-elide, sanitized),
+    `tests/ui/ownership/borrow/view_fields.gti` (C++20/C++23 at O0/O1/O3, no-elide, sanitized),
     example 170 and an ownerless corpus differential.
 - **Phase 1b (remaining phase 1):**
   - *Boundary found in 1a.* Inside a callee, a text-field read of a by-value or

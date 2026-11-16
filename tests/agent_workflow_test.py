@@ -1488,7 +1488,6 @@ class ValidationChecks(unittest.TestCase):
         gate = inventory("gate")
         self.assertEqual(gate, full - validation.GATE_EXCLUDED)
         self.assertTrue(gate < full)
-        self.assertNotIn("generic_algorithm_breadth", validation.GATE_EXCLUDED, "the shipped default stays in the gate")
         self.assertNotIn("trusted_body_analysis_0", validation.GATE_EXCLUDED)
         # macOS runs only the platform-specific inventory: listed names and prefixed families.
         listed = (("llvm_",), {"other"})

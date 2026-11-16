@@ -3529,7 +3529,6 @@
         "tests/fixtures/complete_range_probe.gti",
         "tests/generic_algorithm_cluster_test.py",
         "tests/generic_callable_concepts_runtime_test.py",
-        "tests/generic_algorithm_breadth_test.py",
         "tests/generic_algorithm_errors_test.py",
         "tests/ordered_search_runtime_test.py",
         "tests/fixtures/ordered_search.gti",
@@ -3674,7 +3673,6 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_indexed_runtime_test.py",
         "tests/restoring_exchange_tests.cpp",
         "examples/104-move-only-ordering.gti"
       ]
@@ -3843,7 +3841,6 @@
         "double"
       ],
       "evidence": [
-        "tests/charconv_runtime_test.py",
         "tests/runtime_charconv_tests.cpp"
       ]
     },
@@ -3866,7 +3863,6 @@
         "double"
       ],
       "evidence": [
-        "tests/charconv_runtime_test.py",
         "tests/runtime_charconv_tests.cpp"
       ]
     },
@@ -4239,7 +4235,6 @@
       ],
       "evidence": [
         "tests/ui/stdlib/memory/shared_owner",
-        "tests/shared_ownership_runtime_test.py",
         "tests/borrowing_capture_tests.cpp"
       ]
     },
@@ -4559,8 +4554,6 @@
       ],
       "reason": "The C++ backend rejects the new scalar, plain-enum and text temporary reference storage shapes with GTI-B0003. LLVM executes the same fixtures at O0/O3; named enum storage, legacy custom formatters and supported owning arguments retain C++ comparator coverage.",
       "evidence": [
-        "tests/scalar_temporary_borrow_runtime_test.py",
-        "tests/integral_enum_formatting_runtime_test.py",
         "tests/fixtures/stdlib_surface_format.gti",
         "tests/fixtures/panic_adoption.gti",
         "tests/fixtures/integral_enum_formatting.gti",
@@ -4625,7 +4618,6 @@
         "tests/fixtures/extensible_formatting.gti",
         "stdlib/std/format.gti",
         "tests/protocol_format_hash_runtime_test.py",
-        "tests/integral_enum_formatting_runtime_test.py",
         "tests/reference_parameter_packs_test.py",
         "tests/consteval_runtime_test.py",
         "tests/fixtures/checked_literal_arguments.gti",
@@ -4794,7 +4786,6 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
         "tests/borrowing_capture_tests.cpp",
-        "tests/borrowing_callbacks_runtime_test.py",
         "examples/156-borrowing-callbacks.gti"
       ]
     },
@@ -4863,7 +4854,6 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
         "tests/borrowing_capture_tests.cpp",
-        "tests/borrowing_callbacks_runtime_test.py",
         "examples/156-borrowing-callbacks.gti",
         "stdlib/std/detail/function_pointer.gti"
       ]
@@ -4992,7 +4982,6 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/transfer_function_threads.gti",
         "tests/managed_thread_tests.cpp",
-        "tests/shared_ownership_threads_test.py",
         "tests/fixtures/owned_inline_callbacks.gti",
         "tests/owned_inline_consumption_test.py"
       ]
@@ -5650,8 +5639,7 @@
       "evidence": [
         "stdlib/std/memory.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp",
-        "tests/borrowing_callbacks_runtime_test.py"
+        "tests/borrowing_capture_tests.cpp"
       ]
     },
     {
@@ -5720,14 +5708,12 @@
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
-        "tests/storage_final_address_runtime_test.py",
         "tests/fixtures/storage_final_address.gti",
         "tests/fixtures/storage_release.gti",
         "tests/arena_pool_runtime_test.py",
         "tests/fixtures/allocator_storage.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
-        "tests/structural_relocation_runtime_test.py",
         "examples/120-immovable-storage.gti",
         "tests/fixtures/programmable_allocators.gti",
         "tests/fixtures/resource_region_contracts.gti",
@@ -5811,14 +5797,12 @@
       ],
       "evidence": [
         "tests/allocator_storage_runtime_test.py",
-        "tests/storage_final_address_runtime_test.py",
         "tests/fixtures/storage_final_address.gti",
         "tests/fixtures/storage_release.gti",
         "tests/arena_pool_runtime_test.py",
         "tests/fixtures/allocator_storage.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
-        "tests/structural_relocation_runtime_test.py",
         "examples/120-immovable-storage.gti",
         "tests/fixtures/programmable_allocators.gti",
         "tests/fixtures/resource_region_contracts.gti",
@@ -5910,9 +5894,7 @@
         "examples/125-manual-object-lifetimes.gti",
         "examples/128-inline-object-pool.gti",
         "tests/uninitialized_carrier_tests.cpp",
-        "tests/uninitialized_carrier_runtime_test.py",
         "tests/object_lifetime_tests.cpp",
-        "tests/object_relocation_runtime_test.py",
         "docs/language/raw-pointers.md"
       ]
     },
@@ -5953,9 +5935,7 @@
       ],
       "evidence": [
         "tests/fixtures/shared_ownership.gti",
-        "tests/shared_ownership_runtime_test.py",
-        "tests/shared_ownership_failure_test.py",
-        "tests/shared_ownership_threads_test.py"
+        "tests/shared_ownership_failure_test.py"
       ]
     },
     {
@@ -5974,7 +5954,6 @@
       ],
       "evidence": [
         "tests/fixtures/shared_ownership_upcast.gti",
-        "tests/shared_ownership_runtime_test.py",
         "tests/ui/stdlib/memory/shared_owner",
         "stdlib/std/memory.gti"
       ]
@@ -6072,9 +6051,7 @@
         "tests/fixtures/shared_ownership_release_race.gti",
         "tests/fixtures/weak_ownership_failure.gti",
         "tests/ui/stdlib/memory/shared_owner",
-        "tests/shared_ownership_runtime_test.py",
-        "tests/shared_ownership_failure_test.py",
-        "tests/shared_ownership_threads_test.py"
+        "tests/shared_ownership_failure_test.py"
       ]
     },
     {
@@ -6708,7 +6685,6 @@
       "evidence": [
         "tests/native_c_scalar_tests.cpp",
         "tests/unit/native_c_scalar_target_tests.cpp",
-        "tests/native_c_scalar_runtime_test.py",
         "examples/123-native-c-scalars.gti",
         "docs/language/native-c-interop.md"
       ]
@@ -7774,7 +7750,6 @@
         "tests/fixtures/string_c_string.cpp",
         "tests/string_c_string_runtime_test.py",
         "tests/fixtures/string_ordering.gti",
-        "tests/string_ordering_runtime_test.py",
         "tests/fixtures/associative_hash_contracts.gti",
         "stdlib/std/string.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
@@ -7810,7 +7785,6 @@
         "nested owner relay"
       ],
       "evidence": [
-        "tests/string_operations_runtime_test.py",
         "tests/ui/stdlib/string/operations_errors",
         "tests/compiler_declarations_tests.cpp",
         "tests/fixtures/string_view_assignment.gti",
@@ -7843,7 +7817,6 @@
         "constant evaluation of the string_view integer forms"
       ],
       "evidence": [
-        "tests/charconv_runtime_test.py",
         "docs/language/standard-library.md"
       ]
     },
@@ -8440,9 +8413,7 @@
       "evidence": [
         "examples/103-resource-exchange.gti",
         "tests/fixtures/restoring_exchange_shapes.gti",
-        "tests/restoring_exchange_tests.cpp",
-        "tests/restoring_exchange_runtime_test.py",
-        "tests/restoring_exchange_shapes_runtime_test.py"
+        "tests/restoring_exchange_tests.cpp"
       ]
     },
     {
@@ -8618,7 +8589,6 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_indexed_runtime_test.py",
         "tests/restoring_exchange_tests.cpp"
       ]
     },

@@ -1,0 +1,20 @@
+// Owned-pointee proof metadata preserves checked accessor execution.
+//@ run-pass
+import std.memory;
+
+class Item {
+  mut int value = 4;
+public:
+  int read() { return this.value; }
+  void increment() mut { this.value = this.value + 1; }
+public:
+  Item() = default;
+};
+
+int main() {
+  auto reader = std::make_unique<Item>();
+  int first = (*reader).read();
+  mut auto writer = std::make_unique<Item>();
+  (*writer).increment();
+  return first + (*writer).read() - 9;
+}
