@@ -1,0 +1,30 @@
+// A function item stored in a local navigates to the function; an unsaved
+// overload makes the conversion ambiguous until it is removed.
+// (From function_signature_lsp_test.py.)
+//@ hover @item: selected
+//@ hover @item: int32_t
+//@ definition @item: @decl
+import std.functional;
+int /*@decl*/selected(int value) { return value; }
+int main() {
+  auto item = /*@item*/selected;
+  std::function<int(int)> callback{item};
+  return callback(7);
+}
+// --- step 2
+import std.functional;
+int selected(int value) { return value; }
+int selected(bool value) { return 1; }
+int main() {
+  auto item = selected;  //~ ERROR GTI-S2090 ambiguous
+  std::function<int(int)> callback{item};
+  return callback(7);
+}
+// --- step 3
+import std.functional;
+int selected(int value) { return value; }
+int main() {
+  auto item = selected;
+  std::function<int(int)> callback{item};
+  return callback(7);
+}

@@ -53,20 +53,17 @@ def main() -> None:
         if f'"{resource}=' not in release_layout.group("environment"):
             fail(f"release build-tree tests lack {resource}")
 
+    # Any remaining LSP registration must be conditional on its actual target.
+    # (The LSP scripts are moving to gti-test's tests/lsp; check whichever
+    # conditional block is still registered, if any.)
     optional_lsp = re.search(
-        r"if\(TARGET gti_lsp\)\s+add_test\(\s+NAME structural_relocation_lsp\b"
-        r".*?set_tests_properties\(structural_relocation_lsp PROPERTIES TIMEOUT 120\)"
-        r"\s+endif\(\)", test_cmake, re.DOTALL,
-    )
-    if optional_lsp is None:
-        fail("structural_relocation_lsp must be conditional on its actual LSP target")
-    formatting_lsp = re.search(
-        r"if\(TARGET gti_lsp\)\s+add_test\(NAME extensible_formatting_lsp\b"
-        r".*?add_test\(NAME integral_enum_lsp\b.*?\s+endif\(\)",
+        r"if\(TARGET gti_lsp\)\s+add_test\((?:(?!if\(|endif\(\)).)*?\s+endif\(\)",
         test_cmake, re.DOTALL,
     )
-    if formatting_lsp is None:
-        fail("formatting LSP tests must be conditional on their actual LSP target")
+    optional_lsp_names = (re.findall(r"add_test\(\s*NAME\s+(\w+)", optional_lsp.group(0))
+                          if optional_lsp else [])
+    if "$<TARGET_FILE:gti_lsp>" in test_cmake and optional_lsp is None:
+        fail("LSP tests must be conditional on their actual LSP target")
 
     # Execute the actual final CMake fragment in a small standalone project.
     # A newly registered test must inherit the layout too, while existing test
@@ -114,8 +111,8 @@ def main() -> None:
             'project(OptionalLsp NONE)\nenable_testing()\n'
             'if(ENABLE_LSP)\nadd_executable(gti_lsp IMPORTED GLOBAL)\n'
             'set_target_properties(gti_lsp PROPERTIES IMPORTED_LOCATION '
-            '"${CMAKE_COMMAND}")\nendif()\n' + optional_lsp.group(0)
-            + '\n' + formatting_lsp.group(0),
+            '"${CMAKE_COMMAND}")\nendif()\n'
+            + (optional_lsp.group(0) if optional_lsp else ""),
             encoding="utf-8",
         )
         for enabled in ("ON", "OFF"):
@@ -128,8 +125,7 @@ def main() -> None:
                 check=True, capture_output=True, text=True, timeout=30,
             )
             names = [test["name"] for test in json.loads(result.stdout)["tests"]]
-            expected_names = ["structural_relocation_lsp", "extensible_formatting_lsp",
-                              "integral_enum_lsp", "generic_enum_lsp"] if enabled == "ON" else []
+            expected_names = optional_lsp_names if enabled == "ON" else []
             if names != expected_names:
                 fail(f"LSP {enabled}: incorrect optional test inventory {names}")
 

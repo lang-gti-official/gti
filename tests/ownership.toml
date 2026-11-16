@@ -32,8 +32,6 @@ reason = "registered only on some hosts or with optional tools or build options"
 tests = [
   # GTI_BUILD_LSP=OFF omits these registrations.
   "scalar_temporary_borrow_lsp",
-  "concept_conditions_lsp",
-  "conditional_member_operators_lsp",
   "reference_parameter_packs_lsp",
   "block_comment_lsp",
   "comment_placement_lsp",
@@ -42,8 +40,6 @@ tests = [
   "diagnostic_recovery_lsp",
   "executable_entry_cli_lsp",
   "export_placement_lsp",
-  "extensible_formatting_lsp",
-  "semantic_call_regressions_lsp",
   "frontend_cache_invalidation",
   "include_removal_lsp",
   "lsp_code_snippets",
@@ -58,13 +54,11 @@ tests = [
   "module_map_lsp",
   "module_navigation_lsp",
   "raw_pointer_audit_policy",
-  "resource_protocol_lsp",
   "source_modules_lsp",
   "module_discovery_lsp",
   "source_text_lsp",
 
   "compact_owner_layout_instrumented",
-  "issues_30_33_lsp",
   "llvm_atomic_wait_service",
   "llvm_mutex_service",
   "llvm_native_runtime_identity",
@@ -130,8 +124,6 @@ owners = [
   "scoped_configuration_defines",
 ]
 consumers = [
-  "concept_conditions_lsp",
-  "conditional_member_operators_lsp",
   "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
@@ -160,8 +152,6 @@ owners = [
   "nested_type_syntax",
 ]
 consumers = [
-  "concept_conditions_lsp",
-  "conditional_member_operators_lsp",
   "reference_parameter_packs_lsp",
   "lsp_protocol",
   "comment_placement_lsp",
@@ -334,13 +324,10 @@ owners = [
   "consuming_receiver_types",
 ]
 consumers = [
-  "concept_conditions_lsp",
-  "conditional_member_operators_lsp",
   "reference_parameter_packs_lsp",
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
-  "semantic_call_regressions_lsp",
   "generic_algorithm_errors",
   "generic_algorithm_breadth",
 ]
@@ -1205,7 +1192,6 @@ owners = [
   "charconv_runtime",
 ]
 consumers = [
-  "extensible_formatting_lsp",
   "source_text_pipeline",
 ]
 
@@ -1261,7 +1247,6 @@ owners = [
   "unique_class_allocation_runtime",
   "allocator_storage_runtime",
   "programmable_allocators_runtime",
-  "resource_protocol_lsp",
   "inline_polymorphic_runtime",
   "owned_inline_consumption_runtime",
   "polymorphic_owner_cleanup_runtime",

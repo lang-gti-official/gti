@@ -1,0 +1,28 @@
+// Member completion on a resource vector lists its recoverable operations.
+// (From resource_protocol_lsp_test.py.)
+//@ completion @dot: try_push_back try_emplace_back try_reserve push_back capacity release
+import std.resource_vector;
+import std.resource;
+import std.memory;
+struct Pool { Pool() = default;
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    return unexpected(std::alloc_errc::resource_exhausted);
+  }
+  unsafe void release(std::raw_allocation allocation) {}
+  void reset() mut {}
+};
+int fill(std::resource_ref<Pool> resource) {
+  mut std::resource_vector<int, Pool> values{resource};
+  auto pushed = values./*@dot*/;  //~ ERROR GTI-P0001
+  return pushed ? 0 : 1;  //~ ERROR GTI-S2001
+}
+int main() {
+  mut Pool pool{};
+  unsafe {
+    /*😀*/ auto resource = std::bind_resource(pool);
+    int status = fill(resource);
+    if (status != 1) { return status; }
+  }
+  pool.reset();
+  return 0;
+}

@@ -1,0 +1,5 @@
+// An old `[[deferred]]` declaration is reported.
+// (From deferred_assertion_lsp_test.py.)
+[[deferred]] void old() {}  //~ ERROR GTI-S2099
+import std.assert;
+int main() { /*😀*/ std::assert!(true); return 0; }
