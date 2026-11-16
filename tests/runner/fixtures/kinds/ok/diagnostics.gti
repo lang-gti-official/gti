@@ -1,0 +1,5 @@
+// The full rendering of a diagnostic, as gti prints it.
+//@ snapshot: diagnostics
+int main() {
+  return missing;  //~ ERROR GTI-S2001
+}
