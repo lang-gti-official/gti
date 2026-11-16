@@ -1,0 +1,31 @@
+// Revisions build once and run once per revision with their own inputs.
+//@ run-pass
+//@ revisions: none one two
+//@ stdout: shared
+//@[none] stdout: none
+//@[one] args: a
+//@[two] run-fail
+//@[two] args: a b
+//@[two] exit-code: 3
+//@[two] stdin: piped
+import std.io;
+import std.string;
+import std.vector;
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc == 1) {
+    std::println("none");
+    return 0;
+  }
+  if (argc == 2) {
+    std::println("shared");
+    return 0;
+  }
+  mut std::io::stdin_reader input{};
+  mut std::string line{};
+  auto read = std::io::getline(input, line);
+  if (read && read.value() == std::size_t(5)) {
+    std::println("two");
+  }
+  return 3;
+}

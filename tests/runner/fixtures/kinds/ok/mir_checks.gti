@@ -1,0 +1,10 @@
+// Patterns over the test's whole MIR instead of a blessed file.
+//@ snapshot: mir
+// CHECK: function main
+// CHECK-NEXT: mir-body
+// CHECK: operation=sub
+// CHECK-NOT: operation=add
+// CHECK: function sum
+// CHECK: operation=add
+int sum(int a, int b) { return a + b; }
+int main() { return sum(1, 2) - 3; }

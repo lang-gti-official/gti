@@ -1,0 +1,46 @@
+// binary32 decimal text output matches C's printf("%f") for the same values.
+//@ run-pass
+import std.string;
+
+int main() {
+  // Exact halves and quarters are exact in binary32.
+  std::println(std::to_string(1.5));
+  std::println(std::to_string(-3.25));
+
+  // 2.675 is stored as 2.6749999523162841796875: the seventh exact digit is
+  // nine, so nearest rounding must carry into "2.675000".
+  std::println(std::to_string(2.675));
+
+  // 0.1 is stored slightly above one tenth.
+  std::println(std::to_string(0.1));
+
+  // Zero and the 2^24 boundary where fractional bits disappear.
+  std::println(std::to_string(0.0));
+  std::println(std::to_string(16777216.0));
+
+  // Beyond int64 range: the digits come from exact decimal doubling.
+  float huge = 1000000000000000000000000000000.0;
+  std::println(std::to_string(huge));
+
+  // Below the sixth fractional digit.
+  std::println(std::to_string(0.0000001));
+
+  // Exact binary halfway cases: retain an even sixth digit, raise an odd one.
+  std::println(std::to_string(0.0078125));
+  std::println(std::to_string(0.0234375));
+
+  // The sign bit of zero is observable in the decimal contract.
+  std::println(std::to_string(-0.0));
+
+  // Non-finite values.
+  float infinite = huge * huge;
+  std::println(std::to_string(infinite));
+  std::println(std::to_string(-infinite));
+  std::println(std::to_string(infinite - infinite));
+
+  // print/println overloads share the same contract.
+  std::print(1.5);
+  std::print(" ");
+  std::println(-2.25);
+  return 0;
+}

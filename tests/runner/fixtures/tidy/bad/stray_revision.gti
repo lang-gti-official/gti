@@ -1,0 +1,5 @@
+// A revision directive must name a declared revision.
+//@ run-pass
+//@ revisions: first second
+//@[third] args: x
+int main() { return 0; }

@@ -1,0 +1,49 @@
+// Passive expected payload copies and call-result publication preserve MIR storage.
+//@ run-fail
+//@ revisions: default error producer-failure
+//@[default] exit-code: 70
+//@[default] stdout: caller cleaned
+//@[default] stderr-contains: expected_passive_publication_failure.gti:24: runtime error[GTI-R0009]: invalid_expected_access in value_on_error
+//@[error] args: error
+//@[error] exit-code: 70
+//@[error] stdout: caller cleaned
+//@[error] stderr-contains: expected_passive_publication_failure.gti:29: runtime error[GTI-R0009]: invalid_expected_access in error_on_value
+//@[producer-failure] args: producer failure
+//@[producer-failure] exit-code: 70
+//@[producer-failure] stdout: caller cleaned
+//@[producer-failure] stderr-contains: expected_passive_publication_failure.gti:18: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- expected_passive_publication_failure.gti
+import std.string;
+import std.vector;
+
+struct Marker {
+  int number;
+  Marker(int number) : number(number) {}
+};
+class Guard {
+public:
+  ~Guard() { std::println("caller cleaned"); }
+public:
+  Guard() = default;
+};
+expected<Marker, Marker> alternative(bool success) {
+  if (success) { return Marker(1); }
+  return unexpected(Marker(2));
+}
+Marker checked(int divisor) { return Marker(10 / divisor); }
+expected<Marker, int> wrapped(int divisor) { return checked(divisor); }
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard = Guard();
+  if (argc == 1) {
+    auto result = alternative(false);
+    Marker copy = result.value();
+    return copy.number;
+  }
+  if (argc == 2) {
+    auto result = alternative(true);
+    Marker copy = result.error();
+    return copy.number;
+  }
+  auto result = wrapped(0);
+  return result.has_value() ? 1 : 2;
+}

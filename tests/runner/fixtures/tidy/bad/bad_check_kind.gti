@@ -1,0 +1,4 @@
+// An unknown pattern kind.
+//@ snapshot: llvm-ir
+// CHECK-SAME: something
+int main() { return 0; }

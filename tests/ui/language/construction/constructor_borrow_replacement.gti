@@ -1,0 +1,85 @@
+// Constructor-input loans retire without consuming the replacement owner.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 1
+//@[run1] stdout: 99
+//@[run1] stdout: 2
+//@[run1] stdout: 9
+//@[run2] run-fail
+//@[run2] args: rhs
+//@[run2] exit-code: 70
+//@[run2] stdout: 1
+//@[run2] stdout: 9
+//@[run2] stderr-contains: constructor_borrow_replacement.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: old cleanup
+//@[run3] exit-code: 70
+//@[run3] stdout: 1
+//@[run3] stdout: 2
+//@[run3] stdout: 9
+//@[run3] stderr-contains: constructor_borrow_replacement.gti:25: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: after commit failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 1
+//@[run4] stdout: 2
+//@[run4] stdout: 9
+//@[run4] stderr-contains: constructor_borrow_replacement.gti:42: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: double failure during cleanup
+//@[run5] exit-code: 70
+//@[run5] stdout: 1
+//@[run5] stdout: 2
+//@[run5] stderr-contains: constructor_borrow_replacement.gti:28: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at constructor_borrow_replacement.gti:25; secondary [GTI-R0002]
+// --- constructor_borrow_replacement.gti
+import std.string;
+import std.vector;
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+struct Trace {
+  ~Trace() { std::println(9); }
+public:
+  Trace() = default;
+};
+
+struct Item {
+  mut std::string text;
+  int32_t id;
+  Item(std::string_view value, int32_t identity)
+      : text(std::string(value)), id(identity) {
+    if (id == 2 && phase == 1) {
+      int32_t constructor_failure = 11 / zero;
+    }
+  }
+  ~Item() {
+    std::println(id);
+    if (id == 1 && (phase == 2 || phase == 4)) {
+      int32_t old_cleanup_failure = 13 / zero;
+    }
+    if (id == 2 && phase == 4) {
+      int32_t staged_cleanup_failure = 17 / zero;
+    }
+  }
+};
+
+int run() {
+  Trace trace{};
+  mut std::string source{"new"};
+  mut Item target{"old", 1};
+  target = Item(source.view(), 2);
+  // The argument's temporary loan has ended, but both owners remain live.
+  source.append("!");
+  if (target.text != "new" || source != "new!") return 1;
+  if (phase == 3) {
+    int32_t after_commit_failure = 19 / zero;
+  }
+  std::println(99);
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  return run();
+}
