@@ -86,7 +86,10 @@ def self_test(runner):
     faults = {"GTI_TEST_TIME_SCALE": "0.1"}
     code, out = run(runner, FIXTURES / "faults", "--jobs", "2", env=faults)
     expect(code == 1, "faults fail the run", out)
-    expect("the worker died with SIGSEGV" in block(out, "CRASH", "crash.gti"),
+    # A sanitized runner's handler reports the SIGSEGV and then aborts.
+    crash = block(out, "CRASH", "crash.gti")
+    expect("the worker died with SIGSEGV" in crash or
+           "the worker died with SIGABRT" in crash,
            "a crash is attributed to its case", out)
     expect("never blessable" in block(out, "ICE", "ice.gti"),
            "an internal compiler error is reported", out)
