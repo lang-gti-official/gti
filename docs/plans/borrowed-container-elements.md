@@ -156,3 +156,25 @@ macOS arm64), bound to `537a058de` and snapshot
 `03126430c06e7c599c03a1ca4154b952051074f038da8dd2485c4ee224b022f8`.
 The follow-up probes used an override object linked against that build; they
 are diagnostic evidence and do not constitute a clean-head verification.
+
+
+### Retention integration repair
+
+The main library's constant-evaluation allocation provider introduced allocation
+and release intrinsics into ordinary container and string bodies. The carrier
+analysis treated both as unknown retaining calls, poisoning the independently
+reconstructed storage effects of their callers and cleanup. The byte provider
+allocates fresh raw storage or releases it; neither operation stores a checked
+reference/view in a caller-owned slot. Carrier analysis now recognizes those
+exact primitive signatures while preserving their allocation, trapping and
+memory effects. Ordinary calls with matching shapes and malformed checked
+reference inputs do not acquire that contract.
+
+A controlled comparison using the same compiler with the earlier library
+passed the four failing owner-replacement, owned-initialization, fixed-array,
+and growable-view probes; restoring only the earlier memory-storage provider
+also recovered them. With the correction and the current library, targeted
+shared-reference-copy, owned-storage, growable-retention, conditional-cleanup
+and array-text tests pass. The MIR carrier-flow suite passes its new primitive
+classification and negative controls. The entire recorded focused plan must
+still pass on the published corrected head before integration.

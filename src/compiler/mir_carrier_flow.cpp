@@ -331,7 +331,7 @@ Fact placeFact(const MirBody &body, const State &state, MirPlaceId id,
 // external owners. This is access provenance, never a physical storage target
 // or a claim about borrowed contents inside the referent.
 Fact scalarReferenceFieldOwners(const MirBody &body, const State &state,
-                               MirPlaceId id, bool expired) {
+                                MirPlaceId id, bool expired) {
   const auto *place = body.findPlace(id);
   if (!place || place->foreignStorage ||
       place->root != MirPlaceRootKind::Binding ||
@@ -458,7 +458,8 @@ Fact operandRead(const MirBody &body, const State &state,
                         operand.kind == MirOperandKind::Move)) {
     auto accessed = placeFact(body, state, operand.place, expired);
     if (!accessed)
-      accessed = scalarReferenceFieldOwners(body, state, operand.place, expired);
+      accessed =
+          scalarReferenceFieldOwners(body, state, operand.place, expired);
     join(read, accessed);
   }
   // Accessing a referent uses its physical loan even when its value is an
@@ -734,9 +735,33 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
               instruction.parameterTypes.front().arguments.front());
       const bool nonRetainingFailure =
           program && mir_detail::explicitFailure(*program, instruction);
-      bool checkedCallEffects =
-          nonRetainingIntrinsic || invocationRetentionContract ||
-          nonRetainingDestruction || scalarConstruction || nonRetainingFailure;
+      // The constant byte provider allocates fresh storage or releases raw
+      // storage. Neither operation publishes checked dependencies into a
+      // caller-owned slot. This is a retention fact only: their allocation,
+      // failure and memory effects remain in the canonical effect table.
+      const auto rawVoid = SemanticType::rawPointerTo(SemanticType::Void);
+      const bool constantStorage =
+          instruction.kind == MirInstructionKind::Call &&
+          !instruction.functionTarget && !instruction.constructorTarget &&
+          !instruction.receiver && !instruction.loan &&
+          instruction.operands.size() == instruction.parameterTypes.size() &&
+          std::equal(instruction.operands.begin(), instruction.operands.end(),
+                     instruction.parameterTypes.begin(),
+                     [](const auto &operand, const auto &type) {
+                       return operand.type == type;
+                     }) &&
+          ((instruction.intrinsic == IntrinsicKind::ConstantAllocate &&
+            instruction.info.type == rawVoid &&
+            instruction.parameterTypes ==
+                std::vector<SemanticType>{SemanticType::UInt64,
+                                          SemanticType::UInt64}) ||
+           (instruction.intrinsic == IntrinsicKind::ConstantRelease &&
+            instruction.info.type == SemanticType::Void &&
+            instruction.parameterTypes == std::vector<SemanticType>{rawVoid}));
+      bool checkedCallEffects = nonRetainingIntrinsic ||
+                                invocationRetentionContract ||
+                                nonRetainingDestruction || scalarConstruction ||
+                                nonRetainingFailure || constantStorage;
       const bool ownedInitialization =
           program && mir_detail::objectInitializeOwned(*program, instruction);
       const bool ownedRelocation =

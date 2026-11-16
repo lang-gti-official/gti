@@ -92,6 +92,43 @@ void intrinsicRetentionEffects() {
       "raw writes override a normally non-retaining intrinsic classification");
 }
 
+void constantStorageRetentionEffects() {
+  const auto rawVoid = SemanticType::rawPointerTo(SemanticType::Void);
+  for (const auto kind :
+       {IntrinsicKind::ConstantAllocate, IntrinsicKind::ConstantRelease}) {
+    auto mir = body();
+    MirInstruction call;
+    call.id = 1;
+    call.kind = MirInstructionKind::Call;
+    call.intrinsic = kind;
+    call.info.type =
+        kind == IntrinsicKind::ConstantAllocate ? rawVoid : SemanticType::Void;
+    call.parameterTypes = kind == IntrinsicKind::ConstantAllocate
+                              ? std::vector<SemanticType>{SemanticType::UInt64,
+                                                          SemanticType::UInt64}
+                              : std::vector<SemanticType>{rawVoid};
+    for (const auto &type : call.parameterTypes)
+      call.operands.push_back({.kind = MirOperandKind::Constant, .type = type});
+    mir.blocks[0].instructions = {call};
+    expect(deriveMirCarrierFlow(mir).effectsComplete,
+           "constant allocation and release do not retain checked inputs");
+    expect(
+        kind == IntrinsicKind::ConstantAllocate
+            ? effects(call).allocates
+            : effects(call).writesUnknownMemory,
+        "retention precision preserves allocation and release memory effects");
+    mir.blocks[0].instructions[0].operands[0].type = SemanticType::referenceTo(
+        SemanticType::StringView, AccessMode::ReadOnly);
+    expect(!deriveMirCarrierFlow(mir).effectsComplete,
+           "a checked reference cannot masquerade as a byte provider input");
+    mir.blocks[0].instructions[0] = call;
+    mir.blocks[0].instructions[0].intrinsic = IntrinsicKind::None;
+    expect(
+        !deriveMirCarrierFlow(mir).effectsComplete,
+        "ordinary allocation-shaped calls need an independent retention proof");
+  }
+}
+
 void unsafeMarkedCheckedCopyEffects() {
   auto mir = body();
   SemanticType record;
@@ -1417,11 +1454,12 @@ void scalarProjectionStillReadsCarrier() {
   staged.blocks[0].instructions.push_back(
       store(6, 4, {.kind = MirOperandKind::Value, .value = 1}));
   const auto stagedFlow = deriveMirCarrierFlow(staged);
-  expect(stagedFlow.reads.at(2) == set({2}) &&
-             stagedFlow.unavailableReads.at(2) == set({2}) &&
-             stagedFlow.stores.at(6) == set({2}) &&
-             stagedFlow.unavailableReads.at(6) == set({2}),
-         "a staged scalar reference keeps the current owner and its expiration");
+  expect(
+      stagedFlow.reads.at(2) == set({2}) &&
+          stagedFlow.unavailableReads.at(2) == set({2}) &&
+          stagedFlow.stores.at(6) == set({2}) &&
+          stagedFlow.unavailableReads.at(6) == set({2}),
+      "a staged scalar reference keeps the current owner and its expiration");
   mir.places[2].projections.back().kind = MirProjectionKind::RawDereference;
   expect(!deriveMirCarrierFlow(mir).reads.at(2),
          "raw pointer fields do not inherit checked reference-field reads");
@@ -1647,6 +1685,7 @@ void partialFactsExtendLiveness() {
 } // namespace
 int main() {
   intrinsicRetentionEffects();
+  constantStorageRetentionEffects();
   unsafeMarkedCheckedCopyEffects();
   unsafeReferenceStagingEffects();
   directReceiverReadIsolation();
