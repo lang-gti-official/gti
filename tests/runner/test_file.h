@@ -90,7 +90,22 @@ struct RunSpec {
   std::optional<int> exitCode;
   std::vector<std::string> args;
   std::optional<std::string> stdinText;
+  // A sibling `name.stdin` (`name.<revision>.stdin`): bytes, which may hold
+  // NUL or non-UTF-8 data that a `//@ stdin:` line cannot.
+  std::optional<std::filesystem::path> stdinFile;
+  // `//@ exit-signal: SIGABRT`: the program must die of this signal.
+  std::optional<int> exitSignal;
+  // `//@ env: NAME=value`: added to the program's environment.
+  std::vector<std::pair<std::string, std::string>> env;
 };
+
+// The signal number of a `SIGABRT`-style name, or nullopt.
+[[nodiscard]] std::optional<int> signalNumber(const std::string &name);
+[[nodiscard]] std::string signalText(int signal);
+
+// How a non-`.gti` section takes part in a build (`// --- helper.c`).
+enum class NativeKind { None, C, Cpp, Header };
+[[nodiscard]] NativeKind nativeKind(const std::string &sectionName);
 
 // `//@ hover @a: text` and the other LSP expectations: the request, its
 // arguments (marker, new name) and the expected value.
@@ -117,8 +132,10 @@ struct TestFile {
   std::optional<std::filesystem::path> stdoutFile;
   std::vector<std::string> stderrContains;
   std::optional<int> exitCode;
+  std::optional<int> exitSignal;
   std::vector<std::string> args;
   std::optional<std::string> stdinText;
+  std::vector<std::pair<std::string, std::string>> env;
   bool optimize = false; // `//@ opt: O3`
   bool slow = false;
   // `//@ format-stable`: formatting the test is idempotent and the formatted
@@ -131,6 +148,18 @@ struct TestFile {
   // requirement executable backends apply (FrontendOptions'
   // requireFunctionDefinitions); always on for build and run tests.
   bool requireFunctionDefinitions = false;
+  // `//@ define: NAME` (gti -D NAME): valueless configuration flags.
+  std::vector<std::string> defines;
+  // `//@ raw-pointer-audit: off|warn|strict` (gti --raw-pointer-audit=) and
+  // `//@ raw-pointer-audit-library-findings`.
+  std::string rawPointerAudit = "off";
+  bool rawPointerAuditLibraryFindings = false;
+  // `//@ native-args: ...`: what follows `--` on a gti command line, passed
+  // to the native build (link flags, sanitizer flags for C/C++ sections).
+  std::vector<std::string> nativeArgs;
+  // `//@ stdlib-overlay: std/x.gti ...`: sections written over a private
+  // copy of the standard library instead of beside the test.
+  std::vector<std::string> stdlibOverlay;
   std::vector<Snapshot> snapshots;
   // `//@ mir-function: name`; empty snapshots every function of the test.
   std::vector<std::string> mirFunctions;
@@ -195,5 +224,15 @@ blessAnnotations(const TestFile &test,
 // `name.<revision>.stdout`.
 [[nodiscard]] std::filesystem::path
 stdoutPathFor(const std::filesystem::path &test, const std::string &revision);
+// `name.stdin`, or `name.<revision>.stdin`.
+[[nodiscard]] std::filesystem::path
+stdinPathFor(const std::filesystem::path &test, const std::string &revision);
+
+// Whether `text` can be written as inline `//@ stdout:` lines: printable
+// UTF-8 without NUL or other control bytes (tabs and CR included).
+[[nodiscard]] bool inlineSafe(const std::string &text);
+// `text` with NUL, other control bytes and invalid UTF-8 written as `\xNN`,
+// for failure messages.
+[[nodiscard]] std::string visibleBytes(const std::string &text);
 
 } // namespace gti_test

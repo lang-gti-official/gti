@@ -1,0 +1,7 @@
+// raw-pointer-audit: strict promotes an audit finding to an error.
+//@ raw-pointer-audit: strict
+int main() {
+  mut const int* pointer = nullptr;
+  { int value = 7; pointer = &value; }
+  unsafe { return *pointer; }  //~ ERROR GTI-S2101
+}

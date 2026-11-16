@@ -152,7 +152,15 @@ def self_test(runner):
                     "revision 'third' is not declared",
                     "stray_revision.fourth.stdout: expected output without a test",
                     "project_bad/test.transcript: line 2: expectations follow",
-                    "project_bad/test.transcript: line 4: exit codes are"):
+                    "project_bad/test.transcript: line 4: exit codes are",
+                    "bad_overlay.gti: line 0: stdlib-overlay names "
+                    "'missing.gti', which is neither a section nor",
+                    "native_check.gti: line 0: C/C++ sections and native-args "
+                    "need build-pass",
+                    "reserved_native_args.gti: line 0: native-args cannot pass '-o'",
+                    "signal_run_pass.gti: line 4: configuration flag '9bad'",
+                    "signal_run_pass.gti: line 5: env is written",
+                    "signal_run_pass.gti: line 0: exit-signal needs run-fail"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -177,10 +185,12 @@ def kinds_self_test(runner):
     """Parse-only modes, analysis options and snapshot kinds."""
     for isolate in ((), ("--isolate",)):
         code, out = run(runner, FIXTURES / "kinds", "--jobs", "4", *isolate)
-        expect(code == 0 and "RESULT ok: 11 passed, 0 failed" in out,
+        expect(code == 0 and "RESULT ok: 19 passed, 0 failed" in out,
                f"the other test kinds pass {isolate}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "kinds")
     expect(code == 0, "tidy accepts the kind fixtures", out)
+
+    features_self_test(runner)
 
     code, out = run(runner, FIXTURES / "snapshot", "--jobs", "4")
     expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
@@ -219,6 +229,33 @@ def kinds_self_test(runner):
         code, out = run(runner, work, "--jobs", "4")
         expect("RESULT fail: 3 passed, 3 failed" in out,
                "blessed snapshots pass", out)
+
+
+def features_self_test(runner):
+    """Native sections, signals and binary output: the failure paths."""
+    code, out = run(runner, FIXTURES / "features/fail", "--jobs", "3")
+    expect(code == 1 and "RESULT fail: 0 passed, 3 failed, 0 ice" in out,
+           "failing feature fixtures fail (not as internal errors)", out)
+    expect("expected: terminated by SIGSEGV\n  actual:   terminated by SIGABRT"
+           in block(out, "FAIL", "wrong_signal.gti"),
+           "the wrong signal is reported", out)
+    expect("-a\\x00c\n      +a\\x00b" in block(out, "FAIL", "binary_mismatch.gti"),
+           "binary stdout differences are shown escaped", out)
+    native = block(out, "FAIL", "native_error.gti")
+    expect("a C/C++ section did not compile" in native and
+           "broken.c:1:27: error:" in native and "/case/" not in native,
+           "a C section that does not compile shows the C compiler output", out)
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory) / "bless"
+        shutil.copytree(FIXTURES / "features/bless", work)
+        code, out = run(runner, work, "--bless")
+        test = work / "nul_stdout.gti"
+        expect(code == 0 and "stdout:" not in test.read_text() and
+               (work / "nul_stdout.stdout").read_bytes() == b"x\0y\n",
+               "bless writes NUL output to a sibling .stdout, not inline",
+               out + test.read_text())
+        code, out = run(runner, work)
+        expect(code == 0, "the blessed binary output passes", out)
 
 
 def project_self_test(runner):

@@ -1,7 +1,12 @@
 #include "test_file.h"
 
+#include "gti/configuration_flags.h"
+#include "gti/driver/native_toolchain.h"
+
 #include <algorithm>
 #include <cctype>
+#include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -101,6 +106,38 @@ bool underSlowDirectory(const std::filesystem::path &path) {
 }
 
 } // namespace
+
+std::optional<int> signalNumber(const std::string &name) {
+  static const std::map<std::string, int> names = {
+      {"SIGABRT", SIGABRT}, {"SIGSEGV", SIGSEGV}, {"SIGBUS", SIGBUS},
+      {"SIGILL", SIGILL},   {"SIGFPE", SIGFPE},   {"SIGTRAP", SIGTRAP},
+      {"SIGKILL", SIGKILL}, {"SIGTERM", SIGTERM}, {"SIGPIPE", SIGPIPE}};
+  const auto found = names.find(name);
+  if (found == names.end())
+    return std::nullopt;
+  return found->second;
+}
+
+std::string signalText(int signal) {
+  for (const char *name : {"SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE",
+                           "SIGTRAP", "SIGKILL", "SIGTERM", "SIGPIPE"})
+    if (signalNumber(name) == signal)
+      return name;
+  return "signal " + std::to_string(signal);
+}
+
+NativeKind nativeKind(const std::string &sectionName) {
+  const std::string extension =
+      std::filesystem::path(sectionName).extension().string();
+  if (extension == ".c")
+    return NativeKind::C;
+  if (extension == ".cpp" || extension == ".cc" || extension == ".cxx" ||
+      extension == ".mm")
+    return NativeKind::Cpp;
+  if (extension == ".h" || extension == ".hpp" || extension == ".inc")
+    return NativeKind::Header;
+  return NativeKind::None;
+}
 
 const char *modeName(Mode mode) {
   switch (mode) {
@@ -344,6 +381,25 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       std::string line =
           !value.empty() && value.front() == ' ' ? value.substr(1) : value;
       target.stdinText = target.stdinText.value_or("") + line + "\n";
+    } else if (name == "exit-signal") {
+      const std::optional<int> signal = signalNumber(trimmed);
+      if (!signal)
+        error(lineNumber, "exit-signal is a name such as SIGABRT or SIGSEGV");
+      else if (target.exitSignal)
+        error(lineNumber, "duplicate exit-signal");
+      else
+        target.exitSignal = signal;
+    } else if (name == "env") {
+      const std::size_t equals = trimmed.find('=');
+      const std::string variable =
+          equals == std::string::npos ? "" : trimmed.substr(0, equals);
+      if (variable.empty() ||
+          !std::all_of(variable.begin(), variable.end(), [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+          }))
+        error(lineNumber, "env is written `//@ env: NAME=value`");
+      else
+        target.env.emplace_back(variable, trimmed.substr(equals + 1));
     } else {
       return false;
     }
@@ -400,7 +456,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         entry.given.insert(name);
       } else {
         error(lineNumber, "only run-pass, run-fail, stdout, stderr-contains, "
-                          "exit-code, args and stdin vary by revision");
+                          "exit-code, exit-signal, args, stdin and env vary "
+                          "by revision");
       }
       continue;
     }
@@ -461,6 +518,38 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (hasValue)
         error(lineNumber, "'require-function-definitions' takes no value");
       test.requireFunctionDefinitions = true;
+    } else if (name == "define") {
+      const std::vector<std::string> flags = splitWords(trimmed);
+      if (flags.empty())
+        error(lineNumber, "define takes configuration flag names");
+      for (const std::string &flag : flags) {
+        if (!lang::isConfigurationFlagName(flag))
+          error(lineNumber, "configuration flag '" + flag +
+                                "' is not an ordinary GTI identifier");
+        else
+          test.defines.push_back(flag);
+      }
+    } else if (name == "raw-pointer-audit") {
+      if (trimmed != "off" && trimmed != "warn" && trimmed != "strict")
+        error(lineNumber, "raw-pointer-audit must be off, warn or strict");
+      test.rawPointerAudit = trimmed;
+    } else if (name == "raw-pointer-audit-library-findings") {
+      if (hasValue)
+        error(lineNumber,
+              "'raw-pointer-audit-library-findings' takes no value");
+      test.rawPointerAuditLibraryFindings = true;
+    } else if (name == "native-args") {
+      const std::vector<std::string> words = splitWords(trimmed);
+      if (words.empty())
+        error(lineNumber, "native-args needs arguments");
+      for (const std::string &word : words)
+        test.nativeArgs.push_back(word);
+    } else if (name == "stdlib-overlay") {
+      const std::vector<std::string> words = splitWords(trimmed);
+      if (words.empty())
+        error(lineNumber, "stdlib-overlay names `// --- std/...` sections");
+      for (const std::string &word : words)
+        test.stdlibOverlay.push_back(word);
     } else if (name == "snapshot") {
       const std::optional<Snapshot> kind =
           trimmed == "mir"           ? std::optional(Snapshot::Mir)
@@ -508,8 +597,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   test.hasInlineStdout = shared.hasInlineStdout;
   test.stderrContains = shared.stderrContains;
   test.exitCode = shared.exitCode;
+  test.exitSignal = shared.exitSignal;
   test.args = shared.args;
   test.stdinText = shared.stdinText;
+  test.env = shared.env;
 
   // FileCheck-style patterns.
   for (std::size_t index = 0; index < lines.size(); ++index) {
@@ -613,7 +704,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     if (!test.snapshots.empty() || !test.checks.empty() || test.optimize ||
         test.concurrent || test.requireFunctionDefinitions ||
         test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
-        !test.args.empty() || test.stdinText)
+        test.exitSignal || !test.args.empty() || test.stdinText ||
+        !test.env.empty() || !test.defines.empty() ||
+        test.rawPointerAudit != "off" || test.rawPointerAuditLibraryFindings ||
+        !test.nativeArgs.empty() || !test.stdlibOverlay.empty())
       error(0, "LSP tests take only LSP expectations and annotations");
     test.groupKey = "lsp";
     return test;
@@ -647,6 +741,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
                  (modeParses(test.mode) ? "parse-fail" : "check-fail"));
   if (modeParses(test.mode) &&
       (test.concurrent || test.requireFunctionDefinitions || test.optimize ||
+       !test.defines.empty() || test.rawPointerAudit != "off" ||
+       test.rawPointerAuditLibraryFindings || !test.stdlibOverlay.empty() ||
        std::any_of(test.snapshots.begin(), test.snapshots.end(),
                    [](Snapshot s) { return s != Snapshot::Format; })))
     error(0, "parse tests take no analysis directives or mir, llvm-ir or "
@@ -668,9 +764,41 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
              "not both");
   if (!modeRuns(test.mode) &&
       (test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
-       !test.args.empty() || test.stdinText))
-    error(0, "stdout/stderr-contains/exit-code/args/stdin need run-pass or "
+       test.exitSignal || !test.args.empty() || test.stdinText ||
+       !test.env.empty()))
+    error(0, "stdout/stderr-contains/exit-code/exit-signal/args/stdin/env "
+             "need run-pass or run-fail");
+  // Native companions and stdlib overlays.
+  std::set<std::string> overlay(test.stdlibOverlay.begin(),
+                                test.stdlibOverlay.end());
+  for (const std::string &name : overlay) {
+    const auto found =
+        std::find_if(test.sections.begin(), test.sections.end(),
+                     [&](const Section &s) { return s.name == name; });
+    // A name that is not a section exposes an existing standard-library
+    // file (`std/detail/x.gti`) as a module of the private copy.
+    if (found == test.sections.end()) {
+      if (!name.starts_with("std/") || !name.ends_with(".gti") ||
+          name.find("..") != std::string::npos)
+        error(0, "stdlib-overlay names '" + name +
+                     "', which is neither a section nor a std/*.gti file");
+    } else if (found == test.sections.begin())
+      error(0, "the entry section cannot be a stdlib overlay");
+    else if (!name.ends_with(".gti") && name != "module-map.json")
+      error(0, "a stdlib overlay is a .gti file or module-map.json");
+  }
+  bool native = !test.nativeArgs.empty();
+  for (const Section &section : test.sections)
+    native = native || (nativeKind(section.name) != NativeKind::None &&
+                        !overlay.contains(section.name));
+  if (native && !modeBuilds(test.mode))
+    error(0, "C/C++ sections and native-args need build-pass, run-pass or "
              "run-fail");
+  for (const std::string &argument : test.nativeArgs)
+    if (lang::driver::isReservedNativeBuildArgument(argument))
+      error(0, "native-args cannot pass '" + argument +
+                   "': the driver owns output, language, optimization and "
+                   "target (as after `gti ... --`)");
   if (!test.revisions.empty() && !modeRuns(test.mode))
     error(0, "revisions need run-pass or run-fail");
   if ((test.optimize || !test.only.empty()) && test.reason.empty())
@@ -694,6 +822,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       error(0, "stdout is given both inline and in a .stdout file");
     test.stdoutFile = sharedStdout;
   }
+  if (std::filesystem::exists(stdinPathFor(path, "")) && !modeRuns(test.mode))
+    error(0, "an input .stdin file needs run-pass or run-fail");
   if (modeRuns(test.mode)) {
     const std::vector<std::string> names =
         test.revisions.empty() ? std::vector<std::string>{""} : test.revisions;
@@ -719,6 +849,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
           run.args = entry.spec.args;
         if (entry.given.contains("stdin"))
           run.stdinText = entry.spec.stdinText;
+        if (entry.given.contains("exit-signal"))
+          run.exitSignal = entry.spec.exitSignal;
+        if (entry.given.contains("env"))
+          run.env = entry.spec.env;
       }
       const std::string where =
           revision.empty() ? "" : "revision '" + revision + "': ";
@@ -735,6 +869,24 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
           run.stdoutFile = file;
         }
       }
+      // Binary stdin: a revision's own file, else the shared one.
+      for (const std::string &candidate :
+           revision.empty() ? std::vector<std::string>{""}
+                            : std::vector<std::string>{revision, ""}) {
+        const std::filesystem::path file = stdinPathFor(path, candidate);
+        if (std::filesystem::exists(file)) {
+          if (run.stdinText)
+            error(0, where + "stdin is given both inline and in " +
+                         file.filename().string());
+          run.stdinFile = file;
+          break;
+        }
+      }
+      if (run.exitSignal && run.mode != Mode::RunFail)
+        error(0, where + "exit-signal needs run-fail");
+      if (run.exitSignal && run.exitCode)
+        error(0, where + "a program exits with a code or dies of a signal, "
+                         "not both");
       if (run.mode == Mode::RunPass && run.exitCode && *run.exitCode != 0)
         error(0, where + "run-pass expects exit code 0; use run-fail");
       if (run.mode == Mode::RunFail && run.exitCode && *run.exitCode == 0)
@@ -743,12 +895,24 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     }
   }
 
+  // Everything that changes the analysis is part of the key, so tests that
+  // can share a standard-library preamble run back to back.
   test.groupKey = std::string(modeParses(test.mode)   ? "parse"
                               : modeBuilds(test.mode) ? "build"
                                                       : "check") +
                   (test.optimize ? ":O3" : ":O0") +
                   (test.concurrent ? ":concurrent" : "") +
-                  (test.requireFunctionDefinitions ? ":definitions" : "");
+                  (test.requireFunctionDefinitions ? ":definitions" : "") +
+                  ":audit=" + test.rawPointerAudit +
+                  (test.rawPointerAuditLibraryFindings ? "+library" : "");
+  std::vector<std::string> defines = test.defines;
+  std::sort(defines.begin(), defines.end());
+  for (const std::string &flag : defines)
+    test.groupKey += ":D" + flag;
+  for (const Section &section : test.sections)
+    if (overlay.contains(section.name))
+      test.groupKey += ":overlay=" + section.name + "#" +
+                       std::to_string(std::hash<std::string>{}(section.text));
   for (const Section &section : test.sections)
     test.groupKey += "|" + section.name;
   test.groupKey += "\n" + imports;
@@ -860,6 +1024,69 @@ std::filesystem::path stdoutPathFor(const std::filesystem::path &test,
   std::filesystem::path result = test;
   result.replace_extension(revision.empty() ? ".stdout"
                                             : "." + revision + ".stdout");
+  return result;
+}
+
+std::filesystem::path stdinPathFor(const std::filesystem::path &test,
+                                   const std::string &revision) {
+  std::filesystem::path result = test;
+  result.replace_extension(revision.empty() ? ".stdin"
+                                            : "." + revision + ".stdin");
+  return result;
+}
+
+namespace {
+
+// The length of the UTF-8 sequence at `index`, or 0 when it is invalid.
+std::size_t utf8Length(const std::string &text, std::size_t index) {
+  const auto byte = [&](std::size_t at) {
+    return static_cast<unsigned char>(text[at]);
+  };
+  const unsigned char lead = byte(index);
+  std::size_t length = lead < 0x80             ? 1
+                       : (lead & 0xE0) == 0xC0 ? 2
+                       : (lead & 0xF0) == 0xE0 ? 3
+                       : (lead & 0xF8) == 0xF0 ? 4
+                                               : 0;
+  if (length == 0 || (length == 2 && lead < 0xC2) ||
+      index + length > text.size())
+    return 0;
+  for (std::size_t at = index + 1; at < index + length; ++at)
+    if ((byte(at) & 0xC0) != 0x80)
+      return 0;
+  return length;
+}
+
+} // namespace
+
+bool inlineSafe(const std::string &text) {
+  for (std::size_t index = 0; index < text.size();) {
+    const unsigned char c = static_cast<unsigned char>(text[index]);
+    if ((c < 0x20 && c != '\n') || c == 0x7F)
+      return false;
+    const std::size_t length = utf8Length(text, index);
+    if (length == 0)
+      return false;
+    index += length;
+  }
+  return true;
+}
+
+std::string visibleBytes(const std::string &text) {
+  std::string result;
+  for (std::size_t index = 0; index < text.size();) {
+    const unsigned char c = static_cast<unsigned char>(text[index]);
+    const std::size_t length = utf8Length(text, index);
+    if (length == 0 || (c < 0x20 && c != '\n' && c != '\t') || c == 0x7F) {
+      char escaped[8];
+      std::snprintf(escaped, sizeof escaped, "\\x%02X", c);
+      result += escaped;
+      ++index;
+    } else {
+      result.append(text, index, length);
+      index += length;
+    }
+  }
   return result;
 }
 

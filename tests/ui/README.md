@@ -21,8 +21,9 @@ int main() {
   `//@ stdin: line`. Stdout is always compared; absent means empty.
 - Several runs of one program: `//@ revisions: a b`, then `//@[a] args: x`
   and the like. The program is built once and run once per revision. Only
-  `run-pass`, `run-fail`, `stdout`, `stderr-contains`, `exit-code`, `args`
-  and `stdin` take a revision; a revision's directive replaces the shared
+  `run-pass`, `run-fail`, `stdout`, `stderr-contains`, `exit-code`,
+  `exit-signal`, `args`, `stdin` and `env` take a revision; a revision's
+  directive replaces the shared
   (unprefixed) one of that name. A revision's expected-output file is
   `name.<revision>.stdout`.
 - `//@ opt: O3` and `//@ only: linux|macos|arm64|x86_64` need `//@ reason: …`.
@@ -33,6 +34,22 @@ int main() {
   annotation), `//~?` (outside the test's files, e.g. in std). Every error and
   warning must be annotated, and every annotation matched.
 - Several files: `// --- main.gti`, `// --- other.gti`; the first is the entry.
+- Native companions (build/run tests): `// --- helper.c` sections compile as
+  C17 and `.cpp` sections as C++, linked like a project's `c-sources` and
+  `cpp-sources`; `.h` sections are only written (the test directory is on the
+  include path). `//@ native-args: -lm …` is what `gti main.gti -- …`
+  forwards, to the C++ compile and the link.
+- Analysis flags, spelled as `gti`'s: `//@ define: NAME` (`-D NAME`),
+  `//@ raw-pointer-audit: off|warn|strict`,
+  `//@ raw-pointer-audit-library-findings`.
+- `//@ stdlib-overlay: std/x.gti …` writes those sections (or exposes an
+  existing `std/…` file) into a private copy of the standard library,
+  registering each new `std/a/b.gti` as module `a.b`; it analyses with its own
+  caches, so it costs a cold standard library.
+- `//@ exit-signal: SIGABRT` (run-fail): the program dies of that signal.
+  `//@ env: NAME=value`: a variable in the program's environment. Binary
+  input and output: sibling `name.stdin` / `name.stdout`, compared bytewise;
+  `--bless` writes output with NUL, control or non-UTF-8 bytes to the file.
 - Parse only: `//@ parse-pass` / `//@ parse-fail` stop after the lexer and
   parser (syntax and recovery tests; annotations as above).
 - Analysis options, named after the compiler's: `//@ execution-profile:
@@ -81,7 +98,8 @@ int main() { return sum(1, 2) - 3; }
 
 Rendering snapshots run `gti` in a separate process (about 0.1 s without
 imports); keep them free of imports. Under `--isolate`, parse modes and mir
-snapshots still run in-process; llvm-ir uses `gti --emit-llvm`.
+snapshots still run in-process; llvm-ir uses `gti --emit-llvm`; C++ sections
+go after `--`, and a test with C sections builds in-process.
 
 ```sh
 build-release/gti-test                          # everything in tests/ui

@@ -164,8 +164,9 @@ int tidy(const fs::path &root) {
                          displayPath(root));
       continue;
     }
-    if (extension == ".stdout") {
-      // name.stdout, or name.<revision>.stdout for a declared revision.
+    if (extension == ".stdout" || extension == ".stdin") {
+      // name.stdout, or name.<revision>.stdout for a declared revision (and
+      // the same for .stdin).
       const std::string stem = file.stem().string();
       const std::size_t dot = stem.find('.');
       const fs::path test = file.parent_path() / (stem.substr(0, dot) + ".gti");
