@@ -6803,6 +6803,18 @@ private:
 
   [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression);
 
+  // A written integer literal with a numeric suffix (`10u8`), optionally
+  // parenthesized and optionally carrying one sign. Its type is the suffix
+  // type; it never adopts a contextual type.
+  [[nodiscard]] static const LiteralExpr *
+  suffixedIntegerLiteral(const Expr *expression, bool allowSign = true);
+
+  [[nodiscard]] static SemanticType integerSuffixType(NumericSuffix suffix);
+
+  // Reports a suffixed literal whose signed value is outside its suffix type.
+  void checkSuffixedIntegerLiteralRange(const Expr &expression,
+                                        const LiteralExpr &literal);
+
   SemanticType analyzeContextualIntegerOperand(const ExprPtr &expression,
                                                SemanticType target);
 
@@ -7456,6 +7468,8 @@ private:
     // The value of the return statement whose declared type it initializes.
     const Expr *contextualReturnValue = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
+    // The suffixed literal whose range its enclosing sign already checked.
+    const LiteralExpr *signedSuffixedIntegerLiteral = nullptr;
     std::optional<ContextualCallableResult> contextualCallableResult;
     std::optional<ResultUse> contextualResultUse;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -7910,6 +7924,8 @@ private:
   const Expr *&contextualReturnValue = requestSession.contextualReturnValue;
   std::optional<SemanticType> &contextualOperatorIntegerType =
       requestSession.contextualOperatorIntegerType;
+  const LiteralExpr *&signedSuffixedIntegerLiteral =
+      requestSession.signedSuffixedIntegerLiteral;
   std::optional<ContextualCallableResult> &contextualCallableResult =
       requestSession.contextualCallableResult;
   std::optional<ResultUse> &contextualResultUse =

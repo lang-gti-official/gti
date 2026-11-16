@@ -992,7 +992,8 @@ target_link_libraries(
 )
 target_compile_features("gti_bindgen" PUBLIC cxx_std_20)
 
-add_library("gti_tree_sitter" MODULE "tree-sitter-gti/src/parser.c")
+add_library("gti_tree_sitter" MODULE "tree-sitter-gti/src/parser.c"
+                                       "tree-sitter-gti/src/scanner.c")
 target_include_directories(
   "gti_tree_sitter" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tree-sitter-gti/src"
 )

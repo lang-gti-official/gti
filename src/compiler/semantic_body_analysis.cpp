@@ -12070,6 +12070,14 @@ auto SemanticVisitor::Impl::conceptConditionRequirements(const Expr &expr) const
 }
 
 auto SemanticVisitor::Impl::visitLiteralExpr(const LiteralExpr &expr) -> void {
+  if (std::holds_alternative<std::uint64_t>(expr.value()) &&
+      isIntegerSuffix(expr.token().numericSuffix)) {
+    // The suffix is the literal's type; context never retypes it.
+    if (signedSuffixedIntegerLiteral != &expr)
+      checkSuffixedIntegerLiteralRange(expr, expr);
+    currentType = integerSuffixType(expr.token().numericSuffix);
+    return;
+  }
   if (contextualOperatorIntegerType &&
       std::holds_alternative<std::uint64_t>(expr.value())) {
     currentType = *contextualOperatorIntegerType;
@@ -12909,6 +12917,23 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
     contextualOperatorIntegerType = target;
     currentType = target;
     return;
+  }
+  if (expr.oper().kind == TokenKind::PLUS ||
+      expr.oper().kind == TokenKind::MINUS) {
+    // A sign written on a suffixed literal is part of that literal constant
+    // (`-128i8`), exactly as a contextual literal's sign is: the result has
+    // the suffix type and the signed value is range-checked once.
+    if (const LiteralExpr *literal =
+            suffixedIntegerLiteral(expr.right().get(), false)) {
+      checkSuffixedIntegerLiteralRange(expr, *literal);
+      semanticModel.recordContextualIntegerOperand(expr);
+      const LiteralExpr *enclosing =
+          std::exchange(signedSuffixedIntegerLiteral, literal);
+      (void)analyze(expr.right());
+      signedSuffixedIntegerLiteral = enclosing;
+      currentType = integerSuffixType(literal->token().numericSuffix);
+      return;
+    }
   }
   if (expr.oper().kind == TokenKind::MINUS) {
     if (const auto *literal =

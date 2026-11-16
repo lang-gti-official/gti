@@ -2029,6 +2029,22 @@ auto SemanticVisitor::Impl::registerEnums(const StmtList &statements,
           value = {.negative = constant->negative,
                    .magnitude = constant->magnitude};
           valueKnown = true;
+          // A suffixed value keeps its written type; it must be the backing
+          // type exactly, as an enum value never converts implicitly.
+          if (const LiteralExpr *suffixed =
+                  suffixedIntegerLiteral(enumerator.initializer.get());
+              suffixed != nullptr &&
+              integerSuffixType(suffixed->token().numericSuffix) !=
+                  underlying) {
+            report(suffixed->token(),
+                   "Scoped enum value has suffix type '" +
+                       typeSpelling(
+                           integerSuffixType(suffixed->token().numericSuffix)) +
+                       "', but the enum's backing type is '" +
+                       typeSpelling(underlying) + "'.",
+                   "GTI-S2036");
+            valueKnown = false;
+          }
         }
       } else if (!nextValue) {
         report(enumerator.name,

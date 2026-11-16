@@ -1247,6 +1247,15 @@ void collectCommentTokens(std::string_view source,
   };
 
   for (std::size_t index = 0; index < source.size();) {
+    if (source[index] == 'R' && index + 1 < source.size() &&
+        source[index + 1] == '"' &&
+        (index == 0 ||
+         !(std::isalnum(static_cast<unsigned char>(source[index - 1])) != 0 ||
+           source[index - 1] == '_'))) {
+      // A raw string may hold quotes and `//` without ending.
+      index = lang::scanRawStringLiteral(source, index).end;
+      continue;
+    }
     if (source[index] == '"' || source[index] == '\'') {
       const char delimiter = source[index];
       for (++index; index < source.size();) {
