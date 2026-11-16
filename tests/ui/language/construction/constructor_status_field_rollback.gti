@@ -1,0 +1,62 @@
+// Cleanup-free class fields retain exact constructor rollback semantics.
+//@ run-pass
+//@ revisions: default child later-failure
+//@[default] stdout: 30
+//@[default] stdout: 20
+//@[default] stdout: 40
+//@[default] stdout: 10
+//@[child] run-fail
+//@[child] args: child
+//@[child] exit-code: 70
+//@[child] stderr-contains: constructor_status_field_rollback.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-failure] run-fail
+//@[later-failure] args: later failure
+//@[later-failure] exit-code: 70
+//@[later-failure] stdout: 40
+//@[later-failure] stdout: 10
+//@[later-failure] stderr-contains: constructor_status_field_rollback.gti:35: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- constructor_status_field_rollback.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+struct Resource {
+  int divisor;
+  Resource(int divisor) : divisor(divisor) {}
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {
+    int checked = 1 / resource.divisor;
+  }
+  ~Guard() { std::println(10); }
+};
+class Leaf {
+public:
+  Leaf() {}
+  ~Leaf() { std::println(40); }
+};
+std::unique_ptr<Leaf> unused_metadata() {
+  std::println("must not evaluate overridden metadata default");
+  int32_t[1] values = {1};
+  int32_t index = 2;
+  std::println(values[index]);
+  return std::make_unique<Leaf>();
+}
+class Outer {
+  Guard guard;
+  std::unique_ptr<Leaf> metadata = unused_metadata();
+public:
+  Outer(Resource& resource, int divisor)
+      : guard(Guard(resource)), metadata(std::make_unique<Leaf>()) {
+    int checked = 2 / divisor;
+  }
+  ~Outer() { std::println(20); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{argc == 2 ? 0 : 1};
+  Outer outer{resource, argc == 3 ? 0 : 1};
+  std::println(30);
+  return 0;
+}

@@ -1,0 +1,6 @@
+// A CHECK pattern that is not in the IR.
+//@ snapshot: llvm-ir
+// CHECK: define {{.*}} ; sum
+// CHECK: @llvm.smul.with.overflow
+int sum(int a, int b) { return a + b; }
+int main() { return sum(1, 2) - 3; }

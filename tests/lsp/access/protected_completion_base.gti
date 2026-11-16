@@ -1,0 +1,17 @@
+// Completion through a base or sibling receiver hides protected members.
+// (From protected_member_lsp_test.py.)
+//@ completion @base: read !secret !helper
+//@ completion @sibling: read !secret !helper
+class Base {
+protected:
+  int /*@secret*/secret = 7;
+  int helper() { return secret; }
+public:
+  Base() {}
+  int read() { return secret; }
+};
+struct Sibling : public Base {};
+struct Derived : public Base {
+  int get(Base& peer) { return peer./*@base*/sec; }  //~ ERROR GTI-S2000
+  int other(Sibling& peer) { return peer./*@sibling*/sec; }  //~ ERROR GTI-S2000
+};
