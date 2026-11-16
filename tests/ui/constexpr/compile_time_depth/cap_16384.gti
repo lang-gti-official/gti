@@ -1,0 +1,9 @@
+// Compile-time depth: Recursion at the 16384-call hard cap completes: depth depends on the configured value, never on the host thread stack.
+//@ check-pass
+//@ constexpr-depth: 16384
+constexpr int32_t descend(int32_t n) {
+  if (n == 0) { return 0; }
+  return descend(n - 1) + 1;
+}
+static_assert(descend(16383) == 16383);
+int main() { return 0; }

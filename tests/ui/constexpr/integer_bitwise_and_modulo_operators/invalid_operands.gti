@@ -1,0 +1,13 @@
+// Integer bitwise and modulo operators: floats and bools gain no bitwise behaviour, literal modulo by zero and invalid literal shift counts are rejected before lowering, and bitwise operations keep the signed/unsigned rules.
+float decimal = 1.0;
+bool condition = true;
+int invalid_modulo = decimal % 2;  //~ ERROR GTI-S2004 requires integer operands
+int invalid_and = condition & true;  //~ ERROR GTI-S2004
+int invalid_shift = 1 << decimal;  //~ ERROR GTI-S2004
+int invalid_complement = ~decimal;  //~ ERROR GTI-S2000 Bitwise complement requires an integer
+int zero_modulo = 7 % 0;  //~ ERROR GTI-S2004 Modulo divisor cannot be zero
+int negative_shift = 1 << -1;  //~ ERROR GTI-S2000
+int wide_shift = 1 >> 32;  //~ ERROR GTI-S2000 Shift count must be less than 32
+int32_t signed_value = 1;
+uint32_t unsigned_value = 1;
+int unsafe_bits = signed_value | unsigned_value;  //~ ERROR GTI-S2000

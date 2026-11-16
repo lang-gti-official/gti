@@ -1,0 +1,2 @@
+// Constexpr enum builders: enum builders preserve type, lifetime and constant eligibility.
+enum class E : uint8_t { low, high }; enum class F : uint8_t { low, high }; constexpr void set(mut E& value) { value = E::high; } constexpr bool bad() { mut E value = E::low; E& view = value; set(value); return view == E::high; } int main() { return 0; }  //~ ERROR GTI-S2017

@@ -1,0 +1,12 @@
+// A private alias of an interface is not visible to importers.
+// --- main.gti
+import "leaf.gti"; int main() { api::Hidden value = 1; return value; }  //~ ERROR GTI-S2024
+// --- leaf.gti
+export module leaf;
+namespace api {
+  int answer(int value) { return value; }
+  export int answer() { return 42; }
+  using Hidden = int;
+  export constexpr int size = 2;
+}
+export namespace visible { int value() { return api::answer(); } }

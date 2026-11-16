@@ -1,0 +1,7 @@
+// Static storage and members: generic class statics should remain rejected until qualified generic paths have a complete representation.
+class Registry<T> {
+public:
+  static int value = 1;  //~ ERROR GTI-S2039 qualified generic member paths
+public:
+  Registry() = default;
+};

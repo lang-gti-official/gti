@@ -1,0 +1,12 @@
+// An ignored non-void result is rejected, and [[discard]] on a void call or a non-call is invalid.
+int calculate() { return 7; }
+namespace output {
+int write(int value) { return value; }
+}
+void perform() {}
+int main() {
+  output::write(calculate());  //~ ERROR GTI-S2009
+  [[discard]] perform();  //~ ERROR GTI-S2000
+  [[discard]] 1 + 2;  //~ ERROR GTI-S2000
+  return 0;
+}

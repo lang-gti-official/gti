@@ -1,0 +1,3 @@
+// Binary float semantics: ordinary binary32 arithmetic and integer-to-float conversion (16777217 rounds to 16777216) give IEEE results at run time.
+//@ run-pass
+int main() { float rounded = float(16777217); float sum = 0.1 + 0.2; float mixed = 0.5 + 1; if (sum > rounded or mixed == 0.0) { return 1; } return 0; }

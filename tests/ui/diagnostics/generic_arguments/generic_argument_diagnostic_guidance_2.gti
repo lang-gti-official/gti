@@ -1,0 +1,5 @@
+// Generic argument diagnostic guidance: named compile-time value arguments remain valid.
+//@ check-pass
+uint64_t extent<uint64_t N>() { return N; }
+constexpr uint64_t count = 4;
+int main() { return int32_t(extent<count>()) - 4; }

@@ -1,0 +1,16 @@
+// Consteval: checked arguments publish values and generic packs are inferred from other arguments.
+//@ check-pass
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) { int proof = 1 / (value > 0 ? 1 : 0); }
+};
+int consume(Checked checked, int runtime) { return checked.value + runtime; }
+
+int forward(Checked checked, int runtime) { return consume(checked, runtime); }
+struct Tagged<Args...> {
+  int value;
+  implicit consteval Tagged(int value) : value(value) {}
+};
+int variadic<Args...>(Tagged<Args...> checked, Args... args) { return checked.value; }
+int run(int runtime) { auto callback = consume; return callback(7, runtime) + forward(7, runtime) + variadic(3, runtime, true); }
+int main() { return run(2) - 21; }

@@ -1,0 +1,2 @@
+// Consteval statement completion: invalid immediate statement or bare return rejects in semantics.
+consteval void check(){} int main(){(check());return 0;}  //~ ERROR GTI-S2057

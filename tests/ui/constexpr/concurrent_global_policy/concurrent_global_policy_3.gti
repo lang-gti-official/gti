@@ -1,0 +1,25 @@
+// Concurrent global policy: immutable share-capable aliases, concrete generics, internal storage, static fields, and reviewed sharing assertions should compile while one selected profile fact reaches semantics, HIR, and MIR.
+//@ execution-profile: concurrent
+//@ check-pass
+using Count = int;
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+};
+[[unsafe_share]] class ReviewedSharedState {
+  mut int value = 0;
+public:
+  ReviewedSharedState() = default;
+};
+Count published = 1;
+static Count internal = 2;
+Box<int> boxed = Box<int>(3);
+ReviewedSharedState synchronized = ReviewedSharedState();
+class Registry {
+public:
+  static int value = 4;
+public:
+  Registry() = default;
+};
+int main() { return published + internal + Registry::value - 7; }

@@ -1,0 +1,6 @@
+// A step's unannotated diagnostic fails, located in that step.
+int main() { return 0; }
+// --- step 2
+int main() {
+  return missing;
+}

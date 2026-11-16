@@ -1,0 +1,14 @@
+// Unknown type cascade suppression: recovered expressions must never admit invalid source to lowering.
+int main() {
+  unsafe {
+    int* pointer = nullptr;
+    auto offset = missing_offset;  //~ ERROR GTI-S2001
+    auto first = pointer + (offset);
+    auto second = pointer - first;
+    auto direct = pointer + absent;  //~ ERROR GTI-S2001
+    auto independent = pointer + true;  //~ ERROR GTI-S2056
+    auto both = missing_left + missing_right;  //~ ERROR GTI-S2001 //~ ERROR GTI-S2001
+  }
+  int unrelated = "text";  //~ ERROR GTI-S2003
+  return 0;
+}

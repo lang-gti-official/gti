@@ -1,0 +1,6 @@
+// Consteval: checked readonly references use the enclosing immediate frame.
+//@ check-pass
+struct Checked { int value; implicit consteval Checked(int& value):value(value){} };
+constexpr int use(Checked value) { return value.value; }
+consteval int outer(int value) { return use(value); }
+int main() { return outer(3) - 3; }

@@ -1,0 +1,16 @@
+// Constexpr bindings: unsupported constexpr forms should fail with focused bounded diagnostics.
+constexpr mut int32_t mutable_value = 1;  //~ ERROR GTI-S2057 cannot be declared mut
+constexpr int32_t missing;  //~ ERROR GTI-S2057 requires an initializer
+int32_t runtime_value() { return 1; }
+constexpr int32_t called = runtime_value();  //~ ERROR GTI-S2057 non-constexpr function
+constexpr int32_t generic_values<Args...>(Args... values) { return 0; }
+class InvalidMember {
+  constexpr int32_t value = 1;  //~ ERROR GTI-S2057 must be static
+public:
+  InvalidMember() = default;
+};
+struct RuntimePoint {
+  int32_t value;
+  RuntimePoint(int32_t initial) : value(initial) {}
+};
+constexpr RuntimePoint runtime_point = RuntimePoint(1);  //~ ERROR GTI-S2057 not an available constexpr constructor

@@ -1,0 +1,11 @@
+// Concurrent global policy: trusted standard-library native wrappers should obey the same concurrent global policy without a privileged exemption.
+//@ execution-profile: concurrent
+namespace std {
+[[no_transfer, no_share]] class native_resource {
+  int descriptor;
+public:
+  native_resource(int value) : descriptor(value) {}
+};
+}
+std::native_resource resource = std::native_resource(1);  //~ ERROR GTI-S2060 'resource' to have a share-capable type
+int main() { return 0; }

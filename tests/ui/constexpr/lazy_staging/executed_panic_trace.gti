@@ -1,0 +1,16 @@
+// An executed compile-time panic is one GTI-S2057 at the requesting call, with its message at the user's panic call and the request trace as notes.
+//@ snapshot: diagnostics
+import std.panic;
+constexpr void require_arguments(int fields, int arguments) {
+  if (fields != arguments) {
+    std::panic("format pattern has 2 fields but 1 argument");
+  }
+}
+consteval void check_pattern(int fields, int arguments) {
+  require_arguments(fields, arguments);
+}
+int main() {
+  check_pattern(2, 2);
+  check_pattern(2, 1);  //~ ERROR GTI-S2057
+  return 0;
+}

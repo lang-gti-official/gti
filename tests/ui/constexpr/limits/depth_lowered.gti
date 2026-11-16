@@ -1,0 +1,10 @@
+// A lowered constexpr-depth admits exactly its own depth and rejects one
+// nested call more, naming the limit. (testConfigurableCompileTimeDepth)
+//@ constexpr-depth: 16
+constexpr int32_t descend(int32_t n) {
+  if (n == 0) { return 0; }
+  return descend(n - 1) + 1;
+}
+static_assert(descend(15) == 15);
+static_assert(descend(16) == 16);  //~ ERROR GTI-S2057 limit of 16 nested calls
+int main() { return 0; }

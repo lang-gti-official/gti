@@ -1,0 +1,7 @@
+// Compile time conditionals: inactive configuration branches should remain syntactically valid GTI rather than being skipped as text.
+#define KNOWN
+#undef KNOWN
+#if defined(KNOWN)
+int broken( { return 0; }  //~ ERROR GTI-P0001
+#endif
+int main() { return 0; }

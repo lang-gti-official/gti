@@ -1,0 +1,10 @@
+main.gti:3:78: error[GTI-S2067]: Payload-enum switch is not exhaustive; missing Message::idle, Message::item, Message::done.
+ 3 | int main() { return identity!({ []() -> int { Message value = Message::idle; switch (value) {} return 0; }() }); }  //~ ERROR GTI-S2067
+   |                                                                              ^~~~~~
+main.gti:3:111: note: In this procedural expansion.
+ 3 | int main() { return identity!({ []() -> int { Message value = Message::idle; switch (value) {} return 0; }() }); }  //~ ERROR GTI-S2067
+   |                                                                                                               ^
+library.gti:2:39: note: The procedural macro is declared here.
+ 2 | export #macro(proc) std::syntax::expr identity(std::syntax::tokens input) { return std::syntax::parse(std::syntax::slice(input, uint64_t(1), std::syntax::size(input) - uint64_t(1))); }
+   |                                       ^~~~~~~~
+help: Handle every variant explicitly or add a 'default' arm.

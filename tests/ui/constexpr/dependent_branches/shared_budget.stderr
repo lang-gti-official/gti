@@ -1,0 +1,14 @@
+main.gti:5:47: error[GTI-S2057]: The condition of 'static_assert' exceeded the compiler's bounded evaluation limit. The request used all 1048576 steps of its constant-evaluation execution-step limit while executing 'cost'.
+ 5 |   for (mut int i = 0; i < 20000; i++) { total += 1; }  //~ ERROR GTI-S2057
+   |                                               ^~
+main.gti:14:1: note: Static assertion declared here.
+ 14 | static_assert(nested<1>() == 20000);
+    | ^~~~~~~~~~~~~
+main.gti:14:25: note: Constant evaluation requested here.
+ 14 | static_assert(nested<1>() == 20000);
+    |                         ^
+main.gti:10:56: note: Constant evaluation requested here.
+ 10 |     if constexpr (cost<N>() == 20000) { return cost<N>(); }
+    |                                                        ^
+help: Reduce constexpr recursion or loop work in the condition.
+help: The limit is 1048576; raise it with '--constexpr-steps <n>' or with 'constexpr-steps = <n>' in the [limits] table of the root package's gti.toml.

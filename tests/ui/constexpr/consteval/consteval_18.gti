@@ -1,0 +1,2 @@
+// Consteval: invalid immediate declaration, invocation or escape rejects.
+consteval int f(int x) { return x; } int g() { auto item = f; return 0; }  //~ ERROR GTI-S2090

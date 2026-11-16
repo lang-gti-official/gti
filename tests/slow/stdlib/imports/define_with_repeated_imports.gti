@@ -1,0 +1,14 @@
+// Direct compilation imports standard modules by name; repeated imports beside an application define share one standard unit that never observes the define.
+//@ slow
+//@ check-pass
+#define APPLICATION_FLAG
+import std.vector;
+import std.vector;
+import std.string;
+int main() {
+  mut std::vector<int32_t> values{};
+  values.push_back(42);
+  std::string text = std::string("ready");
+  return values[std::size_t(0)] == 42 && text.size() == std::size_t(5) ? 0
+                                                                       : 1;
+}

@@ -1,0 +1,22 @@
+// Integer bitwise and modulo operators: bitwise, modulo and shift operators compute C++ results at run time (promotion of ~int8_t, 1 << 31 wraps to INT_MIN).
+//@ run-pass
+int combine(int left, int right) {
+  return ((left & right) | (left ^ right)) % 17;
+}
+
+int shift_small(uint8_t value) { return (value << 3) >> 1; }
+int64_t mix_widths(int64_t left, uint32_t right) { return left & right; }
+uint64_t unsigned_bits(uint64_t left, uint64_t right) { return left | right; }
+
+int main() {
+  int8_t small = 3;
+  int promoted = ~small;
+  int flags = ((5 & 3) | 8) ^ 2;
+  int shifted = (flags << 2) >> 1;
+  int remainder = combine(shifted, 5);
+  int wrapped = 1 << 31;
+  if (promoted == -4 and remainder == 6 and wrapped == -2147483648) {
+    return 0;
+  }
+  return 1;
+}

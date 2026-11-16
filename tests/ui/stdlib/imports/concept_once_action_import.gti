@@ -1,0 +1,4 @@
+// import std.functional exposes its compiler concept std::once_action.
+//@ check-pass
+import std.functional;
+concept selected<T> = std::once_action<T>;

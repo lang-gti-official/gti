@@ -1,0 +1,1 @@
+int before() { return 0; } import lib; struct Item { int value = 1; }; import local; namespace n { int value = 2; } import lib.main; int main() { return answer() + local_value() - 44; }

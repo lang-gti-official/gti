@@ -1,0 +1,4 @@
+// Ownership and missing include diagnostics: a declared input-outlives-result relationship permits the return.
+//@ check-pass
+int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second)
+  requires outlives<b, a> { return second; }

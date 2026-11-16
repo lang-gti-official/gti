@@ -1,0 +1,3 @@
+// Integer bitwise and modulo operators: spaced angle tokens do not become a shift operator.
+//@ parse-fail
+int value = 1 > > 2;  //~ ERROR GTI-P0001

@@ -1,0 +1,8 @@
+// Reserved names are rejected on every declaration and type-expression identifier surface.
+//@ parse-fail
+class template {};  //~ ERROR GTI-P0002
+namespace template {}  //~ ERROR GTI-P0002
+class Box { int template = 1; };  //~ ERROR GTI-P0002
+int function(int template) { return 0; }  //~ ERROR GTI-P0002
+class Values<uint64_t template> {};  //~ ERROR GTI-P0002
+int main() { int values[template] = {}; return 0; }  //~ ERROR GTI-P0002

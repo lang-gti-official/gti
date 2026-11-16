@@ -1,0 +1,14 @@
+main.gti:9:62: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 9 | int main() { return checked_percent(42) + checked_percent(142) == 0 ? 0 : 1; }  //~ ERROR GTI-S2057
+   |                                                              ^
+main.gti:6:51: note: This call cannot run during compilation.
+ 6 |   if (value > 100) { reject("percentage above 100"); }
+   |                                                   ^
+main.gti:5:15: note: Immediate declaration is here.
+ 5 | consteval int checked_percent(int value) {
+   |               ^~~~~~~~~~~~~~~
+main.gti:9:62: note: Constant evaluation requested here.
+ 9 | int main() { return checked_percent(42) + checked_percent(142) == 0 ? 0 : 1; }  //~ ERROR GTI-S2057
+   |                                                              ^
+help: 'reject' is not constexpr.
+help: Only operations that execute during compilation must be constexpr. Declare the callee constexpr, or keep this call off the path that compile-time evaluation takes.

@@ -1,0 +1,8 @@
+// Ownership and missing include diagnostics: a use in a disjoint branch does not keep a borrow live at an access.
+//@ check-pass
+int run(bool condition) {
+  mut int value = 1;
+  int& borrowed = value;
+  if (condition) { value = 2; return value; }
+  return borrowed;
+}

@@ -1,0 +1,8 @@
+// An explicitly mutable owner accepts writes to its mutable fields.
+//@ check-pass
+struct Command { mut int name = 0;  public: Command() = default; };
+int main() {
+  mut Command cmd{};
+  cmd.name = 1;
+  return 0;
+}

@@ -1,0 +1,8 @@
+// Ownership and missing include diagnostics: a copied field of a temporary borrowed carrier keeps its loan until the full expression ends and receives a source diagnostic.
+import std.unordered_set;
+int main() {
+  mut std::unordered_set<int> values{};
+  int key = 7;
+  if (values.insert(7).second || !values.contains(key)) { return 1; }  //~ ERROR GTI-S2017
+  return 0;
+}

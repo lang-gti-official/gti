@@ -1,0 +1,7 @@
+// Ownership and missing include diagnostics: capture mutation advice must not suggest changing the mutable source binding.
+//@ snapshot: diagnostics
+struct Command { mut int name = 0;  public: Command() = default; };
+void examine() {
+  mut Command cmd{};
+  auto modify = [cmd]() -> void { cmd.name = 1; };  //~ ERROR GTI-S2000
+}
