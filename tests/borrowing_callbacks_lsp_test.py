@@ -19,11 +19,11 @@ SOURCE = """int main() {
 RECEIVER_SOURCE = """int invoke<F>(F& callback) { return callback(); }
 int invoke_mut<F>(mut F& callback) { return callback(); }
 
-class Counter<T> {
-  mut T value;
+class Counter {
+  mut int value;
 public:
-  Counter(T value) : value(value) {}
-  T read() { return this.value; }
+  Counter(int value) : value(value) {}
+  int read() { return this.value; }
   void increment() mut { this.value += 1; }
   int shared() {
     auto callback = [&this]() -> int { return this.read(); };
@@ -43,11 +43,24 @@ public:
   }
 };
 
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T read() {
+    auto callback = [&this]() -> T { return this.value; };
+    return callback();
+  }
+};
+
 int main() {
-  mut Counter<int> counter{4};
+  mut Counter counter{4};
   if (counter.shared() != 4) return 1;
   if (counter.exclusive() != 7) return 2;
   if (counter.read() != 8) return 3;
+  Box<int> number{12};
+  Box<bool> flag{true};
+  if (number.read() != 12 || !flag.read()) return 4;
   return 0;
 }
 """

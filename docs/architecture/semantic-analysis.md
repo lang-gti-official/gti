@@ -2331,9 +2331,9 @@ origins, access modes and loan endpoints as named reference captures. Inside
 the lambda, semantics records an expression alias from `This` to the resolved
 capture binding. Classification, retained-dependency analysis and HIR lowering
 follow that alias, so the backend receives an ordinary checked-reference
-capture rather than rediscovering receiver semantics. Text-field contracts
-also follow the alias and cannot mistake a captured receiver for the enclosing
-method's formal receiver. Static contexts and missing receiver captures report
+capture rather than rediscovering receiver semantics. The existing
+`lambdaDepth` guard keeps captured receiver text outside the enclosing method's
+formal text contracts. Static contexts and missing receiver captures report
 `GTI-S2027`; bare `[this]` is rejected by the parser. Tooling presents the
 capture's type and members but never renames the `this` keyword.
 

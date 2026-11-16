@@ -12640,7 +12640,8 @@ auto SemanticVisitor::Impl::visitThisExpr(const This &expr) -> void {
       return;
     }
     // Receiver spelling selects the checked environment binding. All place,
-    // loan, access and lowering rules then follow an ordinary reference capture.
+    // loan, access and lowering rules then follow an ordinary reference
+    // capture.
     Token name = expr.keyword();
     name.kind = TokenKind::IDENTIFIER;
     auto reference = std::make_shared<Variable>(std::move(name));
