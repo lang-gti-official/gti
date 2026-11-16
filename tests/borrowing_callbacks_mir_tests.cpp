@@ -503,9 +503,143 @@ int main() { return 0; }
   }
   return true;
 }
+
+bool receiverCaptureTests() {
+  const auto accepted =
+      lang::Frontend().analyze("receiver-captures-mir.gti", R"gti(
+class Counter {
+  mut int value = 4;
+public:
+  Counter() = default;
+  int read() { return this.value; }
+  int shared() {
+    auto callback = [&this]() -> int { return this.read(); };
+    auto copy = callback;
+    return copy();
+  }
+  int exclusive() mut {
+    mut auto callback = [mut &this]() -> int { this.value += 1; return this.value; };
+    int result = callback();
+    this.value += 1;
+    return result;
+  }
+};
+int main() {
+  mut Counter counter{};
+  if (counter.shared() != 4) return 1;
+  if (counter.exclusive() != 5) return 2;
+  return counter.read() - 6;
+}
+)gti");
+  if (!accepted.canGenerateCode() ||
+      !lang::verifyMirProgram(accepted.mir).valid()) {
+    for (const auto &diagnostic : accepted.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return false;
+  }
+  bool shared = false;
+  bool exclusive = false;
+  for (const auto &lambda : accepted.mir.lambdaInstances()) {
+    if (lambda.captureTypes.size() != 1 ||
+        lambda.captureTypes.front().kind != lang::SemanticType::Reference)
+      return false;
+    shared |=
+        lambda.captureModes.front() == lang::LambdaCaptureMode::BorrowRead;
+    exclusive |=
+        lambda.captureModes.front() == lang::LambdaCaptureMode::BorrowMut;
+    auto changed = accepted.mir;
+    auto *target =
+        const_cast<lang::MirLambdaInstance *>(changed.findLambda(lambda.id));
+    target->captureModes.front() = lang::LambdaCaptureMode::Copy;
+    if (lang::verifyMirProgram(changed).valid()) {
+      std::cerr << "accepted forged receiver capture ownership\n";
+      return false;
+    }
+  }
+  if (!shared || !exclusive)
+    return false;
+  const std::pair<std::string_view, std::string_view> rejected[] = {
+      {"shared-write", R"gti(class C { mut int n = 0; public: C() = default;
+        void run() mut { auto f = [&this]() -> void { this.n += 1; }; f(); }
+      }; int main() { mut C c{}; c.run(); })gti"},
+      {"mutable-readonly-receiver",
+       R"gti(class C { mut int n = 0; public: C() = default;
+        void run() { mut auto f = [mut &this]() -> void { this.n += 1; }; f(); }
+      }; int main() { C c{}; c.run(); })gti"},
+      {"shared-conflict", R"gti(class C { mut int n = 0; public: C() = default;
+        int run() mut { auto f = [&this]() -> int { return this.n; }; this.n = 3; return f(); }
+      }; int main() { mut C c{}; return c.run(); })gti"},
+      {"exclusive-conflict",
+       R"gti(class C { mut int n = 0; public: C() = default;
+        int run() mut { mut auto f = [mut &this]() -> int { return this.n; }; int n = this.n; return f() + n; }
+      }; int main() { mut C c{}; return c.run(); })gti"},
+      {"static-receiver", R"gti(class C { public: static int run() {
+        auto f = [&this]() -> int { return 1; }; return f(); }
+      }; int main() { return C::run(); })gti"},
+      {"no-receiver",
+       R"gti(int main() { auto f = [&this]() -> int { return 1; }; return f(); })gti"},
+      {"missing-capture", R"gti(class C { int n = 0; public: C() = default;
+        int run() { auto f = []() -> int { return this.n; }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+      {"duplicate-receiver", R"gti(class C { public: C() = default;
+        int run() { auto f = [&this, &this]() -> int { return 1; }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+      {"copy-exclusive", R"gti(class C { mut int n = 0; public: C() = default;
+        int run() mut { mut auto f = [mut &this]() -> int { return this.n; }; mut auto copy = f; return copy(); }
+      }; int main() { mut C c{}; return c.run(); })gti"},
+      {"nested-receiver", R"gti(class C { int n = 0; public: C() = default;
+        int run() { auto f = [&this]() -> int {
+          auto inner = [&this]() -> int { return this.n; }; return inner();
+        }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+      {"captured-reference-result",
+       R"gti(class C { int n = 0; public: C() = default;
+        int run() { auto f = [&this]() -> int& { return this.n; }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+      {"value-receiver", R"gti(class C { public: C() = default;
+        int run() { auto f = [this]() -> int { return 1; }; return f(); }
+      }; int main() { C c{}; return c.run(); })gti"},
+  };
+  for (const auto &[name, source] : rejected) {
+    const auto result =
+        lang::Frontend().analyze(std::string(name), std::string(source));
+    const std::string_view expectedCode =
+        name == "shared-write" ? "GTI-S2000"
+        : name == "shared-conflict" || name == "exclusive-conflict"
+            ? "GTI-S2017"
+        : name == "static-receiver" || name == "no-receiver" ||
+                name == "missing-capture"
+            ? "GTI-S2027"
+            : "";
+    if (!expectedCode.empty() &&
+        std::none_of(result.diagnostics.begin(), result.diagnostics.end(),
+                     [&](const auto &d) {
+                       return d.code == expectedCode &&
+                              d.primary.end > d.primary.start;
+                     })) {
+      std::cerr << "receiver diagnostic missing: " << name << " expected "
+                << expectedCode << '\n';
+      for (const auto &d : result.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+      return false;
+    }
+    if (result.canGenerateCode() || result.diagnostics.empty() ||
+        std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                    [](const auto &d) { return d.code == "GTI-B0001"; })) {
+      std::cerr << "receiver rejection failed: " << name << '\n';
+      for (const auto &d : result.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
+  if (!receiverCaptureTests())
+    return 18;
   if (!callResultAliasProofTests())
     return 10;
   if (argc == 2 && std::string_view(argv[1]) == "--alias-proof-only") {

@@ -30,7 +30,36 @@ int sample_fresh<F>(F& callback, int value) {
   return result;
 }
 
+// Receiver captures borrow the current object, with explicit access.
+
+class Counter {
+  mut int value;
+public:
+  Counter(int value) : value(value) {}
+  int read() { return this.value; }
+  void increment() mut { this.value += 1; }
+  int shared() {
+    auto callback = [&this]() -> int { return this.read(); };
+    auto copy = callback;
+    return copy();
+  }
+  int exclusive() mut {
+    mut auto callback = [mut &this]() -> int {
+      this.increment();
+      this.value += 2;
+      return this.value;
+    };
+    int result = callback();
+    // The receiver loan ends at the closure's last use.
+    this.value += 1;
+    return result;
+  }
+};
+
+
 int main() {
+  mut Counter counter{4};
+  if (counter.shared() != 4 || counter.exclusive() != 7 || counter.read() != 8) return 8;
   // A result can relay one parameter's exclusive borrow through local aliases.
   // The caller owns the referent; the lambda neither copies nor consumes it.
   auto increment_reference = [](mut int& value) -> mut int& {

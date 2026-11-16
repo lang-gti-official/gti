@@ -3871,6 +3871,10 @@
           {
             "type": "identifier",
             "named": true
+          },
+          {
+            "type": "this",
+            "named": false
           }
         ]
       }

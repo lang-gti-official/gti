@@ -4831,9 +4831,14 @@ private:
           borrow = previous();
         else if (mutKeyword)
           throw error(peek(), "Expect '&' after 'mut' in a borrowing capture.");
-        Token name =
-            consume(TokenKind::IDENTIFIER,
-                    "Expect a local binding name in lambda capture list.");
+        Token name = check(TokenKind::THIS)
+                         ? advance()
+                         : consume(TokenKind::IDENTIFIER,
+                                   "Expect a local binding name or 'this' in "
+                                   "lambda capture list.");
+        if (name.kind == TokenKind::THIS && !borrow)
+          throw error(name, "Receiver captures require '[&this]' or "
+                            "'[mut &this]'.");
         std::optional<Token> equal;
         ExprPtr initializer;
         if (match({TokenKind::EQUAL})) {
@@ -4846,7 +4851,9 @@ private:
         } else {
           Token source =
               generatedToken(TokenKind::IDENTIFIER, name.lexeme, name);
-          initializer = generatedVariable(source);
+          initializer = name.kind == TokenKind::THIS
+                            ? ExprPtr(std::make_unique<This>(name))
+                            : generatedVariable(source);
         }
         captures.emplace_back(std::move(name), std::move(equal),
                               std::move(initializer), std::move(borrow),

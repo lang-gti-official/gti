@@ -1473,7 +1473,7 @@ module.exports = grammar({
             field("name", $.identifier),
             optional(seq("=", field("initializer", $._expression_not_comma))),
           ),
-          seq(optional(field("mutable", "mut")), "&", field("name", $.identifier)),
+          seq(optional(field("mutable", "mut")), "&", field("name", choice($.identifier, "this"))),
         ),
       ),
 
