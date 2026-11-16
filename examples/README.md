@@ -279,7 +279,7 @@ is a teaching helper, not a production server.
 | `029-callable-predicates.gti` | exact bool predicate results from confined generic callables |
 | `030-callable-forwarding.gti` | proven confined callable forwarding through generic helper layers |
 | `031-exact-constraints.gti` | exact lifecycle and comparison capabilities for generic APIs |
-| `032-structured-bindings.gti` | immutable exact-arity decomposition, independent passive class-array copies, explicit owning class-array moves |
+| `032-structured-bindings.gti` | immutable exact-arity decomposition, owning, read-only borrowed and mutable borrowed range patterns, independent passive class-array copies, explicit owning class-array moves |
 | `033-source-concepts.gti` | unary capabilities, structural class contracts with an `[[unsatisfied(...)]]` explanation, and trailing-clause admission of dependent compound arguments |
 | `034-do-while.gti` | body-first loops with explicit `continue` and termination |
 | `035-conditional-expressions.gti` | lazy conditional values and explicit move selection |

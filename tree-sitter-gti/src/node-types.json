@@ -2926,6 +2926,10 @@
           {
             "type": "range_for_declaration",
             "named": true
+          },
+          {
+            "type": "range_structured_binding",
+            "named": true
           }
         ]
       },
@@ -5638,6 +5642,32 @@
         "types": [
           {
             "type": "type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "range_structured_binding",
+    "named": true,
+    "fields": {
+      "mutable": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "mut",
+            "named": false
+          }
+        ]
+      },
+      "name": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
             "named": true
           }
         ]

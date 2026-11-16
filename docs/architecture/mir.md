@@ -2554,6 +2554,15 @@ The verifier admits a publishing call's borrow facts against its target's
 `publishedTextFields` (`dependentTextCallPublication`), as it admits a
 publishing construction against its constructor.
 
+A call with this independently proved text publication may also borrow an
+unrelated temporary argument. Its contextual result borrows the publication's
+designated argument, not that temporary. The temporary-argument result check
+therefore admits `dependentTextCallPublication` only when its source argument
+differs from the temporary's input index. The declared publication, exact
+source mapping, stored result dependency, call-scoped loan, and full-expression
+drop obligations remain independently verified; an ownerless declaration
+summary alone does not authorize a dependent result.
+
 `isOwnerlessTextStorageProjection` excludes a direct text-field
 place whose object carries a `Stored` loan designating the field: a carrier
 binding of that loan, or the construction's own result value. A write into

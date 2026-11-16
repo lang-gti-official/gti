@@ -3700,9 +3700,47 @@ private:
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'for'.");
 
     if (isStructuredBindingPrefix()) {
-      throw error(peek(), "Structured bindings are not supported in a for-loop "
-                          "initializer; declare the binding in the surrounding "
-                          "block.");
+      std::optional<Token> mutKeyword;
+      if (match({TokenKind::MUT}))
+        mutKeyword = previous();
+      const Mutability mutability =
+          mutKeyword ? Mutability::Mutable : Mutability::Immutable;
+      Token autoKeyword = consume(TokenKind::AUTO, "Expect 'auto'.");
+      TypeRef bindingType(autoKeyword);
+      if (match({TokenKind::AMPERSAND}))
+        bindingType.reference = previous();
+      if (mutKeyword && !bindingType.reference)
+        throw error(*mutKeyword,
+                    "Mutable structured range bindings require 'auto&'.");
+      Token left =
+          consume(TokenKind::LEFT_BRACKET, "Expect '[' before binding names.");
+      std::vector<VariableDecl> bindings;
+      do {
+        Token name = consume(TokenKind::IDENTIFIER,
+                             "Expect a structured range binding name.");
+        bindings.emplace_back(mutability, TypeRef(autoKeyword), std::move(name),
+                              nullptr, std::nullopt, false, std::nullopt, false,
+                              false, mutKeyword);
+      } while (match({TokenKind::COMMA}));
+      Token right =
+          consume(TokenKind::RIGHT_BRACKET, "Expect ']' after binding names.");
+      Token colon =
+          consume(TokenKind::COLON,
+                  "Structured for bindings require a range after ':'.");
+      ExprPtr range = expression();
+      consume(TokenKind::RIGHT_PAREN, "Expect ')' after range expression.");
+      Token element = generatedToken(TokenKind::IDENTIFIER,
+                                     "__gti_decomposed_element_" +
+                                         std::to_string(++generatedNameCounter),
+                                     colon);
+      auto pattern = std::make_shared<StructuredBindingDecl>(
+          autoKeyword, std::move(left), std::move(bindings), std::move(right),
+          colon, generatedVariable(element), true);
+      StmtList body{std::move(pattern), statement()};
+      return makeRangeForStatement(
+          keyword, mutability, std::move(bindingType), std::move(element),
+          std::move(colon), std::move(range),
+          std::make_shared<BlockStmt>(std::move(body)));
     }
 
     if (isTypedDeclaration() && !check(TokenKind::STATIC) &&

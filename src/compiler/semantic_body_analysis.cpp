@@ -6155,7 +6155,8 @@ auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitStructuredBindingDecl(
     const StructuredBindingDecl &stmt) -> void {
-  semanticModel.recordFullExpression(stmt, stmt.initializer());
+  if (!stmt.isRangeProjection())
+    semanticModel.recordFullExpression(stmt, stmt.initializer());
   if (functionDepth == 0) {
     report(stmt.autoKeyword(),
            "Structured bindings are limited to local declarations.",
@@ -6174,7 +6175,8 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
            "Structured binding source must have a complete value type.",
            "GTI-S2048");
     sourceType = SemanticType::Unknown;
-  } else if (initializerType.kind == SemanticType::Reference) {
+  } else if (initializerType.kind == SemanticType::Reference &&
+             !stmt.isRangeProjection()) {
     report(stmt.autoKeyword(),
            "Structured bindings own their source value and do not infer "
            "references; copy or move the referred value explicitly.",
@@ -6184,7 +6186,11 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
     sourceType = SemanticType::Unknown;
   }
 
-  if (sourceType != SemanticType::Unknown && stmt.initializer() &&
+  if (stmt.isRangeProjection() && sourceType.kind == SemanticType::Reference &&
+      sourceType.arguments.size() == 1)
+    sourceType = SemanticType(sourceType.arguments.front());
+  if (!stmt.isRangeProjection() && sourceType != SemanticType::Unknown &&
+      stmt.initializer() &&
       !isOwnershipAssignable(sourceType, initializerType, stmt.initializer())) {
     report(expressionToken(stmt.initializer()),
            "Cannot initialize structured binding by copying move-only "
@@ -6195,7 +6201,7 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
         "Transfer ownership explicitly with std::move(owner), or bind a "
         "fresh value.");
   }
-  if (sourceType != SemanticType::Unknown &&
+  if (!stmt.isRangeProjection() && sourceType != SemanticType::Unknown &&
       typeTraits(sourceType).containsBorrowedState) {
     report(stmt.autoKeyword(),
            "Structured bindings cannot decompose values carrying stored "
@@ -6210,6 +6216,7 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
   result.elements.reserve(stmt.bindings().size());
 
   std::vector<StructuredBindingElementInfo> components;
+  std::vector<Token> componentFields;
   bool decompositionKnown = false;
   if (sourceType.kind == SemanticType::Array &&
       sourceType.arguments.size() == 1 &&
@@ -6273,8 +6280,9 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
           decompositionKnown = false;
           break;
         }
-        if (resolved.type.kind == SemanticType::Reference ||
-            typeTraits(resolved.type).containsBorrowedState) {
+        if (!stmt.isRangeProjection() &&
+            (resolved.type.kind == SemanticType::Reference ||
+             typeTraits(resolved.type).containsBorrowedState)) {
           report(field.declaration->name(),
                  "Structured bindings cannot project a field carrying a "
                  "stored reference in the current lifetime model.",
@@ -6283,6 +6291,7 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
           decompositionKnown = false;
           break;
         }
+        componentFields.push_back(field.declaration->name());
         components.push_back(
             {.binding = bindingInfo(resolved.type, AccessMode::ReadOnly),
              .projection = StructuredBindingProjectionKind::Field,
@@ -6314,6 +6323,48 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
             : StructuredBindingElementInfo{
                   .binding =
                       bindingInfo(SemanticType::Unknown, AccessMode::ReadOnly)};
+    if (stmt.isRangeProjection() && decompositionKnown &&
+        index < components.size()) {
+      const auto *source = exprAs<Variable>(stmt.initializer().get());
+      if (source == nullptr)
+        continue; // Only the parser's checked range element can supply this
+                  // form.
+      const auto generated = [&](TokenKind kind, std::string spelling) {
+        const Token &anchor = binding.name();
+        return Token(kind, std::move(spelling), std::monostate{},
+                     anchor.position, anchor.line, anchor.source, false, true);
+      };
+      ExprPtr projection = std::make_unique<Variable>(source->name());
+      if (element.projection == StructuredBindingProjectionKind::ArrayElement) {
+        projection = std::make_unique<Index>(
+            std::move(projection), generated(TokenKind::RIGHT_BRACKET, "]"),
+            std::make_unique<LiteralExpr>(
+                generated(TokenKind::INT_LITERAL,
+                          std::to_string(element.index)),
+                Literal{element.index}));
+      } else {
+        projection = std::make_unique<Get>(
+            std::move(projection), generated(TokenKind::DOT, "."),
+            generated(TokenKind::IDENTIFIER, componentFields[index].lexeme));
+      }
+      // Keep the written auto token so this follows ordinary reference-local
+      // validation, including parent loans and stored-reference fields.
+      TypeRef type(stmt.autoKeyword());
+      type.reference = generated(TokenKind::AMPERSAND, "&");
+      auto projected = std::make_shared<VariableDecl>(
+          binding.mutability(), std::move(type), binding.name(),
+          std::move(projection), std::nullopt, false, std::nullopt, false,
+          false, binding.mutKeyword());
+      analyze(projected);
+      if (const BindingInfo *info = semanticModel.findBinding(*projected)) {
+        element.binding = *info;
+        semanticModel.record(binding, *info);
+      }
+      element.declaration = &binding;
+      result.elements.push_back(std::move(element));
+      result.rangeProjections.push_back(std::move(projected));
+      continue;
+    }
     const SymbolId symbol =
         recordBindingOccurrence(binding.name(), element.binding.type, false,
                                 SemanticBindingKind::LocalVariable);
