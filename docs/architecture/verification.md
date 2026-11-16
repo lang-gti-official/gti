@@ -10301,7 +10301,8 @@ including forged type/instance metadata. `generic_enum_instances_runtime`
 checks generic and nongeneric transport, owning and passive field publication,
 borrowed/copied patterns, finite owning recursion, cleanup and failure rollback
 under both C++ standards at O0/O1/O3, no-elide construction, and ASan/UBSan.
-`generic_enum_lsp` covers concrete/default/alias signatures, qualified
+`tests/lsp/generics/generic_enum_variants.gti` and
+`generic_enum_overlay_close.jsonl` cover concrete/default/alias signatures, qualified
 completion and dirty dependency reanalysis, including rejection of stale
 diagnostics republished with a newer document version. Example 129 and the
 MIR/lowered censuses demonstrate a source-defined message queue without
@@ -11590,7 +11591,7 @@ for captureless, copied-snapshot and owning-capture closures; nested reborrows
 preserve results and exactly-once cleanup on division failure. Forged owner
 identities fail MIR verification, and semantic negatives reject invalidating a
 borrowed environment, permission upgrades and references to fresh closures.
-`local_reference_inference_lsp` checks
+`tests/lsp/borrows/local_reference_inference.gti` and its `.jsonl` check
 inferred type/access hover, declaration navigation, copy hints, mutation/upgrade
 errors, UTF-16 spans, malformed-source recovery, dirty dependency overlays and
 format/reanalysis. These focused gates do not substitute for combined validation.

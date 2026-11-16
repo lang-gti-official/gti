@@ -222,12 +222,6 @@ add_test(NAME bounded_array_borrows COMMAND gti_bounded_array_borrows_tests)
 add_test(NAME bounded_array_borrows_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bounded_array_borrows_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(bounded_array_borrows_runtime PROPERTIES TIMEOUT 300)
-if(TARGET gti_lsp)
-  add_test(NAME local_reference_inference_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(local_reference_inference_lsp PROPERTIES TIMEOUT 120)
-endif()
-
 add_executable(gti_prvalue_direct_initialization_tests
                prvalue_direct_initialization_tests.cpp)
 target_link_libraries(gti_prvalue_direct_initialization_tests PRIVATE gti_llvm_backend)
@@ -3417,13 +3411,6 @@ if(Python3_Interpreter_FOUND)
     # Its GCC sanitized build may take minutes under a parallel suite;
     # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
     set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 1800)
-    if(TARGET gti_lsp)
-      add_test(NAME generic_enum_lsp
-        COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/generic_enum_lsp_test.py"
-          "$<TARGET_FILE:gti_lsp>")
-      set_tests_properties(generic_enum_lsp PROPERTIES TIMEOUT 180)
-    endif()
     add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"
