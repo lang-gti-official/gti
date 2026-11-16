@@ -1,0 +1,30 @@
+// Member requirement concepts: named, relational, composed and direct member requirements must supply symbolic call facts without executing their bodies.
+//@ check-pass
+//@ format-stable
+concept snapshot_as<T, R> = requires(T& item) { { item.snapshot() } -> R; };
+concept snapshot_value<T> = snapshot_as<T, T>;
+concept snapshot_and_copy<T> = snapshot_value<T> && std::copy_constructible<T>;
+struct Sample {
+  int value = 7;
+  Sample snapshot() { Sample result{.value = this.value + 1}; return result; }
+public:
+  Sample() = default;
+};
+T take_snapshot<T>(T& value) requires snapshot_value<T> {
+  return value.snapshot();
+}
+T forward_snapshot<T>(T& value) requires snapshot_and_copy<T> {
+  return take_snapshot(value);
+}
+T direct_snapshot<T>(T& value)
+  requires requires(T& x) { { x.snapshot() } -> T; } {
+  return value.snapshot();
+}
+int main() {
+  Sample value{};
+  auto first = forward_snapshot(value);
+  auto second = direct_snapshot(first);
+  static_assert(requires(Sample& x) { { x.snapshot() } -> Sample; });
+  static_assert(!(requires(Sample& x) { { x.absent() } -> Sample; }));
+  return second.value - 9;
+}

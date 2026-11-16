@@ -1,0 +1,9 @@
+// Dependent type default constraints: a selected function default validates nested constraints before HIR.
+class Ordered<std::totally_ordered T> { public: Ordered() = default; };
+class NotOrdered { public: NotOrdered() = default; };
+class Holder<T, Compare = Ordered<T>> { public: Holder() = default; };
+class Nested<T, Compare = Holder<T>> { public: Nested() = default; };
+class Constrained<T, std::integral U = T> { public: Constrained() = default; };
+
+int choose<T, C = Ordered<T>>(T& value) { return 7; }
+int main() { NotOrdered value{}; return choose(value); }  //~ ERROR GTI-S2029

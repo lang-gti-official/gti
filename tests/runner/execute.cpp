@@ -4,6 +4,7 @@
 #include "gti/driver/build.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/formatter.h"
 #include "gti/frontend_cache.h"
 #include "gti/lowered_program.h"
 #include "gti/semantic_preamble.h"
@@ -501,6 +502,47 @@ void collectRendered(Compiled &compiled, const Materialized &files,
 
 } // namespace
 
+// `//@ format-stable`: the formatter reaches a fixed point in one pass and
+// the formatted program checks like the original.
+void Engine::checkFormatting(const TestFile &test, Outcome &outcome) {
+  TestFile formatted = test;
+  formatted.formatStable = false;
+  std::string problems;
+  try {
+    const lang::Formatter formatter;
+    for (Section &section : formatted.sections) {
+      const std::string once = formatter.format(section.text);
+      std::string twice = formatter.format(once);
+      if (test.runnerFault == "format-drift")
+        twice += "\n";
+      if (once != twice)
+        problems += "formatting " + section.name +
+                    " is not idempotent (-first +second):\n" +
+                    diff(once, twice);
+      section.text = once;
+    }
+  } catch (const std::exception &exception) {
+    problems += std::string("the formatter threw: ") + exception.what() + "\n";
+  }
+  if (problems.empty()) {
+    // The copy is never blessed: it shares the original's path.
+    const bool bless = state->options.bless;
+    state->options.bless = false;
+    const Outcome again = run(formatted);
+    state->options.bless = bless;
+    outcome.cpu += again.cpu;
+    outcome.wall += again.wall;
+    if (again.status != Status::Pass)
+      problems += std::string("the formatted program does not check (") +
+                  statusName(again.status) + "):\n" +
+                  indent(again.detail, "    ");
+  }
+  if (!problems.empty()) {
+    outcome.status = Status::Fail;
+    outcome.detail = problems;
+  }
+}
+
 Outcome Engine::run(const TestFile &test) {
   Outcome outcome;
   if (!test.errors.empty()) {
@@ -756,6 +798,8 @@ Outcome Engine::run(const TestFile &test) {
   }
   if (outcome.status != Status::Skip)
     state->warmGroups.insert(test.groupKey);
+  if (test.formatStable && outcome.status == Status::Pass)
+    checkFormatting(test, outcome);
   if (!options.isolate && outcome.cpu > limit &&
       (outcome.status == Status::Pass || outcome.status == Status::Fail)) {
     outcome.status = Status::Timeout;

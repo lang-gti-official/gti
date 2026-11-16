@@ -1,0 +1,37 @@
+// Structural class constraints: class argument contract fails in semantics even without a selected member body.
+mut int closed = 0;
+struct Counter {
+  unsafe int read() { return 7; }
+  unsafe void close() { closed += 1; }
+public:
+  Counter() = default;
+};
+concept readable<T> = requires(T& source) {
+  unsafe { source.read() } -> int;
+};
+concept closable<T> = readable<T> && requires(T& source) {
+  unsafe { source.close() } -> void;
+};
+int observe<T>(T& source) requires readable<T> {
+  unsafe { return source.read(); }
+}
+class Monitor<closable T> {
+  T& source;
+  mut int initial = 0;
+public:
+  Monitor(T& source) : source(source) {
+    unsafe { this.initial = this.source.read(); }
+  }
+  int read() { return observe(this.source); }
+  ~Monitor() { unsafe { this.source.close(); } }
+};
+class Outer<closable T> {
+  Monitor<T> inner;
+public:
+  Outer(Monitor<T> inner) : inner(std::move(inner)) {}
+  int read() { return this.inner.read(); }
+};
+class Unused<closable T> { int value = 0;  public: Unused() = default; };
+class Defaulted<closable T = Counter> { int value = 0;  public: Defaulted() = default; };
+class Packed<closable T...> { int value = 0;  public: Packed() = default; };
+class Hidden { int read(){return 1;} void close(){}  public: Hidden() = default; }; int main() { Unused<Hidden> value{}; return 0; }  //~ ERROR GTI-S2029

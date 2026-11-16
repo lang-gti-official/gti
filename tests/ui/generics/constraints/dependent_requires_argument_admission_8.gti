@@ -1,0 +1,17 @@
+// Dependent requires argument admission: concrete viability cannot replace a closed class's actual lifecycle capabilities.
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+
+class Immovable {
+public:
+  Immovable() = default;
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+};
+int read<T>(T value) requires std::copyable<Immovable> && boxed_int<Box<Immovable>> { return 0; }
+int main() { return read(1); }  //~ ERROR GTI-S2029
