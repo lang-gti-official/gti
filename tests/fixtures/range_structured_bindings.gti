@@ -37,6 +37,31 @@ int borrowed_sum<Tag>(std::vector<Entry>& entries) {
   return sum;
 }
 
+std::vector<Entry> make_entries() {
+  mut std::vector<Entry> result{};
+  result.emplace_back(std::string("a"), 1);
+  result.emplace_back(std::string("b"), 2);
+  return result;
+}
+
+int mutate_entries<Tag>(mut std::vector<Entry>& entries) {
+  for (mut auto& [key, value] : entries) {
+    key.append("!");
+    value += 10;
+  }
+  return entries[0].value + entries[1].value;
+}
+
+int mutate_temporary() {
+  for (mut auto& [key, value] : make_entries()) {
+    value += 4;
+    if (value == 5) continue;
+    key.append("!");
+    return value;
+  }
+  return 0;
+}
+
 int main() {
   mut std::vector<Entry> entries{};
   entries.emplace_back(std::string("one"), 1);
@@ -57,5 +82,16 @@ int main() {
   BorrowedEntry entry{owner, 8};
   auto references = Range(entry);
   for (auto& [key, value] : references) { total += key + value; }
+  mut auto mutable_entries = make_entries();
+  if (mutate_entries<int>(mutable_entries) != 23) return 4;
+  if (mutable_entries[0].key.view() != "a!") return 5;
+  if (mutate_temporary() != 6) return 6;
+  mut int matrix[2][2] = {{1, 2}, {3, 4}};
+  for (mut auto& [left, right] : matrix) {
+    left += 10;
+    right += left;
+    break;
+  }
+  if (matrix[0][0] != 11 || matrix[0][1] != 13 || matrix[1][0] != 3) return 7;
   return total == 60 ? 0 : 3;
 }

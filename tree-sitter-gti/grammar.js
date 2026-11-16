@@ -1172,8 +1172,7 @@ module.exports = grammar({
 
     range_structured_binding: ($) =>
       seq(
-        "auto",
-        optional("&"),
+        choice(seq("auto", optional("&")), seq(field("mutable", "mut"), "auto", "&")),
         "[",
         field("name", $.identifier),
         repeat(seq(",", field("name", $.identifier))),

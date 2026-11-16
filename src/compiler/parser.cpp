@@ -3700,21 +3700,27 @@ private:
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'for'.");
 
     if (isStructuredBindingPrefix()) {
-      if (check(TokenKind::MUT))
-        throw error(peek(),
-                    "Structured range bindings are read-only; remove 'mut'.");
+      std::optional<Token> mutKeyword;
+      if (match({TokenKind::MUT}))
+        mutKeyword = previous();
+      const Mutability mutability =
+          mutKeyword ? Mutability::Mutable : Mutability::Immutable;
       Token autoKeyword = consume(TokenKind::AUTO, "Expect 'auto'.");
       TypeRef bindingType(autoKeyword);
       if (match({TokenKind::AMPERSAND}))
         bindingType.reference = previous();
+      if (mutKeyword && !bindingType.reference)
+        throw error(*mutKeyword,
+                    "Mutable structured range bindings require 'auto&'.");
       Token left =
           consume(TokenKind::LEFT_BRACKET, "Expect '[' before binding names.");
       std::vector<VariableDecl> bindings;
       do {
         Token name = consume(TokenKind::IDENTIFIER,
                              "Expect a structured range binding name.");
-        bindings.emplace_back(Mutability::Immutable, TypeRef(autoKeyword),
-                              std::move(name), nullptr);
+        bindings.emplace_back(mutability, TypeRef(autoKeyword), std::move(name),
+                              nullptr, std::nullopt, false, std::nullopt, false,
+                              false, mutKeyword);
       } while (match({TokenKind::COMMA}));
       Token right =
           consume(TokenKind::RIGHT_BRACKET, "Expect ']' after binding names.");
@@ -3732,8 +3738,8 @@ private:
           colon, generatedVariable(element), true);
       StmtList body{std::move(pattern), statement()};
       return makeRangeForStatement(
-          keyword, Mutability::Immutable, std::move(bindingType),
-          std::move(element), std::move(colon), std::move(range),
+          keyword, mutability, std::move(bindingType), std::move(element),
+          std::move(colon), std::move(range),
           std::make_shared<BlockStmt>(std::move(body)));
     }
 

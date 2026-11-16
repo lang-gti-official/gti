@@ -11470,10 +11470,11 @@ int main() {
           .analyze("range-pattern.gti", R"(
 struct Entry<T> { T key; T value; Entry(T k, T v) : key(k), value(v) {} };
 int main() {
-  Entry<int> entries[2] = {Entry<int>(1, 2), Entry<int>(3, 4)};
+  mut Entry<int> entries[2] = {Entry<int>(1, 2), Entry<int>(3, 4)};
   mut int sum = 0;
   for (auto [key, value] : entries) { sum += key + value; }
   for (auto& [key, value] : entries) { sum += key + value; }
+  for (mut auto& [key, value] : entries) { key += 1; value += key; }
   return sum - 20;
 }
 )");
@@ -11490,7 +11491,7 @@ int main() {
         projectedDebugLocals += local.name == "key" || local.name == "value";
     }
   }
-  expect(projectedDebugLocals == 4 &&
+  expect(projectedDebugLocals == 6 &&
              rangePattern.semantics.verifySourceDebug().empty(),
          "range pattern names retain ordinary lexical debug-local records");
   const auto retainedProjections = std::count_if(
@@ -11501,7 +11502,7 @@ int main() {
                (declaration->name().lexeme == "key" ||
                 declaration->name().lexeme == "value");
       });
-  expect(retainedProjections == 4,
+  expect(retainedProjections == 6,
          "HIR owns projection syntax after concrete semantic models expire");
 
   const std::string rangePrelude = R"(
@@ -11526,8 +11527,13 @@ struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b
   rejectRange(
       "for (auto& [a, b] : items) { items[0].first = 7; int copy = a; }",
       "owner mutation cannot invalidate a projected borrow");
-  rejectRange("for (mut auto& [a, b] : items) {}",
-              "mutable range patterns require a separate design");
+  rejectRange("for (mut auto [a, b] : items) {}",
+              "mutable range patterns require a reference");
+  rejectRange(
+      "Item frozen[1] = {Item(1, 2)}; for (mut auto& [a, b] : frozen) {}",
+      "mutable range patterns require mutable storage");
+  rejectRange("for (mut auto& [a, b] : items) { items[0].first = 7; a += b; }",
+              "mutable patterns retain exclusive access to the owner");
   rejectRange("for (auto& [a, b] : items) {} return a;",
               "pattern names end with the iteration");
   auto escapedRange =
@@ -11553,12 +11559,14 @@ int& escape(Item& fallback) {
   expect(!ownedEscape.canGenerateCode(),
          "an owned iteration projection cannot escape its element");
 
-  const std::string rangeFormatted =
-      lang::Formatter().format("int "
-                               "main(){for(auto[a,b]:items){use(a,b);}for(auto&"
-                               "[a,b]:items){use(a,b);}}");
+  const std::string rangeFormatted = lang::Formatter().format(
+      "int "
+      "main(){for(auto[a,b]:items){use(a,b);}for(auto&"
+      "[a,b]:items){use(a,b);}for(mut auto&[a,b]:items){a+=b;}}");
   expect(rangeFormatted.find("auto [a, b] : items") != std::string::npos &&
              rangeFormatted.find("auto& [a, b] : items") != std::string::npos &&
+             rangeFormatted.find("mut auto& [a, b] : items") !=
+                 std::string::npos &&
              lang::Formatter().format(rangeFormatted) == rangeFormatted,
          "range patterns format consistently and idempotently");
   lang::FormatOptions rightAligned;

@@ -40,17 +40,23 @@ an element record, in declaration order:
 ```gti
 for (auto [key, value] : entries) { use(key, value); }
 for (auto& [key, value] : entries) { use(key, value); }
+for (mut auto& [key, value] : entries) { update(key, value); }
 ```
 
 The first form owns the current element under the normal value-binding rules:
 copying from a borrowed range requires a copyable element, while a consuming
 range transfers the element. The second form borrows the current element.
-The names are read-only projections, with no extra copies or allocations for
-decomposition. Their checked references cannot outlive the current iteration
+The first two forms create read-only projections. The explicit `mut auto&`
+form selects normal mutable iteration and creates mutable references to each
+component. It requires mutable access to every component; it cannot upgrade a
+stored read-only reference. Disjoint fields can be mutated independently while
+the exclusive iteration loan prevents conflicting access to the range.
+Decomposition adds no copies or allocations. Their checked references cannot outlive the current iteration
 or invalidate its range. Moving an individual component is not supported.
 
 The number of names must match the number of components. Private fields,
-inherited storage, nested patterns and mutable patterns are not supported.
+inherited storage and nested patterns are not supported. Mutable value patterns
+(`mut auto [a, b]`) are not supported; use `mut auto&` for mutable projections.
 This syntax applies to ordinary range-for loops, not classic for initializers
 or compile-time expansion loops. Local structured declarations retain their
 existing owning-only rules.

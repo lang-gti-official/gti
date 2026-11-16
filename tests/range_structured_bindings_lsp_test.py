@@ -10,9 +10,10 @@ from lsp_smoke_test import LspSession, lsp_position
 
 SOURCE = """struct Entry { int key; int value; Entry(int k, int v) : key(k), value(v) {} };
 int main() {
-  Entry entries[1] = {Entry(1, 2)};
+  mut Entry entries[1] = {Entry(1, 2)};
   /* 😀 */ for (auto& [key, value] : entries) { int result = key + value; }
   for (auto [key, value] : entries) { int result = key + value; }
+  for (mut auto& [key, value] : entries) { key += 1; value += key; }
   return 0;
 }
 """
@@ -82,6 +83,7 @@ def main():
             formatted = edits[0]["newText"] if edits else SOURCE
             assert "auto& [key, value] : entries" in formatted, formatted
             assert "auto [key, value] : entries" in formatted, formatted
+            assert "mut auto& [key, value] : entries" in formatted, formatted
             clean(change(2, formatted))
             errors = change(3, SOURCE.replace("[key, value]", "[key]", 1))
             assert errors and not any(item.get("code") == "GTI-B0001" for item in errors), errors

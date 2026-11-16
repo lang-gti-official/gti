@@ -4165,7 +4165,7 @@ Range structured bindings
 
 int sum(Entries& entries) {
   for (auto [key, value] : entries) { use(key, value); }
-  for (auto& [key, value] : entries) { use(key, value); }
+  for (mut auto& [key, value] : entries) { use(key, value); }
   return 0;
 }
 

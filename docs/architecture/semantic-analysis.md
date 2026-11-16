@@ -223,7 +223,9 @@ Range structured patterns use these ordinary reference-local contracts. The
 parser records a pattern over the existing range element binding; value versus
 reference ownership remains the range's responsibility. Semantic analysis checks
 exact arity, public direct fields or fixed-array elements, then records checked
-read-only reference declarations for each projection. Those declarations retain
+reference declarations for each projection, using the written binding access
+mode (read-only or explicit mutable). Mutable projections use the same
+exclusive child-loan checks as ordinary mutable field/index references. Those declarations retain
 field/index identity, parent loans, stored-owner dependencies and iteration scope.
 HIR flattens them into the same iteration block, avoiding a second hidden owner
 or a shorter nested scope. Its existing synthetic-statement ownership inventory

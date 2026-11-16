@@ -137,10 +137,11 @@ and may not escape its iteration. A read-only element cannot mutate; a mutable
 element is one child of the exclusive range loan and is the only overlapping
 mutation path until it ends.
 
-An ordinary range-for may instead use `auto [a, b]` or `auto& [a, b]`.
-The range first establishes the same owned element or read-only element borrow
+An ordinary range-for may instead use `auto [a, b]`, `auto& [a, b]`, or
+`mut auto& [a, b]`.
+The range first establishes the same owned element or checked element borrow
 as its named binding form. Exact-arity decomposition then creates read-only
-checked projections of fixed-array elements or public direct instance fields;
+(or explicitly mutable) checked projections of fixed-array elements or public direct instance fields;
 inherited storage is rejected. Projection references retain their source places
 and parent loans and cannot escape the iteration. Decomposition performs no
 additional element copy and does not permit partial movement. See

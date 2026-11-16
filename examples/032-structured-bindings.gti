@@ -36,6 +36,9 @@ int main() {
   for (auto [lo, hi] : intervals) { total += hi - lo; }
   Label borrowed[1] = {Label(std::string("name"))};
   for (auto& [text] : borrowed) { total += int(text.size()); }
+  // Explicit mutable patterns borrow each component exclusively.
+  for (mut auto& [lo, hi] : intervals) { lo += 1; hi += 1; }
+  if (intervals[0].lo != 1 || intervals[1].hi != 9) return 2;
   intervals[0].lo = 99;
   if (total == 8 && width == 1920 && height == 1080 && score == 7 && ready &&
       first.lo == 0 && first.width() == 1 && second.width() == 3 &&

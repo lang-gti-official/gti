@@ -6351,9 +6351,10 @@ auto SemanticVisitor::Impl::visitStructuredBindingDecl(
       // validation, including parent loans and stored-reference fields.
       TypeRef type(stmt.autoKeyword());
       type.reference = generated(TokenKind::AMPERSAND, "&");
-      auto projected =
-          std::make_shared<VariableDecl>(Mutability::Immutable, std::move(type),
-                                         binding.name(), std::move(projection));
+      auto projected = std::make_shared<VariableDecl>(
+          binding.mutability(), std::move(type), binding.name(),
+          std::move(projection), std::nullopt, false, std::nullopt, false,
+          false, binding.mutKeyword());
       analyze(projected);
       if (const BindingInfo *info = semanticModel.findBinding(*projected)) {
         element.binding = *info;

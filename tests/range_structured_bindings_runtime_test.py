@@ -26,6 +26,9 @@ int main() {
         "implicit-copy": "for (auto [key, value] : entries) {}",
         "partial-move": "for (auto& [key, value] : entries) { auto moved = std::move(key); }",
         "owner-invalidation": "for (auto& [key, value] : entries) { entries.clear(); int size = int(key.size()); }",
+        "mutable-invalidation": "for (mut auto& [key, value] : entries) { entries.clear(); value += 1; }",
+        "mutable-alias": "for (mut auto& [key, value] : entries) { auto& held = value; value += 1; int copy = held; }",
+        "immutable-owner": "auto& readonly = entries; for (mut auto& [key, value] : readonly) { value += 1; }",
         "wrong-arity": "for (auto& [key] : entries) {}",
     }
     with tempfile.TemporaryDirectory(prefix="gti-range-pattern-negative-") as directory:

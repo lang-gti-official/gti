@@ -49,10 +49,14 @@ def main():
         invoke(["cc", "-O3", "-c", str(native), "-o", str(obj)])
         report = {}
         binaries = {}
-        for mode in ("borrowed", "owned"):
+        for mode in ("borrowed", "owned", "mutable"):
             pattern = SOURCE if mode == "borrowed" else SOURCE.replace("auto& [", "auto [")
+            if mode == "mutable":
+                pattern = SOURCE.replace("  Pair pairs", "  mut Pair pairs").replace("auto& [", "mut auto& [").replace("      state ^= key + value;", "      key += 1; value += 1; state ^= key + value;")
             explicit = pattern.replace("[key, value]", "entry").replace(
                 " : pairs) {", " : pairs) { auto& key = entry.key; auto& value = entry.value;")
+            if mode == "mutable":
+                explicit = explicit.replace("auto& key", "mut auto& key").replace("auto& value", "mut auto& value")
             for shape, source in (("pattern", pattern), ("explicit", explicit)):
                 name = mode + "-" + shape
                 path = root / (name + ".gti")
@@ -69,7 +73,7 @@ def main():
                 binaries[name] = binary
                 report[name] = {"compile_seconds": seconds, "binary_bytes": binary.stat().st_size,
                                 "ir_bytes": ir.stat().st_size, "allocation_calls": 0, "samples": []}
-        outputs = set()
+        outputs = {mode: set() for mode in ("borrowed", "owned", "mutable")}
         for repetition in range(8):
             names = list(binaries)
             if repetition % 2:
@@ -78,14 +82,14 @@ def main():
                 start = time.perf_counter()
                 output = invoke([str(binaries[name])])
                 elapsed = time.perf_counter() - start
-                outputs.add(output.stdout)
+                outputs[name.split("-")[0]].add(output.stdout)
                 if repetition:
                     report[name]["samples"].append(elapsed)
-        assert len(outputs) == 1, outputs
+        assert all(len(values) == 1 for values in outputs.values()), outputs
         for values in report.values():
             values["median_seconds"] = statistics.median(values["samples"])
         report["compiler_child_maxrss_native_units"] = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-        for mode in ("borrowed", "owned"):
+        for mode in ("borrowed", "owned", "mutable"):
             report[mode + "_pattern_to_explicit_ratio"] = (
                 report[mode + "-pattern"]["median_seconds"] /
                 report[mode + "-explicit"]["median_seconds"])
