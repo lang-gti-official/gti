@@ -43,7 +43,6 @@ ALLOWED_SPELLINGS = {
     "cli_smoke_test.py": "the direct-compilation CLI contract, including --std and --keep-cpp acceptance",
     "compiled_library_project_test.py": "asserts the project driver rejects --backend cpp for a compiled library",
     "feature_interaction_model_test.py": "the model's recorded observations name the C++ options",
-    "general_object_layout_test.py": "pins the C++ backend's general sizeof/alignof rejection beside the LLVM layout runs",
     "llvm_backend_cli_test.py": "asserts the LLVM backend rejects --std and --keep-cpp",
     "llvm_cache_project_test.py": "asserts the project driver rejects --std with --backend llvm",
     "llvm_case_context_test.py": "unit test of the recorded case-context command spelling",

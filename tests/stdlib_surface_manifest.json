@@ -5787,7 +5787,7 @@
         "tests/runtime_object_layout_test.py",
         "docs/language/standard-library.md",
         "examples/181-general-object-layout.gti",
-        "tests/general_object_layout_test.py"
+        "tests/ui/layout/general_object_layout.gti"
       ]
     },
     {
@@ -7744,7 +7744,7 @@
       ],
       "evidence": [
         "tests/string_operations_runtime_test.py",
-        "tests/string_operations_errors_test.py",
+        "tests/ui/stdlib/string/operations_errors",
         "tests/compiler_declarations_tests.cpp",
         "tests/fixtures/string_view_assignment.gti",
         "tests/declaration_construction_runtime_test.py"

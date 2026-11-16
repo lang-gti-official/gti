@@ -396,10 +396,7 @@ owners = [
   "^constexpr_",
   "compile_limits",
   "macro_values_semantic_ir",
-  "macro_values_runtime",
   "macro_fresh_callables",
-  "macro_fresh_callable_runtime",
-  "global_borrow_carriers_runtime",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -720,7 +717,6 @@ owners = [
   "native_c_scalar_pipeline",
   "native_record_pipeline",
   "native_record_c_oracle",
-  "general_object_layout_runtime",
   "compact_owner_layout",
   "compact_owner_layout_runtime",
   "environment_target_capability",
@@ -1034,7 +1030,6 @@ paths = [
 ]
 owners = [
   "chrono_runtime_boundary",
-  "constexpr_chrono_runtime",
   "environment_runtime_boundary",
   "environment_c_header",
   "environment_runtime",
@@ -1227,7 +1222,6 @@ owners = [
   "protocol_format_hash_runtime",
   "reference_parameter_packs",
   "string_operations_runtime",
-  "string_operations_errors",
   "string_ordering_runtime",
   "string_owned_output_runtime",
   "string_index_range_runtime",
@@ -1355,7 +1349,6 @@ owners = [
   "composable_io_runtime",
   "process_runtime",
   "environment_runtime",
-  "constexpr_chrono_runtime",
   "random_engine_runtime",
   "cmath_runtime",
   "http_runtime",

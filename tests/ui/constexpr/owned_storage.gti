@@ -1,0 +1,134 @@
+// Owning containers over std::storage agree between constant evaluation and run time.
+//@ run-pass
+// Owning containers in constant evaluation. std::string, std::vector and an
+// application container over std::storage run their ordinary source-defined
+// raw storage through verified MIR at compile time; every static_assert has
+// a runtime twin that must agree.
+import std.memory;
+import std.string;
+import std.vector;
+
+// Growth reallocates, relocates and releases the old buffer.
+constexpr std::size_t grown_length() {
+  mut std::string text = std::string("ab");
+  for (mut int round = 0; round < 6; round++) {
+    text.append("cd");
+    text.push_back('!');
+  }
+  return text.size();
+}
+
+constexpr bool text_operations() {
+  mut std::string text = std::string("left");
+  text.append("-right");
+  return text == "left-right" && text != "left" && text.view().size() == std::size_t(10) &&
+         text[std::size_t(5)] == 'r' && text.find("right") == std::size_t(5) &&
+         text.find('z') == std::string::npos && text.starts_with("left") &&
+         text.ends_with("right");
+}
+
+// An empty string views the shared immutable terminator.
+constexpr bool empty_text() {
+  std::string empty{};
+  return empty.empty() && empty.view().size() == std::size_t(0) && empty == "";
+}
+
+constexpr std::string greeting(std::string_view name) {
+  mut std::string text = std::string("hello, ");
+  text.append(name);
+  return text;
+}
+
+// A returned owner moves to the caller and is destroyed there.
+constexpr std::size_t moved_result() { return greeting("gti").size(); }
+
+constexpr int vector_sum(int count) {
+  mut std::vector<int> values{};
+  for (mut int i = 1; i <= count; i++) { values.push_back(i * i); }
+  values.pop_back();
+  values.insert(std::size_t(0), 100);
+  mut int sum = 0;
+  for (mut std::size_t i = 0; i < values.size(); i++) { sum += values[i]; }
+  return sum;
+}
+
+// Elements with destructors relocate on growth and are destroyed in order.
+constexpr std::size_t total_text(int count) {
+  mut std::vector<std::string> words{};
+  for (mut int i = 0; i < count; i++) {
+    mut std::string word = std::string("w");
+    for (mut int j = 0; j < i; j++) { word.push_back('x'); }
+    words.push_back(std::move(word));
+  }
+  mut std::size_t total = 0;
+  for (mut std::size_t i = 0; i < words.size(); i++) { total += words[i].size(); }
+  return total;
+}
+
+// An application-defined container over the public typed allocation boundary.
+class Ring {
+  mut std::storage<int> slots;
+  mut std::size_t count = 0;
+public:
+  constexpr Ring(std::storage<int> slots) : slots(std::move(slots)) {}
+  constexpr void push(int value) mut {
+    this.slots.construct(this.count, value);
+    this.count = this.count + std::size_t(1);
+  }
+  constexpr int sum() {
+    mut int total = 0;
+    for (mut std::size_t i = 0; i < this.count; i++) { total += this.slots.get(i); }
+    return total;
+  }
+};
+
+constexpr int ring_total() {
+  std::allocator allocator = std::allocator();
+  mut Ring ring = Ring(allocator.try_storage<int>(std::size_t(8)).value());
+  ring.push(5);
+  ring.push(7);
+  ring.push(9);
+  return ring.sum();
+}
+
+// Move-assigning an owner into a field transfers it; the moved-from local's
+// cleanup does not destroy what the field now owns.
+class Slot {
+  mut std::vector<int> values;
+public:
+  constexpr Slot() : values(std::vector<int>()) {}
+  constexpr void replace(int value) mut {
+    mut std::vector<int> replacement{};
+    replacement.push_back(value);
+    this.values = std::move(replacement);
+  }
+  constexpr int first() { return this.values[std::size_t(0)]; }
+};
+
+constexpr int moved_into_field() {
+  mut Slot slot = Slot();
+  slot.replace(41);
+  slot.replace(42);
+  return slot.first();
+}
+
+static_assert(grown_length() == std::size_t(20));
+static_assert(text_operations());
+static_assert(empty_text());
+static_assert(moved_result() == std::size_t(10));
+static_assert(vector_sum(4) == 114);
+static_assert(total_text(5) == std::size_t(15));
+static_assert(ring_total() == 21);
+static_assert(moved_into_field() == 42);
+
+int main() {
+  if (grown_length() != std::size_t(20)) { return 1; }
+  if (!text_operations()) { return 2; }
+  if (!empty_text()) { return 3; }
+  if (moved_result() != std::size_t(10)) { return 4; }
+  if (vector_sum(4) != 114) { return 5; }
+  if (total_text(5) != std::size_t(15)) { return 6; }
+  if (ring_total() != 21) { return 7; }
+  if (moved_into_field() != 42) { return 8; }
+  return 0;
+}

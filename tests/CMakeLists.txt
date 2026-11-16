@@ -131,11 +131,6 @@ add_executable(gti_macro_fresh_callable_tests macro_fresh_callable_tests.cpp)
 target_link_libraries(gti_macro_fresh_callable_tests PRIVATE gti_compiler)
 add_test(NAME macro_fresh_callables COMMAND gti_macro_fresh_callable_tests)
 set_tests_properties(macro_fresh_callables PROPERTIES TIMEOUT 60)
-add_test(NAME macro_fresh_callable_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_fresh_callables.gti"
-    --ownership-checks)
-set_tests_properties(macro_fresh_callable_runtime PROPERTIES TIMEOUT 1200)
 add_test(NAME macro_result_failures
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/macro_result_failure_test.py"
     $<TARGET_FILE:gti>)
@@ -203,10 +198,6 @@ add_executable(gti_expression_text_tests expression_text_tests.cpp)
 add_executable(gti_macro_value_tests macro_value_tests.cpp)
 target_link_libraries(gti_macro_value_tests PRIVATE gti_compiler)
 add_test(NAME macro_values_semantic_ir COMMAND gti_macro_value_tests)
-add_test(NAME macro_values_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-    $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/macro_values.gti" --ownership-checks)
-set_tests_properties(macro_values_runtime PROPERTIES TIMEOUT 1200)
 target_link_libraries(gti_expression_text_tests PRIVATE gti_compiler)
 add_test(NAME expression_text_semantic_ir COMMAND gti_expression_text_tests)
 add_test(NAME expression_text_runtime
@@ -1324,10 +1315,6 @@ add_test(NAME returned_field_address_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
     $<TARGET_FILE:gti>)
 set_tests_properties(returned_field_address_runtime PROPERTIES TIMEOUT 1200)
-add_test(NAME optimizer_terminal_context_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_terminal_context_runtime_test.py"
-    "$<TARGET_FILE:gti>")
-set_tests_properties(optimizer_terminal_context_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME wrapping_context_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/wrapping_context_runtime_test.py"
     $<TARGET_FILE:gti>)
@@ -1553,38 +1540,10 @@ set_tests_properties(class_argument_profiles_runtime PROPERTIES TIMEOUT 180)
 add_test(NAME empty_return_construction_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/empty_return_construction_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(empty_return_construction_runtime PROPERTIES TIMEOUT 180)
-add_test(NAME source_expected_production_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/source_expected_production.gti" --ownership-checks)
-set_tests_properties(source_expected_production_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME source_expected_example_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/169-source-expected.gti" --ownership-checks)
 set_tests_properties(source_expected_example_runtime PROPERTIES TIMEOUT 300)
-add_test(NAME global_borrow_carriers_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/global_borrow_carriers.gti" --ownership-checks)
-set_tests_properties(global_borrow_carriers_runtime PROPERTIES TIMEOUT 300)
-add_test(NAME readonly_range_over_mutable_result_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/readonly_range_over_mutable_result.gti" --ownership-checks)
-set_tests_properties(readonly_range_over_mutable_result_runtime PROPERTIES TIMEOUT 300)
-add_test(NAME parameter_payload_reference_returns_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/parameter_payload_reference_returns.gti" --ownership-checks)
-set_tests_properties(parameter_payload_reference_returns_runtime PROPERTIES TIMEOUT 300)
-add_test(NAME raw_pointer_slot_references_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/raw_pointer_slot_references.gti" --ownership-checks)
-set_tests_properties(raw_pointer_slot_references_runtime PROPERTIES TIMEOUT 300)
-add_test(NAME use_based_accessor_selection_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/use_based_accessor_selection.gti" --ownership-checks)
-set_tests_properties(use_based_accessor_selection_runtime PROPERTIES TIMEOUT 300)
-add_test(NAME reflected_contextual_construction_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-          $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/tests/fixtures/reflected_contextual_construction.gti" --ownership-checks)
-set_tests_properties(reflected_contextual_construction_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME callable_return_type_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)
@@ -2193,11 +2152,6 @@ add_test(NAME generic_initialization COMMAND gti_generic_initialization_tests)
 add_executable(gti_generic_layout_tests generic_layout_tests.cpp)
 target_link_libraries(gti_generic_layout_tests PRIVATE gti_compiler)
 add_test(NAME generic_layout COMMAND gti_generic_layout_tests)
-add_test(NAME generic_instance_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/generic_instance_runtime_test.py"
-                 "$<TARGET_FILE:gti>")
-set_tests_properties(generic_instance_runtime PROPERTIES TIMEOUT 600)
 
 add_executable("gti_lowered_program_census"
                "${PROJECT_SOURCE_DIR}/tests/lowered_program_census.cpp"
@@ -3496,11 +3450,6 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/consteval_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(consteval_runtime PROPERTIES TIMEOUT 300)
-  add_test(NAME general_object_layout_runtime
-           COMMAND "${Python3_EXECUTABLE}"
-                   "${PROJECT_SOURCE_DIR}/tests/general_object_layout_test.py"
-                   "$<TARGET_FILE:gti>")
-  set_tests_properties(general_object_layout_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME string_index_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -4267,81 +4216,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(json_dynamic_runtime PROPERTIES TIMEOUT 1200)
   add_test(
-    NAME constexpr_text_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_text_positive.gti"
-  )
-  add_test(
-    NAME constexpr_array_mir_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_array_mir_positive.gti"
-  )
-  add_test(
-    NAME constexpr_readonly_references_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_readonly_references.gti"
-  )
-  add_test(
-    NAME constexpr_mutation_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_mutation.gti"
-  )
-  add_test(
-    NAME constexpr_results_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_results.gti"
-  )
-  add_test(
-    NAME constexpr_allocation_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_allocation.gti"
-            --ownership-checks
-  )
-  add_test(
-    NAME constexpr_owned_storage_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_owned_storage.gti"
-            --ownership-checks
-  )
-  add_test(
-    NAME constexpr_payload_enum_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_payload_enum.gti"
-            --ownership-checks
-  )
-  add_test(
-    NAME constexpr_tryable_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_tryable.gti"
-            --ownership-checks
-  )
-  add_test(
-    NAME fresh_callable_borrow_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/fresh_callable_borrows.gti"
-            --ownership-checks
-  )
-  add_test(
     NAME constexpr_allocation_example
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
@@ -4358,60 +4232,11 @@ if(Python3_Interpreter_FOUND)
             --ownership-checks
   )
   add_test(
-    NAME constexpr_enum_builders_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_enum_builders.gti"
-  )
-  add_test(
     NAME constexpr_builders_example
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
             "$<TARGET_FILE:gti>"
             "${PROJECT_SOURCE_DIR}/examples/142-constexpr-builders.gti"
-  )
-  add_test(
-    NAME constexpr_chrono_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_chrono.gti"
-  )
-  add_test(
-    NAME constexpr_library_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_library_positive.gti"
-  )
-  add_test(
-    NAME constexpr_dependent_branches_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_dependent_branches.gti"
-  )
-  add_test(
-    NAME constexpr_operators_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_operators.gti"
-  )
-  add_test(
-    NAME constexpr_asset_table_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_asset_table.gti"
-  )
-  add_test(
-    NAME constexpr_record_mir_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_record_mir_positive.gti"
   )
   add_test(
     NAME sum_types_runtime
@@ -4954,9 +4779,6 @@ if(Python3_Interpreter_FOUND)
   # Its GCC sanitized build may take minutes under a parallel suite;
   # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
   set_tests_properties(string_operations_runtime PROPERTIES TIMEOUT 1800)
-  add_test(NAME string_operations_errors
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/string_operations_errors_test.py" "$<TARGET_FILE:gti>")
-  set_tests_properties(string_operations_errors PROPERTIES TIMEOUT 300)
   add_test(NAME expected_filesystem_prerequisites_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expected_filesystem_prerequisites_runtime_test.py" "$<TARGET_FILE:gti>")
   set_tests_properties(expected_filesystem_prerequisites_runtime PROPERTIES TIMEOUT 300)
