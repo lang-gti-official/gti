@@ -1,0 +1,2 @@
+// Default immutability: method, lambda, constexpr and generic bodies obey the same local-initialization rule.
+struct Record { int read() { mut int value; return 0; }  public: Record() = default; };  //~ ERROR GTI-S2000 requires an initializer

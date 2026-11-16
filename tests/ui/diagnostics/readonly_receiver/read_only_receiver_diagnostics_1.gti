@@ -1,0 +1,27 @@
+// Read only receiver diagnostics: a direct implicit field write should identify the read-only method and mutable field declaration.
+struct Component {
+  mut int offset = 0;
+public:
+  Component() = default;
+};
+
+class Path {
+public:
+  void direct() {
+    direct_value = 1;  //~ ERROR GTI-S2002
+  }
+
+  void nested() {
+    component.offset = 2;  //~ ERROR GTI-S2002
+  }
+
+  void bind() {
+    mut int& alias = component.offset;  //~ ERROR GTI-S2017
+  }
+
+private:
+  mut int direct_value = 0;
+  mut Component component = Component();
+public:
+  Path() = default;
+};

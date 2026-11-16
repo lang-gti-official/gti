@@ -1,0 +1,5 @@
+// A C section needs a build.
+// --- main.gti
+int main() { return 0; }
+// --- helper.c
+int helper(void) { return 0; }

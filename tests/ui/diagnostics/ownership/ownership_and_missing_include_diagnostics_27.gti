@@ -1,0 +1,3 @@
+// Ownership and missing include diagnostics: read-only reference advice must explain the access contract, not only binding mutability.
+struct Command { mut int name = 0;  public: Command() = default; };
+void update(Command& cmd) { cmd.name = 1; }  //~ ERROR GTI-S2000

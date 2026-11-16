@@ -1,0 +1,3 @@
+// analyze-fail: a semantic error, without lowering.
+//@ analyze-fail
+int main() { return missing; }  //~ ERROR GTI-S2001

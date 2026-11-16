@@ -1,0 +1,9 @@
+// The recommended explicit view accessor compiles.
+//@ check-pass
+import std.string;
+int main() {
+  std::string word = std::string("abc");
+  mut std::string output{};
+  output.append(word.view());
+  return 0;
+}

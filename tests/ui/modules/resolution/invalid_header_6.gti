@@ -1,0 +1,2 @@
+// A malformed or misplaced module import or header fails during source loading: an import inside a namespace.
+namespace n { import lib; }  //~ ERROR GTI-I0012 unconditional source-unit-level

@@ -1,0 +1,4 @@
+// Comparison operator formatting stability: the formatter disambiguates a compact concept's generic close from its assignment token.
+//@ parse-pass
+//@ snapshot: format
+concept sortable<T> = std::totally_ordered<T> && std::movable<T>;

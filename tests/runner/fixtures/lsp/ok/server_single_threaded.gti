@@ -1,0 +1,3 @@
+// The same call on the default (single-threaded) server is not available.
+import std.cthread;
+int main() { std::thrd_t handle = 0; mut int32_t result = 0; unsafe { return std::thrd_join(handle, result); } }  //~ ERROR GTI-S2084

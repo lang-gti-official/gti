@@ -1,0 +1,12 @@
+// Consteval statement completion: standalone immediate void calls and implicit bare returns publish through verified HIR/MIR without runtime effects.
+//@ check-pass
+mut int global = 7;
+constexpr int choose(bool read) { return read ? global : 2; }
+consteval void validate(bool read) { int checked = choose(read); }
+struct Port { int value; implicit consteval Port() : value(42) {} };
+Port make() { return; }
+int main() {
+  mut int& held = global;
+  validate(false);
+  return held + make().value - 49;
+}

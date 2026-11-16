@@ -1,0 +1,5 @@
+main.gti:4:25: error[GTI-S2089]: Unknown type 'std::set'.
+ 4 | using dictionary = std::set<int>;  //~ ERROR GTI-S2089
+   |                         ^~~
+help: Add import std.set; to this source file.
+help: Add import std.set;

@@ -1,0 +1,4 @@
+// Dependent constexpr branch deferral retains concrete flow, declaration checks and resource limits (the condition reads a runtime parameter).
+import std.string;
+int bad<uint64_t N>(bool runtime) { if constexpr(N == 0 && runtime) { return 1; } else { return 2; } }  //~ ERROR GTI-S2057 not constexpr //~ ERROR GTI-S2031
+int main() { return bad<0>(true); }

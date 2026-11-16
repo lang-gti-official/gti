@@ -1,0 +1,16 @@
+// Ownership and missing include diagnostics: a whole-value transfer after a field move names the missing field and identifies its transfer site.
+import std.string;
+
+struct Pair {
+  mut std::string first;
+  mut std::string second;
+  Pair(std::string a, std::string b)
+    : first(std::move(a)), second(std::move(b)) {}
+};
+void consume(Pair input) {}
+int main() {
+  mut Pair value{std::string("a"), std::string("b")};
+  auto first = std::move(value.first);
+  consume(std::move(value));  //~ ERROR GTI-S2018 first
+  return int(first.size());
+}

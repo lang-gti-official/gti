@@ -1,0 +1,18 @@
+// Fixed-width integers: out-of-range literals, narrowing and mixed-sign arithmetic are rejected semantically, one diagnostic each (13).
+int8_t too_high = 128;  //~ ERROR GTI-S2003
+int8_t too_low = -129;  //~ ERROR GTI-S2003
+int16_t wide = 1;
+int8_t narrowing = wide;  //~ ERROR GTI-S2003
+int alias_overflow = 2147483648;  //~ ERROR GTI-S2003
+int64_t signed_overflow = 9223372036854775808;  //~ ERROR GTI-S2003
+uint8_t unsigned_negative = -1;  //~ ERROR GTI-S2003
+uint8_t unsigned_overflow = 256;  //~ ERROR GTI-S2003
+uint16_t unsigned_wide = 1;
+uint8_t unsigned_narrowing = unsigned_wide;  //~ ERROR GTI-S2003
+int32_t signed_value = 1;
+uint32_t unsigned_value = 1;
+uint32_t signed_to_unsigned = signed_value;  //~ ERROR GTI-S2003
+int32_t unsafe_sum = signed_value + unsigned_value;  //~ ERROR GTI-S2000
+bool unsafe_comparison = signed_value < unsigned_value;  //~ ERROR GTI-S2000
+uint32_t unsafe_negation = -unsigned_value;  //~ ERROR GTI-S2000
+uint alias_unsigned_overflow = 4294967296;  //~ ERROR GTI-S2003

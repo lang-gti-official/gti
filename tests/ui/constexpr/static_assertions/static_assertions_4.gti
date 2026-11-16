@@ -1,0 +1,5 @@
+// Static assertions: runtime values should remain invalid in static assertions.
+int verify(int value) {
+  static_assert(value == 4);  //~ ERROR GTI-S2057 reads a binding that is not constexpr
+  return value;
+}

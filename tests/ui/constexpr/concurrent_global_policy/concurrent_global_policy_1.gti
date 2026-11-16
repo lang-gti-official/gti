@@ -1,0 +1,11 @@
+// Concurrent global policy: the default execution profile should preserve existing mutable namespace and static-field storage.
+//@ check-pass
+mut int namespace_count = 0;
+static mut int internal_count = 0;
+class Registry {
+public:
+  static mut int current = 0;
+public:
+  Registry() = default;
+};
+int main() { return namespace_count + internal_count + Registry::current; }

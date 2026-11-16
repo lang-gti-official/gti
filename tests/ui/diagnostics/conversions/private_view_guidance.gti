@@ -1,0 +1,5 @@
+// Conversion guidance does not suggest an inaccessible accessor.
+//@ snapshot: diagnostics
+class Number { private: int view() { return 1; }  public: Number() = default; };
+int consume(int value) { return value; }
+int main() { Number value{}; return consume(value); }  //~ ERROR GTI-S2003

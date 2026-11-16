@@ -1,0 +1,3 @@
+// Generic argument diagnostic guidance: genuine conflicting inferred types retain their explanation.
+T choose<T>(T left, T right) { return left; }
+int main() { return choose(1, true); }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003

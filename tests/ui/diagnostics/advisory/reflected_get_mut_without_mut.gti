@@ -1,0 +1,16 @@
+// Removing the mut that reflected get_mut requires is an error rather than an advisory fix.
+import std.meta;
+struct Point {
+  mut int x = 1;
+  mut int y = 2;
+public:
+  Point() = default;
+};
+int main() {
+  Point point = Point();
+  mut int total = 0;
+  constexpr for (auto field : std::meta::fields_of<Point>()) {
+    total += field.get_mut(point);  //~ ERROR GTI-S2112 //~ ERROR GTI-S2112
+  }
+  return total;
+}

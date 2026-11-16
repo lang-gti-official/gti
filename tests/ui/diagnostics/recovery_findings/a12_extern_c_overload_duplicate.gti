@@ -1,0 +1,10 @@
+// Recovery reproducer a12-extern-c-overload-duplicate: only the owning diagnostic is reported, located at its cause.
+// A12: one overloaded extern "C" declaration is reported twice at the same span.
+extern "C" {
+  int32_t twice(int32_t v);
+  int32_t twice(int64_t v);  //~ ERROR GTI-S2054
+}
+
+int main() {
+  return 0;
+}

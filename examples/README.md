@@ -939,4 +939,4 @@ success exits with 0 and prints nothing.
 
 The [constant character conversion example](constant-character/main.gti) shows
 explicit fitting integer constants, constexpr calls and value-generic code units.
-It is registered by `testCharactersAndStringViews` in `compiler_pipeline`.
+`gti_test_examples` checks it.

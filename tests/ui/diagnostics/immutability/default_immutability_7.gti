@@ -1,0 +1,2 @@
+// Default immutability: an unknown local type does not acquire a speculative initialization diagnostic.
+int main() { mut Missing value; return 0; }  //~ ERROR GTI-S2000 Unknown type

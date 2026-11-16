@@ -1,0 +1,8 @@
+// Generic advisory soundness: a mutable place passed to an unresolved callable has no unsafe removal fix.
+//@ check-pass
+void invoke<Function>(Function function) {
+  mut int value = 1;
+  function(value);
+}
+void bump(mut int& value) { value++; }
+int main() { invoke(bump); return 0; }

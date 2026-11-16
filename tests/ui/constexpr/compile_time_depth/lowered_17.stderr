@@ -1,0 +1,36 @@
+main.gti:8:46: error[GTI-S2057]: The condition of 'static_assert' exceeded the compiler's bounded evaluation limit. The constexpr call depth exceeded the request's limit of 16 nested calls while executing 'depth_of'.
+ 8 | static_assert(depth_of("((((((((((((((((x", 0) == 16);  //~ ERROR GTI-S2057 call depth exceeded
+   |                                              ^
+main.gti:8:1: note: Static assertion declared here.
+ 8 | static_assert(depth_of("((((((((((((((((x", 0) == 16);  //~ ERROR GTI-S2057 call depth exceeded
+   | ^~~~~~~~~~~~~
+main.gti:8:46: note: Constant evaluation requested here.
+ 8 | static_assert(depth_of("((((((((((((((((x", 0) == 16);  //~ ERROR GTI-S2057 call depth exceeded
+   |                                              ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+main.gti:5:54: note: Constant evaluation requested here.
+ 5 |   if (text[at] == '(') { return depth_of(text, at + 1) + 1; }
+   |                                                      ^
+help: Reduce constexpr recursion or loop work in the condition.
+help: The limit is 16; raise it with '--constexpr-depth <n>' or with 'constexpr-depth = <n>' in the [limits] table of the root package's gti.toml.
+help: 8 intermediate constexpr calls omitted from this evaluation trace.

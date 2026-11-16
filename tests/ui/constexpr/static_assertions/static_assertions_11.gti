@@ -1,0 +1,7 @@
+// Static assertions: a non-dependent false assertion in an unused generic declaration should fail immediately.
+class Broken<T> {
+  static_assert(false, "not dependent");  //~ ERROR GTI-S2079
+public:
+  Broken() = default;
+};
+int main() { return 0; }

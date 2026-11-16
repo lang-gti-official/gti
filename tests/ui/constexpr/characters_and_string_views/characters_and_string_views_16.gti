@@ -1,0 +1,2 @@
+// Characters and string views: implicit and out-of-range concrete character conversions must reject.
+char value = 65;  //~ ERROR GTI-S2003

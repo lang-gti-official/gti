@@ -1,0 +1,26 @@
+// Overload failure guidance: copyable and explicitly moved pack arguments remain accepted.
+//@ check-pass
+class Ticket {
+  int id;
+public:
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+  std::string_view view() { return "ticket"; }
+};
+class Point {
+  int x;
+public:
+  Point(int value) : x(value) {}
+};
+void sink(int value) {}
+void sink(char value) {}
+void sink<Args...>(std::string_view label, Args... args) {}
+void only<Args...>(Args... args) {}
+void show(int value) {}
+void show<T>(std::string_view label, T value) {}
+int main() {
+  Ticket t{1};
+  sink("t", std::move(t));
+  return 0;
+}

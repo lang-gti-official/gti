@@ -1,0 +1,18 @@
+main.gti:13:12: error[GTI-S2018]: Value 'source' has already been moved.
+ 13 | int code = source.code; }  //~ ERROR GTI-S2018
+    |            ^~~~~~
+main.gti:12:49: note: Ownership transferred here.
+ 12 | if (path == 0) { Ticket destination = std::move(source); } else if (path == 1) { Ticket destination = std::move(source); } else if (path == 2) { Ticket destination = std::move(source); } else if (path == 3) { Ticket destination = std::move(source); } else if (path == 4) { Ticket destination = std::move(source); } else { Ticket destination = std::move(source); }
+    |                                                 ^~~~~~
+main.gti:12:113: note: Ownership transferred here.
+ 12 | if (path == 0) { Ticket destination = std::move(source); } else if (path == 1) { Ticket destination = std::move(source); } else if (path == 2) { Ticket destination = std::move(source); } else if (path == 3) { Ticket destination = std::move(source); } else if (path == 4) { Ticket destination = std::move(source); } else { Ticket destination = std::move(source); }
+    |                                                                                                                 ^~~~~~
+main.gti:12:177: note: Ownership transferred here.
+ 12 | if (path == 0) { Ticket destination = std::move(source); } else if (path == 1) { Ticket destination = std::move(source); } else if (path == 2) { Ticket destination = std::move(source); } else if (path == 3) { Ticket destination = std::move(source); } else if (path == 4) { Ticket destination = std::move(source); } else { Ticket destination = std::move(source); }
+    |                                                                                                                                                                                 ^~~~~~
+main.gti:12:241: note: Ownership transferred here.
+ 12 | if (path == 0) { Ticket destination = std::move(source); } else if (path == 1) { Ticket destination = std::move(source); } else if (path == 2) { Ticket destination = std::move(source); } else if (path == 3) { Ticket destination = std::move(source); } else if (path == 4) { Ticket destination = std::move(source); } else { Ticket destination = std::move(source); }
+    |                                                                                                                                                                                                                                                 ^~~~~~
+help: These transfer locations are alternatives across control-flow paths, not a single execution trace.
+help: At least 1 additional ownership-transfer location is omitted from this explanation.
+help: Use the value before transferring it, or borrow it instead if the receiving API supports references. If independent ownership is needed, make an explicit clone before the transfer when the type supports it.

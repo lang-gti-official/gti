@@ -1,0 +1,11 @@
+// LSP section and option mistakes are invalid tests.
+//@ disk-only: missing.gti
+//@ execution-profile: parallel
+// --- main.gti
+int main() { return 0; }
+// --- lib.gti
+//@ disk-only: lib.gti
+export module lib;
+export int broken() { return missing; }  //~ ERROR GTI-S2001
+// --- step 2 other.gti
+int main() { return 1; }

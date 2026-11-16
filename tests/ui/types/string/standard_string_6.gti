@@ -1,0 +1,2 @@
+// Standard string: the bounded integer-output slice should not silently claim floating-point formatting.
+int main() { std::print(1.5); return 0; }  //~ ERROR GTI-S2029 does not satisfy concept 'std::integral<float>'
