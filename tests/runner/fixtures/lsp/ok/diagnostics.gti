@@ -1,0 +1,6 @@
+// Published diagnostics are matched by annotations, exhaustively.
+//@ hover @name: int32_t value
+int main() {
+  int /*@name*/value = missing;  //~ ERROR GTI-S2001
+  return value;
+}

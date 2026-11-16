@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: dangling raw pointer.
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr int* leak() { mut int x = 5; return &x; } constexpr int read() { unsafe { return *leak(); } } constexpr int constant = read();  //~ ERROR GTI-S2057
+int main() { return 0; }

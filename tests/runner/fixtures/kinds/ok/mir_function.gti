@@ -1,0 +1,5 @@
+// The verified MIR of one named function, normalised and blessed.
+//@ snapshot: mir
+//@ mir-function: sum
+int sum(int a, int b) { return a + b; }
+int main() { return sum(1, 2) - 3; }

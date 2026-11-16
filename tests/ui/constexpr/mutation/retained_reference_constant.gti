@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: retained reference constant.
+constexpr void add(mut int& value, int amount) { value += amount; }
+constexpr int& retained = bad(); constexpr int& bad() { int value = 4; return value; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2045 //~ ERROR GTI-S2057 //~ ERROR GTI-S2017 //~ ERROR GTI-S2017
+int main() { return 0; }

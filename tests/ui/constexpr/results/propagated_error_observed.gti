@@ -1,0 +1,146 @@
+// Void propagation returns the exact error alternative, and a function observes that error result by value.
+//@ check-pass
+import std.numeric;
+import std.array;
+
+enum class parse_error { empty, invalid };
+
+struct Dimensions {
+  mut int width = 3;
+  mut int height = 4;
+  constexpr Dimensions(int scale) { this.width *= scale; this.height *= scale; }
+  constexpr int area() { return this.width * this.height; }
+public:
+  Dimensions() = default;
+};
+
+constexpr expected<int, parse_error> parse_digit(std::string_view text) {
+  if (text.empty()) { return unexpected(parse_error::empty); }
+  if (text[0] == '7') { return 7; }
+  return unexpected(parse_error::invalid);
+}
+
+constexpr expected<int, parse_error> twice(std::string_view text) {
+  int digit = ?parse_digit(text);
+  return digit * 2;
+}
+
+constexpr expected<expected<int, parse_error>, parse_error> nested_result(bool valid) {
+  if (!valid) { return unexpected(parse_error::invalid); }
+  return twice("");
+}
+
+constexpr int consume_result(expected<int, parse_error> input) {
+  return input.value_or(11);
+}
+
+constexpr expected<int, std::string_view> text_error(bool valid) {
+  if (valid) { return 9; }
+  return unexpected("invalid");
+}
+
+constexpr expected<expected<int, std::string_view>, int> nested_text(bool valid) {
+  return text_error(valid);
+}
+
+struct Reading {
+  mut expected<int, parse_error> result;
+  constexpr Reading(std::string_view input) : result(twice(input)) {}
+  constexpr int get() { return this.result.value_or(9); }
+};
+
+struct Snapshot {
+  int value;
+  constexpr Snapshot(mut int& source) : value(source) { source += 1; }
+};
+
+constexpr int snapshot_value() {
+  mut int source = 5;
+  Snapshot first = Snapshot(source);
+  Snapshot second = Snapshot(source);
+  return first.value + second.value + source;
+}
+
+struct Report {
+  int code;
+  constexpr Report(int input) : code(input) {}
+};
+
+constexpr expected<Dimensions, Report> dimensions(bool valid) {
+  if (!valid) { return unexpected(Report(19)); }
+  return Dimensions(2);
+}
+
+constexpr expected<void, parse_error> validate(bool valid) {
+  if (!valid) { return unexpected(parse_error::invalid); }
+  return;
+}
+
+constexpr expected<int, parse_error> after_validation(bool valid) {
+  ?validate(valid);
+  return 25;
+}
+
+constexpr int result_array() {
+  mut expected<int, parse_error> results[2] = {twice("7"), twice("")};
+  results[1] = twice("7");
+  return results[0].value() + results[1].value();
+}
+
+struct Nested {
+  Dimensions dimensions;
+  constexpr Nested(int scale) : dimensions(Dimensions(scale)) {}
+};
+
+struct ReadSnapshot {
+  int value;
+  constexpr ReadSnapshot(int& source) : value(source) {}
+};
+
+struct Adjusted {
+  int value;
+  constexpr Adjusted(mut int& source, int amount = 2) : value(source) { source += amount; }
+};
+
+constexpr int constructor_defaults() {
+  mut int source = 3;
+  Adjusted first = Adjusted(source);
+  Adjusted second = Adjusted(source, 4);
+  return first.value + second.value + source;
+}
+
+constexpr int invalid_default(int divisor) { return 1 / divisor; }
+struct Selected {
+  int value = invalid_default(0);
+  constexpr Selected(int input) : value(input) {}
+public:
+  Selected() = default;
+};
+
+struct Defaults {
+  Dimensions dimensions = Dimensions(2);
+  expected<int, parse_error> reading = twice("7");
+public:
+  Defaults() = default;
+};
+
+constexpr int defaults_value() {
+  Defaults value = Defaults();
+  return value.dimensions.area() + value.reading.value();
+}
+
+constexpr int read_snapshot() {
+  int source = 9;
+  ReadSnapshot snapshot = ReadSnapshot(source);
+  return snapshot.value;
+}
+
+constexpr int checked_sum(bool overflow) {
+  mut auto result = std::checked_add(int8_t(overflow ? 127 : 5), int8_t(1));
+  if (!result) { return 71; }
+  return int(result.value());
+}
+
+static_assert(consume_result(after_validation(false)) == 11);
+static_assert(after_validation(false).error() == parse_error::invalid);
+int main() { return 0; }

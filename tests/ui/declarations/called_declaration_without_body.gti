@@ -1,0 +1,6 @@
+// A closed executable rejects a call to a declaration that has no body.
+// (From executable_entry_tests.cpp, which analyses with the definition
+// closure.)
+//@ require-function-definitions
+int helper(int value);
+int main() { return helper(7); }  //~ ERROR GTI-S2106

@@ -1,0 +1,4 @@
+// Dependent constexpr branch deferral retains concrete flow, declaration checks and resource limits (a move in the selected branch reaches the later use).
+import std.string;
+int bad<uint64_t N>() { mut std::string text = std::string("text"); if constexpr(N == 0) { std::string old = std::move(text); } return int(text.size()); }  //~ ERROR GTI-S2018 moved
+int main() { return bad<0>(); }

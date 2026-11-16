@@ -1,0 +1,26 @@
+// Standard string: std::string should be an ordinary source-defined owner over char storage.
+//@ check-pass
+import std.string;
+
+int main() {
+  std::string_view literal = "engine";
+  mut std::string value = std::string(literal);
+  value.push_back(' ');
+  value.append("runtime");
+  mut std::string copy = value.clone();
+  std::string signed_text =
+      std::to_string(int64_t(-9223372036854775807 - 1));
+  std::string unsigned_text =
+      std::to_string(uint64_t(18446744073709551615));
+  bool cloned = value == copy;
+  copy[0] = 'E';
+  char first = copy.at(0);
+  copy.clear();
+  if (literal.size() == 6 and !literal.empty() and literal[0] == 'e' and
+      cloned and value == "engine runtime" and first == 'E' and copy.empty() and
+      signed_text == "-9223372036854775808" and
+      unsigned_text == "18446744073709551615") {
+    return 0;
+  }
+  return 1;
+}

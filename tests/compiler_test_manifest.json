@@ -666,10 +666,6 @@
       "suite": "constexpr"
     },
     {
-      "name": "testStandardString",
-      "suite": "constexpr"
-    },
-    {
       "name": "testLogicalOperatorSpellings",
       "suite": "constexpr"
     },
@@ -706,46 +702,6 @@
       "suite": "constexpr"
     },
     {
-      "name": "testConstexprLibrary",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprOperators",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testDependentConstexprBranches",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprReadOnlyReferences",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprMutation",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprEnumBuilders",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprResults",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprTryable",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprPayloadEnums",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testConstexprAllocation",
-      "suite": "constexpr"
-    },
-    {
       "name": "testStaticAssertions",
       "suite": "constexpr"
     },
@@ -767,10 +723,6 @@
     },
     {
       "name": "testNativeStackSegmentsAreInvisible",
-      "suite": "constexpr"
-    },
-    {
-      "name": "testLazyStagingAndCompileTimePanic",
       "suite": "constexpr"
     },
     {

@@ -1,0 +1,42 @@
+// Constructor field placement/replacement preserves success and failure cleanup.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 3
+//@[default] stdout: 12
+//@[default] stdout: 3
+//@[default] stdout: 9
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 3
+//@[fail] stdout: 3
+//@[fail] stdout: 9
+//@[fail] stderr-contains: optional_constructor_failure.gti:15: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- optional_constructor_failure.gti
+import std.optional;
+import std.string;
+import std.vector;
+
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  ~Marker() { std::println(value); }
+};
+
+struct Payload {
+  Marker first;
+  int value;
+  Payload(int divisor) : first(Marker(3)), value(12 / divisor) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Marker caller{9};
+  mut std::optional<Payload> slot{};
+  [[discard]] slot.emplace(1);
+  // Reset the old payload, construct the new one under ordinary MIR failure
+  // routing, then publish only the completed value into the empty slot.
+  [[discard]] slot.emplace(2 - argc);
+  std::println(slot.value().value);
+  return 0;
+}

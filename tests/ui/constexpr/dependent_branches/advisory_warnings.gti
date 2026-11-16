@@ -1,0 +1,6 @@
+// Warnings in primary and concrete constexpr bodies remain advisory through staged and ordinary HIR lowering.
+//@ check-pass
+constexpr int ordinary() { return 3; return 4; }  //~ WARN GTI-S2095
+constexpr int generic<uint64_t N>() { if constexpr(N == 0) { return 1; } else { return 2; } return 3; }
+static_assert(ordinary() == 3); static_assert(generic<0>() == 1);
+int main() { return generic<0>() - 1; }
