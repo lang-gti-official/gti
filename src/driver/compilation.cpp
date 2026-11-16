@@ -373,6 +373,7 @@ CompilationInputs loadCompilationInputs(
     const CompilationRequest &request, ProgressObserver *progress,
     const std::unordered_map<std::string, std::string> &overrides) {
   SourceLoader sourceLoader;
+  sourceLoader.setErrorLimit(request.compileLimits().errorLimit);
   CompilationInputs inputs;
   std::vector<std::filesystem::path> preludes{
       request.standardLibrary().prelude};
@@ -393,6 +394,7 @@ CompilationInputs loadCompilationInputs(
   }
   inputs.sources = sourceLoader.sources();
   inputs.diagnostics = sourceLoader.errors();
+  applyErrorLimit(inputs.diagnostics, request.compileLimits().errorLimit);
   inputs.sourceValid = !sourceLoader.hadError();
   std::erase_if(inputs.diagnostics, [&](const Diagnostic &diagnostic) {
     return request.warnings().suppresses(diagnostic) ||

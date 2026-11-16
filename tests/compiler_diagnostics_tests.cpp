@@ -4784,7 +4784,57 @@ int main() { return 0; }
   }
 }
 
+void testAnalysisErrorLimit() {
+  std::string source = "void broken() {\n";
+  for (int index = 0; index < 230; ++index)
+    source += "missing_" + std::to_string(index) + "();\n";
+  source += "}\n";
+  for (std::size_t limit : {20U, 1U, 7U, 0U}) {
+    lang::FrontendOptions options;
+    options.limits.errorLimit = limit;
+    const auto result =
+        lang::Frontend(options).analyze("error-limit.gti", source);
+    const std::size_t expected = limit == 0 ? 230 : limit + 1;
+    expect(lang::errorDiagnosticCount(result.diagnostics) == expected,
+           "frontend error count respects the analysis budget");
+    expect(!result.canGenerateCode(), "limited analysis cannot generate code");
+    if (limit != 0) {
+      expect(result.diagnostics.back().code == "GTI-D0002" &&
+                 result.diagnostics.back().primary.source.find(
+                     "error-limit.gti") != std::string::npos,
+             "terminal error limit diagnostic retains its source location");
+    }
+  }
+  // This inspects the analyzer's raw records before the frontend presentation
+  // cap. It proves that later statements were not analyzed.
+  lang::Lexer lexer;
+  lang::Parser parser(lexer.scan(source, "error-limit.gti"));
+  const auto program = parser.parse();
+  lang::SemanticVisitor semantic;
+  expect(!semantic.check(program) &&
+             lang::errorDiagnosticCount(semantic.errors()) == 20,
+         "semantic analysis actually stops after twenty failing statements");
+  lang::Parser goodParser(lexer.scan("void valid() {}", "valid.gti"));
+  expect(semantic.check(goodParser.parse()),
+         "limited semantic visitors reset on reuse");
+  std::string parseErrors;
+  for (int index = 0; index < 230; ++index)
+    parseErrors += "int bad_" + std::to_string(index) + " = ;\n";
+  for (const std::string &invalid : {std::string(230, '`'), parseErrors}) {
+    const auto result = lang::Frontend().analyze("syntax-limit.gti", invalid);
+    expect(lang::errorDiagnosticCount(result.diagnostics) == 21 &&
+               result.diagnostics.back().code == "GTI-D0002",
+           "lexical and parser recovery stop at the same default limit");
+  }
+  std::vector<lang::Diagnostic> warnings(40);
+  for (auto &diagnostic : warnings)
+    diagnostic.severity = lang::DiagnosticSeverity::Warning;
+  expect(!lang::applyErrorLimit(warnings, 20) && warnings.size() == 40,
+         "warnings do not consume the error budget");
+}
+
 constexpr NamedTest kTests[] = {
+    {"testAnalysisErrorLimit", testAnalysisErrorLimit},
     {"testMissingSwitchCasesFix", testMissingSwitchCasesFix},
     {"testPayloadPatternVisibilityDiagnostics",
      testPayloadPatternVisibilityDiagnostics},

@@ -1,5 +1,14 @@
 [
   {
+    "id": "AnalysisErrorLimit",
+    "code": "GTI-D0002",
+    "phase": "Driver",
+    "severity": "Error",
+    "group": "error-limit",
+    "format": "Too many errors; stopping analysis (error limit {0}).",
+    "arguments": 1
+  },
+  {
     "id": "UnbalancedProceduralInput",
     "code": "GTI-I0016",
     "phase": "SourceLoading",

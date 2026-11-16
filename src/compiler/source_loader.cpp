@@ -653,6 +653,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                        bool isPrelude, const Token *includeToken,
                        std::optional<std::string> standardLibraryName,
                        SourceUnitRole role) {
+  if (errorLimitReached(diagnostics, errorLimit))
+    return 0;
   const std::string key = path.string();
   SourceUnitId unitId = 0;
   if (const auto state = states.find(key); state != states.end()) {
@@ -730,7 +732,11 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
                          .completionOffset = unitCompletionOffset,
                          .sourceGeneration = generation,
                          .knownSourceDigest = knownSourceDigest,
-                         .cacheContext = cacheContext});
+                         .cacheContext = cacheContext,
+                         .errorLimit = errorLimit == 0
+                                           ? 0
+                                           : errorLimit - errorDiagnosticCount(
+                                                              diagnostics)});
     sourceManager.set(key, lexical->source);
     if (SourceUnit *unit = graph.findUnit(unitId)) {
       unit->sourceDigest = lexical->sourceDigest;
@@ -785,7 +791,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     return false;
   };
   bool invalidCapture = false;
-  for (std::size_t i = 2; i < lexed.size(); ++i) {
+  for (std::size_t i = 2;
+       i < lexed.size() && !errorLimitReached(diagnostics, errorLimit); ++i) {
     if (!macroNameBefore(i - 2) || lexed[i - 1].kind != TokenKind::BANG ||
         lexed[i].kind != TokenKind::LEFT_PAREN)
       continue;
@@ -797,7 +804,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
       invalidCapture = true;
     }
     const auto end = std::min(group.end + 1, lexed.size());
-    for (std::size_t j = i; j < end; ++j) {
+    for (std::size_t j = i;
+         j < end && !errorLimitReached(diagnostics, errorLimit); ++j) {
       if (!syntaxDirective(lexed[j].kind))
         continue;
       diagnostics.push_back(
@@ -957,6 +965,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
     }
     for (const ProcessedSourceUnit::Directive &directive :
          processed->directives) {
+      if (errorLimitReached(diagnostics, errorLimit))
+        break;
       (void)resolveDirective(directive.tokens, 0, directive.braceDepth,
                              directive.conditionalDepth);
     }
@@ -1015,7 +1025,8 @@ SourceLoader::loadFile(const std::filesystem::path &path, bool isEntry,
   int braceDepth = 0;
   ConfigurationDirectiveProcessor directiveProcessor(
       fileTokens, targetInfo, activeFlags, declaredFlags, diagnostics);
-  for (std::size_t index = moduleHeaderEnd; index < fileTokens.size();
+  for (std::size_t index = moduleHeaderEnd;
+       index < fileTokens.size() && !errorLimitReached(diagnostics, errorLimit);
        ++index) {
     Token &token = fileTokens[index];
     if (token.kind == TokenKind::END_OF_FILE) {

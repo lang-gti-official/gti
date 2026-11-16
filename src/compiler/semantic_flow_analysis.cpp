@@ -2439,6 +2439,7 @@ auto SemanticVisitor::Impl::analyzeStatementsInRegion(
     measureTopLevelStatements = false;
   }
   for (std::size_t index = 0; index < statements.size(); ++index) {
+    throwIfCancelled();
     const StmtPtr &statement = statements[index];
     loanFlow.currentRegion = region;
     loanFlow.currentOrder = statementOffset + index + 1;
