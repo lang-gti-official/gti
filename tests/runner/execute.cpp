@@ -1,4 +1,5 @@
 #include "execute.h"
+#include "lsp.h"
 #include "snapshot.h"
 
 #include "gti/compile_limits.h"
@@ -322,6 +323,8 @@ struct Engine::State {
   lang::TargetInfo concurrentTarget;
   lang::driver::FrontendReuse reuse;
   std::set<std::string> warmGroups;
+  std::unique_ptr<LspServer> lsp;
+  int lspDocuments = 0;
   fs::path caseDirectory;
 };
 
@@ -350,6 +353,72 @@ Engine::Engine(EngineOptions options) : state(std::make_unique<State>()) {
 }
 
 Engine::~Engine() = default;
+
+// LSP tests are measured in wall time: the work happens in the server
+// process. A worker's first LSP test (or any transcript, which starts its own
+// server) may also spend the cold allowance analysing the standard library.
+Outcome Engine::runLsp(const TestFile &test) {
+  Outcome outcome;
+  const EngineOptions &options = state->options;
+  const double limit = options.limits.forTest(test);
+  const double start = lspClock();
+  const fs::path directory =
+      state->caseDirectory / ("lsp" + std::to_string(++state->lspDocuments));
+  std::error_code error;
+  fs::remove_all(directory, error);
+  bool cold = test.mode == Mode::LspTranscript;
+  LspResult result;
+  if (test.mode == Mode::LspTranscript) {
+    result = runLspTranscript(options.lsp, test, directory,
+                              start + limit + options.limits.coldAllowance);
+  } else {
+    if (!state->lsp || !state->lsp->running()) {
+      state->lsp = std::make_unique<LspServer>(
+          options.lsp, options.workDirectory / "gti_lsp.log");
+      std::string failure;
+      if (!state->lsp->startInitialized(limit + options.limits.coldAllowance,
+                                        failure)) {
+        outcome.status = Status::Fail;
+        outcome.detail =
+            "could not start " + options.lsp.string() + ": " + failure + "\n";
+        return outcome;
+      }
+    }
+    cold = !state->lsp->warm;
+    result =
+        runLspTest(*state->lsp, test, directory,
+                   start + limit + (cold ? options.limits.coldAllowance : 0.0));
+  }
+  outcome.wall = lspClock() - start;
+  outcome.cpu = outcome.wall;
+  outcome.cold = cold;
+  if (result.crashed || result.timedOut) {
+    outcome.status = result.crashed ? Status::Crash : Status::Timeout;
+    outcome.detail = result.failure;
+    return outcome;
+  }
+  std::string detail = result.failure;
+  if (result.published) {
+    const std::vector<std::string> problems =
+        compareDiagnostics(test, result.diagnostics);
+    if (!problems.empty() && options.bless) {
+      writeFile(test.path, blessAnnotations(test, result.diagnostics));
+      outcome.blessed.push_back(test.display);
+    } else {
+      for (const std::string &problem : problems)
+        detail += problem + "\n";
+    }
+  }
+  if (!detail.empty()) {
+    outcome.status = Status::Fail;
+    outcome.detail = detail;
+  } else if (!cold && outcome.wall > limit) {
+    outcome.status = Status::Timeout;
+    outcome.detail = "over the time limit: " + std::to_string(outcome.wall) +
+                     " s > " + std::to_string(limit) + " s\n";
+  }
+  return outcome;
+}
 
 namespace {
 
@@ -574,6 +643,8 @@ Outcome Engine::run(const TestFile &test) {
     outcome.status = Status::Skip;
     return outcome;
   }
+  if (test.mode == Mode::Lsp || test.mode == Mode::LspTranscript)
+    return runLsp(test);
   const EngineOptions &options = state->options;
   const double limit = options.limits.forTest(test);
   const bool warm = state->warmGroups.contains(test.groupKey);

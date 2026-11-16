@@ -1,0 +1,19 @@
+// A derived class reads a protected member of its own type: hover,
+// definition and keyword tokens come from the frontend; UTF-16 positions
+// survive a non-BMP character (😀). (From protected_member_lsp_test.py.)
+//@ hover @use: int32_t
+//@ definition @use: @secret
+//@ token @protected: keyword
+class Base {
+/*@protected*/protected:
+  int /*@secret*/secret = 7;
+  int helper() { return secret; }
+public:
+  Base() {}
+  int read() { return secret; }
+};
+struct Derived : public Base {
+  int get(Derived& peer) { return peer./*@use*/secret; }
+public:
+  Derived() = default;
+};

@@ -87,6 +87,12 @@ bool selfTestEnabled() {
   return value != nullptr && std::string(value) == "1";
 }
 
+bool lspRequest(const std::string &name) {
+  return name == "hover" || name == "definition" || name == "references" ||
+         name == "completion" || name == "token" || name == "rename" ||
+         name == "formatting" || name == "symbols";
+}
+
 bool underSlowDirectory(const std::filesystem::path &path) {
   for (const auto &part : path)
     if (part == "slow")
@@ -112,6 +118,10 @@ const char *modeName(Mode mode) {
     return "parse-pass";
   case Mode::ParseFail:
     return "parse-fail";
+  case Mode::Lsp:
+    return "lsp";
+  case Mode::LspTranscript:
+    return "lsp-transcript";
   }
   return "?";
 }
@@ -188,10 +198,27 @@ bool writeFile(const std::filesystem::path &path, const std::string &text) {
   return static_cast<bool>(out);
 }
 
+bool underLspDirectory(const std::filesystem::path &path) {
+  for (const auto &part : path.parent_path())
+    if (part == "lsp")
+      return true;
+  return false;
+}
+
 TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   TestFile test;
   test.path = path;
   test.display = std::move(display);
+  const bool lsp = underLspDirectory(path);
+  if (lsp && path.extension() == ".jsonl") {
+    // Validated when it runs; the runner reads it line by line.
+    test.mode = Mode::LspTranscript;
+    test.modeExplicit = true;
+    test.groupKey = "lsp-transcript";
+    if (!readFile(path))
+      test.errors.push_back("cannot read the transcript");
+    return test;
+  }
   const std::optional<std::string> contents = readFile(path);
   if (!contents) {
     test.errors.push_back("cannot read the test file");
@@ -366,6 +393,14 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
                           "exit-code, args and stdin vary by revision");
       }
       continue;
+    }
+    if (lsp) {
+      std::vector<std::string> words = splitWords(name);
+      if (!words.empty() && lspRequest(words.front())) {
+        test.lspDirectives.push_back(
+            LspDirective{std::move(words), trimmed, lineNumber});
+        continue;
+      }
     }
     if (name == "check-pass" || name == "check-fail" || name == "build-pass" ||
         name == "run-pass" || name == "run-fail" || name == "parse-pass" ||
@@ -557,6 +592,21 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       }
       test.annotations.push_back(std::move(annotation));
     }
+  }
+
+  if (lsp) {
+    test.mode = Mode::Lsp;
+    if (!modes.empty())
+      error(0, "LSP tests take no mode; diagnostics are `//~` annotations");
+    if (test.sections.size() != 1 || test.sections.front().firstLine != 1)
+      error(0, "LSP tests are one file without `// --- name` sections");
+    if (!test.snapshots.empty() || !test.checks.empty() || test.optimize ||
+        test.concurrent || test.requireFunctionDefinitions ||
+        test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
+        !test.args.empty() || test.stdinText)
+      error(0, "LSP tests take only LSP expectations and annotations");
+    test.groupKey = "lsp";
+    return test;
   }
 
   // Mode and consistency.
