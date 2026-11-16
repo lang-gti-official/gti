@@ -2130,13 +2130,32 @@ bool ownedContentEntry(const MirBody &entryBody, const MirLoan &entryLoan,
         }
         const auto &actualOperand =
             viaReceiver ? *read.receiver : read.operands[read.borrowArgument];
+        // An ordinary method can stage its receiver before the call. Keep
+        // that stage's physical field selection: alias recovery below is
+        // deliberately allowed to collapse a reference back to its formal.
+        const MirOperand *physicalOperand = &actualOperand;
+        if (viaReceiver && parameter &&
+            actualOperand.kind == MirOperandKind::Value) {
+          const auto *stage = definitionFor(body, actualOperand.value);
+          if (!stage || stage->tombstone ||
+              stage->kind != MirInstructionKind::CallInput ||
+              stage->result != actualOperand.value ||
+              stage->callSite != read.callSite ||
+              stage->callInputRole != MirCallInputRole::Receiver ||
+              stage->operands.size() != 1 ||
+              stage->info.type != actualOperand.type ||
+              (stage->callInputKind != HirCallInputKind::ReadBorrow &&
+               stage->callInputKind != HirCallInputKind::MutableBorrow))
+            continue;
+          physicalOperand = &stage->operands.front();
+        }
         // Reconstructing a reference's alias may collapse its dereference to
         // the formal root. Check the physical receiver first so an unrelated
         // projection cannot borrow that root's contents authority.
         if (viaReceiver && parameter &&
-            (actualOperand.kind == MirOperandKind::BorrowRead ||
-             actualOperand.kind == MirOperandKind::BorrowWrite) &&
-            !sameOwnerPlace(actualOperand.place))
+            (physicalOperand->kind == MirOperandKind::BorrowRead ||
+             physicalOperand->kind == MirOperandKind::BorrowWrite) &&
+            !sameOwnerPlace(physicalOperand->place))
           continue;
         const auto actual = borrowSourceForOperand(body, actualOperand);
         if (!actual || !sameOwnerPlace(*actual))
@@ -2169,9 +2188,10 @@ bool ownedContentEntry(const MirBody &entryBody, const MirLoan &entryLoan,
           const auto *actualPlace = body.findPlace(*actual);
           // Alias recovery can erase the checked field selection. The physical
           // receiver retains its type and was checked against this owner above.
-          if (parameter && (actualOperand.kind == MirOperandKind::BorrowRead ||
-                            actualOperand.kind == MirOperandKind::BorrowWrite))
-            actualPlace = body.findPlace(actualOperand.place);
+          if (parameter &&
+              (physicalOperand->kind == MirOperandKind::BorrowRead ||
+               physicalOperand->kind == MirOperandKind::BorrowWrite))
+            actualPlace = body.findPlace(physicalOperand->place);
           if (!owner || callee->staticMember ||
               (receiverAllowsMutation(callee->receiverMutability) &&
                ownerAccess != AccessMode::Mutable) ||

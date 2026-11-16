@@ -180,3 +180,26 @@ and array-text tests pass. The MIR carrier-flow suite passes its new primitive
 classification and negative controls. The entire recorded focused plan must pass on the published corrected head
 before integration. PR #425 records the final run, exact head and handoff
 status; the earlier failures above are retained as before-fix evidence.
+
+
+The next integration run (`run-26d05bd23917403685e4eb4cf75f3ea7`, head
+`810ea19e`) cleared all 28 ownership assertions and passed 379 of 380 native
+borrowed-container cases. It exposed three remaining reconciliation issues:
+
+- Full-library regex helpers select an owned vector through a reference formal
+  and stage its method receiver. The content proof must recover that physical
+  field path from the exact receiver `CallInput`, checking its call site, role,
+  type and borrow mode before independently verifying the callee. Forged paths
+  and stages from another call remain rejected.
+- `string_view` and C-string values are structurally relocatable even when a
+  particular value retains an external owner. The constexpr relocation shortcut
+  must exclude text types; their in-owner movement uses the existing tracked
+  temporary and owner-aware transfers. Shared-reference records already take
+  that tracked route because their structural relocation is unavailable.
+- A view used after its owner ends now reports the supported lifetime violation
+  `GTI-S2017`, replacing the old unsupported-publication `GTI-S2045` expectation.
+  The regression requires the owner-unavailable diagnostic and rejects an ICE.
+
+These corrections do not add a container or lifetime feature. The final PR
+validation must cover the corrected native insertion, staged receiver, full
+standard-library import, and compile-time container controls together.

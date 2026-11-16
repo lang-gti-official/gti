@@ -2086,6 +2086,26 @@ int main() {
 ''')
 
 
+CASES['projected_record_reference_staged_receiver'] = (True, r'''
+import std.vector;
+struct Item { int value; Item(int value) : value(value) {} };
+struct State {
+  mut std::vector<Item> values;
+  State(std::vector<Item> values) : values(std::move(values)) {}
+};
+int inspect(mut State& state) {
+  Item item = state.values.back();
+  state.values.pop_back();
+  return item.value;
+}
+int main() {
+  mut std::vector<Item> values{};
+  values.push_back(Item(42));
+  mut State state{std::move(values)};
+  return inspect(state) == 42 ? 0 : 1;
+}
+''')
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('compiler', type=Path)

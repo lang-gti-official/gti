@@ -105,14 +105,14 @@ def main():
             "escaped-view-shell": ('import std.string;\nimport std.string_view;\nstd::string_view_iterator escape(std::string& owner) { '
                 'std::string_view view = owner.view(); return view.begin(); } int main() { return 0; }', "GTI-S2045"),
             # A sub-view keeps the source's owner borrowed and cannot outlive
-            # it; a dynamic view is shrunk in place, never reassigned.
+            # it; narrowing and reassignment both preserve the source owner.
             "subview-owner-invalidation": ('import std.string;\nint main() { mut std::string owner{"abc"}; '
                 'std::string_view part = owner.view().substr(std::size_t(1)); owner.clear(); return int(part.size()); }', "GTI-S2017"),
             "subview-escapes-local-owner": ('import std.string;\nstd::string_view leak() { std::string owner{"abc"}; '
                 'return owner.view().substr(std::size_t(1), std::size_t(1)); } int main() { return 0; }', "GTI-S2045"),
             "subview-outlives-owner": ('import std.string;\nint main() { mut std::string_view kept = ""; '
                 '{ std::string owner{"abc"}; std::string_view part = owner.view().substr(std::size_t(1)); kept = part; } '
-                'return int(kept.size()); }', "GTI-S2045"),
+                'return int(kept.size()); }', "GTI-S2017"),
             "shrunk-view-owner-invalidation": ('import std.string;\nint main() { mut std::string owner{"abc"}; '
                 'mut std::string_view rest = owner.view(); rest.remove_prefix(std::size_t(1)); owner.clear(); '
                 'return int(rest.size()); }', "GTI-S2017"),
@@ -153,6 +153,10 @@ def main():
             emitted = output / f"{name}.mir"
             result = run([compiler, path, "--emit-mir", "-o", emitted])
             assert result.returncode != 0 and code in result.stderr, (name, result.stdout, result.stderr)
+            if name == "subview-outlives-owner":
+                assert "Cannot use a borrowed value after its owner" in result.stderr, result.stderr
+                assert "retained dependency has become unavailable" in result.stderr, result.stderr
+                assert "GTI-B0001" not in result.stderr, result.stderr
             assert "GTI-B0001" not in result.stderr and not emitted.exists(), (name, result.stderr)
             print(f"{name}: rejected", flush=True)
         # The call-scoped temporary borrow lets a read-only callback parameter

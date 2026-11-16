@@ -13,9 +13,9 @@ namespace detail {
 unsafe constexpr void relocate_within_owned_at<T, Owner>(T* destination, T* source,
                                                mut Owner& owner)
     requires layout_queryable<T> && move_constructible<T> {
-  if constexpr (std::relocatable<T>) {
-    // Relocatable values carry no external dependencies. Preserve the direct
-    // move within this owner's allocation, including constant evaluation.
+  if constexpr (std::relocatable<T> && !std::meta::is_text<T>()) {
+    // Text is bitwise relocatable but can carry a value-level owner. Keep
+    // its relocation on the tracked path rather than treating it as raw data.
     unsafe { std::relocate_at(destination, source); }
   } else {
     mut std::uninitialized<T> temporary{};

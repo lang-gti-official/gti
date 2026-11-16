@@ -4885,7 +4885,7 @@ int main() {
 }
 
 void testOwnedStorageReferenceReceiver() {
-  for (const bool projected : {false, true}) {
+  for (const int projected : {0, 1, 2}) {
     std::string source = R"gti(
 import std.string;
 import std.vector;
@@ -4917,6 +4917,10 @@ int main() {
           std::string("return clone_first(values)").size(),
           "State state{std::move(values)}; return clone_first(state)");
     }
+    if (projected == 2)
+      source.replace(source.find("state.values[std::size_t(0)]"),
+                     std::string("state.values[std::size_t(0)]").size(),
+                     "state.values.back()");
     const auto result = analyzeText(source, true);
     if (!result.canGenerateCode())
       printDiagnostics(result);
@@ -4947,6 +4951,22 @@ int main() {
       expect(
           !lang::mir_detail::ownedContentEntry(forged, loan, &result.mir),
           "an arbitrary projection cannot witness the reference formal owner");
+      if (projected == 2) {
+        auto wrongStage = function->body;
+        bool changedStage = false;
+        for (auto &block : wrongStage.blocks)
+          for (auto &instruction : block.instructions)
+            if (instruction.kind == lang::MirInstructionKind::CallInput &&
+                instruction.callInputRole == lang::MirCallInputRole::Receiver) {
+              instruction.callSite = 0;
+              changedStage = true;
+            }
+        expect(changedStage,
+               "method receiver has an explicit call-input stage");
+        expect(
+            !lang::mir_detail::ownedContentEntry(wrongStage, loan, &result.mir),
+            "a stage from another call cannot witness the physical owner");
+      }
       checked = true;
     }
     expect(checked,
