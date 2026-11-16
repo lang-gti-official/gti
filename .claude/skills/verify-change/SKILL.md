@@ -10,10 +10,11 @@ completely before selecting or running checks. It owns optimized compilers,
 risk-based focused and platform coverage, preservation, exact-source evidence,
 bounded output and waiting. Run focused checks only: the merge queue runs the
 bounded gate on the exact candidate and full validation runs the complete suite
-after integration, so never run it locally to finish a task. Local runs
-follow the CI test policy: runtime harnesses run on LLVM at `-O0` unless
-`GTI_TEST_LLVM_LEVELS` selects more, the frozen C++ backend is not built and
-has no tests, and broad local runs leave out the daily tier with `-LE slow`.
+after integration, so never run it locally to finish a task. New tests follow
+[Writing Tests](../../../AGENTS.md#writing-tests) and run in seconds with
+`build-release/gti-test <path-or-substring>`. Local runs follow the CI test
+policy: LLVM at `-O0`, no C++-backend checks, and the daily slow tier left out
+with `-LE slow`.
 
 Use the canonical planner to avoid a stale client-specific selection policy:
 
