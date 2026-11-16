@@ -135,6 +135,15 @@ jobs:
           GTI_FORK_SHA: ${{ steps.range.outputs.base }}
           GTI_HEAD_SHA: ${{ github.sha }}
         run: python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
+      - name: Keep the old test suite frozen
+        # No new tests/*_test.py, tests/*_tests.cpp or add_test( registration:
+        # the old suite is being drained into one runner
+        # (docs/plans/test-suite-redesign.md). tests/ui/, tests/unit/,
+        # tests/runner/ and tests/gti_test.cmake are the new runner's.
+        env:
+          GTI_FORK_SHA: ${{ steps.range.outputs.base }}
+          GTI_HEAD_SHA: ${{ github.sha }}
+        run: python3 scripts/check_test_freeze.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
       - name: Report the surface review for changed stdlib sources
         # Advisory: a missing manifest review warns; it never blocks.
         env:
@@ -205,8 +214,6 @@ jobs:
         # Keep going after a failure so one run reports every compile error.
         run: cmake --build build --parallel "${GTI_JOBS}" -- -k 0
       - name: Run fast feedback
-        env:
-          GTI_TEST_BACKENDS: llvm
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
@@ -215,8 +222,6 @@ jobs:
         # them once per candidate, and the macOS fast job stays with the
         # feedback set and the declared tests.
         if: matrix.platform == 'linux'
-        env:
-          GTI_TEST_BACKENDS: llvm
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
       - name: Re-run the tests this pull request declares

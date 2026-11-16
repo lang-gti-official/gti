@@ -13,16 +13,13 @@ import tempfile
 
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
-from validation_checks import cpp_only  # noqa: E402  (the label mirrors CPP_ONLY_PREFIXES)
-
 
 def verify_algorithm_partitions(tests):
     """The breadth harness is one entry whose modes come from backend policy.
 
     The former c++20/c++23 x O0/O1/O3, no-elide and sanitized partitions were
     C++-backend configurations; tests/backend_modes.py now selects the modes
-    from GTI_TEST_BACKENDS, so the entry must not pin any --mode itself.
+    (LLVM at GTI_TEST_LLVM_LEVELS), so the entry must not pin any --mode itself.
     """
     partitions = [test for test in tests if any(
         pathlib.Path(arg).name == "generic_algorithm_breadth_test.py"
@@ -111,13 +108,14 @@ def verify(tests, repository):
         names.add(test["name"])
         properties = {item["name"]: item["value"] for item in test["properties"]}
         labels = properties.get("LABELS", [])
-        # A build without the frozen C++ backend disables its C++-only entries;
-        # no other entry may be disabled.
-        if "coverage-full" not in labels or (properties.get("DISABLED")
-                                              and not cpp_only(test["name"])):
+        # No entry may be disabled; slow-labelled entries move to the daily
+        # slow tier but stay registered.
+        if "coverage-full" not in labels or properties.get("DISABLED"):
             raise AssertionError(f"{test['name']}: omitted from full coverage")
-        if ("cpp-backend" in labels) != bool(cpp_only(test["name"])):
-            raise AssertionError(f"{test['name']}: cpp-backend label disagrees with CPP_ONLY_PREFIXES")
+        if "cpp-backend" in labels:
+            raise AssertionError(f"{test['name']}: the C++ backend's tests were removed")
+        if "slow" in labels and "feedback-fast" in labels:
+            raise AssertionError(f"{test['name']}: a slow-tier test cannot be fast feedback")
         timeout = properties.get("TIMEOUT")
         if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
             raise AssertionError(f"{test['name']}: no explicit timeout bound")
@@ -249,21 +247,17 @@ def main():
             pass
         else:
             raise AssertionError(f"accepted forged {mutation} registration")
-    # The C++-only label must track scripts/validation_checks.py in both directions.
-    for target_name, mutation in (("stdlib_surface", "labelled"), ("cpp_mir_body_emitter_text", "unlabelled")):
+    # The removed C++ backend's label, or a slow test in fast feedback, is refused.
+    for target_name, label in (("stdlib_surface", "cpp-backend"), ("compiler_library_boundary", "slow")):
         changed = copy.deepcopy(tests)
         target = next(test for test in changed if test["name"] == target_name)
-        labels = next(prop for prop in target["properties"] if prop["name"] == "LABELS")["value"]
-        if mutation == "labelled":
-            labels.append("cpp-backend")
-        else:
-            labels.remove("cpp-backend")
+        next(prop for prop in target["properties"] if prop["name"] == "LABELS")["value"].append(label)
         try:
             verify(changed, repository)
         except AssertionError:
             pass
         else:
-            raise AssertionError(f"accepted a {mutation} C++-only entry")
+            raise AssertionError(f"accepted a {label} label on {target_name}")
     harnesses, referrers = harness_sources(repository)
     standalone_inventory = json.loads((repository / "tests/standalone_harnesses.json").read_text())
     standalone = verify_harness_inventory(tests, harnesses, referrers, standalone_inventory)

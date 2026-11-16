@@ -1,0 +1,9 @@
+// run-pass compares stdout and the exit code.
+//@ run-pass
+//@ stdout: hello
+//@ stdout: world
+int main() {
+  std::println("hello");
+  std::println("world");
+  return 0;
+}

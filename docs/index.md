@@ -229,6 +229,10 @@ than mixed into the active queue.
   the open [failure-transport evaluation](plans/implementation-sequence.md#c04-failure-transport-evaluation),
   [milestone ownership and campaign validation](plans/implementation-sequence.md#llvm-campaign-waves-and-validation),
   and [parallel assignment boundaries](plans/implementation-sequence.md#agent-assignment-and-evidence)
+- [Test-suite redesign](plans/test-suite-redesign.md) — owner-accepted plan
+  for one in-process test runner, tiers with CPU budgets and the daily slow
+  tier; execution state in its
+  [campaign section](plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16)
 - [Systems-readiness roadmap](plans/roadmap-to-1.0.md) — capability outcomes
   and the soft, revisable path to a full-featured 1.0
 - [Language restriction ledger](plans/language-alignment.md) — current

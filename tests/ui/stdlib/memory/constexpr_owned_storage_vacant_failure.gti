@@ -1,0 +1,13 @@
+// A storage slot that was never constructed cannot be read during constant
+// evaluation, exactly as the runtime state check rejects it.
+import std.memory;
+
+constexpr int read_vacant() {
+  std::allocator allocator = std::allocator();
+  std::storage<int> slots = allocator.try_storage<int>(std::size_t(2)).value();
+  return slots.get(std::size_t(1));
+}
+
+static_assert(read_vacant() == 0);  //~ ERROR GTI-S2057
+
+int main() { return 0; }

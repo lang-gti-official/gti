@@ -1,0 +1,3 @@
+// Rejection probe diag-l12-lone-carriage-return (from tests/coverage/rejections).
+int main() {  return 0;  //!ERR  //~ ERROR GTI-L0014
+}

@@ -1,0 +1,24 @@
+// Functions declare a return type before their name.
+//@ run-pass
+//@ stdout: the value is even
+int square(int value) {
+  return value * value;
+}
+
+bool is_even(int value) {
+  return value % 2 == 0;
+}
+
+void describe(int value) {
+  if (is_even(value)) {
+    std::println("the value is even");
+  } else {
+    std::println("the value is odd");
+  }
+}
+
+int main() {
+  int value = square(4);
+  describe(value);
+  return 0;
+}

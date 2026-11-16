@@ -47,6 +47,42 @@ Reproduce a remaining
 composition against current main before treating a past rejection as a new
 compiler task.
 
+## Test-suite redesign campaign (2026-11-16)
+
+**Owner-directed, non-exclusive:** language and compiler work continues in
+parallel. The design is [the test-suite redesign plan](test-suite-redesign.md);
+this section holds its execution state. The outcome is a per-commit suite that
+is fast and reliably green: one in-process runner (`gti-test`) over single-file
+tests discovered by directory walk, replacing the registered Python scripts, C++
+test binaries and `tests/CMakeLists.txt` entries family by family.
+
+Owner decisions (2026-11-16):
+
+- Lower test assurance is accepted for speed, down to what Rust's and Clang's
+  own suites accept. Existing directives in `AGENTS.md`, `docs/` and skills
+  about how tests are written or what runs per commit may be replaced by this
+  campaign; each phase updates the prose it invalidates.
+- Channels: `tip` is packaged + smoke; `nightly` is per-commit full validation
+  and must become fast and reliably green; a **daily slow tier** (demoted
+  families and the `-O3` re-run, beside the daily sanitizers) runs on the
+  nightly commit and is a hard requirement for the beta cut and stable
+  promotion, exactly as the sanitizer verdict is. Beta and stable may wait as
+  long as the slow tier takes. The slow tier never gates `nightly` or `tip`.
+- The plan's §13 recommendations are the defaults. Superseding §13 item 9, the
+  C++ backend's tests and CI are deleted rather than demoted; its compiler
+  source and `GTI_ENABLE_CPP_BACKEND` stay.
+
+| Phase | Outcome | Prerequisites | Status |
+| --- | --- | --- | --- |
+| 0. Stop the bleeding | Per-commit runtime harnesses at `-O0` only (`GTI_TEST_LLVM_LEVELS` selects more); slow families carry the CTest label `slow` and run in the daily slow tier, whose `Slow tier verdict (<sha>)` the release train requires; C++-backend tests and CI removed; a diff-based PR lint freezes the old suite (no new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`; `tests/ui/`, `tests/unit/`, `tests/runner/` and `tests/gti_test.cmake` are exempt) | none | in progress |
+| 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts | none | not started |
+| 2. Runner MVP | `gti-test` under `tests/runner/`, cases under `tests/ui/`, one CTest entry registered in `tests/gti_test.cmake`; preamble-cache spike settles plan scenario A or B | none | in progress |
+| 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | not started |
+
+Until phase 2 lands, a new test is a case added to an existing harness; after
+it lands, new tests go under `tests/ui/`. Acceptance for each conversion phase
+is the plan's §11.4 coverage and seeded-bug comparison against phase 1.
+
 ## Module-only source campaign (2026-10-29)
 
 **Owner-directed delivery hold:** this is one coordinated breaking change in

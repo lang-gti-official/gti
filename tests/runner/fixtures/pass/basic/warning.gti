@@ -1,0 +1,5 @@
+// A warning is exhaustive too, and does not make the test check-fail.
+int main() {
+  mut int32_t unused = 1;  //~ WARN GTI-S2096
+  return unused;
+}

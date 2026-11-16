@@ -31,11 +31,13 @@ semantics.
 - The C++ backend is frozen and separated from default builds, tests, CI and
   releases. Its code stays in the tree, built only with
   `-DGTI_ENABLE_CPP_BACKEND=ON`; shared compiler changes carry no obligation
-  to keep it compiling or passing, and no general test may build or run it.
-  Its own tests run only in the hand-dispatched `cpp-backend.yml`.
+  to keep it compiling or passing. Its tests and CI were removed (owner
+  decision 2026-11-16, [test-suite redesign](docs/plans/test-suite-redesign.md));
+  no test may build or run it.
 - The shipped backend gets the execution coverage: every runtime harness runs
-  its fixtures on LLVM (`llvm-O0` and `llvm-O3`, via `tests/backend_modes.py`),
-  and no fixture may lose its last execution mode. Assert language behaviour
+  its fixtures on LLVM via `tests/backend_modes.py`, at `-O0` per commit and
+  also at `-O3` in the daily slow tier (`GTI_TEST_LLVM_LEVELS`), and no
+  fixture may lose its last execution mode. Assert language behaviour
   through diagnostics, semantic facts, MIR or LLVM execution, never generated
   C++ text. Do not weaken LLVM acceptance.
 - Reintroducing the C++ backend is a future owner decision and a port, not a
@@ -143,15 +145,18 @@ semantics.
   role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
   a macOS arm64 and Linux x64 build with `feedback-fast`, plus
   `compiler_pipeline` on Linux); the queue's `CI gate` runs the same bounded set on the
-  exact candidate. Post-integration full validation then runs the complete
-  inventory on Linux in cost-balanced bundled-release shards, the `darwin`
+  exact candidate. Post-integration full validation then runs the per-commit
+  inventory (every registered test except those labelled `slow`, runtime
+  harnesses at `-O0`) on Linux in cost-balanced bundled-release shards, the `darwin`
   set on macOS (what differs on the platform: the AArch64 LLVM backend,
   Apple-only tests, threads/TLS/atomics, debug info, install/bundle/link,
   ABI/layout; `tests/ci_darwin_tests.json`) and installed-toolchain checks,
   produces the production archives, and proves each platform's shards covered
-  its inventory. The compiler, LLVM-backend and thread sanitizers run daily on
-  the nightly commit (`sanitizers.yml`), and the release train cuts and
-  promotes only sanitizer-verified commits. Explicitly allowlisted orchestration-only changes run lint and workflow
+  its inventory. The compiler, LLVM-backend and thread sanitizers
+  (`sanitizers.yml`) and the slow tier (`slow.yml`: the `slow`-labelled tests
+  at `-O0` and `-O3`, plus an `-O3` re-run of the per-commit runtime harnesses)
+  run daily on the nightly commit; neither gates `main` or nightly, and the
+  release train cuts and promotes only commits that passed both. Explicitly allowlisted orchestration-only changes run lint and workflow
   regressions instead; compiler/runtime, build/packaging, validation selection,
   mixed and unknown changes retain full integration coverage. A source-only
   `stdlib/std/*.gti` candidate with allowed source tests/docs/metadata may reuse
@@ -188,15 +193,13 @@ semantics.
 - Run every full build and every full or broad test suite through the shared
   build window, whether or not the helper runs it:
   `python3 scripts/build_window.py --kind build -- cmake --build <tree> ...` and
-  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> -LE cpp-backend ...`.
+  `python3 scripts/build_window.py --kind suite -- ctest --test-dir <tree> -LE slow ...`.
   Local runs follow the CI test policy: the frozen C++ backend is not built
-  (`GTI_ENABLE_CPP_BACKEND` is off), a configured tree exports
-  `GTI_TEST_BACKENDS=llvm` to every harness, and no general test may build or
-  run the C++ backend; assert language behaviour through diagnostics, semantic
-  facts, MIR or LLVM execution, never generated C++. Shared compiler changes
-  carry no obligation to keep the C++ backend compiling. Deliberate C++ backend
-  work configures `-DGTI_ENABLE_CPP_BACKEND=ON -DGTI_TEST_BACKENDS=cpp`, runs
-  `-L cpp-backend`, and dispatches `cpp-backend.yml` by hand
+  (`GTI_ENABLE_CPP_BACKEND` is off) and no test builds or runs it; runtime
+  harnesses run on LLVM at `-O0` unless `GTI_TEST_LLVM_LEVELS` (for example
+  `O0,O3`) selects more. Assert language behaviour through diagnostics,
+  semantic facts, MIR or LLVM execution, never generated C++. Shared compiler
+  changes carry no obligation to keep the C++ backend compiling
   ([ADR 031](docs/decisions/031-native-llvm-backend-foundation.md#c-backend-separation-2026-11-10)).
   The window is one counted semaphore under the Git common directory, shared
   by every worktree and session on the machine, so concurrent agents stop
@@ -322,6 +325,11 @@ one-off implementation-note or redesign files when an existing category fits.
    language meaning in semantics, concrete instances in HIR, body-local control
    flow and effects in MIR, and representation choices in backends.
 4. Add focused positive and negative tests at the layer that owns the rule.
+   The old suite is frozen (`scripts/check_test_freeze.py` in PR CI): add no
+   new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`. New tests go in
+   the new runner's `tests/ui/` once it lands
+   ([test-suite redesign](docs/plans/test-suite-redesign.md)); until then, add
+   cases to an existing harness.
    Run broader relevant CTest, CLI, LSP, Tree-sitter, formatter, or installed
    toolchain checks in proportion to the change. Use a GTI compiler executable
    built with host optimization for every test that compiles or analyzes GTI
@@ -363,6 +371,10 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
   toolchains plus linked local builds (`gtiup link`); Neovim managed mode uses
   the selected matching compiler/LSP/parser without downloading its own tools.
   Installation remains opt-in.
+- **Tip** is the fastest channel: full validation's `tip` job republishes one
+  rolling `tip` prerelease from each run's production archives as soon as both
+  platforms pass their installed-toolchain checks, before the complete suite
+  finishes. It claims nothing about that suite and needs no agent action.
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
   selected `main` commit with successful release-producing integration CI and retained production
   artifacts. It verifies exact source/run/attempt, platform, configuration and

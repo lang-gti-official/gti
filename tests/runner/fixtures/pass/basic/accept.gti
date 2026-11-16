@@ -1,0 +1,2 @@
+// A program with no diagnostics passes check-pass by default.
+int main() { return 0; }

@@ -1,0 +1,3 @@
+// A crash kills only its worker; the next case still runs.
+//@ runner-fault: crash
+int main() { return 0; }

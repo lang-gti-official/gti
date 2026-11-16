@@ -1,0 +1,9 @@
+// Rejection probe diag-s30-recursive-value-type (from tests/coverage/rejections).
+struct Node { //!ERR
+  int v = 0;
+  Node next; //!ERR  //~ ERROR GTI-S2082
+};
+
+int main() {
+  return 0;
+}

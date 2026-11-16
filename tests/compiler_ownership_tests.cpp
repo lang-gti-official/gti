@@ -16882,7 +16882,9 @@ int main() {
                         "requires an explicit std::move ownership transfer") &&
           hasDiagnostic(invalid.diagnostics,
                         "Lambda return types cannot carry borrowed state") &&
-          hasDiagnostic(invalid.diagnostics, "cannot capture 'this'") &&
+          hasDiagnostic(invalid.diagnostics,
+                        "The receiver is not captured; use '[&this]' or '[mut "
+                        "&this]'.") &&
           hasDiagnostic(invalid.diagnostics,
                         "Lambda argument 1 has type 'bool'") &&
           hasDiagnostic(invalid.diagnostics, "limited to local bindings") &&

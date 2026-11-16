@@ -1,0 +1,10 @@
+// Annotations match by code and line: trailing, `^` (line above) and `|`
+// (same line as the previous annotation) forms, with optional message text.
+int main() {
+  int32_t value = missing_name;  //~ ERROR GTI-S2001
+  int32_t other = also_missing;
+  //~^ ERROR GTI-S2001 'also_missing'
+  int32_t both = first_name + second_name;  //~ ERROR GTI-S2001 'first_name'
+  //~| ERROR GTI-S2001 'second_name'
+  return value + other + both;
+}

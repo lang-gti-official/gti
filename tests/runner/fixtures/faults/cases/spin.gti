@@ -1,0 +1,3 @@
+// A case that spins exceeds its CPU limit.
+//@ runner-fault: spin
+int main() { return 0; }

@@ -423,6 +423,32 @@ resets the component override to that bundle's LSP. `gtiup show` identifies the
 component; `gc` removes old unreferenced prefixes only on explicit request.
 No installation or download occurs on compiler or editor startup.
 
+### GitHub tip publication
+
+The rolling `tip` prerelease is the fastest channel: the newest main commit
+whose production archives built and passed the installed-toolchain checks. The
+`tip` job of `full-validation.yml` publishes it as soon as both `package` jobs
+of a push run succeed, without waiting for the integration shards, so it
+normally trails a merge by one package build. It makes no claim about the
+complete suite. A commit that later fails full validation stays published as
+tip until a newer commit replaces it; nightly never selects it.
+
+The job builds and tests nothing. `release_artifacts.py tip` verifies the run's
+package provenance and each archive's embedded `BUILD_ID`, then copies the
+archive bytes unchanged to `gti-tip-<platform>.tar.gz` with a matching
+`.sha256` line and a `BUILD_ID` asset: the shape a rolling-channel installer
+expects, and the same bytes nightly serves if it later selects that commit.
+`resolve_release_source.py admit-tip` applies nightly's newer-wins rule against
+`refs/tags/tip`, and the tag moves only through a lease on the value admission
+read. Archives upload before `BUILD_ID`. The job is `continue-on-error`: a
+failed tip publication never changes the run conclusion that nightly selection
+reads. Full validation queues runs and drops superseded pending ones, so tip
+advances once per run that starts, not once per merge.
+
+The `tip` release must exist before release immutability is enabled, for the
+same reason as `nightly`: a release published afterwards cannot replace its
+assets or move its tag.
+
 ### GitHub nightly publication
 
 `.github/workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch.
@@ -456,12 +482,13 @@ arbitrary PR pass or merge exception still does not.
    `cmake/PackageRelease.cmake` refuses a macOS stage without it. The stage
    becomes `gti-nightly-<platform>.tar.gz` with a `.sha256` sidecar and
    `share/gti/BUILD_ID` naming the exact source commit. Full integration also
-   runs the complete suite in cost-balanced shards on the same bundled-release
+   runs the per-commit suite (runtime harnesses at `-O0`, tests labelled
+   `slow` excluded) in cost-balanced shards on the same bundled-release
    configuration, reusing the packaging job's object cache, and retains the
    system-LLVM fast checks, including the Linux system-LLVM installed
-   consumers. The sanitizer gates run daily on the published nightly commit
-   instead (`sanitizers.yml`); the release train requires them, nightly does
-   not. The coverage gate proves each platform's inventory
+   consumers. The sanitizer gates (`sanitizers.yml`) and the slow tier
+   (`slow.yml`) run daily on the published nightly commit instead; the
+   release train requires both, nightly does not. The coverage gate proves each platform's inventory
    ran exactly once. Packaging is a required part of the `Full validation
    verdict`; the merge gate (`CI gate`) proves only build and fast checks.
 2. **Select validated artifacts.** Nightly runs only from main's own definition
@@ -544,8 +571,9 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    takes the current validated nightly and the 48-hour beta soak is the
    safety margin. It must also
    have a passing `Sanitizer verdict (<commit>)` from a scheduled or
-   main-dispatched `sanitizers.yml` run; until the daily sanitizers pass on
-   that nightly the train skips with a notice. A dispatch's optional
+   main-dispatched `sanitizers.yml` run and a passing
+   `Slow tier verdict (<commit>)` from `slow.yml`; until both daily tiers pass
+   on that nightly the train skips with a notice. A dispatch's optional
    `min_age_hours` can require a minimum age (measured from the commit's
    committer time, which the queue sets when it lands); nothing lowers the
    full CI evidence requirement. The train skips with a notice when a cut already landed
@@ -625,10 +653,10 @@ overwrites; no tag or branch is ever forced, moved or deleted.
    since publication, and no open issue labelled `release-blocker` may name
    the version in its title or body (`0.494.0`, `v0.494.0` or any
    `0.494.0-beta.K`; `10.494.0` or `0.494.0.1` do not count). The beta's code
-   must have a passing sanitizer verdict: a release cut that changes only
-   release metadata is covered by its nightly parent's verdict, and any other
-   beta commit (a backported line) needs its own, from a `sanitizers.yml`
-   dispatch naming that commit. A dispatch's
+   must have passing sanitizer and slow-tier verdicts: a release cut that
+   changes only release metadata is covered by its nightly parent's verdicts,
+   and any other beta commit (a backported line) needs its own, from
+   `sanitizers.yml` and `slow.yml` dispatches naming that commit. A dispatch's
    `soak_hours` may lower the soak; the stable notes record it. The job waits
    for the protected `stable` environment's approval and then re-admits the
    beta. That recheck rejects the selected beta if a newer stable release or

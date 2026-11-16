@@ -47,6 +47,8 @@ FrontendResult analyze(const CompilationRequest &request,
   options.reportLibraryAuditFindings = request.rawPointerAuditLibraryFindings();
   options.limits = request.compileLimits();
   options.program = request.program();
+  options.cache = request.frontendReuse().parses;
+  options.preambleCache = request.frontendReuse().preambles;
   options.sourceDebugProfile = request.debugInfo()
                                    ? SourceDebugProfile::LexicalV1
                                    : SourceDebugProfile::None;
@@ -56,9 +58,15 @@ FrontendResult analyze(const CompilationRequest &request,
   options.lowerLibraryReachableOnly = artifact;
   options.retainApplicationBodies = artifact && request.applicationBodies();
   const auto finish = [&](FrontendResult result) {
-    addIncludeSuggestions(
-        result, options, request.entry(), {request.standardLibrary().prelude},
-        {}, {request.standardLibrary().root}, request.packageSources());
+    // Include-fix trials analyse one-off import graphs. Each would select a
+    // trusted prefix of its own, which costs more than the trial; they
+    // report the same advice without one.
+    FrontendOptions suggestionOptions = options;
+    suggestionOptions.preambleCache.reset();
+    addIncludeSuggestions(result, suggestionOptions, request.entry(),
+                          {request.standardLibrary().prelude}, {},
+                          {request.standardLibrary().root},
+                          request.packageSources());
     std::erase_if(result.diagnostics, [&](const Diagnostic &diagnostic) {
       return request.warnings().suppresses(diagnostic) ||
              request.packageWarnings().suppresses(diagnostic,

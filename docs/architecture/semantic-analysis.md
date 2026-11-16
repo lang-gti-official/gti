@@ -2064,7 +2064,13 @@ on which trusted units precede it. A frontend caller may pass a
 `FrontendOptions::preambleCache`; the frontend then analyses a program's
 *trusted prefix* once and resumes every later analysis of a program with the
 same prefix from a copy of that state. `gti check` and builds do not set it,
-and an analysis with the raw-pointer audit enabled never uses it.
+and an analysis with the raw-pointer audit enabled never uses it. The
+`gti-test` runner sets it, with a shared `FrontendCache`, for complete checks
+and executable builds through `driver::FrontendReuse`: a resumed analysis
+reports the diagnostics a fresh one does, and MIR that differs only by a
+consistent renaming of the identities registered above the prefix.
+`gti-test --isolate` compares the runner's verdicts with fresh `gti`
+processes. Include-fix trials of such a compilation run without the cache.
 
 - **Prefix.** The leading units of the compilation order that are
   compiler-trusted and not the entry unit; their declarations are a prefix of
@@ -2324,6 +2330,18 @@ loans, so a write through the capture conflicts with a live alias of it while
 disjoint fields stay independent. A capture list still resolves its
 initializers in the enclosing scope, where an enclosing closure's capture is
 not a place; capturing it by reference therefore remains rejected.
+
+Explicit `&this` and `mut &this` captures borrow the instance receiver's ordinary
+place. Their environment fields use the same reference types, retained
+origins, access modes and loan endpoints as named reference captures. Inside
+the lambda, semantics records an expression alias from `This` to the resolved
+capture binding. Classification, retained-dependency analysis and HIR lowering
+follow that alias, so the backend receives an ordinary checked-reference
+capture rather than rediscovering receiver semantics. The existing
+`lambdaDepth` guard keeps captured receiver text outside the enclosing method's
+formal text contracts. Static contexts and missing receiver captures report
+`GTI-S2027`; bare `[this]` is rejected by the parser. Tooling presents the
+capture's type and members but never renames the `this` keyword.
 
 ## Confined Callable Contracts
 

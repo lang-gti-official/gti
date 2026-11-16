@@ -1679,6 +1679,13 @@ capture suggests the exact owned spelling. The ordinary `GTI-S2018` move-state
 diagnostic owns an unavailable move-capture source and later source use, so a
 correctly spelled second move does not receive a misleading init-capture error.
 
+Receiver capture spelling is explicit: `[&this]` or `[mut &this]`. Missing
+receiver captures and capture attempts outside an instance method body report
+`GTI-S2027` at `this`. The parser rejects bare `[this]` with the accepted
+spellings. Shared writes, mutable borrowing of a read-only receiver, and
+conflicts with a live receiver capture use the ordinary borrow diagnostics;
+no automatic fix changes a shared capture into an exclusive one.
+
 `GTI-S2065` owns the opaque-native-handle boundary. It points at the invalid
 attribute, declaration name, native-facing name conflict, direct type use, or
 operation that would require the hidden pointee representation. It explains
