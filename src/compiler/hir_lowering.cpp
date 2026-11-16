@@ -3916,6 +3916,16 @@ private:
                   HirBody &body) {
     std::vector<HirStatementId> result;
     for (const StmtPtr &statement : statements) {
+      if (const auto *pattern = stmtAs<StructuredBindingDecl>(statement.get());
+          pattern && pattern->isRangeProjection()) {
+        if (const auto *info = model.findStructuredBinding(*pattern)) {
+          auto projections =
+              lowerStatements(info->rangeProjections, model, classArguments,
+                              classValueArguments, body);
+          result.insert(result.end(), projections.begin(), projections.end());
+        }
+        continue;
+      }
       if (const std::optional<HirStatementId> lowered =
               lowerStatement(statement.get(), model, classArguments,
                              classValueArguments, body)) {

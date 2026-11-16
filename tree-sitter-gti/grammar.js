@@ -26,6 +26,7 @@ module.exports = grammar({
 
   conflicts: ($) => [
     [$.generic_argument_profile_clause, $._base_type],
+    [$._base_type, $.range_structured_binding],
     [$.function_declaration, $.macro_declaration],
     [$.macro_declaration, $._qualified_identifier],
     [$.generic_argument_profile_clause, $.generic_parameter],
@@ -1148,7 +1149,7 @@ module.exports = grammar({
             optional(field("update", $.expression)),
           ),
           seq(
-            field("binding", $.range_for_declaration),
+            field("binding", choice($.range_for_declaration, $.range_structured_binding)),
             ":",
             field("range", $.expression),
           ),
@@ -1167,6 +1168,16 @@ module.exports = grammar({
         field("sequence", $.expression),
         ")",
         field("body", $.statement),
+      ),
+
+    range_structured_binding: ($) =>
+      seq(
+        "auto",
+        optional("&"),
+        "[",
+        field("name", $.identifier),
+        repeat(seq(",", field("name", $.identifier))),
+        "]",
       ),
 
     range_for_declaration: ($) =>

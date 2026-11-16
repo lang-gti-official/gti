@@ -7373,8 +7373,17 @@
                   "type": "FIELD",
                   "name": "binding",
                   "content": {
-                    "type": "SYMBOL",
-                    "name": "range_for_declaration"
+                    "type": "CHOICE",
+                    "members": [
+                      {
+                        "type": "SYMBOL",
+                        "name": "range_for_declaration"
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "range_structured_binding"
+                      }
+                    ]
                   }
                 },
                 {
@@ -7453,6 +7462,63 @@
             "type": "SYMBOL",
             "name": "statement"
           }
+        }
+      ]
+    },
+    "range_structured_binding": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "auto"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "&"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "["
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": ","
+              },
+              {
+                "type": "FIELD",
+                "name": "name",
+                "content": {
+                  "type": "SYMBOL",
+                  "name": "identifier"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "]"
         }
       ]
     },
@@ -10453,6 +10519,10 @@
     [
       "generic_argument_profile_clause",
       "_base_type"
+    ],
+    [
+      "_base_type",
+      "range_structured_binding"
     ],
     [
       "function_declaration",

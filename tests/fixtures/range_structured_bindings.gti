@@ -1,0 +1,25 @@
+import std.vector;
+import std.string;
+import std.utility;
+
+struct Entry {
+  std::string key;
+  int value;
+  Entry(std::string key, int value) : key(std::move(key)), value(value) {}
+};
+
+int main() {
+  mut std::vector<Entry> entries{};
+  entries.emplace_back(std::string("one"), 1);
+  entries.emplace_back(std::string("two"), 2);
+  mut int total = 0;
+  for (auto& [key, value] : entries) {
+    if (key.size() != 3) return 1;
+    total += value;
+  }
+  for (auto [key, value] : std::move(entries).into_range()) {
+    if (key.size() != 3) return 2;
+    total += value;
+  }
+  return total == 6 ? 0 : 3;
+}

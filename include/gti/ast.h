@@ -3208,11 +3208,15 @@ class StructuredBindingDecl final
 public:
   StructuredBindingDecl(Token autoKeyword, Token leftBracket,
                         std::vector<VariableDecl> bindings, Token rightBracket,
-                        Token equal, ExprPtr initializer)
+                        Token equal, ExprPtr initializer,
+                        bool rangeProjection = false)
       : autoKeyword_(std::move(autoKeyword)),
         leftBracket_(std::move(leftBracket)), bindings_(std::move(bindings)),
         rightBracket_(std::move(rightBracket)), equal_(std::move(equal)),
-        initializer_(std::move(initializer)) {}
+        initializer_(std::move(initializer)),
+        rangeProjection_(rangeProjection) {}
+
+  [[nodiscard]] bool isRangeProjection() const { return rangeProjection_; }
 
   void accept(StmtVisitor &visitor) const override {
     visitor.visitStructuredBindingDecl(*this);
@@ -3234,6 +3238,7 @@ private:
   Token rightBracket_;
   Token equal_;
   ExprPtr initializer_;
+  bool rangeProjection_ = false;
 };
 
 class DoWhileStmt final : public StmtOfKind<StmtKind::DoWhileStmt> {

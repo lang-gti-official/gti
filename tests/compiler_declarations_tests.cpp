@@ -11464,6 +11464,67 @@ int main() {
          "structured-binding diagnostics should reject ambiguous ownership, "
          "shape, access, mutation, and untyped initialization");
 
+  const auto rangePattern = lang::Frontend().analyze("range-pattern.gti", R"(
+struct Entry { int key; int value; Entry(int k, int v) : key(k), value(v) {} };
+int main() {
+  Entry entries[2] = {Entry(1, 2), Entry(3, 4)};
+  mut int sum = 0;
+  for (auto [key, value] : entries) { sum += key + value; }
+  for (auto& [key, value] : entries) { sum += key + value; }
+  return sum - 20;
+}
+)");
+  for (const auto &diagnostic : rangePattern.diagnostics)
+    std::cerr << "range-pattern: " << diagnostic.code << " "
+              << diagnostic.message << '\n';
+  expect(rangePattern.canGenerateCode(),
+         "owning and borrowed range patterns should reach verified MIR");
+
+  const std::string rangePrelude = R"(
+struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
+)";
+  const auto rejectRange = [&](std::string body, std::string_view reason) {
+    auto checked = lang::Frontend().analyze(
+        "invalid-range-pattern.gti",
+        rangePrelude + "int main() { mut Item items[1] = {Item(1, 2)}; " +
+            body + " return 0; }");
+    expect(!checked.canGenerateCode(), reason);
+    expect(std::none_of(checked.diagnostics.begin(), checked.diagnostics.end(),
+                        [](const auto &d) { return d.code == "GTI-B0001"; }),
+           "invalid range patterns must not cause internal diagnostics");
+  };
+  rejectRange("for (auto& [only] : items) {}",
+              "range patterns require exact arity");
+  rejectRange("for (auto& [a, a] : items) {}",
+              "range patterns require distinct names");
+  rejectRange("for (auto& [a, b] : items) { a = 7; }",
+              "range projections remain read-only");
+  rejectRange(
+      "for (auto& [a, b] : items) { items[0].first = 7; int copy = a; }",
+      "owner mutation cannot invalidate a projected borrow");
+  rejectRange("for (mut auto& [a, b] : items) {}",
+              "mutable range patterns require a separate design");
+  rejectRange("for (auto& [a, b] : items) {} return a;",
+              "pattern names end with the iteration");
+  auto escapedRange =
+      lang::Frontend().analyze("escaping-range-pattern.gti", rangePrelude + R"(
+int& escape() {
+  Item items[1] = {Item(1, 2)};
+  for (auto& [a, b] : items) { return a; }
+  return items[0].first;
+}
+)");
+  expect(!escapedRange.canGenerateCode(),
+         "projected references cannot escape local range storage");
+  const std::string rangeFormatted =
+      lang::Formatter().format("int "
+                               "main(){for(auto[a,b]:items){use(a,b);}for(auto&"
+                               "[a,b]:items){use(a,b);}}");
+  expect(rangeFormatted.find("auto [a, b] : items") != std::string::npos &&
+             rangeFormatted.find("auto& [a, b] : items") != std::string::npos &&
+             lang::Formatter().format(rangeFormatted) == rangeFormatted,
+         "range patterns format consistently and idempotently");
+
   lang::Lexer lexer;
   const auto expectSyntaxError = [&](std::string input,
                                      std::string_view message) {
@@ -11483,7 +11544,7 @@ int main() {
   expectSyntaxError(
       "int main() { for (auto [left, right] = values; true; left++) {} "
       "return 0; }",
-      "not supported in a for-loop initializer");
+      "Structured for bindings require a range");
   lang::Parser autoArrayParser(
       lexer.scan("int main() { auto[2] values = {1, 2}; return 0; }"));
   (void)autoArrayParser.parse();
