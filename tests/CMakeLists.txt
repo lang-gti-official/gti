@@ -236,10 +236,6 @@ if(TARGET gti_lsp)
   set_tests_properties(foreign_variable_lsp PROPERTIES TIMEOUT 90)
 endif()
 
-add_executable(gti_protected_member_tests protected_member_tests.cpp)
-target_link_libraries(gti_protected_member_tests PRIVATE gti_compiler)
-add_test(NAME protected_members COMMAND gti_protected_member_tests)
-set_tests_properties(protected_members PROPERTIES TIMEOUT 30)
 add_test(NAME protected_member_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/protected_member_runtime_test.py"
     $<TARGET_FILE:gti>)
@@ -1058,9 +1054,6 @@ if(Python3_Interpreter_FOUND)
     set_property(TEST allocator_raw_audit_independence_${gti_audit_stem} APPEND PROPERTY LABELS "allocator-audit")
   endforeach()
 endif()
-add_executable(gti_shared_ownership_tests shared_ownership_tests.cpp)
-target_link_libraries(gti_shared_ownership_tests PRIVATE gti_compiler)
-add_test(NAME shared_ownership_pipeline COMMAND gti_shared_ownership_tests)
 
 set(GTI_COMPILER_TEST_SUITES
     frontend

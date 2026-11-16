@@ -1,0 +1,21 @@
+// Member requirement concepts: a dependent class receiver should prove an open exact member result from its substituted declaration.
+//@ check-pass
+concept yields<S, R> = requires(S& source) { { source.read() } -> R; };
+void unwrap_into<S, T>(S& source, mut T& target) requires yields<S, T> {
+  target = source.read();
+}
+
+class Box<std::copyable T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() { return this.value; }
+};
+T relay<std::copyable T>(T value) {
+  Box<T> box = Box<T>(value);
+  mut T result = value;
+  unwrap_into(box, result);
+  return result;
+}
+int main() { return relay(7) - 7; }

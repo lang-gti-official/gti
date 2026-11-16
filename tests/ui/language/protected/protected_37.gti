@@ -1,0 +1,8 @@
+// Protected members: the program is accepted.
+//@ check-pass
+class Base<T, uint64_t N> { protected: T value; public: Base(T x) : value(x) {} };
+struct Derived<T, uint64_t N> : public Base<T, N> {
+  Derived(T x) : Base<T, N>(x) {}
+  unsafe T read_raw(Derived<T, N>* peer) { unsafe { return peer->value; } }
+};
+int use(Derived<int, 7>* peer) { Derived<int, 7> d{1}; unsafe { return d.read_raw(peer); } }

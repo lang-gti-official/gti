@@ -1,0 +1,8 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+int main() {
+           mut auto owner = std::make_shared<int>(7);
+           int& borrowed = *owner;
+           owner.reset();  //~ ERROR GTI-S2017
+           return borrowed;
+         }

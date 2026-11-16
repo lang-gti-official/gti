@@ -1,0 +1,7 @@
+// Rejections: a source result class is an ordinary shared-owner pointee.
+//@ check-pass
+import std.memory;
+int main() {
+           std::shared_ptr<expected<int, int>> empty{};
+           return int(empty.use_count());
+         }

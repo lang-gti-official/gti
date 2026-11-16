@@ -1,0 +1,12 @@
+// Concurrency capabilities: local shared ownership needs no thread permission.
+//@ check-pass
+import std.memory;
+[[no_share]]
+class Payload { int value = 7;  public: Payload() = default; };
+int main() {
+  auto value = std::make_shared<Payload>();
+  auto weak = value.downgrade();
+  auto locked = weak.lock();
+  return int(value.use_count()) - 2;
+}
+

@@ -1,0 +1,16 @@
+// Protected members: rejected with GTI-S2007.
+class Base {
+protected:
+  mut int value = 1;
+  int method() { return value; }
+  static int secret() { return 3; }
+  static mut int shared = 2;
+  using Number = int;
+  struct Detail { int code = 4;  public: Detail() = default; };
+public:
+  Base() {}
+  int inspect(Base& peer) { return peer.value; }
+  virtual int api() { return value; }
+};
+struct Sibling : public Base { public: Sibling() = default; };
+Base::Detail make() { return Base::Detail(); }  //~ ERROR GTI-S2007 //~ ERROR GTI-S2007

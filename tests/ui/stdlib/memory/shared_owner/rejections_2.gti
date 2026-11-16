@@ -1,0 +1,8 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+int main() {
+           auto owner = std::make_shared<int>(7);
+           auto weak = owner.downgrade();
+           auto copied = weak;  //~ ERROR GTI-S2003
+           return int(copied.use_count());
+         }
