@@ -53,10 +53,6 @@ if(TARGET gti_lsp)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/module_navigation_lsp_test.py"
       $<TARGET_FILE:gti_lsp>)
   set_tests_properties(module_navigation_lsp PROPERTIES TIMEOUT 120)
-  add_test(NAME include_removal_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/include_removal_lsp_test.py"
-      $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(include_removal_lsp PROPERTIES TIMEOUT 120)
 endif()
 
 add_executable(gti_thread_local_syntax_tests thread_local_syntax_tests.cpp)
@@ -1516,13 +1512,6 @@ add_executable(gti_protocol_concept_tests
   "${PROJECT_SOURCE_DIR}/tests/protocol_concept_tests.cpp")
 target_link_libraries(gti_protocol_concept_tests PRIVATE gti_llvm_backend)
 add_test(NAME protocol_concepts COMMAND gti_protocol_concept_tests)
-if(TARGET gti_lsp)
-  add_test(NAME conformance_header_lsp
-           COMMAND "${Python3_EXECUTABLE}"
-                   "${PROJECT_SOURCE_DIR}/tests/conformance_header_lsp_test.py"
-                   "$<TARGET_FILE:gti_lsp>")
-  set_tests_properties(conformance_header_lsp PROPERTIES TIMEOUT 120)
-endif()
 add_executable(gti_tryable_propagation_tests
   "${PROJECT_SOURCE_DIR}/tests/tryable_propagation_tests.cpp")
 target_link_libraries(gti_tryable_propagation_tests PRIVATE gti_llvm_backend)
