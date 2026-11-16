@@ -188,19 +188,24 @@ obligations; do not claim a source-defined replacement before it is implemented.
 
 ## Test And Finish
 
-1. Add focused valid and invalid tests in the owning suite, including recovery
-   and concrete generic/ownership composition where applicable.
-2. Inspect HIR/MIR and emitted C++ when their representation changes; test
-   runtime edges independently.
-3. Synchronize formatter, Tree-sitter, semantic tokens, completion, hover, and
-   examples only when the change crosses those surfaces. Use
+1. Add accepted and rejected `tests/ui/` cases ([Writing Tests](../../../AGENTS.md#writing-tests)),
+   including recovery and concrete generic/ownership composition where
+   applicable, with user-defined types rather than library ones.
+2. Inspect HIR/MIR and the affected backend output when their representation
+   changes; test runtime edges independently. Do not assume emitted C++ is
+   available or authoritative for every new language feature.
+3. Synchronize formatter, Tree-sitter, semantic tokens, completion and hover
+   only when the change crosses those surfaces; an `examples/` program is
+   optional. Use
    the `lsp-synchronization` skill for semantic editor changes.
 4. Update `docs/language/` for meaning, `docs/architecture/` for implemented
    boundaries, and existing `docs/plans/` for remaining implementation work,
    linked to its RFC. New feature designs belong in the RFC repository, not a
    new local proposal. Prefer updating an existing canonical document.
-5. Run focused CTest targets first, then the broad affected workflows described
-   in [`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
+5. Run `build-release/gti-test` on the tests you touched, then the affected
+   consumers that
+   [`docs/architecture/verification.md`](../../../docs/architecture/verification.md)
+   records.
 6. Run `git diff --check`; inspect the full diff for accidental semantic or
    documentation drift. For an executable change, confirm that the diff adds no
    new AST/HIR-only `CppEmitter` behavior and cite the MIR-emitted family that

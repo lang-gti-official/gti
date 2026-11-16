@@ -324,28 +324,64 @@ one-off implementation-note or redesign files when an existing category fits.
 3. Keep phase authority directional: syntax in the lexer/parser/AST, resolved
    language meaning in semantics, concrete instances in HIR, body-local control
    flow and effects in MIR, and representation choices in backends.
-4. Add focused positive and negative tests at the layer that owns the rule.
-   The old suite is frozen (`scripts/check_test_freeze.py` in PR CI): add no
-   new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`. New tests are
-   single `.gti` files under `tests/ui/`, run by `build-release/gti-test`
-   ([`tests/ui/README.md`](tests/ui/README.md)).
-   Run broader relevant CTest, CLI, LSP, Tree-sitter, formatter, or installed
-   toolchain checks in proportion to the change. Use a GTI compiler executable
-   built with host optimization for every test that compiles or analyzes GTI
-   (`Release`, `RelWithDebInfo`, or `MinSizeRel`); an unoptimized compiler is
-   not valid verification evidence.
+4. Add tests as [Writing Tests](#writing-tests) says. Use a GTI compiler
+   executable built with host optimization for every test that compiles or
+   analyzes GTI (`Release`, `RelWithDebInfo`, or `MinSizeRel`); an
+   unoptimized compiler is not valid verification evidence.
 5. Update the canonical architecture or language document when implementation
    behavior changes. Update a plan when its status changes; do not describe
    planned behavior as current.
-6. Every new language feature must ship with an accompanying runnable example
-   under `examples/` in the same change. Add a focused example or extend an
-   existing one to demonstrate the feature explicitly, including its intended
-   use and important supported boundaries. Test fixtures and documentation
-   snippets alone do not satisfy this requirement. Validate the example with
-   an optimized GTI compiler and update the applicable example index, corpus
-   registration, and census expectations. A feature is not complete without
-   its example and passing example evidence.
+6. A new language feature is proven by its tests. A runnable program under
+   `examples/` is welcome where it teaches the feature; `gti_test_examples`
+   checks every single-file example to verified MIR with no other
+   registration.
 7. Keep generated, vendored, and unrelated user files out of task diffs.
+
+## Writing Tests
+
+- Put a test where its proof lives. Compiler acceptance, rejection,
+  diagnostics, run-time behaviour, MIR, LLVM IR and formatting: one `.gti`
+  file under `tests/ui/<area>/`. Editor behaviour: `tests/lsp/`. Driver,
+  `gti.toml`, packaging and CLI: `tests/project/<name>/test.transcript`. C++
+  library code with no source-level observable: `tests/unit/`. Nothing is
+  registered anywhere. The format is in [`tests/ui/README.md`](tests/ui/README.md).
+- Start each file with a `// ` line saying what it proves. One behaviour per
+  file. Test language rules with user-defined types and the narrowest import.
+- Prove at the cheapest level. The default is a compile check: with
+  `//~ ERROR GTI-xxxx` on the offending line it must be rejected, without it
+  accepted, both through verified MIR. Annotations are exhaustive both ways.
+  Use `//@ run-pass`/`run-fail` only when the behaviour is observable only at
+  run time. Use `//@ snapshot: mir|llvm-ir|diagnostics|format` only when that
+  output is the point.
+- Every fix adds one regression test, the reduced reproducer, that fails
+  before the fix and passes after it.
+- Run `build-release/gti-test <path-or-substring>` for the tests you touch;
+  it takes seconds. `--bless` rewrites annotations, output and snapshots of
+  the selected tests: read its diff before committing. It never runs in CI and
+  never accepts an internal compiler error. `--tidy` checks layout and
+  directives.
+- Budgets are CPU time, enforced by the runner: check 2 s, build/run 5 s,
+  project transcript 20 s. A test over half its limit goes to `tests/slow/`
+  with `//@ slow`. `//@ opt: O3` and `//@ only:` need a `//@ reason:` line.
+  Per-commit runs are `-O0`; the daily slow tier runs `tests/slow/` and `-O3`.
+- The old harnesses are frozen: `scripts/check_test_freeze.py` rejects a new
+  `tests/**/*_test.py`, `*_tests.cpp` or `add_test(` outside the new
+  directories. When a change breaks a case in an old harness, fix that case
+  or convert it to a new-style test and delete it there; never add to it. Add
+  no CMake registration, `tests/ownership.toml` entry, census baseline or
+  manifest for a new test.
+- Never weaken an expectation to get green. A removed annotation, deleted
+  test or downgraded mode in a PR that also changes the compiler needs a
+  one-line reason in the PR body (`- expectations:` in its `Validation:`
+  block).
+- In the PR's `Validation:` block, a new-style test is covered by
+  `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). Do not run sanitizers,
+  `-O3`, corpus walks or the complete suite to finish a task.
+
+Until the migration completes, the old suite still runs in full validation,
+`compiler_pipeline` still gates PRs and belongs in focused checks, and the
+families already converted are listed in the
+[campaign section](docs/plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16).
 
 ## Release Channels And VERSION
 
