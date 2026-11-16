@@ -182,7 +182,7 @@ int main() {
   std::string input{"token text"};
   auto token = Token(input.view(), 3);
   mut auto mutableToken = Token(input.view(), 4);
-  return measure(token) + mutableToken.width() + inspectInput(input) == 40 ? 0 : 1;
+  return int(measure(token) + mutableToken.width()) + inspectInput(input) == 40 ? 0 : 1;
 }
 )gti");
   if (!result.canGenerateCode())

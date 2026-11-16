@@ -1588,9 +1588,8 @@ auto SemanticVisitor::Impl::consumeTextDependentValue(const ExprPtr &expression)
 
 auto SemanticVisitor::Impl::retainDependentTextInitializer(
     const VariableDecl &stmt, const SemanticType &declaredType,
-    bool globalStorage, bool instanceField)
+    const ExprPtr &initializer, bool globalStorage, bool instanceField)
     -> std::optional<SemanticTypeTraits> {
-  const ExprPtr &initializer = stmt.initializer();
   const ExpressionInfo *initializerInfo =
       initializer ? semanticModel.findExpression(*initializer) : nullptr;
   // A value whose text field or payload holds dynamic text carries that

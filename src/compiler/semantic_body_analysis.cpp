@@ -6743,7 +6743,7 @@ auto SemanticVisitor::Impl::visitVariableDecl(const VariableDecl &stmt)
     semanticModel.record(stmt, std::move(updated));
   }
   const auto dependentValueTraits = retainDependentTextInitializer(
-      stmt, declaredType, globalStorage, instanceField);
+      stmt, declaredType, initializer, globalStorage, instanceField);
   const bool ownerDependentValue = dependentValueTraits.has_value();
   if (dependentValueTraits) {
     BindingInfo updated = *semanticModel.findBinding(stmt);
@@ -16457,7 +16457,8 @@ auto SemanticVisitor::Impl::analyzeInferredVariable(
         "type provides one.");
   }
   const auto dependentValueTraits = retainDependentTextInitializer(
-      declaration, inferredType, !local || declaration.isThreadLocal(), false);
+      declaration, inferredType, declaration.initializer(),
+      !local || declaration.isThreadLocal(), false);
   if (!type.reference && !rangeOwnerReference && declaration.initializer() &&
       (typeTraits(inferredType).containsBorrowedState || ownerDependentText ||
        dependentValueTraits.has_value())) {
