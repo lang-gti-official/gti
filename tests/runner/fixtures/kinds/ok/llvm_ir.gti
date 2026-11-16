@@ -1,0 +1,8 @@
+// LLVM IR patterns find a function by its source name.
+//@ snapshot: llvm-ir
+// CHECK: define {{.*}} ; sum
+// CHECK: @llvm.sadd.with.overflow.i32
+// CHECK-NOT: @llvm.ssub.with.overflow
+// CHECK: define i32 @main()
+int sum(int a, int b) { return a + b; }
+int main() { return sum(1, 2) - 3; }

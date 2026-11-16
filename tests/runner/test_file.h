@@ -11,11 +11,38 @@
 
 namespace gti_test {
 
-enum class Mode { CheckPass, CheckFail, BuildPass, RunPass, RunFail };
+enum class Mode {
+  CheckPass,
+  CheckFail,
+  BuildPass,
+  RunPass,
+  RunFail,
+  // Stop after the lexer and parser: syntax and recovery tests.
+  ParsePass,
+  ParseFail,
+};
 
 [[nodiscard]] const char *modeName(Mode mode);
 [[nodiscard]] bool modeRuns(Mode mode);
 [[nodiscard]] bool modeBuilds(Mode mode);
+[[nodiscard]] bool modeParses(Mode mode);
+[[nodiscard]] bool modeFails(Mode mode);
+
+// Output a test asserts besides diagnostics and run results (`//@ snapshot:`).
+enum class Snapshot { Mir, LlvmIr, Diagnostics, Format };
+
+[[nodiscard]] const char *snapshotName(Snapshot snapshot);
+// The sibling expected file of a blessed snapshot (`name.mir`, `name.stderr`,
+// `name.formatted`); empty for llvm-ir, which is checked by patterns only.
+[[nodiscard]] std::string snapshotExtension(Snapshot snapshot);
+
+// One FileCheck-style `// CHECK:` line.
+struct CheckPattern {
+  enum class Kind { Check, Next, Not };
+  Kind kind = Kind::Check;
+  std::string pattern;
+  int writtenLine = 0;
+};
 
 enum class Severity { Error, Warning };
 
@@ -58,6 +85,19 @@ struct TestFile {
   std::optional<std::string> stdinText;
   bool optimize = false; // `//@ opt: O3`
   bool slow = false;
+  // `//@ execution-profile: concurrent` (the compiler's
+  // `--execution-profile`); single-threaded by default.
+  bool concurrent = false;
+  // `//@ require-function-definitions`: analyse with the definition-closure
+  // requirement executable backends apply (FrontendOptions'
+  // requireFunctionDefinitions); always on for build and run tests.
+  bool requireFunctionDefinitions = false;
+  std::vector<Snapshot> snapshots;
+  // `//@ mir-function: name`; empty snapshots every function of the test.
+  std::vector<std::string> mirFunctions;
+  // `// CHECK:` patterns, against the llvm-ir snapshot when there is one,
+  // else the mir snapshot.
+  std::vector<CheckPattern> checks;
   std::string reason;
   std::vector<std::string> only;
   // Self-test fault injection (`//@ runner-fault:`); honoured only when
@@ -99,6 +139,11 @@ struct LocatedDiagnostic {
 [[nodiscard]] std::string
 blessAnnotations(const TestFile &test,
                  const std::vector<LocatedDiagnostic> &diagnostics);
+
+[[nodiscard]] bool hasSnapshot(const TestFile &test, Snapshot snapshot);
+// The expected file of a blessed snapshot.
+[[nodiscard]] std::filesystem::path snapshotPath(const TestFile &test,
+                                                 Snapshot snapshot);
 
 // Replaces inline `//@ stdout:` lines with `output`.
 [[nodiscard]] std::string blessInlineStdout(const TestFile &test,

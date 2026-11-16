@@ -1,11 +1,15 @@
 #include "execute.h"
+#include "snapshot.h"
 
 #include "gti/compile_limits.h"
 #include "gti/driver/build.h"
 #include "gti/driver/compilation.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/formatter.h"
 #include "gti/frontend_cache.h"
+#include "gti/lexer.h"
 #include "gti/lowered_program.h"
+#include "gti/parser.h"
 #include "gti/semantic_preamble.h"
 
 #include <fcntl.h>
@@ -19,6 +23,7 @@
 #include <cmath>
 #include <csignal>
 #include <exception>
+#include <functional>
 #include <map>
 #include <optional>
 #include <regex>
@@ -84,9 +89,14 @@ public:
   [[nodiscard]] std::string_view name() const override {
     return "gti-test-check";
   }
-  [[nodiscard]] lang::BackendArtifact generate(lang::LoweredProgram) override {
+  [[nodiscard]] lang::BackendArtifact
+  generate(lang::LoweredProgram program) override {
+    if (inspect)
+      inspect(program);
     return {};
   }
+  // Called with the lowered program, for the mir snapshot.
+  std::function<void(const lang::LoweredProgram &)> inspect;
 };
 
 bool internalError(const std::string &code, const std::string &message) {
@@ -133,45 +143,8 @@ std::string indent(const std::string &text, const std::string &prefix) {
   return result;
 }
 
-// A line diff of expected and actual output, capped at `limit` lines.
-std::string diff(const std::string &expected, const std::string &actual,
-                 std::size_t limit = 40) {
-  const std::vector<std::string> a = lines(expected);
-  const std::vector<std::string> b = lines(actual);
-  std::vector<std::string> out;
-  if (a.size() * b.size() > 4'000'000) {
-    out.push_back("(output too large to diff; " + std::to_string(a.size()) +
-                  " expected lines, " + std::to_string(b.size()) +
-                  " actual lines)");
-  } else {
-    std::vector<std::vector<int>> table(a.size() + 1,
-                                        std::vector<int>(b.size() + 1, 0));
-    for (std::size_t i = a.size(); i-- > 0;)
-      for (std::size_t j = b.size(); j-- > 0;)
-        table[i][j] = a[i] == b[j] ? table[i + 1][j + 1] + 1
-                                   : std::max(table[i + 1][j], table[i][j + 1]);
-    std::size_t i = 0;
-    std::size_t j = 0;
-    while (i < a.size() || j < b.size()) {
-      if (i < a.size() && j < b.size() && a[i] == b[j]) {
-        out.push_back(" " + a[i]);
-        ++i;
-        ++j;
-      } else if (i < a.size() &&
-                 (j == b.size() || table[i + 1][j] >= table[i][j + 1])) {
-        out.push_back("-" + a[i++]);
-      } else {
-        out.push_back("+" + b[j++]);
-      }
-    }
-  }
-  std::string result;
-  for (std::size_t index = 0; index < out.size() && index < limit; ++index)
-    result += "    " + out[index] + "\n";
-  if (out.size() > limit)
-    result +=
-        "    ... (" + std::to_string(out.size() - limit) + " more lines)\n";
-  return result;
+std::string diff(const std::string &expected, const std::string &actual) {
+  return lineDiff(expected, actual, 40);
 }
 
 struct ProcessRun {
@@ -346,6 +319,7 @@ struct Engine::State {
   EngineOptions options;
   lang::driver::ToolchainLayout toolchain;
   lang::TargetInfo target;
+  lang::TargetInfo concurrentTarget;
   lang::driver::FrontendReuse reuse;
   std::set<std::string> warmGroups;
   fs::path caseDirectory;
@@ -359,6 +333,11 @@ Engine::Engine(EngineOptions options) : state(std::make_unique<State>()) {
       lang::driver::AnalysisConfiguration(
           lang::TargetInfo::host(), lang::ExecutionProfile::SingleThreaded,
           lang::driver::RuntimeProfile::Hosted)
+          .target();
+  state->concurrentTarget =
+      lang::driver::AnalysisConfiguration(lang::TargetInfo::host(),
+                                          lang::ExecutionProfile::Concurrent,
+                                          lang::driver::RuntimeProfile::Hosted)
           .target();
   state->reuse = lang::driver::FrontendReuse{
       .parses = std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
@@ -499,6 +478,47 @@ void collectRendered(Compiled &compiled, const Materialized &files,
   collect(compiled, files, diagnostics);
 }
 
+// parse-pass / parse-fail: the lexer and parser of every section, nothing
+// after them.
+void parseOnly(Compiled &compiled, const Materialized &files,
+               const TestFile &test) {
+  std::vector<lang::Diagnostic> diagnostics;
+  for (const Section &section : test.sections) {
+    if (!section.name.ends_with(".gti"))
+      continue;
+    lang::Lexer lexer;
+    std::vector<lang::Token> tokens = lexer.scan(
+        section.text,
+        (files.entry.parent_path() / section.name).lexically_normal().string());
+    diagnostics.insert(diagnostics.end(), lexer.errors().begin(),
+                       lexer.errors().end());
+    lang::Parser parser(std::move(tokens), section.text);
+    (void)parser.parse();
+    diagnostics.insert(diagnostics.end(), parser.errors().begin(),
+                       parser.errors().end());
+  }
+  collect(compiled, files, diagnostics);
+  compiled.succeeded = std::none_of(
+      compiled.diagnostics.begin(), compiled.diagnostics.end(),
+      [](const LocatedDiagnostic &d) { return d.severity == Severity::Error; });
+}
+
+// Rendered diagnostics as `gti` prints them, with the test's directory and
+// the standard library root replaced by stable names.
+std::string normalizeRendered(std::string text, const fs::path &directory,
+                              const fs::path &standardLibrary) {
+  const auto replace = [&](const std::string &from, const std::string &to) {
+    if (from.empty())
+      return;
+    for (std::size_t at = 0; (at = text.find(from, at)) != std::string::npos;
+         at += to.size())
+      text.replace(at, from.size(), to);
+  };
+  replace(directory.string() + "/", "");
+  replace(standardLibrary.string() + "/", "$STD/");
+  return text;
+}
+
 } // namespace
 
 Outcome Engine::run(const TestFile &test) {
@@ -516,6 +536,153 @@ Outcome Engine::run(const TestFile &test) {
   const EngineOptions &options = state->options;
   const double limit = options.limits.forTest(test);
   const bool warm = state->warmGroups.contains(test.groupKey);
+
+  const auto requestFor = [&](const TestFile &file, const fs::path &entry) {
+    auto request =
+        lang::driver::CompilationRequest(
+            entry, state->toolchain.standardLibrary,
+            file.concurrent ? state->concurrentTarget : state->target,
+            file.optimize ? lang::OptimizationLevel::O3
+                          : lang::OptimizationLevel::O0,
+            lang::CppStandard::Cpp23)
+            .withCompileLimits(lang::resolveCompileLimits({}, {}))
+            .withFrontendReuse(state->reuse);
+    return file.requireFunctionDefinitions ? request.withDefinitionClosure()
+                                           : request;
+  };
+
+  // `//@ snapshot:` outputs, after the test's other expectations passed.
+  // Returns the failure text.
+  const auto snapshots = [&](const Materialized &files, bool bless,
+                             Outcome &result) {
+    std::string problems;
+    const auto compare = [&](Snapshot kind, const std::string &actual) {
+      if (!test.checks.empty() &&
+          (kind == Snapshot::LlvmIr ||
+           (kind == Snapshot::Mir && !hasSnapshot(test, Snapshot::LlvmIr)))) {
+        for (const std::string &problem : matchChecks(test.checks, actual))
+          problems += problem + "\n";
+        return;
+      }
+      bool blessed = false;
+      problems += compareSnapshot(test, kind, actual, bless, blessed);
+      if (blessed)
+        result.blessed.push_back(snapshotPath(test, kind).string());
+    };
+    for (const Snapshot kind : test.snapshots) {
+      if (kind == Snapshot::Format) {
+        const lang::Formatter formatter;
+        std::string formatted;
+        for (const Section &section : test.sections) {
+          if (test.sections.size() > 1 || section.firstLine != 1)
+            formatted += "// --- " + section.name + "\n";
+          formatted += section.name.ends_with(".gti")
+                           ? formatter.format(section.text)
+                           : section.text;
+        }
+        compare(kind, formatted);
+      } else if (kind == Snapshot::Diagnostics) {
+        const fs::path entry =
+            files.entry.lexically_relative(state->caseDirectory);
+        // As --isolate: --emit-mir unless the definition closure is needed.
+        std::vector<std::string> argv{options.gti.string(),
+                                      "--color=never",
+                                      "--progress",
+                                      "never",
+                                      entry.string(),
+                                      "-o",
+                                      "snapshot"};
+        if (!modeBuilds(test.mode) && !test.requireFunctionDefinitions)
+          argv.push_back("--emit-mir");
+        if (test.concurrent) {
+          argv.push_back("--execution-profile");
+          argv.push_back("concurrent");
+        }
+        const ProcessRun process = runProcess(
+            argv, std::nullopt, limit + options.limits.coldAllowance,
+            4 * (limit + options.limits.coldAllowance), state->caseDirectory);
+        if (!process.started || process.timedOut || process.signal != 0) {
+          problems += "snapshot diagnostics: gti did not finish (" +
+                      std::string(process.timedOut ? "timeout" : "crash") +
+                      ")\n";
+          continue;
+        }
+        // Only the diagnostics, without the summary line.
+        std::string rendered;
+        for (const std::string &line : lines(process.err))
+          if (line.rfind("Diagnostics: ", 0) != 0)
+            rendered += line + "\n";
+        if (rendered.empty())
+          problems += "snapshot diagnostics: gti reported no diagnostics\n";
+        else
+          compare(kind,
+                  normalizeRendered(rendered, state->caseDirectory,
+                                    state->toolchain.standardLibrary.root));
+      } else if (kind == Snapshot::Mir) {
+        std::string selected;
+        std::string error;
+        std::set<std::string> sources;
+        for (const auto &[path, name] : files.sections)
+          sources.insert(path);
+        CheckBackend backend;
+        backend.inspect = [&](const lang::LoweredProgram &program) {
+          selected = selectMir(program, test.mirFunctions, sources, error);
+        };
+        const lang::driver::CompilationResult mir =
+            lang::driver::compileWithBackend(requestFor(test, files.entry),
+                                             backend);
+        if (mir.status != lang::driver::CompilationStatus::Success)
+          problems += "snapshot mir: the program did not reach verified MIR\n";
+        else if (!error.empty())
+          problems += "snapshot mir: " + error;
+        else
+          compare(kind, selected);
+      } else if (kind == Snapshot::LlvmIr) {
+        std::string ir;
+        if (options.isolate) {
+          std::vector<std::string> argv{options.gti.string(),
+                                        "--color=never",
+                                        files.entry.string(),
+                                        test.optimize ? "-O3" : "-O0",
+                                        "--emit-llvm",
+                                        "-o",
+                                        "case.ll"};
+          if (test.concurrent) {
+            argv.push_back("--execution-profile");
+            argv.push_back("concurrent");
+          }
+          const ProcessRun process = runProcess(
+              argv, std::nullopt, limit + options.limits.coldAllowance,
+              4 * (limit + options.limits.coldAllowance), state->caseDirectory);
+          if (process.exitCode == 0)
+            ir = readFile(state->caseDirectory / "case.ll").value_or("");
+          else
+            problems += "snapshot llvm-ir: gti --emit-llvm failed\n" +
+                        indent(tail(process.err, 20), "    ");
+        } else {
+          const lang::driver::CompilationResult emitted =
+              lang::driver::compileToLlvmIr(requestFor(test, files.entry));
+          if (emitted.succeeded())
+            ir = emitted.artifact->contents;
+          else
+            problems += "snapshot llvm-ir: LLVM IR emission failed: " +
+                        emitted.backendFailureDetails.value_or(
+                            emitted.diagnostics.empty()
+                                ? std::string("(no detail)")
+                                : emitted.diagnostics.front().message) +
+                        "\n";
+        }
+        std::map<std::string, std::string> sources;
+        for (const Section &section : test.sections)
+          sources[(state->caseDirectory / section.name).string()] =
+              section.text;
+        if (!ir.empty())
+          compare(kind, annotateLlvmIr(ir, sources,
+                                       state->caseDirectory.string() + "/"));
+      }
+    }
+    return problems;
+  };
 
   const auto attempt = [&](bool bless) {
     Outcome result;
@@ -544,13 +711,23 @@ Outcome Engine::run(const TestFile &test) {
       if (test.runnerFault == "ice") {
         compiled.internalFailure =
             "GTI-B0001 at main.gti:1: Internal compiler error: injected";
+      } else if (modeParses(test.mode)) {
+        parseOnly(compiled, files, test);
       } else if (options.isolate) {
         std::vector<std::string> argv{options.gti.string(), "--color=never",
                                       files.entry.string(),
                                       test.optimize ? "-O3" : "-O0"};
-        const fs::path output = state->caseDirectory /
-                                (modeBuilds(test.mode) ? "case" : "case.mir");
-        if (!modeBuilds(test.mode))
+        if (test.concurrent) {
+          argv.push_back("--execution-profile");
+          argv.push_back("concurrent");
+        }
+        // `gti --emit-mir` analyses without the definition closure; a test
+        // that requires it builds instead.
+        const bool emitMir =
+            !modeBuilds(test.mode) && !test.requireFunctionDefinitions;
+        const fs::path output =
+            state->caseDirectory / (emitMir ? "case.mir" : "case");
+        if (emitMir)
           argv.push_back("--emit-mir");
         argv.push_back("-o");
         argv.push_back(output.string());
@@ -572,14 +749,8 @@ Outcome Engine::run(const TestFile &test) {
               "\n" + tail(process.err, 20);
         }
       } else {
-        const auto request =
-            lang::driver::CompilationRequest(
-                files.entry, state->toolchain.standardLibrary, state->target,
-                test.optimize ? lang::OptimizationLevel::O3
-                              : lang::OptimizationLevel::O0,
-                lang::CppStandard::Cpp23)
-                .withCompileLimits(lang::resolveCompileLimits({}, {}))
-                .withFrontendReuse(state->reuse);
+        const lang::driver::CompilationRequest request =
+            requestFor(test, files.entry);
         if (!modeBuilds(test.mode)) {
           CheckBackend backend;
           const lang::driver::CompilationResult result =
@@ -630,7 +801,7 @@ Outcome Engine::run(const TestFile &test) {
     } else {
       std::vector<std::string> problems =
           compareDiagnostics(test, compiled.diagnostics);
-      if (test.mode == Mode::CheckFail && compiled.succeeded)
+      if (modeFails(test.mode) && compiled.succeeded)
         problems.insert(problems.begin(),
                         "the program compiled without errors");
       const bool errors =
@@ -641,7 +812,7 @@ Outcome Engine::run(const TestFile &test) {
       // Bless never changes a test's declared proof level: an explicit
       // check-pass, build-pass or run test that now errors stays failing.
       const bool blessable =
-          !(errors && test.modeExplicit && test.mode != Mode::CheckFail);
+          !(errors && test.modeExplicit && !modeFails(test.mode));
       if (!problems.empty()) {
         if (bless && blessable) {
           const std::string text = blessAnnotations(test, compiled.diagnostics);
@@ -736,6 +907,14 @@ Outcome Engine::run(const TestFile &test) {
             result.detail +=
                 "stderr:\n" + indent(tail(program.err, 20), "    ");
         }
+      }
+    }
+    if (result.status == Status::Pass && !compiled.internalFailure &&
+        !test.snapshots.empty()) {
+      const std::string problems = snapshots(files, bless, result);
+      if (!problems.empty()) {
+        result.status = Status::Fail;
+        result.detail += problems;
       }
     }
     result.cpu = totalCpu() - cpuStart;
