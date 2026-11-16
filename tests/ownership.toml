@@ -312,7 +312,7 @@ owners = [
   "callable_return_type",
   "stored_callable_types",
   "semantic_call_regressions",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
   "owning_function_types",
   "consuming_receiver_types",
 ]
@@ -321,7 +321,7 @@ consumers = [
   "language_coverage_corpus",
   "lsp_protocol",
   "diagnostic_recovery_lsp",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
 ]
 
 [[area]]
@@ -392,7 +392,7 @@ owners = [
   "binary64_runtime",
   "defined_integer_arithmetic",
   "checked_integer_overflow_runtime",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
   "^constexpr_",
@@ -801,7 +801,7 @@ owners = [
   "scoped_parallel_cleanup_tsan",
   "shared_mutex_threads_tsan",
   "transfer_function_threads_tsan",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
   "llvm_thread_execution",
@@ -864,7 +864,7 @@ paths = [
 owners = [
   "gti_unit_tests",
   "allocation_abort_runtime",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
   "programmable_allocators_runtime",
   "existing_value_allocation_failure_runtime",
   "unique_scalar_allocation_runtime",
@@ -941,7 +941,7 @@ paths = [
 ]
 owners = [
   "charconv_runtime_boundary",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
   "string_c_string_runtime",
   "cmath_runtime",
 ]
@@ -982,7 +982,7 @@ owners = [
 ]
 consumers = [
   "practical_examples",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
   "gti_unit_tests",
 ]
 
@@ -1051,7 +1051,7 @@ paths = [
   "tests/fixtures/algorithm_user_types.gti",
 ]
 owners = [
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
   "stdlib_surface",
@@ -1119,7 +1119,7 @@ owners = [
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
   "generic_algorithm_cluster",
 ]
 consumers = [
@@ -1144,7 +1144,7 @@ owners = [
   "string_c_string_runtime",
   "text_view_iterator_runtime",
   "encoding_runtime",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
   "source_text_pipeline",
@@ -1191,7 +1191,7 @@ paths = [
 ]
 owners = [
   "protocol_format_hash_runtime",
-  "gti_test_ui",
+  "^gti_test_ui(_[0-9]+)?$",
   "shared_ownership_failure",
   "unique_owner_access_runtime",
   "unique_scalar_allocation_runtime",

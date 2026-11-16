@@ -182,8 +182,8 @@ jobs:
         # once per candidate while they drain into tests/ui. Dropping
         # `|compiler_pipeline` from the Linux row removes it from the gate.
         include:
-          - {os: ubuntu-24.04, platform: linux, gate: 'gti_test_ui|gti_test_examples|gti_unit_tests|compiler_pipeline'}
-          - {os: macos-26, platform: darwin, gate: 'gti_test_ui|gti_test_examples|gti_unit_tests'}
+          - {os: ubuntu-24.04, platform: linux, gate: 'gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests|compiler_pipeline'}
+          - {os: macos-26, platform: darwin, gate: 'gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests'}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     steps:
@@ -245,7 +245,7 @@ jobs:
       - name: Hold new and modified gti-test cases to half their limit
         # The runner's over-budget rule: a case this pull request adds or
         # changes fails when its warm CPU time exceeds half its kind's limit.
-        # Limits are scaled 2x for hosted runners, as in the gti_test_ui
+        # Limits are scaled 2x for hosted runners, as in the gti_test_ui*
         # entry, so the rule matches a local `gti-test --changed` run. Linux
         # only: one platform is enough to keep slow cases out.
         if: github.event_name == 'pull_request' && matrix.platform == 'linux'
