@@ -1003,7 +1003,9 @@ constexpr std::string_view unicode = std::concat!({"\u00E9", "\U0001F600", "é"}
 static_assert(empty.size() == 0);
 static_assert(value == "ab");
 static_assert(binary.size() == 6);
+int invoke<F>(F callback) { return callback(); }
 int main() {
+  if (invoke([]() -> int { return 42; }) != 42) { return 2; }
   return value == "ab" && binary.size() == 6 && binary[0] == '\0' &&
       binary[1] == '7' && binary[2] == 'A' && binary[3] == 'B' &&
       binary[4] == '\\' && binary[5] == 'n' && unicode.size() == 8 ? 0 : 1;
@@ -1015,6 +1017,10 @@ int main() {
         std::cerr << d.code << ": " << d.message << '\n';
     check(result.canGenerateCode(), "concat expands to static literal storage "
                                     "under both trusted-body policies");
+    check(std::none_of(result.mir.functionInstances().begin(),
+                       result.mir.functionInstances().end(),
+                       [](const auto &f) { return f.proceduralFunction; }),
+          "generic discovery never publishes a procedural runtime body");
   }
   for (const auto &[input, message] :
        std::array<std::pair<std::string_view, std::string_view>, 6>{

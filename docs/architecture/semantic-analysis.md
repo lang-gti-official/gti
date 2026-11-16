@@ -29,6 +29,8 @@ procedural request enables syntax intrinsics in the same MIR interpreter; there
 is no AST fallback or host plugin. The ordinary constant profile still rejects
 syntax capabilities, including capabilities nested inside persistent aggregates.
 Procedural bodies and syntax-dependent helpers are omitted from runtime HIR/MIR.
+HIR excludes procedural declarations by their declaration mode as well as syntax
+capability types, including discovery through concrete generic analyses.
 
 `std.syntax` declares `tokens`, `expr`, `span`, and `binding` through trusted
 `@compiler_type` identities. Its intrinsic declarations are recognized only in
