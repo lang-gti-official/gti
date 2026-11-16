@@ -1,0 +1,18 @@
+// The removed `#include` is one GTI-I0014 error in each open file that uses
+// it, and migrating to `import` clears it. (include_removal_lsp_test.py)
+//@ disk-only: leaf.gti
+// --- one.gti
+/* 😀 */ #include "leaf.gti"  //~ ERROR GTI-I0014
+int main() {}
+// --- two.gti
+/* 😀 */ #include "leaf.gti"  //~ ERROR GTI-I0014
+int main() {}
+// --- leaf.gti
+export module leaf;
+export int value() { return 1; }
+// --- step 2 one.gti
+import "leaf.gti";
+int main() { return value(); }
+// --- step 3 two.gti
+import "leaf.gti";
+int main() { return value(); }

@@ -1,5 +1,6 @@
 // A misplaced `export` is one parser error whose quick fix moves it before
-// the attributes; with a comment just before it, no edit is offered.
+// the attributes; with a comment just before it, no edit is offered, and
+// formatting spaces an unspaced `export[[`.
 // (export_placement_lsp_test.py; `/*^m*/` markers leave no comment behind.)
 //@ code-action @export: "export" => step 2
 export module api;
@@ -13,3 +14,8 @@ export [[track_caller]] /* 😀 */ [[discardable]] int check(bool ready) { retur
 //@ no-code-action @export
 export module api;
 [[track_caller]] /* 😀 */ /*^export*/export [[discardable]] int check(bool ready) { return 1; }  //~ ERROR GTI-P0001
+// --- step 4
+//@ formatting: export [[track_caller]] /* 😀 */ [[discardable]] int check(bool ready) {
+export module api;
+// 😀 UTF-16 control
+export[[track_caller]] /* 😀 */ [[discardable]] int check(bool ready) { return 1; }

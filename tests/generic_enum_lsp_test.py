@@ -5,7 +5,6 @@ import pathlib
 import sys
 import tempfile
 
-from owning_enum_array_lsp import run_enum_array_lsp
 from lsp_smoke_test import (
     LspSession, has_error_diagnostics, lsp_position, semantic_tokens_by_position,
 )
@@ -219,4 +218,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    run_enum_array_lsp(sys.argv[1])
