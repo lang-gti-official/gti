@@ -4224,6 +4224,7 @@
       "source": "stdlib/std/detail/memory_capabilities.gti",
       "status": "executable",
       "operations": [
+        "gti_internal::runtime::gti_rt_realloc_v1",
         "gti_internal::shared_owner",
         "gti_internal::uninitialized_storage",
         "gti_internal::unique_owner"
@@ -4237,7 +4238,8 @@
       "evidence": [
         "tests/llvm_memory_execution_test.py",
         "tests/stdlib_module_boundaries_test.py",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/resource_memory_runtime_tests.cpp"
       ],
       "required_instantiations": [
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
@@ -4265,10 +4267,12 @@
         "tests/fixtures/process_storage_policy.gti",
         "tests/fixtures/process_storage_query_policy.gti",
         "tests/stdlib_module_boundaries_test.py",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/slow/stdlib/vector/growth_o3.gti"
       ],
       "required_instantiations": [
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "eligible process-region resizing preserves initialized prefix; unsupported allocation layouts retain owner-aware relocation"
       ]
     },
     {
@@ -8512,7 +8516,8 @@
         "construction-only Message",
         "std::vector<std::optional<std::string>>",
         "owning payload enum and Expected<Ticket, Error> across growth, insertion, erasure and shrinking",
-        "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
+        "compile-time construction, growth and destruction through constant evaluation, with runtime parity",
+        "repeated scalar and user-record growth, owning-element fallback, reserve/no-op/shrink and constexpr growth"
       ],
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
@@ -8525,7 +8530,9 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/source_prefix_complete_elements.gti",
         "tests/source_prefix_owner_runtime_test.py",
-        "tests/fixtures/constexpr_owned_storage.gti"
+        "tests/fixtures/constexpr_owned_storage.gti",
+        "tests/slow/stdlib/vector/growth_o0.gti",
+        "tests/slow/stdlib/vector/growth_o3.gti"
       ]
     },
     {
