@@ -1,0 +1,8 @@
+// Rejection probe diag-c02-unterminated-if (from tests/coverage/rejections).
+#define FAST
+#ifdef FAST //!ERR  //~ ERROR GTI-I0003
+int value() { return 1; }
+
+int main() {
+  return value() - 1;
+}

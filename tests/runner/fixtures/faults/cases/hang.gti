@@ -1,0 +1,3 @@
+// A case that sleeps is stopped by the wall-clock backstop.
+//@ runner-fault: hang
+int main() { return 0; }

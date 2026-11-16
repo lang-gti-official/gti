@@ -1,0 +1,9 @@
+// run-fail accepts the declared non-zero exit code and stderr text.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: index_out_of_bounds
+int main() {
+  int32_t[3] values = {1, 2, 3};
+  int32_t index = 5;
+  return values[index];
+}

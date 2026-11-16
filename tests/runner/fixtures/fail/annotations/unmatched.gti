@@ -1,0 +1,5 @@
+// An annotation no diagnostic matches fails the test.
+int main() {
+  int32_t value = missing_name;  //~ ERROR GTI-S2001
+  return 0;  //~ ERROR GTI-S2001
+}

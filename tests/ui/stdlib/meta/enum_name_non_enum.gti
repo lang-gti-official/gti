@@ -1,0 +1,6 @@
+// stdlib surface case "enum-name-non-enum" (from tests/fixtures/enum_name_non_enum.gti).
+import std.meta;
+int main() {
+  std::enum_name(42);  //~ ERROR GTI-S2029
+  return 0;
+}
