@@ -1,5 +1,7 @@
-// Fixed array dynamic write failure edge: the dynamic array-write fixture should pass the frontend.
-//@ check-pass
+// Fixed arrays: an out-of-bounds dynamic element write takes its index_out_of_bounds failure edge instead of silently doing nothing.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: index_out_of_bounds
 int main() {
   mut int32_t cells[4] = {};
   mut uint64_t index = uint64_t(0);

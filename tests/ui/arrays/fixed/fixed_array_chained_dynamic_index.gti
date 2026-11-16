@@ -1,5 +1,7 @@
-// Fixed array chained dynamic index: the chained array-index fixture should pass the frontend.
-//@ check-pass
+// Fixed arrays: a chained dynamic element access is bounds-checked over the complete projected place and the backend accepts it.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: index_out_of_bounds
 int main() {
   mut int32_t matrix[2][3] = {};
   mut uint64_t row = uint64_t(0);
