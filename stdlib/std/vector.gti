@@ -443,6 +443,8 @@ public:
       return;
     }
 
+    if (this.data.grow_bytes_if_supported(requested)) { return; }
+
     mut std::detail::prefix_owner<T> replacement =
         std::detail::prefix_owner<T>(requested);
     unsafe { this.data.relocate_to_unchecked(replacement); }
