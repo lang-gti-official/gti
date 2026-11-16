@@ -5202,7 +5202,7 @@
         "tests/ephemeral_carrier_mir_tests.cpp",
         "tests/ui/language/iterators/span_chunk_yields.gti",
         "tests/ui/language/iterators/user_carrier_yields.gti",
-        "examples/196-borrowed-yield-cursors.gti"
+        "examples/197-borrowed-yield-cursors.gti"
       ]
     },
     {
