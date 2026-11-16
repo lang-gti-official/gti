@@ -723,16 +723,14 @@ Outcome Engine::run(const TestFile &test) {
               if (run.stdoutFile)
                 fs::remove(*run.stdoutFile);
               if (run.hasInlineStdout)
-                writeFile(test.path,
-                          blessInlineStdout(test, "", run.revision));
+                writeFile(test.path, blessInlineStdout(test, "", run.revision));
             } else if (inlineFits && !trailingSpace) {
               writeFile(test.path,
                         blessInlineStdout(test, program.out, run.revision));
             } else {
               writeFile(stdoutPath, program.out);
               if (run.hasInlineStdout)
-                writeFile(test.path,
-                          blessInlineStdout(test, "", run.revision));
+                writeFile(test.path, blessInlineStdout(test, "", run.revision));
             }
             if (std::find(result.blessed.begin(), result.blessed.end(),
                           test.display) == result.blessed.end())
@@ -742,12 +740,11 @@ Outcome Engine::run(const TestFile &test) {
             for (const std::string &problem : problems)
               result.detail += label + problem + "\n";
             if (stdoutDiffers)
-              result.detail += label +
-                               "stdout differs (-expected +actual):\n" +
+              result.detail += label + "stdout differs (-expected +actual):\n" +
                                diff(expectedOut, program.out);
             if (!problems.empty() && !program.err.empty())
-              result.detail += label + "stderr:\n" +
-                               indent(tail(program.err, 20), "    ");
+              result.detail +=
+                  label + "stderr:\n" + indent(tail(program.err, 20), "    ");
           }
         }
       }

@@ -372,8 +372,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   for (const auto &[revision, entry] : overrides)
     if (std::find(test.revisions.begin(), test.revisions.end(), revision) ==
         test.revisions.end())
-      error(entry.line, "revision '" + revision +
-                            "' is not declared by `//@ revisions:`");
+      error(entry.line,
+            "revision '" + revision + "' is not declared by `//@ revisions:`");
   test.stdoutLines = shared.stdoutLines;
   test.hasInlineStdout = shared.hasInlineStdout;
   test.stderrContains = shared.stderrContains;
@@ -698,9 +698,7 @@ std::string blessInlineStdout(const TestFile &test, const std::string &output,
     }
   }
   if (insertAt == lines.size())
-    insertAt = sawOwn         ? lastOwn + 1
-               : sawDirective ? lastDirective + 1
-                              : 1;
+    insertAt = sawOwn ? lastOwn + 1 : sawDirective ? lastDirective + 1 : 1;
   std::string result;
   for (std::size_t index = 0; index <= lines.size(); ++index) {
     if (index == insertAt)
