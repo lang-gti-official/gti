@@ -179,6 +179,7 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   stagedWorker = {};
   primitiveRequirementProofs.clear();
   primitiveRequirementProofCount = 0;
+  idleQueryCatalogs.clear();
   currentNamespace.clear();
   currentSourceUnit = 0;
   structuredBindingElements.clear();
@@ -341,37 +342,59 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
     -> void {
   const RegistrationFloor &floor = registrationFloor;
   registerNamespaces(declarations, {});
+  throwIfCancelled();
   registerNamespaceAliases(declarations, {});
+  throwIfCancelled();
   registerConstraintPredicateDeclarations(declarations, {});
+  throwIfCancelled();
   registerTypeAliases(declarations, {});
+  throwIfCancelled();
   registerEnums(declarations, {});
+  throwIfCancelled();
   registerConcepts(declarations, {});
+  throwIfCancelled();
   registerEnumGenericParameters();
+  throwIfCancelled();
   genericDefaultConstants.clear();
   registerClasses(declarations, {});
+  throwIfCancelled();
   for (ClassId id = floor.classes + 1; id <= classes.size(); ++id)
     resolveClassGenericDefaults(id);
   for (EnumId id = floor.enums + 1; id <= enums.size(); ++id)
     resolveEnumGenericDefaults(id);
   resolveTypeAliases();
+  throwIfCancelled();
   for (ClassId id = floor.classes + 1; id <= classes.size(); ++id) {
     resolveClassArgumentPatterns(id);
   }
   registerClassSpecializations(declarations, {});
+  throwIfCancelled();
   resolveConcepts();
+  throwIfCancelled();
   registerConformances(declarations, {});
+  throwIfCancelled();
   refreshTypeAliasProjections();
+  throwIfCancelled();
   recordClassTypeIdentities();
+  throwIfCancelled();
   resolveEnumPayloads();
+  throwIfCancelled();
   resolveClassInheritance();
+  throwIfCancelled();
   genericDefaultConstants.clear();
   registerFunctionGenericParameters(declarations, {}, false);
+  throwIfCancelled();
   genericDefaultConstants.clear();
   registerNamespaceSymbols(declarations, {});
+  throwIfCancelled();
   bindConformanceOperations();
+  throwIfCancelled();
   collectRootNativeStorageSymbols(declarations);
+  throwIfCancelled();
   collectClassMembers(declarations, {});
+  throwIfCancelled();
   bindOutOfClassDefinitions(declarations, {});
+  throwIfCancelled();
   if (requireFunctionDefinitions) {
     for (const auto &owner : registering(classes, floor.classes)) {
       for (const auto &[name, member] : owner.members) {
@@ -386,17 +409,24 @@ auto SemanticVisitor::Impl::registerDeclarations(const StmtList &declarations)
     }
   }
   recordClassFieldSymbols();
+  throwIfCancelled();
   validateOrdinaryClassLayouts();
   registerGlobalBorrowStorage(declarations, {});
+  throwIfCancelled();
   resolveInheritedMembers();
+  throwIfCancelled();
   validateNativeRecords();
   validateNativeFacingNamespaces(declarations);
   validateStoredReferenceContracts();
   resolveFunctionBorrowSummaries();
+  throwIfCancelled();
   validateInterfaceCapabilities();
   recordClassTypes();
+  throwIfCancelled();
   recordClassLifecycles();
+  throwIfCancelled();
   registerDesignatedConstructors();
+  throwIfCancelled();
   const auto checkOverloads = [&](const Symbol &symbol) {
     for (std::size_t right = 1; right < symbol.overloads.size(); ++right)
       for (std::size_t left = 0; left < right; ++left)

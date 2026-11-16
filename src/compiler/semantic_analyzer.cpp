@@ -29,7 +29,16 @@ auto SemanticVisitor::Impl::freshRequest() const -> std::unique_ptr<Impl> {
   return fresh;
 }
 
+void SemanticVisitor::Impl::finishLimitedAnalysis() {
+  for (auto &held : heldDiagnostics)
+    diagnostics.insert(diagnostics.end(), std::make_move_iterator(held.begin()),
+                       std::make_move_iterator(held.end()));
+  heldDiagnostics.clear();
+  enforceErrorLimit = false;
+}
+
 bool SemanticVisitor::check(const Program &program) {
+  impl->enforceErrorLimit = true;
   try {
     const bool resuming = impl->adoptedPreamble != nullptr;
     const bool valid = impl->check(program);
@@ -38,10 +47,18 @@ bool SemanticVisitor::check(const Program &program) {
       // Discard every partial semantic/value/effect fact and request journal;
       // the immutable cached prefix itself remains available to later edits.
       impl = impl->freshRequest();
-      return impl->check(program);
+      impl->enforceErrorLimit = true;
+      const bool valid = impl->check(program);
+      impl->enforceErrorLimit = false;
+      return valid;
     }
+    impl->enforceErrorLimit = false;
     return valid;
+  } catch (const Impl::ErrorLimitReached &) {
+    impl->finishLimitedAnalysis();
+    return false;
   } catch (const Impl::AnalysisCancelled &) {
+    impl->enforceErrorLimit = false;
     impl->analysisCancelled = true;
     return false;
   }

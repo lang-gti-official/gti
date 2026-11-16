@@ -277,12 +277,22 @@ public:
   // points throw AnalysisCancelled, which only SemanticVisitor::check catches;
   // the abandoned analyzer is discarded. Speculative workers never receive it.
   struct AnalysisCancelled {};
+  struct ErrorLimitReached {};
+  void finishLimitedAnalysis();
+  bool enforceErrorLimit = false;
   const std::atomic<bool> *cancellation = nullptr;
   // FrontendOptions::reuseConstantEvaluations; workers share the request's
   // StagedConstantResults, which carries it.
   bool reuseConstantEvaluations = true;
   bool analysisCancelled = false;
   void throwIfCancelled() const {
+    if (enforceErrorLimit && compileLimits.errorLimit != 0) {
+      std::size_t errors = errorDiagnosticCount(diagnostics);
+      for (const auto &held : heldDiagnostics)
+        errors += errorDiagnosticCount(held);
+      if (errors >= compileLimits.errorLimit)
+        throw ErrorLimitReached{};
+    }
     if (cancellation != nullptr &&
         cancellation->load(std::memory_order_relaxed))
       throw AnalysisCancelled{};
@@ -3649,7 +3659,25 @@ private:
                                            std::vector<const TypeRef *> &types);
   void prepareRequirementLookup(const std::vector<std::string> *lookupScope,
                                 SourceUnitId unit);
-  [[nodiscard]] std::unique_ptr<Impl> unevaluatedExpressionWorker() const;
+  // An isolated analyzer for one unevaluated query. When the query ends, its
+  // copy of the creator's sealed catalog returns to the creator's idle pool,
+  // so the next query takes it instead of copying the catalog again.
+  class UnevaluatedWorker {
+  public:
+    UnevaluatedWorker(std::unique_ptr<Impl> impl,
+                      std::vector<SemanticCatalog> *idleCatalogs)
+        : impl(std::move(impl)), idleCatalogs(idleCatalogs) {}
+    UnevaluatedWorker(const UnevaluatedWorker &) = delete;
+    UnevaluatedWorker &operator=(const UnevaluatedWorker &) = delete;
+    ~UnevaluatedWorker();
+    Impl *operator->() const { return impl.get(); }
+    Impl &operator*() const { return *impl; }
+
+  private:
+    std::unique_ptr<Impl> impl;
+    std::vector<SemanticCatalog> *idleCatalogs = nullptr;
+  };
+  [[nodiscard]] UnevaluatedWorker unevaluatedExpressionWorker() const;
   [[nodiscard]] bool constraintPredicateSatisfied(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments, std::string *reason,
@@ -7110,6 +7138,10 @@ private:
               nextFunctionId};
     }
   };
+  // Copies of this analyzer's sealed catalog released by finished
+  // unevaluated-query workers (see UnevaluatedWorker). Outside the request
+  // session, so a worker never inherits its creator's pool.
+  mutable std::vector<SemanticCatalog> idleQueryCatalogs;
 
   // Initialization/move state lives in lexical scopes; loop/switch snapshots
   // and their joins are part of the same body-scoped value-flow owner.
