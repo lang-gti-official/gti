@@ -1,0 +1,8 @@
+// A URL literal is validated during compilation: an out-of-range port stops
+// the build at the literal instead of failing at run time.
+import std.http;
+
+int main() {
+  auto target = std::http::url::checked("https://example.com:99999/api");
+  return target.port() == uint16_t(0) ? 1 : 0;
+}

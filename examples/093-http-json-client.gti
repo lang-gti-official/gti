@@ -1,6 +1,7 @@
 import std.http;
 import std.io;
 import std.cstdio;
+import std.format;
 import std.json;
 import std.string;
 import std.vector;
@@ -37,11 +38,11 @@ int stream_file(mut std::http::client& client, std::http::request& request,
 
 int main(int argc, std::vector<std::string> argv) {
   if (argc == 1) {
-    auto base = std::http::url::https("example.com");
-    if (!base) { return 1; }
-    mut auto endpoint = base.value() / "api" / "users";
+    // A literal URL is checked during compilation, so it cannot fail here.
+    auto base = std::http::url::checked("https://example.com");
+    mut auto endpoint = base / "api" / "users";
     endpoint.add_query_parameter("name", "Alice Smith");
-    std::println(endpoint.view());
+    std::println("{}", endpoint);
     std::println("Usage: http-json URL [post | stream FILE]");
     return 0;
   }
