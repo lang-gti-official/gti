@@ -412,7 +412,7 @@ protected base construction, named-field construction, attribute records,
 constant records, copy/move preservation and exactly-once owning cleanup.
 Example 005 demonstrates the source opt-in and a type that requires arguments.
 
-`explicit_default_constructors_lsp` checks the construction span, related type
+`tests/lsp/code_actions/explicit_default_constructor.gti` checks the construction span, related type
 span, actionable hint, absence of an automatic opt-in edit, and diagnostic
 clearing. Existing lifecycle, constexpr, generic, stdlib, example, MIR census,
 and editor suites retain their coverage with explicitly declared fixture
@@ -3003,7 +3003,7 @@ conditional and Expected results with C++20/C++23 at O0/O1/O3 and O1 ASan/UBSan.
 `?` returns from the enclosing function with exactly-once local cleanup;
 defined failure destroys completed values in ordinary order. It also runs
 example 152 and the C-string constructor/factory client without an outer mutable
-placeholder. `unsafe_function_lsp` covers the new initializer spelling, inferred
+placeholder. `tests/lsp/code_actions/unsafe_*` covers the new initializer spelling, inferred
 hover, keyword tokens, malformed-source recovery and UTF-16 warning ranges,
 including the absence of an invalid keyword-removal fix. Tree-sitter's
 `unsafe_expressions` corpus preserves the dedicated syntax node.
@@ -3018,7 +3018,7 @@ constructor-generic and constexpr unsafe constructors, exact caller permission,
 MIR permission-erasure rejection, hover and formatter reanalysis. Negative cases
 cover implicit defaults, base initializers, nested lambdas, and generic raw
 emplacement hiding an unsafe constructor. Moving an explicitly completed value
-into raw storage remains supported. `unsafe_function_lsp` checks the diagnostic's
+into raw storage remains supported. `tests/lsp/code_actions/unsafe_*` checks the diagnostic's
 UTF-16 range, related declaration and recovery after edits.
 
 `c_string_import_runtime` runs the source-defined constructor and factory through
@@ -6117,7 +6117,7 @@ Release/Ninja compiler on the Mac mini (macOS arm64, AppleClang 21, LLVM 22.1.8)
 `compiler_pipeline`, `cpp_mir_body_emitter_preflight`,
 `cpp_mir_body_emitter_text`, `cpp_mir_body_emitter_lifecycle`,
 `conditional_class_publication`, `constructor_argument_staging_runtime`,
-`temporary_constructor_argument_runtime`, `diagnostic_recovery_lsp`,
+`temporary_constructor_argument_runtime`, `tests/lsp/diagnostics/recovery_*`,
 `class_expression_consumers_runtime`, and `class_expression_publication_runtime`.
 The combined focused run takes 158.53 seconds; the consumer matrix passes all
 48 cases in six native modes, and all ten publication fixtures pass six native
@@ -6840,7 +6840,7 @@ nested-block/lambda ownership of permission, and conservative generic deferral.
 `unsafe_function_runtime` preserves success, failure and cleanup through the
 production MIR backend at C++20/C++23 O0/O1/O3.
 
-`unsafe_function_lsp` checks the same errors and warning, exact source/UTF-16
+`tests/lsp/code_actions/unsafe_*` checks the same errors and warning, exact source/UTF-16
 ranges, related declaration keyword, keyword semantic tokens, hover, preferred
 spelling/removal edits and stale-action rejection. CLI and project workflows
 test the existing warning suppression controls. Example 39 demonstrates
@@ -9684,7 +9684,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `borrowed_argument_inner_temporary_runtime` | a borrowed argument kept across a later conditional argument, an arm of `?:` or the right operand of `&&` or `||`, that creates a class object for a nested call to borrow, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a function result and a construction as receivers, a `mut` receiver and a reference argument in the arms of `?:`, a borrowed local before a construction passed by reference, objects with nothing to destroy, also in a body that cannot fail, a producer that can fail and calls that can fail, and a later argument that fails; each object is destroyed once after the outer call, before the borrowed temporary, and never when its operand was skipped, a failing producer publishes nothing, and each live local is destroyed once; `cpp_mir_body_emitter_preflight` rejects such a producer that also takes the borrowed object and an operand that ends the outer borrow |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
-| `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
+| `unsafe_function_contract` / `unsafe_function_runtime` / `tests/lsp/code_actions/unsafe_*` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `cpp_mir_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
 | `cmake_test_ownership` | root CMake owns products/options/install rules while `tests/CMakeLists.txt` owns test executables and CTest registration |
@@ -11667,7 +11667,7 @@ HIR/MIR, target mutation, and production representation preflight.
 `generic_contract_runtime` runs the pack fixture, A19, and updated examples 33
 and 80 through the unchanged eight-mode native matrix.
 
-`testGenericAdvisorySoundness` and `generic_advisory_lsp` cover A20/A24/A33,
+`testGenericAdvisorySoundness` and `tests/lsp/code_actions/generic_unused_mut.gti` cover A20/A24/A33,
 unresolved callable arguments, an unrelated mutable operator receiver,
 declaration-independent warnings, exact safe edits, UTF-16 positions, current
 versions and stale-fix rejection. `tests/lsp/generics/{pack_function_item,trailing_clause_facts}.gti` checks contextual

@@ -33,9 +33,7 @@ tests = [
   # GTI_BUILD_LSP=OFF omits these registrations.
   "concurrency_composition_lsp",
   "diagnostic_explanations",
-  "diagnostic_recovery_lsp",
   "executable_entry_cli_lsp",
-  "export_placement_lsp",
   "frontend_cache_invalidation",
   "include_removal_lsp",
   "lsp_code_snippets",
@@ -121,7 +119,6 @@ owners = [
 consumers = [
   "language_coverage_corpus",
   "lsp_protocol",
-  "diagnostic_recovery_lsp",
   "module_editor_recovery",
   "tree_sitter_queries",
   "constructor_formatting",
@@ -145,7 +142,6 @@ owners = [
 ]
 consumers = [
   "lsp_protocol",
-  "export_placement_lsp",
   "cli_workflow",
 ]
 
@@ -214,7 +210,6 @@ paths = [
 owners = [
   "diagnostic_registry_generator",
   "diagnostic_explanations",
-  "diagnostic_recovery_lsp",
 ]
 consumers = [
   "lsp_protocol",
@@ -314,7 +309,6 @@ owners = [
 consumers = [
   "language_coverage_corpus",
   "lsp_protocol",
-  "diagnostic_recovery_lsp",
   "generic_algorithm_errors",
   "generic_algorithm_breadth",
 ]

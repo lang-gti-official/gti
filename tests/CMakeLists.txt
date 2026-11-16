@@ -701,9 +701,6 @@ if(TARGET gti_lsp)
   add_test(NAME out_of_class_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_lsp_test.py" $<TARGET_FILE:gti_lsp>)
   set_tests_properties(out_of_class_lsp PROPERTIES TIMEOUT 120)
-  add_test(NAME lifetime_parameters_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lifetime_parameters_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(lifetime_parameters_lsp PROPERTIES TIMEOUT 120)
   add_test(NAME borrowing_composition_lsp
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/borrowing_composition_lsp_test.py" $<TARGET_FILE:gti_lsp>)
 endif()
@@ -722,9 +719,6 @@ add_test(NAME explicit_default_constructors
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/explicit_default_constructors_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(explicit_default_constructors PROPERTIES TIMEOUT 600)
 if(GTI_BUILD_LSP)
-  add_test(NAME explicit_default_constructors_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/explicit_default_constructors_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(explicit_default_constructors_lsp PROPERTIES TIMEOUT 120)
 endif()
 add_test(NAME out_of_class_performance
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/out_of_class_performance_test.py" $<TARGET_FILE:gti>
@@ -5207,23 +5201,6 @@ if(Python3_Interpreter_FOUND)
       COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/lsp_smoke_test.py"
               "$<TARGET_FILE:gti_lsp>" expected-payload-range
     )
-    add_test(NAME unsafe_function_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/unsafe_function_lsp_test.py"
-                   "$<TARGET_FILE:gti_lsp>")
-    add_test(NAME export_placement_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/export_placement_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
-    add_test(NAME diagnostic_recovery_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/diagnostic_recovery_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
-    set_tests_properties(diagnostic_recovery_lsp PROPERTIES TIMEOUT 60)
-    add_test(NAME generic_advisory_lsp
-             COMMAND "${Python3_EXECUTABLE}"
-                     "${PROJECT_SOURCE_DIR}/tests/generic_advisory_lsp_test.py"
-                     "$<TARGET_FILE:gti_lsp>")
     add_test(
       NAME lsp_scalability_benchmark_smoke
       COMMAND
