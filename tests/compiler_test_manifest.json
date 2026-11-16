@@ -74,6 +74,10 @@
       "suite": "frontend"
     },
     {
+      "name": "testInitStatements",
+      "suite": "frontend"
+    },
+    {
       "name": "testParserRecovery",
       "suite": "frontend"
     },

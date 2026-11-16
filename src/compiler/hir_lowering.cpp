@@ -3714,6 +3714,12 @@ private:
       if (statement.source == nullptr) {
         continue;
       }
+      // The block enclosing a header init statement shares its statement's
+      // source; the statement itself owns the source's full expressions.
+      if (statement.kind == HirStatementKind::Block &&
+          headerInitializer(statement.source) != nullptr) {
+        continue;
+      }
       const auto *invocation = stmtAs<ExpressionStmt>(statement.source);
       const bool statementOnlyMacro =
           invocation && invocation->expression() &&
@@ -3962,6 +3968,27 @@ private:
                      HirBody &body) {
     if (statement == nullptr) {
       return std::nullopt;
+    }
+    // Semantics scoped a header init statement exactly like the first
+    // statement of a block enclosing the whole statement. HIR publishes that
+    // block, so cleanup, loans and exits use the ordinary block contract.
+    const bool headerInitialized =
+        std::exchange(initializedHeader, nullptr) == statement;
+    if (const StmtPtr *initializer = headerInitializer(statement);
+        initializer != nullptr && !headerInitialized) {
+      std::vector<HirStatementId> statements;
+      if (const auto lowered =
+              lowerStatement(initializer->get(), model, classArguments,
+                             classValueArguments, body))
+        statements.push_back(*lowered);
+      initializedHeader = statement;
+      if (const auto lowered = lowerStatement(statement, model, classArguments,
+                                              classValueArguments, body))
+        statements.push_back(*lowered);
+      return appendStatement({.kind = HirStatementKind::Block,
+                              .source = statement,
+                              .statements = std::move(statements)},
+                             body);
     }
     if (const auto *block = stmtAs<BlockStmt>(statement)) {
       return appendStatement({.kind = HirStatementKind::Block,
@@ -7773,6 +7800,9 @@ private:
   HirValueId activeResultRegion = 0;
   HirBindingId nextBindingId = 1;
   HirStatementId nextStatementId = 1;
+  // The if, switch or range for whose header init statement was just lowered
+  // into its enclosing block; its next lowering produces the statement itself.
+  const Stmt *initializedHeader = nullptr;
   std::size_t placeSnapshotId = 0;
   std::size_t nextPlaceBodyId = 1;
   bool lifecycleValid = true;

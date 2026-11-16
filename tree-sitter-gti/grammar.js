@@ -27,6 +27,7 @@ module.exports = grammar({
   conflicts: ($) => [
     [$.generic_argument_profile_clause, $._base_type],
     [$._base_type, $.range_structured_binding],
+    [$.structured_binding_declaration, $.range_structured_binding],
     [$.function_declaration, $.macro_declaration],
     [$.macro_declaration, $._qualified_identifier],
     [$.generic_argument_profile_clause, $.generic_parameter],
@@ -1118,6 +1119,7 @@ module.exports = grammar({
           "if",
           optional(field("constant", "constexpr")),
           "(",
+          optional(field("initializer", $._init_statement)),
           field("condition", $.expression),
           ")",
           field("consequence", $.statement),
@@ -1140,22 +1142,36 @@ module.exports = grammar({
         "(",
         choice(
           seq(
-            field(
-              "initializer",
-              choice($.variable_declaration, $.expression_statement),
+            field("initializer", $._init_statement),
+            choice(
+              seq(
+                optional(field("condition", $.expression)),
+                ";",
+                optional(field("update", $.expression)),
+              ),
+              $._range_for_tail,
             ),
-            optional(field("condition", $.expression)),
-            ";",
-            optional(field("update", $.expression)),
           ),
-          seq(
-            field("binding", choice($.range_for_declaration, $.range_structured_binding)),
-            ":",
-            field("range", $.expression),
-          ),
+          $._range_for_tail,
         ),
         ")",
         field("body", $.statement),
+      ),
+
+    _range_for_tail: ($) =>
+      seq(
+        field("binding", choice($.range_for_declaration, $.range_structured_binding)),
+        ":",
+        field("range", $.expression),
+      ),
+
+    // A C++17/C++20 init statement before an if condition, a switch value or
+    // a range-for binding.
+    _init_statement: ($) =>
+      choice(
+        $.variable_declaration,
+        $.structured_binding_declaration,
+        $.expression_statement,
       ),
 
     constexpr_for_statement: ($) =>
@@ -1191,6 +1207,7 @@ module.exports = grammar({
       seq(
         "switch",
         "(",
+        optional(field("initializer", $._init_statement)),
         field("value", $.expression),
         ")",
         field("body", $.switch_body),

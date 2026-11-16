@@ -509,9 +509,12 @@ struct MacroParameterUses {
       break;
     case StmtKind::IfStmt: {
       const auto &branch = static_cast<const IfStmt &>(*value);
+      scopes.emplace_back();
+      statement(branch.initializer().get());
       expression(branch.condition());
       scoped(branch.thenBranch());
       scoped(branch.elseBranch());
+      scopes.pop_back();
       break;
     }
     case StmtKind::ForStmt: {
@@ -536,9 +539,14 @@ struct MacroParameterUses {
       expression(loop.condition());
       break;
     }
-    case StmtKind::RangeForStmt:
-      statement(static_cast<const RangeForStmt &>(*value).lowered().get());
+    case StmtKind::RangeForStmt: {
+      const auto &loop = static_cast<const RangeForStmt &>(*value);
+      scopes.emplace_back();
+      statement(loop.initializer().get());
+      statement(loop.lowered().get());
+      scopes.pop_back();
       break;
+    }
     case StmtKind::ConditionalStmt:
       if (const auto *selected =
               activeBranch(static_cast<const ConditionalStmt &>(*value)))
@@ -706,8 +714,10 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
                          return child && validMacroBody(*child, ownLoopDepth);
                        });
   if (const auto *branch = stmtAs<IfStmt>(&statement))
-    return !branch->isConstexpr() && expressionAllowed(*branch->condition()) &&
-           branch->thenBranch() &&
+    return !branch->isConstexpr() &&
+           (!branch->initializer() ||
+            validMacroBody(*branch->initializer(), ownLoopDepth)) &&
+           expressionAllowed(*branch->condition()) && branch->thenBranch() &&
            validMacroBody(*branch->thenBranch(), ownLoopDepth) &&
            (!branch->elseBranch() ||
             validMacroBody(*branch->elseBranch(), ownLoopDepth));
@@ -741,7 +751,9 @@ auto SemanticVisitor::Impl::validMacroBody(const Stmt &statement,
     return expressionAllowed(*loop->condition()) && loop->body() &&
            validMacroBody(*loop->body(), ownLoopDepth + 1);
   if (const auto *loop = stmtAs<RangeForStmt>(&statement))
-    return loop->lowered() && validMacroBody(*loop->lowered(), ownLoopDepth);
+    return (!loop->initializer() ||
+            validMacroBody(*loop->initializer(), ownLoopDepth)) &&
+           loop->lowered() && validMacroBody(*loop->lowered(), ownLoopDepth);
   if (stmtAs<LoopControlStmt>(&statement))
     return ownLoopDepth != 0;
   return stmtAs<EmptyStmt>(&statement);

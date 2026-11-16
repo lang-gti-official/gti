@@ -233,6 +233,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Borrow surrounding state in a callback or signature-erased view | [156: borrowing callbacks](156-borrowing-callbacks.gti) |
 | Model an absent value and initialize it later | [84: optional values](084-optional-values.gti) |
 | Take ownership of an enum alternative's payload in a `switch` | [161: consuming matches](161-consuming-matches.gti) |
+| Scope a helper value to one `if`, `switch` or range `for` with a C++17/C++20 init statement | [196: init statements](196-init-statements.gti) |
 | Read program arguments | [43: hosted arguments](043-program-arguments.gti) |
 | Traverse, search, or modify containers | [90: algorithms](090-generic-algorithms.gti), [87: dictionaries](087-associative-containers.gti) |
 | Model an owner and its checked views | [41: owner dependencies](041-owner-dependencies.gti), [42: reborrows](042-exclusive-reborrows.gti) |
@@ -282,6 +283,7 @@ is a teaching helper, not a production server.
 | `032-structured-bindings.gti` | immutable exact-arity decomposition, owning, read-only borrowed and mutable borrowed range patterns, independent passive class-array copies, explicit owning class-array moves |
 | `033-source-concepts.gti` | unary capabilities, structural class contracts with an `[[unsatisfied(...)]]` explanation, and trailing-clause admission of dependent compound arguments |
 | `034-do-while.gti` | body-first loops with explicit `continue` and termination |
+| `196-init-statements.gti` | C++17/C++20 init statements: a range-for owner the range borrows, a `switch` init with payload patterns destroyed on every exit, an `if`/`else if` chain whose borrow ends with the statement, and a `constexpr` init for `if constexpr` |
 | `035-conditional-expressions.gti` | lazy conditional values and explicit move selection |
 | `036-c-abi-sockets.gti` | bounded `extern "C"` interoperability with POSIX `socket` and `close` |
 | `037-tcp-socket-owner.gti` | move-only `std::tcp` listener and stream owners exchanging bytes over loopback |

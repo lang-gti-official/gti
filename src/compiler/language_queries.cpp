@@ -1354,6 +1354,17 @@ private:
     } else if (const auto *node = stmtAs<IfStmt>(&value)) {
       indentation(depth);
       append(node->isConstexpr() ? "if constexpr (" : "if (");
+      if (const auto *initializer =
+              stmtAs<VariableDecl>(node->initializer().get())) {
+        variable(*initializer, depth);
+        append("; ");
+      } else if (const auto *initializer =
+                     stmtAs<ExpressionStmt>(node->initializer().get())) {
+        expression(initializer->expression().get(), depth + 1);
+        append("; ");
+      } else if (node->initializer()) {
+        append("; ");
+      }
       expression(node->condition().get(), depth + 1);
       append(")\n");
       if (node->thenBranch())

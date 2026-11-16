@@ -1,0 +1,81 @@
+// C++17/C++20 init statements put a helper value in the header of the
+// statement that needs it. Its name is visible in the condition and in every
+// branch, and the value is destroyed when the whole statement ends.
+import std.string;
+import std.vector;
+
+enum class Command {
+  add(int amount),
+  rename(std::string name),
+  stop,
+};
+
+struct Account {
+  mut std::string name;
+  mut int balance;
+  Account(std::string name, int balance)
+      : name(std::move(name)), balance(balance) {}
+};
+
+Command parse(std::string_view line) {
+  if (line == "stop") {
+    return Command::stop;
+  }
+  if (line.size() > uint64_t(4) &&
+      line.substr(uint64_t(0), uint64_t(4)) == "add ") {
+    return Command::add(int(line.size()) - 4);
+  }
+  return Command::rename(std::string(line));
+}
+
+std::vector<std::string> script() {
+  mut std::vector<std::string> lines = std::vector<std::string>();
+  lines.push_back(std::string("add ..."));
+  lines.push_back(std::string("savings"));
+  lines.push_back(std::string("stop"));
+  lines.push_back(std::string("add ignored after stop"));
+  return lines;
+}
+
+int main() {
+  mut Account account = Account(std::string("checking"), 10);
+
+  // C++20 range-for init: the owner lives for the whole loop, so the range
+  // may borrow it.
+  for (std::vector<std::string> lines = script(); auto& line : lines) {
+    // C++17 switch init with payload patterns. The parsed command is
+    // destroyed at the end of each switch, including on `break`.
+    switch (Command command = parse(line.view()); command) {
+    case Command::add(auto& amount):
+      account.balance += amount;
+      continue;
+    case Command::rename(auto& name):
+      account.name = name.clone();
+      continue;
+    case Command::stop:
+      break;
+    }
+    break;
+  }
+
+  // C++17 if init: `name` is a borrow that ends with the whole statement, so
+  // the account may be changed again afterwards.
+  if (auto& name = account.name; name == "savings") {
+    std::println(name);
+  } else if (int balance = account.balance; balance < 0) {
+    // An else-if may add its own init and still see the outer one.
+    std::println(name);
+    return 1;
+  } else {
+    return 2;
+  }
+  account.name = std::string("closed");
+
+  // `if constexpr` takes a constexpr init; the branch is chosen at compile
+  // time.
+  if constexpr (constexpr int expected = 13; expected > 0) {
+    return account.balance == expected && account.name == "closed" ? 0 : 3;
+  } else {
+    return 4;
+  }
+}

@@ -6430,6 +6430,12 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti_lsp>"
     )
     add_test(
+      NAME init_statements_lsp
+      COMMAND "${Python3_EXECUTABLE}"
+              "${PROJECT_SOURCE_DIR}/tests/init_statements_lsp_test.py"
+              "$<TARGET_FILE:gti_lsp>"
+    )
+    add_test(
       NAME block_comment_lsp
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/block_comment_lsp_test.py"
