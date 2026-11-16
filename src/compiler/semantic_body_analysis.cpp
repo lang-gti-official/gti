@@ -905,6 +905,7 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
           classId, classTypeArguments, classValueArguments);
       !fails || *fails) {
     const auto assertionStart = static_cast<std::ptrdiff_t>(diagnostics.size());
+    const std::uint64_t needsBefore = bodyNeedSerial();
     analyzeConcreteClassStaticAssertions(classType->declaration->members());
     const bool rejected =
         std::any_of(diagnostics.begin() + assertionStart, diagnostics.end(),
@@ -915,7 +916,8 @@ auto SemanticVisitor::Impl::analyzeClassFieldInitializers(
         declaresConcreteClassStaticAssertions(
             classType->declaration->members()))
       recordConcreteClassAssertionOutcome(classId, classTypeArguments,
-                                          classValueArguments, rejected);
+                                          classValueArguments, rejected,
+                                          needsBefore);
   }
   if (const auto *primary =
           semanticModel.findClassLifecycle(*classType->declaration)) {
@@ -5009,6 +5011,18 @@ auto SemanticVisitor::Impl::noteBodyNeed(const FunctionDecl *declaration)
   if (declaration != nullptr && context != nullptr &&
       context->pending(declaration))
     context->need(*declaration);
+}
+
+auto SemanticVisitor::Impl::pendingConstexprDefinitions() const
+    -> std::vector<const FunctionDecl *> {
+  std::vector<const FunctionDecl *> pending;
+  if (const auto &context = requestSession.bodyContext;
+      context != nullptr && context->anyUnfinished())
+    for (const FunctionDecl *body : context->unfinishedBodies())
+      if ((body->isConstexpr() || body->isProceduralMacro()) &&
+          !constexprDefinitionsAnalyzed.contains(body))
+        pending.push_back(body);
+  return pending;
 }
 
 auto SemanticVisitor::Impl::captureAttemptCheckpoint() const
@@ -11535,6 +11549,7 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
                "GTI-S2063");
         return false;
       }
+      const std::uint64_t needsBefore = bodyNeedSerial();
       worker->analyzeConcreteClassStaticAssertions(
           owner->declaration->members());
       worker->finishClassInstanceContext();
@@ -11549,7 +11564,8 @@ auto SemanticVisitor::Impl::validateLayoutClassAssertions(
       diagnostics.insert(diagnostics.end(), worker->diagnostics.begin(),
                          worker->diagnostics.end());
       recordConcreteClassAssertionOutcome(type.classId, type.arguments,
-                                          type.valueArguments, failed);
+                                          type.valueArguments, failed,
+                                          needsBefore);
       if (failed)
         return false;
     }

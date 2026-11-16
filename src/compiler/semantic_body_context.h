@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -111,6 +112,15 @@ public:
     return found == keys.end() ? nullptr : found->second;
   }
 
+  // The tracked bodies that are not final yet, in resolution order.
+  [[nodiscard]] std::vector<const FunctionDecl *> unfinishedBodies() const {
+    std::vector<const FunctionDecl *> bodies;
+    for (const auto &[declaration, entry] : entries)
+      if (entry.state != BodyState::Analysed)
+        bodies.push_back(declaration);
+    return inResolutionOrder(std::move(bodies));
+  }
+
   // Revision advances whenever a pending body becomes Analysed, so an
   // attempt that began at an older revision may now succeed.
   [[nodiscard]] std::uint64_t revision() const { return currentRevision; }
@@ -163,6 +173,7 @@ public:
   // request-level record that the frontend's net examines. Every need is
   // recorded, repeats included.
   void need(const FunctionDecl &declaration) {
+    ++needsRecorded;
     if (!openAttempts.empty())
       openAttempts.back()->needs.push_back(&declaration);
     else
@@ -176,7 +187,30 @@ public:
     // such an attempt is open, a sharing worker records a pending body
     // instead of analysing it privately.
     bool resolving = false;
+    // Cache writes made while the attempt is open. They take effect only if
+    // it ends clean (see commitWrites), so a result computed while a needed
+    // body was unavailable never enters a cache.
+    std::vector<std::function<void()>> writes;
   };
+  // A write to a cache that outlives the current attempt: journaled in the
+  // innermost open attempt, or performed now when none is open.
+  void write(std::function<void()> cacheWrite) {
+    if (openAttempts.empty())
+      cacheWrite();
+    else
+      openAttempts.back()->writes.push_back(std::move(cacheWrite));
+  }
+  // A closed attempt that ended clean passes its writes to the enclosing
+  // attempt, or performs them.
+  void commitWrites(AttemptNeeds &attempt) {
+    for (auto &cacheWrite : attempt.writes)
+      write(std::move(cacheWrite));
+    attempt.writes.clear();
+  }
+  // Every need ever recorded in this context, monotonically. A computation
+  // during which it changed depended on an unavailable body, wherever the
+  // need was recorded.
+  [[nodiscard]] std::uint64_t needSerial() const { return needsRecorded; }
   void openAttempt(AttemptNeeds &attempt) {
     openAttempts.push_back(&attempt);
     if (attempt.resolving)
@@ -228,6 +262,7 @@ private:
   std::vector<AttemptNeeds *> openAttempts;
   std::size_t resolvingAttempts = 0;
   std::size_t unfinished = 0;
+  std::uint64_t needsRecorded = 0;
   std::size_t nextOrder = 0;
   std::uint64_t currentRevision = 0;
 };

@@ -753,6 +753,9 @@ auto SemanticVisitor::Impl::stagedConstantKey(
   for (const FunctionDecl *definition : constexprDefinitionsAnalyzed)
     if (declaredBeforeCurrent(definition))
       values.push_back(reinterpret_cast<std::uintptr_t>(definition));
+  for (const FunctionDecl *definition : pendingConstexprDefinitions())
+    if (declaredBeforeCurrent(definition))
+      values.push_back(reinterpret_cast<std::uintptr_t>(definition));
   append(std::move(values));
   values = {};
   for (const auto *definition : constexprConstructorsAnalyzed)
@@ -1079,10 +1082,27 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     if (const auto *candidate = stagingModel.findConstructor(*declaration))
       constructors.push_back(candidate->id);
   }
-  for (const auto *declaration : constexprDefinitionsAnalyzed) {
-    if (const auto *candidate = stagingModel.findFunction(*declaration)) {
-      completed.push_back(candidate->id);
+  // Building keys reads every definition's record; that is not a demand.
+  std::vector<FunctionId> keyCompleted;
+  {
+    SemanticModel::FunctionLookupRecorder *const recorder =
+        semanticModel.functionLookupRecorder();
+    std::unordered_set<FunctionId> *const paused =
+        recorder == nullptr ? nullptr
+                            : std::exchange(recorder->active, nullptr);
+    const FunctionDemandScope pauseStaging(stagingModel, nullptr);
+    const FunctionDemandScope pauseCanonical(semanticModel, nullptr);
+    for (const auto *declaration : constexprDefinitionsAnalyzed) {
+      if (const auto *candidate = stagingModel.findFunction(*declaration)) {
+        completed.push_back(candidate->id);
+      }
     }
+    keyCompleted = completed;
+    for (const FunctionDecl *declaration : pendingConstexprDefinitions())
+      if (const auto *candidate = stagingModel.findFunction(*declaration))
+        keyCompleted.push_back(candidate->id);
+    if (recorder != nullptr)
+      recorder->active = paused;
   }
   // A success this request already proved is replayed (see
   // StagedConstantResults), unless the outer authority has since closed a
@@ -1096,7 +1116,7 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   const auto reuseKey =
       !concreteEffects || concreteEffects->invalidInstances.empty()
           ? stagedConstantKey(selected, info, arguments, substitution, receiver,
-                              completed, constructors)
+                              keyCompleted, constructors)
           : std::nullopt;
   const std::size_t depth = enclosingDepth + context.callDepth;
   if (reuseKey && !context.procedural) {
@@ -1268,7 +1288,11 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     if (closureKey && (!requestSession.layoutAssertionWork ||
                        !requestSession.layoutAssertionWork->failure)) {
       lowered->key = *closureKey;
-      stagedConstants->recordClosure(lowered);
+      // Recorded only if this evaluation's attempt ends clean.
+      writeBodyDependentCache(
+          [stagedConstants,
+           recorded = std::shared_ptr<const StagedConstantResults::Closure>(
+               lowered)] { stagedConstants->recordClosure(recorded); });
     }
     closure = std::move(lowered);
   }
@@ -1359,13 +1383,17 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
                               "A void constexpr call does not produce a "
                               "constant value.");
     if (recordable)
-      stagedConstants->record(
-          {.key = *reuseKey,
-           .voidCompletion = true,
-           .steps = context.work->steps - stepsBefore,
-           .depth = depth,
-           .warnings = closure->warnings,
-           .nativeObjectLayout = closure->nativeObjectLayout});
+      writeBodyDependentCache(
+          [stagedConstants,
+           recorded = StagedConstantResults::Result{
+               .key = *reuseKey,
+               .voidCompletion = true,
+               .steps = context.work->steps - stepsBefore,
+               .depth = depth,
+               .warnings = closure->warnings,
+               .nativeObjectLayout = closure->nativeObjectLayout}]() mutable {
+            stagedConstants->record(std::move(recorded));
+          });
     return ConstexprEvaluation{.voidCompletion = true, .location = callSite};
   }
   const auto sourceLocation =
@@ -1402,13 +1430,17 @@ auto SemanticVisitor::Impl::executeStagedConstexprOnce(
   };
   if (result) {
     if (recordable && StagedConstantResults::reusable(*result.value))
-      stagedConstants->record(
-          {.key = *reuseKey,
-           .value = *result.value,
-           .steps = context.work->steps - stepsBefore,
-           .depth = depth,
-           .warnings = closure->warnings,
-           .nativeObjectLayout = closure->nativeObjectLayout});
+      writeBodyDependentCache(
+          [stagedConstants,
+           recorded = StagedConstantResults::Result{
+               .key = *reuseKey,
+               .value = *result.value,
+               .steps = context.work->steps - stepsBefore,
+               .depth = depth,
+               .warnings = closure->warnings,
+               .nativeObjectLayout = closure->nativeObjectLayout}]() mutable {
+            stagedConstants->record(std::move(recorded));
+          });
     return ConstexprEvaluation{.value = std::move(result.value),
                                .location = callSite};
   }

@@ -574,6 +574,7 @@ public:
   [[nodiscard]] SemanticInstanceAnalysis
   withLateDemand(Analyze analyze,
                  std::unordered_set<FunctionId> *finalConsulted = nullptr) {
+    lateDemandResultClean = true;
     if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive)
       return analyze();
     const std::shared_ptr<BodyContext> context = requestSession.bodyContext;
@@ -619,6 +620,9 @@ public:
         for (const FunctionDecl *body : needed)
           if (context->pending(body))
             context->need(*body);
+        lateDemandResultClean = needed.empty();
+        if (lateDemandResultClean && context != nullptr)
+          context->commitWrites(needs);
         if (finalConsulted != nullptr)
           *finalConsulted = std::move(consulted);
         return std::move(result);
@@ -738,7 +742,8 @@ public:
     journalNextInstance = false;
     preserveInvalidProgramEffectDiagnostics(key, result);
     reserveInstanceRange(result.model);
-    retainInstance(std::move(key), result, consulted);
+    if (lateDemandResultClean)
+      retainInstance(std::move(key), result, consulted);
     return result;
   }
 
@@ -4736,9 +4741,12 @@ private:
                               const std::vector<SemanticType> &typeArguments,
                               const std::vector<CompileTimeValue> &values);
 
+  // `needsBefore` is bodyNeedSerial() before the assertions were analysed:
+  // an outcome that depended on an unavailable body is not recorded.
   void recordConcreteClassAssertionOutcome(
       ClassId classId, const std::vector<SemanticType> &typeArguments,
-      const std::vector<CompileTimeValue> &values, bool failed);
+      const std::vector<CompileTimeValue> &values, bool failed,
+      std::uint64_t needsBefore);
 
   // Whether an earlier analysis in this request learned that the instance's
   // assertions fail (true) or hold (false).
@@ -8034,6 +8042,27 @@ private:
   // final), and a request has finitely many pending bodies, so the bound is
   // only a guard against a wrong progress test.
   static constexpr std::size_t bodyDemandRoundLimit = 64;
+  // Journals a write to a request- or snapshot-lived cache (see
+  // BodyContext::write).
+  void writeBodyDependentCache(std::function<void()> cacheWrite) {
+    if (requestSession.bodyContext != nullptr)
+      requestSession.bodyContext->write(std::move(cacheWrite));
+    else
+      cacheWrite();
+  }
+  // Constexpr and procedural definitions whose bodies are pending here. A
+  // staged-result key counts them as available: a result is recorded only by
+  // a clean attempt, which used none of them, so demanding one later must
+  // not change the key (see StagedConstantResults).
+  [[nodiscard]] std::vector<const FunctionDecl *>
+  pendingConstexprDefinitions() const;
+  [[nodiscard]] std::uint64_t bodyNeedSerial() const {
+    return requestSession.bodyContext ? requestSession.bodyContext->needSerial()
+                                      : 0;
+  }
+  // Whether the last withLateDemand result was computed with every needed
+  // body available; only such a result may be retained across snapshots.
+  bool lateDemandResultClean = true;
   [[nodiscard]] bool bodyDemandResolving() const {
     return ownsBodyContext() && bodyPhaseActive && !instanceAnalysisActive;
   }
@@ -8054,8 +8083,10 @@ private:
       }();
       const std::vector<const FunctionDecl *> outstanding =
           attemptOutstandingNeeds(*context, needs, lookups);
-      if (outstanding.empty())
+      if (outstanding.empty()) {
+        context->commitWrites(needs);
         return result;
+      }
       const auto passOn = [&] {
         for (const FunctionDecl *body : outstanding)
           if (context->pending(body))

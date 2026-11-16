@@ -7845,6 +7845,7 @@ auto SemanticVisitor::Impl::concreteClassAssertionsFail(
   // The instance's field analysis reports these assertions; this analysis
   // only learns whether one fails.
   const auto start = static_cast<std::ptrdiff_t>(diagnostics.size());
+  const std::uint64_t needsBefore = bodyNeedSerial();
   analyzeConcreteClassStaticAssertions(owner.declaration->members());
   const bool failed =
       std::any_of(diagnostics.begin() + start, diagnostics.end(),
@@ -7852,7 +7853,8 @@ auto SemanticVisitor::Impl::concreteClassAssertionsFail(
                     return diagnostic.severity == DiagnosticSeverity::Error;
                   });
   diagnostics.erase(diagnostics.begin() + start, diagnostics.end());
-  recordConcreteClassAssertionOutcome(classId, typeArguments, values, failed);
+  recordConcreteClassAssertionOutcome(classId, typeArguments, values, failed,
+                                      needsBefore);
   return failed;
 }
 
@@ -7873,10 +7875,15 @@ auto SemanticVisitor::Impl::knownConcreteClassAssertionOutcome(
 
 auto SemanticVisitor::Impl::recordConcreteClassAssertionOutcome(
     ClassId classId, const std::vector<SemanticType> &typeArguments,
-    const std::vector<CompileTimeValue> &values, bool failed) -> void {
+    const std::vector<CompileTimeValue> &values, bool failed,
+    std::uint64_t needsBefore) -> void {
   // An analysis nested in an open reanalysis of the same instance skips the
   // assertions its enclosing reanalysis owns, so it learns nothing.
   if (requestSession.assertionsOwnedUpChain)
+    return;
+  // An outcome computed while a needed body was unavailable is an artefact
+  // of that, not a fact of the instance.
+  if (bodyNeedSerial() != needsBefore)
     return;
   requestSession.classAssertionOutcomes.insert_or_assign(
       InstanceAnalysisKey{.kind = InstanceAnalysisKind::ClassFieldInitializers,

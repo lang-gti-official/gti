@@ -2209,6 +2209,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
           return !std::all_of(scope.begin(), scope.end(), openAssumption);
         });
     std::optional<ConstraintFailure> proof;
+    const std::uint64_t needsBefore = bodyNeedSerial();
     if (closedAssumptions) {
       struct RestoreScopes {
         std::vector<std::vector<AppliedConceptRequirement>> &scopes;
@@ -2220,10 +2221,14 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     } else {
       proof = evaluateConceptApplication(requirement);
     }
+    // A proof outlives the request (it is shared through the preamble), so
+    // one that depended on an unavailable body is never recorded.
     if (!proof) {
-      adoptedPreamble->recordConceptProof(proofKey());
-      if (workMetrics != nullptr)
-        ++workMetrics->semanticConceptProofRecords;
+      if (bodyNeedSerial() == needsBefore) {
+        adoptedPreamble->recordConceptProof(proofKey());
+        if (workMetrics != nullptr)
+          ++workMetrics->semanticConceptProofRecords;
+      }
       return std::nullopt;
     }
     if (!closedAssumptions)
