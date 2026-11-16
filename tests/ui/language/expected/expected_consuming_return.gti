@@ -1,0 +1,92 @@
+// Consuming source members publish owning expected payloads after cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 10
+//@[run1] stdout: 11
+//@[run1] stdout: 20
+//@[run1] stdout: 30
+//@[run1] stdout: 12
+//@[run1] stdout: 90
+//@[run2] run-fail
+//@[run2] args: callee-fails
+//@[run2] exit-code: 70
+//@[run2] stdout: 10
+//@[run2] stdout: 11
+//@[run2] stdout: 12
+//@[run2] stdout: 20
+//@[run2] stdout: 90
+//@[run2] stderr-contains: expected_consuming_return.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: pending cleanup-fails
+//@[run3] exit-code: 70
+//@[run3] stdout: 10
+//@[run3] stdout: 11
+//@[run3] stdout: 20
+//@[run3] stdout: 12
+//@[run3] stdout: 90
+//@[run3] stderr-contains: expected_consuming_return.gti:28: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: callee and cleanup-fail
+//@[run4] exit-code: 70
+//@[run4] stdout: 10
+//@[run4] stdout: 11
+//@[run4] stdout: 12
+//@[run4] stdout: 20
+//@[run4] stderr-contains: expected_consuming_return.gti:28: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at expected_consuming_return.gti:16; secondary [GTI-R0002]
+//@[run5] args: ordinary error skips payload
+//@[run5] stdout: 20
+//@[run5] stdout: 90
+// --- expected_consuming_return.gti
+import std.string;
+import std.vector;
+
+mut int stage = 0;
+
+class Item {
+  mut std::string text{"payload"};
+public:
+  Item() { std::println(10); }
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { std::println(12); }
+  Item Take() && {
+    std::println(11);
+    int divisor = stage == 1 || stage == 3 ? 0 : 1;
+    int checked = 1 / divisor;
+    return std::move(this);
+  }
+  bool Valid() { return this.text.view() == "payload"; }
+};
+
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() {
+    std::println(20);
+    int divisor = stage == 2 || stage == 3 ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+};
+
+class Outer {
+public:
+  Outer() = default;
+  ~Outer() { std::println(90); }
+};
+
+expected<Item, int> Make() {
+  Guard guard{};
+  if (stage == 4) { return unexpected(7); }
+  Item item{};
+  return std::move(item).Take();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Outer outer{};
+  auto result = Make();
+  if (!result) { return result.error() - 7; }
+  if (!result.value().Valid()) { return 1; }
+  std::println(30);
+  return 0;
+}

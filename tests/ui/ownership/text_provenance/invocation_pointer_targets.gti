@@ -1,0 +1,35 @@
+// An invocation pointer's text result is ownerless; only ownerless-text targets form one.
+//@ run-pass
+//@ stdout: full
+//@ stdout: some
+//@ stdout: empty
+//@ stdout: some
+import std.functional;
+import std.string;
+// An invocation pointer's text result is ownerless (owner decision
+// 2026-10-27): a function or lambda returning ownerless text forms one, and
+// its results keep no argument's owner borrowed.
+std::string_view tag(std::string_view s) {
+  if (s.empty()) { return "empty"; }
+  return "full";
+}
+std::string_view call(std::function_ptr<std::string_view(std::string_view)> pointer,
+                      std::string_view text) {
+  return pointer(text);
+}
+int main() {
+  auto quiet = [](std::string_view s) -> std::string_view {
+    return s.empty() ? "none" : "some";
+  };
+  std::function_ptr<std::string_view(std::string_view)> named{tag};
+  std::function_ptr<std::string_view(std::string_view)> lambda{quiet};
+  mut std::string owner{"owned"};
+  std::string_view first = named(owner.view());
+  std::string_view second = lambda(owner.view());
+  owner.append("!");
+  std::println(first);
+  std::println(second);
+  std::println(call(named, ""));
+  std::println(call(lambda, owner.view()));
+  return 0;
+}

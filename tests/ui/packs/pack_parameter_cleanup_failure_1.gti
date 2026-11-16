@@ -1,0 +1,29 @@
+// Owning pack fixture pack parameter cleanup failure fails with 1 injected failure and cleans up.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: main.gti:17: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:22; secondary [GTI-R0002]
+//@ stdout: 2
+//@ stdout: 1
+//@ args: fail
+import std.string;
+import std.vector;
+
+class Token {
+public:
+  int value;
+  Token(int initial) : value(initial) {}
+  ~Token() {
+    std::println(this.value);
+    int result = 1 / (this.value - 1);
+  }
+};
+
+void ignore<Args...>(int divisor, Args... args) {
+  int result = 1 / divisor;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller = Token(9);
+  ignore(argc == 1 ? 1 : 0, Token(1), Token(2));
+  return 0;
+}

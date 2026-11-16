@@ -1,0 +1,3 @@
+// Without the requirement, check accepts the bodyless declaration.
+int helper(int value);
+int main() { return helper(7); }

@@ -1,0 +1,7 @@
+main.gti:6:21: error[GTI-S2106]: GTI function 'helper' is called but has no definition in this program.
+ 6 | int main() { return helper(7); }  //~ ERROR GTI-S2106
+   |                     ^~~~~~
+main.gti:5:5: note: The bodyless declaration is here.
+ 5 | int helper(int value);
+   |     ^~~~~~
+help: Provide a GTI definition or an exact specialization for this call. For a foreign function, use extern "C" with a supported native signature.

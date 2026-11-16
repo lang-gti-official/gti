@@ -1,0 +1,22 @@
+// Public source-defined owning callback wrappers use the shared native matrix.
+//@ run-pass
+import std.functional;
+
+mut int destroyed = 0;
+class Call {
+public:
+  ~Call() { destroyed++; }
+  int operator()(int value) { return value; }
+public:
+  Call() = default;
+};
+
+int exercise() {
+  std::move_only_function<int(int)> handler{Call()};
+  return handler(7) - 7;
+}
+
+int main() {
+  int result = exercise();
+  return result + destroyed - 1;
+}

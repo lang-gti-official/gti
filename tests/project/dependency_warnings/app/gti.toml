@@ -1,0 +1,12 @@
+manifest-version = 1
+
+[package]
+name = "sample"
+version = "0.1.0"
+
+[dependencies]
+library = { path = "../warning-library" }
+
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

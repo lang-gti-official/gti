@@ -1,0 +1,39 @@
+// A returned class storing a projected reference publishes in place.
+//@ run-pass
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+struct Input { mut int first = 5; mut int second = 7;  public: Input() = default; };
+mut int visits = 0;
+mut int& selected_field(mut Input& input) { visits += 1; return input.second; }
+class View {
+  mut int& value;
+public:
+  View(mut Input& input) : value(selected_field(input)) {}
+  void update() mut { this.value = 42; }
+};
+int main() {
+  mut Input input{};
+  { mut View view = View(input); view.update(); }
+  return input.first == 5 && input.second == 42 && visits == 1 ? 0 : 1;
+}

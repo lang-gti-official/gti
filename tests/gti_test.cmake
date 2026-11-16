@@ -4,11 +4,18 @@
 add_executable(gti-test
   "${PROJECT_SOURCE_DIR}/tests/runner/main.cpp"
   "${PROJECT_SOURCE_DIR}/tests/runner/execute.cpp"
+  "${PROJECT_SOURCE_DIR}/tests/runner/snapshot.cpp"
+  "${PROJECT_SOURCE_DIR}/tests/runner/lsp.cpp"
+  "${PROJECT_SOURCE_DIR}/tests/runner/project.cpp"
   "${PROJECT_SOURCE_DIR}/tests/runner/test_file.cpp")
 target_link_libraries(gti-test PRIVATE gti_driver)
 target_include_directories(gti-test SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 # --isolate runs the sibling `gti`.
 add_dependencies(gti-test gti)
+# LSP tests drive the sibling `gti_lsp`.
+if(TARGET gti_lsp)
+  add_dependencies(gti-test gti_lsp)
+endif()
 
 # The runner's own behaviour, then `--tidy` and every test under tests/ui.
 add_test(NAME gti_test_ui
@@ -24,4 +31,65 @@ if(NOT gti_test_timeout_scale MATCHES "^[1-9][0-9]*$")
 endif()
 math(EXPR gti_test_time_scale "2 * ${gti_test_timeout_scale}")
 set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
+
+# Every single-file example (`examples/*.gti`) must analyse to verified MIR
+# with no diagnostics: gti-test treats a directive-less file as check-pass.
+# Subdirectories hold project-style examples and the modules that top-level
+# examples import; project tests own those. Running and census belong to the
+# slow tier's corpus tool. Each exclusion names what keeps the example out.
+file(GLOB gti_examples CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.gti")
+set(gti_examples_excluded
+  # These need `//@ execution-profile: concurrent`, which the examples do not
+  # carry yet.
+  066-managed-threads 076-scalar-atomics 175-thread-local-storage
+  # They import modules from sibling directories, which the runner does not
+  # copy beside the case.
+  121-programmable-allocators procedural-html procedural-macros
+  # Unannotated GTI-S2096 warnings (unneeded `mut`). In 065 it looks like a
+  # false positive: the array is mutated through a `mut auto&` range loop.
+  016-move-generics 027-copy-move-policies 046-defined-integer-arithmetic
+  065-mutable-ranges 067-forward-iterators 080-function-items)
+foreach(gti_example IN LISTS gti_examples_excluded)
+  list(REMOVE_ITEM gti_examples "${PROJECT_SOURCE_DIR}/examples/${gti_example}.gti")
+endforeach()
+add_test(NAME gti_test_examples
+  COMMAND gti-test --root "${PROJECT_SOURCE_DIR}/examples" --jobs 4 ${gti_examples})
+# Examples are whole programs, several above the 2 s check budget; the scaled
+# limit here only catches hangs.
+math(EXPR gti_examples_time_scale "8 * ${gti_test_timeout_scale}")
+set_tests_properties(gti_test_examples PROPERTIES PROCESSORS 4
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale}")
+
+# gti-corpus: one walk of the example corpus checking the whole-program
+# analysis invariants (body-analysis order, trusted-body parity, instance
+# reuse) per entry, with a JSON report. Slow tier only.
+add_executable(gti-corpus "${PROJECT_SOURCE_DIR}/tests/corpus/gti_corpus.cpp")
+target_link_libraries(gti-corpus PRIVATE gti_compiler)
+add_test(NAME gti_corpus
+  COMMAND gti-corpus --root "${PROJECT_SOURCE_DIR}" --jobs 4
+          --json "${CMAKE_CURRENT_BINARY_DIR}/gti-corpus.json")
+set_tests_properties(gti_corpus PROPERTIES TIMEOUT 7200 PROCESSORS 4)
+
+# gti_unit_tests: every tests/unit/*.cpp linked into one executable of C++
+# unit tests of library code (runtime, driver, LLVM passes, formatter). A file
+# declares GTI_UNIT_TEST cases (tests/unit/unit_test.h); adding one needs no
+# CMake edit. `gti_unit_tests --list`, `--test NAME`.
+file(GLOB gti_unit_sources CONFIGURE_DEPENDS
+  "${PROJECT_SOURCE_DIR}/tests/unit/*.cpp")
+add_executable(gti_unit_tests ${gti_unit_sources})
+target_include_directories(gti_unit_tests PRIVATE
+  "${PROJECT_SOURCE_DIR}/tests/unit" "${PROJECT_SOURCE_DIR}/runtime/src")
+target_include_directories(gti_unit_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
+target_compile_features(gti_unit_tests PRIVATE cxx_std_23)
+target_compile_definitions(gti_unit_tests PRIVATE GTI_UNIT_TESTS_RUNNER)
+target_link_libraries(gti_unit_tests PRIVATE
+  gti_driver gti_llvm_backend gti_runtime Threads::Threads
+  ${CMAKE_DL_LIBS})
+# The embedding context checks are assertions.
+set_source_files_properties(
+  "${PROJECT_SOURCE_DIR}/tests/unit/runtime_embedding_tests.cpp"
+  PROPERTIES COMPILE_OPTIONS "-UNDEBUG")
+add_test(NAME gti_unit_tests COMMAND gti_unit_tests)
+set_tests_properties(gti_unit_tests PROPERTIES TIMEOUT 300
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")

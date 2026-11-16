@@ -1,0 +1,31 @@
+// A failing nominal field default failure drops the earlier constructed field before reporting the failure.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0007
+//@ stdout: earlier constructed
+//@ stdout: earlier dropped
+import std.io;
+
+class Earlier {
+public:
+  Earlier() { std::println("earlier constructed"); }
+  ~Earlier() { std::println("earlier dropped"); }
+};
+class Failing {
+public:
+  Failing() {
+    int32_t[1] values = {1};
+    int32_t index = 2;
+    std::println(values[index]);
+  }
+  ~Failing() { std::println("must not drop failing field"); }
+};
+class Outer {
+  Earlier earlier;
+  Failing failing;
+public:
+  ~Outer() { std::println("must not drop incomplete outer"); }
+public:
+  Outer() = default;
+};
+int main() { Outer object{}; return 0; }

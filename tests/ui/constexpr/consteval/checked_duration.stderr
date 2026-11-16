@@ -1,0 +1,15 @@
+main.gti:57:31: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 57 | int main() { return wait_time("150s", 0); }  //~ ERROR GTI-S2057
+    |                               ^~~~~~
+main.gti:10:41: note: Compile-time evaluation panicked: "Duration must end in ms"
+ 10 |     std::panic("Duration must end in ms");
+    |                                         ^
+main.gti:22:22: note: Immediate declaration is here.
+ 22 |   implicit consteval Milliseconds(std::string_view text) : value(parse_milliseconds(text)) {}
+    |                      ^~~~~~~~~~~~
+main.gti:57:31: note: Constant evaluation requested here.
+ 57 | int main() { return wait_time("150s", 0); }  //~ ERROR GTI-S2057
+    |                               ^~~~~~
+main.gti:22:89: note: Constant evaluation requested here.
+ 22 |   implicit consteval Milliseconds(std::string_view text) : value(parse_milliseconds(text)) {}
+    |                                                                                         ^

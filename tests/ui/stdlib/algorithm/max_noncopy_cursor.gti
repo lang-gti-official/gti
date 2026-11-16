@@ -1,0 +1,12 @@
+// std::max_element rejects a mutable map cursor, which cannot be copied.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+using Entry = std::map<int, int>::value_type; int main() { mut std::map<int, int> x{}; x.insert(1, 2); auto best = std::max_element(x.begin_mut(), x.end(), [](Entry& a, Entry& b) -> bool { return a.second < b.second; }); return 0; }  //~ ERROR GTI-S2029

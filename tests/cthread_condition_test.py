@@ -32,7 +32,7 @@ def main():
                  "-Wall", "-Wextra", "-Werror", "-pthread",
                  "-I", root / "runtime/include", "-I", root / "runtime/src",
                  root / "runtime/src/cthread_mutex.cpp",
-                 root / "tests/runtime_cthread_condition_tests.cpp", "-o", native])
+                 root / "tests/unit/runtime_cthread_condition_tests.cpp", "-o", native])
             run([native])
             run([native, "destroy-waiting"], 86)
             run([native, "reacquire-failure"], 86)

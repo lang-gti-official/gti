@@ -1,0 +1,5 @@
+// A bodyless static interface function cannot be called in a closed program.
+// (From compiler_declarations_tests.cpp invalid interface statics.)
+//@ require-function-definitions
+interface I { static int missing(); };
+int main() { return I::missing(); }  //~ ERROR GTI-S2106

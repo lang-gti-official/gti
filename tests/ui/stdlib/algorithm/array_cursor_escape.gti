@@ -1,0 +1,12 @@
+// A mutable cursor into a local std::array cannot be returned.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+std::array<int, 2>::iterator dangling() { mut std::array<int, 2> x{}; return x.begin_mut(); } int main() { return 0; }  //~ ERROR GTI-S2045 borrowed return
