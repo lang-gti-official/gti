@@ -23,6 +23,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -125,22 +126,37 @@ struct Options {
   std::optional<fs::path> json;
   std::optional<fs::path> gti;
   std::optional<fs::path> lsp;
+  // `--filter REGEX`: tests whose path matches (std::regex search).
+  std::optional<std::string> filter;
+  // `--opt O3` (or GTI_TEST_OPT=O3): run tests without `//@ opt:` build
+  // optimized.
+  std::string opt;
+  // `--slowest N`: list the N most expensive tests after the run.
+  std::size_t slowest = 0;
+  // `--cpu-budget SECONDS` (or GTI_TEST_CPU_BUDGET): the run fails when its
+  // tests' CPU together exceeds it (the tier budget).
+  double cpuBudget = 0;
+  // `--bless-directives`: bless may rewrite `//@` lines (inline stdout).
+  bool blessDirectives = false;
 };
 
 void usage(std::ostream &out) {
   out << "usage: gti-test [paths or substrings...] [--root DIR] [--jobs N]\n"
-         "                [--changed [BASE]] [--failed] [--shard I/N] "
-         "[--bless]\n"
-         "                [--isolate] [--gti PATH] [--lsp PATH] [--json FILE]\n"
-         "                [--junit FILE] [--list] [--tidy]\n"
+         "                [--filter REGEX] [--changed [BASE]] [--failed]\n"
+         "                [--shard I/N] [--bless [--bless-directives]]\n"
+         "                [--opt O0|O3] [--isolate] [--gti PATH] [--lsp PATH]\n"
+         "                [--json FILE] [--junit FILE] [--slowest N]\n"
+         "                [--cpu-budget SECONDS] [--list] [--tidy]\n"
          "Runs every test under tests/ui, tests/project and tests/lsp (or\n"
          "--root DIR). A positional argument that names a file or directory\n"
          "selects it; any other selects tests whose path contains it.\n"
          "--changed: tests whose file, expected files or directory differ "
          "from\n"
          "the merge base with BASE (default origin/main), held to half their\n"
-         "limit. --failed: the failures of the last run. See "
-         "tests/ui/README.md.\n";
+         "limit. --failed: the failures of the last run. --opt O3 (or\n"
+         "GTI_TEST_OPT=O3): run tests without `//@ opt:` build optimized.\n"
+         "--cpu-budget (or GTI_TEST_CPU_BUDGET): fail when the tests' CPU\n"
+         "together exceeds it. See tests/ui/README.md.\n";
 }
 
 // A command's standard output, or nullopt when it fails.
@@ -419,6 +435,8 @@ int tidy(const fs::path &root) {
       if (!text || text->rfind("// ", 0) != 0)
         problems.push_back(display + ": the first line must be a `// ` comment "
                                      "saying what the transcript checks");
+      for (const std::string &error : parseTestFile(file, display).errors)
+        problems.push_back(display + ": " + error);
       continue;
     }
     if (extension != ".gti") {
@@ -614,6 +632,16 @@ int main(int argc, char **argv) {
       options.tidy = true;
     } else if (argument == "--bless") {
       options.bless = true;
+    } else if (argument == "--bless-directives") {
+      options.blessDirectives = true;
+    } else if (argument == "--filter") {
+      options.filter = value();
+    } else if (argument == "--opt") {
+      options.opt = value();
+    } else if (argument == "--slowest") {
+      options.slowest = static_cast<std::size_t>(std::stoul(value()));
+    } else if (argument == "--cpu-budget") {
+      options.cpuBudget = std::strtod(value().c_str(), nullptr);
     } else if (argument == "--isolate") {
       options.isolate = true;
     } else if (argument == "--root") {
@@ -633,8 +661,9 @@ int main(int argc, char **argv) {
       // An optional base: the next argument, unless it is an option or a
       // path (then it selects tests and the base is origin/main).
       options.changed = "origin/main";
+      std::error_code missing;
       if (index + 1 < argc && argv[index + 1][0] != '-' &&
-          !fs::exists(argv[index + 1]))
+          !fs::exists(argv[index + 1], missing))
         options.changed = argv[++index];
     } else if (argument == "--jobs" || argument == "-j") {
       options.jobs = static_cast<unsigned>(std::stoul(value()));
@@ -658,9 +687,37 @@ int main(int argc, char **argv) {
       std::cerr << "gti-test: unknown option " << argument << '\n';
       usage(std::cerr);
       return 2;
+    } else if (argument.find_first_of("\n\r") != std::string::npos) {
+      std::cerr << "gti-test: an argument holds a line break; pass one path "
+                   "or substring per argument\n";
+      usage(std::cerr);
+      return 2;
     } else {
       options.selectors.push_back(argument);
     }
+  }
+  if (options.opt.empty())
+    if (const char *opt = std::getenv("GTI_TEST_OPT"))
+      options.opt = opt;
+  if (!options.opt.empty() && options.opt != "O0" && options.opt != "O3") {
+    std::cerr << "gti-test: --opt (GTI_TEST_OPT) is O0 or O3\n";
+    return 2;
+  }
+  if (options.cpuBudget == 0)
+    if (const char *budget = std::getenv("GTI_TEST_CPU_BUDGET"))
+      options.cpuBudget = std::strtod(budget, nullptr);
+  std::optional<std::regex> filter;
+  if (options.filter) {
+    try {
+      filter.emplace(*options.filter);
+    } catch (const std::regex_error &error) {
+      std::cerr << "gti-test: --filter: " << error.what() << '\n';
+      return 2;
+    }
+  }
+  if (options.blessDirectives && !options.bless) {
+    std::cerr << "gti-test: --bless-directives goes with --bless\n";
+    return 2;
   }
   if (options.bless && ciEnvironment()) {
     std::cerr << "gti-test: --bless is refused when CI is set; bless locally "
@@ -672,13 +729,15 @@ int main(int argc, char **argv) {
       std::getenv("GTI_TEST_LSP") ? fs::path(std::getenv("GTI_TEST_LSP"))
                                   : self.parent_path() / "gti_lsp");
   // Without paths or --root: tests/ui, tests/project and tests/lsp (the
-  // last only when gti_lsp exists).
+  // last only when gti_lsp exists); tidy also covers tests/slow.
   std::vector<fs::path> defaultRoots;
   if (options.rootGiven) {
     defaultRoots.push_back(options.root);
   } else {
-    for (const char *root : {"tests/ui", "tests/project", "tests/lsp"}) {
-      if (!fs::exists(root))
+    for (const char *root :
+         {"tests/ui", "tests/project", "tests/lsp", "tests/slow"}) {
+      if (!fs::exists(root) ||
+          (std::string(root) == "tests/slow" && !options.tidy))
         continue;
       if (std::string(root) == "tests/lsp" && !fs::exists(lspPath) &&
           !options.tidy) {
@@ -702,7 +761,8 @@ int main(int argc, char **argv) {
   std::vector<fs::path> roots;
   std::vector<std::string> substrings;
   for (const std::string &selector : options.selectors) {
-    if (fs::exists(selector))
+    std::error_code missing;
+    if (fs::exists(selector, missing))
       roots.push_back(selector);
     else
       substrings.push_back(selector);
@@ -757,12 +817,22 @@ int main(int argc, char **argv) {
                          return display.find(s) != std::string::npos;
                        }))
         continue;
+      if (filter && !std::regex_search(display, *filter))
+        continue;
       if (options.shardCount != 0 &&
           stableHash(display) % options.shardCount != options.shardIndex - 1)
         continue;
       if (previousFailures && !previousFailures->contains(absolute))
         continue;
       TestFile test = parseTestFile(absolute, display);
+      // The global optimisation override reaches run tests that do not pin
+      // their level.
+      if (options.opt == "O3" && modeRuns(test.mode) && !test.optPinned) {
+        test.optimize = true;
+        if (const std::size_t at = test.groupKey.find(":O0");
+            at != std::string::npos)
+          test.groupKey.replace(at, 3, ":O3");
+      }
       if (changed && std::none_of(changed->begin(), changed->end(),
                                   [&](const fs::path &file) {
                                     return affects(test, file);
@@ -799,6 +869,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   engineOptions.bless = options.bless;
+  engineOptions.blessDirectives = options.blessDirectives;
   const double scale = timeScale();
   engineOptions.limits.check *= scale;
   engineOptions.limits.run *= scale;
@@ -902,8 +973,10 @@ int main(int argc, char **argv) {
     const TestFile &test = tests[index];
     // --changed: a new or modified test must leave room under its limit.
     const double limit = engineOptions.limits.forTest(test);
+    bool overBudget = false;
     if (changed && !options.isolate && outcome.status == Status::Pass &&
         !outcome.cold && outcome.cpu > limit / 2) {
+      overBudget = true;
       outcome.status = Status::Fail;
       outcome.detail =
           "over budget: " + fixed(outcome.cpu) + " s of its " + fixed(limit) +
@@ -922,8 +995,13 @@ int main(int argc, char **argv) {
       for (std::string line; std::getline(detail, line);)
         std::cout << "  " << line << '\n';
       std::cout << "  rerun: " << rerun << ' ' << test.display << '\n';
-      // LSP transcripts have nothing to bless.
-      if (outcome.status == Status::Fail && test.mode != Mode::LspTranscript)
+      // LSP transcripts have nothing to bless, and blessing cannot make a
+      // test cheaper.
+      if (overBudget)
+        std::cout << "  fix: make it cheaper, or move it to tests/slow/ with "
+                     "`//@ slow`\n";
+      else if (outcome.status == Status::Fail &&
+               test.mode != Mode::LspTranscript)
         std::cout << "  bless: " << rerun << ' ' << test.display
                   << " --bless\n";
       std::cout.flush();
@@ -1129,12 +1207,37 @@ int main(int argc, char **argv) {
             << jobs << " jobs";
   if (options.isolate)
     std::cout << ", isolated (" << inProcess
-              << " in-process: parse modes, mir snapshots, C sections)";
+              << " in-process: parse and analyze modes, mir snapshots, C "
+                 "sections, other targets)";
   if (slowest < tests.size())
     std::cout << "; slowest " << tests[slowest].display << ' '
               << fixed(outcomes[slowest]->cpu) << 's';
   std::cout << '\n';
+  // The most expensive tests, and the tier's CPU budget.
+  std::vector<std::size_t> order;
+  for (std::size_t index = 0; index < tests.size(); ++index)
+    if (outcomes[index])
+      order.push_back(index);
+  std::stable_sort(order.begin(), order.end(),
+                   [&](std::size_t a, std::size_t b) {
+                     return outcomes[a]->cpu > outcomes[b]->cpu;
+                   });
+  const bool overBudget = options.cpuBudget > 0 && totalCpu > options.cpuBudget;
+  const std::size_t listed =
+      std::min(order.size(), std::max(options.slowest, overBudget ? 20 : 0UL));
+  for (std::size_t rank = 0; rank < listed; ++rank)
+    std::cout << "SLOW " << fixed(outcomes[order[rank]]->cpu) << "s "
+              << tests[order[rank]].display << " ["
+              << modeName(tests[order[rank]].mode) << "]\n";
+  if (options.cpuBudget > 0)
+    std::cout << "BUDGET " << (overBudget ? "fail" : "ok") << ": "
+              << fixed(totalCpu, 1) << " of " << fixed(options.cpuBudget, 1)
+              << " cpu-s"
+              << (overBudget ? "; the slowest tests are listed above: make "
+                               "them cheaper or move them to tests/slow/"
+                             : "")
+              << '\n';
   if (tests.empty())
     std::cout << "gti-test: no tests selected\n";
-  return failed == 0 && !tests.empty() ? 0 : 1;
+  return failed == 0 && !tests.empty() && !overBudget ? 0 : 1;
 }

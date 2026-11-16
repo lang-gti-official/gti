@@ -1,7 +1,9 @@
 #include "test_file.h"
 
+#include "gti/compile_limits.h"
 #include "gti/configuration_flags.h"
 #include "gti/driver/native_toolchain.h"
+#include "gti/target.h"
 
 #include <algorithm>
 #include <cctype>
@@ -9,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <set>
 #include <sstream>
@@ -49,6 +52,50 @@ std::vector<std::string> splitLines(const std::string &text) {
   return lines;
 }
 
+// Shell-like words: blanks separate; '...' is literal; "..." takes \" and
+// \\ escapes; a backslash outside quotes escapes the next character. `""`
+// is an empty word. False on an unterminated quote.
+bool shellWords(const std::string &text, std::vector<std::string> &words) {
+  std::string word;
+  bool inWord = false;
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const char c = text[index];
+    if (c == ' ' || c == '\t') {
+      if (inWord)
+        words.push_back(std::move(word));
+      word.clear();
+      inWord = false;
+      continue;
+    }
+    inWord = true;
+    if (c == '\'') {
+      const std::size_t close = text.find('\'', index + 1);
+      if (close == std::string::npos)
+        return false;
+      word += text.substr(index + 1, close - index - 1);
+      index = close;
+    } else if (c == '"') {
+      for (++index;; ++index) {
+        if (index >= text.size())
+          return false;
+        if (text[index] == '"')
+          break;
+        if (text[index] == '\\' && index + 1 < text.size() &&
+            (text[index + 1] == '"' || text[index + 1] == '\\'))
+          ++index;
+        word += text[index];
+      }
+    } else if (c == '\\' && index + 1 < text.size()) {
+      word += text[++index];
+    } else {
+      word += c;
+    }
+  }
+  if (inWord)
+    words.push_back(std::move(word));
+  return true;
+}
+
 std::vector<std::string> splitWords(const std::string &text) {
   std::istringstream stream(text);
   std::vector<std::string> words;
@@ -79,13 +126,8 @@ std::string codePart(const std::string &line) {
   return marker == std::string::npos ? line : line.substr(0, marker);
 }
 
-// `step N`: an LSP marker test's next document version.
-bool isStepName(const std::string &name) {
-  return name.size() > 5 && name.rfind("step ", 0) == 0 &&
-         std::all_of(name.begin() + 5, name.end(), [](char c) {
-           return std::isdigit(static_cast<unsigned char>(c));
-         });
-}
+// `step N` or `step N path`: an LSP marker test's next document version.
+bool isStepName(const std::string &name) { return lspStep(name).has_value(); }
 
 bool isSectionMarker(const std::string &line, std::string &name) {
   const std::string prefix = "// --- ";
@@ -103,8 +145,44 @@ bool selfTestEnabled() {
 
 bool lspRequest(const std::string &name) {
   return name == "hover" || name == "definition" || name == "references" ||
-         name == "completion" || name == "token" || name == "rename" ||
-         name == "formatting" || name == "symbols";
+         name == "completion" || name == "completion-detail" ||
+         name == "signature" || name == "token" || name == "rename" ||
+         name == "formatting" || name == "symbols" || name == "code-action" ||
+         name == "no-code-action";
+}
+
+// `//@ execution-profile:` and `//@ raw-pointer-audit:` of an LSP test or
+// transcript, as the `gti_lsp` options they name. False when `name` is
+// neither.
+bool serverOption(const std::string &name, const std::string &value,
+                  std::vector<std::string> &arguments,
+                  const std::function<void(const std::string &)> &error) {
+  const auto given = [&](const std::string &prefix) {
+    return std::any_of(arguments.begin(), arguments.end(),
+                       [&](const std::string &argument) {
+                         return argument.starts_with(prefix);
+                       });
+  };
+  if (name == "execution-profile") {
+    if (value != "single-threaded" && value != "concurrent")
+      error("execution-profile must be single-threaded or concurrent");
+    else if (given("--execution-profile"))
+      error("duplicate execution-profile");
+    else
+      arguments.insert(arguments.begin(),
+                       {std::string("--execution-profile"), value});
+    return true;
+  }
+  if (name == "raw-pointer-audit") {
+    if (value != "off" && value != "warn" && value != "strict")
+      error("raw-pointer-audit must be off, warn or strict");
+    else if (given("--raw-pointer-audit"))
+      error("duplicate raw-pointer-audit");
+    else
+      arguments.push_back("--raw-pointer-audit=" + value);
+    return true;
+  }
+  return false;
 }
 
 bool underSlowDirectory(const std::filesystem::path &path) {
@@ -115,6 +193,28 @@ bool underSlowDirectory(const std::filesystem::path &path) {
 }
 
 } // namespace
+
+std::optional<LspStep> lspStep(const std::string &sectionName) {
+  if (sectionName.rfind("step ", 0) != 0)
+    return std::nullopt;
+  const std::size_t end = sectionName.find(' ', 5);
+  const std::string number = sectionName.substr(
+      5, end == std::string::npos ? std::string::npos : end - 5);
+  if (number.empty() || number.size() > 6 ||
+      !std::all_of(number.begin(), number.end(), [](char c) {
+        return std::isdigit(static_cast<unsigned char>(c));
+      }))
+    return std::nullopt;
+  LspStep step;
+  step.number = std::stoi(number);
+  if (end != std::string::npos) {
+    step.file = sectionName.substr(end + 1);
+    if (step.file.empty() ||
+        step.file.find_first_of(" \t") != std::string::npos)
+      return std::nullopt;
+  }
+  return step;
+}
 
 std::vector<DefaultDirective>
 defaultDirectives(const std::filesystem::path &test,
@@ -209,6 +309,10 @@ const char *modeName(Mode mode) {
     return "parse-pass";
   case Mode::ParseFail:
     return "parse-fail";
+  case Mode::AnalyzePass:
+    return "analyze-pass";
+  case Mode::AnalyzeFail:
+    return "analyze-fail";
   case Mode::Lsp:
     return "lsp";
   case Mode::LspTranscript:
@@ -223,8 +327,13 @@ bool modeParses(Mode mode) {
   return mode == Mode::ParsePass || mode == Mode::ParseFail;
 }
 
+bool modeAnalyzes(Mode mode) {
+  return mode == Mode::AnalyzePass || mode == Mode::AnalyzeFail;
+}
+
 bool modeFails(Mode mode) {
-  return mode == Mode::CheckFail || mode == Mode::ParseFail;
+  return mode == Mode::CheckFail || mode == Mode::ParseFail ||
+         mode == Mode::AnalyzeFail;
 }
 
 const char *snapshotName(Snapshot snapshot) {
@@ -316,8 +425,29 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     test.mode = Mode::LspTranscript;
     test.modeExplicit = true;
     test.groupKey = "lsp-transcript";
-    if (!readFile(path))
+    const std::optional<std::string> text = readFile(path);
+    if (!text)
       test.errors.push_back("cannot read the transcript");
+    // `//@` comment lines name the server's options.
+    const std::vector<std::string> lines = splitLines(text.value_or(""));
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+      const std::string line = trim(lines[index]);
+      if (line.rfind("//@ ", 0) != 0)
+        continue;
+      const std::string body = line.substr(4);
+      const std::size_t colon = body.find(':');
+      const std::string name = trim(body.substr(0, colon));
+      const std::string value =
+          colon == std::string::npos ? "" : trim(body.substr(colon + 1));
+      const auto error = [&](const std::string &message) {
+        test.errors.push_back("line " + std::to_string(index + 1) + ": " +
+                              message);
+      };
+      if (!serverOption(name, value, test.serverArguments, error))
+        error("a transcript takes only `//@ execution-profile:` and "
+              "`//@ raw-pointer-audit:` (the server's options), not '" +
+              name + "'");
+    }
     return test;
   }
   const std::optional<std::string> contents = readFile(path);
@@ -463,8 +593,9 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       else
         target.exitCode = static_cast<int>(code);
     } else if (name == "args") {
-      for (std::string &word : splitWords(trimmed))
-        target.args.push_back(std::move(word));
+      // Shell-like quoting: `//@ args: "" 'a b' c\ d` is three arguments.
+      if (!shellWords(trimmed, target.args))
+        error(lineNumber, "args has an unterminated quote");
     } else if (name == "stdin") {
       std::string line =
           !value.empty() && value.front() == ' ' ? value.substr(1) : value;
@@ -535,7 +666,13 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     std::string name = body;
     std::string value;
     bool hasValue = false;
-    if (const std::size_t colon = body.find(':'); colon != std::string::npos) {
+    // In LSP tests a marker may name its file (`@lib.gti:decl`), so the
+    // value starts after the first colon followed by a blank.
+    std::size_t colon = body.find(':');
+    while (lsp && colon != std::string::npos && colon + 1 < body.size() &&
+           body[colon + 1] != ' ' && body[colon + 1] != '\t')
+      colon = body.find(':', colon + 1);
+    if (colon != std::string::npos) {
       name = body.substr(0, colon);
       value = body.substr(colon + 1);
       hasValue = true;
@@ -547,7 +684,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
          (name != "allow-warnings" && name != "execution-profile" &&
           name != "define" && name != "raw-pointer-audit" &&
           name != "raw-pointer-audit-library-findings" &&
-          name != "require-function-definitions"))) {
+          name != "require-function-definitions" &&
+          lang::findCompileLimit(name) == nullptr))) {
       error(lineNumber, "a defaults file sets only analysis options and "
                         "allow-warnings, not '" +
                             name + "'");
@@ -589,10 +727,22 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
             LspDirective{std::move(words), trimmed, lineNumber});
         continue;
       }
+      if (serverOption(
+              name, trimmed, test.serverArguments,
+              [&](const std::string &message) { error(lineNumber, message); }))
+        continue;
+      if (name == "disk-only") {
+        const std::vector<std::string> names = splitWords(trimmed);
+        if (names.empty())
+          error(lineNumber, "disk-only names `// --- path` sections");
+        test.diskOnly.insert(test.diskOnly.end(), names.begin(), names.end());
+        continue;
+      }
     }
     if (name == "check-pass" || name == "check-fail" || name == "build-pass" ||
         name == "run-pass" || name == "run-fail" || name == "parse-pass" ||
-        name == "parse-fail") {
+        name == "parse-fail" || name == "analyze-pass" ||
+        name == "analyze-fail") {
       if (hasValue)
         error(lineNumber, "'" + name + "' takes no value");
       modes.push_back(name);
@@ -617,10 +767,29 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (test.revisions.size() < 2)
         error(lineNumber, "revisions needs at least two names");
     } else if (name == "opt") {
+      test.optPinned = true;
       if (trimmed == "O3")
         test.optimize = true;
       else if (trimmed != "O0")
         error(lineNumber, "opt must be O0 or O3");
+    } else if (const lang::CompileLimitInfo *limit =
+                   lang::findCompileLimit(name)) {
+      std::string message;
+      const std::optional<std::size_t> parsed =
+          lang::parseCompileLimitValue(*limit, trimmed, message);
+      if (!parsed)
+        error(lineNumber, message);
+      else if (std::any_of(
+                   test.compileLimits.begin(), test.compileLimits.end(),
+                   [&](const auto &entry) { return entry.first == name; }))
+        error(lineNumber, "duplicate " + name);
+      else
+        test.compileLimits.emplace_back(name, *parsed);
+    } else if (name == "target") {
+      if (!lang::parseTargetTriple(trimmed))
+        error(lineNumber, "target '" + trimmed + "' is not a supported triple");
+      else
+        test.target = trimmed;
     } else if (name == "slow") {
       if (hasValue)
         error(lineNumber, "'slow' takes no value");
@@ -821,26 +990,74 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     test.mode = Mode::Lsp;
     if (!modes.empty())
       error(0, "LSP tests take no mode; diagnostics are `//~` annotations");
-    if (test.sections.front().firstLine != 1)
-      error(0, "LSP tests are one file; edits are `// --- step 2`, "
-               "`// --- step 3`, ... sections");
-    for (std::size_t index = 1; index < test.sections.size(); ++index)
-      if (test.sections[index].name != "step " + std::to_string(index + 1))
+    // File sections, then the numbered edit steps.
+    std::set<std::string> files;
+    std::vector<int> stepOf(test.sections.size(), 0);
+    int steps = 0;
+    for (std::size_t index = 0; index < test.sections.size(); ++index) {
+      const std::string &name = test.sections[index].name;
+      const std::optional<LspStep> step = lspStep(name);
+      if (!step) {
+        if (steps > 0)
+          error(0, "file sections come before the `// --- step N` edits");
+        files.insert(name);
+        continue;
+      }
+      stepOf[index] = ++steps;
+      if (step->number != steps + 1)
         error(0, "LSP edit steps are numbered `step 2`, `step 3`, ... in "
                  "order");
-    for (LspDirective &directive : test.lspDirectives)
+      const std::string target =
+          step->file.empty() ? test.sections.front().name : step->file;
+      if (!files.contains(target) || !target.ends_with(".gti"))
+        error(0, "`" + name + "` edits '" + target +
+                     "', which is not a .gti file section");
+      else if (std::find(test.diskOnly.begin(), test.diskOnly.end(), target) !=
+               test.diskOnly.end())
+        error(0, "`" + name + "` edits '" + target +
+                     "', which is disk-only (never opened)");
+    }
+    for (const std::string &name : test.diskOnly)
+      if (!files.contains(name) || name == test.sections.front().name)
+        error(0, "disk-only names '" + name +
+                     "', which is not a file section other than the entry");
+    for (const Annotation &annotation : test.annotations)
+      if (!annotation.unlocated &&
+          ((!annotation.section.ends_with(".gti") &&
+            !lspStep(annotation.section)) ||
+           std::find(test.diskOnly.begin(), test.diskOnly.end(),
+                     annotation.section) != test.diskOnly.end()))
+        error(annotation.writtenLine,
+              "annotations belong in opened .gti documents; '" +
+                  annotation.section + "' publishes no diagnostics");
+    for (LspDirective &directive : test.lspDirectives) {
       for (std::size_t index = 0; index < test.sections.size(); ++index)
-        if (directive.writtenLine >= test.sections[index].firstLine)
-          directive.step = static_cast<int>(index);
+        if (directive.writtenLine >= test.sections[index].firstLine) {
+          directive.section = static_cast<int>(index);
+          directive.step = stepOf[index];
+        }
+      if (!test.sections[static_cast<std::size_t>(directive.section)]
+               .name.ends_with(".gti") &&
+          !lspStep(
+              test.sections[static_cast<std::size_t>(directive.section)].name))
+        error(directive.writtenLine,
+              "LSP directives belong in .gti sections or above the first");
+    }
     if (!test.snapshots.empty() || !test.checks.empty() || test.optimize ||
         test.concurrent || test.requireFunctionDefinitions ||
         test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
         test.exitSignal || !test.args.empty() || test.stdinText ||
         !test.env.empty() || !test.defines.empty() ||
         test.rawPointerAudit != "off" || test.rawPointerAuditLibraryFindings ||
-        !test.nativeArgs.empty() || !test.stdlibOverlay.empty())
-      error(0, "LSP tests take only LSP expectations and annotations");
+        !test.nativeArgs.empty() || !test.stdlibOverlay.empty() ||
+        !test.compileLimits.empty() || !test.target.empty())
+      error(0, "LSP tests take only LSP expectations, annotations, "
+               "disk-only and the server's options (execution-profile, "
+               "raw-pointer-audit)");
+    // Tests that share a server run back to back.
     test.groupKey = "lsp";
+    for (const std::string &argument : test.serverArguments)
+      test.groupKey += " " + argument;
     return test;
   }
 
@@ -856,13 +1073,15 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   if (!modes.empty()) {
     test.modeExplicit = true;
     const std::string &mode = modes.front();
-    test.mode = mode == "check-pass"   ? Mode::CheckPass
-                : mode == "check-fail" ? Mode::CheckFail
-                : mode == "build-pass" ? Mode::BuildPass
-                : mode == "run-pass"   ? Mode::RunPass
-                : mode == "run-fail"   ? Mode::RunFail
-                : mode == "parse-pass" ? Mode::ParsePass
-                                       : Mode::ParseFail;
+    test.mode = mode == "check-pass"     ? Mode::CheckPass
+                : mode == "check-fail"   ? Mode::CheckFail
+                : mode == "build-pass"   ? Mode::BuildPass
+                : mode == "run-pass"     ? Mode::RunPass
+                : mode == "run-fail"     ? Mode::RunFail
+                : mode == "parse-pass"   ? Mode::ParsePass
+                : mode == "parse-fail"   ? Mode::ParseFail
+                : mode == "analyze-pass" ? Mode::AnalyzePass
+                                         : Mode::AnalyzeFail;
   } else {
     test.mode = hasErrors ? Mode::CheckFail : Mode::CheckPass;
   }
@@ -872,15 +1091,33 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   if (!modeFails(test.mode) && hasErrors)
     error(0, std::string(modeName(test.mode)) +
                  " test cannot expect errors; use " +
-                 (modeParses(test.mode) ? "parse-fail" : "check-fail"));
+                 (modeParses(test.mode)     ? "parse-fail"
+                  : modeAnalyzes(test.mode) ? "analyze-fail"
+                                            : "check-fail"));
   if (modeParses(test.mode) &&
       (test.concurrent || test.requireFunctionDefinitions || test.optimize ||
        !test.defines.empty() || test.rawPointerAudit != "off" ||
+       !test.compileLimits.empty() || !test.target.empty() ||
        test.rawPointerAuditLibraryFindings || !test.stdlibOverlay.empty() ||
        std::any_of(test.snapshots.begin(), test.snapshots.end(),
                    [](Snapshot s) { return s != Snapshot::Format; })))
     error(0, "parse tests take no analysis directives or mir, llvm-ir or "
              "diagnostics snapshots");
+  if (modeAnalyzes(test.mode) &&
+      (test.requireFunctionDefinitions || test.optimize ||
+       std::any_of(test.snapshots.begin(), test.snapshots.end(),
+                   [](Snapshot s) {
+                     return s == Snapshot::Mir || s == Snapshot::LlvmIr;
+                   })))
+    error(0, "analyze tests stop before HIR: no require-function-definitions, "
+             "opt or mir/llvm-ir snapshots");
+  if (!test.target.empty() && test.mode != Mode::CheckPass &&
+      test.mode != Mode::CheckFail && !modeAnalyzes(test.mode))
+    error(0, "target is for check and analyze tests (nothing is linked)");
+  if (!test.target.empty() &&
+      std::any_of(test.snapshots.begin(), test.snapshots.end(),
+                  [](Snapshot s) { return s != Snapshot::Format; }))
+    error(0, "target takes no mir, llvm-ir or diagnostics snapshot");
   for (const Snapshot kind : {Snapshot::Mir, Snapshot::LlvmIr})
     if (hasSnapshot(test, kind) && modeFails(test.mode))
       error(0, std::string("snapshot: ") + snapshotName(kind) +
@@ -1031,9 +1268,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
 
   // Everything that changes the analysis is part of the key, so tests that
   // can share a standard-library preamble run back to back.
-  test.groupKey = std::string(modeParses(test.mode)   ? "parse"
-                              : modeBuilds(test.mode) ? "build"
-                                                      : "check") +
+  test.groupKey = std::string(modeParses(test.mode)     ? "parse"
+                              : modeAnalyzes(test.mode) ? "analyze"
+                              : modeBuilds(test.mode)   ? "build"
+                                                        : "check") +
                   (test.optimize ? ":O3" : ":O0") +
                   (test.concurrent ? ":concurrent" : "") +
                   (test.requireFunctionDefinitions ? ":definitions" : "") +
@@ -1043,6 +1281,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   std::sort(defines.begin(), defines.end());
   for (const std::string &flag : defines)
     test.groupKey += ":D" + flag;
+  for (const auto &[limit, value] : test.compileLimits)
+    test.groupKey += ":" + limit + "=" + std::to_string(value);
+  if (!test.target.empty())
+    test.groupKey += ":target=" + test.target;
   for (const Section &section : test.sections)
     if (overlay.contains(section.name))
       test.groupKey += ":overlay=" + section.name + "#" +

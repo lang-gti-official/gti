@@ -18,7 +18,9 @@ int main() {
 - Modes: `//@ check-pass`, `check-fail`, `build-pass`, `run-pass`, `run-fail`.
 - Run tests: `//@ stdout: line` (repeat per line; or a sibling `name.stdout`),
   `//@ exit-code: N`, `//@ stderr-contains: text`, `//@ args: a b`,
-  `//@ stdin: line`. Stdout is always compared; absent means empty.
+  `//@ stdin: line`. Stdout is always compared; absent means empty. `args`
+  are shell-like words: `''` or `""` is an empty argument, quotes keep
+  blanks, `\` escapes one character (and `\"` inside `"…"`).
 - Several runs of one program: `//@ revisions: a b`, then `//@[a] args: x`
   and the like. The program is built once and run once per revision. Only
   `run-pass`, `run-fail`, `stdout`, `stderr-contains`, `exit-code`,
@@ -51,7 +53,18 @@ int main() {
   input and output: sibling `name.stdin` / `name.stdout`, compared bytewise;
   `--bless` writes output with NUL, control or non-UTF-8 bytes to the file.
 - Parse only: `//@ parse-pass` / `//@ parse-fail` stop after the lexer and
-  parser (syntax and recovery tests; annotations as above).
+  parser (syntax and recovery tests; annotations as above). They see
+  declarations only: a module unit's `export module`/`import` header belongs
+  to the source loader, so test headers with check or analyze modes.
+- Semantics only: `//@ analyze-pass` / `//@ analyze-fail` stop after
+  semantic analysis (the frontend's `stopAfter` Semantics phase): no HIR, MIR
+  or borrow checking. In-process even under `--isolate` (`gti` has no such
+  stop).
+- Compile limits, named as `gti`'s options: `//@ constexpr-depth: 16`
+  (`--constexpr-depth 16`), likewise `constexpr-steps`, `macro-depth`,
+  `macro-expansions`, `error-limit` and the other `[limits]` keys.
+- `//@ target: x86_64-pc-windows-msvc`: check or analyze for another target
+  (nothing is linked; in-process under `--isolate`).
 - Analysis options, named after the compiler's: `//@ execution-profile:
   concurrent` (default `single-threaded`; `gti --execution-profile`) and
   `//@ require-function-definitions` (the definition closure executable
@@ -111,6 +124,8 @@ build-release/gti-test --changed HEAD~3         # ... vs another base
 build-release/gti-test --failed                 # the last run's failures
 build-release/gti-test tests/ui/x/y.gti --bless # rewrite annotations/stdout
 build-release/gti-test --tidy                   # validate directives/layout
+build-release/gti-test --filter 'borrow/.*move' # paths matching a regex
+build-release/gti-test --opt O3 --slowest 10    # optimized run tests, costs
 build-release/gti-test --isolate                # each case in a fresh gti
 build-release/gti-test --json r.json --junit r.xml  # reports
 ```
@@ -146,4 +161,20 @@ driver's LLVM sanitizer instrumentation, which needs an upstream Clang
 uninstrumented.
 
 `--bless` refuses under `CI`, never accepts an internal compiler error or
-turns a declared pass test into an error test. Review its diff.
+turns a declared pass test into an error test, and never changes a `//@`
+line unless `--bless-directives` is also given: without it, new run output
+goes to a sibling `name.stdout` and differing inline `//@ stdout:` lines are
+reported, not rewritten. One `--bless` writes annotations and the rendered
+snapshots that quote them. Review its diff.
+
+Tiers and reports: `--opt O3` (or `GTI_TEST_OPT=O3`) builds every run test
+that does not pin `//@ opt:` optimized; `--filter REGEX` selects tests whose
+path matches; `--slowest N` lists the N most expensive tests after the run;
+`--cpu-budget SECONDS` (or `GTI_TEST_CPU_BUDGET`) prints `BUDGET ok|fail:
+<total> of <budget> cpu-s` and fails the run when its tests' CPU together
+exceeds the budget, listing the 20 slowest. `--tidy` without `--root`
+checks tests/ui, tests/project, tests/lsp and tests/slow.
+
+Not built: symbol probes of built programs (the old `nm` checks inspect
+sanitizer-instrumented objects and package archives, which a per-test
+directive on a normal program cannot honestly stand for).
