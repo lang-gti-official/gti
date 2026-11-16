@@ -1,0 +1,15 @@
+// Ownership and missing include diagnostics: projected moves of a user-defined owner retain both exact field transfer sites.
+struct Ticket {
+  mut int code = 7;
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+struct Holder { mut Ticket field = Ticket();  public: Holder() = default; };
+
+void examine(bool condition) {
+  mut Holder holder{};
+  if (condition) { Ticket first = std::move(holder.field); }
+  else { Ticket second = std::move(holder.field); }
+  int code = holder.field.code;  //~ ERROR GTI-S2018
+}

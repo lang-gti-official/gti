@@ -1,0 +1,15 @@
+// Removing the unnecessary mut from a wholly moved binding and an unused sibling keeps the program valid.
+//@ check-pass
+struct Record {
+  mut int value = 4;
+public:
+  Record() = default;
+};
+int main() {
+  Record whole = Record();
+  Record kept[2] = {Record(), Record()};
+  mut Record moved[2] = {Record(), Record()};
+  Record transferred = std::move(whole);
+  Record element = std::move(moved[0]);
+  return transferred.value + element.value + kept[0].value;
+}

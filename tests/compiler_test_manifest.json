@@ -634,66 +634,6 @@
       "suite": "constexpr"
     },
     {
-      "name": "testAnalysisErrorLimit",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testMissingSwitchCasesFix",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testPayloadPatternVisibilityDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testGenericAdvisorySoundness",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDuplicateDiagnosticsMerge",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testRejectedInstanceCascades",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testConversionDiagnosticGuidance",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testOverloadFailureGuidance",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testRawAuditDiagnosticPublication",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testOwnershipAndMissingIncludeDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testDiagnosticFoundation",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testAdvisoryDiagnostics",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testFormatting",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testLanguageQueries",
-      "suite": "diagnostics"
-    },
-    {
-      "name": "testToolingOccurrenceOptOut",
-      "suite": "diagnostics"
-    },
-    {
       "name": "testFrontendBackendAndOptimizationPipeline",
       "suite": "e2e"
     },

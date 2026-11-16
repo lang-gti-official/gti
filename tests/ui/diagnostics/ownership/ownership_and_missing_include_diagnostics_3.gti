@@ -1,0 +1,8 @@
+// Ownership and missing include diagnostics: owning erasure explains the source capture that retains borrowed state.
+import std.functional;
+std::function<int()> invalid() {
+  int value = 1;
+  std::function<int()> callback{[&value]() -> int { return value; }};
+  return callback;
+}
+int main() { auto call = invalid(); return call(); }  //~ ERROR GTI-S2018

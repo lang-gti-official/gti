@@ -7313,10 +7313,12 @@ the corresponding CLI/LSP cause across files, UTF-16 positions and a repaired
 unsaved overlay. Existing viable-overload tests ensure rejected candidates do
 not publish diagnostics when another candidate succeeds.
 
-`testOwnershipAndMissingIncludeDiagnostics` covers exact move origins, branch
-joins, reinitialization, user-defined projected owners, restored receiver
-fields, shadowing, and the deterministic four-origin bound. It also checks
-explicit omission reporting and repeated-join bounds at the producer. The
+`tests/ui/diagnostics/ownership/` covers exact move origins, branch joins,
+reinitialization, user-defined projected owners, restored receiver fields,
+shadowing, and the deterministic four-origin bound with explicit omission
+reporting (`bounded_move_causes`, a diagnostics snapshot); the
+`semantic_move_origin_bounds` case of `gti_unit_tests` checks repeated-join
+bounds at the producer. The
 lookup-recovery cases retain independent invalid pointer offsets/pointees and
 both undefined operands, reject executable generation, and clear the cause
 after a repaired snapshot. `diagnostic_explanations` checks the same root and
@@ -9519,7 +9521,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate across independently buildable frontend, declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, diagnostics/formatting/queries, and bounded end-to-end executables; the aggregate rejects missing or duplicate registrations before running every suite once |
+| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, and bounded end-to-end executables (the former frontend and diagnostics/formatting/queries suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |
@@ -11652,7 +11654,7 @@ HIR/MIR, target mutation, and production representation preflight.
 `generic_contract_runtime` runs the pack fixture, A19, and updated examples 33
 and 80 through the unchanged eight-mode native matrix.
 
-`testGenericAdvisorySoundness` and `generic_advisory_lsp` cover A20/A24/A33,
+`tests/ui/diagnostics/generic_advisory/` and `generic_advisory_lsp` cover A20/A24/A33,
 unresolved callable arguments, an unrelated mutable operator receiver,
 declaration-independent warnings, exact safe edits, UTF-16 positions, current
 versions and stale-fix rejection. `generic_contract_lsp` checks contextual

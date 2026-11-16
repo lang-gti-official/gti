@@ -1,0 +1,6 @@
+// Ownership and missing include diagnostics: an explicit shared result lifetime resolves the ambiguity.
+//@ check-pass
+int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool condition) {
+  if (condition) { return first; }
+  return second;
+}

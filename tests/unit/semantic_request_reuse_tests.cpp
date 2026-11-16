@@ -1,7 +1,7 @@
 // SemanticVisitor reuse across requests: identities, AST-backed facts and
 // diagnostics never leak from one request into the next. Library API with no
 // source-level observable. (Moved unchanged from
-// compiler_diagnostics_tests.cpp.)
+// the former compiler_diagnostics_tests.cpp.)
 #include "gti/lexer.h"
 #include "gti/parser.h"
 #include "gti/semantic_analyzer.h"

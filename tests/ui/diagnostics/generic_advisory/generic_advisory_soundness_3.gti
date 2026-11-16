@@ -1,0 +1,5 @@
+// Generic advisory soundness: a declaration-wide unused mutable local retains one primary warning.
+//@ check-pass
+//@ snapshot: diagnostics
+T identity<T>(T value) { mut int unused = 1; return value; }  //~ WARN GTI-S2096
+int main() { return identity(0); }

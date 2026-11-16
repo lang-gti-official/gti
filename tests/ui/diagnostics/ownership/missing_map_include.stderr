@@ -1,0 +1,5 @@
+main.gti:3:25: error[GTI-S2089]: Unknown type 'std::map'.
+ 3 | using dictionary = std::map<int, int>;  //~ ERROR GTI-S2089
+   |                         ^~~
+help: Add import std.map; to this source file.
+help: Add import std.map;
