@@ -1,0 +1,4 @@
+// An empty switch over a concrete generic enum is offered every case.
+//@ snapshot: diagnostics
+namespace nested { enum Packet<T> { empty, filled(T value) }; }
+int main() { nested::Packet<bool> value = nested::Packet<bool>::filled(true); switch (value) {} return 0; }  //~ ERROR GTI-S2067

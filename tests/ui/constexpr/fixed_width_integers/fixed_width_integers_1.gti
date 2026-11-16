@@ -1,0 +1,13 @@
+// Fixed width integers: suffix-less fixed-width aliases should remain valid complete GTI programs without a prelude include.
+//@ check-pass
+int main() {
+  int8 signed8 = 1;
+  int16 signed16 = 2;
+  int32 signed32 = 3;
+  int64 signed64 = 4;
+  uint8 unsigned8 = 5;
+  uint16 unsigned16 = 6;
+  uint32 unsigned32 = 7;
+  uint64 unsigned64 = 8;
+  return 0;
+}

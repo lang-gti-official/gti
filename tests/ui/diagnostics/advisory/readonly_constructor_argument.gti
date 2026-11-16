@@ -1,0 +1,13 @@
+// A read-only constructor argument keeps the unnecessary-mut warning on its owner.
+//@ check-pass
+class Inspect {
+public:
+  Inspect(int& source) {}
+public:
+  Inspect() = default;
+};
+int main() {
+  mut int owner = 4;  //~ WARN GTI-S2096
+  Inspect view{owner};
+  return owner;
+}

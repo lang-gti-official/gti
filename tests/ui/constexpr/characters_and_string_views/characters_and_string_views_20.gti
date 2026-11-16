@@ -1,0 +1,2 @@
+// Characters and string views: obsolete string declarations should explain the owning and non-owning replacements without guessing ownership intent.
+int main() { string text = "old"; return 0; }  //~ ERROR GTI-S2033 std::string

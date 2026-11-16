@@ -1,0 +1,4 @@
+main.gti:2:34: error[GTI-S2067]: Payload-enum switch is not exhaustive; missing sample::Value::none, sample::Value::item.
+ 2 | int main() { auto value = get(); switch (value) {} return 0; }  //~ ERROR GTI-S2067
+   |                                  ^~~~~~
+help: Handle every variant explicitly or add a 'default' arm.

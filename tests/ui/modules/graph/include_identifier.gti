@@ -1,0 +1,4 @@
+// include is an ordinary identifier, not a reserved word.
+//@ check-pass
+int include = 1;
+int main() { return include - 1; }

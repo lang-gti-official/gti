@@ -1,0 +1,38 @@
+// Fixed width integers: the program is accepted.
+//@ check-pass
+int8_t minimum8 = -128;
+int16_t widened16 = minimum8;
+int32_t maximum32 = 2147483647;
+int default32 = maximum32;
+int64_t maximum64 = 9223372036854775807;
+int64_t minimum64 = -9223372036854775808;
+uint8_t maximum_u8 = 255;
+uint16_t widened_u16 = maximum_u8;
+uint32_t maximum_u32 = 4294967295;
+uint default_u32 = maximum_u32;
+uint64_t maximum_u64 = 18446744073709551615;
+int64_t signed_widening = maximum_u32;
+uint32_t hexadecimal_pattern = 0xA5A5;
+uint8_t binary_pattern = 0b10100101;
+
+int64_t add_wide(int16_t left, int64_t right) {
+  return left + right;
+}
+
+uint64_t add_unsigned(uint16_t left, uint64_t right) {
+  return left + right;
+}
+
+int main() {
+  int8_t maximum8 = 127;
+  int16_t minimum16 = -32768;
+  int32_t promoted = maximum8 + minimum16;
+  uint8_t unsigned_left = 1;
+  uint8_t unsigned_right = 2;
+  int32_t promoted_unsigned = unsigned_left + unsigned_right;
+  uint8_t bytes[4] = {1, 2, 3, 4};
+  uint32_t counter = 1;
+  uint32_t next = counter + 1;
+  bool has_next = next > 0;
+  return promoted;
+}

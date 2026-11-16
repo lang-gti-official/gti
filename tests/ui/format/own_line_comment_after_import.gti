@@ -1,0 +1,8 @@
+// An own-line comment after an import stays on its own line.
+//@ parse-pass
+//@ snapshot: format
+import "a.gti";
+// Entry point.
+int main() {
+  return 0;
+}

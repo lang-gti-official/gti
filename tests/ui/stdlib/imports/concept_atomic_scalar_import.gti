@@ -1,0 +1,4 @@
+// import std.atomic exposes its compiler concept std::atomic_scalar.
+//@ check-pass
+import std.atomic;
+concept selected<T> = std::atomic_scalar<T>;

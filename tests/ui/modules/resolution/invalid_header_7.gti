@@ -1,0 +1,4 @@
+// A malformed or misplaced module import or header fails during source loading: an import under a configuration condition.
+#if true
+import lib;  //~ ERROR GTI-I0012 unconditional source-unit-level
+#endif

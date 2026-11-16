@@ -1,0 +1,4 @@
+// Compile time conditionals: #error requires an explicit string message.
+//@ parse-fail
+#error
+int value = 1;  //~ ERROR GTI-P0001 Expect a string message after '#error'

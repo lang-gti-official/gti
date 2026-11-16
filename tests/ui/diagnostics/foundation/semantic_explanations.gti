@@ -1,0 +1,10 @@
+// A duplicate declaration relates the original, an immutable write explains the declaration and remedy, and a type mismatch names both GTI types.
+//@ snapshot: diagnostics
+int duplicate = 1;
+int duplicate = 2;  //~ ERROR GTI-S2006
+int main() {
+  int fixed = 1;
+  fixed = 2;  //~ ERROR GTI-S2002
+  int value = "text";  //~ ERROR GTI-S2003
+  return 0;
+}

@@ -1,0 +1,7 @@
+// Static assertions: an assertion that evaluates its own function instance should be evaluated once by that instance.
+//@ check-pass
+constexpr int32_t unit<uint64_t N>() {
+  static_assert(unit<N>() == 1, "unit instance");
+  return 1;
+}
+int main() { return unit<3>() - 1; }

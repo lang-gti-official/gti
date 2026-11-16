@@ -1,0 +1,42 @@
+// Static storage and members: namespace and class static declarations should compile.
+//@ check-pass
+static int file_value = 7;
+static int add_file_value(int value) { return value + file_value; }
+
+namespace detail {
+static int namespace_value = 5;
+static int read_namespace_value() { return namespace_value; }
+}
+
+class Counter {
+public:
+  static int answer = 42;
+  static mut int count = 0;
+  static int current() { return count; }
+  int value = 3;
+public:
+  Counter() = default;
+};
+
+class Empty {
+public:
+  static Empty value = Empty();
+public:
+  Empty() = default;
+};
+
+class Managed {
+public:
+  static mut int live = 0;
+  ~Managed() {}
+public:
+  Managed() = default;
+};
+
+int main() {
+  Counter::count = add_file_value(2);
+  int result = Counter::current() + Counter::answer +
+               detail::read_namespace_value() + detail::namespace_value;
+  if (result == 61) { return 0; }
+  return 1;
+}

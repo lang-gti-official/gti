@@ -1,0 +1,2 @@
+import math.add;
+int main() { return math::add(2, 3) == 5 ? 0 : 1; }

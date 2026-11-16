@@ -1,0 +1,11 @@
+// Dependent constexpr branches: independent constant requests each receive a fresh work budget.
+//@ check-pass
+constexpr int cost<uint64_t N>() {
+  mut int total = 0;
+  for (mut int i = 0; i < 100; i++) { total += 1; }
+  return total;
+}
+static_assert(cost<1>() == 100);
+static_assert(cost<1>() == 100);
+static_assert(cost<1>() == 100);
+int main() { return 0; }

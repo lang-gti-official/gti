@@ -1,0 +1,13 @@
+// Default immutability: initialized mutable locals, constructor-initialized fields and program-wide scalar data initialization remain valid.
+//@ check-pass
+mut int32_t zeroed;
+struct Record {
+  mut int32_t value;
+  Record(int32_t initial) : value(initial) {}
+};
+int main() {
+  mut int32_t value = 1;
+  value = 2;
+  Record record{value};
+  return record.value + zeroed - 2;
+}

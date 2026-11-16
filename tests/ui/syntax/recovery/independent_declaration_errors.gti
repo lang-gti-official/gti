@@ -1,0 +1,9 @@
+// The parser reports independent declaration errors and recovers to later declarations.
+//@ parse-fail
+int first = ;  //~ ERROR GTI-P0001
+int second = ;  //~ ERROR GTI-P0001
+class Broken {
+  return 1;  //~ ERROR GTI-P0001
+  int value = 2;
+};
+int main() { return 0; }

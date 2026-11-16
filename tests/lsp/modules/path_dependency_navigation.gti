@@ -1,0 +1,38 @@
+// Module queries through a path dependency: the import navigates to the
+// library's module declaration, names resolve into it despite a missing
+// import, and an incomplete import completes the dependency's modules.
+// (module_navigation_lsp_test.py, first part.)
+//@ disk-only: library/api.gti
+//@ definition @import: @library/api.gti:module
+//@ hover @dep: net.http
+//@ definition @answer: @library/api.gti:answer
+//@ definition @missing: none
+// --- app/main.gti
+/* 😀 */ import /*@dep*/dep./*@import*/net.http;
+import dep./*@missing*/missing;  //~ ERROR GTI-I0012
+int main() { return /*@answer*/answer(); }
+// --- app/gti.toml
+manifest-version = 1
+[package]
+name = "app"
+version = "0.1.0"
+source-root = "."
+[dependencies]
+dep = { path = "../library" }
+[targets.app]
+kind = "executable"
+root = "main.gti"
+// --- library/gti.toml
+manifest-version = 1
+[package]
+name = "library"
+version = "0.1.0"
+source-root = "."
+[modules]
+"net.http" = "api.gti"
+// --- library/api.gti
+/* 😀 */ export module /*@module*/net /* trivia */ . http;
+export int /*@answer*/answer() { return 42; }
+// --- step 2 app/main.gti
+//@ completion @partial: dep.net.http
+/* 😀 */ import dep /* trivia */ . ne/*^partial*/  //~ ERROR GTI-I0012 //~ ERROR GTI-P0001

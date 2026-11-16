@@ -1,0 +1,2 @@
+// A malformed or misplaced module import or header fails during source loading: an interface header after a declaration.
+int value = 0; export module late;  //~ ERROR GTI-I0012 must be the first declaration

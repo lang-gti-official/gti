@@ -1,0 +1,3 @@
+// Analysis for another target, without linking.
+//@ target: x86_64-pc-windows-msvc
+int main() { return 0; }

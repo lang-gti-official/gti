@@ -1,0 +1,4 @@
+// Ownership and missing include diagnostics: applying the callback include fix should resolve the signature type.
+//@ check-pass
+import std.functional;
+using callback = std::move_only_function<void()>;
