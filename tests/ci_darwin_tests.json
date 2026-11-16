@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Tests macOS runs in post-integration full validation (the `darwin` test set). Linux runs the complete inventory once; macOS proves only what differs on the platform: the AArch64 LLVM backend (every llvm_* and macos_* test by prefix), the Apple-only registrations, threads/atomics/TLS/cthread runtime, debug info and lldb, install/bundle/package/link, ABI/layout/native C, and the default-backend runtime harnesses. Derived from the 2026-11-03 test-matrix review; a test not listed and not matching a prefix runs on Linux only. The compiler smoke always runs.",
+  "description": "Tests macOS runs in post-integration full validation (the `darwin` test set). Linux runs the complete inventory once; macOS proves only what differs on the platform: the AArch64 LLVM backend (every llvm_* and macos_* test by prefix), the Apple-only registrations, threads/atomics/TLS/cthread runtime, debug info and lldb, install/bundle/package/link, ABI/layout/native C, and the default-backend runtime harnesses. Derived from the 2026-11-03 test-matrix review; a test not listed and not matching a prefix runs on Linux only. The compiler smoke always runs, and so do the per-commit gti-test entries (gti_test_ui, gti_test_examples) and gti_unit_tests, as in the pull-request gate.",
   "prefixes": [
     "llvm_",
     "macos_"
@@ -27,6 +27,8 @@
     "embedding_foundation",
     "embedding_header_c17_oracle",
     "embedding_header_cpp20_oracle",
+    "gti_test_examples",
+    "gti_test_ui",
     "gti_unit_tests",
     "layout_query_native_boundary",
     "layout_query_pipeline",

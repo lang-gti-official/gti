@@ -34,6 +34,26 @@ def verify_corpus_walk(tests, repository):
     if stale:
         raise AssertionError(f"old corpus partitions are registered again: {stale}")
 
+def verify_gti_test_tiers(tests):
+    # The PR gate and per-commit full validation run gti_test_ui,
+    # gti_test_examples and gti_unit_tests; the daily slow tier runs
+    # tests/slow and the --isolate run (.github/workflows/ci.yml, slow.yml).
+    labels = {test["name"]: next((item["value"] for item in test.get("properties", [])
+                                  if item["name"] == "LABELS"), [])
+              for test in tests}
+    for name, slow in (("gti_test_ui", False), ("gti_test_examples", False),
+                       ("gti_unit_tests", False), ("gti_test_slow", True),
+                       ("gti_test_isolate", True)):
+        if name not in labels:
+            raise AssertionError(f"{name} is not registered")
+        if ("slow" in labels[name]) != slow:
+            raise AssertionError(f"{name} must {'' if slow else 'not '}be in the slow tier")
+    commands = {test["name"]: test.get("command", []) for test in tests}
+    if not any(pathlib.Path(arg).name == "slow" for arg in commands["gti_test_slow"]):
+        raise AssertionError("gti_test_slow must run tests/slow")
+    if "--isolate" not in commands["gti_test_isolate"]:
+        raise AssertionError("gti_test_isolate must run every case through the CLI")
+
 def inventory(build):
     # `ctest --show-only` writes LastTest.log. Query a copy of only the generated
     # registration files, never the build tree running the outer CTest process.
@@ -107,6 +127,7 @@ def verify(tests, repository):
     if not feedback or feedback == names:
         raise AssertionError("fast feedback must be a nonempty partial selection")
     verify_corpus_walk(tests, repository)
+    verify_gti_test_tiers(tests)
     return found
 
 
