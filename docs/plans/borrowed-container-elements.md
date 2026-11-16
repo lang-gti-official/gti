@@ -126,8 +126,8 @@ fixtures; the measurements above describe the pre-reconciliation candidate.
 
 ### Integration blockers (2026-11-16)
 
-PR #425 remains a draft, not ready for merge. The reconciled published head
-`537a058de` passes `constexpr_owned_storage_runtime`,
+PR #425 was kept in draft after the first integration check. The reconciled
+head `537a058de` passed `constexpr_owned_storage_runtime`,
 `constexpr_owned_containers_example`, `view_fields`,
 `object_construction_runtime`, `reference_payload_semantics`,
 `ephemeral_carrier_mir`, both operator-place composition suites, and
@@ -137,7 +137,8 @@ The pre-reconciliation results above do not certify this combined head.
 
 The failures span retained-input publication, borrowed-record construction,
 cloning, borrowed-array return identity, and conditional cleanup/verification.
-They must be resolved and the focused integration plan rerun before handoff.
+The repair below addresses their shared retention cause; the focused
+integration plan remains the acceptance gate for handoff.
 Do not suppress these checks or treat existing native execution evidence as a
 substitute for independently verified MIR.
 
@@ -176,5 +177,6 @@ and growable-view probes; restoring only the earlier memory-storage provider
 also recovered them. With the correction and the current library, targeted
 shared-reference-copy, owned-storage, growable-retention, conditional-cleanup
 and array-text tests pass. The MIR carrier-flow suite passes its new primitive
-classification and negative controls. The entire recorded focused plan must
-still pass on the published corrected head before integration.
+classification and negative controls. The entire recorded focused plan must pass on the published corrected head
+before integration. PR #425 records the final run, exact head and handoff
+status; the earlier failures above are retained as before-fix evidence.

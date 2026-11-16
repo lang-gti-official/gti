@@ -27,7 +27,8 @@ static void *counted_realloc(void *previous, size_t bytes) {
   record(pointer, bytes);
   return pointer;
 }
-static int counted_posix_memalign(void **pointer, size_t alignment, size_t bytes) {
+static int counted_posix_memalign(void **pointer, size_t alignment,
+                                  size_t bytes) {
   int status = posix_memalign(pointer, alignment, bytes);
   if (!status)
     record(*pointer, bytes);
@@ -38,12 +39,12 @@ static void counted_free(void *pointer) {
     ++deallocations;
   free(pointer);
 }
-#define INTERPOSE(replacement, original)                                        \
-  __attribute__((used)) static struct {                                         \
-    const void *replace; const void *original;                                  \
-  } pair_##original __attribute__((section("__DATA,__interpose"))) = {            \
-    (const void *)&replacement, (const void *)&original                         \
-  }
+#define INTERPOSE(replacement, original)                                       \
+  __attribute__((used)) static struct {                                        \
+    const void *replace;                                                       \
+    const void *original;                                                      \
+  } pair_##original __attribute__((section("__DATA,__interpose"))) = {         \
+      (const void *)&replacement, (const void *)&original}
 INTERPOSE(counted_malloc, malloc);
 INTERPOSE(counted_calloc, calloc);
 INTERPOSE(counted_realloc, realloc);
@@ -57,7 +58,7 @@ void bench_begin(void) {
 }
 void bench_end(uint64_t digest) {
   counting = 0;
-  printf("GTI-ALLOC-1 %llu %llu %llu %llu\n",
-         (unsigned long long)digest, (unsigned long long)allocations,
-         (unsigned long long)deallocations, (unsigned long long)requested_bytes);
+  printf("GTI-ALLOC-1 %llu %llu %llu %llu\n", (unsigned long long)digest,
+         (unsigned long long)allocations, (unsigned long long)deallocations,
+         (unsigned long long)requested_bytes);
 }
