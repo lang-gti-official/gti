@@ -1,0 +1,33 @@
+// Fixed arrays: fixed arrays should support value semantics and checked indexing.
+//@ check-pass
+uint32_t video[64 * 32] = {};
+
+int extent(int values[2]) { return 2; }
+int extent(int values[3]) { return 3; }
+int first(int values[3]) { return values[0]; }
+
+struct Buffers {
+public:
+  mut int samples[3] = {1, 2, 3};
+
+  void bump() mut { this.samples[1] += 4; }
+  uint64_t count() { return this.samples.size(); }
+public:
+  Buffers() = default;
+};
+
+int main() {
+  mut int buffer[2 + 3] = {1, 2, 3, 4, 5};
+  buffer[2] = 10;
+  buffer[1]++;
+  int copy[5] = buffer;
+  int matrix[0x2][0b11] = {{1, 2, 3}, {4, 5, 6}};
+  mut Buffers buffers = Buffers();
+  buffers.bump();
+  uint64_t count = buffer.size();
+  if (count == 5 and first(matrix[1]) == 4 and extent(matrix[0]) == 3 and
+      buffers.count() == 3 and copy[4] == 5) {
+    return 0;
+  }
+  return 1;
+}

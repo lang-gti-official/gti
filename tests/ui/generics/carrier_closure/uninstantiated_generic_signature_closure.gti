@@ -1,0 +1,14 @@
+// Uninstantiated generic signature closure: unused generic signatures should reach verified MIR.
+//@ check-pass
+struct Result<T> { T value; };
+class Dormant<T> {
+  Result<char> field = {.value = 'x'};
+public:
+  Dormant(Result<int8_t> input) {}
+  Result<int> result();
+  void accept(Result<bool> input);
+  Result<T> dependent(Result<T> input) { return input; }
+public:
+  Dormant() = default;
+};
+int main() { return 0; }

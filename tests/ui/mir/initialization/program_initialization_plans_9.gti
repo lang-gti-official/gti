@@ -1,0 +1,10 @@
+// Program initialization plans: an ordinary bodyless GTI declaration should be unknown rather than silently treated as storage-effect-free.
+int32_t opaque();
+class BodylessGlobals {
+public:
+  static mut int32_t first = opaque();  //~ ERROR GTI-S2068 no executable body
+  static mut int32_t later = 1;
+public:
+  BodylessGlobals() = default;
+};
+int main() { return BodylessGlobals::first; }

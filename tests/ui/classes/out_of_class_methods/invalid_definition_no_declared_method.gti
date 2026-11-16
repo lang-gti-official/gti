@@ -1,0 +1,3 @@
+// Out-of-class methods: an invalid separate definition (no declared method) gets a source diagnostic.
+struct A { public: A() = default; }; int A::read() { return 1; }  //~ ERROR GTI-S2120 No declared method
+int main() { return 0; }

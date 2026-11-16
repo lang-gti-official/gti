@@ -1,0 +1,8 @@
+// Extern c interop: an exact C symbol must not alias root GTI storage through another source namespace.
+int32_t native_counter = 0;
+namespace native {
+extern "C" {
+  [[link_name("native_counter")]] int32_t read_counter();  //~ ERROR GTI-S2054
+}
+}
+int main() { return 0; }

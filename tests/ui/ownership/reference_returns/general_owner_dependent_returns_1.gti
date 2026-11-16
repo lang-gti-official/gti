@@ -1,0 +1,100 @@
+// General owner dependent returns: free, static, and generic borrowed returns should preserve a single read-only owner dependency.
+//@ check-pass
+import std.memory;
+
+class Reading<T> {
+  mut T value;
+
+public:
+  Reading(T initial) : value(initial) {}
+  T& read() { return this.value; }
+  void replace(T next) mut { this.value = next; }
+};
+
+// RFC 0004: the views and the callable name their stored region, so a view
+// the callable returns borrows the reading, not the movable callable shell.
+class ReadingView<T, lifetime a> {
+  T&<a> value;
+
+public:
+  ReadingView(T&<a> source) : value(source) {}
+  T&<a> get() { return this.value; }
+};
+
+class IntViewFactory {
+public:
+  static ReadingView<int> make(int& source) {
+    return ReadingView<int>(source);
+  }
+public:
+  IntViewFactory() = default;
+};
+
+class DirectPayload {
+public:
+  int value;
+  DirectPayload(int initial) : value(initial) {}
+};
+
+class ViewCallable<T, lifetime a> {
+  T&<a> source;
+
+public:
+  ViewCallable(T&<a> value) : source(value) {}
+  ReadingView<T, a> operator()() {
+    return ReadingView<T, a>(this.source);
+  }
+  ReadingView<T, a> operator[](uint64_t index) {
+    return ReadingView<T, a>(this.source);
+  }
+};
+
+int main() {
+  mut Reading<int> reading = Reading<int>(7);  //~ WARN GTI-S2096
+  mut ReadingView<int> view = make_view<int>(reading.read());  //~ WARN GTI-S2096
+  mut ReadingView<int> forwarded =  //~ WARN GTI-S2096
+      forward_view<int>(std::move(view));
+  int& first = forwarded.get();
+  int& relayed = forward_reference<int>(first);
+  ReadingView<int> static_view = IntViewFactory::make(reading.read());
+  ViewCallable<int> callable = ViewCallable<int>(reading.read());
+  ReadingView<int> called_view = callable();
+  ReadingView<int> indexed_view = callable[uint64_t(0)];
+  std::unique_ptr<DirectPayload> direct_owner =
+      std::make_unique<DirectPayload>(7);
+  DirectPayload& direct_value = direct_owner_value(direct_owner);
+  mut ReadingView<int> relay_source = make_view<int>(reading.read());  //~ WARN GTI-S2096
+  ReadingView<int> generic_relay =
+      unconstrained_relay<ReadingView<int>>(std::move(relay_source));
+  ViewCallable<int> relocated_callable = std::move(callable);
+  return relayed + static_view.get() + called_view.get() + indexed_view.get() +
+      direct_value.value + generic_relay.get() + shared_aliases() - 42;
+}
+
+ReadingView<T> make_view<T>(T& source) {
+  return ReadingView<T>(source);
+}
+
+ReadingView<T> forward_view<T>(ReadingView<T> view) {
+  return std::move(view);
+}
+
+T unconstrained_relay<T>(T value) { return std::move(value); }
+
+T& forward_reference<T>(T& source) { return source; }
+
+DirectPayload& direct_owner_value(std::unique_ptr<DirectPayload>& owner) {
+  return *owner;
+}
+
+int shared_aliases() {
+  mut Reading<int> reading = Reading<int>(5);
+  {
+    ReadingView<int> view = ReadingView<int>(reading.read());
+    int& first = view.get();
+    int& second = first;
+    int sum = first + second;
+  }
+  reading.replace(6);
+  return reading.read() - 6;
+}

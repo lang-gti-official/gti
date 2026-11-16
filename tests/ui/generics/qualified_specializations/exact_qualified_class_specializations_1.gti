@@ -1,0 +1,46 @@
+// Exact qualified class specializations: a qualified exact class specialization should replace its primary for the matching canonical application.
+//@ check-pass
+class demo::Value<int> {
+public:
+  int read() { return 2; }
+public:
+  Value() = default;
+};
+
+namespace demo {
+class Value<T> {
+public:
+  int read() { return 1; }
+public:
+  Value() = default;
+};
+
+class Count<uint64_t N> {
+public:
+  int read() { return 1; }
+public:
+  Count() = default;
+};
+}
+
+int read_exact(demo::Value<int>& value) { return value.read(); }
+
+class demo::Count<7> {
+public:
+  int read() { return 7; }
+public:
+  Count() = default;
+};
+
+int read_through_generic<T>(demo::Value<T>& value) {
+  return value.read();
+}
+
+int main() {
+  demo::Value<int> exact{};
+  demo::Value<bool> primary{};
+  demo::Count<7> exact_value{};
+  demo::Count<8> primary_value{};
+  return read_exact(exact) + read_through_generic<int>(exact) +
+         primary.read() + exact_value.read() + primary_value.read() - 13;
+}

@@ -1,0 +1,27 @@
+// Moved loop local redeclarations: a conditionally moved lexically dropped loop-local should verify through its scope-end drop across the loop backedge.
+//@ check-pass
+class Tracker {
+  int32_t value;
+
+public:
+  Tracker(int32_t initial) : value(initial) {}
+  Tracker(Tracker&& other) = default;
+  ~Tracker() {}
+
+  int32_t read() { return this.value; }
+};
+
+int32_t consume(Tracker taken) { return taken.read(); }
+
+int main() {
+  mut int32_t total = 0;
+  mut int32_t index = 0;
+  while (index < 4) {
+    mut Tracker element{index + 1};  //~ WARN GTI-S2096
+    if (index % 2 == 0) {
+      total = total + consume(std::move(element));
+    }
+    index++;
+  }
+  return total;
+}

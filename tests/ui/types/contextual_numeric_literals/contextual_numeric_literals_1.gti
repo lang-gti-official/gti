@@ -1,0 +1,21 @@
+// Contextual numeric literals: integer literals should work with composed numeric, signed, and floating constraints, on either side and with grouping/signs.
+//@ check-pass
+concept number<T> = std::numeric<T>;
+bool zero<number T>(T value) { return value == (0); }
+bool positive<std::numeric T>(T value) { return (+0) < value; }
+T half<std::numeric T>(T value) { return T(value / 2); }
+bool negative<std::signed_numeric T>(T value) { return value == (-1); }
+bool floating<std::floating_point T>(T value) { return (-2) <= value; }
+int main() {
+  bool a = zero(uint64_t(0));
+  bool b = zero(0.0);
+  bool c = zero(0.0d);
+  bool d = positive(uint8_t(1));
+  bool e = positive(1.0d);
+  bool f = negative(int8_t(-1));
+  bool g = negative(-1.0);
+  bool h = floating(-1.0d);
+  uint8_t small = half(uint8_t(4));
+  float decimal = half(4.0);
+  return 0;
+}

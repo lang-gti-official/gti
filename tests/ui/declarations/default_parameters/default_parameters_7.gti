@@ -1,0 +1,4 @@
+// Default parameters: defaults should affect viability without silently changing exact overload ranking.
+int choose(int value) { return value; }
+int choose(int value, int fallback = 1) { return value + fallback; }
+int main() { return choose(1); }  //~ ERROR GTI-S2013 2 overloads exactly match

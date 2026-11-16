@@ -1,0 +1,10 @@
+// Call sibling argument borrow conflicts: a sibling read of an owner with a live exclusive argument borrow should be a semantic rejection, not a MIR construction failure.
+import std.vector;
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.end());  //~ ERROR GTI-S2017
+  return 0;
+}

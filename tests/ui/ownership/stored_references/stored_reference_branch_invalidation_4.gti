@@ -1,0 +1,4 @@
+// Stored reference branch invalidation: a carrier moved on only one branch must keep its owner loan conservative after the join.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { mut auto moved = std::move(iterator); char first = *moved; } value.push_back('!'); return 0; }

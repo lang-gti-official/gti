@@ -1,0 +1,6 @@
+// Borrowed callable conditionals: analysis result.
+import std.memory;
+
+int apply<F>(mut F& f) { return f(1); }
+int relay<F>(F& f) { return apply(f); }  //~ ERROR GTI-S2017
+int main() { auto f = [](int n) -> int { return n; }; return relay(f); }  //~ ERROR GTI-S2046

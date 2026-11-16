@@ -1,0 +1,15 @@
+// Local type inference: auto initialization should reject move-only copies in GTI semantics.
+import std.memory;
+
+class Value {
+public:
+  int number = 1;
+public:
+  Value() = default;
+};
+
+int main() {
+  auto owner = std::make_unique<Value>();
+  auto copied = owner;  //~ ERROR GTI-S2003 Cannot initialize inferred binding 'copied'
+  return copied->number;
+}

@@ -1,0 +1,7 @@
+main.gti:11:28: error[GTI-S2023]: Cannot infer constructor-local type parameter 'T' from the supplied constructor arguments.
+ 11 |   Missing value = Missing(1);  //~ ERROR GTI-S2023
+    |                            ^
+main.gti:6:11: note: Constructor-local generic parameter declared here.
+ 6 |   Missing<T>(Wrapper<T> value) {}
+   |           ^
+help: Constructor-local generic arguments are inference-only; the parameter must occur in an exactly matching constructor parameter type.

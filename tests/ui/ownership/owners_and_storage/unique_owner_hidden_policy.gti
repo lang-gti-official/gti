@@ -1,0 +1,17 @@
+// Unique ownership and allocation: the intrinsic owner exposes null representation, not a standard-library-shaped has_value policy query (trusted source).
+//@ stdlib-overlay: std/owner_policy.gti std/detail/memory_capabilities.gti
+// --- main.gti
+import std.owner_policy;
+int main() { return owner_policy_main(); }
+// --- std/owner_policy.gti
+export module owner_policy;
+import std.memory;
+import std.detail.memory_capabilities;
+struct Widget { public: Widget() = default; };
+
+export int owner_policy_main() {
+  gti_internal::unique_owner<Widget> owner =
+      gti_internal::allocate_unique_owner<Widget>();
+  bool engaged = gti_internal::unique_owner_has_value(owner);  //~ ERROR GTI-S2000
+  return 0;
+}

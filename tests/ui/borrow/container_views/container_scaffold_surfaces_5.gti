@@ -1,0 +1,9 @@
+// Container scaffold surfaces: a concrete generic relay must preserve a dynamic string_view owner dependency and reject mutation while that result is live.
+import std.string;
+T relay<T>(T value) { return value; }
+int main() {
+  mut std::string text = std::string("abc");
+  std::string_view view = relay(text.view());
+  text.push_back('d');  //~ ERROR GTI-S2017
+  return view.empty() ? 0 : 1;
+}

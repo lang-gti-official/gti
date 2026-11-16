@@ -1,0 +1,4 @@
+// Stored reference loop invalidation2: moving a pre-existing retained carrier into a for initializer should keep one loan active until the loop exit without duplicate cleanup.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto original = value.begin(); for (mut auto iterator = std::move(original); false; ++iterator) { char current = *iterator; } value.push_back('!'); return 0; }

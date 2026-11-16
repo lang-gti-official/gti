@@ -1,0 +1,18 @@
+// Direct brace construction: unsupported brace forms and constructor mismatches should fail.
+class Sample {
+public:
+  Sample(int value) {}
+public:
+  Sample() = default;
+};
+
+int main() {
+  int primitive{1};  //~ ERROR GTI-S2038
+  int values[1]{1};  //~ ERROR GTI-S2038
+  auto inferred{1};  //~ ERROR GTI-S2028
+  Sample copy_list = {1};  //~ ERROR GTI-S2092
+  Sample& reference{1};  //~ ERROR GTI-S2038
+  Sample mismatch{true};  //~ ERROR GTI-S2012
+  Sample missing;  //~ ERROR GTI-S2000
+  return 0;
+}

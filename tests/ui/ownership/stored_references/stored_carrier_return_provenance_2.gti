@@ -1,0 +1,22 @@
+// Stored carrier return provenance: generic accessor composition must preserve the called method's receiver-owner contract without exposing its private field path.
+//@ check-pass
+class ValueBox<T> {
+  mut T payload;
+public:
+  ValueBox(T value) : payload(value) {}
+  T& get() { return this.payload; }
+  void set(T value) mut { this.payload = value; }
+};
+class BorrowedBox<T, lifetime a> {
+  ValueBox<T>&<a> owner;
+public:
+  BorrowedBox(ValueBox<T>&<a> owner) : owner(owner) {}
+  T&<a> get() { return this.owner.get(); }
+};
+int main() {
+  mut ValueBox<int> owner{4};  //~ WARN GTI-S2096
+  BorrowedBox<int> carrier{owner};
+  int& value = carrier.get();
+  auto moved = std::move(carrier);
+  return value + moved.get() - 8;
+}

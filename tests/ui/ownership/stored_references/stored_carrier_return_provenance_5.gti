@@ -1,0 +1,37 @@
+// Stored carrier return provenance: a value-returning receiver adapter and its copies retain physical storage until their final use, not the receiver's external resource.
+//@ check-pass
+class Cell {
+  int& resource;
+  mut int value = 7;
+public:
+  Cell(int& resource) : resource(resource) {}
+  int read() { return this.value; }
+  int& get() { return this.value; }
+  void reset() mut { this.value = 9; }
+  ~Cell() {}
+};
+class Cursor {
+  Cell& cell;
+public:
+  Cursor(Cell& cell) : cell(cell) {}
+  int read() { return this.cell.read(); }
+  int& operator*() { return this.cell.get(); }
+};
+Cursor relay(Cursor cursor) { return cursor; }
+class Collection {
+  mut Cell cell;
+public:
+  Collection(int& resource) : cell(Cell(resource)) {}
+  Cursor cursor() { return Cursor(this.cell); }
+  void reset() mut { this.cell.reset(); }
+};
+int main() {
+  int resource = 4;
+  mut Collection owner{resource};
+  auto cursor = owner.cursor();
+  auto copied = relay(cursor);
+  int& element = *copied;
+  int result = element;
+  owner.reset();
+  return result - 7;
+}

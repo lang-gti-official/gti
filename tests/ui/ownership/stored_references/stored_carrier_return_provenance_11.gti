@@ -1,0 +1,10 @@
+// Stored carrier return provenance: a carrier-shell reference with a type unlike the external referent should report the incoherent owner-dependency type.
+class ReadCarrier {
+public:
+  int& referent;
+  mut uint64_t position = 0;
+  ReadCarrier(int& source) : referent(source) {}
+};
+uint64_t& escape_incompatible(ReadCarrier carrier) {
+  return carrier.position;  //~ ERROR GTI-S2085
+}

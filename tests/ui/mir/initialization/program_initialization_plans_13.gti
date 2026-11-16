@@ -1,0 +1,16 @@
+// Program initialization plans: implicit base construction should include the exact selected base constructor effects before accepting a program initializer.
+class ImplicitBase {
+public:
+  ImplicitBase() { ImplicitBaseProbe::later = 1; }
+};
+class ImplicitBaseProbe : public ImplicitBase {
+public:
+  ImplicitBaseProbe() {}
+  static int32_t make_probe() {
+    ImplicitBaseProbe probe = ImplicitBaseProbe();
+    return 1;
+  }
+  static mut int32_t first = ImplicitBaseProbe::make_probe();  //~ ERROR GTI-S2068
+  static mut int32_t later = 0;
+};
+int main() { return ImplicitBaseProbe::first; }

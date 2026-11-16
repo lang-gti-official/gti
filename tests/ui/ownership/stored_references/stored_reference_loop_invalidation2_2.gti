@@ -1,0 +1,4 @@
+// Stored reference loop invalidation2: a return path should use normal scope cleanup while the reachable condition-false path uses the loop endpoint.
+//@ check-pass
+import std.string;
+int run(bool leave) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (leave) { char current = *iterator; return 0; } value.push_back('!'); return 0; } int main() { return run(false) + run(true); }

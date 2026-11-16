@@ -1,0 +1,69 @@
+// Stored reference scoped storage: stored-reference diagnostics should reject unsupported reference graphs, assignment, and temporary owners.
+class BorrowingIterator<T> {
+  T& value;
+public:
+  BorrowingIterator(T& source) : value(source) {}
+};
+
+class SingleRange<T> {
+  mut T value;
+public:
+  SingleRange(T initial) : value(initial) {}
+  BorrowingIterator<T> begin() {
+    return BorrowingIterator<T>(this.value);
+  }
+  void replace(T next) mut { this.value = next; }
+};
+
+class TwoReferences {
+  mut int& left;
+  mut int& right;  //~ ERROR GTI-S2045
+public:
+  TwoReferences(mut int& source) : left(source), right(source) {}
+};
+
+class MissingBinding {
+  int& value;  //~ ERROR GTI-S2000
+public:
+  MissingBinding(int& source) {}  //~ ERROR GTI-S2045
+};
+
+class NestedBorrow {
+  BorrowingIterator<int> iterator;
+public:
+  NestedBorrow(BorrowingIterator<int> source)
+      : iterator(std::move(source)) {}
+};
+
+class CleanupBorrow {
+  int& value;
+public:
+  CleanupBorrow(int& source) : value(source) {}
+  ~CleanupBorrow() {}
+};
+
+class GenericNest<T> {
+  T nested;
+public:
+  GenericNest(T value) : nested(std::move(value)) {}
+};
+
+BorrowingIterator<int> escape(int& value) {
+  return BorrowingIterator<int>(value);
+}
+
+SingleRange<int> global_range = SingleRange<int>(1);
+BorrowingIterator<int> global_iterator = global_range.begin();  //~ ERROR GTI-S2045
+
+int main() {
+  mut SingleRange<int> range = SingleRange<int>(1);
+  mut BorrowingIterator<int> iterator = range.begin();
+  BorrowingIterator<int> other = range.begin();
+  iterator = std::move(other);  //~ ERROR GTI-S2003
+  BorrowingIterator<int> nested_source = range.begin();
+  GenericNest<BorrowingIterator<int>> nested =
+      GenericNest<BorrowingIterator<int>>(std::move(nested_source));
+  BorrowingIterator<int> dangling = SingleRange<int>(2).begin();  //~ ERROR GTI-S2045
+  range.replace(2);
+  return 0;
+}

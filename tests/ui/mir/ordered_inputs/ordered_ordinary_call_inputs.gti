@@ -1,0 +1,57 @@
+// Ordered ordinary call inputs: MIR forms source-ordered receiver and argument inputs before each call; ordinary scalar/reference calls should lower to verified ordered call inputs.
+//@ check-pass
+//@ snapshot: mir
+//@ mir-function: main
+//@ mir-function: ordered_close
+// CHECK: function main
+// A free call: argument zero (scalar), one (read borrow), two (mutable
+// borrow), then the invocation.
+// CHECK: call-input {{.*}}call-site=#1 call-input-role=argument call-input-kind=value
+// CHECK-NEXT: call-input {{.*}}call-site=#1 call-input-role=argument call-input-index=1 call-input-kind=read-borrow
+// CHECK-NEXT: call-input {{.*}}call-site=#1 call-input-role=argument call-input-index=2 call-input-kind=mutable-borrow
+// CHECK-NEXT: {{^ *i[0-9]+ call (?!.*receiver=)}}
+// A member call: the mutable-borrow receiver, then the same argument chain.
+// CHECK: call-input {{.*}}call-site=#2 call-input-role=receiver call-input-kind=mutable-borrow
+// CHECK: call-input {{.*}}call-site=#2 call-input-role=argument call-input-kind=value
+// CHECK-NEXT: call-input {{.*}}call-site=#2 call-input-role=argument call-input-index=1 call-input-kind=read-borrow
+// CHECK-NEXT: call-input {{.*}}call-site=#2 call-input-role=argument call-input-index=2 call-input-kind=mutable-borrow
+// CHECK-NEXT: call {{.*}}call-site=#2 {{.*}}receiver=
+// The native call inside a method takes its raw-pointer argument without
+// inventing a receiver:
+// CHECK: function OrderedReceiver::ordered_close
+// CHECK: call-input {{.*}}call-input-role=argument call-input-kind=value
+// CHECK-NEXT: {{^ *i[0-9]+ call (?!.*receiver=)}}
+extern "C" {
+  void ordered_native_close(void* value);
+}
+
+class OrderedReceiver {
+  mut void* handle = nullptr;
+
+public:
+  OrderedReceiver() {}
+
+  int ordered_member(int scalar, int& observed, mut int& changed) mut {
+    changed += scalar;
+    return observed + changed;
+  }
+
+  void ordered_close() mut {
+    unsafe { ordered_native_close(this.handle); }
+  }
+};
+
+int ordered_free(int scalar, int& observed, mut int& changed) {
+  changed += scalar;
+  return observed + changed;
+}
+
+int main() {
+  mut OrderedReceiver receiver = OrderedReceiver();
+  mut int observed = 2;  //~ WARN GTI-S2096
+  mut int changed = 3;
+  int first = ordered_free(1, observed, changed);
+  int second = receiver.ordered_member(4, observed, changed);
+  receiver.ordered_close();
+  return first + second;
+}

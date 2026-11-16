@@ -1,0 +1,18 @@
+// Source defined storage: recoverable allocation and sparse-state observers retain ordinary source identities and typed results through HIR/MIR.
+//@ check-pass
+import std.memory;
+
+int main() {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<int>(uint64_t(2), std::alignment(uint64_t(64)));
+  if (!allocated) { return 3; }
+  mut auto values = std::move(allocated).value();
+  if (values.capacity() != uint64_t(2) || values.initialized(uint64_t(1))) {
+    return 1;
+  }
+  values.construct(uint64_t(1), 42);
+  if (!values.initialized(uint64_t(1)) || values.initialized(uint64_t(0))) {
+    return 2;
+  }
+  return values.get(uint64_t(1)) - 42;
+}

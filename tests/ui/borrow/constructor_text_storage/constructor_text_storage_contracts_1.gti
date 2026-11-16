@@ -1,0 +1,47 @@
+// Constructor text storage contracts: ownerless constructor fields and checked view references stay valid.
+//@ check-pass
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  constexpr Label(std::string_view input = "default") : text((input)) {}
+};
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+struct CLabel {
+  c_string text;
+  CLabel(c_string input) : text(input) {}
+};
+struct Borrowed {
+  std::string_view& text;
+  Borrowed(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+
+constexpr Label constant = Label("constant");
+static_assert(constant.text.size() == std::size_t(8));
+std::size_t inspect(std::string_view input) {
+  Borrowed borrowed{input};
+  return borrowed.size();
+}
+int main() {
+  Label literal{"literal"};
+  Label defaulted{};
+  std::string_view independent = "independent";
+  Label local{independent};
+  Borrowed static_reference{independent};
+  if (static_reference.size() != std::size_t(11)) { return 1; }
+  std::string_view alias = independent;
+  Borrowed static_alias{alias};
+  if (static_alias.size() != std::size_t(11)) { return 2; }
+  Box<std::string_view> generic{"generic"};
+  std::pair<std::string_view, int32_t> pair{"pair", 1};
+  CLabel empty{nullptr};
+  std::string owner = std::string("owned");
+  std::string_view view = owner.view();
+  Borrowed borrowed{view};
+  return int(borrowed.size() + inspect(view)) - 10;
+}

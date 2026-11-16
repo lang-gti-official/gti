@@ -1,0 +1,14 @@
+// Exact qualified class specializations: the formatter preserves qualified exact-specialization syntax idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+namespace demo {
+  class Value<T> {
+  public:
+    Value() = default;
+  };
+}
+class demo::Value<int> {
+public:
+  Value() = default;
+};

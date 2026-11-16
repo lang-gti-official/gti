@@ -1,0 +1,18 @@
+// Stored carrier return provenance: copying, moving, and dropping one read-only carrier alias should leave the shared owner loan live until the final alias ends.
+//@ check-pass
+import std.vector;
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  {
+    mut auto first = values.begin();
+    {
+      auto copied = first;
+      mut auto moved = std::move(copied);
+      ++moved;
+      int observed = *moved;
+    }
+    int original = *first;
+  }
+  values.push_back(4);
+  return 0;
+}

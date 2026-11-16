@@ -1,0 +1,10 @@
+// Stored reference branch invalidation2: a retained borrow should end independently on both conditional paths before a branch-local invalidation.
+//@ snapshot: mir
+//@ mir-function: main
+// The retained loan ends once on each conditional path, at a statement.
+// CHECK: end-borrow hir-statement={{#[0-9]+}} call-input-kind=value loan=1 dispatch-owner
+// CHECK: end-borrow hir-statement={{#[0-9]+}} call-input-kind=value loan=1 dispatch-owner
+// CHECK-NOT: end-borrow hir-statement={{#[0-9]+}} call-input-kind=value loan=1 dispatch-owner
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (value.empty()) { char first = *iterator; value.push_back('!'); } else { value.push_back('?'); } return 0; }
