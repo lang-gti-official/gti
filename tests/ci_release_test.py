@@ -171,6 +171,58 @@ def artifact_contract(root):
         archive.write_bytes(b"fixture")
         artifacts.verify(directory, sha, 7, 2, repository, consume=True)
         assert not list(directory.glob("provenance-*"))
+    tip_contract(artifacts, sha, repository)
+
+
+def tip_contract(artifacts, sha, repository):
+    """Tip republishes one run's exact archive bytes under its own asset names."""
+    import io
+    environment = {"GITHUB_SHA": sha, "GITHUB_REPOSITORY": repository,
+                   "GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "2"}
+
+    def packages(directory, identity=sha):
+        directory.mkdir()
+        for platform in artifacts.PLATFORMS:
+            name = f"gti-nightly-{platform}.tar.gz"
+            with tarfile.open(directory / name, "w:gz") as archive:
+                data = (identity + "\n").encode()
+                entry = tarfile.TarInfo("./share/gti/BUILD_ID")
+                entry.size = len(data)
+                archive.addfile(entry, io.BytesIO(data))
+            (directory / f"{name}.sha256").write_text(f"{artifacts.digest(directory / name)}  {name}\n")
+            artifacts.record(directory, platform, environment)
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = pathlib.Path(temporary)
+        packages(root / "nightly")
+        artifacts.tip_assets(root / "nightly", root / "tip", sha, 7, 2, repository)
+        expected = {"BUILD_ID"}
+        for platform in artifacts.PLATFORMS:
+            name = f"gti-tip-{platform}.tar.gz"
+            expected |= {name, f"{name}.sha256"}
+            assert (root / "tip" / name).read_bytes() == \
+                (root / "nightly" / f"gti-nightly-{platform}.tar.gz").read_bytes(), "tip serves nightly's bytes"
+            assert (root / "tip" / f"{name}.sha256").read_text() == \
+                f"{artifacts.digest(root / 'tip' / name)}  {name}\n", "the checksum line names the tip asset"
+        assert {item.name for item in (root / "tip").iterdir()} == expected
+        assert (root / "tip/BUILD_ID").read_text() == sha + "\n"
+        assert (root / "nightly/provenance-linux-x64.json").is_file(), "nightly still consumes the provenance"
+        packages(root / "foreign", identity="b" * 40)
+        (root / "unrecorded").mkdir()
+        refused = (
+            (root / "nightly", root / "other-run", sha, 8, 2),
+            (root / "nightly", root / "other-attempt", sha, 7, 1),
+            (root / "foreign", root / "other-identity", sha, 7, 2),
+            (root / "unrecorded", root / "no-provenance", sha, 7, 2),
+        )
+        for directory, output, source, run_id, attempt in refused:
+            try:
+                artifacts.tip_assets(directory, output, source, run_id, attempt, repository)
+            except (OSError, ValueError):
+                pass
+            else:
+                raise AssertionError(("tip accepted unverified packages", output.name))
+            assert not (output / "BUILD_ID").exists(), output.name
 
 
 def editor_contract(root):
@@ -298,7 +350,30 @@ def nightly_contract(root):
         "full validation runs queue; a superseded head's verdict is still channel evidence"
     integration = jobs(full)
     # The sanitizers run daily on the nightly commit (sanitizers.yml), not here.
-    assert list(integration) == ["plan", "package", "integration", "verdict", "report"], list(integration)
+    assert list(integration) == ["plan", "package", "tip", "integration", "verdict", "report"], list(integration)
+    tip = integration["tip"]
+    assert "needs: [package]\n" in tip, "tip waits for both packages and nothing else"
+    assert "continue-on-error: true" in tip, "a tip failure never changes the run nightly selects by"
+    assert "if: github.event_name == 'push' && github.repository == 'lang-gti-official/gti'" in tip
+    assert "group: gti-tip-publication\n      cancel-in-progress: false" in tip
+    assert "contents: write" in tip and "contents: write" not in full.replace(tip, ""), \
+        "only tip publication writes from full validation"
+    assert "pattern: gti-nightly-*-${{ github.run_attempt }}" in tip
+    assert "cmake" not in tip and "validation_checks.py" not in tip and "ctest" not in tip, \
+        "tip republishes the packaged archives; it builds and tests nothing"
+    order = ["release_artifacts.py tip", "admit-tip",
+             "--force-with-lease=refs/tags/tip:${GTI_TIP_LEASE}", "gh release create tip",
+             "--clobber dist/tip/BUILD_ID"]
+    positions = [tip.index(item) for item in order]
+    assert positions == sorted(positions), "tip must verify, admit, lease the tag, then upload BUILD_ID last"
+    assert tip.count("if: steps.admission.outputs.publish == 'true'") == 2
+    assert "--force " not in tip and "push --force" not in tip and "+refs/tags" not in tip
+    assert "git tag" not in tip and "nightly\"" not in tip and "refs/tags/nightly" not in tip
+    assert "--prerelease" in tip and "--verify-tag" in tip and "--latest=false" in tip
+    assert "tip" not in integration["verdict"].split("steps:", 1)[0], "the verdict never depends on tip"
+    for line in tip.splitlines():
+        if line.lstrip().startswith(("run:", "python3", "git ", "gh ")):
+            assert "${{" not in line, line
     assert "merge_group" not in jobs(ci).get("gate", "") or "package" not in jobs(ci)["gate"]
     assert "package" not in jobs(ci) and "integration" not in jobs(ci) and "sanitizers" not in jobs(ci), \
         "the merge gate proves build and fast checks only"
@@ -926,6 +1001,17 @@ def source_contract(root):
         run(["git", "push", "--quiet", "--force", "origin", f"{stray}:refs/tags/nightly"], work)
         run(["git", "checkout", "--quiet", "main"], work)
         query(newest, mode="admit-nightly", success=False)
+        # Tip uses the same newer-wins admission against its own tag, so the
+        # diverged nightly above does not affect it and its lease is separate.
+        assert query(newest, mode="admit-tip") == {"publish": "true", "lease": ""}
+        run(["git", "push", "--quiet", "origin", f"{newest}:refs/tags/tip"], work)
+        assert query(newest, mode="admit-tip") == {"publish": "true", "lease": newest}
+        run(["git", "checkout", "--quiet", "--detach", latest], work)
+        assert query(latest, mode="admit-tip") == {"publish": "false", "lease": ""}, \
+            "a slower package job never moves tip back"
+        run(["git", "checkout", "--quiet", "--detach", stray], work)
+        assert query(stray, mode="admit-tip") == {"publish": "false", "lease": ""}, "tip names main commits only"
+        run(["git", "checkout", "--quiet", "main"], work)
         selection_contract(script, work, newest, latest, advanced, stray)
         run(["git", "remote", "remove", "origin"], work)
         query(advanced, mode="admit-nightly", success=False)

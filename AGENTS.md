@@ -363,6 +363,10 @@ on Gitea and is unaffected. See "Published Toolchain Channels" in
   toolchains plus linked local builds (`gtiup link`); Neovim managed mode uses
   the selected matching compiler/LSP/parser without downloading its own tools.
   Installation remains opt-in.
+- **Tip** is the fastest channel: full validation's `tip` job republishes one
+  rolling `tip` prerelease from each run's production archives as soon as both
+  platforms pass their installed-toolchain checks, before the complete suite
+  finishes. It claims nothing about that suite and needs no agent action.
 - **Nightly** republishes one rolling `nightly` prerelease, daily, from the
   selected `main` commit with successful release-producing integration CI and retained production
   artifacts. It verifies exact source/run/attempt, platform, configuration and

@@ -25,6 +25,9 @@ GATE_WORKFLOW = ".github/workflows/ci.yml"
 GATE_JOB = "CI gate"
 QUEUE_BRANCH = "gh-readonly-queue/main/"
 NIGHTLY_TAG = "refs/tags/nightly"
+# The tip channel: the newest main commit whose production packages built and
+# passed their installed-toolchain checks, before the complete suite finishes.
+TIP_TAG = "refs/tags/tip"
 # How far back along main's first-parent history a scheduled selection looks
 # for the newest commit with full-validation evidence. Full validation keeps
 # one run going plus the newest waiting push, so the newest validated commit
@@ -100,11 +103,15 @@ def remote_main() -> str:
     return fields[0]
 
 
+def published_rolling(tag: str) -> tuple[str, str]:
+    """A rolling tag's exact ref value (the lease) and the commit it names."""
+    refs = remote_refs(tag, tag + "^{}")
+    lease = refs.get(tag, "")
+    return lease, refs.get(tag + "^{}", lease)
+
+
 def published_nightly() -> tuple[str, str]:
-    """The nightly tag's exact ref value (the lease) and the commit it names."""
-    refs = remote_refs(NIGHTLY_TAG, NIGHTLY_TAG + "^{}")
-    lease = refs.get(NIGHTLY_TAG, "")
-    return lease, refs.get(NIGHTLY_TAG + "^{}", lease)
+    return published_rolling(NIGHTLY_TAG)
 
 
 def is_ancestor(ancestor: str, descendant: str) -> bool:
@@ -116,18 +123,28 @@ def is_ancestor(ancestor: str, descendant: str) -> bool:
 
 
 def nightly_relation(sha: str, published: str) -> str:
-    """Newer wins: how a candidate on main compares with the published nightly."""
+    """Newer wins: how a candidate on main compares with a rolling channel's published build."""
     if not published:
         return "first"
     if published == sha:
         return "same"
     if git("cat-file", "-t", published, optional=True) != "commit":
-        raise ValueError(f"published nightly {published} is not in main's history")
+        raise ValueError(f"published build {published} is not in main's history")
     if is_ancestor(published, sha):
         return "newer"
     if is_ancestor(sha, published):
         return "older"
-    raise ValueError(f"published nightly {published} and {sha} have diverged")
+    raise ValueError(f"published build {published} and {sha} have diverged")
+
+
+def admit_tip(sha: str) -> dict[str, str]:
+    """Admit a packaged main commit that is not older than the published tip.
+
+    Tip makes no full-validation claim: its source is any main commit whose
+    production packages passed their installed-toolchain checks. The ordering
+    rule is nightly's, so a slower package job never moves the tag backwards.
+    """
+    return admit_rolling(sha, TIP_TAG, "Tip")
 
 
 def admit_nightly(sha: str) -> dict[str, str]:
@@ -138,19 +155,24 @@ def admit_nightly(sha: str) -> dict[str, str]:
     cycle. Newer wins, so a slower publication never moves the tag backwards,
     and the tag lease refuses a concurrent move.
     """
+    return admit_rolling(sha, NIGHTLY_TAG, "Nightly")
+
+
+def admit_rolling(sha: str, tag: str, label: str) -> dict[str, str]:
+    channel = label.lower()
     sha = checked_sha(sha)
     current = remote_main()
     if git("cat-file", "-t", sha, optional=True) != "commit" or not is_ancestor(sha, current):
-        print(f"Nightly source {sha}: not a commit on main {current}")
+        print(f"{label} source {sha}: not a commit on main {current}")
         return {"publish": "false", "lease": ""}
-    lease, published = published_nightly()
+    lease, published = published_rolling(tag)
     relation = nightly_relation(sha, published)
     # The tag moves before uploads finish. A failed publication must be
     # resumable at the same commit; scheduled selection still skips an
     # unchanged nightly, while a failed-job retry or dispatch can repair it.
     admitted = relation in ("first", "newer", "same")
     where = "current main" if sha == current else f"on main behind {current}"
-    print(f"Nightly source {sha}: {where}; published nightly "
+    print(f"{label} source {sha}: {where}; published {channel} "
           f"{published or 'none'} ({relation})")
     return {"publish": str(admitted).lower(), "lease": lease if admitted else ""}
 
@@ -294,7 +316,7 @@ def select_nightly(repository: str, event: str, ref: str, requested: str,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("source", "admit-nightly", "select-nightly"))
+    parser.add_argument("mode", choices=("source", "admit-nightly", "admit-tip", "select-nightly"))
     parser.add_argument("--sha", default="")
     parser.add_argument("--event", choices=("push", "workflow_dispatch", "schedule", "nightly"),
                         default="push")
@@ -309,6 +331,8 @@ def main() -> int:
             values = source(arguments.sha, arguments.event, arguments.before)
         elif arguments.mode == "admit-nightly":
             values = admit_nightly(arguments.sha)
+        elif arguments.mode == "admit-tip":
+            values = admit_tip(arguments.sha)
         else:
             from release_artifacts import release_evidence
             request = github_request(os.environ.get("GTI_GITHUB_TOKEN", ""))

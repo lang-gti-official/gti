@@ -423,6 +423,32 @@ resets the component override to that bundle's LSP. `gtiup show` identifies the
 component; `gc` removes old unreferenced prefixes only on explicit request.
 No installation or download occurs on compiler or editor startup.
 
+### GitHub tip publication
+
+The rolling `tip` prerelease is the fastest channel: the newest main commit
+whose production archives built and passed the installed-toolchain checks. The
+`tip` job of `full-validation.yml` publishes it as soon as both `package` jobs
+of a push run succeed, without waiting for the integration shards, so it
+normally trails a merge by one package build. It makes no claim about the
+complete suite. A commit that later fails full validation stays published as
+tip until a newer commit replaces it; nightly never selects it.
+
+The job builds and tests nothing. `release_artifacts.py tip` verifies the run's
+package provenance and each archive's embedded `BUILD_ID`, then copies the
+archive bytes unchanged to `gti-tip-<platform>.tar.gz` with a matching
+`.sha256` line and a `BUILD_ID` asset: the shape a rolling-channel installer
+expects, and the same bytes nightly serves if it later selects that commit.
+`resolve_release_source.py admit-tip` applies nightly's newer-wins rule against
+`refs/tags/tip`, and the tag moves only through a lease on the value admission
+read. Archives upload before `BUILD_ID`. The job is `continue-on-error`: a
+failed tip publication never changes the run conclusion that nightly selection
+reads. Full validation queues runs and drops superseded pending ones, so tip
+advances once per run that starts, not once per merge.
+
+The `tip` release must exist before release immutability is enabled, for the
+same reason as `nightly`: a release published afterwards cannot replace its
+assets or move its tag.
+
 ### GitHub nightly publication
 
 `.github/workflows/nightly.yml` runs daily at 02:00 UTC and on manual dispatch.
