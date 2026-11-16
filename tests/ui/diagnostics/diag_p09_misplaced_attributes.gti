@@ -1,0 +1,7 @@
+// Rejection probe diag-p09-misplaced-attributes (from tests/coverage/rejections).
+int compute() { return 4; }
+
+int main() {
+  [[discardable]] int x = compute(); //!ERR  //~ ERROR GTI-P0001
+  return x - 4;
+}

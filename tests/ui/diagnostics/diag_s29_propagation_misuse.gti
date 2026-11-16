@@ -1,0 +1,16 @@
+// Rejection probe diag-s29-propagation-misuse (from tests/coverage/rejections).
+int plain() { return 3; }
+
+expected<int, std::string_view> wrap() {
+  int v = ?plain(); //!ERR  //~ ERROR GTI-S2086
+  return v;
+}
+
+int compute() {
+  int w = ?wrap(); //!ERR  //~ ERROR GTI-S2086
+  return w;
+}
+
+int main() {
+  return compute();
+}

@@ -1,0 +1,3 @@
+// An unknown directive is rejected.
+//@ check-pas
+int main() { return 0; }

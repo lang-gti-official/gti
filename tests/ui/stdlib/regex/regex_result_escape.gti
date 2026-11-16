@@ -1,0 +1,15 @@
+// A match result cannot outlive its subject: returning a result over a
+// local string is rejected.
+import std.regex;
+import std.string;
+
+std::match_results leak(std::regex& re) {
+  std::string local{"abbbc"};
+  return std::regex_search(local.view(), re);  //~ ERROR GTI-S2045
+}
+
+int main() {
+  std::regex re = std::regex("b+");
+  std::match_results m = leak(re);
+  return m ? 0 : 1;
+}
