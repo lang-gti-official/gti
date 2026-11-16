@@ -18,17 +18,20 @@ struct Guard {
 
 int main(int argc, std::vector<std::string> argv) {
   Guard outer{90};
+  // A parse and a clone each make exactly one allocation, the URL's buffer.
   if (argc == 1) {
-    unsafe { adoption_fail_at(uint64_t(3)); }
+    unsafe { adoption_fail_at(uint64_t(1)); }
     auto url = std::http::url::parse("https://example.com/base?q=value").expect("valid URL");
     return 1;
   }
   mut auto url = std::http::url::parse("https://example.com/base?q=value").expect("valid URL");
   if (argc == 2) {
-    unsafe { adoption_fail_at(uint64_t(3)); }
+    unsafe { adoption_fail_at(uint64_t(1)); }
     auto copy = url.clone();
     return 2;
   }
+  // With a query present, the first allocation encodes the segment and the
+  // second grows the URL's own buffer for the insertion.
   unsafe { adoption_fail_at(uint64_t(2)); }
   url.push_path_segment("replacement");
   return 3;

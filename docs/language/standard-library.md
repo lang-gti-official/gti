@@ -660,8 +660,9 @@ The current implemented foundation includes:
   empty values stay distinct, and successful values are independent owners;
   see [Environment Observation](process.md#environment-observation); and
 - `std.http` an owned move-only `std::http::url` with fallible absolute
-  HTTP(S) parsing, secure authority construction, component-safe path/query
-  building, explicit cloning, receiver-tied views, and request/client
+  HTTP(S) parsing, compile-time checked URL literals, secure authority
+  construction, component-safe path/query building in one owned buffer,
+  explicit cloning, receiver-tied component views, formatting, and request/client
   overloads, plus a synchronous reusable HTTP/HTTPS client with owned request
   headers and bodies, strict TLS verification, redirects disabled by default,
   bounded buffered responses, duplicate/order-preserving response headers,

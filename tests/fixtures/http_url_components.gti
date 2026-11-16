@@ -1,0 +1,56 @@
+// std::http::url components are views into one owned buffer: checked URL
+// literals, path and query views, in-place builders, and formatting.
+import std.http;
+import std.format;
+import std.string;
+
+int main() {
+  auto parsed = std::http::url::parse("HTTPS://Example.com:8443/base/?q=1&x=2");
+  if (!parsed) { return 1; }
+  mut auto base = std::move(parsed).value();
+  if (base.view() != "https://Example.com:8443/base/?q=1&x=2") { return 2; }
+  if (base.scheme() != "https" || base.host() != "Example.com" || base.port() != uint16_t(8443)) { return 3; }
+  if (!base.has_explicit_port() || base.path() != "/base/" || !base.has_query() || base.query() != "q=1&x=2") { return 4; }
+
+  base.push_path_segment("a b");
+  if (base.view() != "https://Example.com:8443/base/a%20b?q=1&x=2" || base.path() != "/base/a%20b") { return 5; }
+  base.set_query_parameter("q", "two words");
+  if (base.query() != "q=two%20words&x=2") { return 6; }
+  base.add_query_parameter("y", "+");
+  if (base.query() != "q=two%20words&x=2&y=%2B") { return 7; }
+  base.clear_query();
+  if (base.has_query() || base.query() != "" || base.view() != "https://Example.com:8443/base/a%20b") { return 8; }
+  base /= "c";
+  if (base.view() != "https://Example.com:8443/base/a%20b/c") { return 9; }
+
+  auto bare = std::http::url::https("api.example").expect("valid authority");
+  if (bare.path() != "" || bare.port() != uint16_t(443) || bare.has_explicit_port()) { return 10; }
+  auto endpoint = bare / "v1" / "items";
+  if (endpoint.view() != "https://api.example/v1/items" || bare.view() != "https://api.example") { return 11; }
+
+  auto literal = std::http::url::checked("https://API.example/v2?k=v");
+  if (literal.host() != "API.example" || literal.path() != "/v2" || literal.query() != "k=v") { return 12; }
+  auto upper = std::http::url::checked("HTTP://plain.example");
+  if (upper.scheme() != "http" || upper.view() != "http://plain.example" || upper.port() != uint16_t(80)) { return 13; }
+
+  if (std::http::url::parse("https://example.com#x").error() != std::http::url_errc::fragment_not_allowed) { return 14; }
+  if (std::http::url::parse("https://user@example.com").error() != std::http::url_errc::credentials_not_allowed) { return 15; }
+  if (std::http::url::parse("https://example.com:65536").error() != std::http::url_errc::invalid_port) { return 16; }
+  if (std::http::url::parse("https://example.com:65535").value().port() != uint16_t(65535)) { return 17; }
+  if (std::http::url::parse("ftp://example.com").error() != std::http::url_errc::invalid_scheme) { return 18; }
+  if (std::http::url::parse("https://[::1]:8080/x").value().host() != "[::1]") { return 19; }
+
+  auto empty_query = std::http::url::parse("https://example.com/p?").expect("valid");
+  if (!empty_query.has_query() || empty_query.query() != "") { return 20; }
+  mut auto adding = empty_query.clone();
+  adding.add_query_parameter("a", "1");
+  if (adding.view() != "https://example.com/p?a=1") { return 21; }
+  mut auto inserting = std::http::url::checked("https://example.com?z=1");
+  inserting.push_path_segment("p");
+  if (inserting.view() != "https://example.com/p?z=1" || inserting.query() != "z=1") { return 22; }
+  // A URL formats as its serialization, honoring width, fill and alignment.
+  if (std::format("{}", literal) != "https://API.example/v2?k=v") { return 23; }
+  if (std::format("[{:>30}]", literal) != "[    https://API.example/v2?k=v]") { return 24; }
+  if (std::format("[{:*<28}]", literal) != "[https://API.example/v2?k=v**]") { return 25; }
+  return 0;
+}

@@ -1487,6 +1487,46 @@
       }
     },
     {
+      "id": "http-url-components",
+      "mode": "run",
+      "source": "tests/fixtures/http_url_components.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "http-url-literal-invalid",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/http_url_literal_invalid.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "URL literal port is not a decimal number from 0 to 65535"
+        ]
+      }
+    },
+    {
+      "id": "http-url-literal-runtime",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/http_url_literal_runtime.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "std::http::url::parse"
+        ]
+      }
+    },
+    {
       "id": "http-url-operators",
       "mode": "run",
       "source": "tests/fixtures/http_url_operators.gti",
@@ -4986,6 +5026,7 @@
         "std::http::request::max_response_bytes",
         "std::http::request::redirect_limit",
         "std::http::request::redirects_policy",
+        "std::http::request::rejection",
         "std::http::request::request",
         "std::http::request::schemes_policy",
         "std::http::request::set_body",
@@ -5015,23 +5056,29 @@
         "std::http::streaming_response::status",
         "std::http::streaming_response::streaming_response",
         "std::http::url::add_query_parameter",
+        "std::http::url::checked",
         "std::http::url::clear_query",
         "std::http::url::clone",
         "std::http::url::has_explicit_port",
+        "std::http::url::has_query",
         "std::http::url::host",
         "std::http::url::https",
         "std::http::url::operator/",
         "std::http::url::operator/=",
         "std::http::url::parse",
+        "std::http::url::path",
         "std::http::url::port",
         "std::http::url::push_path_segment",
+        "std::http::url::query",
         "std::http::url::scheme",
         "std::http::url::set_query_parameter",
         "std::http::url::string",
-        "std::http::url::view"
+        "std::http::url::view",
+        "std::http::url_literal::url_literal"
       ],
       "case_ids": [
         "http",
+        "http-url-components",
         "http-url-operators"
       ],
       "required_instantiations": [
@@ -5039,14 +5086,39 @@
         "string_view and owned-url request/client overloads",
         "read-only named URL cloning, consuming operator chains, mutable path append and borrow rejection",
         "bounded streaming std::io::reader with independent request/client lifetime, generic short writer, cancellation, limits and late transport errors",
-        "same-origin and secure redirects with method conversion, header stripping and a shared deadline"
+        "same-origin and secure redirects with method conversion, header stripping and a shared deadline",
+        "compile-time checked URL literals, single-buffer component views, in-place builders and URL formatting",
+        "infallible request builders whose refused headers or CA paths surface from send before any connection"
       ],
       "evidence": [
         "docs/language/http.md",
         "stdlib/std/http.gti",
+        "tests/fixtures/http_url_components.gti",
         "tests/fixtures/stdlib_surface_http.gti",
         "tests/http_runtime_test.py",
         "tests/http_url_operators_test.py"
+      ]
+    },
+    {
+      "id": "http.url-literal-rejections",
+      "source": "stdlib/std/http.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::http::url::checked<invalid URL literal>",
+        "std::http::url::checked<runtime text>"
+      ],
+      "case_ids": [
+        "http-url-literal-invalid",
+        "http-url-literal-runtime"
+      ],
+      "reason": "url_literal validates its text with an implicit consteval constructor, so an invalid literal stops compilation with the parser's reason and runtime text must use url::parse.",
+      "required_instantiations": [
+        "out-of-range port in a literal",
+        "runtime string argument"
+      ],
+      "evidence": [
+        "tests/fixtures/http_url_literal_invalid.gti",
+        "tests/fixtures/http_url_literal_runtime.gti"
       ]
     },
     {
