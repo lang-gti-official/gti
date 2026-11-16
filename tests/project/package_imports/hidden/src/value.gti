@@ -1,0 +1,2 @@
+export module value;
+export namespace hidden { int value() { return 7; } }

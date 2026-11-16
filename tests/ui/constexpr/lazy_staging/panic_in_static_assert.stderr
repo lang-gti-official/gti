@@ -1,0 +1,10 @@
+main.gti:5:57: error[GTI-S2057]: The condition of 'static_assert' failed. Compile-time evaluation panicked: "not a multiple of three"
+ 5 |   if (v % 3 != 0) { std::panic("not a multiple of three"); }  //~ ERROR GTI-S2057
+   |                                                         ^
+main.gti:8:1: note: Static assertion declared here.
+ 8 | static_assert(checked_third(10) == 3);
+   | ^~~~~~~~~~~~~
+main.gti:8:31: note: Constant evaluation requested here.
+ 8 | static_assert(checked_third(10) == 3);
+   |                               ^
+help: A panic that executes during compilation fails the request with its message.

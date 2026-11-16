@@ -1,0 +1,3 @@
+// Unknown function attribute classification: recognized function attributes remain valid.
+//@ check-pass
+[[discardable]] int compute() { return 4; }

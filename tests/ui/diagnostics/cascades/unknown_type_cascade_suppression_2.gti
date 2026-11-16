@@ -1,0 +1,2 @@
+// Unknown type cascade suppression: known operand mismatches retain their diagnostic.
+int main() { return 1 + true; }  //~ ERROR GTI-S2004

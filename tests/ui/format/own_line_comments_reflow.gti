@@ -1,0 +1,8 @@
+// An own-line comment keeps its line while its block reflows; trailing comments stay beside reformatted statements.
+//@ parse-pass
+//@ snapshot: format
+int f(){int y=2;
+// own line
+return y;}
+int y=2;// note
+int x=1;/* note */

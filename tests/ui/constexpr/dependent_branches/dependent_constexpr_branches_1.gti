@@ -1,0 +1,12 @@
+// Dependent constexpr branches: source access queries and nested staged constants share bounded request accounting without rejecting finite generic recursion.
+//@ check-pass
+constexpr bool selected<uint64_t N>() {
+  if constexpr (N == 0) { return true; }
+  else { return selected<N - 1>(); }
+}
+int query<uint64_t N>() {
+  if constexpr (selected<N>()) { return 7; }
+  else { return 0; }
+}
+static_assert(selected<3>());
+int main() { return query<3>() - 7; }

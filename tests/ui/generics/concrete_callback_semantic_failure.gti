@@ -1,0 +1,6 @@
+// A concrete generic callback error found while instances are discovered is a semantic error, never a backend failure.
+int apply<F>(F& callback) { return callback(1); }  //~ ERROR GTI-S2003
+int main() {
+  auto callback = [](bool value) -> int { return 1; };
+  return apply(callback);
+}

@@ -1,0 +1,4 @@
+// Dependent constexpr branch deferral retains concrete flow, declaration checks and resource limits (the selected branch returns a reference to a local).
+import std.string;
+int& bad<uint64_t N>(int& input) { if constexpr(N == 0) { int local = 3; return local; } else { return input; } }  //~ ERROR GTI-S2017 reference must derive
+int main() { int value = 1; return bad<0>(value); }

@@ -1,0 +1,87 @@
+// Generated derived construction preserves base failure and caller cleanup.
+//@ run-pass
+//@ revisions: default stack-success-test-path base derived-failure derived-failure-cleanup
+//@[stack-success-test-path] args: stack success test path
+//@[base] run-fail
+//@[base] args: base
+//@[base] exit-code: 70
+//@[base] stdout: 2
+//@[base] stdout: 1
+//@[base] stdout: 9
+//@[base] stderr-contains: polymorphic_owning_base_constructor.gti:22: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[derived-failure] run-fail
+//@[derived-failure] args: derived failure
+//@[derived-failure] exit-code: 70
+//@[derived-failure] stdout: 6
+//@[derived-failure] stdout: 2
+//@[derived-failure] stdout: 4
+//@[derived-failure] stdout: 3
+//@[derived-failure] stdout: 1
+//@[derived-failure] stdout: 9
+//@[derived-failure] stderr-contains: polymorphic_owning_base_constructor.gti:36: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[derived-failure-cleanup] run-fail
+//@[derived-failure-cleanup] args: derived failure cleanup
+//@[derived-failure-cleanup] exit-code: 70
+//@[derived-failure-cleanup] stdout: 6
+//@[derived-failure-cleanup] stdout: 2
+//@[derived-failure-cleanup] stdout: 4
+//@[derived-failure-cleanup] stdout: 3
+//@[derived-failure-cleanup] stderr-contains: polymorphic_owning_base_constructor.gti:26: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at polymorphic_owning_base_constructor.gti:36; secondary [GTI-R0002]
+// --- polymorphic_owning_base_constructor.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+mut int32_t base_divisor = 1;
+mut int32_t derived_divisor = 1;
+mut int32_t cleanup_divisor = 1;
+
+class Guard {
+  int32_t identity;
+public:
+  Guard(int32_t value) : identity(value) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+class Base {
+  std::string name;
+  std::unique_ptr<Guard> retained;
+public:
+  Base(std::string_view label) : name(std::string(label)), retained(std::make_unique<Guard>(1)) {
+    Guard inside = Guard(2);
+    std::println(6 / base_divisor);
+  }
+  ~Base() {
+    std::println(3);
+    int32_t checked = 6 / cleanup_divisor;
+  }
+  virtual void Attach() mut = 0;
+};
+
+class Derived : public Base {
+  std::string title;
+public:
+  Derived() : Base("layer"), title(std::string("editor")) {
+    Guard inside = Guard(4);
+    std::println(8 / derived_divisor);
+  }
+  ~Derived() { std::println(5); }
+  void Attach() mut override { std::println(this.title); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  base_divisor = argc == 2 ? 0 : 1;
+  derived_divisor = argc >= 3 ? 0 : 1;
+  cleanup_divisor = argc == 4 ? 0 : 1;
+  Guard outer = Guard(9);
+  if (argc == 5) {
+    derived_divisor = 1;
+    mut Derived stack{};
+    stack.Attach();
+  } else {
+    mut auto concrete = std::make_unique<Derived>();
+    mut auto erased = concrete.upcast<Base>();
+    erased->Attach();
+  }
+  return 0;
+}

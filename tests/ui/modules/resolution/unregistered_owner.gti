@@ -1,0 +1,2 @@
+// Direct compilation does not discover named modules implicitly.
+import lib;  //~ ERROR GTI-I0012 registered source owner

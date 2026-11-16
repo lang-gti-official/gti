@@ -1,0 +1,14 @@
+// A user namespace named gti_std stays distinct from the standard library.
+//@ run-pass
+namespace gti_std {
+class string_view {
+  int32_t value;
+public:
+  string_view(int32_t value) : value(value) {}
+  int32_t read() { return this.value; }
+};
+}
+int main() {
+  gti_std::string_view value = gti_std::string_view(7);
+  return value.read() - 7;
+}

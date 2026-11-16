@@ -45,7 +45,7 @@ def main():
                  "-Wall", "-Wextra", "-Werror", "-pthread",
                  "-I", root / "runtime/include", "-I", root / "runtime/src",
                  root / "runtime/src/cthread_mutex.cpp",
-                 root / "tests/runtime_cthread_mutex_tests.cpp", "-o", native])
+                 root / "tests/unit/runtime_cthread_mutex_tests.cpp", "-o", native])
             run([native])
             run([native, "destroy-locked"], 86)
             for fixture in ("cthread_mutex", "cthread_mutex_concurrent", "cthread_mutex_destroy"):

@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: overflow through reference.
+constexpr void add(mut int& value, int amount) { value += amount; }  //~ ERROR GTI-S2057
+constexpr int bad() { mut int value = 2147483647; add(value, 1); return value; } constexpr int constant = bad();
+int main() { return 0; }

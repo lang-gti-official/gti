@@ -1,0 +1,4 @@
+// Constexpr library: importing std.chrono alone is accepted (the baseline for its constant work).
+//@ check-pass
+import std.chrono;
+int main() { return 0; }

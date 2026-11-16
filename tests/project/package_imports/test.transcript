@@ -1,0 +1,15 @@
+// A declared package import loads the dependency's module and the reserved std owner resolves before package aliases; a dependency's own dependency alias is not visible to its importer, and a quoted import cannot cross into another package. (From compiler_frontend_tests.cpp testPackageImports.)
+$ cd app
+$ gti check
+stdout: Diagnostics: 0 errors, 0 warnings
+$ cp variants/std_module.gti src/main.gti
+$ gti check
+stdout: Diagnostics: 0 errors, 0 warnings
+$ cp variants/transitive.gti src/main.gti
+$ gti check
+? 65
+stderr: $DIR/app/src/main.gti:1:1: error[GTI-I0012]: Source owner 'app' does not declare module 'hidden.value' or dependency alias 'hidden'.
+$ cp variants/escape.gti src/main.gti
+$ gti check
+? 65
+stderr: $DIR/app/src/main.gti:1:1: error[GTI-I0012]: A quoted import cannot cross a source-owner boundary

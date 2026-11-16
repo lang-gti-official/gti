@@ -1,0 +1,15 @@
+main.gti:14:21: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 14 |   check_pattern(2, 1);  //~ ERROR GTI-S2057
+    |                     ^
+main.gti:6:60: note: Compile-time evaluation panicked: "format pattern has 2 fields but 1 argument"
+ 6 |     std::panic("format pattern has 2 fields but 1 argument");
+   |                                                            ^
+main.gti:9:16: note: Immediate declaration is here.
+ 9 | consteval void check_pattern(int fields, int arguments) {
+   |                ^~~~~~~~~~~~~
+main.gti:14:21: note: Constant evaluation requested here.
+ 14 |   check_pattern(2, 1);  //~ ERROR GTI-S2057
+    |                     ^
+main.gti:10:38: note: Constant evaluation requested here.
+ 10 |   require_arguments(fields, arguments);
+    |                                      ^

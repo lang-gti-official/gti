@@ -1,0 +1,10 @@
+// Commands run in a copy of the directory with paths normalised.
+$ gti main.gti --emit-mir -o out.mir
+stdout: Diagnostics: 0 errors, 0 warnings
+!stderr: error
+$ gti broken.gti --emit-mir -o out.mir
+? 65
+stderr: $DIR/broken.gti:1:21: error[GTI-S2001]
+$ cd sub
+$ gti ../main.gti --emit-mir -o out.mir
+!stderr: warning[
