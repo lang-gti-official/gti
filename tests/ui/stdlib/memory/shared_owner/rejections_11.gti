@@ -1,0 +1,11 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+struct Borrowed {
+           int& value;
+           Borrowed(int& source) : value(source) {}
+         };
+         int main() {
+           int value = 7;
+           auto owner = std::make_shared<Borrowed>(value);  //~ ERROR GTI-S2029
+           return 0;
+         }

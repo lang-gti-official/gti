@@ -1,0 +1,9 @@
+// Exact member signature concepts: a mut contract must not grant mutation through a read-only receiver.
+concept accepts<C, V> = requires(mut C& receiver, V& input, mut V& output) {
+  { receiver.apply(input, output) } -> int;
+};
+int invoke<C>(mut C& receiver, int& input, mut int& output)
+    requires accepts<C, int> { return receiver.apply(input, output); }
+
+int bad<C>(C& receiver, int& input, mut int& output)
+    requires accepts<C, int> { return receiver.apply(input, output); }  //~ ERROR GTI-S2029

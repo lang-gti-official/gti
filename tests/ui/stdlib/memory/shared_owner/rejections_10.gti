@@ -1,0 +1,7 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+int& escape() {  //~ ERROR GTI-S2017
+           auto owner = std::make_shared<int>(7);
+           return *owner;
+         }
+         int main() { return escape(); }

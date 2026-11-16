@@ -1,0 +1,2 @@
+// Protected members: rejected with GTI-S2040.
+struct Base { public: Base() = default; }; struct Derived : protected Base { public: Derived() = default; };  //~ ERROR GTI-S2040

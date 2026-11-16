@@ -1,0 +1,18 @@
+// Member requirement concepts: a dependent receiver whose member result differs from the open required result must fail before instantiation.
+concept yields<S, R> = requires(S& source) { { source.read() } -> R; };
+void unwrap_into<S, T>(S& source, mut T& target) requires yields<S, T> {
+  target = source.read();
+}
+
+class Fixed<std::copyable T> {
+public:
+  Fixed() {}
+  int32_t read() { return 1; }
+};
+T relay<std::copyable T>(T value) {
+  Fixed<T> box = Fixed<T>();
+  mut T result = value;
+  unwrap_into(box, result);  //~ ERROR GTI-S2029 satisfy concept
+  return result;
+}
+int main() { return relay(7) - 7; }

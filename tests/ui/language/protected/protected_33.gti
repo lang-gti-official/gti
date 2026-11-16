@@ -1,0 +1,3 @@
+// Protected members: rejected with GTI-S2007.
+class Base<T> { protected: using Hidden = T;  public: Base() = default; };
+struct Derived : public Base<int> { int bad() { Base<bool>::Hidden value = true; return 0; }  public: Derived() = default; };  //~ ERROR GTI-S2007

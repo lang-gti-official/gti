@@ -1,0 +1,5 @@
+// Interface static ambiguity: selecting ambiguous inherited static functions must fail in semantics.
+interface Left { static int create() { return 1; } };
+interface Right { static int create() { return 2; } };
+class Both : public Left, public Right { public: Both() = default; };
+int main() { return Both::create(); }  //~ ERROR GTI-S2013 ambiguous

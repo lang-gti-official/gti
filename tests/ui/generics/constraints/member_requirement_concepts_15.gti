@@ -1,0 +1,3 @@
+// Member requirement concepts: an unresolved required expression must be false, not a parser error.
+//@ check-pass
+int main() { static_assert(!(requires(int& x) { { other.clone() } -> int; })); return 0; }

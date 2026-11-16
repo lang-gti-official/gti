@@ -1,0 +1,6 @@
+// Member requirement concepts: direct member failures must identify the required member, not invent a concept name.
+T snapshot<T>(T& x)
+    requires requires(T& item) { { item.snapshot() } -> T; } {
+  return x.snapshot();
+}
+int main() { int value = 1; return snapshot(value); }  //~ ERROR GTI-S2029 required member 'snapshot()'

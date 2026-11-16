@@ -1,0 +1,22 @@
+// Member requirement concepts: recursive constraints must fail closed, and exact reference results must not satisfy owned member requirements.
+//@ check-pass
+concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };
+struct Recursive {
+  Recursive snapshot() requires snapshots<Recursive> {
+    Recursive result{};
+    return result;
+  }
+public:
+  Recursive() = default;
+};
+struct Borrowed {
+  int value = 0;
+  int& snapshot() { return this.value; }
+public:
+  Borrowed() = default;
+};
+int main() {
+  static_assert(!(requires(Recursive& x) { { x.snapshot() } -> Recursive; }));
+  static_assert(!(requires(Borrowed& x) { { x.snapshot() } -> int&; }));
+  return 0;
+}

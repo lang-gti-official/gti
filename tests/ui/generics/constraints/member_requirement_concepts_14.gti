@@ -1,0 +1,5 @@
+// Member requirement concepts: structural implication must preserve the required member name.
+concept reads<T> = requires(T& x) { { x.read() } -> T; };
+concept writes<T> = requires(T& x) { { x.write() } -> T; };
+T write<T>(T& x) requires writes<T> { return x.write(); }
+T invalid<T>(T& x) requires reads<T> { return write(x); }  //~ ERROR GTI-S2029

@@ -1,0 +1,4 @@
+// Stored reference loop invalidation3: a carrier transferred conditionally inside a loop should retain conservative owner protection rather than silently gaining a loop endpoint.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (false) { mut auto moved = std::move(iterator); } value.push_back('!'); return 0; }
