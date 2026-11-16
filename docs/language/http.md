@@ -20,18 +20,16 @@ int main() {
   mut auto client = std::move(created).value();
 
   mut std::http::request request = std::http::request(
-      std::http::method::get, "https://gitea.example/api/v1/version");
-  mut auto token = request.set_header("Authorization", "token secret");
-  if (!token) {
-    return 2;
-  }
+      std::http::method::get,
+      std::http::url::checked("https://gitea.example/api/v1/version"));
+  request.set_header("Authorization", "token secret");
 
   mut auto received = client.send(request);
   if (!received) {
-    return 3;
+    return 2;
   }
   mut auto response = std::move(received).value();
-  mut std::string body = response.body();
+  std::string body = response.body();
   return response.status() == uint32_t(200) ? 0 : 4;
 }
 ```
@@ -52,36 +50,51 @@ as a class field; an API wrapper normally stores one parsed base URL, clones it
 for each operation, appends endpoint components, and reuses one
 `std::http::client` for its connection pool.
 
-Component and rendered views borrow the URL's existing owning string fields;
-there are no duplicate view backing buffers. A retained view still protects
-the whole URL against mutation or consumption, and cannot escape a temporary
-URL. Internal construction bridges are private; public factories and `clone()`
-retain the parsing and ownership contract.
+A URL owns one buffer holding its serialization, plus the offsets of its
+components. `scheme()`, `host()`, `path()`, `query()` and `view()` are views
+into that buffer, so observing a component never allocates. A retained view
+still protects the whole URL against mutation or consumption, and cannot
+escape a temporary URL. Builders edit the buffer in place. Internal
+construction bridges are private; public factories and `clone()` retain the
+parsing and ownership contract.
+
+A URL known when the program is written is best spelled as a checked
+literal. The literal is validated during compilation, so the factory cannot
+fail:
 
 ```gti
-mut auto parsed = std::http::url::https("gitea.example");
+std::http::url base = std::http::url::checked("https://gitea.example/api/v1");
+mut auto endpoint = base / "repos";
+endpoint.add_query_parameter("limit", "20");
+
+mut auto received = client.get(endpoint);
+```
+
+A URL that arrives at run time is parsed and its error handled:
+
+```gti
+mut auto parsed = std::http::url::parse(configured_base);
 if (!parsed) {
   return 1;
 }
 mut std::http::url endpoint = std::move(parsed).value();
-endpoint.push_path_segment("api");
-endpoint.push_path_segment("v1");
 endpoint.push_path_segment("repos");
-endpoint.add_query_parameter("limit", "20");
-
-mut auto received = client.get(endpoint);
 ```
 
 The construction and observation surface is:
 
 ```gti
 static expected<url, url_errc> parse(string_view absolute);
+static url checked(url_literal absolute);
 static expected<url, url_errc> https(string_view authority);
 url clone();
 string_view scheme();
 string_view host();
 bool has_explicit_port();
 uint16_t port();
+string_view path();
+bool has_query();
+string_view query();
 void push_path_segment(string_view value) mut;
 void operator/=(string_view value) mut;
 url operator/(string_view value);
@@ -101,10 +114,22 @@ host, bracketed IPv6 host, or either form followed by a port; it does not
 accept a path or query. Credentials and fragments are deliberately outside
 this abstraction.
 
+`url::checked` takes a `std::http::url_literal`, a passive value whose
+`implicit consteval` constructor runs the same parser during compilation. A
+string constant argument converts to it; an invalid URL stops compilation at
+that argument with a message naming the problem (for example, that the port is
+not a decimal number from 0 to 65535). A runtime string is rejected with
+`GTI-S2057`; use `parse` for it. A `url_literal` can also be stored or passed
+through wrappers to keep that proof.
+
 `port()` returns an explicit port when present and otherwise the scheme
-default, 80 or 443. `has_explicit_port()` distinguishes those cases. `view()`
-is a receiver-tied view and `string()` makes an independent owned copy.
-`clone()` makes an independently mutable URL.
+default, 80 or 443. `has_explicit_port()` distinguishes those cases. `path()`
+is the encoded path, beginning with `/`, or empty when the URL names only an
+authority. `query()` is the encoded text after `?`; `has_query()` reports
+whether a `?` is present at all, so `https://h/p?` has an empty but present
+query. `view()` is the whole serialization and `string()` makes an
+independent owned copy. `clone()` makes an independently mutable URL, copying
+one buffer.
 
 `base / "api" / "v1"` preserves a named `base`: the first `/` clones it,
 then consuming `/` overloads reuse the owned intermediate. A fresh URL or
@@ -115,8 +140,10 @@ it. `base /= "api"` appends in place and requires a mutable receiver.
 These operators append one raw path segment, exactly like
 `push_path_segment`; they do not resolve relative URLs or combine authorities.
 Pass a `string_view`, not another `url`. Query text and the authority survive
-unchanged. Consuming chains avoid whole-URL clones, but each append still
-rebuilds the rendered URL and may allocate.
+unchanged. Consuming chains avoid whole-URL clones. Appending to a URL with no
+query writes the encoded segment directly onto the end of its buffer; with a
+query present, the segment is inserted before the `?`. Either may grow the
+buffer.
 
 Builder inputs are raw components. Every byte outside ASCII unreserved text is
 written as an uppercase percent escape: a space becomes `%20`, `+` becomes
@@ -147,12 +174,18 @@ has the same two forms. A request is move-only and provides:
 - `set_max_response_bytes`, whose default is 16 MiB;
 - `set_redirect_policy` and `set_redirect_limit`, described below;
 - `set_scheme_policy(scheme_policy)` to restrict initial and redirected URLs; and
-- `set_ca_bundle(path)` for a PEM trust bundle used by this request.
+- `set_ca_bundle(path)` for a PEM trust bundle used by this request; and
+- `rejection()`, the first builder input the request refused, if any.
 
-Header mutators and `set_ca_bundle` return `expected<void, errc>`. Header names
-must be non-empty RFC token text. NUL, carriage return, and line feed are
-rejected in values, so these APIs cannot be used for request smuggling by line
-injection. A CA path containing NUL is rejected.
+Builders return nothing. Header names must be non-empty RFC token text, and
+NUL, carriage return, and line feed are refused in values, so these APIs
+cannot be used for request smuggling by line injection. A CA path containing
+NUL is refused. A refused input is not applied; the request records the first
+refusal, and `send`, `send_stream` and every client verb return it
+(`errc::invalid_header` for a header, `errc::request_failed` for a CA path)
+before contacting anything. One check of the send result therefore covers both
+invalid input and transport failure, and `rejection()` reports the same refusal
+earlier for a caller who wants it.
 
 `std::http::client::create()` returns `expected<client, errc>`. A client is
 move-only, is neither transferable nor shareable, and admits one request at a
