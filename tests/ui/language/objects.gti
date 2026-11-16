@@ -1,0 +1,64 @@
+// Struct members are public by default. Default construction is an explicit
+// API choice: field initializers alone do not declare Point().
+//@ run-pass
+//@ stdout: objects use explicit construction
+struct Point {
+  int x = 0;
+  int y = 0;
+
+  Point() = default;
+  Point(int initial_x, int initial_y) : x(initial_x), y(initial_y) {}
+};
+
+// Supplying a field initializer does not bypass the required input. Calling
+// RequiredInput() or make_unique<RequiredInput>() would be a compile error.
+struct RequiredInput {
+  int value = -1;
+  RequiredInput(int input) : value(input) {}
+public:
+  RequiredInput() = default;
+};
+
+// Class members are private by default. A trailing `mut` allows a method to
+// write to mutable fields and requires a mutable receiver at the call site.
+class Counter {
+  mut int value;
+
+public:
+  Counter() : value(0) {}
+  Counter(int initial) : value(initial) {}
+
+  int current() {
+    return this.value;
+  }
+
+  int tick() mut {
+    this.value += 1;
+    return this.value;
+  }
+};
+
+// A selected state-bearing base initializes before derived fields. A declared
+// cleanup body does not prevent explicit or generated base construction.
+class MeasuredCounter : public Counter {
+public:
+  int limit;
+  // Checked argument computation finishes before the base constructor starts.
+  MeasuredCounter(int initial, int limit) : Counter(initial + 1), limit(limit) {}
+  ~MeasuredCounter() {}
+};
+
+int main() {
+  Point origin{};
+  Point offset{2, 3};
+  mut Counter counter{origin.x};
+  int next = counter.tick();
+  MeasuredCounter measured{1, 5};
+  RequiredInput supplied{7};
+
+  if (next == counter.current() and offset.x == 2 and measured.current() == 2 and measured.limit == 5 and supplied.value == 7) {
+    std::println("objects use explicit construction");
+    return 0;
+  }
+  return 1;
+}

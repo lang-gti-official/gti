@@ -145,14 +145,15 @@ class ProfileControls(unittest.TestCase):
             self.assertEqual(run.call_count, 2)
 
     def test_corpus_endpoints_follow_shared_backend_policy(self):
-        for selected, expected in {
-            "llvm": [("O0", "native", "llvm"), ("O3", "native", "llvm")],
-            "cpp": [("O3", "c++23", "cpp")],
-            "both": [("O0", "native", "llvm"), ("O3", "native", "llvm"),
-                     ("O3", "c++23", "cpp")],
+        for levels, expected in {
+            "": [("O0", "native", "llvm")],
+            "O0,O3": [("O0", "native", "llvm"), ("O3", "native", "llvm")],
         }.items():
-            with patch.dict(os.environ, {"GTI_TEST_BACKENDS": selected}):
+            with patch.dict(os.environ, {"GTI_TEST_BACKENDS": "llvm", "GTI_TEST_LLVM_LEVELS": levels}):
                 self.assertEqual(oracle.configurations(), expected)
+        with patch.dict(os.environ, {"GTI_TEST_BACKENDS": "cpp"}):
+            with self.assertRaises(ValueError):
+                oracle.configurations()
 
     def test_cli_rejects_invalid_or_nonhost_targets_before_observation(self):
         for module, extra in [(census, []), (oracle, ["/unused/runtime"])]:

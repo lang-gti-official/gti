@@ -1,0 +1,7 @@
+// Output that differs from the expectation fails with a diff.
+//@ run-pass
+//@ stdout: expected
+int main() {
+  std::println("actual");
+  return 0;
+}

@@ -1,0 +1,14 @@
+// Rejection probe diag-g01-nested-generic-lambda-instantiation (from tests/coverage/rejections).
+R transform_one<R, F>(int value, F f) {
+  return f(value); //!ERR
+}
+
+R pipeline<R, F>(int value, F f) {
+  return transform_one<R>(value, f); //!ERR  //~ ERROR GTI-S2026
+}
+
+int main() {
+  auto to_text = [](int v) -> std::string_view { return "n"; };
+  int r = pipeline<int>(3, to_text); //!ERR  //~ ERROR GTI-S2026
+  return r;
+}

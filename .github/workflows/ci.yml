@@ -214,8 +214,6 @@ jobs:
         # Keep going after a failure so one run reports every compile error.
         run: cmake --build build --parallel "${GTI_JOBS}" -- -k 0
       - name: Run fast feedback
-        env:
-          GTI_TEST_BACKENDS: llvm
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
@@ -224,8 +222,6 @@ jobs:
         # them once per candidate, and the macOS fast job stays with the
         # feedback set and the declared tests.
         if: matrix.platform == 'linux'
-        env:
-          GTI_TEST_BACKENDS: llvm
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
       - name: Re-run the tests this pull request declares

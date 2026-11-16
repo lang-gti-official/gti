@@ -2064,7 +2064,13 @@ on which trusted units precede it. A frontend caller may pass a
 `FrontendOptions::preambleCache`; the frontend then analyses a program's
 *trusted prefix* once and resumes every later analysis of a program with the
 same prefix from a copy of that state. `gti check` and builds do not set it,
-and an analysis with the raw-pointer audit enabled never uses it.
+and an analysis with the raw-pointer audit enabled never uses it. The
+`gti-test` runner sets it, with a shared `FrontendCache`, for complete checks
+and executable builds through `driver::FrontendReuse`: a resumed analysis
+reports the diagnostics a fresh one does, and MIR that differs only by a
+consistent renaming of the identities registered above the prefix.
+`gti-test --isolate` compares the runner's verdicts with fresh `gti`
+processes. Include-fix trials of such a compilation run without the cache.
 
 - **Prefix.** The leading units of the compilation order that are
   compiler-trusted and not the entry unit; their declarations are a prefix of
