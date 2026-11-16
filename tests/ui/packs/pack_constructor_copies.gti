@@ -1,0 +1,33 @@
+// Owning pack fixture pack constructor copies runs to completion.
+//@ run-pass
+//@ stdout: 11
+//@ stdout: 22
+//@ stdout: 11
+//@ stdout: 22
+import std.string;
+
+struct Copyable {
+  int number;
+  Copyable(int input) : number(input) {}
+};
+
+struct Pair {
+  Copyable first;
+  Copyable second;
+  Pair(Copyable left, Copyable right) : first(left), second(right) {}
+  ~Pair() {
+    std::println(this.first.number);
+    std::println(this.second.number);
+  }
+};
+
+void construct<T, Args...>(Args... args) {
+  for (mut int index = 0; index < 2; index++) {
+    T value = T(args...);
+  }
+}
+
+int main() {
+  construct<Pair>(Copyable(11), Copyable(22));
+  return 0;
+}

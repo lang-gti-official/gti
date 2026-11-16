@@ -1,0 +1,10 @@
+// An out-of-bounds index into a fresh fixed array keeps its run-time bounds check.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0007]: index_out_of_bounds in fixed_array
+int32_t[3] make(int32_t first) {
+  int32_t[3] values = {first, 2, 3};
+  return values;
+}
+int32_t read(int32_t index) { return make(1)[index]; }
+int main() { return read(3); }

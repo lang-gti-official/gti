@@ -1,0 +1,41 @@
+// Interface-only owner construction preserves guarded destruction and rollback (phase 1)
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: main.gti:28: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@ stdout: 2
+//@ stdout: 9
+//@ args: fail
+import std.memory;
+import std.string;
+import std.vector;
+
+class Trace {
+  int identity;
+  int divisor;
+public:
+  Trace(int identity, int divisor) : identity(identity), divisor(divisor) {}
+  ~Trace() {
+    std::println(this.identity);
+    int cleanup_failure = 1 / this.divisor;
+  }
+};
+
+interface Operation { int Read(); };
+class Guarded : public Operation {
+  Trace field;
+public:
+  Guarded(int divisor, int cleanup_divisor) : field(Trace(2, cleanup_divisor)) {
+    int constructor_failure = 12 / divisor;
+    std::println(constructor_failure);
+  }
+  ~Guarded() { std::println(3); }
+  int Read() override { return 7; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace caller{9, 1};
+  auto concrete = std::make_unique<Guarded>(
+      argc > 1 ? 0 : 1, argc > 2 ? 0 : 1);
+  auto erased = std::upcast_unique<Operation, Guarded>(std::move(concrete));
+  return erased->Read() - 7;
+}

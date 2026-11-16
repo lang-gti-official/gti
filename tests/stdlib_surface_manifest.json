@@ -4589,7 +4589,7 @@
         "tests/reference_parameter_packs_test.py",
         "tests/consteval_runtime_test.py",
         "tests/fixtures/checked_literal_arguments.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -5264,7 +5264,7 @@
         "tests/fixtures/json_parity.gti",
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
-        "tests/json_dynamic_runtime_test.py",
+        "tests/slow/stdlib/json/dynamic",
         "tests/reflection_runtime_test.py"
       ]
     },
@@ -5784,7 +5784,7 @@
         "tests/runtime_object_layout_test.py",
         "docs/language/standard-library.md",
         "examples/181-general-object-layout.gti",
-        "tests/general_object_layout_test.py"
+        "tests/ui/layout/general_object_layout.gti"
       ]
     },
     {
@@ -6240,11 +6240,11 @@
         "tests/reflection_runtime_test.py",
         "tests/reflection_tests.cpp",
         "stdlib/std/meta.gti",
-        "tests/fixtures/reflection_attributes.gti",
-        "tests/fixtures/reflection_construct.gti",
-        "tests/fixtures/reflection_callables.gti",
-        "tests/fixtures/reflection_deferred_range.gti",
-        "tests/fixtures/reflection_defaults.gti",
+        "tests/slow/reflection/attributes.gti",
+        "tests/ui/reflection/construct.gti",
+        "tests/ui/reflection/callables.gti",
+        "tests/ui/reflection/deferred_range.gti",
+        "tests/ui/reflection/defaults.gti",
         "tests/fixtures/reflection_method_invoke.gti",
         "tests/reflection_method_runtime_test.py",
         "examples/185-reflected-method-dispatch.gti"
@@ -6563,7 +6563,7 @@
         "stdlib/std/panic.gti",
         "tests/reference_parameter_packs_test.py",
         "tests/fixtures/checked_format_panic.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -7265,7 +7265,7 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -7739,7 +7739,7 @@
       ],
       "evidence": [
         "tests/string_operations_runtime_test.py",
-        "tests/string_operations_errors_test.py",
+        "tests/ui/stdlib/string/operations_errors",
         "tests/compiler_declarations_tests.cpp",
         "tests/fixtures/string_view_assignment.gti",
         "tests/declaration_construction_runtime_test.py"
@@ -7989,7 +7989,7 @@
         "tests/annotated_test_suite_test.py",
         "examples/annotated-tests/tests/main.gti",
         "tests/fixtures/testing_assertions.gti",
-        "tests/testing_assertions_runtime_test.py",
+        "tests/ui/stdlib/testing/assertions",
         "tests/fixtures/protocol_testing_assertions.gti",
         "tests/protocol_format_hash_runtime_test.py"
       ]
@@ -8264,7 +8264,7 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/protocol_format_hash_runtime_test.py",
         "tests/fixtures/legacy_hash_policy_state.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -8309,7 +8309,7 @@
       ],
       "evidence": [
         "tests/fixtures/generic_clone.gti",
-        "tests/generic_clone_runtime_test.py",
+        "tests/ui/generics/clone",
         "tests/concept_conditions_test.py"
       ]
     },

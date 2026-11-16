@@ -263,7 +263,6 @@ if(Python3_Interpreter_FOUND)
     mir_cutover_corpus_oracle 85
     constructor_pack_field_runtime 85
     expected_transform_error_runtime 85
-    pack_parameter_runtime 85
     simd_runtime 85)
   list(LENGTH gti_long_gate_costs gti_long_gate_count)
   math(EXPR gti_long_gate_last "${gti_long_gate_count} - 1")
