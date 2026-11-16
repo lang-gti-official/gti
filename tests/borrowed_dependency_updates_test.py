@@ -2106,6 +2106,114 @@ int main() {
 }
 ''')
 
+
+# Replacing an owning resource carrier must destroy the old elements before
+# releasing their regions, and retain the replacement's exact provider.
+CASES['resource_replacement_cleanup'] = (True, r'''
+import std.resource;
+import std.memory;
+mut int first_releases = 0;
+mut int second_releases = 0;
+mut int first_live = 0;
+mut int second_live = 0;
+mut int violations = 0;
+class Provider {
+  std::process_resource process{};
+  int id;
+public:
+  Provider(int id) : id(id) {}
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe {
+      auto result = this.process.allocate(request);
+      if (!result) { return unexpected(result.error()); }
+      std::raw_allocation raw = std::move(result).value();
+      return std::raw_allocation(raw.address, raw.bytes, raw.alignment, uint64_t(this.id));
+    }
+  }
+  unsafe void release(std::raw_allocation raw) {
+    if (raw.id != uint64_t(this.id)) { violations++; }
+    if (this.id == 1) { first_releases++; if (first_live != 0) { violations++; } }
+    else { second_releases++; if (second_live != 0) { violations++; } }
+    unsafe { this.process.release(raw); }
+  }
+};
+class Item {
+  int id;
+public:
+  Item(int id) : id(id) { if (id == 1) { first_live++; } else { second_live++; } }
+  ~Item() { if (this.id == 1) { first_live--; } else { second_live--; } }
+};
+int main() {
+  Provider first{1}; Provider second{2};
+  unsafe {
+    auto first_ref = std::bind_resource(first);
+    auto second_ref = std::bind_resource(second);
+    {
+      mut std::resource_storage<Item, Provider> left{first_ref};
+      mut std::resource_storage<Item, Provider> right{second_ref};
+      left.try_allocate(1).value(); right.try_allocate(1).value();
+      left.emplace(0, 1); right.emplace(0, 2);
+      left = std::move(right);
+      if (first_releases != 2 || second_releases != 0 || first_live != 0 || second_live != 1) { return 1; }
+    }
+  }
+  return violations == 0 && first_releases == 2 && second_releases == 2 && second_live == 0 ? 0 : 2;
+}
+''')
+
+RESOURCE_REPLACEMENT = r'''
+import std.resource;
+import std.memory;
+class Provider {
+  std::process_resource process{};
+public:
+  Provider() = default;
+  unsafe expected<std::raw_allocation, std::alloc_errc> allocate(std::layout request) {
+    unsafe { return this.process.allocate(request); }
+  }
+  unsafe void release(std::raw_allocation raw) { unsafe { this.process.release(raw); } }
+  void reset() mut {}
+};
+int main() {
+  mut Provider first{}; mut Provider second{};
+  unsafe {
+    auto first_ref = std::bind_resource(first);
+    auto second_ref = std::bind_resource(second);
+    mut std::resource_storage<int, Provider> left{first_ref};
+    std::resource_storage<int, Provider> right{second_ref};
+    left = std::move(right);
+    second.reset();
+  }
+  return 0;
+}
+'''
+CASES['resource_replacement_protects_provider'] = (False, RESOURCE_REPLACEMENT)
+CASES['resource_replacement_surviving_provider'] = (True, RESOURCE_REPLACEMENT.replace('    second.reset();', ''))
+CASES['record_default_text_initializer'] = (True, r'''
+struct P { std::string_view name = "Ada"; uint32_t health = 7; public: P() = default; };
+int main() { P value{}; return value.name == "Ada" && value.health == 7 ? 0 : 1; }
+''')
+
+
+# Enum payloads retain the same view owner through direct and moved publication.
+for spelling, expression in (('direct', 'owner.view()'), ('moved', 'std::move(view)')):
+    source = r"""
+enum Text { empty, value(std::string_view text) };
+int main() {
+  mut std::string owner{"owned"};
+  std::string_view view = owner.view();
+  auto text = Text::value(EXPRESSION);
+  switch (text) {
+    case Text::value(auto& selected): return selected == "owned" ? 0 : 1;
+    case Text::empty: return 2;
+  }
+}
+""".replace('EXPRESSION', expression)
+    CASES['enum_text_publication_' + spelling] = (True, source)
+    CASES['enum_text_publication_' + spelling + '_protects_owner'] = (
+        False, source.replace('  switch (text)', '  owner.clear();\n  switch (text)'))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('compiler', type=Path)

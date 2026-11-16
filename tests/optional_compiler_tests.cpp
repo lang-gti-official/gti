@@ -386,13 +386,10 @@ public:
         "borrowed-storage-admission.gti", source, {standardLibraryPrelude()},
         {}, {standardLibraryRoot()});
     if (declaration.find("optional") == std::string::npos) {
-      expect(!frontend.canGenerateCode() &&
-                 hasDiagnosticCode(frontend.diagnostics, "GTI-S2029") &&
-                 hasDiagnostic(frontend.diagnostics, "View") &&
-                 hasDiagnostic(frontend.diagnostics, "vector_element") &&
-                 !hasDiagnosticCode(frontend.diagnostics, "GTI-B0001"),
-             "source-defined owning storage rejects borrowed payloads through "
-             "its declared element constraint, without a private handle rule");
+      expect(frontend.canGenerateCode() &&
+                 lang::verifyMirProgram(frontend.mir).valid(),
+             "source-defined vector admits shared-reference elements through "
+             "its declared element constraint and verified owner tracking");
       continue;
     }
     // View is a user class containing int&, not std::string_view. Both empty
@@ -589,38 +586,56 @@ int main() { auto text = Text::value("static"); return 0; }
              lang::verifyMirProgram(literalPayload.mir).valid(),
          "a directly literal-backed text payload needs no external owner loan");
   for (const std::string expression : {"owner.view()", "std::move(view)"}) {
-    const auto dynamicPayload = lang::Frontend().analyze(
-        "dynamic-text-payload.gti",
-        "import std.string;\nenum Text { empty, value(std::string_view "
-        "text) };\n"
-        "int main() { std::string owner{\"owned\"}; "
+    const std::string source =
+        "import std.string;\nenum Text { empty, value(std::string_view text) "
+        "};\n"
+        "int main() { mut std::string owner{\"owned\"}; "
         "std::string_view view = owner.view(); auto text = Text::value(" +
-            expression + "); return 0; }",
+        expression +
+        "); switch (text) { case Text::value(auto& selected): "
+        "return int(selected.size()); case Text::empty: return 0; } }";
+    const auto dynamicPayload = lang::Frontend().analyze(
+        "dynamic-text-payload.gti", source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(dynamicPayload.canGenerateCode() &&
+               lang::verifyMirProgram(dynamicPayload.mir).valid(),
+           "ordinary enum storage retains dynamic text, including moved views");
+    auto invalidated = source;
+    invalidated.insert(invalidated.find("switch (text)"), "owner.clear(); ");
+    const auto rejected = lang::Frontend().analyze(
+        "dynamic-text-payload-invalidated.gti", invalidated,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(!dynamicPayload.canGenerateCode() &&
-               hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-S2045") &&
-               !hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-B0001"),
-           "ordinary enum storage rejects dynamic text, including moved views, "
-           "before MIR");
+    expect(!rejected.canGenerateCode() &&
+               hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
+               !hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") &&
+               !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+           "enum payload use protects the retained owner after moving a view");
   }
 
   for (const std::string storage :
        {"std::string_view values[1] = {std::move(view)};",
         "mut std::vector<std::string_view> values{}; "
         "values.push_back(std::move(view));"}) {
+    const std::string source = "import std.string;\nimport std.vector;\n"
+                               "int main() { mut std::string owner{\"owned\"}; "
+                               "std::string_view view = owner.view(); " +
+                               storage + " return int(values[0].size()); }";
     const auto moved = lang::Frontend().analyze(
-        "moved-text-storage-rejected.gti",
-        "import std.string;\nimport std.vector;\n"
-        "struct Holder { std::string_view text; };\n"
-        "int main() { std::string owner{\"owned\"}; "
-        "std::string_view view = owner.view(); " +
-            storage + " return 0; }",
+        "moved-text-storage.gti", source, {standardLibraryPrelude()}, {},
+        {standardLibraryRoot()});
+    expect(moved.canGenerateCode() && lang::verifyMirProgram(moved.mir).valid(),
+           "fixed-array and dynamic storage admit moved owner-dependent text");
+    auto invalidated = source;
+    invalidated.insert(invalidated.find("return int(values"),
+                       "owner.clear(); ");
+    const auto rejected = lang::Frontend().analyze(
+        "moved-text-storage-invalidated.gti", invalidated,
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(!moved.canGenerateCode() &&
-               hasDiagnosticCode(moved.diagnostics, "GTI-S2045") &&
-               !hasDiagnosticCode(moved.diagnostics, "GTI-B0001"),
-           "moving owner-dependent text does not erase its loan at a "
-           "fixed-array or dynamic-storage boundary");
+    expect(!rejected.canGenerateCode() &&
+               hasDiagnosticCode(rejected.diagnostics, "GTI-S2017") &&
+               !hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") &&
+               !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
+           "moving a view into storage retains its owner through element use");
   }
   // A local struct value carries the moved view's owner at its field
   // (L-OWN-02), so the owner stays borrowed while the value is live.

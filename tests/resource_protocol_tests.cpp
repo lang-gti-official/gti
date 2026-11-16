@@ -416,7 +416,7 @@ int main() {
            "GTI-S2017",
            "a cleanup-bound lease prevents reset even without a later explicit "
            "read");
-  negative(R"(
+  positive(R"(
 int use(std::resource_ref<std::process_resource> first,
         std::resource_ref<std::process_resource> second) {
   mut std::resource_storage<int,std::process_resource> left{first};
@@ -426,8 +426,7 @@ int use(std::resource_ref<std::process_resource> first,
 }
 int main() { return 0; }
 )",
-           "GTI-S2003",
-           "assignment cannot silently replace the retained resource binding");
+           "replacement transfers a resource binding through checked cleanup");
   negative(R"(
 std::resource_ref<std::process_resource> escape() {
   std::process_resource local{};

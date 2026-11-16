@@ -276,6 +276,11 @@ public:
 };
 int main() {
   std::vector<Item> values{std::size_t(2)};
+  mut std::uninitialized<Item> slot{};
+  unsafe {
+    [[discard]] std::construct_at(slot.data());
+    std::destroy_at(slot.data());
+  }
   return 0;
 }
 )",
@@ -292,15 +297,22 @@ int main() {
     return;
   }
 
-  std::size_t checked = 0;
+  std::size_t checked = 0, checkedOwned = 0;
   for (const auto address : enumerateMirBodyAddresses(frontend.mir)) {
     const auto &ownerBody = *findMirBody(frontend.mir, address);
     for (const auto &block : ownerBody.blocks) {
       for (const auto &instruction : block.instructions) {
-        if (instruction.intrinsic != IntrinsicKind::ObjectConstruct ||
-            !instruction.constructorTarget || instruction.operands.size() != 1)
+        const bool owned =
+            instruction.intrinsic == IntrinsicKind::ObjectConstructOwned;
+        if ((!owned &&
+             instruction.intrinsic != IntrinsicKind::ObjectConstruct) ||
+            !instruction.constructorTarget ||
+            instruction.operands.size() != (owned ? 2u : 1u))
           continue;
-        ++checked;
+        if (owned)
+          ++checkedOwned;
+        else
+          ++checked;
         const auto *target = frontend.mir.findConstructorInstance(
             *instruction.constructorTarget);
         const auto traits = effects(frontend.mir, instruction);
@@ -353,7 +365,8 @@ int main() {
       }
     }
   }
-  expect(checked != 0, "fixture must exercise selected in-place construction");
+  expect(checked != 0 && checkedOwned != 0,
+         "fixture exercises both raw and owner-aware selected construction");
   for (const auto level :
        {OptimizationLevel::O0, OptimizationLevel::O2, OptimizationLevel::O3}) {
     const auto optimized = OptimizationPipeline().run(

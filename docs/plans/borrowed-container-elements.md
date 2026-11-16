@@ -203,3 +203,28 @@ borrowed-container cases. It exposed three remaining reconciliation issues:
 These corrections do not add a container or lifetime feature. The final PR
 validation must cover the corrected native insertion, staged receiver, full
 standard-library import, and compile-time container controls together.
+
+
+### CI consumer regression alignment
+
+The next CI run found expectations inherited from the pre-container boundary:
+`vector<shared-reference-record>`, borrowed text in arrays and enum payloads,
+and replacement of a resource-bound owner are no longer blanket rejections.
+The owning tests now distinguish valid publication from later invalidation of
+its retained owner. Native controls exercise resource replacement cleanup and
+provider identity, including destruction before release and no duplicate release.
+The optional wrapper's still-unsupported reference-field shapes retain their
+rejection tests.
+
+Optimizer checks cover both raw and owner-aware selected constructors. Text
+field initialization now has an explicit MIR `Initialize`; tests require its
+producer and unique publication to survive optimization and reject removal of
+the stage. They no longer demand the obsolete metadata-only text initializer
+shape, which independent MIR verification rejects.
+
+`storage_adoption_contract` previously lowered every imported library body and
+repeated optimizer/backend admission over that closure for its forged-MIR
+controls. It now uses the native driver's reachable-only lowering options.
+All source fixtures, unsafe-admission checks, cleanup mutations, O0/O3 emission,
+and fixed-address/immovable-element controls remain. The timeout is unchanged;
+Linux timing and the five CI-consumer results are recorded on PR #425.

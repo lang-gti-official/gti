@@ -9251,9 +9251,9 @@ int main() {
       "coherence replay should reject forged unreachable-block evidence");
 }
 
-// A constructor record can publish a field initializer that the body leaves
-// unstaged, so the publishing value has no MIR use. The dead-computation
-// rewrite, the pass and coherence replay must all keep that value.
+// Text fields now publish through an explicit Initialize so owner flow can
+// inspect the store. Its producer must survive optimization, and the record
+// must not publish the same field a second time.
 void testRecordPublishedInitializerRetained() {
   const auto standardLibrary =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
@@ -9279,10 +9279,9 @@ int main() {
     return;
   }
 
-  // Locate the generated default constructor's unstaged text-view literal:
-  // the record names its HIR argument and no Initialize carries it.
+  // Locate the generated default constructor's staged text-view literal.
   std::optional<lang::MirBodyAddress> address;
-  lang::MirInstructionId literal = 0;
+  lang::MirInstructionId literal = 0, stage = 0;
   for (const lang::MirConstructorInstance &constructor :
        frontend.mir.constructorInstances()) {
     if (!constructor.generatedDefault) {
@@ -9296,31 +9295,49 @@ int main() {
     }
     for (const lang::MirBlock &block : body->blocks) {
       for (const lang::MirInstruction &instruction : block.instructions) {
-        const lang::MirConstructorInitializer *published =
-            lang::mirRecordPublishedConstructorInitializer(
-                frontend.mir, *body, constructor.id, instruction);
-        if (published == nullptr ||
-            published->targetType != lang::SemanticType::StringView ||
+        if (instruction.info.type != lang::SemanticType::StringView ||
             instruction.operation != lang::MirOperation::Literal ||
-            !instruction.result || !body->usesOf(*instruction.result).empty()) {
+            !instruction.result || body->usesOf(*instruction.result).empty())
           continue;
-        }
+        for (const auto &stageBlock : body->blocks)
+          for (const auto &publication : stageBlock.instructions)
+            if (publication.kind == lang::MirInstructionKind::Initialize &&
+                publication.constructorInitializer &&
+                publication.hirValue == instruction.hirValue) {
+              stage = publication.id;
+              expect(lang::mirRecordPublishedConstructorInitializer(
+                         frontend.mir, *body, constructor.id, instruction) ==
+                         nullptr,
+                     "an explicit text-field stage prevents duplicate record "
+                     "publication");
+            }
         address = candidate;
         literal = instruction.id;
       }
     }
   }
-  expect(address.has_value() && literal != 0,
+  expect(address.has_value() && literal != 0 && stage != 0,
          "the generated default constructor should publish its text-view "
-         "field from an unstaged literal with no MIR use");
+         "field through an explicit stage using its literal");
   if (!address) {
     return;
   }
 
+  lang::MirProgram missingStage = frontend.mir;
+  auto *missingBody = lang::findMirBody(missingStage, *address);
+  for (auto &block : missingBody->blocks)
+    for (auto &instruction : block.instructions)
+      if (instruction.id == stage)
+        instruction = lang::makeMirInstructionTombstone(instruction);
+  (void)lang::rebuildMirValueUses(*missingBody);
+  expect(
+      !lang::verifyMirProgram(missingStage).valid(),
+      "metadata alone cannot replace a required text-field publication stage");
+
   lang::MirProgram rewritten = frontend.mir;
   expect(!lang::rewriteMirDeadInstruction(rewritten, *address, literal),
          "the canonical dead-instruction rewrite should refuse a value the "
-         "constructor record publishes from");
+         "explicit field initializer uses");
   expect(rewritten == frontend.mir,
          "a refused dead-instruction rewrite should leave MIR unchanged");
 
@@ -9351,23 +9368,15 @@ int main() {
                                record.instruction == literal;
                       }),
          "no transformation record should remove the publishing literal");
-  const lang::OptimizationPassReport *deadComputations =
-      findPass(optimized.report, "dead-unused-computations");
-  expect(deadComputations != nullptr &&
-             std::any_of(deadComputations->remarks.begin(),
-                         deadComputations->remarks.end(),
-                         [&](const lang::OptimizationRemark &remark) {
-                           return remark.kind ==
-                                      lang::OptimizationRemarkKind::Missed &&
-                                  remark.body == *address &&
-                                  remark.instruction == literal &&
-                                  remark.message.find(
-                                      "constructor record publishes "
-                                      "an unstaged field initializer") !=
-                                      std::string::npos;
-                         }),
-         "the dead-computation pass should report the retained publishing "
-         "value instead of removing it");
+  std::size_t publications = 0;
+  if (body)
+    for (const auto &block : body->blocks)
+      for (const auto &instruction : block.instructions)
+        if (!instruction.tombstone && instruction.id == stage &&
+            instruction.kind == lang::MirInstructionKind::Initialize)
+          ++publications;
+  expect(publications == 1,
+         "optimization preserves exactly one explicit text-field publication");
 }
 
 void testRangePublicationPreserved() {

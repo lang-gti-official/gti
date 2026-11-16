@@ -24,7 +24,14 @@ lang::FrontendResult analyze(const std::string &source, bool trusted = true) {
       std::vector<std::filesystem::path>{root / "stdlib/prelude.gti"};
   if (trusted)
     preludes.push_back(entry);
-  return lang::Frontend().analyze(
+  // Exercise the same executable library closure as the native driver. These
+  // fixtures test reachable object lifetimes and forged cleanup, not every
+  // unrelated function imported transitively by std.memory.
+  lang::FrontendOptions options;
+  options.lowerReachableOnly = true;
+  options.lowerLibraryReachableOnly = true;
+  options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+  return lang::Frontend(options).analyze(
       entry, source, preludes,
       {{std::filesystem::weakly_canonical(entry).string(), source}},
       {root / "stdlib"});
