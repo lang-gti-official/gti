@@ -1,0 +1,7 @@
+// A CHECK-NOT pattern that matches.
+//@ snapshot: llvm-ir
+// CHECK: define {{.*}} ; sum
+// CHECK-NOT: @llvm.sadd.with.overflow
+// CHECK: ret i1
+int sum(int a, int b) { return a + b; }
+int main() { return sum(1, 2) - 3; }

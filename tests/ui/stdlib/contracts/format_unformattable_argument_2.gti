@@ -1,0 +1,12 @@
+// std::format rejects an unformattable argument 2 at its public contract.
+//@ check-fail
+import std.panic;
+import std.format;
+import std.string;
+struct Opaque { int value = 1; public: Opaque() = default; };
+int main() {
+  Opaque opaque{};
+  mut std::string output{};
+  auto result = std::format("{} {} {}", 1, 2, opaque);  //~ ERROR GTI-S2029 std::formattable<Opaque>
+  return 0;
+}

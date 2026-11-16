@@ -774,6 +774,10 @@
       "suite": "constexpr"
     },
     {
+      "name": "testAnalysisErrorLimit",
+      "suite": "diagnostics"
+    },
+    {
       "name": "testMissingSwitchCasesFix",
       "suite": "diagnostics"
     },

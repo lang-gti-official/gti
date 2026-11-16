@@ -61,6 +61,12 @@ impose reasoning-depth or reconsideration limits.
 - Resume the same live operation with interruptible waits. Back off remote
   status polling when unchanged; do not repeatedly read logs, Git state or
   manuals merely to occupy a queue. Useful independent review remains welcome.
+- Put temporary files (check plans, PR bodies, logs) in a directory unique
+  to the task, never at the top of a shared scratch or `/tmp` directory where
+  another agent's file of the same name is overwritten. Wait on a background
+  operation by its pid or its output file; never with
+  `until ! pgrep -f "<text>"`, which matches its own command line and never
+  exits.
 - On resumption/compaction, recover the ledger and pending handles before
   launching work. Preserve completed evidence rather than restarting audits.
   Explain material cost/schedule growth without dropping required work.

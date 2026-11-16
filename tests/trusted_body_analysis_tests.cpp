@@ -8,10 +8,14 @@
 #include "gti/semantic_analyzer.h"
 #include "gti/semantic_preamble.h"
 #include "gti/source_graph.h"
+#include "gti/support.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -81,11 +85,22 @@ void checkFixtures(const std::filesystem::path &root) {
     expect(!analyzeSource(source).semanticValid,
            "transitive calls, function items and unused application bodies are "
            "checked");
-  expect(!analyzeSource(
-              "int main() { return 0; }", false, false,
-              "constexpr int broken_constant() { return missing_constant; }")
+  // An unused trusted constexpr definition is deferred like any other
+  // trusted body (#398); the complete check still reports it, and so does
+  // any compile-time evaluation that reaches it.
+  const std::string brokenConstant =
+      "export constexpr int broken_constant() { return missing_constant; }\n";
+  expect(analyzeSource("int main() { return 0; }", false, false, brokenConstant)
+             .semanticValid,
+         "an unused constexpr definition is deferred");
+  expect(!analyzeSource("int main() { return 0; }", true, false, brokenConstant)
               .semanticValid,
-         "constant definitions remain checked");
+         "the complete check still reports an unused constexpr definition");
+  expect(!analyzeSource("static_assert(broken_constant() == 1);\n"
+                        "int main() { return 0; }",
+                        false, false, brokenConstant)
+              .semanticValid,
+         "a constant-evaluated constexpr definition is still checked");
   expect(!analyzeSource("int main() { return 0; }", false, false,
                         "class Virtual { public: virtual int f() { return "
                         "missing_virtual; } };")
@@ -271,6 +286,410 @@ std::string key(const lang::Diagnostic &diagnostic) {
     result += "\n  hint " + hint;
   }
   return result;
+}
+
+void report(const std::string &label, const std::filesystem::path &entry,
+            const std::vector<std::string> &expected,
+            const std::vector<std::string> &actual);
+
+// Constant-evaluation demand parity (#398). Each case evaluates a trusted
+// constexpr definition at compile time through a different entry point, or
+// reaches one from a context that cannot complete it in place. The reachable
+// policy must report exactly the complete check's diagnostics and validity,
+// without repeated analysis rounds, with and without a preamble; the
+// `Deferred` test order must report the same. Every declaration is the
+// test's own (Non-Negotiable 6): the library is an overlay of a trusted path,
+// and no case depends on a standard-library type except where noted.
+// These pass with constexpr bodies analysed eagerly and must keep passing
+// once unused trusted constexpr bodies are deferred.
+void checkConstantDemandParity(const std::filesystem::path &root) {
+  const auto entry = root / "tests/demand-entry.gti";
+  const auto library = root / "stdlib/std/cmath.gti";
+  const auto run =
+      [&](const std::string &libraryText, const std::string &source,
+          lang::TrustedBodyAnalysis policy, lang::FrontendWorkMetrics &work,
+          std::shared_ptr<lang::SemanticPreambleCache> preambles = nullptr,
+          std::shared_ptr<lang::FrontendCache> parses = nullptr) {
+        lang::FrontendOptions options;
+        options.stopAfter = lang::FrontendPhase::Hir;
+        options.analyzeRecoveredProgram = true;
+        options.trustedBodies = policy;
+        options.workMetrics = &work;
+        options.preambleCache = std::move(preambles);
+        options.cache = std::move(parses);
+        return lang::Frontend(options).analyze(
+            entry, "import std.cmath;\n" + source,
+            {root / "stdlib/prelude.gti"},
+            {{library.string(), "export module cmath;\n" + libraryText}},
+            {root / "stdlib"});
+      };
+  const auto keys = [](const lang::FrontendResult &result) {
+    std::vector<std::string> items;
+    for (const auto &diagnostic : result.diagnostics)
+      items.push_back(key(diagnostic));
+    std::sort(items.begin(), items.end());
+    return items;
+  };
+  // The complete check of one program, with its expected validity.
+  const auto completeCheck = [&](const std::string &caseLabel,
+                                 const std::string &libraryText,
+                                 const std::string &source, bool valid) {
+    lang::FrontendWorkMetrics completeWork;
+    auto complete = run(libraryText, source,
+                        lang::TrustedBodyAnalysis::Complete, completeWork);
+    if ((complete.semanticValid && complete.hirValid) != valid)
+      for (const auto &diagnostic : complete.diagnostics)
+        std::cerr << caseLabel << ": " << diagnostic.code << ": "
+                  << diagnostic.message << '\n';
+    expect((complete.semanticValid && complete.hirValid) == valid,
+           caseLabel + (valid ? ": the complete check accepts the program"
+                              : ": the complete check rejects the program"));
+    if (!valid)
+      expect(!complete.diagnostics.empty(),
+             caseLabel + ": the complete check reports why");
+    return complete;
+  };
+  // One analysis compared with the complete check of the same program.
+  const auto compare = [&](const std::string &label,
+                           const lang::FrontendResult &complete,
+                           const lang::FrontendResult &other,
+                           const lang::FrontendWorkMetrics *work,
+                           std::size_t expectedRounds = 0) {
+    const auto completeKeys = keys(complete);
+    const auto otherKeys = keys(other);
+    if (completeKeys != otherKeys)
+      report(label + ": diagnostics", entry, completeKeys, otherKeys);
+    expect(complete.semanticValid == other.semanticValid &&
+               complete.hirValid == other.hirValid,
+           label + ": validity equals the complete check");
+    if (work != nullptr)
+      expect(work->semanticDemandRounds == expectedRounds &&
+                 work->semanticDemandFallbacks == 0,
+             label + ": " + std::to_string(expectedRounds) +
+                 " repeated analysis round(s), got " +
+                 std::to_string(work->semanticDemandRounds) + " round(s) and " +
+                 std::to_string(work->semanticDemandFallbacks) +
+                 " fallback(s)");
+  };
+  const auto parityCase = [&](const std::string &caseLabel,
+                              const std::string &libraryText,
+                              const std::string &source, bool valid = true,
+                              std::size_t expectedRounds = 0) {
+    const auto complete = completeCheck(caseLabel, libraryText, source, valid);
+    for (const bool preamble : {false, true}) {
+      const std::string label = caseLabel + (preamble ? " [preamble]" : "");
+      lang::FrontendWorkMetrics reachableWork;
+      const auto reachable = run(
+          libraryText, source, lang::TrustedBodyAnalysis::Reachable,
+          reachableWork,
+          preamble ? std::make_shared<lang::SemanticPreambleCache>() : nullptr);
+      compare(label, complete, reachable, &reachableWork, expectedRounds);
+    }
+    // Every trusted body analysed last, in reverse order: a body is first
+    // needed where it cannot be completed, and only later where it can.
+    lang::FrontendWorkMetrics deferredWork;
+    const auto deferred = run(
+        libraryText, source, lang::TrustedBodyAnalysis::Deferred, deferredWork);
+    compare(caseLabel + " [deferred order]", complete, deferred, nullptr);
+  };
+
+  // A chain of trusted constexpr callees reached only from compile time.
+  const std::string chain =
+      "constexpr int chain_leaf(int n) { return n * 2; }\n"
+      "constexpr int chain_middle(int n) { return chain_leaf(n) + 1; }\n"
+      "export constexpr int chain_root(int n) { return chain_middle(n); }\n";
+  parityCase("namespace-scope static_assert through a callee chain", chain,
+             "static_assert(chain_root(20) == 41);\n"
+             "int main() { return 0; }\n");
+  parityCase("if constexpr through a callee chain", chain,
+             "int main() { if constexpr (chain_root(1) == 3) { return 0; } "
+             "return 1; }\n");
+  // A generic library constexpr function first instantiated, and its callee
+  // first reached, from a concrete instance of a user function.
+  parityCase("constexpr callee first resolved in a concrete instance",
+             chain + "export constexpr int scaled<T>(int n) { "
+                     "return chain_leaf(n); }\n",
+             "int instance<T>() { static_assert(scaled<T>(3) == 6); "
+             "return 0; }\n"
+             "int main() { return instance<int32_t>(); }\n");
+  // A concept predicate whose wrapper calls a trusted constexpr function.
+  parityCase("concept predicate calling a trusted constexpr function",
+             "constexpr bool lib_accepts() { return true; }\n"
+             "export constexpr bool accepts<T>() { return lib_accepts(); }\n",
+             "concept accepted<T> = accepts<T>();\n"
+             "int lift<accepted T>() { return 0; }\n"
+             "int main() { return lift<int32_t>(); }\n");
+  // `?` in a constant evaluation selects trusted conformance operations of
+  // the test's own protocol conformance, which nothing else calls.
+  const std::string checkedLibrary =
+      "export class checked_rejection {\n"
+      "public:\n"
+      "  int code;\n"
+      "  constexpr checked_rejection(int code) : code(code) {}\n"
+      "};\n"
+      "export class checked_result {\n"
+      "public:\n"
+      "  int code;\n"
+      "  int value;\n"
+      "  constexpr checked_result(int code, int value) : code(code), "
+      "value(value) {}\n"
+      "};\n"
+      "export for concept std::tryable<checked_result> {\n"
+      "  using value_type = int;\n"
+      "  using residual_type = checked_rejection;\n"
+      "  constexpr bool has_value(checked_result& result) { "
+      "return result.code == 0; }\n"
+      "  constexpr int take_value(checked_result result) { "
+      "return result.value; }\n"
+      "  constexpr checked_rejection take_residual(checked_result result) { "
+      "return checked_rejection(result.code); }\n"
+      "};\n"
+      "export constexpr checked_result validated(int v) { "
+      "if (v > 0) { return checked_result(0, v); } "
+      "return checked_result(v - 1, 0); }\n";
+  const std::string checkedSource =
+      "class status {\n"
+      "public:\n"
+      "  int code;\n"
+      "  int value;\n"
+      "  constexpr status(int value) : code(0), value(value) {}\n"
+      "  implicit constexpr status(checked_rejection rejected) "
+      ": code(rejected.code), value(0) {}\n"
+      "};\n"
+      "constexpr status doubled(int v) { "
+      "int checked = ?validated(v); return status(checked * 2); }\n";
+  parityCase("? propagation in a constant evaluation", checkedLibrary,
+             checkedSource + "static_assert(doubled(21).value == 42);\n"
+                             "static_assert(doubled(0).code == -1);\n"
+                             "int main() { return 0; }\n");
+  parityCase("? propagation in a failing constant evaluation", checkedLibrary,
+             checkedSource + "static_assert(doubled(0).value == 42);\n"
+                             "int main() { return 0; }\n",
+             false);
+  // A class-scope static_assert over a trusted constexpr function.
+  parityCase("class-scope static_assert",
+             "export constexpr int lib_size() { return 4; }\n",
+             "class Fixed { public: Fixed() = default; "
+             "static_assert(lib_size() == 4); int value = 0; };\n"
+             "int main() { Fixed fixed{}; return fixed.value; }\n");
+  // A procedural macro whose trusted helper nothing else uses.
+  parityCase("procedural macro with an otherwise unused trusted helper",
+             "export constexpr int lib_nine() { return 9; }\n",
+             "#macro int nine() { return lib_nine(); }\n"
+             "int main() { return nine!() - 9; }\n");
+
+  // D1: trusted constexpr callees first reached at run time from a concrete
+  // instance that only the program-effect closure analyses: a member of a
+  // generic class calls a constrained generic constexpr function, whose
+  // constraint check (a requirement attempt inside that instance) looks up
+  // constexpr members of a non-generic class that nothing else reaches. The
+  // effect worker completes such bodies in a body context of its own.
+  const auto effectLibrary = [](const std::string &leafBody) {
+    return "constexpr int effect_leaf(int n) { " + leafBody +
+           " }\n"
+           "export class effect_cell {\n"
+           "  mut int value = 0;\n"
+           "public:\n"
+           "  effect_cell() = default;\n"
+           "  constexpr void attach(int n) mut { this.value = effect_leaf(n); "
+           "}\n"
+           "  constexpr int read() { return this.value; }\n"
+           "};\n"
+           "export concept attachable<T> = requires(mut T& cell, int n) {\n"
+           "  { cell.attach(n) } -> void;\n"
+           "  { cell.read() } -> int;\n"
+           "};\n"
+           "export constexpr int effect_place<T>(mut T& target, int n) "
+           "requires attachable<T> { target.attach(n); "
+           "return target.read(); }\n"
+           "export class effect_box<T> {\n"
+           "  mut T inner;\n"
+           "public:\n"
+           "  effect_box(T inner) : inner(inner) {}\n"
+           "  int fill(int n) mut { if constexpr (attachable<T>) { "
+           "return effect_place(this.inner, n); } return 0; }\n"
+           "};\n";
+  };
+  parityCase("constexpr callees first reached inside an effect-closure "
+             "instance",
+             effectLibrary("return n + 1;"),
+             "int main() { mut effect_box<effect_cell> box{effect_cell()}; "
+             "return box.fill(4) - 5; }\n");
+  parityCase("constexpr callees first reached from a global initializer's "
+             "effect closure",
+             effectLibrary("return n + 1;"),
+             "int filled() { mut effect_box<effect_cell> box{effect_cell()}; "
+             "return box.fill(6); }\n"
+             "int seeded = filled();\n"
+             "int main() { return seeded - 7; }\n");
+  parityCase("a broken constexpr callee first reached inside an "
+             "effect-closure instance",
+             effectLibrary("return missing_effect_leaf;"),
+             "int main() { mut effect_box<effect_cell> box{effect_cell()}; "
+             "return box.fill(4) - 5; }\n",
+             // A body first analysed by late demand that reports an error
+             // repeats the request with it required, as for any deferred
+             // trusted body (the late-demand rule).
+             false, 1);
+
+  // D3: one constexpr body needed first where it cannot be completed (the
+  // concrete instance analysis of a constrained call, and with `Deferred`
+  // the end-of-pass trusted bodies) and then where it can (the body phase of
+  // a later application function). The second need must not be hidden by
+  // the first: a member of a generic class behind a constexpr predicate,
+  // the shape of a reflection query behind a concept.
+  const std::string probeLibrary =
+      "export class kind_probe<T> {\n"
+      "public:\n"
+      "  constexpr kind_probe() {}\n"
+      "  constexpr bool narrow() { return sizeof(T) <= uint64_t(4); }\n"
+      "};\n"
+      "export constexpr bool narrow_kind<T>() { "
+      "return kind_probe<T>().narrow(); }\n"
+      "export concept narrow_value<T> = narrow_kind<T>();\n"
+      "export int narrowed<narrow_value T>(T value) { return 1; }\n";
+  const std::string probeSource =
+      "int in_instance<T>(T value) { static_assert(narrow_kind<T>()); "
+      "if constexpr (narrow_value<T>) { return narrowed(value); } "
+      "return 0; }\n"
+      "int first() { return in_instance(int32_t(3)); }\n"
+      "int later() { static_assert(narrow_kind<int32_t>()); "
+      "static_assert(!narrow_value<int64_t>); return 1; }\n"
+      "int main() { return first() + later() - 2; }\n";
+  parityCase("a constexpr body needed first by an instance, then by the "
+             "body phase",
+             probeLibrary, probeSource);
+  parityCase("an unsatisfied constraint needed first by an instance, then "
+             "by the body phase",
+             probeLibrary,
+             "int in_instance<T>(T value) { static_assert(narrow_kind<T>()); "
+             "if constexpr (narrow_value<T>) { return narrowed(value); } "
+             "return 0; }\n"
+             "int first() { return in_instance(int64_t(3)); }\n"
+             "int later() { static_assert(narrow_kind<int32_t>()); "
+             "return 1; }\n"
+             "int main() { return first() + later() - 2; }\n",
+             false);
+
+  // D4: a held-back preamble body (a constexpr predicate with `if constexpr`
+  // over its callee) needed by a staged constant evaluation that a concrete
+  // instance's constraint check runs, first during the program-effect
+  // closure or HIR discovery rather than in the body phase.
+  const std::string stagedLibrary =
+      "constexpr bool staged_leaf<T>() { return sizeof(T) >= uint64_t(4); }\n"
+      "constexpr bool staged_wide<T>() {\n"
+      "  if constexpr (staged_leaf<T>()) { return true; } else { return false; "
+      "}\n"
+      "}\n"
+      "export concept staged_value<T> = staged_wide<T>();\n"
+      "export int staged_measure<T>(T value) requires staged_value<T> "
+      "{ return 1; }\n"
+      "export class staged_relay<T> {\n"
+      "  T value;\n"
+      "public:\n"
+      "  staged_relay(T value) : value(value) {}\n"
+      "  int measure() { if constexpr (staged_value<T>) { "
+      "return staged_measure(this.value); } return 0; }\n"
+      "};\n";
+  parityCase("a held-back predicate needed by a staged evaluation in a "
+             "concrete instance",
+             stagedLibrary,
+             "int relayed<T>(T value) { staged_relay<T> relay{value}; "
+             "return relay.measure(); }\n"
+             "int main() { return relayed(int32_t(5)) - 1; }\n");
+  parityCase("a held-back predicate needed by a staged evaluation behind a "
+             "global initializer",
+             stagedLibrary,
+             "int relayed<T>(T value) { staged_relay<T> relay{value}; "
+             "return relay.measure(); }\n"
+             "int measured = relayed(int64_t(5));\n"
+             "int main() { return measured - 1; }\n");
+  parityCase("a held-back predicate rejecting a concrete instance",
+             stagedLibrary,
+             "int relayed<T>(T value) { staged_relay<T> relay{value}; "
+             "static_assert(staged_value<T>, \"too narrow\"); "
+             "return relay.measure(); }\n"
+             "int main() { return relayed(int8_t(5)) - 1; }\n",
+             false);
+
+  // A constant evaluation that fails inside a trusted constexpr callee:
+  // every attempt that is discarded before the body is available must leave
+  // no diagnostic behind, and the final attempt reports exactly the
+  // complete check's failure.
+  const std::string failingLibrary =
+      "constexpr int failing_leaf(int n) { return 100 / n; }\n"
+      "export constexpr int failing_root(int n) { "
+      "return failing_leaf(n) + 1; }\n"
+      "export constexpr bool failing_kind<T>() { "
+      "return failing_root(int(sizeof(T)) - 4) > 0; }\n"
+      "export concept failing_value<T> = failing_kind<T>();\n";
+  parityCase("a failing constant evaluation at namespace scope", failingLibrary,
+             "static_assert(failing_root(0) == 1);\n"
+             "int main() { return 0; }\n",
+             false);
+  parityCase("a failing constant evaluation in an instance's constraint",
+             failingLibrary,
+             "int guarded<failing_value T>(T value) { return 0; }\n"
+             "int main() { return guarded(int32_t(1)); }\n",
+             false);
+  parityCase("a failed assertion over a trusted constant", failingLibrary,
+             "static_assert(failing_root(50) == 4, \"wrong constant\");\n"
+             "int main() { return 0; }\n",
+             false);
+
+  // Cross-snapshot reuse (plan risk 1): a predicate over a preamble type is
+  // evaluated first inside a concrete instance of one snapshot, then at
+  // namespace scope in a second snapshot that adopts the same preamble. A
+  // result recorded by the first (a shared concept proof, an instance) must
+  // be exactly what the second computes on its own.
+  const auto crossSnapshot = [&](const std::string &caseLabel,
+                                 const std::string &firstSource,
+                                 const std::string &secondSource,
+                                 bool secondValid) {
+    const auto firstComplete =
+        completeCheck(caseLabel + " (first)", probeLibrary, firstSource, true);
+    const auto secondComplete = completeCheck(
+        caseLabel + " (second)", probeLibrary, secondSource, secondValid);
+    // The snapshots share a parse cache, as the editor does: a preamble is
+    // keyed by its prefix units' exact parsed syntax.
+    auto preambles = std::make_shared<lang::SemanticPreambleCache>();
+    auto parses =
+        std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
+            .maximumEntries = 1024,
+            .maximumEstimatedBytes = 512U * 1024U * 1024U});
+    lang::FrontendWorkMetrics firstWork;
+    const auto first =
+        run(probeLibrary, firstSource, lang::TrustedBodyAnalysis::Reachable,
+            firstWork, preambles, parses);
+    compare(caseLabel + " [first snapshot]", firstComplete, first, &firstWork);
+    lang::FrontendWorkMetrics secondWork;
+    const auto second =
+        run(probeLibrary, secondSource, lang::TrustedBodyAnalysis::Reachable,
+            secondWork, preambles, parses);
+    expect(secondWork.semanticPreambleBuilds == 0 &&
+               secondWork.semanticPreambleAdoptions != 0,
+           caseLabel + ": the second snapshot adopts the first's preamble");
+    compare(caseLabel + " [second snapshot]", secondComplete, second,
+            &secondWork);
+  };
+  const std::string instanceSnapshot =
+      "int in_instance<T>(T value) { static_assert(narrow_kind<T>()); "
+      "if constexpr (narrow_value<T>) { return narrowed(value); } "
+      "return 0; }\n"
+      "int main() { return in_instance(int32_t(3)) - 1; }\n";
+  crossSnapshot("a predicate proved in an instance, then asserted at "
+                "namespace scope",
+                instanceSnapshot,
+                "static_assert(narrow_value<int32_t>);\n"
+                "static_assert(narrow_kind<int16_t>());\n"
+                "int main() { return 0; }\n",
+                true);
+  crossSnapshot("a predicate proved in an instance, then refuted at "
+                "namespace scope",
+                instanceSnapshot,
+                "static_assert(narrow_value<int64_t>, \"not narrow\");\n"
+                "int main() { return 0; }\n",
+                false);
 }
 
 lang::FrontendResult
@@ -496,8 +915,21 @@ void checkEntry(const std::filesystem::path &root,
     completeKeys.push_back(key(diagnostic));
   std::sort(completeKeys.begin(), completeKeys.end());
 
+  // A reachable analysis completes every body it needs in the same pass: no
+  // repeated round and no complete fallback, with or without a preamble.
+  const auto expectNoRounds = [&](const std::string &label,
+                                  const lang::FrontendWorkMetrics &work) {
+    expect(work.semanticDemandRounds == 0 && work.semanticDemandFallbacks == 0,
+           label + " needs no repeated analysis round for " + entry.string() +
+               ", got " + std::to_string(work.semanticDemandRounds) +
+               " round(s) and " + std::to_string(work.semanticDemandFallbacks) +
+               " fallback(s)");
+  };
+  lang::FrontendWorkMetrics reachableWork;
   const lang::FrontendResult reachable =
-      analyze(root, entry, lang::TrustedBodyAnalysis::Reachable, true);
+      analyze(root, entry, lang::TrustedBodyAnalysis::Reachable, true, nullptr,
+              &reachableWork);
+  expectNoRounds("reachable analysis", reachableWork);
   expect(!complete.hirValid || reachable.hirValid,
          "reachable analysis preserves valid HIR for " + entry.string());
   std::vector<std::string> completeApplication;
@@ -543,6 +975,7 @@ void checkEntry(const std::filesystem::path &root,
                               : lang::TrustedBodyAnalysis::Reachable,
                 !completeRound, preambles, &work, parses);
     const std::string label = "preamble round " + std::to_string(round);
+    expectNoRounds(label, work);
     expect(work.semanticPreambleBuilds == (round == 0 ? 1U : 0U) &&
                work.semanticPreambleAdoptions != 0,
            label + " builds the preamble once and adopts it for " +
@@ -594,6 +1027,413 @@ void measureEntry(const std::filesystem::path &root,
               << " fallback=" << metrics.semanticDemandFallbacks << '\n';
   }
 }
+
+// Bounded analysis defers trusted constexpr definitions by default (#398);
+// FrontendOptions::deferConstexprBodies = false is the test-only eager mode
+// that lets one binary compare the two.
+void checkConstexprDeferralOption(const std::filesystem::path &root) {
+  expect(lang::FrontendOptions{}.deferConstexprBodies,
+         "constexpr bodies are deferred by default");
+  const auto entry = root / "tests/defer-option-entry.gti";
+  const auto library = root / "stdlib/std/cmath.gti";
+  const auto run = [&](bool defer, lang::FrontendWorkMetrics &metrics) {
+    lang::FrontendOptions options;
+    options.stopAfter = lang::FrontendPhase::Semantics;
+    options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+    options.workMetrics = &metrics;
+    options.deferConstexprBodies = defer;
+    return lang::Frontend(options).analyze(
+        entry, "import std.cmath;\nint main() { return 0; }\n",
+        {root / "stdlib/prelude.gti"},
+        {{library.string(),
+          "export module cmath;\n"
+          "constexpr int broken_constant() { return missing_constant; }\n"}},
+        {root / "stdlib"});
+  };
+  lang::FrontendWorkMetrics eagerWork;
+  lang::FrontendWorkMetrics deferredWork;
+  const auto eager = run(false, eagerWork);
+  const auto deferred = run(true, deferredWork);
+  expect(!eager.semanticValid,
+         "eagerly, an unused trusted constexpr definition is analysed");
+  expect(deferred.semanticValid && deferredWork.semanticDeferredBodies >
+                                       eagerWork.semanticDeferredBodies,
+         "deferConstexprBodies defers an unused trusted constexpr definition");
+}
+
+// Compile-time limits reached inside trusted, deferrable constexpr bodies
+// (#398; budget and sticky-flag drift after a discarded demand attempt).
+// Bounded analysis must report exactly what complete analysis reports at
+// each limit's boundary, with and without a trusted prefix preamble: a demand
+// attempt that is discarded and repeated may neither leak nor refund
+// constant-evaluation steps, call depth, staging nesting or requirement-query
+// work, nor move a recorded limit exhaustion. Each case compares codes, spans,
+// messages, notes and hints. With `deferConstexpr` the bounded runs also defer
+// trusted constexpr definitions (FrontendOptions::deferConstexprBodies).
+void checkDemandBudgetParity(const std::filesystem::path &root,
+                             bool deferConstexpr) {
+  const auto entry = root / "tests/budget-entry.gti";
+  const auto library = root / "stdlib/std/cmath.gti";
+  // User-defined declarations only: the limits are language rules.
+  const std::string libraryText = R"GTI(export module cmath;
+export struct Tally {
+  uint64_t count;
+  constexpr Tally(uint64_t c) : count(c) {}
+};
+constexpr uint64_t spin_inner(uint64_t n) {
+  mut uint64_t i = 0;
+  while (i < n) { i = i + 1; }
+  return i;
+}
+export constexpr Tally spin(uint64_t n) { return Tally(spin_inner(n)); }
+export constexpr uint64_t descend(uint64_t n) {
+  if (n == uint64_t(0)) { return uint64_t(0); }
+  return descend(n - uint64_t(1)) + uint64_t(1);
+}
+export constexpr uint64_t level<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else {
+    if constexpr (level<N - 1>() == N - 1) { return N; }
+    else { return 0; }
+  }
+}
+export constexpr bool cycle<uint64_t N>() {
+  if constexpr (cycle<N>()) { return true; }
+  else { return false; }
+}
+export constexpr uint64_t nested_spin<uint64_t N>() {
+  if constexpr (spin_inner(N) == N) { return N; }
+  else { return 0; }
+}
+export struct Pair<A, B> { Pair() = default; };
+constexpr bool accept<T>() { return true; }
+concept accepted<T> = accept<T>();
+export constexpr bool probe<T>() { return accepted<T>; }
+)GTI";
+  const std::string prefix = "import std.cmath;\n";
+  enum class Mode { Complete, Reachable, Preamble };
+  struct Outcome {
+    std::vector<std::string> keys;
+    // Primary start offsets of diagnostics located in the entry.
+    std::vector<std::size_t> entryStarts;
+    bool semanticValid = false;
+    bool hirValid = false;
+    lang::FrontendWorkMetrics work;
+  };
+  const auto analyzeMode =
+      [&](const std::string &text, const lang::CompileLimits &limits, Mode mode,
+          std::shared_ptr<lang::SemanticPreambleCache> preambles = nullptr,
+          std::shared_ptr<lang::FrontendCache> parses = nullptr) {
+        Outcome outcome;
+        lang::FrontendOptions options;
+        options.stopAfter = lang::FrontendPhase::Hir;
+        options.analyzeRecoveredProgram = true;
+        options.limits = limits;
+        options.workMetrics = &outcome.work;
+        options.trustedBodies = mode == Mode::Complete
+                                    ? lang::TrustedBodyAnalysis::Complete
+                                    : lang::TrustedBodyAnalysis::Reachable;
+        options.deferConstexprBodies = deferConstexpr && mode != Mode::Complete;
+        options.preambleCache = std::move(preambles);
+        options.cache = std::move(parses);
+        const auto result = lang::Frontend(options).analyze(
+            entry, prefix + text, {root / "stdlib/prelude.gti"},
+            {{library.string(), libraryText}}, {root / "stdlib"});
+        for (const lang::Diagnostic &diagnostic : result.diagnostics) {
+          outcome.keys.push_back(key(diagnostic));
+          if (std::filesystem::path(diagnostic.primary.source).filename() ==
+              entry.filename())
+            outcome.entryStarts.push_back(diagnostic.primary.start);
+        }
+        std::sort(outcome.keys.begin(), outcome.keys.end());
+        outcome.semanticValid = result.semanticValid;
+        outcome.hirValid = result.hirValid;
+        return outcome;
+      };
+  const auto completeValid = [&](const std::string &text,
+                                 const lang::CompileLimits &limits) {
+    const Outcome outcome = analyzeMode(text, limits, Mode::Complete);
+    return outcome.semanticValid && outcome.hirValid;
+  };
+  const std::string suffix = deferConstexpr ? " [constexpr deferred]" : "";
+  // Compares each bounded configuration with the complete check: reachable,
+  // then two rounds over one preamble cache (the first builds it, the second
+  // adopts it). Returns the complete check's outcome.
+  const auto compare = [&](const std::string &label, const std::string &text,
+                           const lang::CompileLimits &limits) {
+    const Outcome complete = analyzeMode(text, limits, Mode::Complete);
+    const auto against = [&](const std::string &modeLabel,
+                             const Outcome &bounded) {
+      const std::string where = label + " (" + modeLabel + ")" + suffix;
+      if (bounded.keys != complete.keys)
+        report("budget parity " + where, entry, complete.keys, bounded.keys);
+      expect(bounded.semanticValid == complete.semanticValid &&
+                 bounded.hirValid == complete.hirValid,
+             where + ": validity equals the complete check");
+      expect(bounded.work.semanticDemandFallbacks == 0,
+             where + ": no complete fallback");
+    };
+    against("reachable", analyzeMode(text, limits, Mode::Reachable));
+    auto preambles = std::make_shared<lang::SemanticPreambleCache>();
+    auto parses =
+        std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
+            .maximumEntries = 1024,
+            .maximumEstimatedBytes = 512U * 1024U * 1024U});
+    for (int round = 0; round < 2; ++round) {
+      const Outcome resumed =
+          analyzeMode(text, limits, Mode::Preamble, preambles, parses);
+      expect(resumed.work.semanticPreambleBuilds == (round == 0 ? 1U : 0U) &&
+                 resumed.work.semanticPreambleAdoptions != 0,
+             label + suffix + ": preamble round " + std::to_string(round) +
+                 " builds the preamble once and adopts it");
+      against("preamble round " + std::to_string(round), resumed);
+    }
+    return complete;
+  };
+  const auto hasMessage = [](const Outcome &outcome, const std::string &code,
+                             const std::string &fragment) {
+    const bool found = std::any_of(
+        outcome.keys.begin(), outcome.keys.end(), [&](const std::string &item) {
+          return item.starts_with(code + '\t') &&
+                 item.find(fragment) != std::string::npos;
+        });
+    if (!found) {
+      std::cerr << "no " << code << " diagnostic containing '" << fragment
+                << "' among:\n";
+      for (const std::string &item : outcome.keys)
+        std::cerr << "  " << item << '\n';
+    }
+    return found;
+  };
+  // The smallest value of `field` in (low, high] for which the complete
+  // check accepts `text`; it must reject `low` and accept `high`.
+  const auto boundary = [&](const std::string &label, const std::string &text,
+                            std::size_t lang::CompileLimits::*field,
+                            std::size_t low, std::size_t high) {
+    lang::CompileLimits limits;
+    limits.*field = high;
+    expect(completeValid(text, limits), label + ": accepted at the bound");
+    limits.*field = low;
+    expect(!completeValid(text, limits), label + ": rejected at the floor");
+    while (high - low > 1) {
+      const std::size_t middle = low + (high - low) / 2;
+      limits.*field = middle;
+      (completeValid(text, limits) ? high : low) = middle;
+    }
+    return high;
+  };
+
+  // The step limit, exhausted in a trusted helper that the entry reaches
+  // through another trusted constexpr definition. Exactly at the limit the
+  // request succeeds and one step fewer fails; well below it, the recorded
+  // exhaustion names the helper executing when the limit tripped.
+  {
+    const std::string text =
+        "static_assert(spin(uint64_t(300)).count == uint64_t(300));\n"
+        "int main() { return 0; }\n";
+    const std::size_t steps =
+        boundary("step limit", text, &lang::CompileLimits::constexprSteps, 1,
+                 std::size_t{1} << 13);
+    lang::CompileLimits limits;
+    limits.constexprSteps = steps;
+    compare("step limit at " + std::to_string(steps), text, limits);
+    limits.constexprSteps = steps - 1;
+    const Outcome failed =
+        compare("step limit at " + std::to_string(steps - 1), text, limits);
+    expect(hasMessage(failed, "GTI-S2057",
+                      "used all " + std::to_string(steps - 1) + " steps"),
+           "one step short exhausts the step limit");
+    limits.constexprSteps = steps / 2;
+    const Outcome inside =
+        compare("step limit at " + std::to_string(steps / 2), text, limits);
+    expect(hasMessage(inside, "GTI-S2057", "while executing 'spin_inner'"),
+           "the recorded exhaustion names the trusted helper");
+  }
+  // The call-depth limit, through trusted recursion.
+  {
+    const std::string text =
+        "static_assert(descend(uint64_t(30)) == uint64_t(30));\n"
+        "int main() { return 0; }\n";
+    const std::size_t depth = boundary(
+        "depth limit", text, &lang::CompileLimits::constexprDepth, 1, 256);
+    lang::CompileLimits limits;
+    limits.constexprDepth = depth;
+    compare("depth limit at " + std::to_string(depth), text, limits);
+    limits.constexprDepth = depth - 1;
+    const Outcome failed =
+        compare("depth limit at " + std::to_string(depth - 1), text, limits);
+    expect(hasMessage(failed, "GTI-S2057", "while executing 'descend'"),
+           "one call short exhausts the depth limit in the trusted body");
+  }
+  // The fixed 64-level staging nesting limit: 63 nested stagings of a
+  // trusted constexpr definition succeed and 64 fail; so does a cycle.
+  {
+    const Outcome inside = compare(
+        "staging nesting 63",
+        "static_assert(level<63>() == 63);\nint main() { return 0; }\n", {});
+    expect(inside.semanticValid && inside.hirValid,
+           "63 nested stagings are within the limit");
+    const Outcome beyond = compare(
+        "staging nesting 64",
+        "static_assert(level<64>() == 64);\nint main() { return 0; }\n", {});
+    expect(hasMessage(beyond, "GTI-S2057",
+                      "Nested constexpr staging depth (64) exceeded"),
+           "64 nested stagings exceed the staging limit");
+    const Outcome cyclic =
+        compare("cyclic staging",
+                "static_assert(cycle<0>());\nint main() { return 0; }\n", {});
+    expect(hasMessage(cyclic, "GTI-S2057", "is staged again while its own"),
+           "a cyclic staging reports the staging limit");
+  }
+  // The 16384-node requirement-query budget, charged by a concept applied
+  // inside a trusted constexpr body. Pair-doubling aliases give 8191 and
+  // 16383 type nodes: the first query fits, the second exceeds the budget,
+  // so only its assertion fails. (The aliases make this the costly case.)
+  {
+    std::string text = "using P0 = Pair<int, int>;\n";
+    for (int index = 1; index <= 13; ++index)
+      text += "using P" + std::to_string(index) + " = Pair<P" +
+              std::to_string(index - 1) + ", P" + std::to_string(index - 1) +
+              ">;\n";
+    text += "static_assert(probe<P12>());\n"
+            "static_assert(probe<P13>());\n"
+            "int main() { return 0; }\n";
+    const Outcome outcome = compare("requirement-query budget", text, {});
+    const std::size_t secondAssertion =
+        prefix.size() + text.find("static_assert(probe<P13>");
+    expect(outcome.entryStarts.size() == 1 &&
+               outcome.entryStarts.front() >= secondAssertion &&
+               hasMessage(outcome, "GTI-S2079", "Static assertion failed"),
+           "only the query beyond the 16384-node budget fails");
+  }
+  // A recorded exhaustion stays with its request. A compile-time branch
+  // condition inside a trusted constexpr instance exhausts the step limit:
+  // the diagnostic names the helper that tripped it, the request that needed
+  // the instance fails, and the next request in the same analysis (with a
+  // fresh budget) is unaffected.
+  {
+    const std::string text = "static_assert(nested_spin<300>() == 300);\n"
+                             "static_assert(spin(uint64_t(20)).count == "
+                             "uint64_t(20));\n"
+                             "int main() { return 0; }\n";
+    const std::size_t steps =
+        boundary("nested step limit", text,
+                 &lang::CompileLimits::constexprSteps, 1, std::size_t{1} << 13);
+    lang::CompileLimits limits;
+    limits.constexprSteps = steps;
+    compare("nested step limit at " + std::to_string(steps), text, limits);
+    limits.constexprSteps = steps - 1;
+    const Outcome edge = compare(
+        "nested step limit at " + std::to_string(steps - 1), text, limits);
+    expect(hasMessage(edge, "GTI-S2057",
+                      "used all " + std::to_string(steps - 1) + " steps"),
+           "one step short exhausts the shared request budget");
+    limits.constexprSteps = steps / 2;
+    const Outcome failed = compare(
+        "nested step limit at " + std::to_string(steps / 2), text, limits);
+    expect(hasMessage(failed, "GTI-S2057", "while executing 'spin_inner'"),
+           "the nested exhaustion names the trusted helper");
+    const std::size_t nextRequest =
+        prefix.size() + text.find("static_assert(spin(");
+    expect(!failed.entryStarts.empty() &&
+               std::none_of(
+                   failed.entryStarts.begin(), failed.entryStarts.end(),
+                   [&](std::size_t start) { return start >= nextRequest; }),
+           "the exhaustion fails its own request and does not leak into "
+           "the next");
+  }
+}
+// Deferred trusted constexpr bodies must not multiply compile-time staging
+// work (#398, cache discipline). For a few corpus entries, the artifact
+// configuration with trusted constexpr definitions deferred stays within a
+// bound of complete analysis's staged closure lowerings and staged worker
+// builds, and needs no repeated analysis round or complete fallback. Parity
+// is not achievable: a body found pending only while a closure is lowered
+// discards that lowering once, and a constexpr body completed out of source
+// order refreshes the worker snapshot. The bound catches a result or
+// closure cache that stops serving (an earlier draft lowered 668 closures
+// for 141, against 196). FrontendWorkMetrics has no counter for either staging
+// quantity, so they are counted from the compile-time trace: one
+// "constexpr-staged-hir" region per closure lowering and one
+// "constexpr-staged-worker" region per worker build.
+void checkDeferredStagingMetrics(const std::filesystem::path &root) {
+  if (!lang::timeTraceAvailable()) {
+    std::cout << "staging metrics skipped: no compile-time trace\n";
+    return;
+  }
+  struct Work {
+    std::size_t closureLowerings = 0;
+    std::size_t workerBuilds = 0;
+    lang::FrontendWorkMetrics metrics;
+    bool valid = false;
+  };
+  const auto trace =
+      std::filesystem::temp_directory_path() /
+      ("gti-staging-metrics-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()) +
+       ".json");
+  const auto count = [](const std::string &text, const std::string &name) {
+    const std::string needle = "\"name\":\"" + name + "\"";
+    std::size_t found = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos;
+         at = text.find(needle, at + needle.size()))
+      ++found;
+    return found;
+  };
+  const auto run = [&](const std::filesystem::path &entry, bool deferred) {
+    Work work;
+    lang::FrontendOptions options;
+    options.trustedBodies = deferred ? lang::TrustedBodyAnalysis::Reachable
+                                     : lang::TrustedBodyAnalysis::Complete;
+    options.deferConstexprBodies = deferred;
+    options.lowerReachableOnly = true;
+    options.lowerLibraryReachableOnly = true;
+    options.workMetrics = &work.metrics;
+    lang::beginTimeTrace("gti_trusted_body_analysis_tests");
+    const auto result = lang::Frontend(options).analyze(
+        entry, std::nullopt, {root / "stdlib/prelude.gti"}, {},
+        {root / "stdlib"});
+    work.valid = result.canGenerateCode();
+    if (!lang::endTimeTrace(trace.string())) {
+      expect(false, "the compile-time trace is written");
+      return work;
+    }
+    std::ifstream input(trace);
+    const std::string text((std::istreambuf_iterator<char>(input)),
+                           std::istreambuf_iterator<char>());
+    work.closureLowerings = count(text, "constexpr-staged-hir");
+    work.workerBuilds = count(text, "constexpr-staged-worker");
+    return work;
+  };
+  for (const char *name :
+       {"044-bounded-requires.gti", "104-move-only-ordering.gti",
+        "141-reflected-json.gti", "146-counted-text-view-iteration.gti"}) {
+    const auto entry = root / "examples" / name;
+    const Work complete = run(entry, false);
+    const Work deferred = run(entry, true);
+    std::cout << name << " closure lowerings " << complete.closureLowerings
+              << " -> " << deferred.closureLowerings << ", worker builds "
+              << complete.workerBuilds << " -> " << deferred.workerBuilds
+              << ", staged executions "
+              << complete.metrics.constexprMirExecutions << " -> "
+              << deferred.metrics.constexprMirExecutions << ", rounds "
+              << deferred.metrics.semanticDemandRounds << ", fallbacks "
+              << deferred.metrics.semanticDemandFallbacks << '\n';
+    const std::string label = std::string(name) + " [constexpr deferred]";
+    expect(complete.valid && deferred.valid,
+           label + ": both analyses can generate code");
+    expect(deferred.closureLowerings * 4 <= complete.closureLowerings * 5,
+           label + ": staged closure lowerings within 1.25x complete");
+    expect(deferred.workerBuilds <= complete.workerBuilds * 4 + 4,
+           label + ": staged worker builds within 4x complete");
+    expect(deferred.metrics.semanticDemandRounds == 0 &&
+               deferred.metrics.semanticDemandFallbacks == 0,
+           label + ": no repeated analysis round or complete fallback");
+  }
+  std::error_code ignored;
+  std::filesystem::remove(trace, ignored);
+}
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -601,15 +1441,28 @@ int main(int argc, char *argv[]) {
       argc > 1 ? std::filesystem::path(argv[1])
                : std::filesystem::path(__FILE__).parent_path().parent_path());
   checkFixtures(root);
+  checkConstantDemandParity(root);
   checkLibraryOnlyOmission(root);
   checkPreambleGraphs(root);
+  checkConstexprDeferralOption(root);
   std::vector<std::filesystem::path> entries;
   bool measure = false;
+  // The budget cases are costly, so the corpus partitions leave them to the
+  // `--fixtures` run (trusted_body_analysis_fixtures), which runs them with
+  // trusted constexpr definitions deferred and checks that deferral adds no
+  // staging work. `--eager-constexpr-bodies` repeats them with constexpr
+  // definitions analysed eagerly.
+  bool budget = false;
+  bool eagerBudget = false;
   if (argc > 2) {
     for (int index = 2; index < argc; ++index)
       if (std::string(argv[index]) == "--measure")
         measure = true;
-      else if (std::string(argv[index]) != "--fixtures")
+      else if (std::string(argv[index]) == "--fixtures")
+        budget = true;
+      else if (std::string(argv[index]) == "--eager-constexpr-bodies")
+        eagerBudget = true;
+      else
         entries.push_back(root / argv[index]);
   } else {
     for (const char *directory : {"examples", "stdlib/tests"}) {
@@ -622,6 +1475,12 @@ int main(int argc, char *argv[]) {
       }
     }
   }
+  if (budget) {
+    checkDemandBudgetParity(root, true);
+    checkDeferredStagingMetrics(root);
+  }
+  if (eagerBudget)
+    checkDemandBudgetParity(root, false);
   std::sort(entries.begin(), entries.end());
   for (const std::filesystem::path &entry : entries) {
     expect(std::filesystem::is_regular_file(entry),

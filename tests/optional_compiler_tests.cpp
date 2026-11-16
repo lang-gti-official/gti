@@ -589,7 +589,9 @@ int main() { auto text = Text::value("static"); return 0; }
              lang::verifyMirProgram(literalPayload.mir).valid(),
          "a directly literal-backed text payload needs no external owner loan");
   for (const std::string expression : {"owner.view()", "std::move(view)"}) {
-    const auto dynamicPayload = lang::Frontend().analyze(
+    // An inferred local binding records the payload's owner dependency just
+    // as `Text text = ...` does; the value may not leave its owner's scope.
+    const auto localPayload = lang::Frontend().analyze(
         "dynamic-text-payload.gti",
         "import std.string;\nenum Text { empty, value(std::string_view "
         "text) };\n"
@@ -597,11 +599,24 @@ int main() { auto text = Text::value("static"); return 0; }
         "std::string_view view = owner.view(); auto text = Text::value(" +
             expression + "); return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
-    expect(!dynamicPayload.canGenerateCode() &&
-               hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-S2045") &&
-               !hasDiagnosticCode(dynamicPayload.diagnostics, "GTI-B0001"),
-           "ordinary enum storage rejects dynamic text, including moved views, "
-           "before MIR");
+    expect(localPayload.canGenerateCode() &&
+               lang::verifyMirProgram(localPayload.mir).valid(),
+           "an inferred local enum binding may hold dynamic text, including "
+           "moved views");
+    const auto escapingPayload = lang::Frontend().analyze(
+        "dynamic-text-payload-escape.gti",
+        "import std.string;\nenum Text { empty, value(std::string_view "
+        "text) };\n"
+        "Text escape() { std::string owner{\"owned\"}; "
+        "std::string_view view = owner.view(); auto text = Text::value(" +
+            expression +
+            "); return text; }\nint main() { auto text = escape(); return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!escapingPayload.canGenerateCode() &&
+               hasDiagnosticCode(escapingPayload.diagnostics, "GTI-S2045") &&
+               !hasDiagnosticCode(escapingPayload.diagnostics, "GTI-B0001"),
+           "ordinary enum storage of dynamic text, including moved views, "
+           "cannot escape its owner and is rejected before MIR");
   }
 
   for (const std::string storage :

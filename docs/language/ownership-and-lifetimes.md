@@ -3207,6 +3207,7 @@ owner dependency at that field instead of rejecting the argument:
 ```gti
 std::string input{"token text"};
 Token token = Token(input.view(), 3);       // token.text views input
+auto inferred = Token(input.view(), 3);    // the same owner dependency
 Diag diag{.text = input.view(), .line = 2}; // so does diag.text
 std::string_view head = token.text;         // a view of input as well
 ```

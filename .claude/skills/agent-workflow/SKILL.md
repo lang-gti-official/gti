@@ -52,6 +52,13 @@ session worktree. `--adopt` is for an existing clean task checkout outside
 primary, not a way around ownership or freshness checks. Retain the ordinary
 GitHub PR URL, and attach it with the client's PR tool when one is available.
 
+Put temporary files (check plans, PR bodies, logs) in a directory unique to
+the task, such as a subdirectory of the session scratchpad, never at the top
+of a shared scratch or `/tmp` directory. Wait on a background operation by its
+pid or output file (or the client's background-task notification); never with
+`until ! pgrep -f "<text>"`, which matches its own command line and never
+exits.
+
 The stash stack is shared across worktrees: never use an unqualified
 `git stash`/`git stash pop` or blanket-stash another active checkout.
 Preserve overlaps with an explicitly identified recoverable snapshot.

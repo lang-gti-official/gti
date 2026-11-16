@@ -1,0 +1,418 @@
+// Consuming calls hand a cleanup-free receiver moved out of a place to the callee.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6 run7 run8 run9 run10 run11 run12 run13 run14 run15 run16 run17 run18 run19 run20
+//@[run2] run-fail
+//@[run2] args: guard
+//@[run2] exit-code: 70
+//@[run2] stderr-contains: consuming_prepared_receiver.gti:46: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: guard result
+//@[run3] exit-code: 70
+//@[run3] stderr-contains: consuming_prepared_receiver.gti:36: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at consuming_prepared_receiver.gti:46; secondary [GTI-R0002]
+//@[run4] run-fail
+//@[run4] args: guard result callee
+//@[run4] exit-code: 70
+//@[run4] stderr-contains: consuming_prepared_receiver.gti:57: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: guard result callee replace
+//@[run5] exit-code: 70
+//@[run5] stderr-contains: consuming_prepared_receiver.gti:55: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run6] run-fail
+//@[run6] args: guard result callee replace bound
+//@[run6] exit-code: 70
+//@[run6] stderr-contains: consuming_prepared_receiver.gti:170: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run7] run-fail
+//@[run7] args: guard result callee replace bound returned
+//@[run7] exit-code: 70
+//@[run7] stderr-contains: consuming_prepared_receiver.gti:175: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run8] run-fail
+//@[run8] args: guard result callee replace bound returned absorbed
+//@[run8] exit-code: 70
+//@[run8] stderr-contains: consuming_prepared_receiver.gti:181: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run9] run-fail
+//@[run9] args: guard result callee replace bound returned absorbed viewed
+//@[run9] exit-code: 70
+//@[run9] stderr-contains: consuming_prepared_receiver.gti:186: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run10] run-fail
+//@[run10] args: guard result callee replace bound returned absorbed viewed expected
+//@[run10] exit-code: 70
+//@[run10] stderr-contains: consuming_prepared_receiver.gti:190: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run11] run-fail
+//@[run11] args: guard result callee replace bound returned absorbed viewed expected assembled
+//@[run11] exit-code: 70
+//@[run11] stderr-contains: consuming_prepared_receiver.gti:239: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run12] run-fail
+//@[run12] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded
+//@[run12] exit-code: 70
+//@[run12] stderr-contains: consuming_prepared_receiver.gti:247: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run13] run-fail
+//@[run13] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped
+//@[run13] exit-code: 70
+//@[run13] stderr-contains: consuming_prepared_receiver.gti:201: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run14] run-fail
+//@[run14] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped generic
+//@[run14] exit-code: 70
+//@[run14] stderr-contains: consuming_prepared_receiver.gti:207: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run15] run-fail
+//@[run15] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped generic discarded
+//@[run15] exit-code: 70
+//@[run15] stderr-contains: consuming_prepared_receiver.gti:211: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run16] run-fail
+//@[run16] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped generic discarded replacing
+//@[run16] exit-code: 70
+//@[run16] stderr-contains: consuming_prepared_receiver.gti:216: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run17] run-fail
+//@[run17] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped generic discarded replacing called
+//@[run17] exit-code: 70
+//@[run17] stderr-contains: consuming_prepared_receiver.gti:221: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run18] run-fail
+//@[run18] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped generic discarded replacing called lambda
+//@[run18] exit-code: 70
+//@[run18] stderr-contains: consuming_prepared_receiver.gti:329: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run19] run-fail
+//@[run19] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped generic discarded replacing called lambda left
+//@[run19] exit-code: 70
+//@[run19] stderr-contains: consuming_prepared_receiver.gti:227: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run20] run-fail
+//@[run20] args: guard result callee replace bound returned absorbed viewed expected assembled forwarded looped generic discarded replacing called lambda left right
+//@[run20] exit-code: 70
+//@[run20] stderr-contains: consuming_prepared_receiver.gti:227: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- consuming_prepared_receiver.gti
+import std.string;
+import std.vector;
+
+// A cleanup-free class moved into a consuming (`&&`) receiver is staged as a
+// prepared parameter that the call hands to the callee, like an owning
+// argument. Every owning result below is traced: each is constructed once and
+// destroyed once, at the point its consumer requires. When a later argument can
+// fail, the receiver occupies that prepared slot from its stage: the call
+// consumes it, and the failure edge destroys it instead of running the member.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+// The same kind of result, read through a field of the temporary.
+class Shown {
+public:
+  int id;
+  Shown(int value) : id(value) { std::println(std::to_string(value)); }
+  ~Shown() { std::println(std::to_string(-this.id)); }
+};
+
+// A result whose destructor can fail while failure cleanup destroys it.
+class Fragile {
+  int id;
+  int divisor;
+public:
+  Fragile(int value, int divisor) : id(value), divisor(divisor) {
+    std::println(std::to_string(value));
+  }
+  ~Fragile() {
+    std::println(std::to_string(-this.id));
+    int fragile = 1 / this.divisor;
+  }
+  int read() { return this.id; }
+};
+
+// Destroyed after the returned result exists; its destructor can fail.
+class Guard {
+  int divisor;
+public:
+  Guard(int divisor) : divisor(divisor) {}
+  ~Guard() { int guard = 1 / this.divisor; }
+};
+
+// The receivers hold only scalar state and have no destructor.
+class Maker {
+  int base;
+public:
+  Maker(int base) : base(base) {}
+  Tracked make() && { return Tracked(this.base); }
+  Tracked divide(int divisor) && { return Tracked(this.base / divisor); }
+  Shown show() && { return Shown(this.base); }
+  Shown show_divided(int divisor) && { return Shown(this.base / divisor); }
+  expected<Tracked, int> attempt(bool fail) && {
+    if (fail) {
+      return unexpected(this.base);
+    }
+    return Tracked(this.base);
+  }
+  Fragile fragile(int divisor) && { return Fragile(this.base, divisor); }
+  Tracked add(int value) && { return Tracked(this.base + value); }
+  Tracked absorb(Tracked first, int value) && {
+    return Tracked(this.base + first.read() + value);
+  }
+  Shown show_add(int value) && { return Shown(this.base + value); }
+};
+
+class Tagged<T> {
+  int base;
+public:
+  Tagged(int base) : base(base) {}
+  Tracked make() && { return Tracked(this.base); }
+  Tracked add(int value) && { return Tracked(this.base + value); }
+};
+
+class Factory {
+  int base;
+public:
+  Factory(int base) : base(base) {}
+  Tracked operator()() && { return Tracked(this.base); }
+  Tracked operator()(int value) && { return Tracked(this.base + value); }
+};
+
+// Results returned directly. The moved-from source's drop still runs between
+// the call and the Return.
+Tracked take_param(Maker maker) { return std::move(maker).make(); }
+
+Tracked take_mut(mut Maker maker) { return std::move(maker).make(); }
+
+Tracked take_local(int value) {
+  Maker local{value};
+  return std::move(local).make();
+}
+
+Tracked take_either(bool left, Maker a, Maker b) {
+  if (left) {
+    return std::move(a).make();
+  }
+  return std::move(b).make();
+}
+
+Tracked take_tagged<T>(Tagged<T> tagged) { return std::move(tagged).make(); }
+
+Tracked take_call(Factory factory) { return std::move(factory)(); }
+
+expected<Tracked, int> take_expected(Maker maker, bool fail) {
+  return std::move(maker).attempt(fail);
+}
+
+// The guard's destructor runs after fragile() has produced the result.
+Fragile take_guarded(Maker maker, int item_divisor, int divisor) {
+  Guard guard{divisor};
+  return std::move(maker).fragile(item_divisor);
+}
+
+// Results held in their own slot: discarded, replacing a binding, or read
+// through a field, from failure-free and raising members.
+void discard_made(Maker maker) { [[discard]] std::move(maker).make(); }
+
+void discard_divided(Maker maker, int divisor) {
+  [[discard]] std::move(maker).divide(divisor);
+}
+
+int replace_made(Maker maker) {
+  mut Tracked kept = Tracked(20);
+  kept = std::move(maker).make();
+  return kept.read();
+}
+
+int replace_divided(Maker maker, int divisor) {
+  mut Tracked kept = Tracked(22);
+  kept = std::move(maker).divide(divisor);
+  return kept.read();
+}
+
+int view_shown(Maker maker) { return std::move(maker).show().id; }
+
+int view_divided(Maker maker, int divisor) {
+  return std::move(maker).show_divided(divisor).id;
+}
+
+int view_either(bool take, Maker maker, int divisor) {
+  return take ? std::move(maker).show_divided(divisor).id : 0;
+}
+
+// Expected results constructed in the binding that consumes them.
+int bind_expected(Maker maker, bool fail) {
+  expected<Tracked, int> result = std::move(maker).attempt(fail);
+  if (!result) {
+    return result.error();
+  }
+  return result.value().read();
+}
+
+int choose_expected(bool left, Maker a, Maker b) {
+  expected<Tracked, int> result =
+      left ? std::move(a).attempt(false) : std::move(b).attempt(true);
+  if (!result) {
+    return result.error();
+  }
+  return result.value().read();
+}
+
+// A later argument can fail after the receiver was prepared.
+int bind_later(Maker maker, int divisor) {
+  Tracked made = std::move(maker).add(1 / divisor);
+  return made.read();
+}
+
+Tracked return_later(mut Maker maker, int divisor) {
+  return std::move(maker).add(1 / divisor);
+}
+
+// The owning first argument is prepared too: the failing second argument
+// destroys it, and otherwise the callee destroys it after its result exists.
+int absorb_later(Maker maker, int divisor) {
+  Tracked made = std::move(maker).absorb(Tracked(70), 1 / divisor);
+  return made.read();
+}
+
+int view_later(Maker maker, int divisor) {
+  return std::move(maker).show_add(1 / divisor).id;
+}
+
+int expected_later(Maker maker, int divisor) {
+  expected<Tracked, int> result = std::move(maker).attempt(1 / divisor == 0);
+  if (!result) {
+    return result.error();
+  }
+  return result.value().read();
+}
+
+int loop_later(int divisor) {
+  mut int total = 0;
+  for (mut int index = 0; index < 2; index += 1) {
+    Maker maker{80 + index};
+    total += std::move(maker).add(1 / divisor).read();
+  }
+  return total;
+}
+
+Tracked tagged_later<T>(Tagged<T> tagged, int divisor) {
+  return std::move(tagged).add(1 / divisor);
+}
+
+void discard_later(Maker maker, int divisor) {
+  [[discard]] std::move(maker).add(1 / divisor);
+}
+
+int replace_later(Maker maker, int divisor) {
+  mut Tracked kept = Tracked(90);
+  kept = std::move(maker).add(1 / divisor);
+  return kept.read();
+}
+
+Tracked call_later(Factory factory, int divisor) {
+  return std::move(factory)(1 / divisor);
+}
+
+// Only the arm that runs prepares and consumes its receiver.
+int choose_later(bool left, Maker a, Maker b, int divisor) {
+  Tracked chosen =
+      left ? std::move(a).add(1 / divisor) : std::move(b).add(2 / divisor);
+  return chosen.read();
+}
+
+Tracked build(Maker maker, int value) { return std::move(maker).add(value); }
+
+// Constructor field initializers prepare the same receiver, or a moved
+// argument, before a later argument fails.
+class Assembled {
+  Tracked item;
+public:
+  Assembled(Maker maker, int divisor)
+      : item(std::move(maker).add(1 / divisor)) {}
+  int read() { return this.item.read(); }
+};
+
+class Forwarded {
+  Tracked item;
+public:
+  Forwarded(Maker maker, int divisor)
+      : item(build(std::move(maker), 1 / divisor)) {}
+  int read() { return this.item.read(); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int total = 0;
+  {
+    Tracked first = take_param(Maker(1));
+    total += first.read();
+  }
+  {
+    Tracked second = take_mut(Maker(2));
+    total += second.read();
+  }
+  {
+    Tracked local = take_local(3);
+    total += local.read();
+  }
+  {
+    Tracked chosen = take_either(false, Maker(30), Maker(4));
+    total += chosen.read();
+  }
+  {
+    Tracked tagged = take_tagged<int>(Tagged<int>(5));
+    total += tagged.read();
+  }
+  {
+    auto take = [](Maker maker) -> Tracked { return std::move(maker).make(); };
+    Tracked taken = take(Maker(6));
+    total += taken.read();
+  }
+  {
+    Tracked called = take_call(Factory(7));
+    total += called.read();
+  }
+  {
+    auto result = take_expected(Maker(8), false);
+    total += result.value().read();
+    auto failed = take_expected(Maker(9), true);
+    total += failed.error();
+  }
+  discard_made(Maker(10));
+  discard_divided(Maker(11), 1);
+  total += replace_made(Maker(21));
+  total += replace_divided(Maker(23), 1);
+  total += view_shown(Maker(12));
+  total += view_divided(Maker(13), 1);
+  total += view_either(true, Maker(14), 1);
+  total += view_either(false, Maker(99), 0);
+  total += bind_expected(Maker(15), false);
+  total += bind_expected(Maker(16), true);
+  total += choose_expected(true, Maker(17), Maker(98));
+  total += choose_expected(false, Maker(97), Maker(18));
+  // One argument fails the guard after the result exists, two also fail that
+  // result's destructor during failure cleanup, three fail a consuming callee
+  // before its result exists, and four fail one while it would replace a
+  // binding, which keeps the old value for failure cleanup.
+  Fragile kept = take_guarded(Maker(40), argc == 3 ? 0 : 1,
+                              argc == 2 || argc == 3 ? 0 : 1);
+  std::println("kept");
+  int divided = view_divided(Maker(50), argc == 4 ? 0 : 1);
+  int replaced = replace_divided(Maker(51), argc == 5 ? 0 : 1);
+  // A later argument fails after the receiver was prepared: six for a bound
+  // result, seven a returned one, eight after an owning argument, nine a field
+  // read, ten an expected binding, eleven and twelve a constructor field's
+  // receiver and moved argument, thirteen a loop, fourteen a generic body,
+  // fifteen a discarded result, sixteen a replacement (keeping the old value),
+  // seventeen a consuming operator(), eighteen a lambda, and nineteen and
+  // twenty either arm of a conditional.
+  int bound = bind_later(Maker(60), argc == 6 ? 0 : 1);
+  Tracked returned = return_later(Maker(62), argc == 7 ? 0 : 1);
+  int absorbed = absorb_later(Maker(64), argc == 8 ? 0 : 1);
+  int viewed = view_later(Maker(66), argc == 9 ? 0 : 1);
+  int expected_value = expected_later(Maker(68), argc == 10 ? 0 : 1);
+  Assembled assembled = Assembled(Maker(72), argc == 11 ? 0 : 1);
+  Forwarded forwarded = Forwarded(Maker(74), argc == 12 ? 0 : 1);
+  int looped = loop_later(argc == 13 ? 0 : 1);
+  Tracked generic = tagged_later<int>(Tagged<int>(84), argc == 14 ? 0 : 1);
+  discard_later(Maker(86), argc == 15 ? 0 : 1);
+  int replacing = replace_later(Maker(88), argc == 16 ? 0 : 1);
+  Tracked called = call_later(Factory(91), argc == 17 ? 0 : 1);
+  auto take_later = [](Maker source, int divisor) -> Tracked {
+    return std::move(source).add(1 / divisor);
+  };
+  Tracked lambda_made = take_later(Maker(93), argc == 18 ? 0 : 1);
+  int left = choose_later(true, Maker(95), Maker(99), argc == 19 ? 0 : 1);
+  int right = choose_later(false, Maker(99), Maker(98), argc == 20 ? 0 : 1);
+  int later = bound + returned.read() + absorbed + viewed + expected_value +
+              assembled.read() + forwarded.read() + looped + generic.read() +
+              replacing + called.read() + lambda_made.read() + left + right;
+  return total + kept.read() + divided + replaced + later - 1596;
+}

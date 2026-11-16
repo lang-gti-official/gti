@@ -1937,7 +1937,8 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
     const std::filesystem::path &entryPath,
     const std::optional<std::string> &requestedProfile,
     std::optional<lang::ExecutionProfile> executionProfileOverride,
-    std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride) {
+    std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride,
+    std::optional<std::size_t> errorLimitOverride) {
   const lang::TargetInfo host = lang::TargetInfo::host();
   ProjectAnalysisInputs result{
       .rawPointerAudit =
@@ -1948,6 +1949,8 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
               lang::ExecutionProfile::SingleThreaded),
           lang::driver::RuntimeProfile::Hosted)};
 
+  if (errorLimitOverride)
+    result.compileLimits.errorLimit = *errorLimitOverride;
   lang::driver::ProjectFactsResult project =
       lang::driver::resolveProjectFacts(entryPath.parent_path());
   if (!project.succeeded()) {
@@ -1963,6 +1966,8 @@ ProjectAnalysisInputs resolveProjectAnalysisInputs(
 
   const lang::driver::ProjectFacts &facts = *project.facts;
   result.compileLimits = facts.compileLimits();
+  if (errorLimitOverride)
+    result.compileLimits.errorLimit = *errorLimitOverride;
   const std::string &profileName =
       requestedProfile ? *requestedProfile : facts.defaultProfileName();
   const auto *profile = facts.findProfile(profileName);
@@ -2028,10 +2033,12 @@ public:
       std::optional<lang::ExecutionProfile> executionProfileOverride =
           std::nullopt,
       std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride =
-          std::nullopt)
+          std::nullopt,
+      std::optional<std::size_t> errorLimitOverride = std::nullopt)
       : standardLibrary(std::move(standardLibrary)),
         executionProfileOverride(executionProfileOverride),
         rawPointerAuditOverride(rawPointerAuditOverride),
+        errorLimitOverride(errorLimitOverride),
         frontendTracePath(frontendTracePathFromEnvironment()),
         completionWorker(std::optional<unsigned>{frontendWorkerStackSize},
                          [this] { runCompletionWorker(); }) {
@@ -3957,7 +3964,8 @@ private:
         try {
           ProjectAnalysisInputs project = resolveProjectAnalysisInputs(
               request.entryPath, request.projectProfile,
-              executionProfileOverride, rawPointerAuditOverride);
+              executionProfileOverride, rawPointerAuditOverride,
+              errorLimitOverride);
           if (project.configurationValid) {
             completion = lang::LanguageQueries().complete(
                 {.entryPath = request.entryPath,
@@ -4176,9 +4184,9 @@ private:
       try {
         if (const std::optional<std::filesystem::path> path =
                 filePathFromUri(request.uri)) {
-          project = resolveProjectAnalysisInputs(*path, request.projectProfile,
-                                                 executionProfileOverride,
-                                                 rawPointerAuditOverride);
+          project = resolveProjectAnalysisInputs(
+              *path, request.projectProfile, executionProfileOverride,
+              rawPointerAuditOverride, errorLimitOverride);
         }
         guarded = runIsolatedAnalysis(request, project);
       } catch (const std::exception &error) {
@@ -4658,9 +4666,9 @@ private:
         ProjectAnalysisInputs project;
         if (const std::optional<std::filesystem::path> path =
                 filePathFromUri(request.uri)) {
-          project = resolveProjectAnalysisInputs(*path, request.projectProfile,
-                                                 executionProfileOverride,
-                                                 rawPointerAuditOverride);
+          project = resolveProjectAnalysisInputs(
+              *path, request.projectProfile, executionProfileOverride,
+              rawPointerAuditOverride, errorLimitOverride);
         }
         guarded = runIsolatedAnalysis(request, project);
       } catch (const std::exception &error) {
@@ -5322,6 +5330,7 @@ private:
   lang::StandardLibraryLayout standardLibrary;
   std::optional<lang::ExecutionProfile> executionProfileOverride;
   std::optional<lang::RawPointerAuditMode> rawPointerAuditOverride;
+  std::optional<std::size_t> errorLimitOverride;
   // Protected by stateMutex; workers consume only their captured request value.
   std::optional<std::string> projectProfile;
   std::optional<std::filesystem::path> frontendTracePath;
@@ -5444,8 +5453,33 @@ int main(int argc, char *argv[]) {
   }
   std::optional<lang::ExecutionProfile> executionProfile;
   std::optional<lang::RawPointerAuditMode> rawPointerAudit;
+  std::optional<std::size_t> errorLimit;
   for (int index = 1; index < argc; ++index) {
     const std::string_view argument = argv[index];
+    if (argument == "--error-limit" || argument.starts_with("--error-limit=")) {
+      std::string_view value;
+      if (argument == "--error-limit") {
+        if (++index >= argc) {
+          std::cerr << "gti_lsp: missing value after --error-limit\n";
+          return 64;
+        }
+        value = argv[index];
+      } else {
+        value = argument.substr(std::string_view("--error-limit=").size());
+      }
+      std::string error;
+      if (errorLimit) {
+        std::cerr << "gti_lsp: --error-limit may be specified only once\n";
+        return 64;
+      }
+      errorLimit = lang::parseCompileLimitValue(
+          *lang::findCompileLimit("error-limit"), value, error);
+      if (!errorLimit) {
+        std::cerr << "gti_lsp: " << error << '\n';
+        return 64;
+      }
+      continue;
+    }
     if (argument == "--execution-profile") {
       if (++index >= argc) {
         std::cerr << "gti_lsp: missing name after --execution-profile\n";
@@ -5492,6 +5526,6 @@ int main(int argc, char *argv[]) {
   return LanguageServer(
              lang::discoverStandardLibrary(argc > 0 ? argv[0] : "gti_lsp",
                                            GTI_BUILD_STDLIB_ROOT),
-             executionProfile, rawPointerAudit)
+             executionProfile, rawPointerAudit, errorLimit)
       .run();
 }

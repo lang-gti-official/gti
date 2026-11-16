@@ -1,0 +1,9 @@
+// A generic call in a global initializer instantiates and runs.
+//@ run-pass
+// A03: a concrete generic call in a program-wide initializer is rejected with
+// GTI-S2068 although it reads no program-wide storage.
+import std.algorithm;
+
+int biggest = std::max(3, 4);
+
+int main() { return biggest == 4 ? 0 : 1; }

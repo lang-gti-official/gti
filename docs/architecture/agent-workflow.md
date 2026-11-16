@@ -343,7 +343,7 @@ python3 scripts/remote_runner.py --runner ubuntu-6 configure
 python3 scripts/remote_runner.py --runner ubuntu-8 configure
 python3 scripts/remote_runner.py hosts
 python3 scripts/remote_runner.py status --all
-python3 scripts/remote_runner.py run --target gti_runtime_failure_tests --ctest-regex '^runtime_failure_boundary$'
+python3 scripts/remote_runner.py run --target gti_unit_tests --ctest-regex '^gti_unit_tests$'
 ```
 
 For a compiler feature, build the compiler and applicable test targets in the
@@ -903,9 +903,8 @@ CTest label is assigned in one place, `gti_slow_test_patterns` in
 `merge-shards`/`ci-gate` still prove each platform ran its per-commit
 inventory exactly once. `slow.yml` proves its own sets the same way with
 `platform:test-set` keys.
-Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
-`body_analysis_order`, `instance_reuse`) are also registered as per-suite,
-per-source or corpus-partition entries; a sharded run executes the parts and
+Long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`) are
+also registered as per-suite or per-source entries; a sharded run executes the parts and
 skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
 across workers instead of one 16–54-minute test ending a shard alone. The
 `gate` set (`GATE_EXCLUDED`) further omits C++-backend-only variants whose

@@ -1,0 +1,20 @@
+// A dependency's own warning preferences (dependency-warnings = false,
+// disabled-warnings) never hide warnings from the consumer; a repeated build
+// is a cache hit; -W flags apply to every package. (From
+// project_cli_smoke_test.py.)
+$ cd app
+$ gti check
+stderr: $DIR/warning-leaf/src/value.gti:2:39: warning[GTI-S2096]
+stderr: $DIR/warning-library/src/value.gti:3:42: warning[GTI-S2096]
+stderr: $DIR/app/src/main.gti:2:14: warning[GTI-S2096]
+stdout: Diagnostics: 0 errors, 3 warnings
+$ gti build --verbose
+stdout: Built app
+$ gti build --verbose
+stderr: gti: cache hit
+$ gti check -Wno-unused-mut
+!stderr: warning[
+stdout: Diagnostics: 0 errors, 0 warnings
+$ gti check --profile nosuch
+? 65
+stderr: $DIR/app/gti.toml:10:10: error[GTI-B1202]: Unknown build profile 'nosuch'.

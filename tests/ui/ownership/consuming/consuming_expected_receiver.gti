@@ -1,0 +1,57 @@
+// Consuming instance methods and operator chains preserve owned lifetimes.
+//@ run-pass
+//@ revisions: default fail fail-error
+//@[default] stdout: value
+//@[default] stdout: error
+//@[default] stdout: 9
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 9
+//@[fail] stderr-contains: consuming_expected_receiver.gti:31: runtime error[GTI-R0009]: invalid_expected_access in value_on_error
+//@[fail-error] run-fail
+//@[fail-error] args: fail error
+//@[fail-error] exit-code: 70
+//@[fail-error] stdout: value
+//@[fail-error] stdout: 9
+//@[fail-error] stderr-contains: consuming_expected_receiver.gti:34: runtime error[GTI-R0009]: invalid_expected_access in error_on_value
+// --- consuming_expected_receiver.gti
+import std.string;
+import std.vector;
+
+class Builder {
+  mut std::string value;
+public:
+  Builder(std::string value) : value(std::move(value)) {}
+  std::string take() && { return std::move(this.value); }
+  bool empty() { return this.value.empty(); }
+};
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+
+expected<Builder, int> make_builder(bool fail) {
+  if (fail) { return unexpected(1); }
+  return Builder(std::string("value"));
+}
+
+expected<int, Builder> make_error(bool fail) {
+  if (fail) { return 1; }
+  return unexpected(Builder(std::string("error")));
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  auto value = make_builder(argc == 2);
+  auto text = std::move(value).value().take();
+  std::println(text.view());
+  auto error = make_error(argc == 3);
+  auto message = std::move(error).error().take();
+  std::println(message.view());
+  auto observed = make_builder(false);
+  if (std::move(observed).value().empty()) { return 1; }
+  return 0;
+}

@@ -75,9 +75,9 @@ Owner decisions (2026-11-16):
 | Phase | Outcome | Prerequisites | Status |
 | --- | --- | --- | --- |
 | 0. Stop the bleeding | Per-commit runtime harnesses at `-O0` only (`GTI_TEST_LLVM_LEVELS` selects more); slow families carry the CTest label `slow` and run in the daily slow tier, whose `Slow tier verdict (<sha>)` the release train requires; C++-backend tests and CI removed; a diff-based PR lint freezes the old suite (no new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`; `tests/ui/`, `tests/unit/`, `tests/runner/` and `tests/gti_test.cmake` are exempt) | none | done: per-commit `tip` channel (#426), plan record (#428), freeze lint (#429), tiers and `slow.yml` (#432) |
-| 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts | none | done: `suite-measures.yml` (#436, via #455) |
+| 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts: `.github/workflows/suite-measures.yml` (dispatch/weekly, never a gate), `GTI_ENABLE_SOURCE_COVERAGE`, `scripts/coverage_report.py`, `scripts/coverage_compare.py`, `scripts/seeded_bugs.py`; see [verification](../architecture/verification.md#suite-yardsticks-source-coverage-and-seeded-bugs) | none | tooling landed through umbrella #455 (#436); baseline run not yet recorded |
 | 2. Runner MVP | `gti-test` under `tests/runner/`, cases under `tests/ui/`, one CTest entry registered in `tests/gti_test.cmake`; preamble-cache spike settles plan scenario A or B | none | done: `gti-test` and `gti_test_ui` with a shared stdlib preamble (#431) |
-| 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | in progress: phase 4 uses `scripts/extract_cpp_tests.py` (temporary; per-file helper specifications, compiler-checked code sets, review resolutions); converted so far: `protected_member_tests.cpp`, `shared_ownership_tests.cpp`, six constraint tests of `compiler_declarations` (#440, #441); umbrella #455 added snapshot (`mir`, `llvm-ir`, `diagnostics`, `format`), parse-only, revisions and execution-profile directives, the LSP and project kinds, `gti_test_examples`, `gti_corpus` (slow tier), `gti_unit_tests` and the converted stored-reference and shared-harness runtime families (#439, #442–#444, #448–#450); agent guidance replaced by [Writing Tests](../../AGENTS.md#writing-tests) |
+| 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | in progress: phase 4 uses `scripts/extract_cpp_tests.py` (temporary; per-file helper specifications, compiler-checked code sets, review resolutions); converted so far: `protected_member_tests.cpp`, `shared_ownership_tests.cpp`, six constraint tests of `compiler_declarations` (#440, #441); umbrella #455 (merged 2026-11-16) added snapshot (`mir`, `llvm-ir`, `diagnostics`, `format`), parse-only, revisions and execution-profile directives, the LSP and project kinds, `gti_test_examples`, `gti_corpus` (slow tier), `gti_unit_tests` and the converted stored-reference and shared-harness runtime families (#439, #442–#444, #447–#450); arriving through a second umbrella: runner rounds 2 and 3 (#465, #467, #469, #477, #478) and CI wiring of the new entries (#476); agent guidance replaced by [Writing Tests](../../AGENTS.md#writing-tests) |
 
 New tests follow [Writing Tests](../../AGENTS.md#writing-tests), never an old
 harness.
@@ -9949,6 +9949,16 @@ follow-ups:
   per-check independence once the source class's bodies allow it.
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
+
+- **Deferred constexpr library bodies (#398, draft):** unused trusted
+  constexpr definitions are deferred like other trusted bodies and demanded
+  by the compile-time path that reaches them through one body-readiness
+  table and attempt scope (semantic-analysis.md, "Compile-Time Body Demand").
+  The staged evaluator remains the execution authority; no execution rule
+  moved or was added. Follow-ups: narrow demand from function lookup to body
+  fact use; make program-effect closure demand-driven (the largest remaining
+  cost in programs that use what they import); defer trusted constructor and
+  destructor bodies through the same table (`BodyKey` already names them).
 
 - **Immediate declarations:** General `consteval` functions and ordinary
   constructors use the staged MIR evaluator and publish passive values before

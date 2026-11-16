@@ -1,0 +1,80 @@
+// Passive expected payload copies and call-result publication preserve MIR storage.
+//@ run-pass
+//@ revisions: default fail explicit-success explicit-fail-now
+//@[default] stdout: 1
+//@[default] stdout: 2
+//@[default] stdout: 3
+//@[default] stdout: published
+//@[default] stdout: caller cleaned
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 1
+//@[fail] stdout: 2
+//@[fail] stdout: caller cleaned
+//@[fail] stderr-contains: expected_generated_passive_construction.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[explicit-success] args: explicit success
+//@[explicit-success] stdout: 1
+//@[explicit-success] stdout: 2
+//@[explicit-success] stdout: 3
+//@[explicit-success] stdout: published
+//@[explicit-success] stdout: caller cleaned
+//@[explicit-fail-now] run-fail
+//@[explicit-fail-now] args: explicit fail now
+//@[explicit-fail-now] exit-code: 70
+//@[explicit-fail-now] stdout: 1
+//@[explicit-fail-now] stdout: 2
+//@[explicit-fail-now] stdout: caller cleaned
+//@[explicit-fail-now] stderr-contains: expected_generated_passive_construction.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- expected_generated_passive_construction.gti
+import std.string;
+import std.vector;
+
+mut int phase = 0;
+
+struct Caller {
+  ~Caller() { std::println("caller cleaned"); }
+public:
+  Caller() = default;
+};
+
+int read_value(int ordinal) {
+  std::println(ordinal);
+  if (ordinal == 2 && (phase == 1 || phase == 3)) {
+    int zero = 0;
+    int first_failure = 10 / zero;
+    return first_failure;
+  }
+  return ordinal * 10;
+}
+
+struct Generated {
+  int first = read_value(1);
+  int second = read_value(2);
+  int third = read_value(3);
+public:
+  Generated() = default;
+};
+
+struct Explicit {
+  int first;
+  Explicit() : first(read_value(1)) {
+    int second = read_value(2);
+    int third = read_value(3);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Caller caller = Caller();
+  if (phase < 2) {
+    expected<Generated, int> result = Generated();
+    if (result.value().first != 10 || result.value().second != 20 ||
+        result.value().third != 30) { return 1; }
+  } else {
+    expected<Explicit, int> result = Explicit();
+    if (result.value().first != 10) { return 2; }
+  }
+  std::println("published");
+  return 0;
+}
