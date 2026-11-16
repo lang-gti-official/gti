@@ -1,0 +1,106 @@
+// Generated derived construction preserves base failure and caller cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6
+//@[run2] args: stack success test path
+//@[run3] run-fail
+//@[run3] args: base
+//@[run3] exit-code: 70
+//@[run3] stdout: 2
+//@[run3] stdout: 1
+//@[run3] stdout: 6
+//@[run3] stdout: 7
+//@[run3] stdout: 9
+//@[run3] stderr-contains: owning_parameter_base_constructor.gti:34: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: derived failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 2
+//@[run4] stdout: 4
+//@[run4] stdout: 6
+//@[run4] stdout: 7
+//@[run4] stdout: 3
+//@[run4] stdout: 1
+//@[run4] stdout: 9
+//@[run4] stderr-contains: owning_parameter_base_constructor.gti:46: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: derived failure cleanup
+//@[run5] exit-code: 70
+//@[run5] stdout: 2
+//@[run5] stdout: 4
+//@[run5] stdout: 6
+//@[run5] stderr-contains: owning_parameter_base_constructor.gti:22: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at owning_parameter_base_constructor.gti:46; secondary [GTI-R0002]
+//@[run6] run-fail
+//@[run6] args: base failure parameter cleanup failure
+//@[run6] exit-code: 70
+//@[run6] stdout: 2
+//@[run6] stdout: 1
+//@[run6] stdout: 6
+//@[run6] stderr-contains: owning_parameter_base_constructor.gti:22: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at owning_parameter_base_constructor.gti:34; secondary [GTI-R0002]
+// --- owning_parameter_base_constructor.gti
+import std.memory;
+import std.string;
+import std.utility;
+import std.vector;
+
+mut int32_t base_divisor = 1;
+mut int32_t derived_divisor = 1;
+mut int32_t parameter_cleanup_divisor = 1;
+
+class Guard {
+  int32_t identity;
+public:
+  Guard(int32_t value) : identity(value) {}
+  ~Guard() { std::println(this.identity); }
+};
+
+struct Spec {
+  std::string title = std::string("editor");
+  std::unique_ptr<Guard> owner = std::make_unique<Guard>(7);
+  ~Spec() {
+    std::println(6);
+    int32_t checked = 1 / parameter_cleanup_divisor;
+  }
+public:
+  Spec() = default;
+};
+
+class Base {
+  std::string name;
+  std::unique_ptr<Guard> retained;
+public:
+  Base(std::string_view label) : name(std::string(label)), retained(std::make_unique<Guard>(1)) {
+    Guard inside = Guard(2);
+    int32_t checked = 6 / base_divisor;
+  }
+  ~Base() { std::println(3); }
+  virtual void Attach() mut = 0;
+};
+
+class Derived : public Base {
+  Spec spec;
+  int32_t identity;
+public:
+  Derived(Spec input, int32_t id) : Base("layer"), spec(std::move(input)), identity(id) {
+    Guard inside = Guard(4);
+    int32_t checked = 8 / derived_divisor;
+  }
+  ~Derived() { std::println(this.identity); }
+  void Attach() mut override { std::println(this.spec.title); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  base_divisor = argc == 2 || argc == 6 ? 0 : 1;
+  derived_divisor = argc == 3 || argc == 4 ? 0 : 1;
+  parameter_cleanup_divisor = argc == 4 || argc == 6 ? 0 : 1;
+  Guard outer = Guard(9);
+  Spec spec{};
+  if (argc == 5) {
+    mut Derived stack{std::move(spec), 5};
+    stack.Attach();
+  } else {
+    mut auto concrete = std::make_unique<Derived>(std::move(spec), 5);
+    mut auto erased = concrete.upcast<Base>();
+    erased->Attach();
+  }
+  return 0;
+}

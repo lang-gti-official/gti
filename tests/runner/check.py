@@ -50,11 +50,11 @@ def block(output, status, name):
 
 def self_test(runner):
     code, out = run(runner, FIXTURES / "pass", "--jobs", "2")
-    expect(code == 0 and "RESULT ok: 6 passed, 0 failed" in out,
+    expect(code == 0 and "RESULT ok: 7 passed, 0 failed" in out,
            "passing fixtures pass", out)
 
     code, out = run(runner, FIXTURES / "fail", "--jobs", "2")
-    expect(code == 1 and "RESULT fail: 0 passed, 4 failed" in out,
+    expect(code == 1 and "RESULT fail: 0 passed, 5 failed" in out,
            "failing fixtures fail", out)
     wrong = block(out, "FAIL", "wrong_code.gti")
     expect("expected: ERROR GTI-S9999 at line 3" in wrong and
@@ -69,6 +69,9 @@ def self_test(runner):
            "actual:" not in unmatched, "an unmatched annotation fails", out)
     expect("-expected\n      +actual" in block(out, "FAIL", "wrong_stdout.gti"),
            "stdout mismatch shows a diff", out)
+    revision = block(out, "FAIL", "wrong_revision.gti")
+    expect("[bad] stdout differs" in revision and "[good]" not in revision,
+           "a failing revision is named and a passing one is not", out)
 
     faults = {"GTI_TEST_TIME_SCALE": "0.1"}
     code, out = run(runner, FIXTURES / "faults", "--jobs", "2", env=faults)
@@ -99,7 +102,7 @@ def self_test(runner):
                "a refused bless changes nothing", out)
 
         code, out = run(runner, work, "--bless", "--jobs", "2")
-        expect(code == 1 and "ICE" in out and out.count("BLESSED") == 3,
+        expect(code == 1 and "ICE" in out and out.count("BLESSED") == 4,
                "bless rewrites failures but not the internal error", out)
         ice = work / "annotations/ice.gti"
         expect(ice.read_text() == before[ice], "an ICE is never blessed", out)
@@ -120,11 +123,17 @@ def self_test(runner):
         stdout = (work / "run/wrong_stdout.gti").read_text()
         expect("//@ stdout: actual" in stdout and "expected" not in stdout,
                "bless rewrote the inline stdout", stdout)
+        revision = (work / "run/wrong_revision.gti").read_text()
+        expect("//@[bad] stdout: actual" in revision and
+               "expected" not in revision,
+               "bless rewrote the revision's inline stdout", revision)
 
     code, out = run(runner, "--tidy", "--root", FIXTURES / "tidy")
     for problem in ("unknown directive 'check-pas'", "no_purpose.gti: the first line",
                     "orphan.stdout: expected output without a test",
-                    "top_level.gti: tests live in a subdirectory"):
+                    "top_level.gti: tests live in a subdirectory",
+                    "revision 'third' is not declared",
+                    "stray_revision.fourth.stdout: expected output without a test"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -133,7 +142,7 @@ def self_test(runner):
     _, first = run(runner, FIXTURES / "pass", "--list", "--shard", "1/2")
     _, second = run(runner, FIXTURES / "pass", "--list", "--shard", "2/2")
     expect(sorted(first.splitlines() + second.splitlines()) ==
-           sorted(full.splitlines()) and len(full.splitlines()) == 6,
+           sorted(full.splitlines()) and len(full.splitlines()) == 7,
            "shards partition the tests", full + first + second)
 
     with tempfile.TemporaryDirectory() as directory:
@@ -141,7 +150,7 @@ def self_test(runner):
         code, out = run(runner, FIXTURES / "pass", "--isolate", "--json", report)
         expect(code == 0 and "isolated" in out, "--isolate agrees", out)
         rows = [json.loads(line) for line in report.read_text().splitlines()]
-        expect(len(rows) == 6 and all("cpu" in row for row in rows),
+        expect(len(rows) == 7 and all("cpu" in row for row in rows),
                "the JSON report has one row per test", report.read_text())
 
 

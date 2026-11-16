@@ -417,11 +417,6 @@ add_test(NAME base_constructor_stage COMMAND gti_base_constructor_stage_tests)
 add_executable(gti_expected_constructor_field_tests expected_constructor_field_tests.cpp)
 target_link_libraries(gti_expected_constructor_field_tests PRIVATE gti_llvm_backend)
 add_test(NAME expected_constructor_field COMMAND gti_expected_constructor_field_tests)
-add_test(NAME generated_constructor_order_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/generated_constructor_order_runtime_test.py"
-                 "$<TARGET_FILE:gti>")
-set_tests_properties(generated_constructor_order_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME base_constructor_stage_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/base_constructor_stage_runtime_test.py"
@@ -1009,11 +1004,6 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/object_destroy_scalar_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(object_destroy_scalar_runtime PROPERTIES TIMEOUT 240)
-  add_test(NAME object_construction_runtime
-           COMMAND ${Python3_EXECUTABLE}
-                   "${PROJECT_SOURCE_DIR}/tests/object_construction_runtime_test.py"
-                   "$<TARGET_FILE:gti>")
-  set_tests_properties(object_construction_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME uninitialized_carrier_runtime
            COMMAND "${Python3_EXECUTABLE}"
                    "${PROJECT_SOURCE_DIR}/tests/uninitialized_carrier_runtime_test.py"
@@ -1691,61 +1681,6 @@ add_test(NAME call_result_publication_runtime
                  "${PROJECT_SOURCE_DIR}/tests/call_result_publication_runtime_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(call_result_publication_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_class_return_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_class_return_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_class_return_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_scoped_return_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_scoped_return_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_scoped_return_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_class_argument_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_class_argument_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_class_argument_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_cleanup_free_copy_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_copy_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_cleanup_free_copy_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_cleanup_free_move_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_cleanup_free_move_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_cleanup_free_move_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_lambda_class_argument_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_lambda_class_argument_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_lambda_class_argument_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_call_reassignment_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_call_reassignment_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_call_reassignment_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_member_argument_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_member_argument_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_member_argument_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_constructor_return_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_constructor_return_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_constructor_return_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME mixed_constructor_parameter_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/mixed_constructor_parameter_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(mixed_constructor_parameter_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME moved_passive_constructor_field_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/moved_passive_constructor_field_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(moved_passive_constructor_field_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME deferred_bound_field_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/deferred_bound_field_runtime_test.py"
@@ -1767,11 +1702,6 @@ add_test(NAME passive_function_item_class_runtime
                  "${PROJECT_SOURCE_DIR}/tests/passive_function_item_class_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(passive_function_item_class_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME passive_class_move_and_copy_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/passive_class_move_and_copy_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(passive_class_move_and_copy_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME view_fields_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/view_fields_runtime_test.py"
@@ -1828,21 +1758,6 @@ add_test(NAME recursive_text_relays_runtime
                  "${PROJECT_SOURCE_DIR}/tests/recursive_text_relays_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(recursive_text_relays_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME failure_free_passive_moves_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_moves_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(failure_free_passive_moves_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME failure_free_passive_constructors_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/failure_free_passive_constructors_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(failure_free_passive_constructors_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME constructor_copy_after_formal_write_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/constructor_copy_after_formal_write_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(constructor_copy_after_formal_write_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME assignment_result_projection_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/assignment_result_projection_runtime_test.py"
@@ -1853,36 +1768,11 @@ add_test(NAME class_store_destinations_runtime
                  "${PROJECT_SOURCE_DIR}/tests/class_store_destinations_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(class_store_destinations_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME array_field_constructor_elements_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/array_field_constructor_elements_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(array_field_constructor_elements_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME assignment_result_whole_value_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/assignment_result_whole_value_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(assignment_result_whole_value_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME declaration_owned_defaults_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/declaration_owned_defaults_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(declaration_owned_defaults_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_consuming_return_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_consuming_return_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_consuming_return_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME base_rollback_record_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/base_rollback_record_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(base_rollback_record_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME virtual_expected_owning_return_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/virtual_expected_owning_return_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(virtual_expected_owning_return_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME reference_owned_field_replacement_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/reference_owned_field_replacement_runtime_test.py"
@@ -1898,31 +1788,11 @@ add_test(NAME raw_owned_field_replacement_runtime
                  "${PROJECT_SOURCE_DIR}/tests/raw_owned_field_replacement_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(raw_owned_field_replacement_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_temporary_observation_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_temporary_observation_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_temporary_observation_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME owning_temporary_field_read_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/owning_temporary_field_read_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(owning_temporary_field_read_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME construction_assignment_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/construction_assignment_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(construction_assignment_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_field_and_join_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_field_and_join_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_field_and_join_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME owned_argument_member_initializer_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/owned_argument_member_initializer_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(owned_argument_member_initializer_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME owning_expected_field_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/owning_expected_field_runtime_test.py"
@@ -1933,11 +1803,6 @@ add_test(NAME comma_class_results_runtime
                  "${PROJECT_SOURCE_DIR}/tests/comma_class_results_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(comma_class_results_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME plain_call_member_initializer_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/plain_call_member_initializer_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(plain_call_member_initializer_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME class_conditional_join_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/class_conditional_join_runtime_test.py"
@@ -1953,26 +1818,6 @@ add_test(NAME owning_conditional_join_runtime
                  "${PROJECT_SOURCE_DIR}/tests/owning_conditional_join_runtime_test.py"
                  $<TARGET_FILE:gti>)
 set_tests_properties(owning_conditional_join_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_payload_short_circuit_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_payload_short_circuit_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_payload_short_circuit_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_class_assignment_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_class_assignment_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_class_assignment_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_conditional_assignment_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_conditional_assignment_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_conditional_assignment_runtime PROPERTIES TIMEOUT 240)
-add_test(NAME expected_conditional_arms_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/expected_conditional_arms_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(expected_conditional_arms_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME borrowed_callable_conditionals_runtime
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/borrowed_callable_conditionals_runtime_test.py"
@@ -1995,11 +1840,6 @@ if(TARGET gti_lsp)
             $<TARGET_FILE:gti_lsp>)
   set_tests_properties(borrowing_callbacks_lsp PROPERTIES TIMEOUT 120)
 endif()
-add_test(NAME consuming_call_assignment_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/consuming_call_assignment_runtime_test.py"
-                 $<TARGET_FILE:gti>)
-set_tests_properties(consuming_call_assignment_runtime PROPERTIES TIMEOUT 240)
 
 add_executable(gti_initialization_and_native_identity_tests
   "${PROJECT_SOURCE_DIR}/tests/initialization_and_native_identity_tests.cpp")
@@ -2769,10 +2609,6 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_borrowed_dispatch_regressions_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(llvm_borrowed_dispatch_regressions PROPERTIES TIMEOUT 600)
-  add_test(NAME owning_expression_transfers
-           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/owning_expression_transfers_test.py"
-                   "$<TARGET_FILE:gti>")
-  set_tests_properties(owning_expression_transfers PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_dispatch_execution
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_dispatch_execution_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
@@ -2877,11 +2713,6 @@ add_test(NAME implicit_receiver_owned_assignment_runtime
           "${PROJECT_SOURCE_DIR}/tests/implicit_receiver_owned_assignment_runtime_test.py"
           $<TARGET_FILE:gti>)
 set_tests_properties(implicit_receiver_owned_assignment_runtime PROPERTIES TIMEOUT 600)
-add_test(NAME constructor_passive_field_rollback_runtime
-  COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/constructor_passive_field_rollback_runtime_test.py"
-          $<TARGET_FILE:gti>)
-set_tests_properties(constructor_passive_field_rollback_runtime PROPERTIES TIMEOUT 600)
 add_executable(gti_expected_payload_pair_emitter_tests expected_payload_pair_emitter_tests.cpp)
 target_link_libraries(gti_expected_payload_pair_emitter_tests PRIVATE gti_llvm_backend)
 add_test(NAME expected_payload_pair_emitter COMMAND gti_expected_payload_pair_emitter_tests)
@@ -3614,21 +3445,7 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(inherited_unique_allocation_runtime PROPERTIES TIMEOUT 300)
-  add_test(
-    NAME generated_base_constructor_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generated_base_constructor_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(generated_base_constructor_runtime PROPERTIES TIMEOUT 300)
 
-  add_test(
-    NAME expected_boundary_replacement_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/expected_boundary_replacement_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(expected_boundary_replacement_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME raw_receiver_owned_argument_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -4717,14 +4534,6 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(constructor_constructed_field_runtime
                          PROPERTIES TIMEOUT 240)
     add_test(
-      NAME constructor_nested_argument_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/constructor_nested_argument_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(constructor_nested_argument_runtime
-                         PROPERTIES TIMEOUT 600)
-    add_test(
       NAME generic_clone_runtime
       COMMAND "${Python3_EXECUTABLE}"
               "${PROJECT_SOURCE_DIR}/tests/generic_clone_runtime_test.py"
@@ -4957,12 +4766,6 @@ if(Python3_Interpreter_FOUND)
   add_test(NAME string_operations_errors
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/string_operations_errors_test.py" "$<TARGET_FILE:gti>")
   set_tests_properties(string_operations_errors PROPERTIES TIMEOUT 300)
-  add_test(NAME expected_filesystem_prerequisites_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expected_filesystem_prerequisites_runtime_test.py" "$<TARGET_FILE:gti>")
-  set_tests_properties(expected_filesystem_prerequisites_runtime PROPERTIES TIMEOUT 300)
-  add_test(NAME expected_passive_publication_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expected_passive_publication_runtime_test.py" "$<TARGET_FILE:gti>")
-  set_tests_properties(expected_passive_publication_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME charconv_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/charconv_runtime_test.py" "$<TARGET_FILE:gti>")
   # Its GCC sanitized build may take minutes under a parallel suite;
@@ -5161,13 +4964,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(grouped_lambda_runtime PROPERTIES TIMEOUT 600)
   add_test(
-    NAME owning_function_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/owning_function_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(owning_function_runtime PROPERTIES TIMEOUT 900)
-  add_test(
     NAME conditional_owning_argument_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/conditional_owning_argument_runtime_test.py"
@@ -5207,41 +5003,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(conditional_converted_receiver_runtime PROPERTIES
                        TIMEOUT 600)
-  add_test(
-    NAME consuming_receiver_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_receiver_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_receiver_runtime PROPERTIES TIMEOUT 480)
-  add_test(
-    NAME consuming_methods_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_methods_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_methods_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME consuming_returned_result_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_returned_result_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_returned_result_runtime PROPERTIES TIMEOUT 300)
-  add_test(
-    NAME consuming_prepared_receiver_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_prepared_receiver_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_prepared_receiver_runtime PROPERTIES TIMEOUT 300)
-  add_test(
-    NAME consuming_conditional_receiver_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_conditional_receiver_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_conditional_receiver_runtime PROPERTIES TIMEOUT 300)
   add_test(
     NAME conditional_prepared_input_result_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5299,20 +5060,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(moved_local_field_read_runtime PROPERTIES TIMEOUT 300)
   add_test(
-    NAME consuming_generic_owner_receiver_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_generic_owner_receiver_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_generic_owner_receiver_runtime PROPERTIES TIMEOUT 300)
-  add_test(
-    NAME consuming_lambda_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_lambda_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_lambda_runtime PROPERTIES TIMEOUT 600)
-  add_test(
     NAME owned_pointee_projection_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/owned_pointee_projection_runtime_test.py"
@@ -5362,20 +5109,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(http_url_operators PROPERTIES TIMEOUT 480)
   add_test(
-    NAME consuming_owned_pointee_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_owned_pointee_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_owned_pointee_runtime PROPERTIES TIMEOUT 480)
-  add_test(
-    NAME retained_owner_member_pack_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/retained_owner_member_pack_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(retained_owner_member_pack_runtime PROPERTIES TIMEOUT 300)
-  add_test(
     NAME hosted_constructor_identity_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/hosted_constructor_identity_test.py"
@@ -5410,20 +5143,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(generic_callable_adapter_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME constructed_callback_argument_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constructed_callback_argument_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(constructed_callback_argument_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME pack_prefix_constructor_failure_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/pack_prefix_constructor_failure_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(pack_prefix_constructor_failure_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME storage_final_address_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/storage_final_address_runtime_test.py"
             "$<TARGET_FILE:gti>")
@@ -5456,27 +5175,6 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_native_record_transport_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(raw_native_record_transport_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME constructor_field_publication_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constructor_field_publication_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(constructor_field_publication_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME constructor_member_call_field_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constructor_member_call_field_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(constructor_member_call_field_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME constructor_virtual_call_field_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constructor_virtual_call_field_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(constructor_virtual_call_field_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME virtual_temporary_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5520,27 +5218,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(contextual_borrowed_construction_runtime PROPERTIES TIMEOUT 600)
   add_test(
-    NAME consuming_retained_field_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_retained_field_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_retained_field_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME consuming_retained_field_replace_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_retained_field_replace_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_retained_field_replace_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME consuming_retained_lambda_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/consuming_retained_lambda_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(consuming_retained_lambda_runtime PROPERTIES TIMEOUT 600)
-  add_test(
     NAME expected_payload_pair_arguments_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/expected_payload_pair_arguments_test.py"
@@ -5548,47 +5225,12 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(expected_payload_pair_arguments_runtime PROPERTIES TIMEOUT 600)
   add_test(
-    NAME expected_payload_pending_cleanup_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/expected_payload_pending_cleanup_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(expected_payload_pending_cleanup_runtime PROPERTIES TIMEOUT 600)
-  add_test(
     NAME temporary_owner_borrow_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/temporary_owner_borrow_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(temporary_owner_borrow_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME owned_expected_error_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/owned_expected_error_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(owned_expected_error_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME owned_unexpected_pending_cleanup_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/owned_unexpected_pending_cleanup_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(owned_unexpected_pending_cleanup_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME private_constructor_placement_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/private_constructor_placement_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(private_constructor_placement_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME nested_guarded_expected_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/nested_guarded_expected_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(nested_guarded_expected_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME structural_relocation_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -5675,20 +5317,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(abstract_generic_failure_contract_runtime PROPERTIES TIMEOUT 600)
   add_test(
-    NAME owning_function_resource_result_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/owning_function_resource_result_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(owning_function_resource_result_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME constructor_argument_staging_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/constructor_argument_staging_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(constructor_argument_staging_runtime PROPERTIES TIMEOUT 480)
-  add_test(
     NAME void_return_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/void_return_runtime_test.py"
@@ -5769,20 +5397,6 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/fixtures"
     )
     set_tests_properties(class_prvalue_assignment_runtime PROPERTIES TIMEOUT 240)
-    add_test(
-      NAME constructor_borrow_replacement_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/constructor_borrow_replacement_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(constructor_borrow_replacement_runtime PROPERTIES TIMEOUT 240)
-    add_test(
-      NAME constructor_text_reference_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/constructor_text_reference_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(constructor_text_reference_runtime PROPERTIES TIMEOUT 240)
     add_test(
       NAME allocation_default_argument_runtime
       COMMAND "${Python3_EXECUTABLE}"

@@ -1054,7 +1054,7 @@ owners = [
 ]
 consumers = [
   "practical_examples",
-  "expected_filesystem_prerequisites_runtime",
+  "gti_test_ui",
   "test_runner",
 ]
 

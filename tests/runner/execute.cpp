@@ -657,84 +657,98 @@ Outcome Engine::run(const TestFile &test) {
                              " test cannot expect errors\n";
         }
       } else if (modeRuns(test.mode) && compiled.succeeded) {
-        const double remaining = std::max(0.5, limit - (totalCpu() - cpuStart));
-        std::vector<std::string> argv{compiled.executable.string()};
-        argv.insert(argv.end(), test.args.begin(), test.args.end());
-        const ProcessRun program = runProcess(argv, test.stdinText, remaining,
-                                              4 * limit, state->caseDirectory);
-        std::string expectedOut;
-        if (test.stdoutFile)
-          expectedOut = readFile(*test.stdoutFile).value_or("");
-        else
-          for (const std::string &line : test.stdoutLines)
-            expectedOut += line + "\n";
-        std::vector<std::string> problems;
-        if (!program.started) {
-          problems.push_back("could not start the program");
-        } else if (program.timedOut) {
-          result.status = Status::Timeout;
-          result.detail = "the program exceeded its limit\n";
-        } else if (program.signal != 0) {
-          problems.push_back("actual:   terminated by signal " +
-                             std::to_string(program.signal));
-        } else if (test.mode == Mode::RunPass && program.exitCode != 0) {
-          problems.push_back("expected: exit code 0");
-          problems.push_back("actual:   exit code " +
-                             std::to_string(program.exitCode));
-        } else if (test.mode == Mode::RunFail && test.exitCode &&
-                   program.exitCode != *test.exitCode) {
-          problems.push_back("expected: exit code " +
-                             std::to_string(*test.exitCode));
-          problems.push_back("actual:   exit code " +
-                             std::to_string(program.exitCode));
-        } else if (test.mode == Mode::RunFail && program.exitCode == 0) {
-          problems.push_back("expected: a non-zero exit code");
-          problems.push_back("actual:   exit code 0");
-        }
-        for (const std::string &needle : test.stderrContains)
-          if (program.err.find(needle) == std::string::npos)
-            problems.push_back("expected: stderr containing \"" + needle +
-                               "\"");
-        const bool stdoutDiffers =
-            program.started && !program.timedOut && program.out != expectedOut;
-        if (result.status == Status::Timeout) {
-        } else if (stdoutDiffers && problems.empty() && bless) {
-          const bool inlineFits =
-              !test.stdoutFile && lines(program.out).size() <= 8 &&
-              (program.out.empty() || program.out.back() == '\n') &&
-              std::none_of(program.out.begin(), program.out.end(),
-                           [](char c) { return c == '\r' || c == '\t'; });
-          fs::path stdoutPath = test.path;
-          stdoutPath.replace_extension(".stdout");
-          bool trailingSpace = false;
-          for (const std::string &line : lines(program.out))
-            trailingSpace =
-                trailingSpace ||
-                (!line.empty() &&
-                 std::isspace(static_cast<unsigned char>(line.back())));
-          if (program.out.empty()) {
-            if (test.stdoutFile)
-              fs::remove(*test.stdoutFile);
-            if (test.hasInlineStdout)
-              writeFile(test.path, blessInlineStdout(test, ""));
-          } else if (inlineFits && !trailingSpace) {
-            writeFile(test.path, blessInlineStdout(test, program.out));
-          } else {
-            writeFile(stdoutPath, program.out);
-            if (test.hasInlineStdout)
-              writeFile(test.path, blessInlineStdout(test, ""));
+        // One execution per revision (or exactly one); every failing
+        // revision's problems are reported, prefixed with its name.
+        for (const RunSpec &run : test.runs) {
+          if (result.status == Status::Timeout)
+            break;
+          const std::string label =
+              run.revision.empty() ? "" : "[" + run.revision + "] ";
+          const double remaining =
+              std::max(0.5, limit - (totalCpu() - cpuStart));
+          std::vector<std::string> argv{compiled.executable.string()};
+          argv.insert(argv.end(), run.args.begin(), run.args.end());
+          const ProcessRun program = runProcess(
+              argv, run.stdinText, remaining, 4 * limit, state->caseDirectory);
+          std::string expectedOut;
+          if (run.stdoutFile)
+            expectedOut = readFile(*run.stdoutFile).value_or("");
+          else
+            for (const std::string &line : run.stdoutLines)
+              expectedOut += line + "\n";
+          std::vector<std::string> problems;
+          if (!program.started) {
+            problems.push_back("could not start the program");
+          } else if (program.timedOut) {
+            result.status = Status::Timeout;
+            result.detail = label + "the program exceeded its limit\n";
+          } else if (program.signal != 0) {
+            problems.push_back("actual:   terminated by signal " +
+                               std::to_string(program.signal));
+          } else if (run.mode == Mode::RunPass && program.exitCode != 0) {
+            problems.push_back("expected: exit code 0");
+            problems.push_back("actual:   exit code " +
+                               std::to_string(program.exitCode));
+          } else if (run.mode == Mode::RunFail && run.exitCode &&
+                     program.exitCode != *run.exitCode) {
+            problems.push_back("expected: exit code " +
+                               std::to_string(*run.exitCode));
+            problems.push_back("actual:   exit code " +
+                               std::to_string(program.exitCode));
+          } else if (run.mode == Mode::RunFail && program.exitCode == 0) {
+            problems.push_back("expected: a non-zero exit code");
+            problems.push_back("actual:   exit code 0");
           }
-          result.blessed.push_back(test.display);
-        } else if (stdoutDiffers || !problems.empty()) {
-          result.status = Status::Fail;
-          for (const std::string &problem : problems)
-            result.detail += problem + "\n";
-          if (stdoutDiffers)
-            result.detail += "stdout differs (-expected +actual):\n" +
-                             diff(expectedOut, program.out);
-          if (!problems.empty() && !program.err.empty())
-            result.detail +=
-                "stderr:\n" + indent(tail(program.err, 20), "    ");
+          for (const std::string &needle : run.stderrContains)
+            if (program.err.find(needle) == std::string::npos)
+              problems.push_back("expected: stderr containing \"" + needle +
+                                 "\"");
+          const bool stdoutDiffers = program.started && !program.timedOut &&
+                                     program.out != expectedOut;
+          if (result.status == Status::Timeout) {
+          } else if (stdoutDiffers && problems.empty() && bless) {
+            const bool inlineFits =
+                !run.stdoutFile && lines(program.out).size() <= 8 &&
+                (program.out.empty() || program.out.back() == '\n') &&
+                std::none_of(program.out.begin(), program.out.end(),
+                             [](char c) { return c == '\r' || c == '\t'; });
+            const fs::path stdoutPath = stdoutPathFor(test.path, run.revision);
+            bool trailingSpace = false;
+            for (const std::string &line : lines(program.out))
+              trailingSpace =
+                  trailingSpace ||
+                  (!line.empty() &&
+                   std::isspace(static_cast<unsigned char>(line.back())));
+            if (program.out.empty()) {
+              if (run.stdoutFile)
+                fs::remove(*run.stdoutFile);
+              if (run.hasInlineStdout)
+                writeFile(test.path,
+                          blessInlineStdout(test, "", run.revision));
+            } else if (inlineFits && !trailingSpace) {
+              writeFile(test.path,
+                        blessInlineStdout(test, program.out, run.revision));
+            } else {
+              writeFile(stdoutPath, program.out);
+              if (run.hasInlineStdout)
+                writeFile(test.path,
+                          blessInlineStdout(test, "", run.revision));
+            }
+            if (std::find(result.blessed.begin(), result.blessed.end(),
+                          test.display) == result.blessed.end())
+              result.blessed.push_back(test.display);
+          } else if (stdoutDiffers || !problems.empty()) {
+            result.status = Status::Fail;
+            for (const std::string &problem : problems)
+              result.detail += label + problem + "\n";
+            if (stdoutDiffers)
+              result.detail += label +
+                               "stdout differs (-expected +actual):\n" +
+                               diff(expectedOut, program.out);
+            if (!problems.empty() && !program.err.empty())
+              result.detail += label + "stderr:\n" +
+                               indent(tail(program.err, 20), "    ");
+          }
         }
       }
     }

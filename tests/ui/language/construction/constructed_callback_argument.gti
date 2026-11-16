@@ -1,0 +1,87 @@
+// Fresh class arguments precede conditionals and retain exact failure cleanup.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run2] run-fail
+//@[run2] args: read
+//@[run2] exit-code: 70
+//@[run2] stdout: 12
+//@[run2] stdout: 100
+//@[run2] stdout: 9
+//@[run2] stderr-contains: constructed_callback_argument.gti:17: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: mutable failure
+//@[run3] exit-code: 70
+//@[run3] stdout: 12
+//@[run3] stdout: 100
+//@[run3] stdout: 6
+//@[run3] stdout: 15
+//@[run3] stdout: 200
+//@[run3] stdout: 9
+//@[run3] stderr-contains: constructed_callback_argument.gti:27: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: later argument failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 12
+//@[run4] stdout: 100
+//@[run4] stdout: 6
+//@[run4] stdout: 15
+//@[run4] stdout: 200
+//@[run4] stdout: 5
+//@[run4] stdout: 18
+//@[run4] stdout: 9
+//@[run4] stderr-contains: constructed_callback_argument.gti:46: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: constructor fails before callback
+//@[run5] exit-code: 70
+//@[run5] stdout: 12
+//@[run5] stdout: 9
+//@[run5] stderr-contains: constructed_callback_argument.gti:9: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- constructed_callback_argument.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+struct Packet {
+  int value;
+  Packet(int value, int divisor) : value(value) {
+    std::println(value);
+    int checked = 12 / divisor;
+  }
+};
+
+class Target {
+public:
+  int operator()(Packet input, int divisor) {
+    std::println(100);
+    return input.value / divisor;
+  }
+public:
+  Target() = default;
+};
+
+class MutableTarget {
+public:
+  int operator()(Packet input, int divisor) mut {
+    std::println(200);
+    return input.value / divisor;
+  }
+public:
+  MutableTarget() = default;
+};
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+public:
+  Caller() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  std::function<int(Packet, int)> callback{Target()};
+  std::println(callback(Packet(12, argc == 5 ? 0 : 1), argc == 2 ? 0 : 2));
+  mut std::function<int(Packet, int) mut> mutable_callback{MutableTarget()};
+  std::println(mutable_callback(Packet(15, 1), argc == 3 ? 0 : 3));
+  std::println(callback(Packet(18, 1), argc == 4 ? 12 / (argc - 4) : 3));
+  return 0;
+}

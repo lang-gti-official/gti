@@ -43,12 +43,32 @@ struct Section {
   std::string text;
 };
 
+// One execution of a run test's program: what it is given and what it must
+// produce. `revision` is empty for a test without `//@ revisions:`.
+struct RunSpec {
+  std::string revision;
+  Mode mode = Mode::RunPass;
+  std::vector<std::string> stdoutLines;
+  bool hasInlineStdout = false;
+  std::optional<std::filesystem::path> stdoutFile;
+  std::vector<std::string> stderrContains;
+  std::optional<int> exitCode;
+  std::vector<std::string> args;
+  std::optional<std::string> stdinText;
+};
+
 struct TestFile {
   std::filesystem::path path;
   // Path relative to the invocation's working directory, for messages.
   std::string display;
   Mode mode = Mode::CheckPass;
   bool modeExplicit = false;
+  // `//@ revisions: a b`: the program is built once and run once per
+  // revision. Only run inputs and expectations vary (`//@[a] args: ...`).
+  std::vector<std::string> revisions;
+  // The executions of a run test, in order: one per revision, or exactly one.
+  std::vector<RunSpec> runs;
+  // The shared (unprefixed) run directives.
   std::vector<std::string> stdoutLines;
   bool hasInlineStdout = false;
   std::optional<std::filesystem::path> stdoutFile;
@@ -100,8 +120,15 @@ struct LocatedDiagnostic {
 blessAnnotations(const TestFile &test,
                  const std::vector<LocatedDiagnostic> &diagnostics);
 
-// Replaces inline `//@ stdout:` lines with `output`.
+// Replaces inline `//@ stdout:` lines (`//@[revision] stdout:` for a
+// revision) with `output`.
 [[nodiscard]] std::string blessInlineStdout(const TestFile &test,
-                                            const std::string &output);
+                                            const std::string &output,
+                                            const std::string &revision = "");
+
+// The expected-output file of a run: `name.stdout`, or
+// `name.<revision>.stdout`.
+[[nodiscard]] std::filesystem::path
+stdoutPathFor(const std::filesystem::path &test, const std::string &revision);
 
 } // namespace gti_test

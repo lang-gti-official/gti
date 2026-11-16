@@ -1,0 +1,112 @@
+// Stored closure captures stay anchored in the outer consuming receiver.
+//@ run-pass
+//@ revisions: default case case-case case-case-case case-case-case-case case-case-case-case-case
+//@[default] stdout: 1
+//@[default] stdout: 2
+//@[default] stdout: 3
+//@[default] stdout: 8
+//@[default] stdout: 7
+//@[default] stdout: 5
+//@[default] stdout: 99
+//@[case] run-fail
+//@[case] args: case
+//@[case] exit-code: 70
+//@[case] stdout: 1
+//@[case] stdout: 8
+//@[case] stdout: 7
+//@[case] stdout: 99
+//@[case] stderr-contains: consuming_retained_lambda.gti:52: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[case-case] run-fail
+//@[case-case] args: case case
+//@[case-case] exit-code: 70
+//@[case-case] stdout: 1
+//@[case-case] stdout: 2
+//@[case-case] stdout: 8
+//@[case-case] stdout: 7
+//@[case-case] stdout: 99
+//@[case-case] stderr-contains: consuming_retained_lambda.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[case-case-case] args: case case case
+//@[case-case-case] stdout: 1
+//@[case-case-case] stdout: 2
+//@[case-case-case] stdout: 3
+//@[case-case-case] stdout: 8
+//@[case-case-case] stdout: 8
+//@[case-case-case] stdout: 7
+//@[case-case-case] stdout: 5
+//@[case-case-case] stdout: 99
+//@[case-case-case-case] run-fail
+//@[case-case-case-case] args: case case case case
+//@[case-case-case-case] exit-code: 70
+//@[case-case-case-case] stdout: 1
+//@[case-case-case-case] stdout: 8
+//@[case-case-case-case] stdout: 8
+//@[case-case-case-case] stdout: 7
+//@[case-case-case-case] stdout: 99
+//@[case-case-case-case] stderr-contains: consuming_retained_lambda.gti:52: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[case-case-case-case-case] run-fail
+//@[case-case-case-case-case] args: case case case case case
+//@[case-case-case-case-case] exit-code: 70
+//@[case-case-case-case-case] stdout: 1
+//@[case-case-case-case-case] stdout: 2
+//@[case-case-case-case-case] stdout: 8
+//@[case-case-case-case-case] stdout: 8
+//@[case-case-case-case-case] stdout: 7
+//@[case-case-case-case-case] stdout: 99
+//@[case-case-case-case-case] stderr-contains: consuming_retained_lambda.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- consuming_retained_lambda.gti
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+class Owner<Callable> {
+  mut Callable callable;
+public:
+  Owner(Callable callable) : callable(std::move(callable)) {}
+  ~Owner() { std::println(8); }
+  int operator()(int divisor) && {
+    return ((std::move(this.callable)))(divisor);
+  }
+};
+
+int later(int divisor) {
+  std::println(2);
+  return 6 / divisor;
+}
+
+int combine(int left, int right) {
+  std::println(3);
+  return left + right;
+}
+
+int invoke<Callable>(Callable callback, int body_divisor, int later_divisor,
+                     bool nested) {
+  Owner<Callable> inner{std::move(callback)};
+  if (nested) {
+    Owner<Owner<Callable>> outer{std::move(inner)};
+    int value = combine(std::move(outer)(body_divisor), later(later_divisor));
+    std::println(5);
+    return value - 18;
+  }
+  int value = combine(std::move(inner)(body_divisor), later(later_divisor));
+  std::println(5);
+  return value - 18;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  int mode = argc - 1;
+  Token caller{99};
+  Token capture{7};
+  auto callback = [capture = std::move(capture)](int divisor) -> int {
+    std::println(1);
+    return (capture.read() + 5) / divisor;
+  };
+  return invoke(std::move(callback), mode == 1 || mode == 4 ? 0 : 1,
+                mode == 2 || mode == 5 ? 0 : 1, mode >= 3);
+}
