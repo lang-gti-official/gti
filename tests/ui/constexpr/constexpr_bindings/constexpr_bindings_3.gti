@@ -1,0 +1,8 @@
+// Constexpr bindings: if constexpr should require a frontend-evaluated constant bool.
+bool runtime_condition() { return true; }
+int main() {
+  if constexpr (runtime_condition()) {  //~ ERROR GTI-S2057 non-constexpr function
+    return 0;
+  }
+  return 1;
+}

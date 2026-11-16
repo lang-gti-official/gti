@@ -1,0 +1,28 @@
+// Compile limits: every request has its own budget; eight 5000-iteration requests fit a 200000-step limit that their sum would not.
+//@ check-pass
+//@ constexpr-steps: 200000
+struct Tally {
+  uint64_t count;
+  uint64_t sum;
+  constexpr Tally(uint64_t c, uint64_t s) : count(c), sum(s) {}
+};
+constexpr Tally accumulate(uint64_t n, uint64_t seed) {
+  mut uint64_t count = 0;
+  mut uint64_t sum = seed;
+  while (count < n) {
+    count = count + 1;
+    sum = sum + count;
+  }
+  return Tally(count, sum);
+}
+constexpr uint64_t spin(uint64_t n) { return accumulate(n, uint64_t(0)).count; }
+static_assert(spin(uint64_t(5000)) > uint64_t(0));
+static_assert(spin(uint64_t(5001)) > uint64_t(0));
+static_assert(spin(uint64_t(5002)) > uint64_t(0));
+static_assert(spin(uint64_t(5003)) > uint64_t(0));
+static_assert(spin(uint64_t(5004)) > uint64_t(0));
+static_assert(spin(uint64_t(5005)) > uint64_t(0));
+static_assert(spin(uint64_t(5006)) > uint64_t(0));
+static_assert(spin(uint64_t(5007)) > uint64_t(0));
+
+int main() { return 0; }

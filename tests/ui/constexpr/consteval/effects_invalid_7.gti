@@ -1,0 +1,25 @@
+// Consteval: immediate effect erasure preserves runtime effects and rejects nonconstant inputs (GTI-S2045).
+mut int global = 7;
+constexpr int source(bool read) { return read ? global : 42; }
+constexpr int generic_source<T>(bool read) { return read ? global : 42; }
+consteval int immediate(bool read) { return source(read); }
+consteval int identity(int value) { return value; }
+struct Port {
+  int value;
+  implicit consteval Port(int value) : value(value < 0 ? global : value) {}
+};
+struct Convertible {
+  int value;
+  constexpr Convertible(int value) : value(value) {}
+  implicit consteval operator int() {
+    return this.value < 0 ? global : this.value;
+  }
+};
+struct Truth {
+  bool value;
+  constexpr Truth(bool value) : value(value) {}
+  consteval operator bool() { return this.value; }
+};
+bool runtime_read() { return global == 7; }
+int combine(mut int& value, int input) { return value + input; }
+int main(){mut int& held=global; bool result=Truth(false) || runtime_read(); return result ? held : 0;}  //~ ERROR GTI-S2045

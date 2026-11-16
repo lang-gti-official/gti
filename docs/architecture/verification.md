@@ -156,11 +156,13 @@ expansion gates live in the [Spot contract](agent-workflow.md#opt-in-google-spot
 ## Checked immediate arguments (#169)
 
 The final call tier changes semantic selection and constant publication (T2).
-`testConsteval` in `compiler_pipeline` covers exact input types, trailing defaults,
+`tests/ui/constexpr/consteval/` covers exact input types, trailing defaults,
 read-only references, ordinary/temporary-borrow precedence, constructor and
 function ambiguity, non-inference, operator/assignment fences, function items,
-forwarding and request-local reuse. Its repeated-call fixture requires at least
-49 cache reuses and fewer than five MIR executions for 50 identical validations;
+forwarding and request-local reuse (`checked_fence_*`, `effects_invalid_*`).
+The `constant_evaluation_api` case of `gti_unit_tests` keeps the reuse metrics
+(at least 19 replays of 20 identical immediate calls, identical diagnostics
+with reuse disabled); `consteval_2` runs 50 identical validations;
 cache hits retain deterministic work charges. An infinite validator is rejected.
 
 `consteval_runtime` runs the user-defined duration and checked formatting clients
@@ -2243,14 +2245,14 @@ instance, on a class whose assertion reflects back, or, in a destructor, on
 their own class pass, and a false self-reflecting assertion reports its message
 once. Instances formed only by constant evaluation or by a global initializer
 are checked in their workers: `Tag<void>` formed inside a `constexpr` call is
-rejected. `testStaticAssertions` adds class and function assertions that call
+rejected. `tests/ui/constexpr/static_assertions/` adds class and function assertions that call
 a constexpr helper declared after them; class and function instances, reached
 from a constant evaluation and from global initializers, that read a namespace
 constant, call a constexpr helper and select an `if constexpr` arm; and a
 function whose assertion evaluates its own instance. `reflection_runtime`
 compiles and runs `reflection_class_assertions.gti` at O0/O1/O3 in C++20/C++23.
 Main `6d502f02` crashes the reflection test (SIGBUS) and fails all four
-`testStaticAssertions` additions; a genuine `if constexpr` cycle still reports
+`static_assertions` additions; a genuine `if constexpr` cycle still reports
 the same staging-depth diagnostics as main. Examples 091, 092, 093 and 141 still create one staged worker per
 compile, and interleaved compile times stay within 2.5% of main.
 
@@ -7298,7 +7300,7 @@ compiler on macOS arm64; it does not claim Linux or Windows execution.
 
 ## Ownership diagnostic explanations
 
-`testMirConstantEvaluation` checks bounded executed-call identities, recursive
+The `constant_evaluation_api` case of `gti_unit_tests` checks bounded executed-call identities, recursive
 omission counts, no successful-result trace, and source-linked failures and
 repairs in bindings, compile-time branches and static assertions.
 `diagnostic_explanations` checks terminal/LSP call-trace agreement across an
@@ -8329,7 +8331,7 @@ arrays, indexed mutation, multidimensional copies, by-value array arguments,
 and generic extents at O0/O1/O3 under both standards. The compiler suite also
 asserts early MIR execution, independent copies, read/write bounds failures,
 and rejection before oversized default-array allocation.
-`testMirConstantRecords` proves staged execution for passive record parameters,
+The same unit case proves staged execution for passive record parameters,
 nested field/array mutation, independent copies, generic record identity, and
 returned aggregates. Direct MIR evaluation rejects incomplete, mistyped, and
 duplicate-field input records. Explicit constructors (including nested/generic
@@ -9521,7 +9523,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics, ownership/lifecycle/ranges/callables, constexpr/configuration/numerics/static-initialization, and bounded end-to-end executables (the former frontend and diagnostics/formatting/queries suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
+| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics, ownership/lifecycle/ranges/callables, and bounded end-to-end executables (the former frontend, diagnostics/formatting/queries and constexpr/configuration/numerics/static-initialization suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |

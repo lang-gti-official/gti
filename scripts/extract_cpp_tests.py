@@ -783,35 +783,6 @@ SPECS: dict[str, FileSpec] = {
             for name in ("testStoredReferenceLoopInvalidation3",
                          "testStoredReferenceLoopInvalidation4",
                          "testWritableAndMovementIteratorCapabilities")}),
-    "compiler_constexpr_tests.cpp": FileSpec(
-        area="constexpr", topic="Constant evaluation",
-        # The heaviest named tests; their fixture mutations, rejection tables
-        # and diagnostics snapshots were written by hand from the same file.
-        only=("testConstexprLibrary", "testLazyStagingAndCompileTimePanic",
-              "testDependentConstexprBranches",
-              "testConstexprReadOnlyReferences", "testConstexprResults",
-              "testStandardString", "testConstexprAllocation",
-              "testConstexprMutation", "testConstexprEnumBuilders",
-              "testConstexprOperators", "testConstexprTryable",
-              "testConstexprPayloadEnums"),
-        areas={"testConstexprLibrary": "constexpr/library",
-               "testLazyStagingAndCompileTimePanic": "constexpr/lazy_staging",
-               "testDependentConstexprBranches":
-                   "constexpr/dependent_branches",
-               "testConstexprReadOnlyReferences":
-                   "constexpr/readonly_references",
-               "testConstexprResults": "constexpr/results",
-               "testStandardString": "types/string",
-               "testConstexprAllocation": "constexpr/allocation",
-               "testConstexprMutation": "constexpr/mutation",
-               "testConstexprEnumBuilders": "constexpr/enum_builders",
-               "testConstexprOperators": "constexpr/operators"},
-        review_policy={
-            name: "the C++ test asserts rejection (or one code of it); the "
-                  "compiler's complete code set was read and matches the "
-                  "case's stated reason"
-            for name in ("testConstexprLibrary", "testConstexprResults",
-                         "testConstexprEnumBuilders")}),
 }
 
 

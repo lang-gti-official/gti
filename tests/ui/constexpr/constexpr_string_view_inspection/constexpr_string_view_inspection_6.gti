@@ -1,0 +1,7 @@
+// Constexpr string view inspection: constant text operations share the deterministic execution budget.
+constexpr uint64_t spin(std::string_view text) {
+  mut uint64_t result = 0;
+  while (!text.empty()) { result += text.size(); }  //~ ERROR GTI-S2057 limit
+  return result;
+}
+constexpr uint64_t result = spin("x");

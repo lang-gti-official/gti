@@ -1,0 +1,2 @@
+// Consteval: generic runtime inputs fail immediate evaluation rather than argument-type selection, before and after instantiation.
+consteval int f(int x) { return x; } int g<T>(int x) { return f(x); }  //~ ERROR GTI-S2057

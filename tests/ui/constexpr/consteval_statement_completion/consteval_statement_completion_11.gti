@@ -1,0 +1,2 @@
+// Consteval statement completion: invalid immediate statement or bare return rejects in semantics.
+struct Port<uint64_t N>{int value;implicit consteval Port():value(100/int(N)) {}}; Port<N> make<uint64_t N>(){return;} int main(){return make<0>().value;}  //~ ERROR GTI-S2057

@@ -1,0 +1,3 @@
+// Binary float semantics: a decimal literal that overflows binary32 receives a focused lexical diagnostic.
+//@ parse-fail
+float huge = 9999999999999999999999999999999999999999.0;  //~ ERROR GTI-L0006 finite binary32 range
