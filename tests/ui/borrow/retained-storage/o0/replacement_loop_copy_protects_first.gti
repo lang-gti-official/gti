@@ -1,0 +1,15 @@
+// Borrowed storage: replacement loop copy protects first.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+int check(int count) {
+  mut std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  for (mut int i = 0; i < count; i += 1) { view = second.view(); }
+  auto copied = view; view = "replacement";
+  first.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  if (count == 0) { return copied == "first" ? 0 : 1; }
+  return copied == "second" ? 0 : 2;
+}
+int main() { return check(0) + check(3); }

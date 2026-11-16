@@ -1,0 +1,21 @@
+// Borrowed storage: growable views clone outlives source.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> copied{};
+  {
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view());
+  values.push_back(second.view());
+  mut std::vector<std::string_view> temporary = values.clone();
+  temporary.swap(copied);
+  }
+  copied.reserve(32);
+  return copied.size() == 2 && copied[0] == "first" && copied[1] == "second" ? 0 : 1;
+}

@@ -1,0 +1,17 @@
+// Borrowed storage: growable views operation erase protects second.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  std::string first{"first"}; mut std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view());
+  values.push_back(second.view());
+  values.push_back(second.view());
+  values.reserve(32);
+  values.erase(1);
+  second.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return values.size() == 2 && values[0] == "first" && values[1] == "second" ? 0 : 1;
+}

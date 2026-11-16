@@ -27,7 +27,7 @@ and [raw pointers](../language/raw-pointers.md).
 
 | Requirement | Owning evidence | Current result |
 | --- | --- | --- |
-| Local replacement, copies, joins and retained owners | `borrowed_dependency_updates`, `mir_carrier_flow` | The current candidate passed all 379 native acceptance/rejection cases (547.02 seconds), including loop-copy dependency retention, observing cleanup, restored-reference aliases, moved-owner cleanup, reference helpers and packs, record replacement, fixed arrays and iterator compositions. Admitted programs execute on LLVM O0 and O3. |
+| Local replacement, copies, joins and retained owners | `gti_test_ui` (`borrow/retained-storage`), `mir_borrow_audit` | The current candidate passed all 379 native acceptance/rejection cases (547.02 seconds), including loop-copy dependency retention, observing cleanup, restored-reference aliases, moved-owner cleanup, reference helpers and packs, record replacement, fixed arrays and iterator compositions. Admitted programs execute on LLVM O0 and O3. |
 | Generic user storage, vector growth, aliases and checked reads | `ownerless_text_contracts`, native matrix, example 194 | The final candidate passes all 99 named owning tests (565.60 seconds), including the corrected forged-MIR expired-dependency fixture. Reference-payload semantics (91.48 seconds), view fields (534.08 seconds), editor recovery (12.09 seconds), construction cleanup (16.04 seconds), native smoke and example 194 also pass. |
 | Fixed-array literals, nested arrays and indexed copies | Native array cases and `testBorrowedArrayCleanupContainment` | Focused LLVM O0/O3 and independent forged-transfer rejection checks passed. |
 | Observing cleanup and partial failure | `object_construction_runtime`, array and vector cleanup fixtures | Array, vector and existing raw/owned/reference cleanup profiles passed at O0/O3, including failed construction. An additional owner-scope safety gap was found: an observing destructor could run after its referent died. The repair preserves known retaining stores through incomplete effect summaries and expires observing dependencies at owner scope exit. Production O0/O3 regressions now reject observing cleanup after owner scope exit, allow passive cleanup, and pass the array/vector partial-failure cleanup harness. |
@@ -263,3 +263,18 @@ dependencies and older copies remain unchanged. Independent MIR verification
 still checks the publication authority. The existing runtime fixture checks
 normal return, failed return cleanup and failure during rollback at O0/O3; a
 proof mutation also rejects ending the escaping loan before rollback cleanup.
+
+
+### Test-runner integration
+
+The legacy test-registration freeze rejected the two new standalone harnesses.
+All 391 native cases now live under `tests/ui/borrow/retained-storage`, with
+separate O0/O3 files preserving 330 accepted-program executions and 452
+required rejections. Sources are unchanged. Rejection annotations now specify
+the exact diagnostic code, message and source line from the passing baseline,
+including warnings; related retained-borrow notes and silent runtime stderr
+remain required through explicit runner assertions. The runner's own checks
+exercise those assertions in linked and isolated mode, including failures.
+All 33 direct carrier-flow test functions now run inside the existing
+`mir_borrow_audit` binary. No freeze exception or new legacy registration is
+needed. Earlier run names above remain historical evidence.

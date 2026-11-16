@@ -1,0 +1,15 @@
+// Borrowed storage: borrowed cursor assignment rejects live child.
+//@ check-fail
+import std.string;
+import std.utility;
+
+import std.vector;
+int overwrite(mut std::vector<int32_t>::iterator cursor) {
+  int32_t& held = *cursor;
+  *cursor = 7;  //~ ERROR GTI-S2017 A mutable call cannot use storage while a reference borrowed from it may still be live.
+  return held;
+}
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(1));
+  return overwrite(values.begin_mut());
+}

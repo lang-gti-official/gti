@@ -1,0 +1,11 @@
+// Borrowed storage: replacement protects new owner.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+int main() {
+  std::string first{"first"}; mut std::string second{"second"};
+  mut std::string_view view = first.view();
+  view = second.view(); second.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return view == "second" ? 0 : 1;
+}

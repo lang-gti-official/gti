@@ -1,0 +1,27 @@
+// Borrowed storage: borrowed enum fresh payload replacement.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+class Carrier {
+  int& source;
+public:
+  Carrier(int& value) : source(value) {}
+  int read() { return this.source; }
+};
+enum Holder { one(Carrier value), none };
+int read(Holder& held) {
+  switch (held) {
+    case Holder::one(value): return value.read();
+    case Holder::none: return 0;
+  }
+}
+int main() {
+  mut int first = 3; mut int second = 8;  //~ WARN GTI-S2096 Mutable binding 'second' is never used mutably.
+  Carrier left{first}; Carrier right{second};
+  mut Holder held = Holder::one(Carrier(first));
+  Holder replacement = Holder::one(right);
+  held = Holder::one(Carrier(second));
+  first = 4;
+  return read(held) == 8 ? 0 : 1;
+}

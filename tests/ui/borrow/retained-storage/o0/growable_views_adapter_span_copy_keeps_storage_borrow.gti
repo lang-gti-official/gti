@@ -1,0 +1,16 @@
+// Borrowed storage: growable views adapter span copy keeps storage borrow.
+//@ check-fail
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view());
+  values.push_back(second.view());
+  values.reserve(32);
+  auto adapter = values.as_span();
+  auto selected = adapter[0];
+  values.reserve(64);  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return selected == "first" ? 0 : 1;
+}

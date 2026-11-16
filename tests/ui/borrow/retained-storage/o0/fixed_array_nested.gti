@@ -1,0 +1,10 @@
+// Borrowed storage: fixed array nested.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  std::string_view views[2][1] = {{first.view()}, {second.view()}};
+  return views[0][0] == "first" && views[1][0] == "second" ? 0 : 1;
+}

@@ -1,0 +1,20 @@
+// Borrowed storage: owned construction text field rejects expired owner.
+//@ check-fail
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  Label(std::string_view input) : text(input) {}
+};
+int main() {
+  mut Label selected{""};
+  { std::string owner{"borrowed"}; mut std::uninitialized<Label> storage{};
+  unsafe {
+    Label* address = storage.data();
+    std::construct_owned_at<Label, std::uninitialized<Label>, std::string_view>(address, storage, owner.view());
+    selected = std::borrow_owned_at(address, storage);
+    std::destroy_at(address);
+  } }
+  return selected.text == "borrowed" ? 0 : 1;  //~ ERROR GTI-S2017 Cannot use a borrowed value after its owner or retained dependency has become unavailable.
+}

@@ -53,6 +53,8 @@ struct TestFile {
   bool hasInlineStdout = false;
   std::optional<std::filesystem::path> stdoutFile;
   std::vector<std::string> stderrContains;
+  bool stderrEmpty = false;
+  std::vector<std::string> diagnosticNotes;
   std::optional<int> exitCode;
   std::vector<std::string> args;
   std::optional<std::string> stdinText;

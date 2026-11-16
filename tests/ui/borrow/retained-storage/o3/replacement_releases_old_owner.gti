@@ -1,0 +1,13 @@
+// Borrowed storage: replacement releases old owner.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+int main() {
+  mut std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  view = second.view(); first.clear();
+  return view == "second" ? 0 : 1;
+}

@@ -1,0 +1,12 @@
+// Borrowed storage: branch first dependency one arm.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+int check(bool choose) {
+  std::string owner{"borrowed"};
+  mut std::string_view view = "literal";
+  if (choose) { view = owner.view(); }
+  return view == (choose ? "borrowed" : "literal") ? 0 : 1;
+}
+int main() { return check(true) + check(false); }

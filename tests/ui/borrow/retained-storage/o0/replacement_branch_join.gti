@@ -1,0 +1,13 @@
+// Borrowed storage: replacement branch join.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+int check(bool replace) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view view = first.view();
+  if (replace) { view = second.view(); }
+  if (replace) { return view == "second" ? 0 : 1; }
+  return view == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }

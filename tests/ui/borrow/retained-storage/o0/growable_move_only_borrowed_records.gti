@@ -1,0 +1,27 @@
+// Borrowed storage: growable move only borrowed records.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.vector;
+import std.memory;
+class Reading {
+  int& value;
+  std::unique_ptr<int> offset;
+public:
+  Reading(int& input, std::unique_ptr<int> owned)
+      : value(input), offset(std::move(owned)) {}
+  Reading(Reading& other) = delete;
+  Reading(Reading&& other) = default;
+  int read() { return this.value + *this.offset; }
+};
+int main() {
+  int first = 11; int second = 22;
+  mut std::vector<Reading> values{};
+  values.push_back(Reading(first, std::make_unique<int>(1)));
+  values.push_back(Reading(second, std::make_unique<int>(2)));
+  values.reserve(32);
+  mut std::vector<Reading> moved = std::move(values);
+  moved.reserve(64);
+  return moved.size() == 2 && moved[0].read() == 12 && moved[1].read() == 24 ? 0 : 1;
+}

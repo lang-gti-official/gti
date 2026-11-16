@@ -1,0 +1,17 @@
+// Borrowed storage: growable views emplace protects first.
+//@ check-fail
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  mut std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.emplace_back(first.view());
+  values.emplace_back(second.view());
+  values.reserve(32);
+  first.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return values.size() == 2 && values[0] == "first" && values[1] == "second" ? 0 : 1;
+}

@@ -256,6 +256,14 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (trimmed.empty())
         error(lineNumber, "stderr-contains needs text");
       test.stderrContains.push_back(trimmed);
+    } else if (name == "stderr-empty") {
+      if (hasValue)
+        error(lineNumber, "stderr-empty takes no value");
+      test.stderrEmpty = true;
+    } else if (name == "diagnostic-note") {
+      if (trimmed.empty())
+        error(lineNumber, "diagnostic-note needs text");
+      test.diagnosticNotes.push_back(trimmed);
     } else if (name == "exit-code") {
       char *end = nullptr;
       const long code = std::strtol(trimmed.c_str(), &end, 10);
@@ -384,10 +392,13 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     error(0, std::string(modeName(test.mode)) +
                  " test cannot expect errors; use check-fail");
   if (!modeRuns(test.mode) &&
-      (test.hasInlineStdout || !test.stderrContains.empty() || test.exitCode ||
-       !test.args.empty() || test.stdinText))
+      (test.hasInlineStdout || !test.stderrContains.empty() ||
+       test.stderrEmpty || test.exitCode || !test.args.empty() ||
+       test.stdinText))
     error(0, "stdout/stderr-contains/exit-code/args/stdin need run-pass or "
              "run-fail");
+  if (test.stderrEmpty && !test.stderrContains.empty())
+    error(0, "stderr-empty conflicts with stderr-contains");
   if (test.mode == Mode::RunPass && test.exitCode && *test.exitCode != 0)
     error(0, "run-pass expects exit code 0; use run-fail");
   if (test.mode == Mode::RunFail && test.exitCode && *test.exitCode == 0)

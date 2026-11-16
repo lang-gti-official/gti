@@ -1,0 +1,26 @@
+// Borrowed storage: owned construction pair protects first.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.memory;
+class PairReading {
+  int& first;
+  int& second;
+public:
+  PairReading(int& left, int& right) : first(left), second(right) {}
+  int read() { return this.first + this.second; }
+};
+int main() {
+  mut int first = 11;
+  int second = 22;
+  mut std::uninitialized<PairReading> storage{};
+  unsafe {
+    PairReading* address = storage.data();
+    std::construct_owned_at<PairReading, std::uninitialized<PairReading>, int&, int&>(address, storage, first, second);
+    first = 99;  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow may still be live.
+    auto selected = std::borrow_owned_at(address, storage);
+    std::destroy_at(address);
+    return selected.read() == 33 ? 0 : 1;
+  }
+}

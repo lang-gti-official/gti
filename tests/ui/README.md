@@ -19,6 +19,11 @@ int main() {
 - Run tests: `//@ stdout: line` (repeat per line; or a sibling `name.stdout`),
   `//@ exit-code: N`, `//@ stderr-contains: text`, `//@ args: a b`,
   `//@ stdin: line`. Stdout is always compared; absent means empty.
+  `//@ stderr-empty` also requires silent stderr and cannot be combined with
+  `stderr-contains`.
+- `//@ diagnostic-note: text` requires a related compiler diagnostic note
+  containing that text (in both normal and isolated runs). Missing notes are
+  not blessed; primary error/warning annotations are still required.
 - `//@ opt: O3` and `//@ only: linux|macos|arm64|x86_64` need `//@ reason: …`.
 - Annotations: `//~ ERROR GTI-S2001 [message text]`, `//~ WARN …`; `//~^`
   (line above, `^^` two), `//~v` (below), `//~|` (same line as the previous

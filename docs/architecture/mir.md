@@ -3588,7 +3588,7 @@ formal or into an environment requires a represented boundary contract. Likewise
 converting a named function with a derived retaining effect to an invocation
 pointer must not erase that effect. Direct calls retain the derived relationship.
 The focused
-`mir_carrier_flow` test covers replacement/copies, branch and loop joins,
+carrier-flow cases in `mir_borrow_audit` covers replacement/copies, branch and loop joins,
 simultaneous edge arguments, alias widening, failure paths and unknown facts.
 
 Explicit MIR intrinsics whose canonical effect classification excludes storage

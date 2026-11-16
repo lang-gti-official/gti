@@ -1,0 +1,19 @@
+// Borrowed storage: nested branch copy outlives slot.
+//@ run-pass
+//@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
+import std.string;
+import std.utility;
+int check(bool choose) {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::string_view outer = "";
+  {
+    mut std::string_view inner = first.view();
+    if (choose) { inner = second.view(); }
+    outer = inner;
+  }
+  if (choose) { return outer == "second" ? 0 : 1; }
+  return outer == "first" ? 0 : 2;
+}
+int main() { return check(true) + check(false); }

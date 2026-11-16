@@ -1,0 +1,15 @@
+// Borrowed storage: growable views operation swap.
+//@ run-pass
+//@ stderr-empty
+import std.string;
+import std.utility;
+import std.vector;
+int main() {
+  std::string first{"first"}; std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view());
+  values.push_back(second.view());
+  values.reserve(32);
+  mut std::vector<std::string_view> other{}; values.swap(other);
+  return other.size() == 2 && other[0] == "first" && other[1] == "second" ? 0 : 1;
+}

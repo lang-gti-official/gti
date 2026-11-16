@@ -1,0 +1,17 @@
+// Borrowed storage: growable views user copy protects second.
+//@ check-fail
+//@ diagnostic-note: Retained borrow originates here.
+import std.string;
+import std.utility;
+import std.vector;
+T copy_borrowed<T>(T& value)
+    requires std::copy_constructible<T> { return value; }
+int main() {
+  std::string first{"first"}; mut std::string second{"second"};
+  mut std::vector<std::string_view> values{};
+  values.push_back(first.view());
+  values.push_back(second.view());
+  std::string_view selected = copy_borrowed(values[0]);
+  second.clear();  //~ ERROR GTI-S2017 Mutable method cannot use move-only storage while a reference borrowed from it may still be live.
+  return selected == "first" ? 0 : 1;
+}
