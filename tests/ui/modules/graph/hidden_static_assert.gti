@@ -1,0 +1,11 @@
+// A file-scope static assertion cannot name a constant its unit does not import directly.
+// --- main.gti
+import "branch.gti";
+static_assert(leaf_limit == 8, "limit must be 8");  //~ ERROR GTI-S2024
+int main() { return 0; }
+// --- branch.gti
+export module branch;
+import "leaf.gti";
+// --- leaf.gti
+export module leaf;
+export constexpr int32_t leaf_limit = 8;

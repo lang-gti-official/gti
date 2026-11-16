@@ -1,0 +1,10 @@
+// break and continue outside a loop parse but are rejected semantically.
+void stop() {
+  break;  //~ ERROR GTI-S2010 'break' can only be used inside a loop or switch
+}
+
+void skip() {
+  if (true) {
+    continue;  //~ ERROR GTI-S2010 'continue' can only be used inside a loop
+  }
+}

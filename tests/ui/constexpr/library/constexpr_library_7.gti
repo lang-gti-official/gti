@@ -1,0 +1,5 @@
+// Constexpr library: execution-local owning and raw-pointer constexpr declarations are admitted.
+//@ check-pass
+import std.string;
+constexpr int length(std::string value) { return int(value.size()); }
+int main() { return 0; }

@@ -1,0 +1,3 @@
+// Chrono adoption preserves the shared constant-evaluation call-depth limit (the default 512 calls).
+import std.chrono;
+constexpr int depth(int i) { std::chrono::nanoseconds n{int64_t(i)}; if (n.count() == int64_t(0)) { return 0; } return depth(i - 1); } constexpr int value = depth(600);  //~ ERROR GTI-S2057 call depth exceeded

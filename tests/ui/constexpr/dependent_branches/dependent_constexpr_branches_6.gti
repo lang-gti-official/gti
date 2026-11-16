@@ -1,0 +1,16 @@
+// Dependent constexpr branches: repeated staged constant calls, in later requests and in concrete generic instances, give the same accepted results.
+//@ check-pass
+constexpr int cost<uint64_t N>() {
+  mut int total = 0;
+  for (mut int i = 0; i < 100; i++) { total += 1; }
+  return total;
+}
+static_assert(cost<1>() == 100);
+static_assert(cost<2>() == 100);
+static_assert(cost<1>() == 100);
+struct Box { int value; };
+int measure<T>() {
+  if constexpr (cost<3>() == 100) { return 1; }
+  else { return 0; }
+}
+int main() { return measure<Box>() + measure<int>() - 2; }

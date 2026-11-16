@@ -1,0 +1,26 @@
+// do-while runs its body first; continue jumps to the condition and break to the exit, both destroying the body's locals.
+//@ run-pass
+mut int destroyed = 0;
+
+class Marker {
+public:
+  Marker() {}
+  ~Marker() { destroyed++; }
+};
+
+int run() {
+  mut int value = 0;
+  do {
+    Marker marker{};
+    value++;
+    if (value < 2) {
+      continue;
+    }
+    if (value == 4) {
+      break;
+    }
+  } while (value < 5);
+  return value;
+}
+
+int main() { return run() == 4 && destroyed == 4 ? 0 : 1; }

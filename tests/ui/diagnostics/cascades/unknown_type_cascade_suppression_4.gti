@@ -1,0 +1,10 @@
+// Unknown type cascade suppression: a fresh valid snapshot must not retain recovery identities.
+//@ check-pass
+int main() {
+  unsafe {
+    int* pointer = nullptr;
+    auto offset = 0;
+    auto result = pointer + (offset);
+  }
+  return 0;
+}

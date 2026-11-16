@@ -1,0 +1,12 @@
+// Constexpr mutation: constructor-body mutation cannot fall back to a value-copy AST interpretation after an unsupported operation.
+import std.numeric;
+int runtime_only(int value) { return value + 1; }
+struct Item {
+  mut int value;
+  constexpr Item(int seed) : value(seed) {
+    this.value++;
+    this.value = runtime_only(this.value);  //~ ERROR GTI-S2057
+  }
+};
+constexpr Item constant = Item(3);
+int main() { return 0; }

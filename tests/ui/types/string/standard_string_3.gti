@@ -1,0 +1,13 @@
+// Standard string: an exact-type constructor rejected only by copy viability should report the argument ownership failure rather than a type mismatch.
+import std.string;
+class Path {
+public:
+  Path(std::string value) {}
+public:
+  Path() = default;
+};
+int main() {
+  mut std::string source = std::string("/hello/world.txt");
+  Path parsed = Path(source);  //~ ERROR GTI-S2018 Constructor argument 1 would call the deleted copy constructor of 'std::string'
+  return 0;
+}

@@ -1,0 +1,12 @@
+// Conditional expressions reject a non-bool condition, inexact arm types and implicit copies of move-only arms.
+import std.memory;
+
+int invalid_condition() { return 1 ? 2 : 3; }  //~ ERROR GTI-S2003 Conditional expression condition must be bool
+bool mismatched_arms(bool condition) { return condition ? 1 : false; }  //~ ERROR GTI-S2050
+struct Item { public: Item() = default; };
+std::unique_ptr<Item> implicit_copy(
+    bool condition,
+    std::unique_ptr<Item> left,
+    std::unique_ptr<Item> right) {
+  return condition ? left : right;  //~ ERROR GTI-S2052 //~ ERROR GTI-S2052
+}

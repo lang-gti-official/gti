@@ -1,0 +1,3 @@
+// A missing semicolon after a do-while condition is one parse error.
+//@ parse-fail
+void recover() { do {} while (false) return; }  //~ ERROR GTI-P0001

@@ -1,0 +1,5 @@
+// An ordinary declaration spelled like a capability leaf remains an ordinary nominal type.
+//@ check-pass
+namespace ordinary { class storage<T> { public: storage() = default; }; }
+ordinary::storage<int> value = ordinary::storage<int>();
+int main() { return 0; }
