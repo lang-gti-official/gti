@@ -18,8 +18,10 @@ does not authorize merging the proposal or implementing it. Discussion-only,
 local-only, and no-publication requests override that default; ordinary bug-fix
 plans and execution plans for accepted designs do not create new RFCs.
 
-The short version: run focused checks (reproducer, owning tests, affected
-cross-phase consumers, `compiler_pipeline`, smoke), record them with `verify`,
+The short version: write tests as
+[Writing Tests](../../../AGENTS.md#writing-tests) says, run focused checks
+(reproducer, owning tests, affected cross-phase consumers, `compiler_pipeline`,
+smoke), record them with `verify`,
 and `finish`: it labels the PR for a rollup (phase `rollup`) or, for Risk-system
 diffs and `--no-rollup`, queues it alone (phase `queued`). Never run the
 complete suite to finish a task; the queue proves build and fast checks on the

@@ -100,8 +100,9 @@ for completion and intermediate statuses.
 ## Validate and integrate
 
 Use the owning feature skill and `verify-change` to select real checks with an
-optimized GTI compiler. Provide required runnable examples and their inventory
-updates for language changes. Use `finish-release` for VERSION decisions.
+optimized GTI compiler. Write tests as
+[Writing Tests](../../../AGENTS.md#writing-tests) says. Use `finish-release`
+for VERSION decisions.
 
 **You validate the change; the merge queue validates integration.** Run the
 exact reproducer or new regression (failing on the parent revision for a fix),
@@ -141,26 +142,25 @@ integration is complete contributor work; report it as deferred, never as passed
    `source-stdlib` lane only with an ancestor's successful full-CI compiler and
    identical native inputs. It runs mandatory library owners/consumers and
    packages the changed stdlib without rebuilding the compiler. Missing artifacts,
-   new CMake registrations, routing/native/build changes or unknown paths use
-   full CI. Register new source cases in an existing owning harness or surface
-   manifest where appropriate; never omit required tests to get the cheaper lane.
-   The old suite is frozen: PR CI (`scripts/check_test_freeze.py`) rejects a new
-   `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`. New tests are
-   single `.gti` files under `tests/ui/`
-   ([format](../../../tests/ui/README.md)).
+   routing/native/build changes or unknown paths use full CI; never omit
+   required tests to get the cheaper lane.
 3. Write the final PR description to a temporary file: behaviour, exactly
    which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
-   and `T1` items list the CTest names you ran, comma-separated; other items
-   (`tier`, `T2`, `reproduction`, `unaffected`, `T3`) are prose:
+   and `T1` items list the CTest names you ran, comma-separated (a new
+   `gti-test` case is `gti_test_ui`); other items (`tier`, `T2`,
+   `reproduction`, `unaffected`, `expectations`, `T3`) are prose. A PR that
+   also changes the compiler and removes an annotation, deletes a test or
+   downgrades a mode gives the one-line reason as `expectations`:
 
    ```text
    Validation:
    - tier: T2 (MIR cleanup publication for a new borrow shape)
-   - T0: mir_borrow_carrier_cleanup_regression
-   - T1: mir_full_expression, optimizer_conformance, compiler_pipeline
+   - T0: gti_test_ui
+   - T1: gti_test_ui, mir_full_expression, compiler_pipeline
    - T2: llvm_cleanup_context_execution, mir_census_profile_controls
    - reproduction: fails on parent <sha> with GTI-B0003, passes on the patch
+   - expectations: tests/ui/borrow/carrier.gti now accepted; the rule changed
    - T3: deferred to post-integration full validation
    ```
 

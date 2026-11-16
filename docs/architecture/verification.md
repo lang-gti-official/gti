@@ -1,5 +1,12 @@
 # Compiler Verification
 
+This document records what the existing gates cover and the evidence behind
+them. How to write and run a new test is [Writing Tests](../../AGENTS.md#writing-tests)
+in `AGENTS.md`; where a section below describes an old harness, it applies to
+that harness's existing cases until the
+[test-suite migration](../plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16)
+converts them.
+
 ## Isolated native test fixtures
 
 C++ test executables that write source/module fixtures use
@@ -7491,28 +7498,14 @@ source-defined traces. `implicit_return_construction_lsp` covers unsaved modifie
 changes, exact UTF-16 error spans, reference navigation and parser recovery.
 Example 166 demonstrates concise optional returns and an unrelated result type.
 
-## Required examples for new language features
+## Examples for new language features
 
-Every new language feature **must include an accompanying runnable example
-under `examples/` in the same change**. This is a completion requirement, not
-an optional follow-up. A focused new program or an explicit extension of an
-existing example is acceptable; a regression fixture or a documentation-only
-snippet is not a substitute.
-
-The example must show the supported syntax in a useful program, explain the
-intended behavior and important boundaries, and provide a checked result where
-the feature has observable behavior. Keep intentionally invalid programs in
-negative tests rather than breaking the runnable example. Link the example
-from the applicable language documentation and update the example index,
-corpus registration, and MIR/LoweredProgram census expectations where affected.
-Compile and run it with an optimized host GTI compiler and the applicable
-backend/optimization configurations, recording the evidence before marking the
-feature complete. Examples complement, rather than replace, focused positive,
-negative, ownership, and failure tests.
-
-An internal refactor or bug fix with no new language feature does not require
-an unrelated new example; it still needs regression coverage, and affected
-existing examples must remain correct.
+A new language feature is proven by its tests ([Writing Tests](../../AGENTS.md#writing-tests)).
+A runnable program under `examples/` is welcome where it teaches the feature;
+`gti_test_examples` checks every single-file example to verified MIR per
+commit, and the slow tier's `gti_corpus` walks the whole corpus. Neither needs
+a registration, index or census edit. Keep intentionally invalid programs in
+`tests/ui/`, not in an example, and keep affected existing examples correct.
 
 ## Release bug closure after panic adoption
 
