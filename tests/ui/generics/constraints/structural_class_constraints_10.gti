@@ -1,0 +1,2 @@
+// Structural class constraints: class annotations do not invent members, waive unsafe blocks or admit non-unary concepts.
+concept pair<T,U> = std::copyable<T> && std::copyable<U>; class Bad<pair T> { int value=0;  public: Bad() = default; }; int main(){return 0;}  //~ ERROR GTI-S2029

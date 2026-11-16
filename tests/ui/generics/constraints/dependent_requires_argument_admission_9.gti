@@ -1,0 +1,12 @@
+// Dependent requires argument admission: a false closed primitive assertion cannot admit another closed argument type.
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+
+class IntegerBox<std::integral T> { public: int get() { return 0; }  public: IntegerBox() = default; };
+int read<T>(T value) requires std::integral<bool> && boxed_int<IntegerBox<bool>> { return 0; }  //~ ERROR GTI-S2029
+int main() { return 0; }

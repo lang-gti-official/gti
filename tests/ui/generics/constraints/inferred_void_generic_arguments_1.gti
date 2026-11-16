@@ -1,0 +1,9 @@
+// Inferred void generic arguments: implicit generic inference should accept void metadata when the actual parameter and result are pointer values.
+//@ check-pass
+T* identity_pointer<T>(T* pointer) { return pointer; }
+
+int main() {
+  void* pointer = nullptr;
+  void* copied = identity_pointer(pointer);
+  return copied == nullptr ? 0 : 1;
+}

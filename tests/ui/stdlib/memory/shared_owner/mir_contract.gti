@@ -1,0 +1,15 @@
+// Mir contract: shared owners must lower to verified MIR.
+//@ check-pass
+import std.memory;
+
+int main() {
+  mut auto first = std::make_shared<int>(7);
+  mut auto second = first.clone();
+  auto weak = first.downgrade();
+  auto weak_copy = weak.clone();
+  int& read = *second;
+  first.reset();
+  int value = read;
+  first.swap(second);
+  return value + int(first.use_count()) - 8;
+}

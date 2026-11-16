@@ -77,7 +77,7 @@ Owner decisions (2026-11-16):
 | 0. Stop the bleeding | Per-commit runtime harnesses at `-O0` only (`GTI_TEST_LLVM_LEVELS` selects more); slow families carry the CTest label `slow` and run in the daily slow tier, whose `Slow tier verdict (<sha>)` the release train requires; C++-backend tests and CI removed; a diff-based PR lint freezes the old suite (no new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`; `tests/ui/`, `tests/unit/`, `tests/runner/` and `tests/gti_test.cmake` are exempt) | none | in progress |
 | 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts | none | not started |
 | 2. Runner MVP | `gti-test` under `tests/runner/`, cases under `tests/ui/`, one CTest entry registered in `tests/gti_test.cmake`; preamble-cache spike settles plan scenario A or B | none | in progress |
-| 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | not started |
+| 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | in progress: phase 4 uses `scripts/extract_cpp_tests.py` (temporary; per-file helper specifications, compiler-checked code sets, review resolutions); converted so far: `protected_member_tests.cpp`, `shared_ownership_tests.cpp`, six constraint tests of `compiler_declarations` |
 
 Until phase 2 lands, a new test is a case added to an existing harness; after
 it lands, new tests go under `tests/ui/`. Acceptance for each conversion phase

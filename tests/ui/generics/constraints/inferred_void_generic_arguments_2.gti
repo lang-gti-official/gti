@@ -1,0 +1,9 @@
+// Inferred void generic arguments: generic inference should continue accepting void* as a complete pointer type.
+//@ check-pass
+T identity<T>(T value) { return value; }
+
+int main() {
+  void* pointer = nullptr;
+  void* copied = identity(pointer);
+  return copied == nullptr ? 0 : 1;
+}

@@ -1,0 +1,3 @@
+// Stored reference loop invalidation4: an unbraced conditional inside a loop must retain conservative semantic loan extent instead of relying on MIR backedge failure.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (false) if (true) { char first = *iterator; value.push_back('!'); } else { value.push_back('?'); } return 0; }  //~ ERROR GTI-S2017 while a reference borrowed from it may still be live

@@ -1,0 +1,12 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+interface Base { int read(); };
+         class Derived : public Base {
+         public:
+           int read() override { return 3; }
+          public: Derived() = default; };
+         int main() {
+           auto owner = std::make_shared<Derived>();
+           auto base = std::upcast_shared<Base, Derived>(owner);  //~ ERROR GTI-S2018
+           return base->read();
+         }

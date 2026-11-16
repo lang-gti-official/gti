@@ -50,7 +50,7 @@ def block(output, status, name):
 
 def self_test(runner):
     code, out = run(runner, FIXTURES / "pass", "--jobs", "2")
-    expect(code == 0 and "RESULT ok: 6 passed, 0 failed" in out,
+    expect(code == 0 and "RESULT ok: 7 passed, 0 failed" in out,
            "passing fixtures pass", out)
 
     code, out = run(runner, FIXTURES / "fail", "--jobs", "2")
@@ -121,8 +121,13 @@ def self_test(runner):
         expect("//@ stdout: actual" in stdout and "expected" not in stdout,
                "bless rewrote the inline stdout", stdout)
 
+    code, out = run(runner, FIXTURES / "format")
+    expect(code == 1 and "is not idempotent" in block(out, "FAIL", "drift.gti"),
+           "format-stable fails when formatting is not a fixed point", out)
+
     code, out = run(runner, "--tidy", "--root", FIXTURES / "tidy")
     for problem in ("unknown directive 'check-pas'", "no_purpose.gti: the first line",
+                    "format-stable needs a check-pass test without annotations",
                     "orphan.stdout: expected output without a test",
                     "top_level.gti: tests live in a subdirectory"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
@@ -133,7 +138,7 @@ def self_test(runner):
     _, first = run(runner, FIXTURES / "pass", "--list", "--shard", "1/2")
     _, second = run(runner, FIXTURES / "pass", "--list", "--shard", "2/2")
     expect(sorted(first.splitlines() + second.splitlines()) ==
-           sorted(full.splitlines()) and len(full.splitlines()) == 6,
+           sorted(full.splitlines()) and len(full.splitlines()) == 7,
            "shards partition the tests", full + first + second)
 
     with tempfile.TemporaryDirectory() as directory:
@@ -141,7 +146,7 @@ def self_test(runner):
         code, out = run(runner, FIXTURES / "pass", "--isolate", "--json", report)
         expect(code == 0 and "isolated" in out, "--isolate agrees", out)
         rows = [json.loads(line) for line in report.read_text().splitlines()]
-        expect(len(rows) == 6 and all("cpu" in row for row in rows),
+        expect(len(rows) == 7 and all("cpu" in row for row in rows),
                "the JSON report has one row per test", report.read_text())
 
 

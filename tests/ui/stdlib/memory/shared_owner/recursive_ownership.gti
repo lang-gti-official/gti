@@ -1,0 +1,15 @@
+// Recursive ownership: recursive shared-owner shapes need a finite verified cleanup recipe.
+//@ check-pass
+import std.memory;
+
+struct Node {
+  int value = 7;
+  std::shared_ptr<Node> next{};
+public:
+  Node() = default;
+};
+int main() {
+  auto root = std::make_shared<Node>();
+  auto alias = root.clone();
+  return alias->value - 7;
+}
