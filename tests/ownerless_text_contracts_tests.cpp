@@ -4885,7 +4885,8 @@ int main() {
 }
 
 void testOwnedStorageReferenceReceiver() {
-  const auto result = analyzeText(R"gti(
+  for (const bool projected : {false, true}) {
+    std::string source = R"gti(
 import std.string;
 import std.vector;
 std::string clone_first(std::vector<std::string>& values) {
@@ -4896,37 +4897,61 @@ int main() {
   values.push_back(std::string("kept"));
   return clone_first(values).size() == 4 ? 0 : 1;
 }
-)gti",
-                                  true);
-  if (!result.canGenerateCode())
-    printDiagnostics(result);
-  expect(result.canGenerateCode(),
-         "owned contents accessed through a reference formal's receiver lower");
-  if (!result.canGenerateCode())
-    return;
-  const auto *function = namedFunction(result, "clone_first");
-  expect(function != nullptr, "reference receiver helper is represented");
-  if (!function)
-    return;
-  bool checked = false;
-  for (const auto &loan : function->body.loans) {
-    if (!lang::mir_detail::ownedContentEntry(function->body, loan, &result.mir))
-      continue;
-    auto forged = function->body;
-    bool changed = false;
-    for (auto &place : forged.places)
-      if (place.projections.size() == 1 &&
-          place.projections.front().kind ==
-              lang::MirProjectionKind::Dereference) {
-        place.projections.front().kind = lang::MirProjectionKind::Index;
-        changed = true;
-      }
-    expect(changed, "reference receiver has an exact dereference place");
-    expect(!lang::mir_detail::ownedContentEntry(forged, loan, &result.mir),
-           "an arbitrary projection cannot witness the reference formal owner");
-    checked = true;
+)gti";
+    if (projected) {
+      const auto insert = source.find("std::string clone_first");
+      source.insert(insert, "struct State { std::vector<std::string> values; "
+                            "State(std::vector<std::string> values) : "
+                            "values(std::move(values)) {} };\n");
+      const auto signature =
+          source.find("clone_first(std::vector<std::string>& values)");
+      source.replace(
+          signature,
+          std::string("clone_first(std::vector<std::string>& values)").size(),
+          "clone_first(State& state)");
+      source.replace(source.find("return values["),
+                     std::string("return values[").size(),
+                     "return state.values[");
+      source.replace(
+          source.find("return clone_first(values)"),
+          std::string("return clone_first(values)").size(),
+          "State state{std::move(values)}; return clone_first(state)");
+    }
+    const auto result = analyzeText(source, true);
+    if (!result.canGenerateCode())
+      printDiagnostics(result);
+    expect(
+        result.canGenerateCode(),
+        "owned contents accessed through a reference formal's receiver lower");
+    if (!result.canGenerateCode())
+      return;
+    const auto *function = namedFunction(result, "clone_first");
+    expect(function != nullptr, "reference receiver helper is represented");
+    if (!function)
+      return;
+    bool checked = false;
+    for (const auto &loan : function->body.loans) {
+      if (!lang::mir_detail::ownedContentEntry(function->body, loan,
+                                               &result.mir))
+        continue;
+      auto forged = function->body;
+      bool changed = false;
+      for (auto &place : forged.places)
+        if (!place.projections.empty() &&
+            place.projections.front().kind ==
+                lang::MirProjectionKind::Dereference) {
+          place.projections.front().kind = lang::MirProjectionKind::Index;
+          changed = true;
+        }
+      expect(changed, "reference receiver has an exact dereference place");
+      expect(
+          !lang::mir_detail::ownedContentEntry(forged, loan, &result.mir),
+          "an arbitrary projection cannot witness the reference formal owner");
+      checked = true;
+    }
+    expect(checked,
+           "reference receiver has a verified external-contents entry");
   }
-  expect(checked, "reference receiver has a verified external-contents entry");
 }
 
 void testOwnedStorageReceiverWrite() {

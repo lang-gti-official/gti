@@ -2036,15 +2036,34 @@ bool ownedContentEntry(const MirBody &entryBody, const MirLoan &entryLoan,
       const auto *place = body.findPlace(id);
       // A method called through a reference formal uses its dereferenced
       // place as the receiver, while the entry witness names the formal.
-      // Admit only that exact dereference, never an arbitrary projection.
+      // It may select an owned field below that checked dereference, just as
+      // a method can select a field below `this`. No indexing or additional
+      // dereference can acquire the root's content authority. Whole-program
+      // checking below verifies the selected field's exact callee owner type.
+      auto projectedKey = source->key;
+      if (projectedKey && place && !place->projections.empty())
+        for (auto part = place->projections.begin() + 1;
+             part != place->projections.end(); ++part)
+          projectedKey->projections.push_back(
+              {.kind = PlaceProjectionKind::Field,
+               .field = part->field,
+               .selection = part->selection});
       const bool referenceReceiver =
-          parameter && place && place->root == MirPlaceRootKind::Binding &&
+          parameter && place && !place->foreignStorage &&
+          place->root == MirPlaceRootKind::Binding &&
           place->binding == source->binding &&
           place->symbol == source->symbol && place->key &&
-          place->key == source->key &&
-          place->type == source->type.arguments.front() &&
-          place->access == ownerAccess && place->projections.size() == 1 &&
-          place->projections.front().kind == MirProjectionKind::Dereference;
+          (place->key == source->key || place->key == projectedKey) &&
+          (place->access == AccessMode::ReadOnly ||
+           ownerAccess == AccessMode::Mutable) &&
+          !place->projections.empty() &&
+          place->projections.front().kind == MirProjectionKind::Dereference &&
+          (place->projections.size() != 1 ||
+           place->type == source->type.arguments.front()) &&
+          std::all_of(place->projections.begin() + 1, place->projections.end(),
+                      [](const auto &part) {
+                        return part.kind == MirProjectionKind::Field;
+                      });
       return id == source->id || referenceReceiver ||
              (receiver && place && place->root == MirPlaceRootKind::This &&
               place->access == source->access &&
@@ -2148,6 +2167,11 @@ bool ownedContentEntry(const MirBody &entryBody, const MirLoan &entryLoan,
                                   ? program->findClassInstance(*callee->owner)
                                   : nullptr;
           const auto *actualPlace = body.findPlace(*actual);
+          // Alias recovery can erase the checked field selection. The physical
+          // receiver retains its type and was checked against this owner above.
+          if (parameter && (actualOperand.kind == MirOperandKind::BorrowRead ||
+                            actualOperand.kind == MirOperandKind::BorrowWrite))
+            actualPlace = body.findPlace(actualOperand.place);
           if (!owner || callee->staticMember ||
               (receiverAllowsMutation(callee->receiverMutability) &&
                ownerAccess != AccessMode::Mutable) ||

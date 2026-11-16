@@ -2062,6 +2062,30 @@ CASES['mixed_reference_pack_protects_text_owner'] = (False,
         'first.clear(); return through_pack(a, middle, b);'))
 
 
+# A reference formal's opaque content witness does not borrow unrelated
+# scalar fields. Keep the aggregate itself owned; nested borrowed aggregates
+# remain outside this delivery's container boundary.
+CASES['projected_owned_storage_reference_shell'] = (True, r'''
+import std.string;
+import std.vector;
+struct State {
+  mut std::size_t position = 0;
+  std::vector<std::string> values;
+  State(std::vector<std::string> values) : values(std::move(values)) {}
+};
+int inspect(mut State& state) {
+  state.position = state.position + std::size_t(1);
+  return state.values[0].size() == std::size_t(5) && state.position == std::size_t(1) ? 0 : 1;
+}
+int main() {
+  mut std::vector<std::string> values{};
+  values.push_back(std::string("hello"));
+  mut State state{std::move(values)};
+  return inspect(state);
+}
+''')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('compiler', type=Path)

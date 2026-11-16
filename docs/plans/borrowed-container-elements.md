@@ -122,3 +122,37 @@ initialization/relocation preserve the live/vacant storage checks. The source
 wrappers retain main's `constexpr` declarations. The combined candidate is
 being revalidated, including the existing compile-time/runtime container
 fixtures; the measurements above describe the pre-reconciliation candidate.
+
+
+### Integration blockers (2026-11-16)
+
+PR #425 remains a draft, not ready for merge. The reconciled published head
+`537a058de` passes `constexpr_owned_storage_runtime`,
+`constexpr_owned_containers_example`, `view_fields`,
+`object_construction_runtime`, `reference_payload_semantics`,
+`ephemeral_carrier_mir`, both operator-place composition suites, and
+`mir_carrier_flow`. However, `compiler_pipeline` fails the portable `import
+std` case and `ownerless_text_contracts` reports 28 failed assertions.
+The pre-reconciliation results above do not certify this combined head.
+
+The failures span retained-input publication, borrowed-record construction,
+cloning, borrowed-array return identity, and conditional cleanup/verification.
+They must be resolved and the focused integration plan rerun before handoff.
+Do not suppress these checks or treat existing native execution evidence as a
+substitute for independently verified MIR.
+
+A focused follow-up recognizes owned fields selected through reference formals
+when tracing an opaque content entry to its actual storage primitive. It checks
+the physical reference/field path and selected callee type, rejects indexing
+or additional dereferences, and permits read-only fields under a mutable
+formal. The owned aggregate runtime regression passes on LLVM O0 and O3;
+`testOwnedStorageReferenceReceiver` passes its direct and projected cases and
+forged-path rejection. This is focused evidence only, not resolution of the
+remaining integration failures. Nested aggregates containing borrowed
+containers remain outside the declared delivery boundary.
+
+The integration run is `run-3469e552844c47dcb39f276d36126e52` (LLVM 23.1.2,
+macOS arm64), bound to `537a058de` and snapshot
+`03126430c06e7c599c03a1ca4154b952051074f038da8dd2485c4ee224b022f8`.
+The follow-up probes used an override object linked against that build; they
+are diagnostic evidence and do not constitute a clean-head verification.
