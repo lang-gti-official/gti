@@ -1,0 +1,4 @@
+// mir-function names a function that does not exist.
+//@ snapshot: mir
+//@ mir-function: nosuch
+int main() { return 0; }

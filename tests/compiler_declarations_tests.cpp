@@ -2166,9 +2166,13 @@ int main() {
   expect(!invalidParser.hadError(),
          "invalid constructor semantics should remain valid syntax");
 
-  const lang::FrontendResult invalidFrontend = lang::Frontend().analyze(
-      "invalid-constructors-and-receivers.gti", invalidSource,
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+  // This fixture intentionally checks more than twenty independent failures.
+  lang::FrontendOptions exhaustiveDiagnostics;
+  exhaustiveDiagnostics.limits.errorLimit = 0;
+  const lang::FrontendResult invalidFrontend =
+      lang::Frontend(exhaustiveDiagnostics)
+          .analyze("invalid-constructors-and-receivers.gti", invalidSource,
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   const std::vector<lang::Diagnostic> &invalidSemantic =
       invalidFrontend.diagnostics;
   expect(!invalidFrontend.semanticValid,
@@ -4758,8 +4762,13 @@ int main() {
          "the backend should receive selected relational methods and generic "
          "default construction as exact MIR targets without concepts");
 
-  lang::FrontendResult invalid = lang::Frontend().analyze(
-      "invalid-constrained-generics.gti", R"(
+  // Preserve the exhaustive constraint-diagnostic matrix beyond the default
+  // cap.
+  lang::FrontendOptions exhaustiveDiagnostics;
+  exhaustiveDiagnostics.limits.errorLimit = 0;
+  lang::FrontendResult invalid =
+      lang::Frontend(exhaustiveDiagnostics)
+          .analyze("invalid-constrained-generics.gti", R"(
 T unsupported_add<T>(T left, T right) { return left + right; }
 T ordered_value<std::ordered T>(T value) { return value; }
 T needs_numeric<std::numeric T>(T value) { return value; }
@@ -4857,7 +4866,7 @@ int use() {
   return 0;
 }
 )",
-      {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+                   {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
   expect(!invalid.canGenerateCode(),
          "unsupported operations and concrete constraint violations should "
          "fail before backend entry");

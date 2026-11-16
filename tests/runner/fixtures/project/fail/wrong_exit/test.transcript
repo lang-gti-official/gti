@@ -1,0 +1,3 @@
+// An unexpected exit code fails with the normalised output.
+$ gti main.gti --emit-mir -o out.mir
+? 2

@@ -1,4 +1,7 @@
 #include "execute.h"
+#include "lsp.h"
+#include "project.h"
+#include "snapshot.h"
 
 #include "gti/compile_limits.h"
 #include "gti/driver/build.h"
@@ -6,7 +9,9 @@
 #include "gti/driver/native_toolchain.h"
 #include "gti/formatter.h"
 #include "gti/frontend_cache.h"
+#include "gti/lexer.h"
 #include "gti/lowered_program.h"
+#include "gti/parser.h"
 #include "gti/semantic_preamble.h"
 
 #include <fcntl.h>
@@ -20,6 +25,7 @@
 #include <cmath>
 #include <csignal>
 #include <exception>
+#include <functional>
 #include <map>
 #include <optional>
 #include <regex>
@@ -85,9 +91,14 @@ public:
   [[nodiscard]] std::string_view name() const override {
     return "gti-test-check";
   }
-  [[nodiscard]] lang::BackendArtifact generate(lang::LoweredProgram) override {
+  [[nodiscard]] lang::BackendArtifact
+  generate(lang::LoweredProgram program) override {
+    if (inspect)
+      inspect(program);
     return {};
   }
+  // Called with the lowered program, for the mir snapshot.
+  std::function<void(const lang::LoweredProgram &)> inspect;
 };
 
 bool internalError(const std::string &code, const std::string &message) {
@@ -134,45 +145,8 @@ std::string indent(const std::string &text, const std::string &prefix) {
   return result;
 }
 
-// A line diff of expected and actual output, capped at `limit` lines.
-std::string diff(const std::string &expected, const std::string &actual,
-                 std::size_t limit = 40) {
-  const std::vector<std::string> a = lines(expected);
-  const std::vector<std::string> b = lines(actual);
-  std::vector<std::string> out;
-  if (a.size() * b.size() > 4'000'000) {
-    out.push_back("(output too large to diff; " + std::to_string(a.size()) +
-                  " expected lines, " + std::to_string(b.size()) +
-                  " actual lines)");
-  } else {
-    std::vector<std::vector<int>> table(a.size() + 1,
-                                        std::vector<int>(b.size() + 1, 0));
-    for (std::size_t i = a.size(); i-- > 0;)
-      for (std::size_t j = b.size(); j-- > 0;)
-        table[i][j] = a[i] == b[j] ? table[i + 1][j + 1] + 1
-                                   : std::max(table[i + 1][j], table[i][j + 1]);
-    std::size_t i = 0;
-    std::size_t j = 0;
-    while (i < a.size() || j < b.size()) {
-      if (i < a.size() && j < b.size() && a[i] == b[j]) {
-        out.push_back(" " + a[i]);
-        ++i;
-        ++j;
-      } else if (i < a.size() &&
-                 (j == b.size() || table[i + 1][j] >= table[i][j + 1])) {
-        out.push_back("-" + a[i++]);
-      } else {
-        out.push_back("+" + b[j++]);
-      }
-    }
-  }
-  std::string result;
-  for (std::size_t index = 0; index < out.size() && index < limit; ++index)
-    result += "    " + out[index] + "\n";
-  if (out.size() > limit)
-    result +=
-        "    ... (" + std::to_string(out.size() - limit) + " more lines)\n";
-  return result;
+std::string diff(const std::string &expected, const std::string &actual) {
+  return lineDiff(expected, actual, 40);
 }
 
 struct ProcessRun {
@@ -347,8 +321,11 @@ struct Engine::State {
   EngineOptions options;
   lang::driver::ToolchainLayout toolchain;
   lang::TargetInfo target;
+  lang::TargetInfo concurrentTarget;
   lang::driver::FrontendReuse reuse;
   std::set<std::string> warmGroups;
+  std::unique_ptr<LspServer> lsp;
+  int lspDocuments = 0;
   fs::path caseDirectory;
 };
 
@@ -361,6 +338,11 @@ Engine::Engine(EngineOptions options) : state(std::make_unique<State>()) {
           lang::TargetInfo::host(), lang::ExecutionProfile::SingleThreaded,
           lang::driver::RuntimeProfile::Hosted)
           .target();
+  state->concurrentTarget =
+      lang::driver::AnalysisConfiguration(lang::TargetInfo::host(),
+                                          lang::ExecutionProfile::Concurrent,
+                                          lang::driver::RuntimeProfile::Hosted)
+          .target();
   state->reuse = lang::driver::FrontendReuse{
       .parses = std::make_shared<lang::FrontendCache>(lang::FrontendCacheLimits{
           .maximumEntries = 2048,
@@ -372,6 +354,93 @@ Engine::Engine(EngineOptions options) : state(std::make_unique<State>()) {
 }
 
 Engine::~Engine() = default;
+
+// A project transcript: its commands' CPU, all together, against the
+// project limit.
+Outcome Engine::runProject(const TestFile &test) {
+  Outcome outcome;
+  const EngineOptions &options = state->options;
+  const double start = lspClock();
+  const ProjectResult result = runProjectTest(
+      test,
+      ProjectTools{options.gti, options.lsp,
+                   state->toolchain.standardLibrary.root},
+      state->caseDirectory / "project", options.limits.forTest(test));
+  outcome.cpu = result.cpu;
+  outcome.wall = lspClock() - start;
+  if (result.timedOut)
+    outcome.status = Status::Timeout;
+  else if (!result.failure.empty())
+    outcome.status = Status::Fail;
+  outcome.detail = result.failure;
+  return outcome;
+}
+
+// LSP tests are measured in wall time: the work happens in the server
+// process. A worker's first LSP test (or any transcript, which starts its own
+// server) may also spend the cold allowance analysing the standard library.
+Outcome Engine::runLsp(const TestFile &test) {
+  Outcome outcome;
+  const EngineOptions &options = state->options;
+  const double limit = options.limits.forTest(test);
+  const double start = lspClock();
+  const fs::path directory =
+      state->caseDirectory / ("lsp" + std::to_string(++state->lspDocuments));
+  std::error_code error;
+  fs::remove_all(directory, error);
+  bool cold = test.mode == Mode::LspTranscript;
+  LspResult result;
+  if (test.mode == Mode::LspTranscript) {
+    result = runLspTranscript(options.lsp, test, directory,
+                              start + limit + options.limits.coldAllowance);
+  } else {
+    if (!state->lsp || !state->lsp->running()) {
+      state->lsp = std::make_unique<LspServer>(
+          options.lsp, options.workDirectory / "gti_lsp.log");
+      std::string failure;
+      if (!state->lsp->startInitialized(limit + options.limits.coldAllowance,
+                                        failure)) {
+        outcome.status = Status::Fail;
+        outcome.detail =
+            "could not start " + options.lsp.string() + ": " + failure + "\n";
+        return outcome;
+      }
+    }
+    cold = !state->lsp->warm;
+    result =
+        runLspTest(*state->lsp, test, directory,
+                   start + limit + (cold ? options.limits.coldAllowance : 0.0));
+  }
+  outcome.wall = lspClock() - start;
+  outcome.cpu = outcome.wall;
+  outcome.cold = cold;
+  if (result.crashed || result.timedOut) {
+    outcome.status = result.crashed ? Status::Crash : Status::Timeout;
+    outcome.detail = result.failure;
+    return outcome;
+  }
+  std::string detail = result.failure;
+  if (result.published) {
+    const std::vector<std::string> problems =
+        compareDiagnostics(test, result.diagnostics);
+    if (!problems.empty() && options.bless) {
+      writeFile(test.path, blessAnnotations(test, result.diagnostics));
+      outcome.blessed.push_back(test.display);
+    } else {
+      for (const std::string &problem : problems)
+        detail += problem + "\n";
+    }
+  }
+  if (!detail.empty()) {
+    outcome.status = Status::Fail;
+    outcome.detail = detail;
+  } else if (!cold && outcome.wall > limit) {
+    outcome.status = Status::Timeout;
+    outcome.detail = "over the time limit: " + std::to_string(outcome.wall) +
+                     " s > " + std::to_string(limit) + " s\n";
+  }
+  return outcome;
+}
 
 namespace {
 
@@ -500,6 +569,47 @@ void collectRendered(Compiled &compiled, const Materialized &files,
   collect(compiled, files, diagnostics);
 }
 
+// parse-pass / parse-fail: the lexer and parser of every section, nothing
+// after them.
+void parseOnly(Compiled &compiled, const Materialized &files,
+               const TestFile &test) {
+  std::vector<lang::Diagnostic> diagnostics;
+  for (const Section &section : test.sections) {
+    if (!section.name.ends_with(".gti"))
+      continue;
+    lang::Lexer lexer;
+    std::vector<lang::Token> tokens = lexer.scan(
+        section.text,
+        (files.entry.parent_path() / section.name).lexically_normal().string());
+    diagnostics.insert(diagnostics.end(), lexer.errors().begin(),
+                       lexer.errors().end());
+    lang::Parser parser(std::move(tokens), section.text);
+    (void)parser.parse();
+    diagnostics.insert(diagnostics.end(), parser.errors().begin(),
+                       parser.errors().end());
+  }
+  collect(compiled, files, diagnostics);
+  compiled.succeeded = std::none_of(
+      compiled.diagnostics.begin(), compiled.diagnostics.end(),
+      [](const LocatedDiagnostic &d) { return d.severity == Severity::Error; });
+}
+
+// Rendered diagnostics as `gti` prints them, with the test's directory and
+// the standard library root replaced by stable names.
+std::string normalizeRendered(std::string text, const fs::path &directory,
+                              const fs::path &standardLibrary) {
+  const auto replace = [&](const std::string &from, const std::string &to) {
+    if (from.empty())
+      return;
+    for (std::size_t at = 0; (at = text.find(from, at)) != std::string::npos;
+         at += to.size())
+      text.replace(at, from.size(), to);
+  };
+  replace(directory.string() + "/", "");
+  replace(standardLibrary.string() + "/", "$STD/");
+  return text;
+}
+
 } // namespace
 
 // `//@ format-stable`: the formatter reaches a fixed point in one pass and
@@ -507,6 +617,10 @@ void collectRendered(Compiled &compiled, const Materialized &files,
 void Engine::checkFormatting(const TestFile &test, Outcome &outcome) {
   TestFile formatted = test;
   formatted.formatStable = false;
+  // Snapshots and CHECK patterns describe the original text; the formatted
+  // copy only has to check.
+  formatted.snapshots.clear();
+  formatted.checks.clear();
   std::string problems;
   try {
     const lang::Formatter formatter;
@@ -555,9 +669,160 @@ Outcome Engine::run(const TestFile &test) {
     outcome.status = Status::Skip;
     return outcome;
   }
+  if (test.mode == Mode::Lsp || test.mode == Mode::LspTranscript)
+    return runLsp(test);
+  if (test.mode == Mode::Project)
+    return runProject(test);
   const EngineOptions &options = state->options;
   const double limit = options.limits.forTest(test);
   const bool warm = state->warmGroups.contains(test.groupKey);
+
+  const auto requestFor = [&](const TestFile &file, const fs::path &entry) {
+    auto request =
+        lang::driver::CompilationRequest(
+            entry, state->toolchain.standardLibrary,
+            file.concurrent ? state->concurrentTarget : state->target,
+            file.optimize ? lang::OptimizationLevel::O3
+                          : lang::OptimizationLevel::O0,
+            lang::CppStandard::Cpp23)
+            .withCompileLimits(lang::resolveCompileLimits({}, {}))
+            .withFrontendReuse(state->reuse);
+    return file.requireFunctionDefinitions ? request.withDefinitionClosure()
+                                           : request;
+  };
+
+  // `//@ snapshot:` outputs, after the test's other expectations passed.
+  // Returns the failure text.
+  const auto snapshots = [&](const Materialized &files, bool bless,
+                             Outcome &result) {
+    std::string problems;
+    const auto compare = [&](Snapshot kind, const std::string &actual) {
+      if (!test.checks.empty() &&
+          (kind == Snapshot::LlvmIr ||
+           (kind == Snapshot::Mir && !hasSnapshot(test, Snapshot::LlvmIr)))) {
+        for (const std::string &problem : matchChecks(test.checks, actual))
+          problems += problem + "\n";
+        return;
+      }
+      bool blessed = false;
+      problems += compareSnapshot(test, kind, actual, bless, blessed);
+      if (blessed)
+        result.blessed.push_back(snapshotPath(test, kind).string());
+    };
+    for (const Snapshot kind : test.snapshots) {
+      if (kind == Snapshot::Format) {
+        const lang::Formatter formatter;
+        std::string formatted;
+        for (const Section &section : test.sections) {
+          if (test.sections.size() > 1 || section.firstLine != 1)
+            formatted += "// --- " + section.name + "\n";
+          formatted += section.name.ends_with(".gti")
+                           ? formatter.format(section.text)
+                           : section.text;
+        }
+        compare(kind, formatted);
+      } else if (kind == Snapshot::Diagnostics) {
+        const fs::path entry =
+            files.entry.lexically_relative(state->caseDirectory);
+        // As --isolate: --emit-mir unless the definition closure is needed.
+        std::vector<std::string> argv{options.gti.string(),
+                                      "--color=never",
+                                      "--progress",
+                                      "never",
+                                      entry.string(),
+                                      "-o",
+                                      "snapshot"};
+        if (!modeBuilds(test.mode) && !test.requireFunctionDefinitions)
+          argv.push_back("--emit-mir");
+        if (test.concurrent) {
+          argv.push_back("--execution-profile");
+          argv.push_back("concurrent");
+        }
+        const ProcessRun process = runProcess(
+            argv, std::nullopt, limit + options.limits.coldAllowance,
+            4 * (limit + options.limits.coldAllowance), state->caseDirectory);
+        if (!process.started || process.timedOut || process.signal != 0) {
+          problems += "snapshot diagnostics: gti did not finish (" +
+                      std::string(process.timedOut ? "timeout" : "crash") +
+                      ")\n";
+          continue;
+        }
+        // Only the diagnostics, without the summary line.
+        std::string rendered;
+        for (const std::string &line : lines(process.err))
+          if (line.rfind("Diagnostics: ", 0) != 0)
+            rendered += line + "\n";
+        if (rendered.empty())
+          problems += "snapshot diagnostics: gti reported no diagnostics\n";
+        else
+          compare(kind,
+                  normalizeRendered(rendered, state->caseDirectory,
+                                    state->toolchain.standardLibrary.root));
+      } else if (kind == Snapshot::Mir) {
+        std::string selected;
+        std::string error;
+        std::set<std::string> sources;
+        for (const auto &[path, name] : files.sections)
+          sources.insert(path);
+        CheckBackend backend;
+        backend.inspect = [&](const lang::LoweredProgram &program) {
+          selected = selectMir(program, test.mirFunctions, sources, error);
+        };
+        const lang::driver::CompilationResult mir =
+            lang::driver::compileWithBackend(requestFor(test, files.entry),
+                                             backend);
+        if (mir.status != lang::driver::CompilationStatus::Success)
+          problems += "snapshot mir: the program did not reach verified MIR\n";
+        else if (!error.empty())
+          problems += "snapshot mir: " + error;
+        else
+          compare(kind, selected);
+      } else if (kind == Snapshot::LlvmIr) {
+        std::string ir;
+        if (options.isolate) {
+          std::vector<std::string> argv{options.gti.string(),
+                                        "--color=never",
+                                        files.entry.string(),
+                                        test.optimize ? "-O3" : "-O0",
+                                        "--emit-llvm",
+                                        "-o",
+                                        "case.ll"};
+          if (test.concurrent) {
+            argv.push_back("--execution-profile");
+            argv.push_back("concurrent");
+          }
+          const ProcessRun process = runProcess(
+              argv, std::nullopt, limit + options.limits.coldAllowance,
+              4 * (limit + options.limits.coldAllowance), state->caseDirectory);
+          if (process.exitCode == 0)
+            ir = readFile(state->caseDirectory / "case.ll").value_or("");
+          else
+            problems += "snapshot llvm-ir: gti --emit-llvm failed\n" +
+                        indent(tail(process.err, 20), "    ");
+        } else {
+          const lang::driver::CompilationResult emitted =
+              lang::driver::compileToLlvmIr(requestFor(test, files.entry));
+          if (emitted.succeeded())
+            ir = emitted.artifact->contents;
+          else
+            problems += "snapshot llvm-ir: LLVM IR emission failed: " +
+                        emitted.backendFailureDetails.value_or(
+                            emitted.diagnostics.empty()
+                                ? std::string("(no detail)")
+                                : emitted.diagnostics.front().message) +
+                        "\n";
+        }
+        std::map<std::string, std::string> sources;
+        for (const Section &section : test.sections)
+          sources[(state->caseDirectory / section.name).string()] =
+              section.text;
+        if (!ir.empty())
+          compare(kind, annotateLlvmIr(ir, sources,
+                                       state->caseDirectory.string() + "/"));
+      }
+    }
+    return problems;
+  };
 
   const auto attempt = [&](bool bless) {
     Outcome result;
@@ -586,13 +851,23 @@ Outcome Engine::run(const TestFile &test) {
       if (test.runnerFault == "ice") {
         compiled.internalFailure =
             "GTI-B0001 at main.gti:1: Internal compiler error: injected";
+      } else if (modeParses(test.mode)) {
+        parseOnly(compiled, files, test);
       } else if (options.isolate) {
         std::vector<std::string> argv{options.gti.string(), "--color=never",
                                       files.entry.string(),
                                       test.optimize ? "-O3" : "-O0"};
-        const fs::path output = state->caseDirectory /
-                                (modeBuilds(test.mode) ? "case" : "case.mir");
-        if (!modeBuilds(test.mode))
+        if (test.concurrent) {
+          argv.push_back("--execution-profile");
+          argv.push_back("concurrent");
+        }
+        // `gti --emit-mir` analyses without the definition closure; a test
+        // that requires it builds instead.
+        const bool emitMir =
+            !modeBuilds(test.mode) && !test.requireFunctionDefinitions;
+        const fs::path output =
+            state->caseDirectory / (emitMir ? "case.mir" : "case");
+        if (emitMir)
           argv.push_back("--emit-mir");
         argv.push_back("-o");
         argv.push_back(output.string());
@@ -614,14 +889,8 @@ Outcome Engine::run(const TestFile &test) {
               "\n" + tail(process.err, 20);
         }
       } else {
-        const auto request =
-            lang::driver::CompilationRequest(
-                files.entry, state->toolchain.standardLibrary, state->target,
-                test.optimize ? lang::OptimizationLevel::O3
-                              : lang::OptimizationLevel::O0,
-                lang::CppStandard::Cpp23)
-                .withCompileLimits(lang::resolveCompileLimits({}, {}))
-                .withFrontendReuse(state->reuse);
+        const lang::driver::CompilationRequest request =
+            requestFor(test, files.entry);
         if (!modeBuilds(test.mode)) {
           CheckBackend backend;
           const lang::driver::CompilationResult result =
@@ -672,7 +941,7 @@ Outcome Engine::run(const TestFile &test) {
     } else {
       std::vector<std::string> problems =
           compareDiagnostics(test, compiled.diagnostics);
-      if (test.mode == Mode::CheckFail && compiled.succeeded)
+      if (modeFails(test.mode) && compiled.succeeded)
         problems.insert(problems.begin(),
                         "the program compiled without errors");
       const bool errors =
@@ -683,7 +952,7 @@ Outcome Engine::run(const TestFile &test) {
       // Bless never changes a test's declared proof level: an explicit
       // check-pass, build-pass or run test that now errors stays failing.
       const bool blessable =
-          !(errors && test.modeExplicit && test.mode != Mode::CheckFail);
+          !(errors && test.modeExplicit && !modeFails(test.mode));
       if (!problems.empty()) {
         if (bless && blessable) {
           const std::string text = blessAnnotations(test, compiled.diagnostics);
@@ -699,85 +968,104 @@ Outcome Engine::run(const TestFile &test) {
                              " test cannot expect errors\n";
         }
       } else if (modeRuns(test.mode) && compiled.succeeded) {
-        const double remaining = std::max(0.5, limit - (totalCpu() - cpuStart));
-        std::vector<std::string> argv{compiled.executable.string()};
-        argv.insert(argv.end(), test.args.begin(), test.args.end());
-        const ProcessRun program = runProcess(argv, test.stdinText, remaining,
-                                              4 * limit, state->caseDirectory);
-        std::string expectedOut;
-        if (test.stdoutFile)
-          expectedOut = readFile(*test.stdoutFile).value_or("");
-        else
-          for (const std::string &line : test.stdoutLines)
-            expectedOut += line + "\n";
-        std::vector<std::string> problems;
-        if (!program.started) {
-          problems.push_back("could not start the program");
-        } else if (program.timedOut) {
-          result.status = Status::Timeout;
-          result.detail = "the program exceeded its limit\n";
-        } else if (program.signal != 0) {
-          problems.push_back("actual:   terminated by signal " +
-                             std::to_string(program.signal));
-        } else if (test.mode == Mode::RunPass && program.exitCode != 0) {
-          problems.push_back("expected: exit code 0");
-          problems.push_back("actual:   exit code " +
-                             std::to_string(program.exitCode));
-        } else if (test.mode == Mode::RunFail && test.exitCode &&
-                   program.exitCode != *test.exitCode) {
-          problems.push_back("expected: exit code " +
-                             std::to_string(*test.exitCode));
-          problems.push_back("actual:   exit code " +
-                             std::to_string(program.exitCode));
-        } else if (test.mode == Mode::RunFail && program.exitCode == 0) {
-          problems.push_back("expected: a non-zero exit code");
-          problems.push_back("actual:   exit code 0");
-        }
-        for (const std::string &needle : test.stderrContains)
-          if (program.err.find(needle) == std::string::npos)
-            problems.push_back("expected: stderr containing \"" + needle +
-                               "\"");
-        const bool stdoutDiffers =
-            program.started && !program.timedOut && program.out != expectedOut;
-        if (result.status == Status::Timeout) {
-        } else if (stdoutDiffers && problems.empty() && bless) {
-          const bool inlineFits =
-              !test.stdoutFile && lines(program.out).size() <= 8 &&
-              (program.out.empty() || program.out.back() == '\n') &&
-              std::none_of(program.out.begin(), program.out.end(),
-                           [](char c) { return c == '\r' || c == '\t'; });
-          fs::path stdoutPath = test.path;
-          stdoutPath.replace_extension(".stdout");
-          bool trailingSpace = false;
-          for (const std::string &line : lines(program.out))
-            trailingSpace =
-                trailingSpace ||
-                (!line.empty() &&
-                 std::isspace(static_cast<unsigned char>(line.back())));
-          if (program.out.empty()) {
-            if (test.stdoutFile)
-              fs::remove(*test.stdoutFile);
-            if (test.hasInlineStdout)
-              writeFile(test.path, blessInlineStdout(test, ""));
-          } else if (inlineFits && !trailingSpace) {
-            writeFile(test.path, blessInlineStdout(test, program.out));
-          } else {
-            writeFile(stdoutPath, program.out);
-            if (test.hasInlineStdout)
-              writeFile(test.path, blessInlineStdout(test, ""));
+        // One execution per revision (or exactly one); every failing
+        // revision's problems are reported, prefixed with its name.
+        for (const RunSpec &run : test.runs) {
+          if (result.status == Status::Timeout)
+            break;
+          const std::string label =
+              run.revision.empty() ? "" : "[" + run.revision + "] ";
+          const double remaining =
+              std::max(0.5, limit - (totalCpu() - cpuStart));
+          std::vector<std::string> argv{compiled.executable.string()};
+          argv.insert(argv.end(), run.args.begin(), run.args.end());
+          const ProcessRun program = runProcess(
+              argv, run.stdinText, remaining, 4 * limit, state->caseDirectory);
+          std::string expectedOut;
+          if (run.stdoutFile)
+            expectedOut = readFile(*run.stdoutFile).value_or("");
+          else
+            for (const std::string &line : run.stdoutLines)
+              expectedOut += line + "\n";
+          std::vector<std::string> problems;
+          if (!program.started) {
+            problems.push_back("could not start the program");
+          } else if (program.timedOut) {
+            result.status = Status::Timeout;
+            result.detail = label + "the program exceeded its limit\n";
+          } else if (program.signal != 0) {
+            problems.push_back("actual:   terminated by signal " +
+                               std::to_string(program.signal));
+          } else if (run.mode == Mode::RunPass && program.exitCode != 0) {
+            problems.push_back("expected: exit code 0");
+            problems.push_back("actual:   exit code " +
+                               std::to_string(program.exitCode));
+          } else if (run.mode == Mode::RunFail && run.exitCode &&
+                     program.exitCode != *run.exitCode) {
+            problems.push_back("expected: exit code " +
+                               std::to_string(*run.exitCode));
+            problems.push_back("actual:   exit code " +
+                               std::to_string(program.exitCode));
+          } else if (run.mode == Mode::RunFail && program.exitCode == 0) {
+            problems.push_back("expected: a non-zero exit code");
+            problems.push_back("actual:   exit code 0");
           }
-          result.blessed.push_back(test.display);
-        } else if (stdoutDiffers || !problems.empty()) {
-          result.status = Status::Fail;
-          for (const std::string &problem : problems)
-            result.detail += problem + "\n";
-          if (stdoutDiffers)
-            result.detail += "stdout differs (-expected +actual):\n" +
-                             diff(expectedOut, program.out);
-          if (!problems.empty() && !program.err.empty())
-            result.detail +=
-                "stderr:\n" + indent(tail(program.err, 20), "    ");
+          for (const std::string &needle : run.stderrContains)
+            if (program.err.find(needle) == std::string::npos)
+              problems.push_back("expected: stderr containing \"" + needle +
+                                 "\"");
+          const bool stdoutDiffers = program.started && !program.timedOut &&
+                                     program.out != expectedOut;
+          if (result.status == Status::Timeout) {
+          } else if (stdoutDiffers && problems.empty() && bless) {
+            const bool inlineFits =
+                !run.stdoutFile && lines(program.out).size() <= 8 &&
+                (program.out.empty() || program.out.back() == '\n') &&
+                std::none_of(program.out.begin(), program.out.end(),
+                             [](char c) { return c == '\r' || c == '\t'; });
+            const fs::path stdoutPath = stdoutPathFor(test.path, run.revision);
+            bool trailingSpace = false;
+            for (const std::string &line : lines(program.out))
+              trailingSpace =
+                  trailingSpace ||
+                  (!line.empty() &&
+                   std::isspace(static_cast<unsigned char>(line.back())));
+            if (program.out.empty()) {
+              if (run.stdoutFile)
+                fs::remove(*run.stdoutFile);
+              if (run.hasInlineStdout)
+                writeFile(test.path, blessInlineStdout(test, "", run.revision));
+            } else if (inlineFits && !trailingSpace) {
+              writeFile(test.path,
+                        blessInlineStdout(test, program.out, run.revision));
+            } else {
+              writeFile(stdoutPath, program.out);
+              if (run.hasInlineStdout)
+                writeFile(test.path, blessInlineStdout(test, "", run.revision));
+            }
+            if (std::find(result.blessed.begin(), result.blessed.end(),
+                          test.display) == result.blessed.end())
+              result.blessed.push_back(test.display);
+          } else if (stdoutDiffers || !problems.empty()) {
+            result.status = Status::Fail;
+            for (const std::string &problem : problems)
+              result.detail += label + problem + "\n";
+            if (stdoutDiffers)
+              result.detail += label + "stdout differs (-expected +actual):\n" +
+                               diff(expectedOut, program.out);
+            if (!problems.empty() && !program.err.empty())
+              result.detail +=
+                  label + "stderr:\n" + indent(tail(program.err, 20), "    ");
+          }
         }
+      }
+    }
+    if (result.status == Status::Pass && !compiled.internalFailure &&
+        !test.snapshots.empty()) {
+      const std::string problems = snapshots(files, bless, result);
+      if (!problems.empty()) {
+        result.status = Status::Fail;
+        result.detail += problems;
       }
     }
     result.cpu = totalCpu() - cpuStart;

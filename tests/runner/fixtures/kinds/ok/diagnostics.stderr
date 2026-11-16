@@ -1,0 +1,3 @@
+main.gti:4:10: error[GTI-S2001]: Undefined name 'missing'.
+ 4 |   return missing;  //~ ERROR GTI-S2001
+   |          ^~~~~~~

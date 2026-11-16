@@ -1,0 +1,19 @@
+// A read-receiver call on a by-value vector mut cursor parameter verifies and runs.
+//@ run-pass
+//@ stdout: ok
+import std.vector;
+import std.iterator;
+
+bool probe<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  return first != last;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(2));
+  auto last = values.end();
+  bool inside = probe(values.begin_mut(), last);
+  std::println(inside ? "ok" : "bad");
+  return 0;
+}

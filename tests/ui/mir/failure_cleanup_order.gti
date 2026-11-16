@@ -1,0 +1,28 @@
+// A checked scalar failure gets one failure record whose cleanup block drops
+// the live locals in reverse construction order; a propagating call keeps
+// its record while cleaning the caller's local.
+// (From failure_metadata_tests.cpp testInvokeEdgesAndFailureCleanup.)
+//@ snapshot: mir
+//@ mir-function: leaf
+//@ mir-function: caller
+class Token {
+public:
+  int value;
+  Token(int input) : value(input) {}
+  ~Token() {}
+};
+
+int leaf(mut int value) {
+  Token outer = Token(1);
+  {
+    Token inner = Token(2);
+    return value + 1;
+  }
+}
+
+int caller(mut int value) {
+  Token local = Token(3);
+  return leaf(value);
+}
+
+int main() { return caller(1); }

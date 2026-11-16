@@ -1,0 +1,3 @@
+// The formatter's output for the test file.
+//@ snapshot: format
+int   main( ) {   return 0; }

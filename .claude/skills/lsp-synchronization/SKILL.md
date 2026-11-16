@@ -29,9 +29,10 @@ new RFC by default.
    generation. Keep AST pointers and snapshot-scoped IDs inside that lifetime.
 4. Keep JSON-RPC IDs, capabilities, URI/position conversion, serialization,
    diagnostic publication, and workspace edits in the protocol layer.
-5. Test valid source, incomplete/broken source, unsaved dependency overlays,
-   stale document generations, cancellation/supersession, close/reopen, and
-   non-ASCII UTF-16 positions as applicable.
+5. Test in `tests/lsp/` (marker tests, or `.jsonl` transcripts for
+   protocol sequences; [Writing Tests](../../../AGENTS.md#writing-tests)): valid source, incomplete/broken source, unsaved
+   dependency overlays, stale document generations, cancellation/supersession,
+   close/reopen, and non-ASCII UTF-16 positions as applicable.
 
 ## Feature Checks
 

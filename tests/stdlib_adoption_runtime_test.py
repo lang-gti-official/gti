@@ -78,7 +78,7 @@ def main():
                    f"<std/detail/memory_storage>:{allocation_line}: runtime error[GTI-R0011]: allocation_failure in private_storage\n")
     cases = {
         "url-failure": (fixtures / "http_url_allocation_failure.gti", [
-            ((), url_failure), (("clone",), url_failure), (("path", "rebuild"), url_failure),
+            ((), url_failure), (("clone",), url_failure), (("path", "insert"), url_failure),
         ]),
         "sort-failure": (sort_source, [
             ((), (0, "call\n" * 6 + "comparator\n6\n1\n2\n3\n4\nouter\n", "")),
@@ -100,8 +100,8 @@ def main():
                 f"<std/vector>:{vector_bounds_line}: runtime error[GTI-R0007]: index_out_of_bounds in vector\n")),
         ]),
         "url": (fixtures / "http_url_storage_counts.gti", [((), (0,
-            "8\n111\n8\n111\n5\n90\n18\n373\n"
-            "7\n8271\n7\n8271\n5\n12354\n16\n24812\n", ""))]),
+            "1\n33\n1\n33\n2\n76\n4\n135\n"
+            "1\n4117\n1\n4117\n1\n8233\n2\n12362\n", ""))]),
         "pipeline": (fixtures / "stdlib_owned_error_pipelines.gti", [((), (0, "", ""))]),
         "example": (repository / "examples/100-owned-error-pipelines.gti",
                     [((), (0, "tea\nobject is missing a required field at /name\n", ""))]),

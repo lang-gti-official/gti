@@ -73,6 +73,12 @@ struct FrontendWorkMetrics {
   // shared concept proofs (see SemanticPreamble::ConceptProofKey).
   std::size_t semanticConceptProofReuses = 0;
   std::size_t semanticConceptProofRecords = 0;
+  // Isolated workers this analysis forked for unevaluated queries (expression
+  // requirements, constraint predicates, layout-query assertions), and how
+  // many of them took an idle copy of the sealed catalog instead of copying
+  // it again.
+  std::size_t semanticQueryWorkers = 0;
+  std::size_t semanticQueryCatalogReuses = 0;
   // Concrete initializer-effect queries answered from, and added to, the
   // adopted preamble's shared effect results.
   std::size_t semanticEffectQueryReuses = 0;
@@ -138,6 +144,8 @@ struct FrontendWorkMetrics {
     semanticInstanceReuseMicroseconds = 0;
     semanticConceptProofReuses = 0;
     semanticConceptProofRecords = 0;
+    semanticQueryWorkers = 0;
+    semanticQueryCatalogReuses = 0;
     semanticEffectQueryReuses = 0;
     semanticEffectQueryRecords = 0;
     hirOmittedInstanceBodies = 0;

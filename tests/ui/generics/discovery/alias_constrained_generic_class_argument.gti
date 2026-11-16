@@ -1,0 +1,14 @@
+// An alias-constrained generic class argument instantiates and runs.
+//@ run-pass
+// A54: 'using Dictionary = std::map<std::string, int>;' is rejected because aliases resolve
+// before class types are recorded ('unknown class').
+// Same defect through the documented container-alias idiom
+// (standard-library.md:635-636) with an owning-string key.
+import std.map;
+import std.string;
+using Dictionary = std::map<std::string, int>;
+int main() {
+  mut Dictionary d{};
+  [[discard]] d.insert(std::string("k"), 1);
+  return d.size() == 1 ? 0 : 1;
+}

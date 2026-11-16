@@ -246,10 +246,16 @@ int main() {{
 
   mut std::http::request invalid_header = std::http::request(
       std::http::method::get, {http_teapot});
-  mut auto invalid_header_result =
-      invalid_header.add_header("X-Test", "bad\\r\\nvalue");
-  if (invalid_header_result ||
-      invalid_header_result.error() != std::http::errc::invalid_header) {{
+  invalid_header.add_header("X-Test", "bad\\r\\nvalue");
+  if (!invalid_header.rejection().has_value() ||
+      invalid_header.rejection().value() != std::http::errc::invalid_header ||
+      invalid_header.headers().size() != std::size_t(0)) {{
+    return 2;
+  }}
+  // A refused header is reported by the send, before any connection.
+  mut auto refused_result = client.send(invalid_header);
+  if (refused_result ||
+      refused_result.error() != std::http::errc::invalid_header) {{
     return 2;
   }}
 
@@ -346,13 +352,10 @@ int main() {{
   trusted_url.push_path_segment("echo");
   mut std::http::request trusted = std::http::request(
       std::http::method::post, trusted_url);
-  mut auto ca_result = trusted.set_ca_bundle({certificate_literal});
-  if (!ca_result) {{
+  trusted.set_ca_bundle({certificate_literal});
+  trusted.set_header("X-GTI-Test", "secure");
+  if (trusted.rejection().has_value()) {{
     return 12;
-  }}
-  mut auto header_result = trusted.set_header("X-GTI-Test", "secure");
-  if (!header_result) {{
-    return 13;
   }}
   trusted.set_body("payload");
   mut auto trusted_result = client.send(trusted);
@@ -452,7 +455,8 @@ int main() {
     mut auto secure = std::string(@HTTPS_UPPER@);
     secure.append(mode == 0 ? "empty" : "policy-hop");
     request.set_url(secure.view());
-    if (!request.set_ca_bundle(@CA@)) { return 84; }
+    request.set_ca_bundle(@CA@);
+    if (request.rejection().has_value()) { return 84; }
     auto accepted = client.send(request);
     if (!accepted || accepted.value().status() != uint32_t(204)) { return 85; }
     auto accepted_stream = client.send_stream(request);
@@ -593,9 +597,9 @@ int main() {
   auto cross_rejected = client.send_stream(cross_request);
   if (cross_rejected || cross_rejected.error() != std::http::errc::redirect_rejected) { return 30; }
   cross_request.set_redirect_policy(std::http::redirect_policy::secure);
-  auto authorization = cross_request.set_header("Authorization", "secret");
-  auto extra = cross_request.set_header("X-Secret", "also-secret");
-  if (!authorization || !extra) { return 31; }
+  cross_request.set_header("Authorization", "secret");
+  cross_request.set_header("X-Secret", "also-secret");
+  if (cross_request.rejection().has_value()) { return 31; }
   auto cross_result = client.send_stream(cross_request);
   if (!cross_result) { return 32; }
   mut auto cross = std::move(cross_result).value();
@@ -606,8 +610,8 @@ int main() {
   mut auto secure_address = std::string(@HTTPS@);
   secure_address.append("downgrade");
   mut auto downgrade = std::http::request(std::http::method::get, secure_address.view());
-  auto ca = downgrade.set_ca_bundle(@CA@);
-  if (!ca) { return 35; }
+  downgrade.set_ca_bundle(@CA@);
+  if (downgrade.rejection().has_value()) { return 35; }
   downgrade.set_redirect_policy(std::http::redirect_policy::secure);
   auto denied = client.send_stream(downgrade);
   if (denied || denied.error() != std::http::errc::redirect_rejected) { return 36; }

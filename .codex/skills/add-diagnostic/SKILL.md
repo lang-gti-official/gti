@@ -13,8 +13,8 @@ earliest phase that knows the rule.
 1. Run `git status --short`. Read
    [`docs/architecture/diagnostics.md`](../../../docs/architecture/diagnostics.md)
    and the language/architecture document for the rule.
-2. Reproduce the invalid input with the smallest focused test. Confirm which
-   phase currently detects or misses it.
+2. Reproduce the invalid input with the smallest `tests/ui/` file
+   ([Writing Tests](../../../AGENTS.md#writing-tests)). Confirm which phase currently detects or misses it.
 3. Search nearby codes and construction helpers with `rg`; extend the existing
    phase family instead of creating a parallel registry.
 4. Produce a `Diagnostic` with:
@@ -27,9 +27,10 @@ earliest phase that knows the rule.
 5. Preserve recovery. Parsing/semantic analysis should continue safely where
    the surrounding source remains meaningful, and code generation must stay
    disabled for invalid input.
-6. Add assertions for the code, meaningful message fragment, exact source
-   identity/span, related data, hint, and replacement as applicable. Avoid
-   brittle whole-rendered diagnostic snapshots.
+6. Annotate the code on its line (`//~ ERROR GTI-xxxx message fragment`);
+   every diagnostic the file produces is annotated. Add
+   `//@ snapshot: diagnostics` only when the rendered span, related data or
+   hint is what changed.
 7. If a fix-it or publication changes, run the LSP protocol tests and verify
    stale generations, UTF-16 conversion, and current-source matching. Code
    actions must come from `Diagnostic::fixes`, never message matching.

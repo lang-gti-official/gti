@@ -67,11 +67,13 @@ lang::FrontendResult
 check(const std::filesystem::path &root, const std::filesystem::path &directory,
       const std::string &name, const std::string &source,
       bool concurrent = false,
-      lang::FrontendPhase stopAfter = lang::FrontendPhase::Hir) {
+      lang::FrontendPhase stopAfter = lang::FrontendPhase::Hir,
+      lang::FrontendWorkMetrics *metrics = nullptr) {
   const auto file = directory / (name + ".gti");
   std::ofstream(file) << source;
   lang::FrontendOptions options;
   options.stopAfter = stopAfter;
+  options.workMetrics = metrics;
   options.analyzeRecoveredProgram = true;
   if (concurrent) {
     options.target.executionProfile = lang::ExecutionProfile::Concurrent;
@@ -2038,6 +2040,90 @@ concept raw_read<T> = requires(T& value) {
 int read<T>(T& value) requires raw_read<T> { return value.raw(); }
 )"),
            "a query cannot hide an unsafe obligation", "GTI-S2055");
+
+  {
+    // Unevaluated-query workers take a released copy of the sealed catalog
+    // instead of copying it again. A query answered on a reused copy must
+    // see exactly what a fresh copy shows: access, the exact instantiation
+    // and value arguments still decide it.
+    const std::string declarations = R"(
+constexpr bool compact<T>() { return sizeof(T) <= uint64_t(8); }
+concept small<T> = compact<T>();
+concept doubles<T> = requires(T& value) {
+  { value.read() + value.read() } -> int;
+};
+struct Lane<uint64_t N> {
+  int slots[N] = {};
+  int read() { return 1; }
+public:
+  Lane() = default;
+};
+struct Probe<T> {
+  T level;
+  T read() { return this.level; }
+public:
+  Probe(T input) : level(input) {}
+};
+class Sealed {
+  int read() { return 2; }
+public:
+  Sealed() = default;
+};
+int take<doubles T>(T& value) { return 1; }
+int fit<small T>(T& value) { return 1; }
+)";
+    const auto run = [&](const std::string &name, const std::string &body,
+                         lang::FrontendWorkMetrics &metrics) {
+      return check(root, directory, name, declarations + body, false,
+                   lang::FrontendPhase::Hir, &metrics);
+    };
+    const auto reused = [&](const lang::FrontendWorkMetrics &metrics,
+                            const std::string &name) {
+      expect(metrics.semanticQueryCatalogReuses > 0 &&
+                 metrics.semanticQueryCatalogReuses <
+                     metrics.semanticQueryWorkers,
+             name + " reuses released query catalogs");
+    };
+    lang::FrontendWorkMetrics repeated;
+    accepted(run("query_catalog_reuse", R"(
+int main() {
+  Probe<int> a{1}; Lane<1> c{}; Lane<2> d{};
+  mut int total = take(a) + take(c) + take(d) + take(a) + take(c);
+  total = total + fit(c) + fit(d) + fit(c) + fit(d);
+  return total == 9 ? 0 : 1;
+}
+)",
+                 repeated),
+             "satisfied requirements repeat on reused query catalogs");
+    reused(repeated, "repeated satisfied requirements");
+    lang::FrontendWorkMetrics access;
+    rejectedBecause(
+        run("query_catalog_reuse_access", R"(
+int main() { Probe<int> a{1}; Sealed b{}; return take(a) + take(b); }
+)",
+            access),
+        "a private member stays inaccessible on a reused query catalog",
+        "is private");
+    reused(access, "access rejection");
+    lang::FrontendWorkMetrics instance;
+    rejectedBecause(
+        run("query_catalog_reuse_instance", R"(
+int main() { Probe<int> a{1}; Probe<bool> b{true}; return take(a) + take(b); }
+)",
+            instance),
+        "a different instantiation is checked on a reused query catalog",
+        "requires numeric operands");
+    reused(instance, "instantiation rejection");
+    lang::FrontendWorkMetrics value;
+    rejectedBecause(
+        run("query_catalog_reuse_value", R"(
+int main() { Lane<1> a{}; Lane<2> b{}; Lane<3> c{}; return fit(a) + fit(b) + fit(c); }
+)",
+            value),
+        "a different value argument is checked on a reused query catalog",
+        "evaluated to false");
+    reused(value, "value-argument rejection");
+  }
 
   const std::string formatting =
       R"(concept sum<T>=requires(T& a,T& b){{a+b}->T;{a==b}->bool;};

@@ -102,6 +102,7 @@ auto SemanticVisitor::Impl::executeProceduralMacro(
     currentType = SemanticType::Unknown;
   };
   noteConstexprAvailabilityObserved();
+  (void)requireBody(&definition);
   if (!function || !constexprDefinitionsAnalyzed.contains(&definition)) {
     reject("The procedural definition must complete semantic analysis before "
            "expansion.");
