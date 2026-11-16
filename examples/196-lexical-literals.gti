@@ -1,0 +1,80 @@
+// Readable numeric literals and raw strings.
+//
+// `_` separates digits without changing the value. A suffix such as `u8`,
+// `i64` or `f32` gives a literal exactly that type: it is never retyped by
+// context, and a value out of range for it is a compile error, not a
+// truncation. Raw strings, R"delim(...)delim", keep their text verbatim, so a
+// regular expression or a JSON document needs no escaping.
+import std.json;
+import std.regex;
+import std.string;
+
+// Separators group digits in any base; they have no meaning.
+constexpr uint64_t bytes_per_gib = 1_073_741_824u64;
+static_assert(bytes_per_gib == 1073741824u64);
+static_assert(0xFF_FF == 65535 && 0b1010_0101 == 165);
+
+// A sign is part of a suffixed literal, so each type's minimum is written
+// directly. `128i8` alone, `256u8` or `-1u8` would be rejected.
+static_assert(-128i8 == int8_t(-128) && 127i8 == int8_t(127));
+static_assert(255u8 == uint8_t(255));
+
+// In hexadecimal, `f` is a digit: this is the integer 0x1f32, not a float.
+static_assert(0x1f32 == 7_986);
+
+// An enum value with a suffix must have the enum's backing type.
+enum class Level : uint8_t { quiet = 0u8, loud = 255u8 };
+
+// Suffixed literals work as value-generic arguments and array extents.
+uint64_t lanes<uint64_t N>() { return N; }
+
+// A raw string needs no escapes; its delimiter lets it contain `)"`.
+constexpr std::string_view time_pattern = R"((\d\d):(\d\d))";
+static_assert(time_pattern == "(\\d\\d):(\\d\\d)");
+constexpr std::string_view quoted = R"q(say "hi" (twice))q";
+
+int main() {
+  // A suffix fixes the type, so mixed widths need no conversions to state.
+  uint8_t port_byte = 0x50u8;
+  int64_t offset = -9_223_372_036_854_775_808i64;
+  mut int32_t samples[4u64] = {};
+  samples[0] = 12i32;
+  std::println(std::to_string(uint64_t(port_byte)));
+  std::println(std::to_string(offset));
+  std::println(std::to_string(lanes<4u64>() * bytes_per_gib));
+  std::println(std::to_string(samples[0]));
+
+  // `f32` and `f64` select the floating type, with or without a fraction.
+  float ratio = 2.5f32;
+  double scale = 1_000f64;
+  std::println(std::to_string(int64_t(double(ratio) * scale)));
+
+  switch (Level::loud) {
+  case Level::quiet:
+    std::println("quiet");
+    break;
+  case Level::loud:
+    std::println("loud");
+    break;
+  }
+
+  // A regular expression without doubled backslashes.
+  std::regex time = std::regex(time_pattern);
+  std::println(time.replace("09:14 and 17:05", "$1h$2"));
+  std::println(quoted);
+
+  // A JSON document, quotes and all, spanning several lines.
+  std::string_view document = R"json({
+  "name": "sensor \"A\"",
+  "ports": [80, 443]
+})json";
+  auto decoded = std::json::decode<std::json::value>(document);
+  if (!decoded) {
+    std::println(decoded.error().description());
+    return 1;
+  }
+  std::println(decoded.value().at("name").as_string().view());
+  std::println(std::to_string(
+      decoded.value().at("ports").as_array().size()));
+  return 0;
+}

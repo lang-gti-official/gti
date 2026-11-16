@@ -339,6 +339,21 @@ comment produces `GTI-L0011` at its opening delimiter and stops later phases
 without parser cascades. The formatter and lexical editor highlighting still
 scan written comment ranges separately.
 
+Numeric literals are scanned as one token with their `_` digit separators and
+any identifier-like suffix; the lexer validates separator placement and the
+suffix, strips separators before decoding, and records the written suffix on
+`Token::numericSuffix`. Integer suffixes leave the decoded magnitude on the
+token; semantic analysis, not the lexer, gives a suffixed literal its type and
+range-checks the signed value, because `-128i8` is valid while `128i8` alone is
+not. `f32`/`f64` select the token's `BinaryFloat` format directly. Raw string
+literals (`R"d(...)d"`) become ordinary `STRING_LITERAL` tokens whose value is
+the verbatim body. `scanRawStringLiteral` is the single extent rule shared by
+the lexer, the formatter's scanner and the LSP comment classifier, so a `"`,
+`//` or `/*` inside a raw string never ends it early in any tool; a malformed
+opening recovers through its intended closing sequence instead of cascading.
+The Tree-sitter grammar recognizes the same token through its external scanner
+(`tree-sitter-gti/src/scanner.c`), the grammar's only one.
+
 ## Parser And AST
 
 `FunctionDecl::unsafeKeyword()` retains the written `unsafe` declaration

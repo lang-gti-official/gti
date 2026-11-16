@@ -204,6 +204,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
 | Build strings, vectors and your own containers at compile time | [195: constexpr owned containers](195-constexpr-owned-containers.gti) |
+| Write `1_000_000`, typed literals like `255u8` or `2.5f32`, and regex or JSON text as raw strings | [196: lexical literals](196-lexical-literals.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
@@ -391,6 +392,7 @@ is a teaching helper, not a production server.
 | `141-reflected-json.gti` | `std.experimental_json` encoding and decoding a reflectable struct with nested structs, vectors, an enum, an optional, a renamed and an ignored field, pretty output, and a decoding failure with its kind, path and offset |
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
+| `196-lexical-literals.gti` | `_` digit separators in every base, `u8`...`i64`/`f32`/`f64` suffixes with exact types (signed minimums, range checking, `0x1f32` as an integer), suffixed enum values, value-generic arguments and array extents, and `R"delim(...)delim"` raw strings for a regular expression and a multi-line JSON document |
 | `195-constexpr-owned-containers.gti` | compile-time `std::string` building, a `std::vector<std::string>`, and an application container over `std::storage`, sizing a fixed array, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |

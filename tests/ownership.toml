@@ -116,6 +116,7 @@ owners = [
   "source_text_pipeline",
   "source_unit_services",
   "block_comment_pipeline",
+  "lexical_literal_pipeline",
   "borrow_origin_syntax",
   "foreign_variable_syntax",
   "nested_type_syntax",
@@ -137,6 +138,7 @@ consumers = [
   "lsp_protocol",
   "diagnostic_recovery_lsp",
   "block_comment_lsp",
+  "lexical_literal_lsp",
   "source_text_lsp",
   "module_editor_recovery",
   "tree_sitter_queries",
@@ -156,6 +158,7 @@ owners = [
   "constructor_formatting",
   "lambda_formatting",
   "block_comment_pipeline",
+  "lexical_literal_pipeline",
   "pack_fold_syntax",
   "nested_type_syntax",
 ]
@@ -167,6 +170,7 @@ consumers = [
   "comment_placement_lsp",
   "export_placement_lsp",
   "block_comment_lsp",
+  "lexical_literal_lsp",
   "cli_workflow",
 ]
 

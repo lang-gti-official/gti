@@ -531,6 +531,18 @@ fix-it because inserting `*/` at an inferred location could silently comment
 out intended code. Source loading stops later phases so parser diagnostics do
 not cascade from the discarded comment body.
 
+`GTI-L0006` (floating) and `GTI-L0007` (integer) own malformed numeric
+literals: a misplaced `_` digit separator points at that separator (both
+bytes of a doubled one), and an unknown or misapplied suffix points at the
+suffix, with focused wording for exponent tails and `d` on an integer. The
+out-of-range value of a suffixed literal is semantic, `GTI-S2004`, spanning
+the whole signed literal. `GTI-L0004` also owns an unterminated raw string
+literal at its two-byte `R"` opening. `GTI-L0016` owns a malformed raw string
+opening: a delimiter longer than 16 characters, a delimiter character that is
+not allowed, or a delimiter not followed by `(`. It spans `R"` through the
+offending character, and recovery consumes the intended literal so its body
+does not cascade.
+
 `GTI-L0013` owns the first invalid UTF-8 byte and stops tokenization with an
 EOF-only stream. `GTI-L0014` owns a carriage return not followed by LF and has
 the same no-cascade recovery. `GTI-L0015` owns one complete valid non-ASCII
