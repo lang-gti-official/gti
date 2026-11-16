@@ -43,3 +43,8 @@ build-release/gti-test --isolate                # each case in a fresh gti
 
 `--bless` refuses under `CI`, never accepts an internal compiler error or
 turns a declared pass test into an error test. Review its diff.
+
+During runner migration, the existing `gti_test_ui` gate runs both `tests/ui`
+and `tests/slow`, with their separate per-case CPU limits. Moving an expensive
+case to the slow directory therefore preserves its CI execution; it does not
+raise the fast-suite limit or silently defer coverage.

@@ -1,4 +1,5 @@
 // stdlib surface case "composable-io" (from tests/fixtures/composable_io.gti).
+//@ slow
 //@ run-pass
 import std.io;
 import std.cstdio;

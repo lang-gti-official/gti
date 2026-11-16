@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The gti_test_ui gate: gti-test's own behaviour, then tidy and tests/ui.
+"""The gti_test_ui gate: gti-test's own behaviour, then tidy and both source tiers.
 
 usage: check.py <gti-test> [--jobs N] [--self-test-only]
 
@@ -190,15 +190,20 @@ def main():
     print("gti-test self-test: ok", flush=True)
     if "--self-test-only" in sys.argv:
         return 0
-    code, out = run(runner, "--tidy", "--root", ROOT / "tests/ui",
-                    fixtures=False)
-    sys.stdout.write(out)
-    if code != 0:
-        return code
-    code, out = run(runner, "--root", ROOT / "tests/ui", "--jobs", jobs,
-                    fixtures=False)
-    sys.stdout.write(out)
-    return code
+    # While the old/new suites coexist, keep slow cases in this same gate:
+    # moving an over-budget case must not remove its last CI execution.
+    for tier in ("ui", "slow"):
+        code, out = run(runner, "--tidy", "--root", ROOT / "tests" / tier,
+                        fixtures=False)
+        sys.stdout.write(out)
+        if code != 0:
+            return code
+        code, out = run(runner, "--root", ROOT / "tests" / tier, "--jobs", jobs,
+                        fixtures=False)
+        sys.stdout.write(out)
+        if code != 0:
+            return code
+    return 0
 
 
 if __name__ == "__main__":

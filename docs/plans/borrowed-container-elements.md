@@ -268,7 +268,7 @@ proof mutation also rejects ending the escaping loan before rollback cleanup.
 ### Test-runner integration
 
 The legacy test-registration freeze rejected the two new standalone harnesses.
-All 391 native cases now live under `tests/ui/borrow/retained-storage`, with
+All 391 native cases now live under `tests/{ui,slow}/borrow/retained-storage`, with
 separate O0/O3 files preserving 330 accepted-program executions and 452
 required rejections. Sources are unchanged. Rejection annotations now specify
 the exact diagnostic code, message and source line from the passing baseline,
@@ -278,3 +278,11 @@ exercise those assertions in linked and isolated mode, including failures.
 All 33 direct carrier-flow test functions now run inside the existing
 `mir_borrow_audit` binary. No freeze exception or new legacy registration is
 needed. Earlier run names above remain historical evidence.
+
+The first migrated run passed 820 cases and all runner self-tests, but seven
+cases exceeded fast CPU budgets: the two borrowed algorithm-composition
+variants and five existing library fixtures (regex mutation, deferred asserts,
+format, composable I/O and encoding). They retain unchanged bodies and
+assertions in `tests/slow`, using its existing per-case budget. The existing
+runner gate now walks both source tiers, including the previously unregistered
+slow cases, so no case loses CI execution. Fast CPU limits remain unchanged.

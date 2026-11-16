@@ -1,4 +1,5 @@
 // stdlib surface case "deferred-assertions" (from tests/fixtures/deferred_assertions.gti).
+//@ slow
 //@ run-pass
 import std.assert;
 import std.string;

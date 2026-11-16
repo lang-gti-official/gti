@@ -1,4 +1,5 @@
 // stdlib surface case "format": std::format and charconv formatting (from tests/fixtures/stdlib_surface_format.gti).
+//@ slow
 //@ run-pass
 //@ stdout: value=7 host=gitea.example ok=1 enabled=true
 //@ stdout: done

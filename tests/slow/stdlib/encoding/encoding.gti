@@ -1,4 +1,5 @@
 // stdlib surface case "encoding" (from tests/fixtures/stdlib_surface_encoding.gti).
+//@ slow
 //@ run-pass
 import std.encoding;
 import std.string;

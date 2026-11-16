@@ -10,7 +10,8 @@ target_include_directories(gti-test SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
 # --isolate runs the sibling `gti`.
 add_dependencies(gti-test gti)
 
-# The runner's own behaviour, then `--tidy` and every test under tests/ui.
+# The runner's own behaviour, then tidy and every test under tests/ui and
+# tests/slow. Keep slow coverage here until separate tier wiring owns it.
 add_test(NAME gti_test_ui
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
     $<TARGET_FILE:gti-test> --jobs 4)

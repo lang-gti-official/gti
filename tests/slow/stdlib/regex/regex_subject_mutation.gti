@@ -1,4 +1,5 @@
 // A match result keeps the subject it read borrowed: changing the subject
+//@ slow
 // while the result is still used is rejected, so a match cannot dangle.
 import std.regex;
 import std.string;

@@ -1,6 +1,9 @@
 // Borrowed storage: borrowed cursor algorithm compositions.
+//@ slow
 //@ run-pass
 //@ stderr-empty
+//@ opt: O3
+//@ reason: Preserve optimized borrowed-storage execution and rejection coverage.
 import std.string;
 import std.utility;
 
