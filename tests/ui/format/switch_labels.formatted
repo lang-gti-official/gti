@@ -1,0 +1,13 @@
+// Switch labels format at the switch's indentation and arm bodies one level deeper.
+//@ parse-pass
+//@ snapshot: format
+void choose(mut int value) {
+  switch (value) {
+  case 0:
+  case 1:
+    value += 1;
+    break;
+  default:
+    break;
+  }
+}

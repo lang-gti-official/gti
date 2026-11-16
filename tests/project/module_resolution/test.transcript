@@ -1,0 +1,52 @@
+// Package module resolution: a dependency's default and named modules and local modules resolve, also between declarations; unknown, transitive, over-long and boundary-crossing imports, duplicate local module names, alias collisions, misplaced re-exports, header mismatches and legacy units fail during source loading. (From compiler_frontend_tests.cpp testSourceModuleResolution.)
+$ cd app
+$ gti check
+stdout: Diagnostics: 0 errors, 0 warnings
+$ cp variants/explicit.gti src/main.gti
+$ gti check
+stdout: Diagnostics: 0 errors, 0 warnings
+$ cp variants/between.gti src/main.gti
+$ gti check
+stdout: Diagnostics: 0 errors, 0 warnings
+$ cp variants/absent.gti src/main.gti
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: Source owner 'app' does not declare module 'absent' or dependency alias 'absent'.
+$ cp variants/lib_absent.gti src/main.gti
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: Source owner 'library' does not declare public module 'absent'.
+$ cp variants/transitive.gti src/main.gti
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: Source owner 'app' does not declare module 'transitive.main' or dependency alias 'transitive'.
+$ cp variants/extra.gti src/main.gti
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: Source owner 'library' does not declare public module 'main.extra'.
+$ cp variants/escape.gti src/main.gti
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: A quoted import cannot cross a source-owner boundary
+$ cp variants/duplicate.gti src/main.gti
+$ gti check
+? 65
+stderr: src/duplicate.gti:1:15: error[GTI-I0012]: Module 'local' has more than one interface in this source owner.
+$ cp variants/local_only.gti src/main.gti
+$ cp variants/misplaced_reexport.gti src/local.gti
+$ gti check
+? 65
+stderr: src/local.gti:1:33: error[GTI-P0001]
+$ cp variants/lib_only.gti src/main.gti
+$ cp ../library/variants/wrong_name.gti ../library/src/api.gti
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: Imported module 'main' declares itself as 'wrong'.
+$ cp ../library/variants/legacy.gti ../library/src/api.gti
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: An import must name an explicit 'export module name;' interface
+$ cp variants/collision.toml gti.toml
+$ gti check
+? 65
+stderr: src/main.gti:1:1: error[GTI-I0012]: Module name 'lib' is ambiguous with a dependency alias

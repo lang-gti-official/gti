@@ -1,0 +1,4 @@
+// Mutable constexpr execution preserves frontend rejection: runtime argument.
+constexpr void add(mut int& value, int amount) { value += amount; }
+int runtime = 4; constexpr int inspect(mut int value) { add(value, 1); return value; } constexpr int constant = inspect(runtime);  //~ ERROR GTI-S2057
+int main() { return 0; }

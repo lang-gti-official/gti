@@ -1,0 +1,9 @@
+// An incomplete payload switch offers one review-only scaffold inserting the missing tags, in declaration order, at the closing brace.
+//@ snapshot: diagnostics
+enum Message { idle, item(int value), done };
+void handle(Message& value) {
+  switch (value) {  //~ ERROR GTI-S2067
+    case Message::idle: break;
+  }
+}
+int main() { return 0; }

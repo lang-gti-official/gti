@@ -1,0 +1,19 @@
+// An export in an active conditional branch publishes its enclosing namespace.
+//@ check-pass
+// --- main.gti
+import "leaf.gti"; int main() { return active::answer() - 42; }
+// --- leaf.gti
+export module leaf;
+#define MODULE_SELECTED
+#undef MODULE_SELECTED
+namespace inactive {
+#if defined(MODULE_SELECTED)
+  export int answer() { return 1; }
+#endif
+  int helper() { return 0; }
+}
+namespace active {
+#if !defined(MODULE_SELECTED)
+  export int answer() { return 42; }
+#endif
+}

@@ -1,0 +1,13 @@
+// A move in one conditional arm leaves the owner maybe-moved after the expression.
+import std.memory;
+
+struct Item {
+  int value;
+  Item(int initial) : value(initial) {}
+};
+
+int inspect(bool condition) {
+  mut auto owner = std::make_unique<Item>(1);
+  auto selected = condition ? std::move(owner) : std::make_unique<Item>(2);
+  return owner->value;  //~ ERROR GTI-S2018 may have been moved on another control-flow path
+}

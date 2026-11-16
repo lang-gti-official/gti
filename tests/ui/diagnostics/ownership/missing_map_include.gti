@@ -1,0 +1,3 @@
+// An unresolved std::map offers the canonical import std.map; fix.
+//@ snapshot: diagnostics
+using dictionary = std::map<int, int>;  //~ ERROR GTI-S2089

@@ -1,0 +1,14 @@
+// Immutable members, parameters and locals reject mutation, and an immutable local requires an initializer.
+class Box {
+  int value = 1;
+  int change() { this.value = 2; return this.value; }  //~ ERROR GTI-S2000
+public:
+  Box() = default;
+};
+int changeParameter(int value) { value = 2; return value; }  //~ ERROR GTI-S2002
+int main() {
+  int fixed = 1;
+  fixed = 2;  //~ ERROR GTI-S2002
+  int missingInitializer;  //~ ERROR GTI-S2000
+  return 0;
+}

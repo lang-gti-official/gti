@@ -1,0 +1,13 @@
+// Ownership and missing include diagnostics: copy failure must not recommend a move assignment the type lacks.
+class Slot {
+  mut int& value;
+public:
+  Slot(mut int& owner) : value(owner) {}
+};
+void examine() {
+  mut int first = 1;
+  mut int second = 2;
+  mut Slot destination = Slot(first);
+  Slot source = Slot(second);
+  destination = source;  //~ ERROR GTI-S2003 Cannot copy assign
+}

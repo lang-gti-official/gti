@@ -1,0 +1,11 @@
+// export import stays on one line when written across a line break.
+//@ check-pass
+//@ snapshot: format
+// --- main.gti
+import "vector.gti";
+int main() { return 0; }
+// --- vector.gti
+export module vector;
+export
+import std.vector;
+import std.span;

@@ -1,0 +1,2 @@
+// Default immutability: method, lambda, constexpr and generic bodies obey the same local-initialization rule.
+int main() { auto action = []() -> int { mut int value; return 0; }; return action(); }  //~ ERROR GTI-S2000 requires an initializer

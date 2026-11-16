@@ -1,0 +1,2 @@
+// Ownership and missing include diagnostics: a built-in fixed-array write identifies its immutable binding.
+void examine() { int values[2] = {1, 2}; values[0] = 3; }  //~ ERROR GTI-S2002

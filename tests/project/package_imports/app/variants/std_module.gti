@@ -1,0 +1,2 @@
+import std.vector;
+int main() { std::vector<int32_t> values{}; return int32_t(values.size()); }

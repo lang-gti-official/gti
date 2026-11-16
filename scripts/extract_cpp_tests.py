@@ -691,6 +691,8 @@ class FileSpec:
     topic: str = ""
     # Named test functions to convert; empty means every function.
     only: tuple[str, ...] = ()
+    # Per named test function, the area it lands in instead of `area`.
+    areas: dict[str, str] = dataclasses.field(default_factory=dict)
     skip: tuple[str, ...] = ()
     # Review resolutions, keyed by Case.key() (the source hash): "accept:
     # why" admits a case the comparison sent to review; "drop: why" records
@@ -781,12 +783,35 @@ SPECS: dict[str, FileSpec] = {
             for name in ("testStoredReferenceLoopInvalidation3",
                          "testStoredReferenceLoopInvalidation4",
                          "testWritableAndMovementIteratorCapabilities")}),
-    "compiler_frontend_tests.cpp": FileSpec(
-        area="language/control_flow", topic="Definite return",
-        only=("testDefiniteReturnAnalysis",)),
     "compiler_constexpr_tests.cpp": FileSpec(
-        area="constexpr/temporaries", topic="Constexpr temporaries",
-        only=("testConstexprConditionalTemporaries",)),
+        area="constexpr", topic="Constant evaluation",
+        # The heaviest named tests; their fixture mutations, rejection tables
+        # and diagnostics snapshots were written by hand from the same file.
+        only=("testConstexprLibrary", "testLazyStagingAndCompileTimePanic",
+              "testDependentConstexprBranches",
+              "testConstexprReadOnlyReferences", "testConstexprResults",
+              "testStandardString", "testConstexprAllocation",
+              "testConstexprMutation", "testConstexprEnumBuilders",
+              "testConstexprOperators", "testConstexprTryable",
+              "testConstexprPayloadEnums"),
+        areas={"testConstexprLibrary": "constexpr/library",
+               "testLazyStagingAndCompileTimePanic": "constexpr/lazy_staging",
+               "testDependentConstexprBranches":
+                   "constexpr/dependent_branches",
+               "testConstexprReadOnlyReferences":
+                   "constexpr/readonly_references",
+               "testConstexprResults": "constexpr/results",
+               "testStandardString": "types/string",
+               "testConstexprAllocation": "constexpr/allocation",
+               "testConstexprMutation": "constexpr/mutation",
+               "testConstexprEnumBuilders": "constexpr/enum_builders",
+               "testConstexprOperators": "constexpr/operators"},
+        review_policy={
+            name: "the C++ test asserts rejection (or one code of it); the "
+                  "compiler's complete code set was read and matches the "
+                  "case's stated reason"
+            for name in ("testConstexprLibrary", "testConstexprResults",
+                         "testConstexprEnumBuilders")}),
 }
 
 
@@ -1397,7 +1422,7 @@ def snake(name: str) -> str:
 
 
 def header_line(case: Case, spec: FileSpec) -> str:
-    message = case.message.strip().rstrip(".")
+    message = case.message.strip().rstrip(".:").rstrip()
     if not message:
         message = "the program is accepted" if case.expect == "accept" else \
             "rejected with " + ", ".join(case.codes) if case.codes else \
@@ -1442,7 +1467,9 @@ def plan(cases: list[Case], spec: FileSpec, existing: dict[str, str]):
         if case.source is None or case.flags:
             flagged.append(case)
             continue
-        body = case.source.lstrip("\n")
+        # Compared without surrounding blank space: a rendered file always
+        # ends in one newline whatever the literal did.
+        body = case.source.strip()
         if body in existing:
             case.flags.append(f"duplicate of existing {existing[body]}")
             flagged.append(case)
@@ -1466,7 +1493,8 @@ def plan(cases: list[Case], spec: FileSpec, existing: dict[str, str]):
         counters[stem] = counters.get(stem, 0) + 1
         name = stem if totals[case.function] == 1 else \
             f"{stem}_{counters[stem]}"
-        item = Planned(case, f"{spec.area}/{name}.gti")
+        area = spec.areas.get(case.function, spec.area)
+        item = Planned(case, f"{area}/{name}.gti")
         by_source[body] = item
         planned.append(item)
     return planned, flagged
@@ -1483,7 +1511,7 @@ def existing_bodies(roots: list[Path]) -> dict[str, str]:
             while lines and lines[0].startswith("//"):
                 lines.pop(0)
             body = re.sub(r"\s*//~.*", "", "".join(lines))
-            bodies[body] = str(path.relative_to(ROOT))
+            bodies[body.strip()] = str(path.relative_to(ROOT))
     return bodies
 
 

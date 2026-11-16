@@ -1,0 +1,4 @@
+// Ownership and missing include diagnostics: region diagnostic precedence must preserve independent return type checking.
+int&<a> invalid<lifetime a, lifetime b>(int&<a> first, bool&<b> second) {
+  return second;  //~ ERROR GTI-S2127 //~ ERROR GTI-S2017
+}

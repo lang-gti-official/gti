@@ -1,0 +1,11 @@
+// Constexpr mutation: an enclosing verified-MIR builder retains an ignored mutable callee's writes.
+//@ check-pass
+constexpr int write(mut int& value) { value++; return value; }
+constexpr int build() {
+  mut int value = 1;
+  [[discard]] write(value);
+  return value;
+}
+constexpr int result = build();
+static_assert(result == 2);
+int main() { return result - 2; }

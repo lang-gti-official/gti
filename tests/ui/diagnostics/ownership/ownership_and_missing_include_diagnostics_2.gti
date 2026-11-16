@@ -1,0 +1,9 @@
+// Ownership and missing include diagnostics: an escaping borrowed callable identifies the captured local storage that the returned view cannot outlive.
+import std.functional;
+std::function_ref<int()> invalid() {
+  int value = 1;
+  auto callback = [&value]() -> int { return value; };
+  std::function_ref<int()> result{callback};
+  return result;  //~ ERROR GTI-S2127
+}
+int main() { auto call = invalid(); return call(); }

@@ -1,0 +1,13 @@
+// Constexpr library: unrelated generic constructor and read-only method declarations admit runtime-only owning substitutions.
+//@ check-pass
+import std.string;
+struct Holder<T> {
+  T value;
+  constexpr Holder(T input) : value(std::move(input)) {}
+  constexpr int tag() { return 7; }
+};
+constexpr T relay<T>(T value) { return std::move(value); }
+int main() {
+  Holder<std::string> owner = Holder<std::string>(relay(std::string("asset")));
+  return owner.tag() == 7 && owner.value.size() == 5 ? 0 : 1;
+}

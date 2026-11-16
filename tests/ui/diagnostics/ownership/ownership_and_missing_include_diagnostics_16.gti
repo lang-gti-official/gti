@@ -1,0 +1,11 @@
+// Ownership and missing include diagnostics: diagnostic provenance must not extend a borrow beyond its last use.
+//@ check-pass
+import std.string;
+
+int main() {
+  mut std::string owner = std::string("hello");
+  auto view = owner.view();
+  int result = int(view.size());
+  owner.clear();
+  return result;
+}
