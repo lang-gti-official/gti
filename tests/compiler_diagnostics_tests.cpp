@@ -679,15 +679,23 @@ int main() {
 )";
   const auto escapingScopeResult = analyze(escapingScope);
   const auto *escapingScopeError =
-      findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-S2003");
-  expect(!escapingScopeResult.canGenerateCode() && escapingScopeError &&
-             escapingScopeError->message.find(
-                 "assignment is unavailable for type 'View'") !=
-                 std::string::npos &&
-             hasDiagnosticHint(escapingScopeResult.diagnostics,
-                               "Initialize a new binding"),
-         "a nonassignable borrowed carrier explains unavailable assignment "
-         "instead of identical-type mismatch");
+      findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-S2017");
+  expect(
+      !escapingScopeResult.canGenerateCode() && escapingScopeError &&
+          escapingScopeError->message.find(
+              "owner or retained dependency has become unavailable") !=
+              std::string::npos &&
+          !findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-S2003") &&
+          !findDiagnosticByCode(escapingScopeResult.diagnostics, "GTI-B0001"),
+      "shared-carrier replacement diagnoses the expired replacement owner "
+      "rather than rejecting supported assignment");
+  auto survivingReplacement = escapingScope;
+  survivingReplacement.replace(survivingReplacement.find("View(inner)"),
+                               std::string("View(inner)").size(),
+                               "View(outer)");
+  expect(
+      analyze(survivingReplacement).canGenerateCode(),
+      "shared-carrier assignment succeeds when its replacement owner survives");
   auto scopedBinding = escapingScope;
   scopedBinding.replace(scopedBinding.find("view = View(inner);"),
                         std::string("view = View(inner);").size(),
