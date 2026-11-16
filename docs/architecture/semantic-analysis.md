@@ -19,6 +19,10 @@ applies normally; an ordinary callable never gains procedural behavior from its
 spelling. The signature is exactly `std::syntax::expr name(std::syntax::tokens
 input)`, without generics, defaults, packs, member/operator forms or constraints.
 
+Procedural definitions, like constexpr definitions, are checked eagerly even
+inside trusted library units: reachable-body deferral must not postpone the
+semantic facts required by expansion.
+
 Completed procedural bodies and their constexpr helpers are type-checked and
 lazily staged through the existing constant HIR/MIR closure service. An explicit
 procedural request enables syntax intrinsics in the same MIR interpreter; there
