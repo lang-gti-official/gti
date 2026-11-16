@@ -1,0 +1,32 @@
+import std.string;
+import std.utility;
+
+struct Item {
+  int key;
+  std::string value;
+  Item(int key) : key(key), value(std::string("owned")) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  ~Item() { std::println(this.key); }
+};
+
+class Source {
+  mut int next;
+public:
+  Source(int first) : next(first) {}
+  bool has_next() { return this.next < 4; }
+  Item take_next() mut { int key = this.next; this.next++; return Item(key); }
+};
+
+int early() {
+  for (auto [key, value] : Source(3)) { return int(value.size()) - key; }
+  return 0;
+}
+int main() {
+  for (auto [key, value] : Source(1)) {
+    if (key == 1) continue;
+    if (value.view() != "owned") return 1;
+    break;
+  }
+  return early() == 2 ? 0 : 2;
+}

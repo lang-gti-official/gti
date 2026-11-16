@@ -1,0 +1,97 @@
+import std.vector;
+import std.string;
+import std.utility;
+
+struct Entry {
+  mut std::string key;
+  mut int value;
+  Entry(std::string key, int value) : key(std::move(key)), value(value) {}
+};
+
+struct BorrowedEntry {
+  int& key;
+  int value;
+  BorrowedEntry(int& key, int value) : key(key), value(value) {}
+};
+
+class Iterator {
+  BorrowedEntry& entry;
+  mut int index = 0;
+public:
+  Iterator(BorrowedEntry& entry) : entry(entry) {}
+  BorrowedEntry& operator*() { return this.entry; }
+  bool operator!=(int end) { return this.index != end; }
+  void operator++() mut { this.index++; }
+};
+class Range {
+  BorrowedEntry& entry;
+public:
+  Range(BorrowedEntry& entry) : entry(entry) {}
+  Iterator begin() { return Iterator(this.entry); }
+  int end() { return 1; }
+};
+
+int borrowed_sum<Tag>(std::vector<Entry>& entries) {
+  mut int sum = 0;
+  for (auto& [key, value] : entries) { sum += value; }
+  return sum;
+}
+
+std::vector<Entry> make_entries() {
+  mut std::vector<Entry> result{};
+  result.emplace_back(std::string("a"), 1);
+  result.emplace_back(std::string("b"), 2);
+  return result;
+}
+
+int mutate_entries<Tag>(mut std::vector<Entry>& entries) {
+  for (mut auto& [key, value] : entries) {
+    key.append("!");
+    value += 10;
+  }
+  return entries[0].value + entries[1].value;
+}
+
+int mutate_temporary() {
+  for (mut auto& [key, value] : make_entries()) {
+    value += 4;
+    if (value == 5) continue;
+    key.append("!");
+    return value;
+  }
+  return 0;
+}
+
+int main() {
+  mut std::vector<Entry> entries{};
+  entries.emplace_back(std::string("one"), 1);
+  entries.emplace_back(std::string("two"), 2);
+  mut int total = borrowed_sum<int>(entries);
+  for (auto& [key, value] : entries) {
+    if (key.size() != 3) return 1;
+    total += value;
+  }
+  for (auto [key, value] : std::move(entries).into_range()) {
+    if (key.size() != 3) return 2;
+    total += value;
+  }
+  int rows[2][2] = {{3, 4}, {5, 6}};
+  for (auto& [first, second] : rows) { total += first + second; }
+  for (auto [first, second] : rows) { total += first + second; }
+  int owner = 7;
+  BorrowedEntry entry{owner, 8};
+  auto references = Range(entry);
+  for (auto& [key, value] : references) { total += key + value; }
+  mut auto mutable_entries = make_entries();
+  if (mutate_entries<int>(mutable_entries) != 23) return 4;
+  if (mutable_entries[0].key.view() != "a!") return 5;
+  if (mutate_temporary() != 6) return 6;
+  mut int matrix[2][2] = {{1, 2}, {3, 4}};
+  for (mut auto& [left, right] : matrix) {
+    left += 10;
+    right += left;
+    break;
+  }
+  if (matrix[0][0] != 11 || matrix[0][1] != 13 || matrix[1][0] != 3) return 7;
+  return total == 60 ? 0 : 3;
+}

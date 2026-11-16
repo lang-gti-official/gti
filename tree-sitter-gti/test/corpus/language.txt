@@ -4158,3 +4158,66 @@ struct Relay<Args...> : public Base {
                   (literal
                     (integer_literal)))))))
         (block)))))
+
+===============================
+Range structured bindings
+===============================
+
+int sum(Entries& entries) {
+  for (auto [key, value] : entries) { use(key, value); }
+  for (mut auto& [key, value] : entries) { use(key, value); }
+  return 0;
+}
+
+---
+
+(source_file
+  (function_declaration
+    (type
+      (primitive_type))
+    (identifier)
+    (parameter_clause
+      (parameter
+        (type
+          (user_type
+            (identifier))
+          (reference_declarator))
+        (identifier)))
+    (block
+      (for_statement
+        (range_structured_binding
+          (identifier)
+          (identifier))
+        (primary_expression
+          (identifier))
+        (block
+          (expression_statement
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list
+                (primary_expression
+                  (identifier))
+                (primary_expression
+                  (identifier)))))))
+      (for_statement
+        (range_structured_binding
+          (identifier)
+          (identifier))
+        (primary_expression
+          (identifier))
+        (block
+          (expression_statement
+            (call_expression
+              (primary_expression
+                (identifier))
+              (argument_list
+                (primary_expression
+                  (identifier))
+                (primary_expression
+                  (identifier)))))))
+      (return_statement
+        (initializer_expression
+          (primary_expression
+            (literal
+              (integer_literal))))))))
