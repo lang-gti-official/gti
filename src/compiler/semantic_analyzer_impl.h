@@ -7974,6 +7974,14 @@ private:
   // held-back one). Otherwise the need is recorded in the context and the
   // caller must treat the body's facts as unavailable.
   BodyReadiness requireBody(const FunctionDecl *declaration);
+  // Demand before record. Under GTI_COMPILER_VALIDATION, checks that a
+  // body-derived fact of `body` (function `id`) read at `site` is final in
+  // this context, or was requested first: through requireBody (the need is
+  // recorded, so the reading attempt is discarded), or as a lookup an
+  // instance analysis consulted (late demand repeats it). A read that did
+  // neither is an internal error: the fact is the body's pre-analysis value.
+  void checkBodyFactRead(const FunctionDecl *body, FunctionId id,
+                         const char *site) const;
   // Makes a pending body of an owned context final: analyses a deferred
   // body or reaches a held-back one.
   void resolveBody(const FunctionDecl *declaration);

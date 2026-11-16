@@ -3692,6 +3692,8 @@ auto SemanticVisitor::Impl::publishTextReturnResult(const Call &call,
                                                     ResolvedCallInfo &resolved,
                                                     const FunctionInfo &callee)
     -> void {
+  checkBodyFactRead(callee.bodyDeclaration(), callee.id,
+                    "a text return publication");
   if (!callee.dependentTextReturn || callee.returnBorrowFields.size() != 1 ||
       resolved.returnType.kind == SemanticType::Reference)
     return;
@@ -3712,6 +3714,7 @@ auto SemanticVisitor::Impl::publishTextCallResult(const Call &call,
   // not recorded yet into a text field of its result, so text passed to it
   // must be ownerless here.
   const FunctionDecl *body = callee.bodyDeclaration();
+  checkBodyFactRead(body, callee.id, "a text call publication");
   const bool provisional =
       body != nullptr && bodiesInProgress.contains(body) &&
       !directTextFieldSymbols(resolved.returnType, true).empty();

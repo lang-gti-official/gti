@@ -1,5 +1,8 @@
 #include "semantic_analyzer_impl.h"
 
+#include "gti/lowered_program.h"
+
+#include <cstdio>
 #include <cstdlib>
 
 #include <iterator>
@@ -4982,6 +4985,37 @@ auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
   }
   context->need(*declaration);
   return BodyReadiness::Unavailable;
+}
+
+auto SemanticVisitor::Impl::checkBodyFactRead(const FunctionDecl *body,
+                                              FunctionId id,
+                                              const char *site) const -> void {
+  // GTI_COMPILER_VALIDATION is the one switch for compiler self-checks.
+  if (!loweredProgramSealValidation())
+    return;
+  // Only a deferred body's facts are missing. A held-back preamble body was
+  // analysed completely when the preamble was built, so its facts are final
+  // here; reaching it only reports the diagnostics it held back.
+  const auto &context = requestSession.bodyContext;
+  if (context == nullptr || body == nullptr ||
+      context->state(body) != BodyState::Deferred)
+    return;
+  const auto &needs = context->needs();
+  if (std::find(needs.begin(), needs.end(), body) != needs.end())
+    return;
+  // An instance analysis that consulted the function is repeated by late
+  // demand once the body is complete (withLateDemand).
+  if (instanceAnalysisActive && id != 0 &&
+      (semanticModel.functionDemandRecorded(id) ||
+       (instanceBaseModel != nullptr &&
+        instanceBaseModel->functionDemandRecorded(id))))
+    return;
+  std::fprintf(stderr,
+               "internal compiler error: %s reads a body-derived fact of "
+               "'%s', whose body is deferred here and was not requested "
+               "first\n",
+               site, body->name().lexeme.c_str());
+  std::abort();
 }
 
 auto SemanticVisitor::Impl::resolveBody(const FunctionDecl *declaration)

@@ -530,6 +530,7 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
       // The contract is a body-derived fact: resolve the body first so
       // a deferred or later declaration cannot change which items match.
       ensureBodyAnalyzed(*info);
+      (void)requireBody(info->bodyDeclaration());
       const CallableParameterContract *current =
           callableParameterContract(function, parameterIndex);
       if (current != nullptr && current->boundary != CallableBoundary::Confined)
@@ -643,11 +644,16 @@ auto SemanticVisitor::Impl::contextualizeFunctionItemArguments(
         target.parameterTypes[index].kind == SemanticType::NativeFunction) {
       continue;
     }
-    if (const FunctionInfo *info = semanticModel.findFunction(target.id))
+    if (const FunctionInfo *info = semanticModel.findFunction(target.id)) {
       ensureBodyAnalyzed(*info);
-    else if (instanceBaseModel != nullptr)
-      if (const FunctionInfo *base = instanceBaseModel->findFunction(target.id))
+      (void)requireBody(info->bodyDeclaration());
+    } else if (instanceBaseModel != nullptr) {
+      if (const FunctionInfo *base =
+              instanceBaseModel->findFunction(target.id)) {
         ensureBodyAnalyzed(*base);
+        (void)requireBody(base->bodyDeclaration());
+      }
+    }
     const CallableParameterContract *contract =
         callableParameterContract(target.id, index);
     const bool threadTask = contract != nullptr &&
@@ -1189,8 +1195,10 @@ auto SemanticVisitor::Impl::ephemeralTemporaryArgumentMatches(
     const FunctionInfo *target = semanticModel.findFunction(function.id);
     if (!target && instanceBaseModel)
       target = instanceBaseModel->findFunction(function.id);
-    if (target)
+    if (target) {
       ensureBodyAnalyzed(*target);
+      (void)requireBody(target->bodyDeclaration());
+    }
   }
   return ephemeralBorrowTargetSupported(function, parameterIndex) &&
          temporaryReadBorrowArgumentMatches(parameter, argument, expression);

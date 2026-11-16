@@ -2765,6 +2765,10 @@ public:
     functionDemandSink = sink;
     return previous;
   }
+  // Whether the current sink recorded a lookup of `id`.
+  [[nodiscard]] bool functionDemandRecorded(FunctionId id) const {
+    return functionDemandSink != nullptr && functionDemandSink->contains(id);
+  }
 
   // One analysis request's record of function lookups, shared by every
   // model of the request (copies and deltas carry it), so a lookup answered
