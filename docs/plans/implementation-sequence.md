@@ -9425,7 +9425,7 @@ prerequisite checkpoints as full acceptance.
     rule. Their destructor or dispatched methods would read the field as
     ownerless text outside the creating body.
   - Evidence: `view_fields` (semantic rejections and verifier mutations),
-    `view_fields_runtime` (C++20/C++23 at O0/O1/O3, no-elide, sanitized),
+    `tests/ui/ownership/borrow/view_fields.gti` (C++20/C++23 at O0/O1/O3, no-elide, sanitized),
     example 170 and an ownerless corpus differential.
 - **Phase 1b (remaining phase 1):**
   - *Boundary found in 1a.* Inside a callee, a text-field read of a by-value or

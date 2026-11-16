@@ -43,7 +43,7 @@ REGISTRIES = ("tests/CMakeLists.txt", "tests/TestThroughput.cmake",
               "tests/ownership.toml", "tests/stdlib_surface_manifest.json")
 # Documents a conversion may not edit (owned by other work); stale mentions
 # there are reported instead.
-UNTOUCHABLE = ("docs/architecture/verification.md",)
+UNTOUCHABLE: tuple[str, ...] = ()
 SUPPORTED_ARGUMENTS = {"names", "cases", "llvm_modes", "stdin_by_name", "fixture_paths"}
 
 # Area of a wrapper, by the first matching pattern on its CTest name. The
@@ -62,6 +62,24 @@ AREAS = (
     (r"^(conditional|class_conditional|owning_conditional|short_circuit|comma_class)", "language/conditionals"),
     (r"^(lambda|grouped_lambda|generic_callable|fresh_callable|constructed_callback|"
      r"borrowing_callbacks|callable_return|passive_function_item)", "language/callables"),
+    (r"^contextual_borrowed", "ownership/borrow"),
+    (r"^(out_of_class_cleanup|source_storage_drain)", "ownership/cleanup"),
+    (r"^(object_relocation|structural_relocation|raw_owner_witness|raw_pointer_conversion|"
+     r"owned_pointee|allocation_default|raw_owned_field|raw_receiver_owned)", "memory"),
+    (r"^(assignment_result|class_store_destinations|payload_enum_reference_assignment|"
+     r"implicit_receiver_owned_assignment)", "language/assignment"),
+    (r"^(moved_local_field_read|owning_temporary_field_read|virtual_temporary_receiver|"
+     r"owning_expected_field)", "language/temporaries"),
+    (r"^operator_(place|relay)", "language/operators"),
+    (r"^(accessor_text_carrier|passive_text_view_class|deferred_bound_field)", "language/views"),
+    (r"^nested_nominal_result", "language/classes"),
+    (r"^(abstract_generic|enum_selector|semantic_call_regressions|contextual_numeric_literals)", "generics"),
+    (r"^coverage_composition", "regressions"),
+    (r"^generic_algorithm_breadth", "stdlib/algorithm"),
+    (r"^restoring_", "stdlib/utility"),
+    (r"^string_(operations|ordering)", "stdlib/string"),
+    (r"^extensible_formatting", "stdlib/format"),
+    (r"^composable_io", "stdlib/io"),
 )
 
 
@@ -157,6 +175,20 @@ class Plan:
         self.reductions: list[str] = []
         self.fixtures: list[str] = []
         self.modes: dict[str, str] = {}
+        self.signatures: dict[str, str] = {}  # fixture -> its observations
+        self.notes: list[str] = []
+
+    def drop(self, fixture: str):
+        """Leave out a fixture another wrapper in the batch converts identically."""
+        target = next(target for _, target in self.moves + self.copies
+                      if target.stem == fixture)
+        self.files = {path: text for path, text in self.files.items()
+                      if path.parent != target.parent
+                      or not (path == target or path.name.startswith(f"{fixture}."))}
+        self.moves = [move for move in self.moves if move[1] != target]
+        self.copies = [copy for copy in self.copies if copy[1] != target]
+        self.fixtures.remove(fixture)
+        self.modes.pop(fixture, None)
 
 
 def docstring(wrapper: pathlib.Path) -> str:
@@ -218,16 +250,32 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
         if converted is None:
             continue
         target = TESTS / "ui" / area / f"{name}.gti"
+        text, stdout_files = converted
         if target.exists():
+            if not stdout_files and same_test(target.read_text(), text):
+                # Already seeded with the same program and observations (a
+                # stdlib surface run case): nothing to add.
+                result.notes.append(f"{name}: {target.relative_to(ROOT)} already checks it")
+                continue
             result.reasons.append(f"{name}: {target.relative_to(ROOT)} already exists")
             continue
-        text, stdout_files = converted
         result.files[target] = text
         for suffix, content in stdout_files.items():
             result.files[target.with_name(f"{name}{suffix}.stdout")] = content
         (result.copies if shared(source, name, wrapper) else result.moves).append((source, target))
         result.fixtures.append(name)
+        result.signatures[name] = repr((runs, stdin))
     return result
+
+
+def same_test(existing: str, generated: str) -> bool:
+    """Whether two test files differ only in their leading description."""
+    def essence(text: str) -> list[str]:
+        lines = text.rstrip("\n").split("\n")
+        if lines and lines[0].startswith("// ") and not lines[0].startswith("// ---"):
+            lines = lines[1:]
+        return lines
+    return essence(existing) == essence(generated)
 
 
 # -- Conversion of one fixture --------------------------------------------------
@@ -579,6 +627,41 @@ def rewrite_documents(moves, dry_run: bool, report: list[str]):
             write(file, file.read_text().replace(old, str(target.relative_to(ROOT))), dry_run)
 
 
+def mention_replacement(entry: dict) -> str:
+    """What a document names instead of a deleted CTest entry: its one test
+    file, or the directory holding its several."""
+    files = entry["moved"] + entry["copied"]
+    if len(files) == 1:
+        return files[0]
+    directories = sorted({str(pathlib.PurePath(path).parent) for path in files})
+    return directories[0] + "/" if len(directories) == 1 else "tests/ui/"
+
+
+def rewrite_mentions(entries: list[dict], dry_run: bool) -> list[str]:
+    """Point Markdown mentions of deleted CTest entries at their test files.
+
+    Release notes (CHANGELOG.md, changes/) record history and stay as written.
+    """
+    changed = set()
+    for entry in entries:
+        if entry.get("reasons") or not (entry["moved"] or entry["copied"]):
+            continue
+        test = entry["test"]
+        replacement = mention_replacement(entry)
+        pattern = re.compile(r"(?<![\w/.-])" + re.escape(test) + r"(?![\w.-])")
+        for hit in git_grep(test, "-w", "-F", "-l"):
+            path = hit.split(":", 1)[0]
+            if not path.endswith(".md") or path == "CHANGELOG.md" or path.startswith("changes/"):
+                continue
+            file = ROOT / path
+            text = file.read_text()
+            new = pattern.sub(replacement, text)
+            if new != text:
+                write(file, new, dry_run)
+                changed.add(path)
+    return sorted(changed)
+
+
 def prune_copies(dry_run: bool) -> int:
     """Remove a copied fixture once its last other user has gone."""
     moves = []
@@ -619,11 +702,19 @@ def main() -> int:
     parser.add_argument("--area", help="area for every given wrapper, overriding the rules")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", type=pathlib.Path, help="write a conversion record here")
+    parser.add_argument("--rewrite-mentions", type=pathlib.Path, metavar="RECORD",
+                        help="point documents naming the converted entries of a --json record "
+                             "at their test files")
     parser.add_argument("--prune-copies", action="store_true",
                         help="delete tests/fixtures originals of converted tests that nothing uses now")
     arguments = parser.parse_args()
     if arguments.prune_copies:
         return prune_copies(arguments.dry_run)
+    if arguments.rewrite_mentions:
+        entries = json.loads(arguments.rewrite_mentions.read_text())
+        for path in rewrite_mentions(entries, arguments.dry_run):
+            print(f"rewrote: {path}")
+        return 0
     names = ctest_names()
     selected = wrappers() if arguments.list or not arguments.wrappers else \
         [TESTS / name for name in arguments.wrappers]
@@ -631,18 +722,26 @@ def main() -> int:
     status = 0
     batch = {path.name for path in selected}
     plans = []
-    claimed: dict[str, str] = {}
+    claimed: dict[str, tuple[str, str]] = {}
     for wrapper in selected:
         if not wrapper.is_file():
             print(f"missing: {wrapper.name}")
             status = 1
             continue
         result = plan(wrapper, names, arguments.area, batch)
-        for fixture in result.fixtures:
-            if fixture in claimed:
-                result.reasons.append(f"{fixture} is also run by {claimed[fixture]}")
+        for fixture in list(result.fixtures):
+            if fixture not in claimed:
+                continue
+            owner, signature = claimed[fixture]
+            if signature == result.signatures[fixture]:
+                # Both wrappers make the same observations: one test file.
+                result.drop(fixture)
+                print(f"shared: {fixture} is converted with {owner}")
+            else:
+                result.reasons.append(f"{fixture} is also run by {owner}")
         if not result.reasons:
-            claimed.update({fixture: wrapper.name for fixture in result.fixtures})
+            claimed.update({fixture: (wrapper.name, result.signatures[fixture])
+                            for fixture in result.fixtures})
         plans.append(result)
     blocked = {result.wrapper.name for result in plans if result.reasons}
     for result in plans:
@@ -662,6 +761,8 @@ def main() -> int:
         if result.reasons:
             print(f"irregular: {wrapper.name}: " + "; ".join(result.reasons))
             continue
+        for note in result.notes:
+            print(f"note: {note}")
         print(f"{'would convert' if arguments.dry_run or arguments.list else 'convert'}: "
               f"{wrapper.name} -> {len(result.fixtures)} file(s), "
               f"{len(result.moves)} moved, {len(result.copies)} copied")

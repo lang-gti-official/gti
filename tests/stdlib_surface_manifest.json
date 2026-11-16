@@ -4754,7 +4754,6 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
         "tests/borrowing_capture_tests.cpp",
-        "tests/borrowing_callbacks_runtime_test.py",
         "examples/156-borrowing-callbacks.gti"
       ]
     },
@@ -4823,7 +4822,6 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
         "tests/borrowing_capture_tests.cpp",
-        "tests/borrowing_callbacks_runtime_test.py",
         "examples/156-borrowing-callbacks.gti",
         "stdlib/std/detail/function_pointer.gti"
       ]
@@ -5578,8 +5576,7 @@
       "evidence": [
         "stdlib/std/memory.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp",
-        "tests/borrowing_callbacks_runtime_test.py"
+        "tests/borrowing_capture_tests.cpp"
       ]
     },
     {

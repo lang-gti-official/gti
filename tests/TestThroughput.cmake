@@ -81,10 +81,6 @@ if(Python3_Interpreter_FOUND)
     semantic_call_regressions_runtime
     consteval_runtime
     callable_return_type_runtime
-    borrowed_enum_field_cleanup_runtime
-    borrowed_enum_scalar_sibling_runtime
-    borrowed_enum_terminal_contexts_runtime
-    contextual_borrowed_construction_runtime
     consuming_range_runtime
     enum_replacement_runtime
     enum_selector_runtime
@@ -96,73 +92,46 @@ if(Python3_Interpreter_FOUND)
     ordered_search_runtime
     abstract_generic_failure_contract_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
-    associative_ownership_runtime borrow_origin_runtime owner_chain_runtime borrowing_composition
-    borrowing_callbacks_runtime charconv_runtime
+    associative_ownership_runtime owner_chain_runtime borrowing_composition
+    charconv_runtime
     cleanup_bound_borrow_runtime complete_containers composable_io_runtime
-    conditional_capability_runtime conditional_converted_receiver_runtime
-    conditional_owning_argument_runtime borrowed_callable_conditionals_runtime
-    borrowed_argument_fallible_condition_runtime
-    borrowed_argument_nested_owning_argument_runtime
-    borrowed_argument_inner_temporary_runtime
-    conditional_cleanup_free_call_result_runtime
-    conditional_checked_arm_input_runtime
-    conditional_cleanup_free_nested_join_runtime
-    conditional_cleanup_free_receiver_runtime
-    conditional_moved_local_join_runtime
+    conditional_capability_runtime
+    borrowed_callable_conditionals_runtime
     moved_local_field_read_runtime
-    conditional_prepared_input_result_runtime
     virtual_temporary_receiver_runtime
     constructor_null_native_runtime
     contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
-    class_conditional_join_runtime
-    comma_class_results_runtime
     contextual_numeric_literals_runtime discarded_nominal_result_runtime
     literal_call_arguments_runtime
     dormant_capability_runtime
     raw_receiver_owned_argument_runtime
     deferred_bound_field_runtime
-    borrowed_field_publication_runtime
-    llvm_borrowed_dispatch_regressions
     passive_text_view_class_runtime
-    passive_function_item_class_runtime
-    view_fields_runtime text_reference_accessors_runtime
-    view_field_payloads_runtime view_field_conversions_runtime
-    dependent_reference_results_runtime
-    view_field_nesting_runtime
-    recursive_text_relays_runtime
-    reference_owned_field_replacement_runtime
     payload_enum_reference_assignment_runtime
     raw_owned_field_replacement_runtime
     shared_getter_worker_loans_runtime
     expected_payload_pair_arguments_runtime
-    extensible_formatting_runtime fresh_callable_later_argument_failure_runtime
+    extensible_formatting_runtime
     generic_algorithm_breadth
-    generic_callable_adapter_runtime generic_callable_transport_runtime generic_contract_runtime
+    generic_contract_runtime
     coverage_composition_runtime
     generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
     returned_field_address_runtime
     http_url_operators immovable_storage_runtime integral_enum_formatting_runtime
-    grouped_lambda_runtime
-    lambda_base_reference_runtime lambda_owning_transport_runtime lambda_pack_invocation_runtime
-    lambda_class_result_consumers_runtime
+    lambda_owning_transport_runtime lambda_pack_invocation_runtime
     nested_borrow_fields
     native_c_scalar_runtime nested_raw_pointer_runtime
     nested_nominal_result_runtime operator_place_composition_runtime
     object_relocation_runtime
     owned_pointee_projection_runtime
     owning_expected_field_runtime
-    owning_conditional_join_runtime
     owning_temporary_field_read_runtime
-    short_circuit_field_view_runtime
-    short_circuit_temporary_argument_runtime
-    short_circuit_payload_enum_argument_runtime
     programmable_allocators_runtime prvalue_direct_initialization_runtime
     raw_owner_witness_runtime raw_pointer_conversion_runtime
-    reference_class_assignment_runtime
     assignment_result_projection_runtime
     class_store_destinations_runtime
     assignment_result_whole_value_runtime
@@ -180,7 +149,7 @@ if(Python3_Interpreter_FOUND)
     inherited_cleanup_context_runtime
     cleanup_context_scope_runtime
     storage_final_address_runtime string_operations_runtime string_ordering_runtime
-    structural_relocation_runtime temporary_owner_borrow_runtime unordered_map
+    structural_relocation_runtime unordered_map
     interface_static_runtime
     uninitialized_carrier_runtime
     vector_empty_constructor_runtime
