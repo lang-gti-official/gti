@@ -175,6 +175,8 @@ auto SemanticVisitor::Impl::resetRequestState(const Program *program) -> void {
   requestSession.unionStates.clear();
   resumeDeclarations.clear();
   requestSession.bodyContext = std::make_shared<BodyContext>(this);
+  semanticModel.setFunctionLookupRecorder(
+      std::make_shared<SemanticModel::FunctionLookupRecorder>());
   registrationFloor = {};
   stagedWorker = {};
   primitiveRequirementProofs.clear();
@@ -4560,6 +4562,15 @@ auto SemanticVisitor::Impl::restoreBodyLocalState(BodyLocalState state)
 auto SemanticVisitor::Impl::ensureBodyAnalyzed(const FunctionInfo &function)
     -> void {
   const FunctionDecl *declaration = function.bodyDeclaration();
+  // While an attempt that can resolve needs is open, a worker sharing the
+  // context never completes a pending body privately: it records the need,
+  // and the attempt's owner completes the body and repeats the attempt.
+  if (const auto &context = requestSession.bodyContext;
+      context != nullptr && !context->ownedBy(this) &&
+      context->resolvingAttemptOpen() && context->pending(declaration)) {
+    context->need(*declaration);
+    return;
+  }
   if (!bodyPhaseActive || instanceAnalysisActive || declaration == nullptr ||
       declaration->body() == nullptr || analyzedBodies.contains(declaration) ||
       bodiesInProgress.contains(declaration)) {
@@ -4957,6 +4968,11 @@ auto SemanticVisitor::Impl::requireBody(const FunctionDecl *declaration)
   case BodyState::HeldBack:
     break;
   }
+  // A worker that analysed the body privately (outside any resolving
+  // attempt; see ensureBodyAnalyzed) has its facts for its own use.
+  if (!context->ownedBy(this) && analyzedBodies.contains(declaration) &&
+      !bodiesInProgress.contains(declaration))
+    return BodyReadiness::Ready;
   if (context->ownedBy(this) && bodyPhaseActive && !instanceAnalysisActive) {
     resolveBody(declaration);
     if (context->state(declaration) == BodyState::Analysed)
@@ -4985,6 +5001,111 @@ auto SemanticVisitor::Impl::resolveBody(const FunctionDecl *declaration)
   case BodyState::InProgress:
     return;
   }
+}
+
+auto SemanticVisitor::Impl::noteBodyNeed(const FunctionDecl *declaration)
+    -> void {
+  const auto &context = requestSession.bodyContext;
+  if (declaration != nullptr && context != nullptr &&
+      context->pending(declaration))
+    context->need(*declaration);
+}
+
+auto SemanticVisitor::Impl::captureAttemptCheckpoint() const
+    -> AttemptCheckpoint {
+  AttemptCheckpoint checkpoint{
+      .diagnostics = diagnostics.size(),
+      .requirementQueryWork = requirementQueryWork,
+      .requirementQueryCharged =
+          requirementQueryWork ? *requirementQueryWork : 0,
+      .nativeObjectLayout = semanticModel.nativeObjectLayoutMarked()};
+  if (const auto &work = requestSession.constexprWork) {
+    checkpoint.constexprSteps = work->steps;
+    checkpoint.exhaustion = work->exhaustion;
+  }
+  return checkpoint;
+}
+
+auto SemanticVisitor::Impl::restoreAttemptCheckpoint(
+    const AttemptCheckpoint &checkpoint) -> void {
+  if (const auto &work = requestSession.constexprWork) {
+    work->steps = checkpoint.constexprSteps;
+    work->exhaustion = checkpoint.exhaustion;
+  }
+  requirementQueryWork = checkpoint.requirementQueryWork;
+  if (requirementQueryWork)
+    *requirementQueryWork = checkpoint.requirementQueryCharged;
+  semanticModel.restoreNativeObjectLayoutMark(checkpoint.nativeObjectLayout);
+}
+
+auto SemanticVisitor::Impl::reapplyAttemptCharges(const AttemptCheckpoint &from,
+                                                  const AttemptCheckpoint &to)
+    -> void {
+  if (const auto &work = requestSession.constexprWork) {
+    work->steps += to.constexprSteps - from.constexprSteps;
+    if (to.exhaustion)
+      work->exhaustion = to.exhaustion;
+  }
+  if (to.requirementQueryWork) {
+    if (requirementQueryWork == to.requirementQueryWork &&
+        from.requirementQueryWork == to.requirementQueryWork)
+      *requirementQueryWork +=
+          to.requirementQueryCharged - from.requirementQueryCharged;
+    else
+      requirementQueryWork = to.requirementQueryWork;
+  }
+  if (to.nativeObjectLayout)
+    semanticModel.requireNativeObjectLayout();
+}
+
+SemanticVisitor::Impl::BodyAttemptScope::BodyAttemptScope(
+    const Impl &impl, BodyContext &context, BodyContext::AttemptNeeds &needs,
+    std::unordered_set<FunctionId> &lookups)
+    : context(context), needs(needs), lookups(lookups),
+      recorder(impl.semanticModel.functionLookupRecorder()) {
+  context.openAttempt(needs);
+  if (recorder != nullptr) {
+    previous = recorder->active;
+    recorder->active = &lookups;
+  }
+}
+
+SemanticVisitor::Impl::BodyAttemptScope::~BodyAttemptScope() {
+  if (recorder != nullptr) {
+    recorder->active = previous;
+    // An enclosing attempt depends on what this one looked up as well.
+    if (previous != nullptr)
+      previous->insert(lookups.begin(), lookups.end());
+  }
+  context.closeAttempt(needs);
+}
+
+auto SemanticVisitor::Impl::attemptOutstandingNeeds(
+    const BodyContext &context, const BodyContext::AttemptNeeds &needs,
+    const std::unordered_set<FunctionId> &lookups) const
+    -> std::vector<const FunctionDecl *> {
+  std::vector<const FunctionDecl *> outstanding;
+  for (const FunctionDecl *body : needs.needs)
+    if (context.pending(body))
+      outstanding.push_back(body);
+  // A lookup is a demand only for a body whose facts a compile-time path
+  // consumes; other bodies' facts are demanded through the ordinary
+  // demanded-function record and late demand.
+  SemanticModel::FunctionLookupRecorder *const recorder =
+      semanticModel.functionLookupRecorder();
+  std::unordered_set<FunctionId> *const paused =
+      recorder == nullptr ? nullptr : std::exchange(recorder->active, nullptr);
+  const FunctionDemandScope pauseDemand(semanticModel, nullptr);
+  for (const FunctionId id : lookups)
+    if (const FunctionInfo *function = semanticModel.findFunction(id))
+      if (const FunctionDecl *body = function->bodyDeclaration();
+          body != nullptr &&
+          (body->isConstexpr() || body->isProceduralMacro()) &&
+          context.pending(body))
+        outstanding.push_back(body);
+  if (recorder != nullptr)
+    recorder->active = paused;
+  return context.inResolutionOrder(std::move(outstanding));
 }
 
 auto SemanticVisitor::Impl::pendingDeferredBody(

@@ -483,7 +483,20 @@ auto SemanticVisitor::Impl::requirementQueryIdentity(
   return identity;
 }
 
+// A pending body the query needs is completed by the context's owner and
+// the query repeated (withBodyDemands), never analysed privately.
 auto SemanticVisitor::Impl::expressionRequirementSatisfied(
+    const MemberRequirement &query,
+    std::span<const SemanticType> inputArguments, std::string *reason,
+    const std::vector<std::string> *lookupScope,
+    SemanticConstraintGuidance *guidance) const -> bool {
+  return constraintQueryAttempts(reason, guidance, [&] {
+    return expressionRequirementSatisfiedOnce(query, inputArguments, reason,
+                                              lookupScope, guidance);
+  });
+}
+
+auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
     const MemberRequirement &query,
     std::span<const SemanticType> inputArguments, std::string *reason,
     const std::vector<std::string> *lookupScope,
@@ -817,6 +830,17 @@ auto SemanticVisitor::Impl::borrowedCarrierResultSatisfied(
 }
 
 auto SemanticVisitor::Impl::constraintPredicateSatisfied(
+    const ConceptApplication &application,
+    const std::vector<SemanticType> &arguments, std::string *reason,
+    const std::vector<std::string> *lookupScope,
+    SemanticConstraintGuidance *guidance) const -> bool {
+  return constraintQueryAttempts(reason, guidance, [&] {
+    return constraintPredicateSatisfiedOnce(application, arguments, reason,
+                                            lookupScope, guidance);
+  });
+}
+
+auto SemanticVisitor::Impl::constraintPredicateSatisfiedOnce(
     const ConceptApplication &application,
     const std::vector<SemanticType> &arguments, std::string *reason,
     const std::vector<std::string> *lookupScope,

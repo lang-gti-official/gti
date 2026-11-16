@@ -89,6 +89,14 @@ struct StagedHash {
 // snapshot only if ordinary HIR discovery actually requests an instance.
 class StagedInstanceProvider final : public SemanticInstanceProvider {
 public:
+  // Staging never completes a primary body mid-lowering: it records the
+  // need, and the enclosing attempt completes the body and repeats.
+  std::function<void(const FunctionDecl &)> needPrimaryBody;
+  bool analyzeDemandedPrimaryBody(const FunctionDecl &body) override {
+    if (needPrimaryBody)
+      needPrimaryBody(body);
+    return false;
+  }
   using ValidateResult = std::function<void(const StagedInstanceKeyView &,
                                             SemanticInstanceAnalysis &)>;
   StagedInstanceProvider(const SemanticInstanceProvider &facts,
@@ -802,11 +810,14 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   for (const auto *definition : constexprConstructorsAnalyzed)
     constructors += declaredBeforeCurrent(definition) ? 1 : 0;
   const bool reanalysis = concreteReanalysis();
+  const std::uint64_t bodyRevision =
+      requestSession.bodyContext ? requestSession.bodyContext->revision() : 0;
   StagedWorker &worker = stagedWorker;
   if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
       worker.declarationOrder != currentDeclarationOrder ||
       worker.definitions != definitions ||
-      worker.constructors != constructors) {
+      worker.constructors != constructors ||
+      worker.bodyRevision != bodyRevision) {
     const PhaseTimeScope workerScope("constexpr-staged-worker");
     worker.impl = std::make_unique<Impl>(target, sourceGraph, false,
                                          workMetrics, sources, rawPointerAudit,
@@ -839,6 +850,7 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.declarationOrder = currentDeclarationOrder;
     worker.definitions = definitions;
     worker.constructors = constructors;
+    worker.bodyRevision = bodyRevision;
   }
   worker.impl->requestSession.constexprWork = work;
   worker.impl->requestSession.bodyContext = requestSession.bodyContext;
@@ -970,7 +982,23 @@ bool stagedClosureRequiresMir(const MirProgram &program) {
 
 } // namespace
 
+// A staged evaluation that needed a pending body (looked up, needed by its
+// closure, or reached as a runtime-only constexpr callee) is an attempt: the
+// body is completed and the evaluation repeated where that is possible.
 auto SemanticVisitor::Impl::executeStagedConstexpr(
+    const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+        &selected,
+    const std::vector<ConstantValue> &arguments,
+    const GenericSubstitution &substitution,
+    const std::optional<ConstantValue> &receiver, const Token &callSite,
+    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+  return withBodyDemands([&] {
+    return executeStagedConstexprOnce(selected, arguments, substitution,
+                                      receiver, callSite, context);
+  });
+}
+
+auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
         &selected,
     const std::vector<ConstantValue> &arguments,
@@ -1150,6 +1178,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                                        request.values.end())},
               analysis);
         });
+    provider.needPrimaryBody = [this](const FunctionDecl &body) {
+      noteBodyNeed(&body);
+    };
     HirLowerer lowerer(target);
     auto hir = [&] {
       const PhaseTimeScope lowerScope("constexpr-staged-hir");
@@ -1386,6 +1417,10 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const FunctionInfo *target =
         callee != nullptr ? stagingModel.findFunction(callee->declaration)
                           : nullptr;
+    // A constexpr callee whose body is still pending is a need, not a
+    // runtime-only call.
+    if (target != nullptr && target->constexprFunction)
+      noteBodyNeed(target->bodyDeclaration());
     const std::string name =
         target != nullptr ? "'" + target->qualifiedName + "'" : "The callee";
     result.detail =

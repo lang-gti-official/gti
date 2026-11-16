@@ -576,34 +576,88 @@ public:
                  std::unordered_set<FunctionId> *finalConsulted = nullptr) {
     if (!lateDemandReady || bodyPhaseActive || instanceAnalysisActive)
       return analyze();
-    for (;;) {
+    const std::shared_ptr<BodyContext> context = requestSession.bodyContext;
+    for (std::size_t round = 0;; ++round) {
       std::unordered_set<FunctionId> consulted;
       SemanticInstanceAnalysis result;
+      // The instance analysis is an attempt (see withBodyDemands): the
+      // bodies its compile-time paths needed are taken before anything below
+      // makes them available, and it is repeated once any of them is.
+      BodyContext::AttemptNeeds needs;
+      std::unordered_set<FunctionId> lookups;
+      const std::size_t diagnosticMark = diagnostics.size();
       {
         const FunctionDemandScope probe(semanticModel, &consulted);
-        result = analyze();
+        if (context != nullptr && context->anyUnfinished()) {
+          const BodyAttemptScope scope(*this, *context, needs, lookups);
+          result = analyze();
+        } else {
+          result = analyze();
+        }
       }
       result.model.setFunctionDemandSink(nullptr);
+      const std::vector<const FunctionDecl *> needed =
+          context == nullptr
+              ? std::vector<const FunctionDecl *>{}
+              : attemptOutstandingNeeds(*context, needs, lookups);
+      // A failure the attempt reported may be an artefact of a missing body;
+      // its diagnostics are set aside so they cannot refuse the late demand
+      // that completes it, and return unless the attempt is repeated.
+      std::vector<Diagnostic> attemptDiagnostics;
+      if (!needed.empty()) {
+        attemptDiagnostics.assign(
+            std::make_move_iterator(
+                diagnostics.begin() +
+                static_cast<std::ptrdiff_t>(diagnosticMark)),
+            std::make_move_iterator(diagnostics.end()));
+        diagnostics.resize(diagnosticMark);
+      }
+      const auto finish = [&]() -> SemanticInstanceAnalysis {
+        diagnostics.insert(diagnostics.end(),
+                           std::make_move_iterator(attemptDiagnostics.begin()),
+                           std::make_move_iterator(attemptDiagnostics.end()));
+        for (const FunctionDecl *body : needed)
+          if (context->pending(body))
+            context->need(*body);
+        if (finalConsulted != nullptr)
+          *finalConsulted = std::move(consulted);
+        return std::move(result);
+      };
       // A preamble body it consulted is complete already; reaching it reports
       // what the body held back, and an error there fails the request as a
       // fresh late analysis would have.
-      if (adoptedPreamble != nullptr &&
-          reachConsultedPreambleBodies(consulted)) {
-        if (finalConsulted != nullptr)
-          *finalConsulted = std::move(consulted);
-        return result;
-      }
+      if (adoptedPreamble != nullptr && reachConsultedPreambleBodies(consulted))
+        return finish();
       std::vector<const FunctionDecl *> demanded;
       for (const FunctionId id : consulted) {
         const FunctionInfo *function = semanticModel.findFunction(id);
         if (function != nullptr && pendingDeferredBody(function->declaration))
           demanded.push_back(function->declaration);
       }
-      if (demanded.empty() || !analyzeLateDemand(demanded)) {
-        if (finalConsulted != nullptr)
-          *finalConsulted = std::move(consulted);
-        return result;
+      std::vector<const FunctionDecl *> heldBack;
+      for (const FunctionDecl *body : needed) {
+        if (context->state(body) == BodyState::HeldBack)
+          heldBack.push_back(body);
+        else if (pendingDeferredBody(body) &&
+                 std::find(demanded.begin(), demanded.end(), body) ==
+                     demanded.end())
+          demanded.push_back(body);
       }
+      // A held-back preamble body a compile-time path needed is reached like
+      // one the instance consulted.
+      if (!heldBack.empty() && reachPreambleBodies(heldBack, false)) {
+        lateDemandFailed = true;
+        lateDemandedBodies.insert(lateDemandedBodies.end(), heldBack.begin(),
+                                  heldBack.end());
+        return finish();
+      }
+      const bool late = !demanded.empty() && analyzeLateDemand(demanded);
+      const bool available = std::any_of(
+          needed.begin(), needed.end(), [&](const FunctionDecl *body) {
+            return context->state(body) == BodyState::Analysed;
+          });
+      if ((!late && !available) || round + 1 >= bodyDemandRoundLimit)
+        return finish();
     }
   }
 
@@ -2108,6 +2162,13 @@ private:
   // snapshot.
   static constexpr std::size_t stagedNestingLimit = 64;
 
+  [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexprOnce(
+      const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+          &target,
+      const std::vector<ConstantValue> &arguments,
+      const GenericSubstitution &substitution,
+      const std::optional<ConstantValue> &receiver, const Token &callSite,
+      ConstexprInterpreter &context);
   [[nodiscard]] std::optional<ConstexprEvaluation> executeStagedConstexpr(
       const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
           &target,
@@ -3628,6 +3689,35 @@ private:
       std::string *reason = nullptr,
       const std::vector<std::string> *lookupScope = nullptr,
       SemanticConstraintGuidance *guidance = nullptr) const;
+  [[nodiscard]] bool expressionRequirementSatisfiedOnce(
+      const MemberRequirement &query, std::span<const SemanticType> arguments,
+      std::string *reason, const std::vector<std::string> *lookupScope,
+      SemanticConstraintGuidance *guidance) const;
+  // A query's reported outcome (reason and guidance) belongs to its last
+  // attempt: a repeated attempt starts from the caller's values.
+  template <typename Once>
+  [[nodiscard]] bool
+  constraintQueryAttempts(std::string *reason,
+                          SemanticConstraintGuidance *guidance,
+                          Once once) const {
+    const std::optional<std::string> reasonBefore =
+        reason ? std::optional(*reason) : std::nullopt;
+    const std::optional<SemanticConstraintGuidance> guidanceBefore =
+        guidance ? std::optional(*guidance) : std::nullopt;
+    bool repeated = false;
+    // Repeating an attempt analyses the bodies it needed, which is request
+    // state, not state of this const query.
+    return const_cast<Impl *>(this)->withBodyDemands([&] {
+      if (repeated) {
+        if (reason)
+          *reason = *reasonBefore;
+        if (guidance)
+          *guidance = *guidanceBefore;
+      }
+      repeated = true;
+      return once();
+    });
+  }
   // `{ e } -> C<x>` for a non-reference C: compares the
   // dependencies a binding of e's value would retain against the origin x.
   // `worker` is the query's isolated analyzer that has already analyzed e.
@@ -3649,6 +3739,12 @@ private:
       const std::vector<SemanticType> &arguments, std::string *reason,
       const std::vector<std::string> *lookupScope = nullptr,
       SemanticConstraintGuidance *guidance = nullptr) const;
+  [[nodiscard]] bool
+  constraintPredicateSatisfiedOnce(const ConceptApplication &application,
+                                   const std::vector<SemanticType> &arguments,
+                                   std::string *reason,
+                                   const std::vector<std::string> *lookupScope,
+                                   SemanticConstraintGuidance *guidance) const;
   [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
       const ConceptApplication &application,
       const std::vector<SemanticType> &arguments,
@@ -7877,6 +7973,123 @@ private:
     return requestSession.bodyContext != nullptr &&
            requestSession.bodyContext->ownedBy(this);
   }
+  // Records a need for a body pending in this context without resolving it
+  // here (a compile-time path that cannot use the body where it is).
+  void noteBodyNeed(const FunctionDecl *declaration);
+
+  // ---- Body-demand attempts ---------------------------------------------
+  // A compile-time query or evaluation that may need a pending body runs as
+  // an attempt: the needs recorded while it is open (by this analyzer or any
+  // worker sharing the context) and the pending constexpr bodies it looked
+  // up are the bodies its result depended on without having them. An attempt
+  // with none is clean and its result stands. Otherwise, where this analyzer
+  // owns the context and is in the body phase, the attempt is discarded (see
+  // AttemptCheckpoint), the bodies are made final in resolution order and the
+  // attempt is repeated; elsewhere its needs pass to the enclosing attempt,
+  // or to the request, whose frontend net repeats the analysis.
+
+  // Everything a discarded attempt must not leave behind. New request state
+  // that an attempt can change is added here, once.
+  struct AttemptCheckpoint {
+    std::size_t diagnostics = 0;
+    std::size_t constexprSteps = 0;
+    std::optional<ConstexprWorkBudget::Exhaustion> exhaustion;
+    std::shared_ptr<std::size_t> requirementQueryWork;
+    std::size_t requirementQueryCharged = 0;
+    bool nativeObjectLayout = false;
+  };
+  [[nodiscard]] AttemptCheckpoint captureAttemptCheckpoint() const;
+  // Restores `checkpoint` except diagnostics, which the caller manages.
+  void restoreAttemptCheckpoint(const AttemptCheckpoint &checkpoint);
+  // Re-applies what the attempt between `from` and `to` charged on top of
+  // the current state (an attempt kept after its needs could not be met).
+  void reapplyAttemptCharges(const AttemptCheckpoint &from,
+                             const AttemptCheckpoint &to);
+  // Opens an attempt on the context and records the request's function
+  // lookups into `lookups` while it is open.
+  class BodyAttemptScope {
+  public:
+    BodyAttemptScope(const Impl &impl, BodyContext &context,
+                     BodyContext::AttemptNeeds &needs,
+                     std::unordered_set<FunctionId> &lookups);
+    ~BodyAttemptScope();
+    BodyAttemptScope(const BodyAttemptScope &) = delete;
+    BodyAttemptScope &operator=(const BodyAttemptScope &) = delete;
+
+  private:
+    BodyContext &context;
+    BodyContext::AttemptNeeds &needs;
+    std::unordered_set<FunctionId> &lookups;
+    SemanticModel::FunctionLookupRecorder *recorder = nullptr;
+    std::unordered_set<FunctionId> *previous = nullptr;
+  };
+  // The bodies a closed attempt needed that are still pending here, in
+  // resolution order: its recorded needs and the constexpr and procedural
+  // bodies it looked up.
+  [[nodiscard]] std::vector<const FunctionDecl *>
+  attemptOutstandingNeeds(const BodyContext &context,
+                          const BodyContext::AttemptNeeds &needs,
+                          const std::unordered_set<FunctionId> &lookups) const;
+  // Repeats are bounded: every repeat follows progress (a body became
+  // final), and a request has finitely many pending bodies, so the bound is
+  // only a guard against a wrong progress test.
+  static constexpr std::size_t bodyDemandRoundLimit = 64;
+  [[nodiscard]] bool bodyDemandResolving() const {
+    return ownsBodyContext() && bodyPhaseActive && !instanceAnalysisActive;
+  }
+
+  template <typename Attempt>
+  auto withBodyDemands(Attempt &&attempt) -> decltype(attempt()) {
+    const std::shared_ptr<BodyContext> context = requestSession.bodyContext;
+    if (context == nullptr || !context->anyUnfinished())
+      return attempt();
+    const bool resolving = bodyDemandResolving();
+    for (std::size_t round = 0;; ++round) {
+      const AttemptCheckpoint checkpoint = captureAttemptCheckpoint();
+      BodyContext::AttemptNeeds needs{.resolving = resolving};
+      std::unordered_set<FunctionId> lookups;
+      auto result = [&] {
+        const BodyAttemptScope scope(*this, *context, needs, lookups);
+        return attempt();
+      }();
+      const std::vector<const FunctionDecl *> outstanding =
+          attemptOutstandingNeeds(*context, needs, lookups);
+      if (outstanding.empty())
+        return result;
+      const auto passOn = [&] {
+        for (const FunctionDecl *body : outstanding)
+          if (context->pending(body))
+            context->need(*body);
+      };
+      if (!resolving || round + 1 >= bodyDemandRoundLimit) {
+        passOn();
+        return result;
+      }
+      // Discard the attempt: its diagnostics are set aside (a failure it
+      // reported may be an artefact of the missing body) and its charges
+      // undone, so the repeat charges the same work afresh.
+      const AttemptCheckpoint attemptEnd = captureAttemptCheckpoint();
+      std::vector<Diagnostic> attemptDiagnostics(
+          std::make_move_iterator(
+              diagnostics.begin() +
+              static_cast<std::ptrdiff_t>(checkpoint.diagnostics)),
+          std::make_move_iterator(diagnostics.end()));
+      diagnostics.resize(checkpoint.diagnostics);
+      restoreAttemptCheckpoint(checkpoint);
+      const std::uint64_t revision = context->revision();
+      for (const FunctionDecl *body : outstanding)
+        resolveBody(body);
+      if (context->revision() != revision)
+        continue;
+      // Nothing became available: keep the attempt as it was.
+      diagnostics.insert(diagnostics.end(),
+                         std::make_move_iterator(attemptDiagnostics.begin()),
+                         std::make_move_iterator(attemptDiagnostics.end()));
+      reapplyAttemptCharges(checkpoint, attemptEnd);
+      passOn();
+      return result;
+    }
+  }
   void enterDeclarationContext(const std::vector<std::string> &namespaceScope,
                                SourceUnitId sourceUnit,
                                std::optional<ClassId> owner);
@@ -8006,6 +8219,9 @@ private:
     std::size_t declarationOrder = 0;
     std::size_t definitions = 0;
     std::size_t constructors = 0;
+    // The body context revision the snapshot was taken at: a body completed
+    // since then is missing from it.
+    std::uint64_t bodyRevision = 0;
   };
   StagedWorker stagedWorker;
   [[nodiscard]] Impl &

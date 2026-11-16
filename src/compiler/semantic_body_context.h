@@ -73,7 +73,12 @@ public:
       return;
     ++nextOrder;
     keys.emplace(key, &declaration);
+    if (state != BodyState::Analysed)
+      ++unfinished;
   }
+  // Whether any tracked body is not final yet; with none, nothing in this
+  // context can need one.
+  [[nodiscard]] bool anyUnfinished() const { return unfinished != 0; }
 
   [[nodiscard]] BodyState state(const FunctionDecl *declaration) const {
     if (declaration == nullptr)
@@ -122,6 +127,7 @@ public:
       return false;
     found->second.state = BodyState::Analysed;
     ++currentRevision;
+    --unfinished;
     return true;
   }
 
@@ -146,15 +152,44 @@ public:
     auto forked = std::make_shared<BodyContext>(*this);
     forked->owner = child;
     forked->recordedNeeds.clear();
+    forked->openAttempts.clear();
+    forked->resolvingAttempts = 0;
     return forked;
   }
 
   // ---- Needs ---------------------------------------------------------------
-  // A demand that could not be met where it arose. Every need is recorded,
-  // repeats included, so a scope that began before it can tell it was
-  // affected.
+  // A demand that could not be met where it arose. It is recorded in the
+  // innermost open attempt (see BodyAttemptNeeds), or, with none open, in the
+  // request-level record that the frontend's net examines. Every need is
+  // recorded, repeats included.
   void need(const FunctionDecl &declaration) {
-    recordedNeeds.push_back(&declaration);
+    if (!openAttempts.empty())
+      openAttempts.back()->needs.push_back(&declaration);
+    else
+      recordedNeeds.push_back(&declaration);
+  }
+  // An attempt whose result may be discarded and repeated collects the needs
+  // recorded while it is open, by any analyzer sharing this context.
+  struct AttemptNeeds {
+    std::vector<const FunctionDecl *> needs;
+    // Whether the attempt's owner can resolve its needs and repeat it. While
+    // such an attempt is open, a sharing worker records a pending body
+    // instead of analysing it privately.
+    bool resolving = false;
+  };
+  void openAttempt(AttemptNeeds &attempt) {
+    openAttempts.push_back(&attempt);
+    if (attempt.resolving)
+      ++resolvingAttempts;
+  }
+  void closeAttempt(AttemptNeeds &attempt) {
+    if (!openAttempts.empty() && openAttempts.back() == &attempt)
+      openAttempts.pop_back();
+    if (attempt.resolving && resolvingAttempts != 0)
+      --resolvingAttempts;
+  }
+  [[nodiscard]] bool resolvingAttemptOpen() const {
+    return resolvingAttempts != 0;
   }
   [[nodiscard]] std::size_t needCount() const { return recordedNeeds.size(); }
   [[nodiscard]] const std::vector<const FunctionDecl *> &needs() const {
@@ -190,6 +225,9 @@ private:
   std::unordered_map<const FunctionDecl *, Entry> entries;
   std::unordered_map<BodyKey, const FunctionDecl *, BodyKeyHash> keys;
   std::vector<const FunctionDecl *> recordedNeeds;
+  std::vector<AttemptNeeds *> openAttempts;
+  std::size_t resolvingAttempts = 0;
+  std::size_t unfinished = 0;
   std::size_t nextOrder = 0;
   std::uint64_t currentRevision = 0;
 };

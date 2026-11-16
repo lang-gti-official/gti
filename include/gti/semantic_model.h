@@ -2456,6 +2456,14 @@ public:
            (base != nullptr && base->requiresNativeObjectLayout());
   }
   void requireNativeObjectLayout() const { nativeObjectLayout_ = true; }
+  // This model's own mark (not its base's), for a discarded attempt to
+  // restore.
+  [[nodiscard]] bool nativeObjectLayoutMarked() const {
+    return nativeObjectLayout_;
+  }
+  void restoreNativeObjectLayoutMark(bool marked) const {
+    nativeObjectLayout_ = marked;
+  }
   [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
     return sourceDebugProfile_;
   }
@@ -2756,6 +2764,21 @@ public:
     auto *previous = functionDemandSink;
     functionDemandSink = sink;
     return previous;
+  }
+
+  // One analysis request's record of function lookups, shared by every
+  // model of the request (copies and deltas carry it), so a lookup answered
+  // at any delta level reaches the attempt that is recording. An attempt
+  // sets `active` for its duration and restores the previous record.
+  struct FunctionLookupRecorder {
+    std::unordered_set<FunctionId> *active = nullptr;
+  };
+  void
+  setFunctionLookupRecorder(std::shared_ptr<FunctionLookupRecorder> recorder) {
+    lookupRecorder = std::move(recorder);
+  }
+  [[nodiscard]] FunctionLookupRecorder *functionLookupRecorder() const {
+    return lookupRecorder.get();
   }
 
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const;
@@ -3440,6 +3463,7 @@ private:
   const SemanticModel *base = nullptr;
   std::unordered_set<const FunctionDecl *> analyzedFunctionBodies;
   mutable std::unordered_set<FunctionId> *functionDemandSink = nullptr;
+  std::shared_ptr<FunctionLookupRecorder> lookupRecorder;
   std::unordered_set<const Call *> *callJournal = nullptr;
   struct InstanceReuseJournal {
     std::unordered_set<LambdaId> lambdas;
