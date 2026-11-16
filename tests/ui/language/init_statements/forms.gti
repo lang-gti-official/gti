@@ -47,6 +47,23 @@ struct Pair {
 
 constexpr int limit() { return 4; }
 
+// Constant evaluation runs an init exactly like a block's first statement.
+struct Split {
+  mut int high;
+  mut int low;
+  constexpr Split(int value) : high(0), low(0) {
+    if (int doubled = value * 2; doubled > 4) {
+      this.high = doubled;
+    } else {
+      this.low = doubled;
+    }
+  }
+};
+
+constexpr Split large = Split(3);
+constexpr Split small = Split(1);
+static_assert(large.high == 6 && large.low == 0 && small.low == 2);
+
 // Concrete reanalysis of a generic body keeps the init's scope.
 T first_or<std::vector_element T>(std::vector<T>& values, T fallback) {
   if (auto count = values.size(); count > 0) {
