@@ -1494,7 +1494,8 @@ retain their actual external owners through insertion, growth and movement.
 The compiler independently checks generated, failure-free relocation and the
 storage-owner witnesses; satisfying the concept alone grants no unchecked
 relocation permission. Borrow-free, non-text elements keep the existing raw
-construction and bulk-relocation paths. Text views use owner-aware transfer even
+construction and relocation paths, including bulk relocation where permitted.
+Text views use owner-aware transfer even
 when their representation is bitwise relocatable, because an individual value
 may retain an external owner. Exclusive borrowed payloads and address-stable host
 state remain unsupported, and a custom move constructor alone does not establish

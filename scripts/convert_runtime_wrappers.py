@@ -519,12 +519,12 @@ def remove_foreach_item(text: str, test: str) -> tuple[str, int]:
 
 
 def remove_toml_owner(text: str, test: str) -> str:
-    """Remove the test from owners/consumers; gti_test_ui takes its place."""
+    """Remove the test from owners/consumers; ^gti_test_ui(_shard_[1-4])?$ takes its place."""
     lines = text.split("\n")
     output = []
     for index, line in enumerate(lines):
         if line.strip() in (f'"{test}",', f'"{test}"'):
-            # Find the enclosing list and make sure gti_test_ui is in it.
+            # Find the enclosing list and make sure ^gti_test_ui(_shard_[1-4])?$ is in it.
             start = index
             while start > 0 and not re.match(r"\s*(owners|consumers)\s*=\s*\[", lines[start]):
                 start -= 1
@@ -532,9 +532,9 @@ def remove_toml_owner(text: str, test: str) -> str:
             while end < len(lines) and lines[end].strip() != "]":
                 end += 1
             block = lines[start:end + 1]
-            if not any(item.strip().startswith('"gti_test_ui"') for item in block) and \
-                    not any(item.strip().startswith('"gti_test_ui"') for item in output[-(index - start):]):
-                output.append('  "gti_test_ui",')
+            if not any(item.strip().startswith('"^gti_test_ui(_shard_[1-4])?$"') for item in block) and \
+                    not any(item.strip().startswith('"^gti_test_ui(_shard_[1-4])?$"') for item in output[-(index - start):]):
+                output.append('  "^gti_test_ui(_shard_[1-4])?$",')
             continue
         if f'"{test}"' in line:
             line = re.sub(r'\s*"' + re.escape(test) + r'",?', "", line)
@@ -543,12 +543,12 @@ def remove_toml_owner(text: str, test: str) -> str:
 
 
 def fix_toml_duplicates(text: str) -> str:
-    """Keep one gti_test_ui per list."""
+    """Keep one ^gti_test_ui(_shard_[1-4])?$ per list."""
     output, seen = [], False
     for line in text.split("\n"):
         if re.match(r"\s*(owners|consumers)\s*=\s*\[", line):
             seen = False
-        if line.strip() == '"gti_test_ui",':
+        if line.strip() == '"^gti_test_ui(_shard_[1-4])?$",':
             if seen:
                 continue
             seen = True

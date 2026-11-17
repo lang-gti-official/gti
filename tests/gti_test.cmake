@@ -17,11 +17,24 @@ if(TARGET gti_lsp)
   add_dependencies(gti-test gti_lsp)
 endif()
 
-# The runner's own behaviour, then the source, project and LSP tests.
-# check.py also retains the borrowed-storage slow regressions in this gate.
+# Keep runner self-tests/tidy separate from the growing source inventory.
+# Four deterministic shards preserve every source case and its per-case bound,
+# with the existing 600-second aggregate timeout on each registered gate.
 add_test(NAME gti_test_ui
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
-    $<TARGET_FILE:gti-test> --jobs 4)
+    $<TARGET_FILE:gti-test> --jobs 4 --checks-only)
+add_test(NAME gti_test_ui_shard_1
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
+    $<TARGET_FILE:gti-test> --jobs 4 --suite-only --shard 1/4)
+add_test(NAME gti_test_ui_shard_2
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
+    $<TARGET_FILE:gti-test> --jobs 4 --suite-only --shard 2/4)
+add_test(NAME gti_test_ui_shard_3
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
+    $<TARGET_FILE:gti-test> --jobs 4 --suite-only --shard 3/4)
+add_test(NAME gti_test_ui_shard_4
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
+    $<TARGET_FILE:gti-test> --jobs 4 --suite-only --shard 4/4)
 # Per-test limits are CPU seconds measured on a fast development machine;
 # hosted runners are about twice as slow, and sanitizer or other slow trees
 # scale every bound by GTI_TEST_TIMEOUT_SCALE.
@@ -31,7 +44,9 @@ if(NOT gti_test_timeout_scale MATCHES "^[1-9][0-9]*$")
   set(gti_test_timeout_scale 1)
 endif()
 math(EXPR gti_test_time_scale "2 * ${gti_test_timeout_scale}")
-set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
+set_tests_properties(gti_test_ui
+  gti_test_ui_shard_1 gti_test_ui_shard_2 gti_test_ui_shard_3 gti_test_ui_shard_4
+  PROPERTIES PROCESSORS 4
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
 
 # Every single-file example (`examples/*.gti`) must analyse to verified MIR

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The gti_test_ui gate: gti-test's own behaviour, then tidy and both source tiers.
+"""The gti_test_ui gate: gti-test's own behaviour, tidy, and the source inventory in bounded shards.
 
-usage: check.py <gti-test> [--jobs N] [--self-test-only]
+usage: check.py <gti-test> [--jobs N] [--checks-only | --suite-only --shard I/N]
 
 The self-test drives gti-test over tests/runner/fixtures and checks every
 outcome class it reports: pass, wrong/missing/unmatched annotations, stdout
@@ -11,6 +11,7 @@ test kinds: parse-only modes, analysis options, and the mir, llvm-ir,
 diagnostics and format snapshots with their failure and bless paths.
 """
 
+import argparse
 import json
 import os
 from xml.etree import ElementTree
@@ -611,44 +612,71 @@ def lsp_self_test(runner):
                "bless annotates published diagnostics", out)
 
 
-def main():
-    runner = Path(sys.argv[1]).resolve()
-    jobs = "4"
-    if "--jobs" in sys.argv:
-        jobs = sys.argv[sys.argv.index("--jobs") + 1]
-    self_test(runner)
-    retained_assertion_test(runner)
-    print("gti-test self-test: ok", flush=True)
-    if "--self-test-only" in sys.argv:
-        return 0
+def suite_roots(runner):
     # Trees built without the language server (GTI_BUILD_LSP=OFF) skip it.
     roots = ["tests/ui", "tests/project"]
     if (runner.parent / "gti_lsp").exists():
         roots.append("tests/lsp")
     else:
         print("gti-test: no gti_lsp beside the runner; tests/lsp skipped")
-    for root in roots:
-        code, out = run(runner, "--tidy", "--root", ROOT / root,
-                        fixtures=False)
-        sys.stdout.write(out)
-        if code != 0:
-            return code
     roots.extend([
         "tests/slow/borrow/retained-storage",
+        "tests/slow/borrow/container_views/nested_text_view_in_raw_storage.gti",
         "tests/slow/stdlib/regex/regex_subject_mutation.gti",
         "tests/slow/stdlib/assert/deferred_assertions.gti",
+        "tests/slow/stdlib/assert/deferred_assertions_ndebug.gti",
         "tests/slow/stdlib/charconv/format.gti",
         "tests/slow/stdlib/io/composable_io.gti",
         "tests/slow/stdlib/encoding/encoding.gti",
+        "tests/slow/language/construction/object_construction.gti",
         "tests/slow/language/construction/object_construction_owned.gti",
         "tests/slow/language/construction/object_construction_reference.gti",
         "tests/slow/language/construction/borrowed_array_cleanup.gti",
         "tests/slow/language/construction/borrowed_vector_cleanup.gti",
     ])
-    code, out = run(runner, *(ROOT / root for root in roots), "--jobs",
-                    jobs, fixtures=False)
-    sys.stdout.write(out)
-    return code
+    return [ROOT / root for root in roots]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("runner", type=Path)
+    parser.add_argument("--jobs", default="4")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--self-test-only", action="store_true")
+    modes.add_argument("--checks-only", action="store_true")
+    modes.add_argument("--suite-only", action="store_true")
+    parser.add_argument("--shard")
+    args = parser.parse_args()
+    runner = args.runner.resolve()
+    if not args.suite_only:
+        self_test(runner)
+        retained_assertion_test(runner)
+        print("gti-test self-test: ok", flush=True)
+    if args.self_test_only:
+        return 0
+    roots = suite_roots(runner)
+    if not args.suite_only:
+        for root in roots:
+            code, out = run(runner, "--tidy", root, fixtures=False)
+            print(out, end="", flush=True)
+            if code != 0:
+                return code
+    if args.checks_only:
+        return 0
+    # Stream failures as they happen and retain per-case evidence even if the
+    # outer gate times out. Each CTest shard owns a distinct report/failed list.
+    reports = runner.parent / "Testing"
+    reports.mkdir(exist_ok=True)
+    label = "gti-test-ui-" + (args.shard or "all").replace("/", "-of-")
+    environment = dict(os.environ)
+    environment.pop("CI", None)
+    environment.pop("GTI_TEST_SELF_TEST", None)
+    environment["GTI_TEST_LAST_RUN"] = str(reports / (label + ".last-run"))
+    command = [str(runner), *map(str, roots), "--jobs", args.jobs,
+               "--json", str(reports / (label + ".jsonl"))]
+    if args.shard:
+        command += ["--shard", args.shard]
+    return subprocess.run(command, cwd=ROOT, env=environment, timeout=600).returncode
 
 
 if __name__ == "__main__":

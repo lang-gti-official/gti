@@ -181,3 +181,14 @@ checks tests/ui, tests/project, tests/lsp and tests/slow.
 Not built: symbol probes of built programs (the old `nm` checks inspect
 sanitizer-instrumented objects and package archives, which a per-test
 directive on a normal program cannot honestly stand for).
+
+### Registered source gates
+
+`gti_test_ui` checks the runner itself and tidies the shared inventory.
+`gti_test_ui_shard_1` through `gti_test_ui_shard_4` partition that same inventory
+with the runner's deterministic `--shard I/4` selection. Run the family with
+`ctest -R '^gti_test_ui(_shard_[1-4])?$'`. No case or per-case limit is changed by
+sharding, and each gate retains the 600-second aggregate timeout. Selected
+borrowed-storage and construction-cleanup slow regressions remain in this
+inventory. Per-case JSON and failed-case records are retained under the build's
+`Testing/` directory, separately for each shard.

@@ -267,14 +267,21 @@ void testOwnedPassiveConstructionProfile() {
       std::filesystem::path(__FILE__).parent_path().parent_path() / "stdlib";
   const auto frontend =
       Frontend().analyze("optimizer-owned-passive.gti", R"(
-import std.vector;
+import std.memory;
 struct Item { int value; Item(int value) : value(value) {} };
 int main() {
-  mut std::vector<int> numbers{std::size_t(1)};
-  numbers.push_back(7);
-  mut std::vector<Item> items{};
-  items.push_back(Item(9));
-  return numbers[1] + items[0].value - 16;
+  mut std::uninitialized<int> default_slot{};
+  mut std::uninitialized<int> scalar_slot{};
+  mut std::uninitialized<Item> record_slot{};
+  unsafe {
+    [[discard]] std::construct_owned_at(default_slot.data(), default_slot);
+    std::initialize_owned_at(scalar_slot.data(), scalar_slot, 7);
+    std::initialize_owned_at(record_slot.data(), record_slot, Item(9));
+    std::destroy_at(record_slot.data());
+    std::destroy_at(scalar_slot.data());
+    std::destroy_at(default_slot.data());
+  }
+  return 0;
 }
 )",
                          {stdlib / "prelude.gti"}, {}, {stdlib});

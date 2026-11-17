@@ -1025,7 +1025,7 @@ owners = [
 ]
 consumers = [
   "practical_examples",
-  "gti_test_ui",
+  "^gti_test_ui(_shard_[1-4])?$",
   "gti_unit_tests",
 ]
 
@@ -2010,3 +2010,11 @@ paths = ["tests/codegen_attribute_tests.cpp", "examples/llvm/codegen-attributes.
 owners = ["codegen_attribute_contract", "codegen_attribute_runtime"]
 consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
 risk = "shared"
+
+# Directory-runner infrastructure owns its checks and every source shard.
+[[area]]
+area = "source-test-runner"
+paths = ["tests/runner/", "tests/gti_test.cmake", "scripts/convert_runtime_wrappers.py"]
+owners = ["^gti_test_ui(_shard_[1-4])?$"]
+consumers = ["cmake_test_ownership", "test_throughput_registration"]
+risk = "system"
