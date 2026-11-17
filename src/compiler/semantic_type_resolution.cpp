@@ -3421,6 +3421,62 @@ auto SemanticVisitor::Impl::analyzeStringViewAddition(
   return true;
 }
 
+auto SemanticVisitor::Impl::recordLiteralTextConcatenation(
+    const Binary &expression) -> void {
+  const auto *operation = semanticModel.findOperator(expression);
+  if (!operation || !sourceGraph)
+    return;
+  const auto *function = semanticModel.findFunction(operation->function);
+  const auto *unit =
+      function ? sourceGraph->findUnit(function->sourceUnit) : nullptr;
+  if (!unit || unit->role != SourceUnitRole::StandardLibrary ||
+      unit->standardLibraryName != "std/string")
+    return;
+  const auto operand =
+      [&](const Expr *expr) -> std::optional<LiteralTextConcatenation> {
+    while (const auto *group = exprAs<Grouping>(expr))
+      expr = group->expression().get();
+    if (const auto *literal = exprAs<LiteralExpr>(expr)) {
+      if (const auto *text = std::get_if<std::string>(&literal->value()))
+        return LiteralTextConcatenation{.size = text->size()};
+    }
+    const auto *nested = expr ? semanticModel.findOperator(*expr) : nullptr;
+    return nested ? nested->literalText : std::nullopt;
+  };
+  const auto left = operand(expression.left().get());
+  const auto right = operand(expression.right().get());
+  if (!left || !right || right->size > std::string{}.max_size() - left->size)
+    return;
+  FunctionId factory = left->factory ? left->factory : right->factory;
+  if (left->factory && right->factory && left->factory != right->factory)
+    return;
+  if (!factory && operation->operandArguments &&
+      operation->parameterTypes ==
+          std::vector<SemanticType>{SemanticType::StringView,
+                                    SemanticType::StringView})
+    factory = operation->function;
+  const auto *producer = semanticModel.findFunction(factory);
+  if (!producer || producer->returnType != operation->returnType ||
+      producer->parameterTypes !=
+          std::vector<SemanticType>{SemanticType::StringView,
+                                    SemanticType::StringView})
+    return;
+  // Only the selected library operations participate. User operators and
+  // arbitrary constant-valued expressions retain their calls and effects.
+  if (!operation->operandArguments &&
+      (function->ownerClass != producer->returnType.classId ||
+       operation->parameterTypes.size() != 1 ||
+       (operation->parameterTypes.front() != SemanticType::StringView &&
+        operation->parameterTypes.front() !=
+            SemanticType::referenceTo(producer->returnType,
+                                      AccessMode::ReadOnly))))
+    return;
+  auto folded = *operation;
+  folded.literalText = LiteralTextConcatenation{
+      .factory = factory, .size = left->size + right->size};
+  semanticModel.recordOperator(expression, std::move(folded));
+}
+
 auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     const Call &call, const Get &member,
     const std::vector<SemanticType> &argumentTypes, const Token &paren)

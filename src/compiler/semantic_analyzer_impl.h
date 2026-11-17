@@ -4508,6 +4508,7 @@ private:
 
   bool analyzeStringViewAddition(const Binary &expression,
                                  const SemanticType &rightType);
+  void recordLiteralTextConcatenation(const Binary &expression);
 
   void
   analyzeStringViewMemberCall(const Call &call, const Get &member,

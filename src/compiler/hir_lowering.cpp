@@ -6097,6 +6097,7 @@ private:
     std::optional<HirFunctionInstanceId> functionItemTarget;
     std::optional<HirFunctionInstanceId> contextualConversionTarget;
     std::optional<EnumId> enumOwner;
+    std::optional<ResolvedOperatorInfo> literalTextOperator;
     std::optional<EnumConstant> enumValue;
     std::optional<std::size_t> enumVariant;
     std::optional<std::size_t> payloadIndex;
@@ -6171,8 +6172,63 @@ private:
     } else if (const auto *binary = exprAs<Binary>(raw)) {
       kind = HirValueKind::Binary;
       operation = binary->oper().kind;
-      lowerOperand(binary->left());
-      lowerOperand(binary->right());
+      const auto *resolved = model.findOperator(*raw);
+      if (resolved && resolved->literalText) {
+        // Semantics has proved that every leaf is a literal and every join
+        // is a trusted text operation. Flatten once, without materializing
+        // intermediate owners or reinterpreting source escape spellings.
+        std::string bytes;
+        bytes.reserve(resolved->literalText->size);
+        std::vector<const Expr *> pending{raw};
+        while (!pending.empty()) {
+          const Expr *part = pending.back();
+          pending.pop_back();
+          if (const auto *group = exprAs<Grouping>(part)) {
+            pending.push_back(group->expression().get());
+          } else if (const auto *join = exprAs<Binary>(part)) {
+            pending.push_back(join->right().get());
+            pending.push_back(join->left().get());
+          } else if (const auto *leaf = exprAs<LiteralExpr>(part)) {
+            const auto *text = std::get_if<std::string>(&leaf->value());
+            if (!text) {
+              lifecycleValid = false;
+              return std::nullopt;
+            }
+            bytes.append(*text);
+          } else {
+            lifecycleValid = false;
+            return std::nullopt;
+          }
+        }
+        const auto *factory =
+            model.findFunction(resolved->literalText->factory);
+        if (!factory || bytes.size() != resolved->literalText->size) {
+          lifecycleValid = false;
+          return std::nullopt;
+        }
+        literalTextOperator =
+            ResolvedOperatorInfo{.operandArguments = true,
+                                 .function = factory->id,
+                                 .declaration = factory->declaration,
+                                 .kind = OverloadedOperator::Plus,
+                                 .returnType = factory->returnType,
+                                 .parameterTypes = factory->parameterTypes};
+        for (std::size_t index = 0; index < 2; ++index) {
+          const HirValueId id = nextValueId++;
+          body.values.push_back(
+              {.id = id,
+               .kind = HirValueKind::Literal,
+               .source = raw,
+               .info = {.type = SemanticType::StringView,
+                        .traits = semanticTraits(SemanticType::StringView)},
+               .literal =
+                   Literal{index == 0 ? std::move(bytes) : std::string{}}});
+          operands.push_back(id);
+        }
+      } else {
+        lowerOperand(binary->left());
+        lowerOperand(binary->right());
+      }
     } else if (const ResolvedOperatorInfo *conversion =
                    model.findOperator(*raw);
                conversion != nullptr &&
@@ -6751,7 +6807,7 @@ private:
       }
     }
     const ResolvedOperatorInfo *resolvedValueOperator =
-        model.findOperator(*raw);
+        literalTextOperator ? &*literalTextOperator : model.findOperator(*raw);
     if (resolvedValueOperator == nullptr &&
         (value.kind == HirValueKind::DereferenceSet ||
          value.kind == HirValueKind::IndexSet)) {

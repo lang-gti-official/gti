@@ -368,7 +368,12 @@ The current implemented foundation includes:
   A fresh or explicitly moved left string reuses its storage; left-associated
   chains therefore take amortized linear copying and geometric allocation
   growth, rather than cloning every accumulated prefix. The first pair of
-  borrowed inputs reserves their combined size once. `text += suffix` accepts
+  borrowed inputs reserves their combined size once. Literal-only `+` trees,
+  including parenthesized groups, combine their decoded bytes at compile time
+  and construct one owned result at runtime, without intermediate strings.
+  This optimization preserves the `std::string` result type; it does not make
+  the expression a static view or a constexpr owning allocation.
+  `text += suffix` accepts
   a string, view, literal, or temporary string and requires a mutable owning
   destination. A view cannot grow with `+=`. Both operators copy counted bytes,
   including embedded NULs. They preserve ordinary borrow rules: self-append,

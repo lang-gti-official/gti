@@ -7808,8 +7808,10 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
   if (expr.oper().kind == TokenKind::PLUS &&
       leftType == SemanticType::StringView &&
-      analyzeStringViewAddition(expr, rightType))
+      analyzeStringViewAddition(expr, rightType)) {
+    recordLiteralTextConcatenation(expr);
     return;
+  }
 
   // An existence-only requirement can establish an operand operation without
   // knowing its result yet. Do not turn a dependent comparison into a bool
@@ -7921,6 +7923,8 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
     }
     currentType = selected ? callExpressionType(selected->returnType)
                            : SemanticType::Unknown;
+    if (selected && *sourceOperator == OverloadedOperator::Plus)
+      recordLiteralTextConcatenation(expr);
     return;
   }
 
