@@ -10564,9 +10564,9 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
               return false;
             producer = &instruction;
           }
-      const MirLoan *result =
-          producer != nullptr && producer->loan ? body.findLoan(*producer->loan)
-                                                 : nullptr;
+      const MirLoan *result = producer != nullptr && producer->loan
+                                  ? body.findLoan(*producer->loan)
+                                  : nullptr;
       return result != nullptr && result->kind == MirLoanKind::CallResult &&
              result->parent == physicalCursor->id && !result->escapes &&
              result->access == AccessMode::ReadOnly &&
