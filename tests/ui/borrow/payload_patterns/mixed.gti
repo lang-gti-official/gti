@@ -1,0 +1,9 @@
+// Borrowed and owned payload bindings mix in one switch.
+//@ run-pass
+enum class data { some(int32_t first, int32_t second) };
+int main() {
+  data value = data::some(1, 7);
+  switch (value) {
+    case data::some(copy, auto& reference): return reference - 7;
+  }
+}

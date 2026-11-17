@@ -1,0 +1,18 @@
+// std::upper_bound rejects a comparator over another element type.
+//@ check-fail
+import std.algorithm;
+import std.functional;
+import std.vector;
+class OncePredicate {
+public:
+  bool operator()(int& value) && { return value < 2; }
+public:
+  OncePredicate() = default;
+};
+class OnceComparator {
+public:
+  bool operator()(int& left, int& right) && { return left < right; }
+public:
+  OnceComparator() = default;
+};
+int main() { mut std::vector<int> values = {1, 2, 3}; int key = 2; std::upper_bound(values.begin(), values.end(), key, [](double& left, double& right) -> bool { return left < right; }); return 0; }  //~ ERROR GTI-S2029

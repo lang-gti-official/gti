@@ -1,0 +1,13 @@
+// Borrowing an element of an owned (moved) range is rejected.
+// (From consuming_range_lsp_test.py.)
+import std.vector;
+import std.string;
+int main() {
+  mut std::vector<std::string> values{};
+  values.emplace_back("owned");
+  mut std::size_t size = 0;
+  for (auto& word : std::move(values).into_range()) {  //~ ERROR GTI-S2083 //~ ERROR GTI-S2017
+    size += word.size();
+  }
+  return size == 5 ? 0 : 1;
+}

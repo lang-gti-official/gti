@@ -1,0 +1,36 @@
+// A failure in a conditional class argument drops what was built.
+//@ run-fail
+//@ revisions: left right
+//@[right] args: right
+//@ exit-code: 70
+//@ stderr-contains: main.gti:14: runtime error[GTI-R0017]: panic: "conditional argument failed"
+//@ stdout: 2
+//@ stdout: 1
+// --- main.gti
+import std.panic;
+import std.string;
+import std.vector;
+
+class Guard {
+  int number;
+public:
+  Guard(int initial) : number(initial) {}
+  Guard(Guard&) = delete;
+  ~Guard() { std::println(this.number); }
+};
+
+int later_argument() {
+  std::panic("conditional argument failed"); // failure-site
+}
+
+int consume(Guard value, int later) {
+  std::println(99);
+  return later;
+}
+
+int check(bool left) {
+  Guard earlier = Guard(1);
+  return consume(((left ? Guard(2) : Guard(2))), later_argument());
+}
+
+int main(int argc, std::vector<std::string> argv) { return check(argc == 1); }

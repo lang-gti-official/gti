@@ -1,0 +1,12 @@
+// A mutable cursor into a local std::list cannot be returned.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+std::list<int>::iterator dangling() { mut std::list<int> x = {1, 2}; return x.begin_mut(); } int main() { return 0; }  //~ ERROR GTI-S2045 borrowed return

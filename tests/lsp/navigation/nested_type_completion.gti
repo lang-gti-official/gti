@@ -1,0 +1,80 @@
+// Completion of nested types: qualified names offer public members only,
+// unqualified names inside the class see their siblings, and a private
+// type's members are not offered. (From nested_type_lsp_test.py.)
+//@ completion @q: Network Logging !Secrets
+namespace demo {
+struct Config {
+  struct Network {
+    struct Tls {
+      bool enabled = false;
+    };
+  };
+  class Logging {
+  public:
+    int level = 1;
+  };
+  using Selected = Network;
+
+private:
+  struct Secrets {
+    struct Token {
+      int code = 1;
+    };
+  };
+};
+}
+using Net = demo::Config::/*@q*/;  //~ ERROR GTI-P0001
+using Secure = demo::Config::Network::Tls;
+int main() { return 0; }
+// --- step 2
+//@ completion @n: Network
+namespace demo {
+struct Config {
+  struct Network {
+    struct Tls {
+      bool enabled = false;
+    };
+  };
+  class Logging {
+  public:
+    int level = 1;
+  };
+  using Selected = /*@n*/Netw;  //~ ERROR GTI-S2000
+
+private:
+  struct Secrets {
+    struct Token {
+      int code = 1;
+    };
+  };
+};
+}
+using Net = demo::Config::Network;
+using Secure = demo::Config::Network::Tls;
+int main() { return 0; }
+// --- step 3
+//@ completion @p: !Token
+namespace demo {
+struct Config {
+  struct Network {
+    struct Tls {
+      bool enabled = false;
+    };
+  };
+  class Logging {
+  public:
+    int level = 1;
+  };
+  using Selected = Network;
+
+private:
+  struct Secrets {
+    struct Token {
+      int code = 1;
+    };
+  };
+};
+}
+using Net = demo::Config::Network;
+using Secure = demo::Config::Secrets::/*@p*/To;  //~ ERROR GTI-S2000
+int main() { return 0; }
