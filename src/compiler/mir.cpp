@@ -10541,6 +10541,38 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
         elementLoan->storedDependency == physicalCursor->id;
     const bool externalStoredYield =
         !range.materializesElementValue && cursorRegionLoan(elementLoan);
+    // A read-only reference yield in the cursor's stored region designates
+    // what the cursor's stored reference holds: its element borrows the
+    // cursor's own Stored loan below the range loan, which advancing the
+    // cursor's shell does not disturb, through the selected dereference's
+    // call result on the cursor.
+    const auto cursorStoredReferenceYield = [&] {
+      if (range.strategy != RangeIterationStrategy::Structural ||
+          range.elementAccess != AccessMode::ReadOnly ||
+          range.materializesElementValue || ambiguousCursor ||
+          physicalCursor == nullptr || elementLoan != physicalCursor ||
+          physicalCursor->entry || physicalCursor->escapes ||
+          physicalCursor->parent != range.rangeLoan ||
+          physicalCursor->access != AccessMode::ReadOnly)
+        return false;
+      const MirInstruction *producer = nullptr;
+      for (const auto &block : body.blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.kind == MirInstructionKind::Call &&
+              instruction.hirValue == range.elementAccessSource) {
+            if (producer != nullptr)
+              return false;
+            producer = &instruction;
+          }
+      const MirLoan *result = producer != nullptr && producer->loan
+                                  ? body.findLoan(*producer->loan)
+                                  : nullptr;
+      return result != nullptr && result->kind == MirLoanKind::CallResult &&
+             result->parent == physicalCursor->id && !result->escapes &&
+             result->access == AccessMode::ReadOnly &&
+             producer->borrowOrigin == BorrowOriginKind::Receiver &&
+             producer->receiver && producer->receiver->place == range.iterator;
+    }();
     if (range.elementBorrowsCursorRegions && !range.materializesElementValue &&
         !externalStoredYield)
       return failure(body, owner,
@@ -10723,7 +10755,8 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
            (range.elementLoan == range.rangeLoan ||
             (elementLoan->parent != range.rangeLoan && !physicalProxy))) ||
           (physicalCursor != nullptr && !physicalProxy &&
-           !range.materializesElementValue && !externalStoredYield)))) {
+           !range.materializesElementValue && !externalStoredYield &&
+           !cursorStoredReferenceYield)))) {
       return failure(body, owner,
                      "range iteration contains an incoherent or escaping "
                      "range/element loan");
