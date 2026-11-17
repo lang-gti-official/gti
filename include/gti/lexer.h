@@ -15,6 +15,32 @@ namespace lang {
 
 using LexDiagnostic = Diagnostic;
 
+// The longest raw string delimiter, `R"delim(...)delim"`, as in C++.
+inline constexpr std::size_t rawStringDelimiterLimit = 16;
+
+// The lexical extent of the raw string literal whose `R` is at `start`.
+// `delimiterEnd` is the `(` that ends a valid delimiter, or the first byte
+// that makes it malformed. A malformed opening recovers through its matching
+// closing sequence when the line has a `(`, otherwise through the end of the
+// line; an unterminated body extends to the end of the source. Tooling
+// scanners (the formatter, LSP comment classification) skip `[start, end)` so
+// a `"` or `//` inside a raw string never ends it early.
+struct RawStringScan {
+  enum class Problem : std::uint8_t {
+    None,
+    DelimiterTooLong,
+    InvalidDelimiterCharacter,
+    MissingOpenParenthesis,
+    Unterminated,
+  };
+  Problem problem = Problem::None;
+  std::size_t delimiterEnd = 0;
+  std::size_t end = 0;
+};
+
+[[nodiscard]] RawStringScan scanRawStringLiteral(std::string_view source,
+                                                 std::size_t start);
+
 class Lexer {
 public:
   Lexer() = default;
@@ -63,8 +89,11 @@ private:
   [[nodiscard]] static bool isNumber(char value);
   [[nodiscard]] static bool isAlpha(char value);
   [[nodiscard]] static bool isAlphaNumeric(char value);
-  void prefixedInteger(int base, std::string_view description);
+  bool validDigitSeparators(std::size_t runStart, std::size_t runEnd,
+                            std::string_view before, bool trailingBeforeSuffix,
+                            std::string_view code);
   void number();
+  void rawString();
   void identifier();
   [[nodiscard]] int lineAt(std::size_t position) const;
   void report(std::string code, std::string message);

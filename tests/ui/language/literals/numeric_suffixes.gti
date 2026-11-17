@@ -1,0 +1,27 @@
+// Suffixed literals have exactly their suffix type at every range edge and
+// execute with the same values; separators do not change a value.
+//@ run-pass
+//@ stdout: 255 -128 65535 -32768
+//@ stdout: 4294967295 -2147483648
+//@ stdout: 18446744073709551615 -9223372036854775808
+//@ stdout: 1000000 7986 165 2
+import std.format;
+
+int main() {
+  uint8_t a = 255u8;
+  int8_t b = -128i8;
+  uint16_t c = 65_535u16;
+  int16_t d = -32_768i16;
+  uint32_t e = 4_294_967_295u32;
+  int32_t f = -2_147_483_648i32;
+  uint64_t g = 0xFFFF_FFFF_FFFF_FFFFu64;
+  int64_t h = -9_223_372_036_854_775_808i64;
+  std::println("{} {} {} {}", a, b, c, d);
+  std::println("{} {}", e, f);
+  std::println("{} {}", g, h);
+  float ratio = 2.5f32;
+  double whole = 1f64;
+  std::println("{} {} {} {}", 1_000_000, 0x1f32, 0b1010_0101,
+               int32_t(double(ratio) - whole + 0.5));
+  return 0;
+}
