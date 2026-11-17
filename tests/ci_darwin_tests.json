@@ -111,7 +111,6 @@
     "macos_runtime_bundle",
     "managed_thread_end_to_end",
     "managed_thread_runtime",
-    "managed_thread_semantic_ir",
     "managed_thread_tsan",
     "mir_thread_local",
     "mutex_cleanup_failure_runtime",

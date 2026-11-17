@@ -213,7 +213,7 @@ set(gti_fast_feedback_tests
   compiler_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
   raw_pointer_pipeline raw_access_contract
-  mir_full_expression mir_program_initialization mir_hosted_startup
+  mir_full_expression mir_program_initialization
   optimizer_foundation optimizer_analyses optimizer_conformance
   layout_query_pipeline native_record_pipeline bindgen_pipeline
   source_text_pipeline source_unit_services

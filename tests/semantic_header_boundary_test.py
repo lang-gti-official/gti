@@ -63,7 +63,7 @@ def main() -> None:
         "tests/unit/semantic_request_reuse_tests.cpp",
         # Rechecks parsed syntax without a SourceManager to verify source-text
         # queries reject missing owning buffers; Frontend always supplies one.
-        "tests/expression_text_tests.cpp",
+        "tests/unit/expression_text_api_tests.cpp",
         # Reuses one analyzer to verify snapshot-owned concrete enum rows are
         # cleared; independent Frontend snapshots cannot exercise that reset.
         "tests/generic_enum_declaration_tests.cpp",

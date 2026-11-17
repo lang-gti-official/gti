@@ -1,0 +1,13 @@
+// General requires: call expression proofs retain exact result requirements diagnostic.
+concept invokes<F, A, R> = requires(F& function, A& argument) {
+  { function(argument) } -> R;
+};
+int invoke_int<F>(F& function, int& argument) requires invokes<F, int, int> {
+  return function(argument);
+}
+struct WrongResult { bool operator()(int& value) { return value != 0; }  public: WrongResult() = default; };
+int main() {
+  int value = 4;
+  WrongResult function{};
+  return invoke_int(function, value);  //~ ERROR GTI-S2029
+}

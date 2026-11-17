@@ -170,9 +170,6 @@ if(GTI_MACRO_SYNTAX_NEOVIM_EXECUTABLE)
       -l "${PROJECT_SOURCE_DIR}/tests/lifetime_syntax_test.lua")
   set_tests_properties(lifetime_neovim_syntax PROPERTIES TIMEOUT 30)
 endif()
-add_executable(gti_expression_text_tests expression_text_tests.cpp)
-target_link_libraries(gti_expression_text_tests PRIVATE gti_compiler)
-add_test(NAME expression_text_semantic_ir COMMAND gti_expression_text_tests)
 add_test(NAME expression_text_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/expression_text_runtime_test.py"
     $<TARGET_FILE:gti>)
@@ -891,9 +888,6 @@ add_test(NAME optimizer_prefix_relocation_runtime
                  "${PROJECT_SOURCE_DIR}/tests/optimizer_prefix_relocation_runtime_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(optimizer_prefix_relocation_runtime PROPERTIES TIMEOUT 300)
-add_executable(gti_optimizer_raw_context_tests optimizer_raw_context_tests.cpp)
-target_link_libraries(gti_optimizer_raw_context_tests PRIVATE gti_compiler)
-add_test(NAME optimizer_raw_context COMMAND gti_optimizer_raw_context_tests)
 add_test(NAME returned_field_address_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
     $<TARGET_FILE:gti>)
@@ -981,10 +975,6 @@ target_link_libraries("gti_mir_program_initialization_tests"
 add_test(NAME mir_program_initialization
          COMMAND gti_mir_program_initialization_tests)
 
-add_executable("gti_mir_hosted_startup_tests"
-               "${PROJECT_SOURCE_DIR}/tests/mir_hosted_startup_tests.cpp")
-target_link_libraries("gti_mir_hosted_startup_tests" PRIVATE gti_compiler)
-add_test(NAME mir_hosted_startup COMMAND gti_mir_hosted_startup_tests)
 
 add_executable("gti_raw_pointer_tests" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_tests.cpp")
 target_link_libraries("gti_raw_pointer_tests" PRIVATE gti_llvm_backend)
@@ -1028,11 +1018,6 @@ add_test(NAME reflection_method_runtime
           "${PROJECT_SOURCE_DIR}/tests/reflection_method_runtime_test.py"
           "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
 set_tests_properties(reflection_method_runtime PROPERTIES TIMEOUT 300)
-add_executable(gti_general_requires_tests general_requires_tests.cpp)
-target_link_libraries(gti_general_requires_tests PRIVATE gti_compiler)
-add_test(NAME general_requires_semantics
-  COMMAND gti_general_requires_tests "${PROJECT_SOURCE_DIR}")
-set_tests_properties(general_requires_semantics PROPERTIES TIMEOUT 120)
 add_test(NAME general_requires_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/generic_symbolic_auto_local_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/173-general-requires.gti" --include-o1)
@@ -1177,10 +1162,6 @@ add_executable(gti_runtime_object_layout_tests runtime_object_layout_tests.cpp)
 target_link_libraries(gti_runtime_object_layout_tests PRIVATE gti_llvm_backend)
 add_test(NAME runtime_object_layout_contract COMMAND gti_runtime_object_layout_tests)
 
-add_executable("gti_managed_thread_tests"
-               "${PROJECT_SOURCE_DIR}/tests/managed_thread_tests.cpp")
-target_link_libraries("gti_managed_thread_tests" PRIVATE gti_llvm_backend)
-add_test(NAME managed_thread_semantic_ir COMMAND gti_managed_thread_tests)
 
 add_executable(gti_scoped_thread_semantic_tests scoped_thread_semantic_tests.cpp)
 target_link_libraries(gti_scoped_thread_semantic_tests PRIVATE gti_llvm_backend)
@@ -1191,10 +1172,6 @@ add_executable("gti_function_item_tests"
 target_link_libraries("gti_function_item_tests" PRIVATE gti_llvm_backend)
 add_test(NAME function_item_semantic_ir COMMAND gti_function_item_tests)
 
-add_executable(gti_function_signature_tests
-               "${PROJECT_SOURCE_DIR}/tests/function_signature_tests.cpp")
-target_link_libraries(gti_function_signature_tests PRIVATE gti_llvm_backend)
-add_test(NAME function_signature_types COMMAND gti_function_signature_tests)
 
 
 add_executable("gti_atomic_tests"
@@ -1852,9 +1829,6 @@ add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_
 add_executable(gti_user_dual_range_backend_tests user_dual_range_backend_tests.cpp)
 target_link_libraries(gti_user_dual_range_backend_tests PRIVATE gti_llvm_backend)
 add_test(NAME user_dual_range_backend COMMAND gti_user_dual_range_backend_tests)
-add_executable(gti_text_view_iterator_compiler_tests text_view_iterator_compiler_tests.cpp)
-target_link_libraries(gti_text_view_iterator_compiler_tests PRIVATE gti_compiler)
-add_test(NAME text_view_iterator_compiler COMMAND gti_text_view_iterator_compiler_tests)
 add_executable(gti_generic_discovery_tests generic_discovery_tests.cpp)
 target_link_libraries(gti_generic_discovery_tests PRIVATE gti_compiler)
 add_test(NAME generic_discovery COMMAND gti_generic_discovery_tests)

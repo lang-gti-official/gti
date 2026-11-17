@@ -1,0 +1,5 @@
+// General requires: iteration query bodies reject runtime statements diagnostic.
+concept invalid<R> = requires(R& range) {
+  for (auto& element : range) { element; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001
+};
+int main() { return 0; }

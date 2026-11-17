@@ -1,0 +1,5 @@
+// General requires: false reflected predicate diagnostic.
+import std.meta;
+concept integral_only<T> = std::meta::is_integral<T>();
+int use<T>(T value) requires integral_only<T> { return 0; }
+int main() { return use(true); }  //~ ERROR GTI-S2029

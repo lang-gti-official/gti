@@ -1,0 +1,9 @@
+// Semantic rejections: mismatched-thread-result-task.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  mut std::thread_result<int32_t> worker =
+      std::thread_result<int32_t>();
+  auto started = worker.start([]() -> bool { return true; });  //~ ERROR GTI-S2084
+  return 0;
+}

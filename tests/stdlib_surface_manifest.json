@@ -4978,7 +4978,7 @@
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/transfer_function_threads.gti",
-        "tests/managed_thread_tests.cpp",
+        "tests/ui/concurrency/managed_threads",
         "tests/ui/callables/owned_inline/callbacks.gti",
         "tests/ui/callables/owned_inline"
       ]
@@ -7456,7 +7456,7 @@
       ],
       "evidence": [
         "tests/fixtures/expression_text.gti",
-        "tests/expression_text_tests.cpp",
+        "tests/ui/language/expression_text",
         "tests/expression_text_runtime_test.py",
         "stdlib/std/source_location.gti"
       ]
@@ -7590,7 +7590,7 @@
         "tests/fixtures/text_view_iterator_module.gti",
         "stdlib/std/string_view.gti",
         "tests/text_view_iterator_runtime_test.py",
-        "tests/text_view_iterator_compiler_tests.cpp",
+        "tests/ui/stdlib/text/view_iterators",
         "examples/146-counted-text-view-iteration.gti"
       ]
     },
@@ -8064,7 +8064,7 @@
         "examples/066-managed-threads.gti",
         "stdlib/std/thread.gti",
         "tests/managed_thread_runtime_test.py",
-        "tests/managed_thread_tests.cpp",
+        "tests/ui/concurrency/managed_threads",
         "tests/runtime_thread_tests.cpp"
       ]
     },

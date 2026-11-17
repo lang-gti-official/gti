@@ -1,0 +1,9 @@
+// General requires: source comparison policy retains its exact read-reference parameter contract diagnostic.
+struct ValueParameter {
+  bool operator==(ValueParameter other) { return true; }
+  bool operator!=(ValueParameter other) { return false; }
+public:
+  ValueParameter() = default;
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+int main() { ValueParameter value{}; return same(value, value) ? 0 : 1; }  //~ ERROR GTI-S2029

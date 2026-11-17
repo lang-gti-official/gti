@@ -263,7 +263,6 @@ owners = [
   "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "general_requires_semantics",
   "qualified_type_members",
   "instance_reuse_fixtures",
   "trusted_body_analysis_fixtures",
@@ -279,7 +278,6 @@ owners = [
   "unsafe_function_contract",
   "unsafe_expression_contract",
   "discardable_result",
-  "function_signature_types",
   "callable_return_type",
   "semantic_call_regressions",
   "^gti_test_ui(_[0-9]+)?$",
@@ -882,7 +880,6 @@ owners = [
   "llvm_hosted_execution",
 ]
 consumers = [
-  "mir_hosted_startup",
   "cli_workflow",
 ]
 
@@ -1117,7 +1114,6 @@ paths = [
 ]
 owners = [
   "managed_thread_end_to_end",
-  "managed_thread_semantic_ir",
   "scoped_parallel_threads",
   "mutex_semantic_ir",
   "atomic_semantic_ir",

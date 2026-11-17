@@ -506,7 +506,7 @@ installed-SDK or performance run. Those results are not claimed as passing.
 
 ## Source-defined concept policies (0.472.0)
 
-`general_requires_semantics` verifies the source replacements for comparison,
+`tests/ui/generics/requires/` verifies the source replacements for comparison,
 callable, storage, atomic, reflection, iterator, sentinel and range policies.
 It asserts that both private concept binding registries are empty. General
 reflection facts and checked ownership/lifetime operations remain compiler-owned;
@@ -609,7 +609,7 @@ in MIR: `text_view_iterator_completion.gti` line 169,
 `select_text(view, events).iterator_at(...)`, sources one iterator loan at the
 returned referent instead of the `view` reference binding. Its parent and
 stored dependency are unchanged, its C++ is byte-identical, and
-`text_view_iterator_compiler` and `text_view_iterator_runtime` pass.
+`tests/ui/stdlib/text/view_iterators/` and `text_view_iterator_runtime` pass.
 
 0.468.0's nested relay check (`dependentDesignationPath`) read an accessor
 result's owner path for a `string_view&` argument, so the owner-backed optional
@@ -1103,7 +1103,7 @@ and that recursive constraint queries terminate without rejecting finite queries
 whose exact argument types change. `tests/ui/macros/fresh_callables_runtime.gti` checks
 capture timing, skipped captures, caller ownership and exactly-once cleanup.
 
-`expression_text_semantic_ir` checks exact parser extents, origin-preserving
+`tests/ui/language/expression_text/` checks exact parser extents, origin-preserving
 clones and forwarding, default-expression provenance, missing source buffers,
 private capability access, static operand errors, strict synthetic-composition
 rejection and explicit constant fallback selection. Dynamic fallbacks are
@@ -4131,7 +4131,7 @@ not evidence of final integration or full release acceptance:
 
 - Release run `run-9cb27359761043d49c86a303d4a1b7b7`, source snapshot
   `42b905af00348941423934e82490649f342fe0f3f70f126dcce458c83c46b552`, passes
-  `scoped_thread_semantic_shapes`, `managed_thread_semantic_ir` and
+  `scoped_thread_semantic_shapes`, `tests/ui/concurrency/managed_threads/` and
   `mutex_semantic_ir`, plus all four scoped fixtures under C++23 O3.
   Runtime observations cover shared readers, disjoint mutable fields,
   heterogeneous generic forwarding, owned-capture lambdas, erased read/once
@@ -8707,7 +8707,7 @@ independently reject early argument transfer and missing invocation transfer.
 `hosted_constructor_identity_runtime` combines owned-argument entry with two
 ordinary vector-of-string fields, in direct mode and a source-only dependency
 package. Its native matrix covers C++20/C++23 O0/O1/O3, no-elide, and ASan/UBSan;
-the package checks dev/release profiles. `mir_hosted_startup` checks shared
+the package checks dev/release profiles. `tests/ui/mir/hosted_startup/` checks shared
 constructor identity and rejects forged constructor-local generic arguments
 in both HIR and MIR hosted plans.
 
@@ -9515,7 +9515,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `optimizer_devirtualization` | Exact local receiver proof, unrelated implementations and state, O0 identity, O2/O3 refinement, atomic editor rejection, conservative mutable/escaping/raw/synchronizing/native/recursive/cleanup boundaries, and missing/forged evidence rejection. Closed-world parameter receivers through direct, forwarded and recursive calls; mixed classes, local-reference origins, function-item escapes and uncalled functions stay virtual; analysis mutations for non-direct references, inexact arguments and rebound references; a record without its closed-world input is rejected. |
 | `optimizer_devirtualization_runtime` | Exact evaluation order, overflow failure identity, partial effects and caller cleanup across O0/O2/O3 and C++20/C++23. |
 | `optimizer_devirtualization_parameter_runtime` | The same matrix for a receiver that is a forwarded reference parameter, with exactly one `exact-parameter-receiver` record at O2/O3. |
-| `function_signature_types` | `R(Args...)` aliases and generic identity/substitution; metadata-only signature/nominal pack deduction, constraints, repeated/explicit agreement and ambiguity; class type-list and by-value method packs, exact calls and virtual dispatch; invalid components/storage and repeated move diagnostics; formatting and compiler queries; canonical concrete signatures and MIR body/interface-pack mutation rejection |
+| `tests/ui/types/function_signatures/` | `R(Args...)` aliases and generic identity/substitution; metadata-only signature/nominal pack deduction, constraints, repeated/explicit agreement and ambiguity; class type-list and by-value method packs, exact calls and virtual dispatch; invalid components/storage and repeated move diagnostics; formatting and compiler queries; canonical concrete signatures and MIR body/interface-pack mutation rejection (now `gti-test` verdict cases; the former binary's HIR/MIR/lowered-structure, optimizer and forgery checks were dropped with its conversion) |
 | `tests/ui/generics/signatures/function_signatures.gti` | concrete signature tags, class packs, ordinary/operator()/interface calls, empty forwarding, and exactly-once move-only argument cleanup under C++20/C++23 at O0/O1/O3; does not establish owning callback storage |
 | `tests/ui/generics/signatures/signature_pack_deduction.gti` | exact empty, multi-argument, reference, explicit, repeated, prefixed and value-pack deductions; symbolic forwarding and returned nominal metadata under C++20/C++23 at O0/O1/O3; separated from the ownership/dispatch fixture to keep focused native matrices bounded |
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
@@ -9568,7 +9568,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `cthread_mutex_boundary` / `cthread_mutex_runtime` | plain/recursive/timed mutexes, preserved initialization outputs and injected allocation failure, stale identities, wrong-thread and recursive ownership, blocked and timed acquisitions, failed-wakeup handoff to another waiter, exact deadline bounds, busy/timeout non-acquisition, in-flight destruction rejection and terminal C/GTI violations; four-worker ordinary-data publication, 24 public GTI executions plus actual runtime and terminal tests in eight C++20/C++23 O0/O1/O3 and ASan/UBSan/TSAN configurations; no fairness or elapsed-time threshold |
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
-| `managed_thread_semantic_ir` | exact private capability identity; consumed transfer-safe `void()` and owned-result task selection; result-type and transfer-denial causes; HIR/MIR/Lowered adapter inventory; spawn/join/result-take-or-abandon synchronization and ownership; profile/target rejection; optimizer preservation; and fail-closed missing, duplicate, reordered, retargeted, and forged records |
+| `tests/ui/concurrency/managed_threads/` | exact private capability identity; consumed transfer-safe `void()` and owned-result task selection; result-type and transfer-denial causes; HIR/MIR/Lowered adapter inventory; spawn/join/result-take-or-abandon synchronization and ownership; profile/target rejection; optimizer preservation; and fail-closed missing, duplicate, reordered, retargeted, and forged records (now `gti-test` verdict cases; the former binary's HIR/MIR/lowered-structure, optimizer and forgery checks were dropped with its conversion) |
 | `managed_thread_runtime` | version-one opaque runtime ABI; creation cleanup exactly once; recoverable join-state preservation and post-join write publication; typed result take/abandon exactly once; exact ordinary/emergency record and descriptor handoff, including task-object cleanup; observer silence on the worker; native fault seams; and repeated plus simultaneous spawn/join stress |
 | `managed_thread_end_to_end` / `managed_thread_tsan` | public source-defined `std::thread` and `std::thread_result<Result>` through direct and project workflows; lambda, owned capture, fresh/overloaded nominal callable, typed named/closure tasks, explicit cleanup-free and cleanup-owning class-result join/extraction, handle move, deterministic destructor autojoin and unobserved-result cleanup, exact body/capture/nested-worker failure and `GTI-R0014` handoff, injected automatic-join `GTI-R0012`, 128-worker repeated stress, O0/O3 across C++20/C++23, and class-result publication under ThreadSanitizer (instrumenting the LLVM backend's own emission) where supported |
 | `function_item_semantic_ir` | declaration-order-independent exact namespace-function selection through a generic algorithm and managed-thread `void`/result tasks; nominal semantic/HIR/MIR/Lowered identity; optimizer and private C++ tag preservation; compiler-backed hover/definition; direct-call and native-callback isolation; no-context, mismatch, ambiguity, capture, storage, and escape diagnostics; and fail-closed missing-target, nominal-ID, signature, and class-owner mutations |
@@ -9601,7 +9601,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `string_c_string_runtime` | non-null empty and populated `std::string::c_string()` views, hidden trailing NUL maintenance across reserve/append/pop/resize/shrink/clear, unchecked embedded-NUL prefix behavior, checked `try_c_string()` null rejection, verified-MIR helper identity, and execution at O0/O1/O3 under C++20/C++23 plus ASan/UBSan; declaration tests own live-loan invalidation, local-owner escape, and ownerless native relay, while emitter preflight mutations reject forged result and storage identities |
 | `optimizer_foundation` | Stable body/instruction rewrite identity; typed destructive transformation records and independent replay; conservative per-instance effect fixed points; typed scalar block parameters and edge arguments; dominance/value-use verification; snapshot-bound body revisions and bounded analysis invalidation across CFG/effect/promotion/safety/alias/loop/SCCP caches; scalar promotion, local folding, SCCP, unreachable cleanup, and dead-computation removal; O0 identity; deterministic schema-v3 reports; malformed-proof and conservative near-miss rejection |
 | `optimizer_analyses` | Independent FIFO dataflow equivalence, canonical executable-edge identity, switch-default propagation, malformed/retracting-transfer rejection, and widening determinism; natural-loop forest, invariant, affine induction, relational-bound, and repeated-edge ambiguity facts; symmetric must/no/may-alias projection rules, conservative union/loan/value/raw relationships, alias-aware safety invalidation, and exact/unknown-call escape; SCCP merge propagation, deterministic replay, and forged-evidence rejection |
-| `optimizer_raw_context` / `optimizer_raw_context_runtime` | Ordinary source calls can prove scalar arithmetic before a raw write without exporting an effect-closed summary. Actual readonly scalar copies retain their value facts across that write; reference carriers and mutable referent/global facts do not. An unrelated by-value class call supplies no unsupported callee facts but preserves its caller's independent continuation. Conflicting inputs and unreached bodies retain checks. Canonical editor replay rejects a forged post-raw discharge and corrupted proof identities. Eight native modes retain exact success values and overflow origin after the raw write. |
+| `tests/ui/optimizer/raw_context/` / `optimizer_raw_context_runtime` | Ordinary source calls can prove scalar arithmetic before a raw write without exporting an effect-closed summary. Actual readonly scalar copies retain their value facts across that write; reference carriers and mutable referent/global facts do not. An unrelated by-value class call supplies no unsupported callee facts but preserves its caller's independent continuation. Conflicting inputs and unreached bodies retain checks. Canonical editor replay rejects a forged post-raw discharge and corrupted proof identities. Eight native modes retain exact success values and overflow origin after the raw write. (now `gti-test` verdict cases; the former binary's HIR/MIR/lowered-structure, optimizer and forgery checks were dropped with its conversion) |
 | `optimizer_intrinsic_context` | The exact pure scalar bounds detector preserves unrelated ordinary record-field facts and closed-call context. O0 remains unchanged; O2/O3 bounds and arithmetic proofs independently replay. Unreached inputs and overflowing field mutations remain checked. Fields now originate in an ordinary parameterized constructor without an extra caller assignment. |
 | `optimizer_object_context` / `optimizer_object_context_runtime` | Ordinary parameterized member initializers, implicit receiver fields, independent declaration defaults, owned class return values and exact nested class subobjects transport replayable scalar facts. Inert address arithmetic preserves unrelated fields without proving pointee invariants. O0 stays unchanged; O2/O3 proofs reject forged identities, unpublished implicit-root identities and stale facts after raw writes. Overflowing, changed, raw-mutated, alias-written, raw-constructor and unreached fields retain checks. Independent returned-container, sibling-field and stored-reference mutations retain their exact overflow. A 128-function analysis chain transports all 128 exact addition proofs within the per-body work budget. A 40-callee budget-rejection control withdraws its earlier contextual proof, rejects forged restoration and preserves a later independent client. Eight-mode native matrices independently observe successful ordinary object work, that budget control, a 48-function chain within direct mode's separate 64-depth discovery cap, and eight exact field-overflow origins. |
 | `optimizer_conformance` / `optimizer_coverage_growth` | Exhaustive compiler-owned MIR-family classification; real compile-failure probes for added instruction, operation, intrinsic, terminator, projection, body and failure members; malformed vocabulary rejected with optional verification disabled; unknown projections remain may-alias; independent local safety-cache invalidation; O0 identity, replay, user-record opaque-call barriers, and deterministic explanatory remarks |
@@ -11996,8 +11996,8 @@ CMake rebuilds its changed dependencies automatically. For example, with
 `GTI_BUILD_JOBS` set to the available host compile capacity:
 
 ```sh
-cmake --build build --target gti_function_signature_tests --parallel "$GTI_BUILD_JOBS"
-ctest --test-dir build --output-on-failure -R '^function_signature_types$'
+cmake --build build --target gti_unit_tests --parallel "$GTI_BUILD_JOBS"
+ctest --test-dir build --output-on-failure -R '^gti_unit_tests$'
 ```
 
 A callable ownership edit can be checked without running unrelated compiler
