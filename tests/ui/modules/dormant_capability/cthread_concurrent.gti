@@ -1,0 +1,5 @@
+// Importing std.cthread without using it builds natively under the concurrent profile.
+//@ build-pass
+//@ execution-profile: concurrent
+import std.cthread;
+int main() { return 0; }

@@ -1,0 +1,32 @@
+// Mutable range loans: std::vector should expose bounded in-place mutable iteration.
+//@ check-pass
+import std.vector;
+
+std::vector<int32_t> make_values() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(2);
+  values.push_back(3);
+  return std::move(values);
+}
+
+int mutate_owned_temporary() {
+  mut int32_t total = 0;
+  for (mut auto& value : make_values()) {
+    value += 4;
+    total += value;
+  }
+  for (mut auto& value : std::vector<int32_t>()) { return value; }
+  return total - 13;
+}
+
+int mutate_vector() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  for (mut auto& value : values) { value += 4; }
+  return values[std::size_t(0)] + values[std::size_t(1)] +
+         values[std::size_t(2)] - 18;
+}
+
+int main() { return mutate_vector() + mutate_owned_temporary(); }

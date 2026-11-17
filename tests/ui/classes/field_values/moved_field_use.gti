@@ -1,0 +1,4 @@
+// Using a class field after moving it out is rejected.
+//@ check-fail
+import std.utility;
+struct V{int n=1; public: V() = default; };struct H{mut V v=V(); public: H() = default; };int main(){mut H h{};V v{};h.v=std::move(v);h.v=v;return 0;}  //~ ERROR GTI-S2018

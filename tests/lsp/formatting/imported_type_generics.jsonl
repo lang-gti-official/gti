@@ -1,0 +1,17 @@
+// Formatting a module that uses a type imported from another file keeps its
+// generic angles and anonymous reference parameters compact without knowing
+// std::function by name; the result analyses clean and is a fixed point.
+// (From function_signature_lsp_test.py; two files, so a transcript.)
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "events.gti", "text": "export module events;\nexport struct Event { int code = 0;  public: Event() = default; };\n"}}
+{"file": {"name": "main.gti", "text": "// supplementary character: 😀\nexport module window;\nimport std.functional;\nimport std.memory;\nimport \"events.gti\";\nexport interface Window {\n  using EventCallbackFn = std::function < void(Event &) >;\n  void SetEventCallback(EventCallbackFn& callback);\n};\nexport std::unique_ptr < Event > CreateEvent() {\n  return std::make_unique<Event>();\n}\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "// supplementary character: 😀\nexport module window;\nimport std.functional;\nimport std.memory;\nimport \"events.gti\";\nexport interface Window {\n  using EventCallbackFn = std::function < void(Event &) >;\n  void SetEventCallback(EventCallbackFn& callback);\n};\nexport std::unique_ptr < Event > CreateEvent() {\n  return std::make_unique<Event>();\n}\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting", "params": {"textDocument": {"uri": "$URI"}, "options": {"tabSize": 2, "insertSpaces": true}}}}
+{"expect": {"id": 2, "result": [{"newText": "// supplementary character: 😀\nexport module window;\nimport std.functional;\nimport std.memory;\nimport \"events.gti\";\nexport interface Window {\n  using EventCallbackFn = std::function<void(Event&)>;\n  void SetEventCallback(EventCallbackFn& callback);\n};\nexport std::unique_ptr<Event> CreateEvent() {\n  return std::make_unique<Event>();\n}\n", "range": "$ANY"}]}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "// supplementary character: 😀\nexport module window;\nimport std.functional;\nimport std.memory;\nimport \"events.gti\";\nexport interface Window {\n  using EventCallbackFn = std::function<void(Event&)>;\n  void SetEventCallback(EventCallbackFn& callback);\n};\nexport std::unique_ptr<Event> CreateEvent() {\n  return std::make_unique<Event>();\n}\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 3, "method": "textDocument/formatting", "params": {"textDocument": {"uri": "$URI"}, "options": {"tabSize": 2, "insertSpaces": true}}}}
+{"expect": {"id": 3, "result": []}}

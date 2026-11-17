@@ -1,0 +1,4 @@
+// A std::map subscript reference into a local cannot be returned.
+//@ check-fail
+import std.map;
+mut int& leak() { mut std::map<int, int> values{}; return values[1]; } int main() { return leak(); }  //~ ERROR GTI-S2017 outlives the result

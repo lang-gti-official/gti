@@ -1,0 +1,7 @@
+// Without the prelude, its output surface is undefined.
+//@ analyze-fail
+//@ no-prelude
+int main() {
+  std::println("x");  //~ ERROR GTI-S2000
+  return 0;
+}

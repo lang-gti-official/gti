@@ -1,0 +1,16 @@
+// A reference pack element cannot escape into a started thread.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+import std.thread;
+void schedule<T>(T& value) {
+  auto task = [&value]() -> void {};
+  auto started = std::thread::start(std::move(task));  //~ ERROR GTI-S2084
+}
+void escape<Args...>(Args&... args) { (schedule(args), ...); }
+int main() { Ticket value{}; escape(value); return 0; }

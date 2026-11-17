@@ -1,0 +1,67 @@
+// Borrowed receivers survive a conditional fallible argument after an owning one.
+//@ run-pass
+//@ revisions: default owner-failure missing-value later-class-failure
+//@[default] stdout: owner accepted
+//@[default] stdout: 10
+//@[default] stdout: object accepted
+//@[default] stdout: 20
+//@[default] stdout: 18
+//@[owner-failure] run-fail
+//@[owner-failure] args: owner-failure
+//@[owner-failure] exit-code: 70
+//@[owner-failure] stdout: 10
+//@[owner-failure] stderr-contains: conditional_expected_argument_receiver.gti:32: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[missing-value] run-fail
+//@[missing-value] args: missing value
+//@[missing-value] exit-code: 70
+//@[missing-value] stderr-contains: conditional_expected_argument_receiver.gti:37: runtime error[GTI-R0009]: invalid_expected_access in value_on_error
+//@[later-class-failure] run-fail
+//@[later-class-failure] args: later class failure
+//@[later-class-failure] exit-code: 70
+//@[later-class-failure] stdout: owner accepted
+//@[later-class-failure] stdout: 10
+//@[later-class-failure] stdout: 20
+//@[later-class-failure] stderr-contains: conditional_expected_argument_receiver.gti:32: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- conditional_expected_argument_receiver.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.identity); }
+};
+
+struct Receiver {
+  mut int total = 0;
+  void owner(std::unique_ptr<Token> token, int value) mut {
+    this.total += value;
+    std::println("owner accepted");
+  }
+  void object(Token token, int value) mut {
+    this.total += value;
+    std::println("object accepted");
+  }
+public:
+  Receiver() = default;
+};
+
+expected<std::unique_ptr<Token>, int> make_owner(bool missing) {
+  if (missing) { return unexpected(1); }
+  return std::make_unique<Token>(10);
+}
+
+int later(int divisor) { return 12 / divisor; }
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Receiver receiver{};
+  expected<std::unique_ptr<Token>, int> owned = make_owner(argc == 3);
+  receiver.owner(std::move(owned).value(), later(argc == 2 ? 0 : 1));
+  expected<Token, int> object = Token(20);
+  receiver.object(std::move(object).value(), later(argc == 4 ? 0 : 2));
+  std::println(receiver.total);
+  return 0;
+}

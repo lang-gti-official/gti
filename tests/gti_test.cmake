@@ -17,21 +17,59 @@ if(TARGET gti_lsp)
   add_dependencies(gti-test gti_lsp)
 endif()
 
-# The runner's own behaviour, then `--tidy` and every test under tests/ui.
-add_test(NAME gti_test_ui
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
-    $<TARGET_FILE:gti-test> --jobs 4)
+# CI sets this so every gti-test entry below also writes a per-case JUnit
+# report, <directory>/<entry>.xml; the workflows upload it. Empty: none.
+set(GTI_TEST_REPORT_DIRECTORY "" CACHE PATH
+  "Directory for the gti-test entries' per-case JUnit reports (CI)")
+function(gti_test_report name out)
+  if(GTI_TEST_REPORT_DIRECTORY)
+    set(${out} --junit "${GTI_TEST_REPORT_DIRECTORY}/${name}.xml" PARENT_SCOPE)
+  else()
+    set(${out} "" PARENT_SCOPE)
+  endif()
+endfunction()
+
 # Per-test limits are CPU seconds measured on a fast development machine;
 # hosted runners are about twice as slow, and sanitizer or other slow trees
 # scale every bound by GTI_TEST_TIMEOUT_SCALE.
-# (TestThroughput.cmake defines the cache entry after this file.)
+# (TestThroughput.cmake defines the cache entry after this file and also
+# multiplies each entry's TIMEOUT below by it.)
 set(gti_test_timeout_scale "${GTI_TEST_TIMEOUT_SCALE}")
 if(NOT gti_test_timeout_scale MATCHES "^[1-9][0-9]*$")
   set(gti_test_timeout_scale 1)
 endif()
 math(EXPR gti_test_time_scale "2 * ${gti_test_timeout_scale}")
-set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
+
+# The per-commit gti-test entries, all named gti_test_ui*, so `ctest -R
+# '^gti_test_ui'` runs every tests/ui, tests/project and tests/lsp case and
+# CI's gate selects them with one pattern. One entry for the whole tree
+# outgrew a 600 s bound on 4-vCPU hosted runners (about 2.5x slower than a
+# development machine), so tests/ui is sharded; each entry stays near a
+# minute locally and its bound only catches hangs.
+# - gti_test_ui: the runner's self-test, `--tidy` over every root, and the
+#   tests/project and tests/lsp cases. Validation blocks cite this name.
+# - gti_test_ui_<i>: shard i of tests/ui (`gti-test --shard i/N`, by a stable
+#   hash of the path). Raise gti_test_ui_shards when a shard nears two
+#   minutes locally.
+set(gti_test_ui_shards 4)
+gti_test_report(gti_test_ui gti_test_ui_report)
+add_test(NAME gti_test_ui
+  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
+    $<TARGET_FILE:gti-test> --jobs 4 --without-ui ${gti_test_ui_report})
+set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4 TIMEOUT 600
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale}")
+foreach(gti_test_ui_shard RANGE 1 ${gti_test_ui_shards})
+  set(gti_test_ui_name gti_test_ui_${gti_test_ui_shard})
+  gti_test_report(${gti_test_ui_name} gti_test_ui_shard_report)
+  add_test(NAME ${gti_test_ui_name}
+    COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/ui"
+      --shard ${gti_test_ui_shard}/${gti_test_ui_shards} --jobs 4
+      ${gti_test_ui_shard_report})
+  set_tests_properties(${gti_test_ui_name} PROPERTIES PROCESSORS 4 TIMEOUT 600
+    ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/${gti_test_ui_name}.last-run")
+  # The seeded-bug measure's gate tier (suite-measures.yml) selects by label.
+  set_property(TEST ${gti_test_ui_name} APPEND PROPERTY LABELS "gti-test-ui")
+endforeach()
 
 # Every single-file example (`examples/*.gti`) must analyse to verified MIR
 # with no diagnostics: gti-test treats a directive-less file as check-pass.
@@ -41,13 +79,34 @@ set_tests_properties(gti_test_ui PROPERTIES PROCESSORS 4
 # project tests own them. Running and census belong to the slow tier's corpus
 # tool.
 file(GLOB gti_examples CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.gti")
+gti_test_report(gti_test_examples gti_test_examples_report)
 add_test(NAME gti_test_examples
-  COMMAND gti-test --root "${PROJECT_SOURCE_DIR}/examples" --jobs 4 ${gti_examples})
+  COMMAND gti-test --root "${PROJECT_SOURCE_DIR}/examples" --jobs 4
+    ${gti_test_examples_report} ${gti_examples})
 # Examples are whole programs, several above the 2 s check budget; the scaled
 # limit here only catches hangs.
 math(EXPR gti_examples_time_scale "8 * ${gti_test_timeout_scale}")
 set_tests_properties(gti_test_examples PROPERTIES PROCESSORS 4
   ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_examples_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-examples.last-run")
+
+# The daily slow tier's gti-test entries (TestThroughput.cmake labels them
+# `slow`, so per-commit full validation leaves them to slow.yml):
+# - gti_test_slow: every `//@ slow` test under tests/slow, at its 120 s limit.
+# - gti_test_isolate: tests/ui with every case in a fresh `gti` process through
+#   the real CLI. Per-commit runs share one analysed stdlib per worker, a path
+#   users never take; this proves both paths agree.
+gti_test_report(gti_test_slow gti_test_slow_report)
+add_test(NAME gti_test_slow
+  COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/slow" --jobs 4
+    ${gti_test_slow_report})
+set_tests_properties(gti_test_slow PROPERTIES PROCESSORS 4 TIMEOUT 1800
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-slow.last-run")
+gti_test_report(gti_test_isolate gti_test_isolate_report)
+add_test(NAME gti_test_isolate
+  COMMAND gti-test "${PROJECT_SOURCE_DIR}/tests/ui" --isolate --jobs 4
+    ${gti_test_isolate_report})
+set_tests_properties(gti_test_isolate PROPERTIES PROCESSORS 4 TIMEOUT 3600
+  ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/gti-test-isolate.last-run")
 
 # gti-corpus: one walk of the example corpus checking the whole-program
 # analysis invariants (body-analysis order, trusted-body parity, instance

@@ -1,0 +1,18 @@
+// env and unset lines change later commands' environment; $DIR, $HOME and
+// $PATH expand in their values, and output names the home as $HOME.
+env GREETING=hello from $DIR
+$ sh -c "echo $GREETING; echo $HOME"
+stdout: hello from $DIR
+stdout: $HOME
+env PATH=$DIR/bin:$PATH
+$ greet
+stdout: greeted by $DIR/bin/greet
+env GREETING=replaced
+$ sh -c "echo $GREETING"
+stdout: replaced
+unset GREETING
+unset HOME
+$ sh -c "echo ${GREETING-unset} ${HOME-unset}"
+stdout: unset unset
+$ sh -c "echo $NO_COLOR $TERM"
+stdout: 1 dumb

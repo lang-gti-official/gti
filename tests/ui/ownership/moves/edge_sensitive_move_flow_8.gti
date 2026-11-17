@@ -1,0 +1,26 @@
+// Edge sensitive move flow: unreachable assignments after continue or break must not repair reachable move state.
+struct Record { int32_t value = 7;  public: Record() = default; };
+int read_after_switch(int32_t selector) {
+  mut Record value = Record();
+  switch (selector) {
+  case 0:
+    Record consumed = std::move(value);
+    break;
+    value = Record();  //~ WARN GTI-S2095
+  default:
+    break;
+  }
+  return value.value;  //~ ERROR GTI-S2018
+}
+
+int main() {
+  mut Record value = Record();
+  mut int32_t index = 0;
+  while (index < 2) {  //~ ERROR GTI-S2018
+    Record consumed = std::move(value);
+    index++;
+    continue;
+    value = Record();  //~ WARN GTI-S2095
+  }
+  return read_after_switch(0);
+}

@@ -1,0 +1,5 @@
+// Directives that do not fit a check-pass test are invalid.
+//@ no-prelude
+//@ stdout-closed
+//@ snapshot: optimization-report
+int main() { return 0; }  //~ INFO GTI-S2001

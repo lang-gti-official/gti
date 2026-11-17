@@ -1,0 +1,4 @@
+// A parse-pass test has no rendered diagnostics to snapshot.
+//@ parse-pass
+//@ snapshot: diagnostics
+int main() { return 0; }

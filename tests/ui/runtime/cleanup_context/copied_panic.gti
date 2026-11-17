@@ -1,0 +1,18 @@
+// A 432-byte panic message with an embedded zero byte survives the calls and cleanups it crosses.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: main.gti:10: runtime error[GTI-R0017]: panic: "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789\x00tail"
+// --- main.gti
+import std.panic;
+class Marker {
+  char code;
+public:
+  Marker(char code) : code(code) {}
+  ~Marker() { std::print(this.code); }
+};
+void leaf() {
+  Marker local{'L'};
+  std::panic("abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789\0tail");
+}
+void middle() { Marker local{'M'}; leaf(); }
+int main() { Marker local{'O'}; middle(); return 0; }

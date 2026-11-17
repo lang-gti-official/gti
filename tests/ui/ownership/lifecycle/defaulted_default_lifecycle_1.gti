@@ -1,0 +1,31 @@
+// Defaulted default lifecycle: explicitly defaulted default construction and destruction should complete the compiler pipeline.
+//@ check-pass
+class ImplicitStructural {
+  int value = 7;
+public:
+  ImplicitStructural() = default;
+};
+
+class ExplicitStructural {
+  int value = 7;
+
+public:
+  ExplicitStructural() = default;
+  ~ExplicitStructural() = default;
+  int read() { return this.value; }
+};
+
+class NestedStructural {
+  ExplicitStructural value = ExplicitStructural();
+
+public:
+  NestedStructural() = default;
+  ~NestedStructural() = default;
+  int read() { return this.value.read(); }
+};
+
+int main() {
+  ExplicitStructural direct = ExplicitStructural();
+  NestedStructural nested = NestedStructural();
+  return direct.read() + nested.read() - 14;
+}

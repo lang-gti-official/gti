@@ -1,0 +1,23 @@
+// Constructor rollback spans local cleanup: the constructor rollback local-cleanup fixture should pass the frontend.
+//@ check-pass
+mut int32_t zero = 0;
+
+class Resource {
+public:
+  int32_t identity;
+  Resource(int32_t value) : identity(value) {}
+  ~Resource() {
+    if (this.identity == 4) { int32_t failure = 19 / zero; }
+  }
+};
+
+class Holder {
+public:
+  Resource completed;
+  Holder() : completed(Resource(5)) { Resource local{4}; }
+};
+
+int main() {
+  Holder holder{};
+  return holder.completed.identity - 5;
+}

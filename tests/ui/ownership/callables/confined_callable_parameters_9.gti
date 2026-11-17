@@ -1,0 +1,11 @@
+// Confined callable parameters: an owned local-copy consumer still requires an explicit caller transfer.
+void store_locally<Operation>(Operation operation) {
+  Operation copy = operation;
+}
+
+int main() {
+  int captured = 1;
+  auto operation = [captured]() -> int { return captured; };
+  store_locally(operation);  //~ ERROR GTI-S2046 requires an explicit std::move ownership transfer
+  return 0;
+}

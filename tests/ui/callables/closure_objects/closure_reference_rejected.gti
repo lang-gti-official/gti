@@ -1,0 +1,9 @@
+// A checked reference to a closure stays restricted.
+//@ check-fail
+
+int peek<T>(T& value) { return 1; }
+int main() {
+  int offset = 1;
+  auto callback = [offset](int value) -> int { return value + offset; };
+  return peek(callback);  //~ ERROR GTI-S2046
+}

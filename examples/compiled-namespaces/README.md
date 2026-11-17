@@ -15,7 +15,7 @@ The `shadow::Packet` API uses a root alias to retain the original geometry type
 inside a namespace containing another `domain::geometry::Point`. Its record and
 enum defaults keep the producer's resolved identities after source removal.
 
-`compiled_namespaces` runs this example at O0/O1/O3, checks consumer-only reuse,
+`tests/project/compiled_namespaces` runs this example at O0, checks consumer-only reuse,
 then distributes the two bundles and deletes every producer source before
 checking and running a new consumer. It also checks private declarations,
 nominal type mismatches and ordinary borrowing rejection. Member APIs, namespace

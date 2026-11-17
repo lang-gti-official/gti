@@ -1,0 +1,18 @@
+// Mutable borrows chained through nested payload bindings run.
+//@ run-pass
+enum Shade { plain(int32_t level), mixed(int32_t level, int32_t tint) };
+enum Paint { coat(Shade shade, int32_t layers) };
+mut int32_t& level_of(mut Paint& paint) {
+  switch (paint) {
+  case Paint::coat(mut auto& shade, layers):
+    switch (shade) {
+    case Shade::plain(mut auto& level): return level;
+    case Shade::mixed(mut auto& level, tint): return level;
+    }
+  }
+}
+int main() {
+  mut Paint p = Paint::coat(Shade::plain(3), 2);
+  level_of(p) = 5;
+  return level_of(p) - 5;
+}

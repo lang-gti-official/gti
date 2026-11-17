@@ -1,0 +1,3 @@
+// T() needs an explicitly declared default constructor.
+//@ check-fail
+struct Value {}; int main() { auto value = Value(); return 0; }  //~ ERROR GTI-S2012

@@ -1,0 +1,14 @@
+// Closing an executable entry clears its diagnostics and reopening it
+// publishes GTI-S2094 again, at the namespaced main's name.
+// (executable_entry_test.py, LSP half; the edits are executable_entry.gti.)
+{"file": {"name": "gti.toml", "text": "manifest-version = 1\n[package]\nname = \"entry-test\"\nversion = \"0.1.0\"\n[targets.app]\nkind = \"executable\"\nroot = \"main.gti\"\n"}}
+{"file": {"name": "main.gti", "text": "export module helper;\n// supplementary: 😀\nnamespace tea { /* 😀 */ export int main() { return 0; } }\n"}}
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "export module helper;\n// supplementary: 😀\nnamespace tea { /* 😀 */ export int main() { return 0; } }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": [{"code": "GTI-S2094", "range": {"start": {"line": 2, "character": 36}, "end": {"line": 2, "character": 40}}, "message": "$ANY"}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 6, "text": "export module helper;\n// supplementary: 😀\nnamespace tea { /* 😀 */ export int main() { return 0; } }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 6, "diagnostics": [{"code": "GTI-S2094", "range": {"start": {"line": 2, "character": 36}, "end": {"line": 2, "character": 40}}, "message": "$ANY"}]}}}

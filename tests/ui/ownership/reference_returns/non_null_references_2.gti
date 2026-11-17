@@ -1,0 +1,3 @@
+// Non null references: scalar literals now select the readonly observer with a nonescaping call loan.
+//@ check-pass
+void inspect(int& value) {} int main() { inspect(3); return 0; }

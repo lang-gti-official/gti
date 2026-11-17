@@ -1,0 +1,27 @@
+// A failing element argument cleans up the elements an arena already holds.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: cleanup
+//@ stderr-contains: GTI-R0001
+//@ stderr-contains: integer_overflow
+//@ stderr-contains: addition
+import std.memory;
+class probe {
+  int32_t stored;
+public:
+  probe(int32_t value) : stored(value) {}
+  probe(probe& other) = delete;
+  probe(probe&& other) = default;
+  ~probe() { std::print("cleanup\n"); }
+};
+int32_t fail_value() {
+  return int32_t(2147483647) + int32_t(1);
+}
+int main() {
+  mut auto created = std::try_make_arena<probe>(std::size_t(2));
+  if (!created) { return 1; }
+  mut std::arena<probe> values = std::move(created).value();
+  [[discard]] values.try_insert(probe(int32_t(5)));
+  [[discard]] values.try_insert(probe(fail_value()));
+  return 2;
+}

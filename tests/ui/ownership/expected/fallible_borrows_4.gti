@@ -1,0 +1,12 @@
+// Fallible borrows: a fallible borrow must not outlive a temporary receiver.
+enum class lookup_errc { missing };
+class Box {
+  int value;
+public:
+  Box(int value) : value(value) {}
+  expected<int&, lookup_errc> find() { return this.value; }
+};
+int main() {
+  auto found = Box(7).find();  //~ ERROR GTI-S2045
+  return found.value();
+}

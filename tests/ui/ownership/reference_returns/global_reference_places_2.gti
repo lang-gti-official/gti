@@ -1,0 +1,10 @@
+// Global reference places: a conflicting qualified-global write should be rejected by semantic loan analysis instead of reaching the MIR verifier.
+namespace state {
+mut int value = 1;
+}
+
+int main() {
+  mut int& alias = state::value;
+  state::value = 2;  //~ ERROR GTI-S2017 Cannot assign to storage while an overlapping borrow
+  return alias;
+}

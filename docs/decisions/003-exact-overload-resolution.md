@@ -91,7 +91,7 @@ already allows. On 2026-11-03, the owner explicitly accepted that evolution haza
 The implementation belongs to semantic selection and literal typing. HIR and
 verified MIR preserve the selected integer type and callable identity; LLVM
 executes the resulting existing typed literal/call operations without a new
-runtime conversion or allocation. `literal_call_arguments_runtime` exercises
+runtime conversion or allocation. `tests/ui/language/temporaries/literal_call_arguments.gti` exercises
 the fixture and example 186 on LLVM at O0 and O3, including integer limits,
 multiple literal arguments, exact-tier selection and temporary-borrow cleanup.
 The deprecated C++ backend receives no feature work; its existing supported

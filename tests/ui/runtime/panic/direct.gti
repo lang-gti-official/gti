@@ -1,0 +1,10 @@
+// A direct panic reports its call site and message and exits 70.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: panic_direct.gti:4: runtime error[GTI-R0017]: panic: "explicit panic"
+// --- panic_direct.gti
+import std.panic;
+
+int main() {
+  std::panic("explicit panic");
+}

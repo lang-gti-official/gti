@@ -1,0 +1,463 @@
+// Reverse live-element cleanup of collections keeps first and secondary failure records, per phase.
+//@ run-pass
+//@ slow
+//@ revisions: phase0 phase1 phase2 phase3 phase4 phase5 phase6 phase7 phase8 phase9 phase10 phase11 phase12 phase13 phase14 phase15 phase16 phase17 phase18 phase19 phase20 phase21 phase22 phase23 phase24 phase25 phase26 phase27 phase28 phase29 phase30 phase31 phase32 phase33 phase34 phase35 phase36 phase37 phase38 phase39 phase40 phase41 phase42
+//@[phase0] stdout: 2
+//@[phase0] stdout: 1
+//@[phase0] stdout: 9
+//@[phase1] run-fail
+//@[phase1] exit-code: 70
+//@[phase1] args: phase
+//@[phase1] stdout: 2
+//@[phase1] stdout: 1
+//@[phase1] stdout: 9
+//@[phase1] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase2] run-fail
+//@[phase2] exit-code: 70
+//@[phase2] args: phase phase
+//@[phase2] stdout: 2
+//@[phase2] stdout: 1
+//@[phase2] stdout: 9
+//@[phase2] stderr-contains: collection_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase3] run-fail
+//@[phase3] exit-code: 70
+//@[phase3] args: phase phase phase
+//@[phase3] stdout: 2
+//@[phase3] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:31; secondary [GTI-R0002]
+//@[phase4] run-fail
+//@[phase4] exit-code: 70
+//@[phase4] args: phase phase phase phase
+//@[phase4] stdout: 2
+//@[phase4] stdout: 1
+//@[phase4] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:23; secondary [GTI-R0002]
+//@[phase5] args: phase phase phase phase phase
+//@[phase5] stdout: 2
+//@[phase5] stdout: 1
+//@[phase5] stdout: 9
+//@[phase6] run-fail
+//@[phase6] exit-code: 70
+//@[phase6] args: phase phase phase phase phase phase
+//@[phase6] stdout: 2
+//@[phase6] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:31; secondary [GTI-R0002]
+//@[phase7] run-fail
+//@[phase7] exit-code: 70
+//@[phase7] args: phase phase phase phase phase phase phase
+//@[phase7] stdout: 2
+//@[phase7] stdout: 1
+//@[phase7] stdout: 9
+//@[phase7] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase8] run-fail
+//@[phase8] exit-code: 70
+//@[phase8] args: phase phase phase phase phase phase phase phase
+//@[phase8] stdout: 2
+//@[phase8] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:31; secondary [GTI-R0002]
+//@[phase9] run-fail
+//@[phase9] exit-code: 70
+//@[phase9] args: phase phase phase phase phase phase phase phase phase
+//@[phase9] stdout: 2
+//@[phase9] stdout: 1
+//@[phase9] stdout: 3
+//@[phase9] stdout: 9
+//@[phase9] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase10] run-fail
+//@[phase10] exit-code: 70
+//@[phase10] args: phase phase phase phase phase phase phase phase phase phase
+//@[phase10] stdout: 2
+//@[phase10] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:31; secondary [GTI-R0002]
+//@[phase11] run-fail
+//@[phase11] exit-code: 70
+//@[phase11] args: phase phase phase phase phase phase phase phase phase phase phase
+//@[phase11] stdout: 2
+//@[phase11] stdout: 1
+//@[phase11] stdout: 9
+//@[phase11] stderr-contains: collection_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase12] run-fail
+//@[phase12] exit-code: 70
+//@[phase12] args: phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase12] stdout: 9
+//@[phase12] stderr-contains: collection_cleanup_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase13] run-fail
+//@[phase13] exit-code: 70
+//@[phase13] args: phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase13] stdout: 2
+//@[phase13] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:31; secondary [GTI-R0002]
+//@[phase14] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase14] stdout: 2
+//@[phase14] stdout: 1
+//@[phase14] stdout: 9
+//@[phase15] run-fail
+//@[phase15] exit-code: 70
+//@[phase15] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase15] stdout: 2
+//@[phase15] stdout: 1
+//@[phase15] stdout: 9
+//@[phase15] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase16] run-fail
+//@[phase16] exit-code: 70
+//@[phase16] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase16] stdout: 2
+//@[phase16] stdout: 1
+//@[phase16] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:23; secondary [GTI-R0002]
+//@[phase17] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase17] stdout: 2
+//@[phase17] stdout: 1
+//@[phase17] stdout: 9
+//@[phase18] run-fail
+//@[phase18] exit-code: 70
+//@[phase18] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase18] stdout: 2
+//@[phase18] stdout: 1
+//@[phase18] stdout: 9
+//@[phase18] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase19] run-fail
+//@[phase19] exit-code: 70
+//@[phase19] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase19] stdout: 2
+//@[phase19] stdout: 1
+//@[phase19] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:23; secondary [GTI-R0002]
+//@[phase20] run-fail
+//@[phase20] exit-code: 70
+//@[phase20] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase20] stdout: 2
+//@[phase20] stdout: 1
+//@[phase20] stdout: 9
+//@[phase20] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase21] run-fail
+//@[phase21] exit-code: 70
+//@[phase21] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase21] stdout: 2
+//@[phase21] stdout: 1
+//@[phase21] stdout: 3
+//@[phase21] stdout: 9
+//@[phase21] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase22] run-fail
+//@[phase22] exit-code: 70
+//@[phase22] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase22] stdout: 2
+//@[phase22] stdout: 1
+//@[phase22] stdout: 9
+//@[phase22] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase23] run-fail
+//@[phase23] exit-code: 70
+//@[phase23] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase23] stdout: 2
+//@[phase23] stdout: 1
+//@[phase23] stdout: 9
+//@[phase23] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase24] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase24] stdout: 9
+//@[phase25] run-fail
+//@[phase25] exit-code: 70
+//@[phase25] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase25] stdout: 2
+//@[phase25] stdout: 1
+//@[phase25] stdout: 9
+//@[phase25] stderr-contains: <std/detail/memory_storage>:536: runtime error[GTI-R0010]: invalid_storage_state in uninitialized_access
+//@[phase26] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase26] stdout: 2
+//@[phase26] stdout: 4
+//@[phase26] stdout: 3
+//@[phase26] stdout: 1
+//@[phase26] stdout: 9
+//@[phase27] run-fail
+//@[phase27] exit-code: 70
+//@[phase27] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase27] stdout: 2
+//@[phase27] stdout: 3
+//@[phase27] stdout: 1
+//@[phase27] stdout: 9
+//@[phase27] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase28] run-fail
+//@[phase28] exit-code: 70
+//@[phase28] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase28] stdout: 2
+//@[phase28] stdout: 3
+//@[phase28] stderr-contains: collection_cleanup_failure.gti:26: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:23; secondary [GTI-R0002]
+//@[phase29] run-fail
+//@[phase29] exit-code: 70
+//@[phase29] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase29] stdout: 2
+//@[phase29] stdout: 3
+//@[phase29] stdout: 1
+//@[phase29] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at collection_cleanup_failure.gti:23; secondary [GTI-R0002]
+//@[phase30] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase30] stdout: 2
+//@[phase30] stdout: 4
+//@[phase30] stdout: 3
+//@[phase30] stdout: 1
+//@[phase30] stdout: 9
+//@[phase31] run-fail
+//@[phase31] exit-code: 70
+//@[phase31] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase31] stdout: 2
+//@[phase31] stdout: 3
+//@[phase31] stdout: 1
+//@[phase31] stdout: 9
+//@[phase31] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase32] run-fail
+//@[phase32] exit-code: 70
+//@[phase32] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase32] stdout: 1
+//@[phase32] stdout: 3
+//@[phase32] stdout: 2
+//@[phase32] stdout: 9
+//@[phase32] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase33] run-fail
+//@[phase33] exit-code: 70
+//@[phase33] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase33] stdout: 3
+//@[phase33] stdout: 2
+//@[phase33] stdout: 1
+//@[phase33] stdout: 9
+//@[phase33] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase34] run-fail
+//@[phase34] exit-code: 70
+//@[phase34] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase34] stdout: 3
+//@[phase34] stdout: 2
+//@[phase34] stdout: 1
+//@[phase34] stdout: 9
+//@[phase34] stderr-contains: <std/vector>:508: runtime error[GTI-R0007]: index_out_of_bounds in vector
+//@[phase35] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase35] stdout: 1
+//@[phase35] stdout: 4
+//@[phase35] stdout: 3
+//@[phase35] stdout: 2
+//@[phase35] stdout: 9
+//@[phase36] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase36] stdout: 3
+//@[phase36] stdout: 4
+//@[phase36] stdout: 2
+//@[phase36] stdout: 1
+//@[phase36] stdout: 9
+//@[phase37] run-fail
+//@[phase37] exit-code: 70
+//@[phase37] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase37] stdout: 2
+//@[phase37] stdout: 3
+//@[phase37] stdout: 1
+//@[phase37] stdout: 9
+//@[phase37] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase38] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase38] stdout: 2
+//@[phase38] stdout: 3
+//@[phase38] stdout: 1
+//@[phase38] stdout: 9
+//@[phase39] run-fail
+//@[phase39] exit-code: 70
+//@[phase39] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase39] stdout: 2
+//@[phase39] stdout: 3
+//@[phase39] stdout: 1
+//@[phase39] stdout: 9
+//@[phase39] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase40] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase40] stdout: 2
+//@[phase40] stdout: 4
+//@[phase40] stdout: 3
+//@[phase40] stdout: 1
+//@[phase40] stdout: 9
+//@[phase41] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase41] stdout: 2
+//@[phase41] stdout: 4
+//@[phase41] stdout: 3
+//@[phase41] stdout: 1
+//@[phase41] stdout: 9
+//@[phase42] run-fail
+//@[phase42] exit-code: 70
+//@[phase42] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase42] stdout: 2
+//@[phase42] stdout: 3
+//@[phase42] stdout: 1
+//@[phase42] stdout: 9
+//@[phase42] stderr-contains: collection_cleanup_failure.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- collection_cleanup_failure.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+mut int32_t phase = 0;
+mut int32_t zero = 0;
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t value) : identity(value) {}
+  ~Resource() {
+    std::println(this.identity);
+    if ((this.identity == 2 &&
+         (phase == 1 || phase == 3 || phase == 4 || phase == 6 ||
+          phase == 7 || phase == 8 || phase == 9 || phase == 10 || phase == 13 ||
+          phase == 15 || phase == 16 || phase == 18 || phase == 19 ||
+          phase == 20 || phase == 21 || phase == 22 || phase == 23 ||
+          phase == 27 || phase == 28 || phase == 29 || phase == 31 ||
+          phase == 37 || phase == 39 || phase == 42)) ||
+        (this.identity == 1 && (phase == 4 || phase == 16 || phase == 19 || phase == 29 || phase == 32)) ||
+        (this.identity == 3 && phase == 33)) {
+      int32_t element_failure = 11 / zero;
+    }
+    if (this.identity == 3 && phase == 28) {
+      int32_t suffix_failure = 13 / zero;
+    }
+  }
+};
+
+int32_t fail_body() { return 17 / zero; }
+
+class Bundle {
+  std::string text;
+  std::unique_ptr<Resource> resource;
+public:
+  Bundle(int32_t identity)
+      : text(std::string("bundle")), resource(std::make_unique<Resource>(identity)) {}
+};
+
+int32_t owning_elements() {
+  mut std::vector<std::unique_ptr<Resource>> values = std::vector<std::unique_ptr<Resource>>();
+  if (phase != 12 && phase != 24) {
+    values.push_back(std::make_unique<Resource>(1));
+    values.push_back(std::make_unique<Resource>(2));
+  }
+  if (phase == 11) {
+    auto moved = std::move(values);
+    return fail_body();
+  }
+  if (phase == 2 || phase == 3 || phase == 12) { return fail_body(); }
+  if (phase >= 14 && phase <= 16) { values.pop_back(); }
+  if (phase == 22) { values.clear(); }
+  if (phase == 24) { values.pop_back(); }
+  return 0;
+}
+
+int32_t direct_elements() {
+  mut std::vector<Resource> values = std::vector<Resource>();
+  values.push_back(Resource(1));
+  values.push_back(Resource(2));
+  if (phase == 6) { return fail_body(); }
+  if (phase == 20) { values.pop_back(); }
+  return 0;
+}
+
+int32_t sparse_elements() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<Resource>(std::size_t(6));
+  if (!allocated) { return 20; }
+  mut std::storage<Resource> values = std::move(allocated).value();
+  // Construct out of slot order: cleanup is reverse slot order, not reverse
+  // construction order, and must skip all uninitialized holes.
+  values.construct(std::size_t(4), Resource(2));
+  values.construct(std::size_t(1), Resource(1));
+  if (phase == 8) { return fail_body(); }
+  if (phase >= 17 && phase <= 19) { values.destroy(std::size_t(4)); }
+  if (phase == 23) { values.clear(); }
+  if (phase == 25) {
+    values.destroy(std::size_t(4));
+    values.destroy(std::size_t(4));
+  }
+  return 0;
+}
+
+int32_t nested_elements() {
+  mut std::vector<std::vector<std::unique_ptr<Resource>>> values = std::vector<std::vector<std::unique_ptr<Resource>>>();
+  mut std::vector<std::unique_ptr<Resource>> first = std::vector<std::unique_ptr<Resource>>();
+  first.push_back(std::make_unique<Resource>(3));
+  values.push_back(std::move(first));
+  mut std::vector<std::unique_ptr<Resource>> second = std::vector<std::unique_ptr<Resource>>();
+  second.push_back(std::make_unique<Resource>(1));
+  second.push_back(std::make_unique<Resource>(2));
+  values.push_back(std::move(second));
+  if (phase == 10) { return fail_body(); }
+  if (phase == 21) { values.pop_back(); }
+  return 0;
+}
+
+int32_t aggregate_elements() {
+  mut std::vector<Bundle> values = std::vector<Bundle>();
+  values.push_back(Bundle(1));
+  values.push_back(Bundle(2));
+  return fail_body();
+}
+
+int32_t erased_elements() {
+  mut std::vector<std::unique_ptr<Resource>> values = std::vector<std::unique_ptr<Resource>>();
+  values.push_back(std::make_unique<Resource>(1));
+  values.push_back(std::make_unique<Resource>(2));
+  values.push_back(std::make_unique<Resource>(3));
+  if (phase == 32 || phase == 35) { values.erase(std::size_t(0)); }
+  else if (phase == 33 || phase == 36) { values.erase(std::size_t(2)); }
+  else if (phase == 34) { values.erase(std::size_t(3)); }
+  else { values.erase(std::size_t(1)); }
+  if (values.size() != std::size_t(2)) { return 21; }
+  // Successful removal must retain a reusable contiguous prefix.
+  values.push_back(std::make_unique<Resource>(4));
+  return 0;
+}
+
+int32_t erased_direct_elements() {
+  mut std::vector<Resource> values = std::vector<Resource>();
+  values.push_back(Resource(1));
+  values.push_back(Resource(2));
+  values.push_back(Resource(3));
+  values.erase(std::size_t(1));
+  if (values.size() != std::size_t(2)) { return 22; }
+  values.push_back(Resource(4));
+  return 0;
+}
+
+int32_t erased_nested_elements() {
+  mut std::vector<std::vector<std::unique_ptr<Resource>>> values = std::vector<std::vector<std::unique_ptr<Resource>>>();
+  for (mut int32_t identity = 1; identity <= 3; identity++) {
+    mut std::vector<std::unique_ptr<Resource>> inner = std::vector<std::unique_ptr<Resource>>();
+    inner.push_back(std::make_unique<Resource>(identity));
+    values.push_back(std::move(inner));
+  }
+  values.erase(std::size_t(1));
+  return 0;
+}
+
+int32_t erased_aggregate_elements() {
+  mut std::vector<Bundle> values = std::vector<Bundle>();
+  values.push_back(Bundle(1));
+  values.push_back(Bundle(2));
+  values.push_back(Bundle(3));
+  values.erase(std::size_t(1));
+  values.push_back(Bundle(4));
+  return 0;
+}
+
+mut int32_t next_identity = 0;
+int32_t next_resource_identity() { next_identity++; return next_identity; }
+class OwningBase {
+  std::unique_ptr<Resource> resource;
+public:
+  OwningBase() : resource(std::make_unique<Resource>(next_resource_identity())) {}
+};
+class DerivedElement : public OwningBase {
+public:
+  DerivedElement() {}
+};
+
+int32_t erased_inherited_elements() {
+  mut std::vector<DerivedElement> values = std::vector<DerivedElement>();
+  values.push_back(DerivedElement());
+  values.push_back(DerivedElement());
+  values.push_back(DerivedElement());
+  values.erase(std::size_t(1));
+  values.push_back(DerivedElement());
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Resource outer = Resource(9);
+  if ((phase >= 26 && phase <= 29) || (phase >= 32 && phase <= 36)) { return erased_elements(); }
+  if (phase == 30 || phase == 31) { return erased_direct_elements(); }
+  if (phase == 37 || phase == 38) { return erased_nested_elements(); }
+  if (phase == 39 || phase == 40) { return erased_aggregate_elements(); }
+  if (phase == 41 || phase == 42) { return erased_inherited_elements(); }
+  if (phase == 5 || phase == 6 || phase == 20) { return direct_elements(); }
+  if (phase == 7 || phase == 8 || (phase >= 17 && phase <= 19) || phase == 23 || phase == 25) { return sparse_elements(); }
+  if (phase == 9 || phase == 10 || phase == 21) { return nested_elements(); }
+  if (phase == 13) { return aggregate_elements(); }
+  return owning_elements();
+}

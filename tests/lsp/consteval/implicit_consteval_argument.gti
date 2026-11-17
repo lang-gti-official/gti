@@ -1,0 +1,29 @@
+// An implicit consteval conversion of an argument is described in hover; a
+// runtime argument names the parameter that must be constant.
+// (From consteval_lsp_test.py.)
+//@ hover @send: Argument 1
+//@ hover @send: implicit consteval Port
+//@ hover @send: checked at compile time
+struct Port {
+  int value;
+  implicit consteval Port(int number) : value(number) {}
+};
+int send(Port port, int payload) { return port.value + payload; }
+int run(int runtime) { /* 😀 */ return /*@send*/send(80, runtime); }
+int main() { return run(2) - 82; }
+// --- step 2
+struct Port {
+  int value;
+  implicit consteval Port(int number) : value(number) {}
+};
+int send(Port port, int payload) { return port.value + payload; }
+int run(int runtime) { /* 😀 */ return send(runtime, runtime); }  //~ ERROR GTI-S2057 parameter 'port' must be a compile-time constant
+int main() { return run(2) - 82; }
+// --- step 3
+struct Port {
+  int value;
+  implicit consteval Port(int number) : value(number) {}
+};
+int send(Port port, int payload) { return port.value + payload; }
+int run(int runtime) { /* 😀 */ return send(80, runtime); }
+int main() { return run(2) - 82; }
