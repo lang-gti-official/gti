@@ -1,0 +1,13 @@
+// A suffixed literal is range-checked as a signed constant of its type and
+// never adopts a contextual type.
+void take(uint8_t value) {}
+
+int main() {
+  uint8_t over = 256u8;  //~ ERROR GTI-S2004 Integer literal '256' is out of range
+  int8_t under = -129i8;  //~ ERROR GTI-S2004 Integer literal '-129'
+  uint8_t negative = -1u8;  //~ ERROR GTI-S2004
+  uint8_t narrowed = 5i32;  //~ ERROR GTI-S2003
+  float single = 2.5f64;  //~ ERROR GTI-S2003
+  take(7i32);  //~ ERROR GTI-S2003
+  return 0;
+}

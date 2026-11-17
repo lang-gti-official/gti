@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -240,6 +241,75 @@ struct CharacterLiteral {
   friend bool operator==(CharacterLiteral, CharacterLiteral) = default;
 };
 
+// A Rust-style numeric literal suffix written directly after the digits
+// (`10u8`, `2.5f32`). It is lexical syntax: the lexer validates and records
+// it, and semantic analysis gives a suffixed integer literal exactly the
+// named fixed-width type. Floating suffixes are already decoded into the
+// literal's BinaryFloat format.
+enum class NumericSuffix : std::uint8_t {
+  None,
+  U8,
+  U16,
+  U32,
+  U64,
+  I8,
+  I16,
+  I32,
+  I64,
+  F32,
+  F64,
+};
+
+inline constexpr bool isIntegerSuffix(NumericSuffix suffix) {
+  return suffix >= NumericSuffix::U8 && suffix <= NumericSuffix::I64;
+}
+
+inline constexpr bool isFloatingSuffix(NumericSuffix suffix) {
+  return suffix == NumericSuffix::F32 || suffix == NumericSuffix::F64;
+}
+
+inline constexpr std::string_view to_string(NumericSuffix suffix) {
+  switch (suffix) {
+  case NumericSuffix::None:
+    return "";
+  case NumericSuffix::U8:
+    return "u8";
+  case NumericSuffix::U16:
+    return "u16";
+  case NumericSuffix::U32:
+    return "u32";
+  case NumericSuffix::U64:
+    return "u64";
+  case NumericSuffix::I8:
+    return "i8";
+  case NumericSuffix::I16:
+    return "i16";
+  case NumericSuffix::I32:
+    return "i32";
+  case NumericSuffix::I64:
+    return "i64";
+  case NumericSuffix::F32:
+    return "f32";
+  case NumericSuffix::F64:
+    return "f64";
+  }
+  return "";
+}
+
+inline constexpr std::optional<NumericSuffix>
+numericSuffixFromSpelling(std::string_view spelling) {
+  for (const NumericSuffix suffix :
+       {NumericSuffix::U8, NumericSuffix::U16, NumericSuffix::U32,
+        NumericSuffix::U64, NumericSuffix::I8, NumericSuffix::I16,
+        NumericSuffix::I32, NumericSuffix::I64, NumericSuffix::F32,
+        NumericSuffix::F64}) {
+    if (to_string(suffix) == spelling) {
+      return suffix;
+    }
+  }
+  return std::nullopt;
+}
+
 using Literal = std::variant<std::monostate, std::nullptr_t, std::uint64_t,
                              BinaryFloat, CharacterLiteral, std::string, bool>;
 
@@ -254,6 +324,8 @@ struct Token {
         completion(completion), generated(generated) {}
 
   TokenKind kind{};
+  // The written suffix of an INT_LITERAL or FLOAT_LITERAL. Kept in padding.
+  NumericSuffix numericSuffix = NumericSuffix::None;
   // Generated spelling may be longer than its validated diagnostic origin.
   // Zero means the written lexeme length. Kept beside kind in its padding.
   std::uint32_t sourceLength = 0;

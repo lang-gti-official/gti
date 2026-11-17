@@ -5991,6 +5991,11 @@
     }
   },
   {
+    "type": "string_literal",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "structured_binding_declaration",
     "named": true,
     "fields": {
@@ -7132,10 +7137,6 @@
   {
     "type": "static_assert",
     "named": false
-  },
-  {
-    "type": "string_literal",
-    "named": true
   },
   {
     "type": "struct",

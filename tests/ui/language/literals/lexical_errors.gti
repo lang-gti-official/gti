@@ -1,0 +1,11 @@
+// Misplaced digit separators, unknown suffixes and a malformed raw string
+// delimiter are lexical errors at the offending text.
+int main() {
+  uint32_t a = 0x_FF;  //~ ERROR GTI-L0007 cannot follow the radix prefix
+  uint32_t b = 1__000;  //~ ERROR GTI-L0007 Consecutive digit separators
+  float c = 1_.5;  //~ ERROR GTI-L0006 next to '.'
+  float d = 1.5u8;  //~ ERROR GTI-L0006 cannot be applied to a floating-point
+  uint64_t e = 10usize;  //~ ERROR GTI-L0007 Unknown numeric literal suffix
+  std::string_view f = R"a b(x)a b";  //~ ERROR GTI-L0016 Invalid character
+  return 0;
+}

@@ -1029,9 +1029,16 @@ auto SemanticVisitor::Impl::analyzeMacroCall(const Call &writtenCall,
         compileLimitHint(compileLimitInfo(limit), compileLimits.*limit));
     return true;
   }
-  auto probeOwner = makeMacroProbe(*call);
+  // A probe can discover deferred constexpr bodies through its constraints.
+  // Resolve those needs in the owning request and rebuild the speculative
+  // snapshot before using its diagnostics or selection. The probe itself
+  // cannot complete bodies in the shared context.
+  auto probeOwner = withBodyDemands([&] {
+    auto probe = makeMacroProbe(*call);
+    probe->analyze(*call);
+    return probe;
+  });
   Impl &probe = *probeOwner;
-  probe.analyze(*call);
   if (hasErrorDiagnostics(probe.diagnostics)) {
     // A failed probe has no result type. Do not reuse the preceding caller
     // expression's type and invent an ignored-return diagnostic for a macro.

@@ -20,6 +20,8 @@ module.exports = grammar({
   name: "gti",
 
   extras: ($) => [/[ \t]|\r?\n/, $.comment],
+  // Raw strings need a matching closing delimiter (src/scanner.c).
+  externals: ($) => [$._raw_string_literal],
   word: ($) => $.identifier,
 
   supertypes: ($) => [$.declaration, $.statement, $.expression],
@@ -1574,10 +1576,17 @@ module.exports = grammar({
       ),
 
     boolean_literal: () => choice("true", "false"),
-    integer_literal: () => /0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+/,
-    float_literal: () => /[0-9]+\.[0-9]+[dD]?/,
-    string_literal: () =>
-      token(seq('"', repeat(choice(/[^"\\\r\n]/, /\\[^\r\n]/)), '"')),
+    // `_` digit separators and Rust-style suffixes (`10u8`, `2.5f32`). In a
+    // hexadecimal literal `f` is a digit, so `0x1f32` stays an integer.
+    integer_literal: () =>
+      /(0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*)([iu](8|16|32|64))?/,
+    float_literal: () =>
+      /[0-9][0-9_]*\.[0-9_]+([dD]|f32|f64)?|[0-9][0-9_]*f(32|64)/,
+    string_literal: ($) =>
+      choice(
+        token(seq('"', repeat(choice(/[^"\\\r\n]/, /\\[^\r\n]/)), '"')),
+        $._raw_string_literal,
+      ),
     character_literal: () =>
       token(seq("'", choice(/[^'\\\r\n]/, /\\[^\r\n]/), "'")),
 
