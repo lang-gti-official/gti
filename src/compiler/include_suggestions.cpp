@@ -722,9 +722,14 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   if (stopped() || !canSuggestIncludes(result) || exhausted())
     return advice;
   std::set<std::string> requested;
+  std::set<std::string> requestedTypes;
   for (const auto &diagnostic : result.diagnostics) {
     if (!diagnostic.missingIncludeName.empty()) {
       requested.insert(diagnostic.missingIncludeName);
+      // A type-declaration spelling is useful for an unknown-type diagnostic,
+      // not for an unrelated unknown value with the same name.
+      if (diagnostic.code == "GTI-S2000")
+        requestedTypes.insert(diagnostic.missingIncludeName);
     }
   }
   // Adding an import cannot repair syntax in the frozen source graph. Every
@@ -856,9 +861,10 @@ IncludeSuggestionResult discoverIncludeSuggestions(
                       [&](const auto &name) { return lexicon->spells(name); })))
       continue;
 
-    if (std::any_of(requested.begin(), requested.end(), [&](const auto &name) {
-          return lexicon->typeDeclarations.contains(name);
-        }))
+    if (std::any_of(requestedTypes.begin(), requestedTypes.end(),
+                    [&](const auto &name) {
+                      return lexicon->typeDeclarations.contains(name);
+                    }))
       declaresRequestedType.insert(candidate.path);
     prepared.emplace_back(lexicon->reexports, candidate);
   }
