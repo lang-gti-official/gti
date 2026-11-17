@@ -1,0 +1,29 @@
+// Under the concurrent profile a plain function converted to a callback
+// type is S2076; [[thread_confined_callback]] admits it and shows in hover,
+// and an unsafe confined callback is S2099. (cthread_lsp_test.py,
+// check_confined.)
+//@ execution-profile: concurrent
+// 😀 callback contract
+import std.cthread;
+using Callback = (int32_t) -> int32_t;
+int32_t transform(int32_t value) { return value; }
+int main() { Callback callback = transform; return 0; }  //~ ERROR GTI-S2076
+// --- step 2
+// 😀 callback contract
+import std.cthread;
+using Callback = (int32_t) -> int32_t;
+[[thread_confined_callback]] int32_t transform(int32_t value) { return value; }
+int main() { Callback callback = transform; return 0; }
+// --- step 3
+// 😀 callback contract
+import std.cthread;
+using Callback = (int32_t) -> int32_t;
+[[thread_confined_callback]] unsafe int32_t transform(int32_t value) { return value; }  //~ ERROR GTI-S2099
+int main() { Callback callback = transform; return 0; }  //~ ERROR GTI-S2076
+// --- step 4
+//@ hover @transform: [[thread_confined_callback]]
+// 😀 callback contract
+import std.cthread;
+using Callback = (int32_t) -> int32_t;
+[[thread_confined_callback]] int32_t tr/*^transform*/ansform(int32_t value) { return value; }
+int main() { Callback callback = transform; return 0; }

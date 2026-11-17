@@ -1,0 +1,70 @@
+// Returning a reference borrowed from a local cleanup-bound carrier is one
+// S2017 in user terms (a local, not a mutex or unlock); a nested
+// cleanup-bound field conflicts the same way, without a backend error.
+// (cleanup_bound_borrow_lsp_test.py)
+// 😀 UTF-16 control
+struct Resource { int value = 7; };
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { int observed = this.resource.value; }
+  Resource& read() { return this.resource; }
+};
+Resource& leak(Resource& resource) {
+  Guard guard{resource};
+  return guard.read();  //~ ERROR GTI-S2017 Returned reference refers to local
+}
+int main() { return 0; }
+// --- step 2
+// 😀 UTF-16 control
+struct Resource { int value = 7; };
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { int observed = this.resource.value; }
+  Resource& read() { return this.resource; }
+};
+Resource& leak(Resource& resource) {
+  return resource;
+}
+int main() { return 0; }
+// --- step 3
+struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 8; }
+public:
+  Resource() = default;
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { int observed = this.resource.value; }
+};
+class Owner {
+  Guard guard;
+public:
+  Owner(Resource& resource) : guard(Guard(resource)) {}
+};
+int main() { mut Resource resource{}; Owner owner{resource}; resource.reset(); return 0; }  //~ ERROR GTI-S2017
+// --- step 4
+struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 8; }
+public:
+  Resource() = default;
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { int observed = this.resource.value; }
+};
+class Owner {
+  Guard guard;
+public:
+  Owner(Resource& resource) : guard(Guard(resource)) {}
+};
+int main() { Resource resource{}; Owner owner{resource}; return 0; }

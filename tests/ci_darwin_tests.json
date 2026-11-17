@@ -16,7 +16,6 @@
     "c_abi_header_boundary",
     "cthread_condition_runtime",
     "cthread_create_join_runtime",
-    "cthread_lsp",
     "cthread_mutex_runtime",
     "cthread_once_runtime",
     "cthread_runtime",

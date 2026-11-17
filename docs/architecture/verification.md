@@ -322,7 +322,7 @@ parameter kinds, unproved result operations and bounded recursive expansion.
 Compiler query checks cover member/binder navigation, concrete hover,
 incomplete-type completion, and formatter stability. Tree-sitter's protocol
 corpus and query checks cover the corresponding syntax and binder scopes.
-`associated_type_families_lsp` checks those compiler facts through the protocol,
+`tests/lsp/types/associated_type_families.gti` checks those compiler facts through the protocol,
 including references, independent binder scopes, semantic tokens, the existing
 cross-file rename guard, exact diagnostic spans, and malformed-edit recovery.
 
@@ -422,7 +422,7 @@ protected base construction, named-field construction, attribute records,
 constant records, copy/move preservation and exactly-once owning cleanup.
 Example 005 demonstrates the source opt-in and a type that requires arguments.
 
-`explicit_default_constructors_lsp` checks the construction span, related type
+`tests/lsp/code_actions/explicit_default_constructor.gti` checks the construction span, related type
 span, actionable hint, absence of an automatic opt-in edit, and diagnostic
 clearing. Existing lifecycle, constexpr, generic, stdlib, example, MIR census,
 and editor suites retain their coverage with explicitly declared fixture
@@ -2395,7 +2395,7 @@ captured escapes, access upgrades, conflicting owner use and unsupported
 signature erasure. `borrow_origin` additionally mutates return loans, parent
 links, summary access and selected formal indices. `borrow_origin_syntax` and
 `lambda_formatting` preserve result-access tokens and formatting;
-`borrowing_callbacks_lsp` checks accepted forms, hover, formatting, conflict
+`tests/lsp/borrows` (`capture_borrow`, `reference_returning_lambdas`, `receiver_capture*`) checks accepted forms, hover, formatting, conflict
 diagnostics and recovery. The `lambda_parameter_reference_results` fixture in
 `llvm_callable_execution` exercises scalar, record and string composition
 through the existing MIR backends, including LLVM O0–O3. Example 156 demonstrates
@@ -3017,7 +3017,7 @@ conditional and Expected results with C++20/C++23 at O0/O1/O3 and O1 ASan/UBSan.
 `?` returns from the enclosing function with exactly-once local cleanup;
 defined failure destroys completed values in ordinary order. It also runs
 example 152 and the C-string constructor/factory client without an outer mutable
-placeholder. `unsafe_function_lsp` covers the new initializer spelling, inferred
+placeholder. `tests/lsp/code_actions/unsafe_*` covers the new initializer spelling, inferred
 hover, keyword tokens, malformed-source recovery and UTF-16 warning ranges,
 including the absence of an invalid keyword-removal fix. Tree-sitter's
 `unsafe_expressions` corpus preserves the dedicated syntax node.
@@ -3032,7 +3032,7 @@ constructor-generic and constexpr unsafe constructors, exact caller permission,
 MIR permission-erasure rejection, hover and formatter reanalysis. Negative cases
 cover implicit defaults, base initializers, nested lambdas, and generic raw
 emplacement hiding an unsafe constructor. Moving an explicitly completed value
-into raw storage remains supported. `unsafe_function_lsp` checks the diagnostic's
+into raw storage remains supported. `tests/lsp/code_actions/unsafe_*` checks the diagnostic's
 UTF-16 range, related declaration and recovery after edits.
 
 `c_string_import_runtime` runs the source-defined constructor and factory through
@@ -6131,7 +6131,7 @@ Release/Ninja compiler on the Mac mini (macOS arm64, AppleClang 21, LLVM 22.1.8)
 `compiler_pipeline`, `cpp_mir_body_emitter_preflight`,
 `cpp_mir_body_emitter_text`, `cpp_mir_body_emitter_lifecycle`,
 `conditional_class_publication`, `constructor_argument_staging_runtime`,
-`temporary_constructor_argument_runtime`, `diagnostic_recovery_lsp`,
+`temporary_constructor_argument_runtime`, `tests/lsp/diagnostics/recovery_*`,
 `tests/ui/classes/expression_consumers/`, and `tests/ui/classes/expression_publication/`.
 The combined focused run takes 158.53 seconds; the consumer matrix passes all
 48 cases in six native modes, and all ten publication fixtures pass six native
@@ -6420,7 +6420,7 @@ generic, static, virtual and call-operator declarations, exact function items,
 extern-C/link-name composition, overload-specific policy and static virtual
 selection. It retains rejection for unannotated calls/lambdas, invalid
 attributes, escaping references and conflicting live loans. Compiler-owned
-hover and formatting preserve the annotation. `discardable_result_lsp` checks
+hover and formatting preserve the annotation. `tests/lsp/declarations/discardable_result.gti` checks
 the default diagnostic's UTF-16 range, unsaved annotation edits, hover,
 incomplete-source recovery and explicit call-site discard.
 
@@ -6469,7 +6469,7 @@ type calls, source-defined erasure/restoration helpers, constness, forbidden
 integer/unrelated-pointer conversions, known pointee facts through aggregates,
 calls and loop backedges, expired origins and the separate unsafe-access rule.
 Its seven MIR mutations reject forged operand shape, constness, pointee type,
-loan, access and raw-memory claims. `raw_pointer_conversion_lsp` checks
+loan, access and raw-memory claims. `tests/lsp/audit/pointer_*` checks
 source-located UTF-16 diagnostics, related type provenance, alias-call
 definition identity and invalid-to-valid recovery. The historical runtime
 matrix passed
@@ -6567,7 +6567,7 @@ the compiler stack. These are integration checks, not new constexpr features.
 explicit and inferred pointer bindings, reseating, copies and branch joins;
 moved owners; raw array aliasing; raw mutable receiver calls; and checked-loan
 conflicts before versus after their ordinary last-use endpoints. The
-`raw_pointer_provenance_lsp` protocol test verifies the same lifetime error,
+`tests/lsp/audit` (`pointer_provenance_*`, `lifetime_contract_queries`) protocol test verifies the same lifetime error,
 the original address's related location, UTF-16 positions, invalid-source
 recovery and clearing on subsequent document generations. These checks cover
 local provenance; the source-result and owner-witness gates below cover the
@@ -6854,7 +6854,7 @@ nested-block/lambda ownership of permission, and conservative generic deferral.
 `unsafe_function_runtime` preserves success, failure and cleanup through the
 production MIR backend at C++20/C++23 O0/O1/O3.
 
-`unsafe_function_lsp` checks the same errors and warning, exact source/UTF-16
+`tests/lsp/code_actions/unsafe_*` checks the same errors and warning, exact source/UTF-16
 ranges, related declaration keyword, keyword semantic tokens, hover, preferred
 spelling/removal edits and stale-action rejection. CLI and project workflows
 test the existing warning suppression controls. Example 39 demonstrates
@@ -7531,7 +7531,7 @@ with constructors, optional string-chain rejection and named-owner copy checks.
 `tests/ui/classes/construction/implicit_return_construction_*.gti` compares implicit and explicit forms at
 O0/O1/O2/O3 under C++20/C++23 and ASan/UBSan: result ownership, temporary receiver
 lifetime, local cleanup and partial construction failure retain identical
-source-defined traces. `implicit_return_construction_lsp` covers unsaved modifier
+source-defined traces. `tests/lsp/declarations/implicit_return_construction.gti` covers unsaved modifier
 changes, exact UTF-16 error spans, reference navigation and parser recovery.
 Example 166 demonstrates concise optional returns and an unrelated result type.
 
@@ -8198,7 +8198,7 @@ publication. Negative checks preserve member-name identity and reject absent,
 wrong-result, unsafe, mutable, consuming, static, inaccessible, and non-nullary
 members. A disjunction does not grant a method missing from another alternative;
 self-referential requirements fail closed and reference results are not owned
-results. `//@ format-stable` keeps formatter round trips. `member_requirement_lsp`
+results. `//@ format-stable` keeps formatter round trips. `tests/lsp/generics/member_requirement.gti`
 checks compiler-owned hover, receiver definition, malformed-source recovery,
 shared diagnostic codes, and formatting/reanalysis.
 `testCompilerPrivateMemberRequirements` proves that trusted source selects a
@@ -9523,10 +9523,10 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `documentation_index` | deterministic, pointer-free standard-library declaration projection; exact signatures, retained documentation, source-facing operator names, stable source identities, visibility filtering, schema serialization, and fail-closed frontend/tooling prerequisites |
 | `block_comment_pipeline` | line tracking, literal exclusion, non-nesting block-comment lexing, unterminated diagnostics, frontend composition, and formatter preservation/idempotence |
 | `constructor_formatting` | constructor-list packing, colon placement and indentation configuration; exact default/opt-in layouts; nested argument/lambda/collection isolation, comments, conditional declarations, tabs, malformed input, token preservation and idempotence; `lsp_protocol` additionally covers configuration discovery and reload |
-| `block_comment_lsp` | multiline UTF-16 semantic tokens, literal exclusion, formatting, and publication of the shared unterminated-comment diagnostic |
-| `comment_placement_lsp` | document formatting with client indentation keeps own-line line and block comments on their own lines after statements and closing braces, keeps trailing comments trailing, and returns no edit for already formatted comments |
+| `tests/lsp/formatting/block_comment_*` | multiline UTF-16 semantic tokens, literal exclusion, formatting, and publication of the shared unterminated-comment diagnostic |
+| `tests/lsp/formatting/comment_placement.jsonl` | document formatting with client indentation keeps own-line line and block comments on their own lines after statements and closing braces, keeps trailing comments trailing, and returns no edit for already formatted comments |
 | `source_text_pipeline` | strict UTF-8 validation and no-cascade recovery, leading-BOM offsets, ASCII token boundaries, Unicode string/comment preservation, LF/CRLF line identity, lone-CR rejection, source locations, and formatter preservation/idempotence |
-| `source_text_lsp` | BOM-aware UTF-16 token positions, Unicode and CRLF document acceptance, LF formatter output, exact lone-CR diagnostic publication, and next-generation clearing |
+| `tests/lsp/formatting/source_text.jsonl` | BOM-aware UTF-16 token positions, Unicode and CRLF document acceptance, LF formatter output, exact lone-CR diagnostic publication, and next-generation clearing |
 | `layout_query_pipeline` | bounded `sizeof(type)`/`alignof(type)` syntax, semantics, diagnostics, constants, HIR/MIR, formatter, and backend literals |
 | `layout_query_native_boundary` | selected host scalar/pointer/positive-array results against an independent native ABI oracle |
 | `native_record_pipeline` | `[[c_abi]]` declaration rules, computed field layout, diagnostics, extern-C signatures, unsafe classification, HIR/MIR retention, formatter, and backend assertions |
@@ -9560,7 +9560,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `cthread_runtime` | real C-style yield; stable initial/managed/manual identities, exact create-handle equality and non-joinable observed identities; total source-defined equality; both profiles, atomic/join composition, exact yield native-call retention, and verified-MIR witnesses at O0/O1/O3 under C++20/C++23 plus ASan/UBSan and TSAN; no timing or fairness oracle |
 | `cthread_runtime_boundary` / `cthread_runtime_firewall` | source-private create/join and identity: non-reused identities across initial/manual and 128 concurrently/sequentially observed foreign threads, stable identity before entry and after leave/shutdown, no identity-derived join or callback permission, exact integer-result and ordinary-write publication, repeated/nested/self/competing joins, injected recoverable failures, exact once-only callback attachment, foreign-thread rejection, initial-thread-owned in-flight shutdown, and exact native-exception/incomplete-entry terminal outcomes |
 | `cthread_sleep_boundary` / `cthread_sleep_runtime` | scalar duration validation, zero/positive sleep, real host interruption, normalized bounded remaining time, invalid native output pairs, exact interruption-only publication, safe and unsafe input/output aliasing, null handling, and managed/manual worker composition; actual native runtime plus 24 public GTI executions across C++20/C++23 O0/O1/O3 and ASan/UBSan/TSAN, with ordinary verified-MIR native-call witnesses and no elapsed-time threshold |
-| `cthread_semantic_ir` / `cthread_create_join_runtime` / `cthread_lsp` | public unsafe create/join and mutex profile/target admission, registered callback entry, hosted runtime lifecycle, exact native synchronization and verifier mutations; integer results and retained context publication, owned-argument entry, failure cleanup, initial/foreign entry rejection and outstanding-handle termination at C++20/C++23 O0/O1/O3 plus sanitizer modes; shared editor diagnostics and selected create/join/mutex wrapper hover/definition |
+| `cthread_semantic_ir` / `cthread_create_join_runtime` / `tests/lsp/concurrency` | public unsafe create/join and mutex profile/target admission, registered callback entry, hosted runtime lifecycle, exact native synchronization and verifier mutations; integer results and retained context publication, owned-argument entry, failure cleanup, initial/foreign entry rejection and outstanding-handle termination at C++20/C++23 O0/O1/O3 plus sanitizer modes; shared editor diagnostics and selected create/join/mutex wrapper hover/definition |
 | `cthread_mutex_boundary` / `cthread_mutex_runtime` | plain/recursive/timed mutexes, preserved initialization outputs and injected allocation failure, stale identities, wrong-thread and recursive ownership, blocked and timed acquisitions, failed-wakeup handoff to another waiter, exact deadline bounds, busy/timeout non-acquisition, in-flight destruction rejection and terminal C/GTI violations; four-worker ordinary-data publication, 24 public GTI executions plus actual runtime and terminal tests in eight C++20/C++23 O0/O1/O3 and ASan/UBSan/TSAN configurations; no fairness or elapsed-time threshold |
 | `runtime_failure_subprocess` | exact ordinary/emergency escaped report bytes, status 70, observer once-only behavior, original-record firewalling, closed/broken-pipe write failure, and process-wide terminal arbitration |
 | `runtime_failure_header_coexistence` | the compiler's semantic `gti/failure.h` and runtime C `gti/runtime_failure.h` contracts coexist in one translation unit and link through both archives |
@@ -9666,7 +9666,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/ownership/borrow/borrowed_argument_inner_temporary.gti` | a borrowed argument kept across a later conditional argument, an arm of `?:` or the right operand of `&&` or `||`, that creates a class object for a nested call to borrow, across C++20/C++23 O0/O1/O3, no-elide and ASan/UBSan: a function result and a construction as receivers, a `mut` receiver and a reference argument in the arms of `?:`, a borrowed local before a construction passed by reference, objects with nothing to destroy, also in a body that cannot fail, a producer that can fail and calls that can fail, and a later argument that fails; each object is destroyed once after the outer call, before the borrowed temporary, and never when its operand was skipped, a failing producer publishes nothing, and each live local is destroyed once; `cpp_mir_body_emitter_preflight` rejects such a producer that also takes the borrowed object and an operand that ends the outer borrow |
 | `collection_cleanup_failure_runtime` | owning and direct class elements, sparse live slots, nested vectors, moved/empty collections, mixed string/resource aggregate elements, inherited-base rollback, explicit pop/slot destruction/clear/erase, and unchanged invalid-slot/index reporting; first/middle/last erase, reusable successful prefixes, reverse suffix draining, inherited element relocation, immediate second-failure termination with distinct source sites, and exact diagnostic records/order across 308 runs at C++20/C++23 O0/O1/O3 plus ASan/UBSan; `failure_metadata` mutates drop and removal recipe presence, count, type, projection, active-cleanup identity, intrinsic ownership, destructor propagation, and generated-relocation/guard facts |
 | `raw_pointer_pipeline` | raw-pointer and unsafe feature composition |
-| `unsafe_function_contract` / `unsafe_function_runtime` / `unsafe_function_lsp` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
+| `unsafe_function_contract` / `unsafe_function_runtime` / `tests/lsp/code_actions/unsafe_*` | namespace-scope caller obligations, exact diagnostics and related spans, generic/overload retention, safe callable-erasure rejection, HIR/MIR/lowered mutations, ordinary MIR call and failure cleanup at O0/O1/O3 under C++20/C++23, and editor publication/clearing/hover without unsafe fix-its |
 | `compiler_library_boundary` | build-tree compiler archive link boundary |
 | `cpp_mir_backend_library_boundary` | build-tree C++ backend archive and generated-source boundary |
 | `cmake_test_ownership` | root CMake owns products/options/install rules while `tests/CMakeLists.txt` owns test executables and CTest registration |
@@ -10137,7 +10137,7 @@ matrix includes 72 public program executions at C++20/C++23 O0/O1/O3 plus
 ASan/UBSan and TSAN, including immutable tagged globals, manual contention,
 managed workers, nested distinct flags, null and foreign-entry rejection, and
 cleanup before terminal defined failure. A post-success failure separately
-proves managed handoff is restored. `cthread_semantic_ir` and `cthread_lsp`
+proves managed handoff is restored. `cthread_semantic_ir` and `tests/lsp/concurrency`
 retain exact callback roles, unsafe/profile diagnostics, and shared declaration
 selection. Fresh immobile values and passive argument snapshots are explicit
 regressions, not C++ copy-elision assumptions.
@@ -10154,7 +10154,7 @@ runtime matrix builds the actual native implementation and runs 24 public GTI
 programs across C++20/C++23 O0/O1/O3 plus ASan/UBSan and TSAN. The public client
 alternates two manual workers through predicate loops for 200 protected
 updates. `cthread_semantic_ir` mutates every private declaration identity and
-signature plus wait synchronization/order facts; `cthread_lsp` checks selected
+signature plus wait synchronization/order facts; `tests/lsp/concurrency` checks selected
 wait declarations and shared unsafe/profile diagnostics. The installed C
 consumer calls all six condition ABI entries. No elapsed-time threshold or
 scheduler-fairness assumption is a correctness oracle.
@@ -10334,7 +10334,7 @@ bindings, projected fields, checked receiver returns, and owning enum field
 exchange. Both include C++20/C++23, optimized/unoptimized, disabled-elision,
 and ASan/UBSan execution. The semantic/MIR suite rejects direct layout cycles,
 forged active-variant cleanup selectors, unguarded extractions, and upgraded
-loans. `borrowed_payload_pattern_lsp` checks navigation, tokens, exact
+loans. `tests/lsp/patterns/borrowed_payload_binding.gti` checks navigation, tokens, exact
 diagnostic locations, and versioned recovery. `<std/json>` (0.408 and earlier) was the end-to-end
 library client of recursive enum storage, without a privileged lowering path;
 the payload-enum suites keep that coverage.
@@ -11670,7 +11670,7 @@ user-defined Cell/Row/Grid trace and unique-owner/optional clients through the
 eight-mode native matrix (48 cases). `operator_place_failure_runtime` checks 12
 unchanged target-before-RHS and callee/caller cleanup observations at the native
 endpoints; an indexed reference failure must report R0007/70, not terminal abort.
-`operator_place_composition_lsp` checks semantic-error publication, symbol queries
+`tests/lsp/places/operator_place_composition.gti` checks semantic-error publication, symbol queries
 and recovery. These are focused gates, not the full campaign acceptance run.
 
 Example14 explicitly demonstrates the repaired forms. Its reviewed inventory
@@ -11690,10 +11690,10 @@ HIR/MIR, target mutation, and production representation preflight.
 `tests/ui/generics/` runs the pack fixture, A19, and updated examples 33
 and 80 through the unchanged eight-mode native matrix.
 
-`tests/ui/diagnostics/generic_advisory/` and `generic_advisory_lsp` cover A20/A24/A33,
+`tests/ui/diagnostics/generic_advisory/` and `tests/lsp/code_actions/generic_unused_mut.gti` cover A20/A24/A33,
 unresolved callable arguments, an unrelated mutable operator receiver,
 declaration-independent warnings, exact safe edits, UTF-16 positions, current
-versions and stale-fix rejection. `generic_contract_lsp` checks contextual
+versions and stale-fix rejection. `tests/lsp/generics/{pack_function_item,trailing_clause_facts}.gti` checks contextual
 function hover/definition, dependent-clause publication and error recovery.
 Focused passes do not replace the campaign's combined full-suite acceptance.
 

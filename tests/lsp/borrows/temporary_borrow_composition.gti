@@ -1,0 +1,29 @@
+// Shared and exclusive child borrows and temporaries in constructor packs
+// publish exactly the frontend's verdict, never a backend error.
+// (scalar_temporary_borrow_lsp_test.py, second part)
+void keep(int& value) {}
+int main() { mut int owner = 1; mut int& parent = owner;
+  int& child = parent; keep(parent); keep(child); return 0; }
+// --- step 2
+void keep(int& value) {}
+int main() { mut int owner = 1; mut int& parent = owner;
+  mut int& child = parent; keep(parent); keep(child); return 0; }  //~ ERROR GTI-S2017
+// --- step 3
+void keep(int& value) {}
+int main() { mut int owner = 1; mut int& parent = owner;
+  int& child = parent; keep(parent); keep(child); return 0; }
+// --- step 4
+class Owner { int value = 7; public: Owner() = default; int& get() { return this.value; } };
+class View { int& value; public: View(int& v) : value(v) {} };
+void observe<Args...>(Args&... values) {}
+int main() { observe(View(Owner().get())); return 0; }
+// --- step 5
+class Owner { int value = 7; public: Owner() = default; int& get() { return this.value; } };
+class View { int& value; public: View(int& v) : value(v) {} };
+void observe<Args...>(mut Args&... values) {}
+int main() { observe(View(Owner().get())); return 0; }  //~ ERROR GTI-S2017
+// --- step 6
+class Owner { int value = 7; public: Owner() = default; int& get() { return this.value; } };
+class View { int& value; public: View(int& v) : value(v) {} };
+void observe<Args...>(Args&... values) {}
+int main() { observe(View(Owner().get())); return 0; }
