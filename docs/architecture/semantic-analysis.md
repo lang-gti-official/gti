@@ -102,7 +102,11 @@ signature probe leaves an unknown result type, preventing secondary unused-resul
 errors from an unrelated preceding expression.
 Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
-execution. The probe forks request context separately from semantic facts,
+execution. Signature probing runs inside the owning request's body-demand
+attempt: when a constraint needs a deferred constexpr definition, the owner
+completes it and recreates the speculative snapshot before accepting either
+its selection or its diagnostics. A probe never completes shared bodies itself.
+The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
 identities; it does not deep-copy the growing whole-program expression model.
 The expression-order cache and active full-expression cleanup frames are local
