@@ -1,0 +1,4 @@
+// Coexisting bindings cannot introduce an unsafe modifier that is invalid on a native declaration.
+namespace first { extern "C" { unsafe c_int target(c_int value); } }  //~ ERROR GTI-P0001 An unsafe declaration requires a GTI function
+namespace second { extern "C" { c_int target(c_int value); } }
+int main() { return 0; }
