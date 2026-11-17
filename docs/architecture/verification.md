@@ -7102,7 +7102,7 @@ changes; this is not a claim of full-suite or cross-platform execution.
 
 ## Composable I/O and mutable-buffer validation
 
-`composable_io_runtime` covers memory/file/process-stream transport, exact
+`tests/ui/stdlib/io/` (`composable_io*`, `mutable_span*`, `passive_error_cleanup`) covers memory/file/process-stream transport, exact
 partial progress, failed flush retries, EOF, binary NUL bytes, zero-capacity
 adapters and oversized custom-transport results. Mutable-slice cases check
 parent reactivation, retained shared copies, first/last/subspan operations,

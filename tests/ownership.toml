@@ -884,7 +884,7 @@ owners = [
   "environment_c_header",
   "environment_runtime",
   "filesystem_path_runtime",
-  "composable_io_runtime",
+  "^gti_test_ui(_[0-9]+)?$",
   "process_runtime",
   "process_resource_policy",
   "process_capture_failure",
@@ -1149,7 +1149,7 @@ paths = [
 ]
 owners = [
   "filesystem_path_runtime",
-  "composable_io_runtime",
+  "^gti_test_ui(_[0-9]+)?$",
   "process_runtime",
   "environment_runtime",
   "cmath_runtime",

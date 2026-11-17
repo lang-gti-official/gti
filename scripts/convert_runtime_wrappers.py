@@ -368,7 +368,10 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
                 str(path.relative_to(ROOT)) for path in namesakes))
         result.files[target] = text
         for suffix, content in stdout_files.items():
-            result.files[target.with_name(f"{name}{suffix}.stdout")] = content
+            if suffix == ".stdin":
+                result.files[target.with_name(f"{name}.stdin")] = content
+            else:
+                result.files[target.with_name(f"{name}{suffix}.stdout")] = content
         if isinstance(source, Generated):
             result.fixtures.append(name)
             result.signatures[name] = repr((runs, stdin))
@@ -590,16 +593,20 @@ def convert(name, source, runs, stdin, description, plan_, profile=None, natives
         if any(not argument or any(c.isspace() for c in argument) for argument in arguments):
             plan_.reasons.append(f"{name}: an argument contains whitespace or is empty")
             return None
-        if any(argument.startswith(tempfile.gettempdir()) or "/gti-" in argument
-               for argument in arguments):
-            plan_.reasons.append(f"{name}: an argument names a temporary file the wrapper creates")
+        if "\0" in stderr:
+            plan_.reasons.append(f"{name}: NUL bytes in stderr")
             return None
-        if "\0" in _stdout + stderr + (stdin or ""):
-            plan_.reasons.append(f"{name}: NUL bytes in stdin, stdout or stderr")
-            return None
-    if stdin is not None and stdin and not stdin.endswith("\n"):
-        plan_.reasons.append(f"{name}: stdin without a final newline")
+    # A file in the wrapper's temporary directory is the same file name in
+    # the test directory, where gti-test runs the program.
+    runs = [(tuple(pathlib.Path(argument).name
+                   if argument.startswith(tempfile.gettempdir()) or "/gti-" in argument
+                   else argument for argument in arguments), expected)
+            for arguments, expected in runs]
+    if any(pathlib.Path(argument).name != argument for arguments, _ in runs
+           for argument in arguments if argument.startswith("/")):
+        plan_.reasons.append(f"{name}: an argument names an absolute path")
         return None
+    stdin_file = bool(stdin) and ("\0" in stdin or not stdin.endswith("\n"))
     if profile not in (None, "single-threaded", "concurrent"):
         plan_.reasons.append(f"{name}: execution profile {profile}")
         return None
@@ -615,7 +622,9 @@ def convert(name, source, runs, stdin, description, plan_, profile=None, natives
     file_mode = "run-pass" if 0 in codes else "run-fail"
     directives.append(f"//@ {file_mode}")
     directives += analysis
-    if stdin:
+    if stdin and stdin_file:
+        stdout_files[".stdin"] = stdin  # a sibling name.stdin, compared bytewise
+    elif stdin:
         directives += [f"//@ stdin: {line}" for line in stdin[:-1].split("\n")]
     revisions = len(runs) > 1
     labels = revision_names(runs) if revisions else [""]
@@ -630,7 +639,7 @@ def convert(name, source, runs, stdin, description, plan_, profile=None, natives
             directives.append(f"//@{prefix} args: {' '.join(arguments)}")
         if code != 0:
             directives.append(f"//@{prefix} exit-code: {code}")
-        inline = stdout_directives(prefix, stdout)
+        inline = None if "\0" in stdout else stdout_directives(prefix, stdout)
         if inline is None:
             stdout_files[f".{label}" if revisions else ""] = stdout
         else:

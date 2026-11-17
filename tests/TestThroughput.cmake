@@ -77,7 +77,7 @@ if(Python3_Interpreter_FOUND)
     consuming_range_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
     owner_chain_runtime borrowing_composition
-    complete_containers composable_io_runtime
+    complete_containers
     constructor_null_native_runtime
     contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication

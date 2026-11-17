@@ -2698,13 +2698,8 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(constructor_constructed_field_runtime
                          PROPERTIES TIMEOUT 240)
-    add_test(NAME composable_io_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tests/composable_io_runtime_test.py"
-        "$<TARGET_FILE:gti>")
     # Its GCC sanitized build may take minutes under a parallel suite;
     # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
-    set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 1800)
     add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"

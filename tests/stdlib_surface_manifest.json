@@ -5143,7 +5143,6 @@
         "user-defined buffered_source windows"
       ],
       "evidence": [
-        "tests/composable_io_runtime_test.py",
         "tests/unit/runtime_io_tests.cpp",
         "docs/language/io.md"
       ]
@@ -6374,7 +6373,6 @@
         "mutable iterators"
       ],
       "evidence": [
-        "tests/composable_io_runtime_test.py",
         "tests/ui/borrow/carrier_shell",
         "docs/language/ranges.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti"

@@ -95,7 +95,6 @@
   "compiler_failure_reducer": 12.1,
   "compiler_library_boundary": 0.0,
   "complete_containers": 62.5,
-  "composable_io_runtime": 49.9,
   "concurrency_composition_lsp": 8.7,
   "conditional_class_publication": 50.0,
   "constexpr_aggregate_runtime": 6.7,
