@@ -38,8 +38,11 @@ struct Limits {
   double check = 2.0;
   double run = 5.0;
   double slow = 120.0;
-  // Wall time of an LSP test's requests (the server is a shared process).
+  // CPU the language server spends on one LSP test's requests.
   double lsp = 3.0;
+  // Wall time an LSP test may wait for any one response or publication
+  // before it is reported as hung (not a budget: a loaded machine waits).
+  double lspHang = 30.0;
   // CPU of a project transcript's commands, all together.
   double project = 20.0;
   // Extra CPU a case may spend while its worker first analyses a standard

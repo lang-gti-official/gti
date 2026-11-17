@@ -693,8 +693,10 @@ bool contains(const Position &start, const Position &end,
 
 LspResult runLspTest(LspServer &server, const TestFile &test,
                      const fs::path &directory, const fs::path &standardLibrary,
-                     double deadline) {
+                     double hangGuard) {
   LspResult result;
+  // Wall time is only a hang guard, renewed for every awaited message.
+  const auto deadline = [&] { return lspClock() + hangGuard; };
   const auto fail = [&](const std::string &line) {
     result.failure += line + "\n";
   };
@@ -765,7 +767,8 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
   const auto timeout = [&](const std::string &what) {
     result.crashed = !server.running();
     result.timedOut = !result.crashed;
-    fail("no " + what + " before the time limit" +
+    fail("no " + what + " within the hang guard (" +
+         std::to_string(hangGuard).substr(0, 5) + " s of wall time)" +
          (server.running() ? "" : "; gti_lsp exited:\n" + server.logTail()));
   };
   const auto isPublication = [&](const json::Object &message,
@@ -786,7 +789,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           [&](const json::Object &message) {
             return isPublication(message, document);
           },
-          deadline);
+          deadline());
       if (!published)
         break;
     }
@@ -1090,15 +1093,15 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
 
       if (kind == "hover") {
         const auto response =
-            server.request("textDocument/hover", at(*marker), deadline);
+            server.request("textDocument/hover", at(*marker), deadline());
         if (!response) {
           timeout("hover response");
           return false;
         }
         expectText("hover", hoverText(response->get("result")));
       } else if (kind == "signature") {
-        const auto response =
-            server.request("textDocument/signatureHelp", at(*marker), deadline);
+        const auto response = server.request("textDocument/signatureHelp",
+                                             at(*marker), deadline());
         if (!response) {
           timeout("signature help");
           return false;
@@ -1122,7 +1125,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           params["context"] = json::Object{{"includeDeclaration", true}};
         const auto response = server.request(
             references ? "textDocument/references" : "textDocument/definition",
-            std::move(params), deadline);
+            std::move(params), deadline());
         if (!response) {
           timeout(kind + " response");
           return false;
@@ -1135,7 +1138,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           continue;
         }
         const auto response =
-            server.request("textDocument/completion", at(*marker), deadline);
+            server.request("textDocument/completion", at(*marker), deadline());
         if (!response) {
           timeout("completion response");
           return false;
@@ -1180,7 +1183,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           auto tokens = server.request(
               "textDocument/semanticTokens/full",
               json::Object{{"textDocument", documentId(marker->document)}},
-              deadline);
+              deadline());
           if (!tokens) {
             timeout("semantic tokens");
             return false;
@@ -1225,8 +1228,8 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
         }
         json::Object params = at(*marker);
         params["newName"] = directive.words[2];
-        const auto response =
-            server.request("textDocument/rename", std::move(params), deadline);
+        const auto response = server.request("textDocument/rename",
+                                             std::move(params), deadline());
         if (!response) {
           timeout("rename response");
           return false;
@@ -1354,7 +1357,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
                                        {"end", positionJson(*rangeEndAt)}}},
                 {"context", json::Object{{"diagnostics", std::move(context)},
                                          {"only", json::Array{"quickfix"}}}}},
-            deadline);
+            deadline());
         if (!response) {
           timeout("code actions");
           return false;
@@ -1440,7 +1443,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
             json::Object{{"textDocument", documentId(home)},
                          {"options", json::Object{{"tabSize", 2},
                                                   {"insertSpaces", true}}}},
-            deadline);
+            deadline());
         if (!response) {
           timeout("formatting response");
           return false;
@@ -1462,7 +1465,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
       } else if (kind == "symbols") {
         const auto response = server.request(
             "textDocument/documentSymbol",
-            json::Object{{"textDocument", documentId(home)}}, deadline);
+            json::Object{{"textDocument", documentId(home)}}, deadline());
         if (!response) {
           timeout("document symbols");
           return false;
@@ -1759,6 +1762,8 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
       break;
     }
   }
+  if (const double cpu = server.cpuSeconds(); cpu >= 0)
+    result.serverCpu = cpu;
   server.stop();
   return result;
 }
