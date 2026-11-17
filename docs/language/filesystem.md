@@ -14,6 +14,12 @@ the ordinary last-use lifetime rules prevent mutation or destruction of the
 owner while that view remains live. Decomposition, joining, comparisons,
 modifiers, and `lexically_normal()` perform no filesystem access.
 
+The `/` operator joins a path with another path or a `std::string_view`,
+including string literals: `auto path = root / "bin" / tool;`. It returns a
+new owning path and leaves both operands unchanged. An absolute right operand
+replaces the left path; an empty right operand preserves the trailing separator
+behavior of `append`/`append_path`.
+
 Host functions accept `std::string_view` or `path&`. Operations involving two
 paths provide either two views or two path references. Path inputs must be
 nonempty and must not contain embedded NUL bytes: invalid input returns

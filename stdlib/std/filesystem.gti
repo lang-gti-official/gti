@@ -423,6 +423,13 @@ namespace std {
         return std::move(result);
       }
 
+      /// Joins a view or string literal without changing either operand.
+      std::filesystem::path operator/(std::string_view other) {
+        mut path result = this.clone();
+        result.append(other);
+        return std::move(result);
+      }
+
       void operator/=(path& other) mut {
         this.append_path(other);
       }
