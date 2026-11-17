@@ -675,3 +675,10 @@ The new runtime entry is a byte-provider forwarding operation; source owns
 eligibility, alignment, capacity and object-lifetime policy. This avoids copying
 when the allocator can extend a region in place without requiring unchecked
 safe APIs or a vector-specific compiler exception.
+
+On macOS arm64 the optional prefix-resize helper is `[[noinline]]`. Keeping
+allocator descriptor state out of the hot append loop improves the measured
+growth workload; the identical annotation regresses Linux x64, so that target
+retains inlining. This is a target-specific code-layout choice, not a change to
+eligibility, failure handling, capacity policy or ownership semantics. The
+public `reserve` body remains visible to the size-preservation proof.

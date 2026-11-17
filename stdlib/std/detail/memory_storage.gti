@@ -814,6 +814,11 @@ public:
   constexpr expected<void, alloc_errc> try_allocate(uint64_t count) mut {
     return this.data.try_allocate(count);
   }
+  // AArch64 macOS benefits from keeping allocator state out of the append
+  // loop. Linux x64 retains inlining; its measured register/call tradeoff differs.
+#if target.os == "macos" && target.arch == "arm64"
+  [[noinline]]
+#endif
   constexpr bool grow_bytes_if_supported(uint64_t count) mut {
     if constexpr (std::bitwise_relocatable<T> && !std::meta::is_text<T>()) {
       if (count <= this.data.capacity()) { return true; }
