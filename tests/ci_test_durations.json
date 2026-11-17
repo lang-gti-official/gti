@@ -90,7 +90,6 @@
   "compiled_primitive_library": 28.8,
   "compiled_scalar_library": 41.9,
   "compiled_scalar_library_cost": 4.1,
-  "compiled_type_forwarding": 104.7,
   "compiler_debug_tooling": 7.9,
   "compiler_failure_reducer": 12.1,
   "compiler_library_boundary": 0.0,

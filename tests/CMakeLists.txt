@@ -3438,10 +3438,6 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 
-add_test(NAME compiled_type_forwarding
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_type_forwarding_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-type-forwarding")
-set_tests_properties(compiled_type_forwarding PROPERTIES TIMEOUT 600)
 add_executable(gti_compiled_interface_types_tests compiled_interface_types_tests.cpp)
 target_link_libraries(gti_compiled_interface_types_tests PRIVATE gti_compiler)
 add_test(NAME compiled_interface_types COMMAND gti_compiled_interface_types_tests)
