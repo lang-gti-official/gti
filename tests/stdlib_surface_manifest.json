@@ -3530,7 +3530,7 @@
         "tests/generic_algorithm_cluster_test.py",
         "tests/ui/callables/concepts",
         "tests/ui/stdlib/algorithm",
-        "tests/ordered_search_runtime_test.py",
+        "tests/ui/stdlib/algorithm/ordered_search",
         "tests/fixtures/ordered_search.gti",
         "tests/fixtures/ordered_search_user_types.gti",
         "examples/139-ordered-search.gti",
@@ -3559,7 +3559,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -4041,7 +4041,7 @@
         "tests/cthread_mutex_test.py",
         "tests/cthread_condition_test.py",
         "tests/cthread_once_test.py",
-        "tests/cthread_create_join_test.py",
+        "tests/ui/stdlib/cthread",
         "tests/cthread_tests.cpp",
         "tests/fixtures/cthread_yield_call_count.cpp",
         "docs/language/concurrency.md"
@@ -4157,7 +4157,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -4177,7 +4177,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -4197,7 +4197,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -4297,7 +4297,7 @@
         "tests/source_prefix_owner_tests.cpp",
         "tests/source_sparse_storage_tests.cpp",
         "tests/fixtures/process_storage_policy.gti",
-        "tests/fixtures/process_storage_query_policy.gti",
+        "tests/ui/stdlib/process/storage_query_policy.gti",
         "tests/stdlib_module_boundaries_test.py",
         "tests/fixtures/constexpr_owned_storage.gti"
       ],
@@ -4317,7 +4317,7 @@
         "format-panic-adoption"
       ],
       "evidence": [
-        "tests/panic_runtime_test.py",
+        "tests/ui/runtime/panic",
         "tests/panic_adoption_runtime_test.py"
       ]
     },
@@ -4422,8 +4422,8 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_experimental_optional.gti",
-        "tests/fixtures/experimental_optional.gti",
-        "tests/experimental_optional_runtime_test.py",
+        "tests/ui/stdlib/memory/optional_payload/experimental.gti",
+        "tests/ui/stdlib/memory/optional_payload",
         "examples/162-experimental-optional.gti"
       ]
     },
@@ -4530,7 +4530,7 @@
         "directory stream and vector<path>"
       ],
       "evidence": [
-        "tests/filesystem_operations_runtime_test.py",
+        "tests/ui/stdlib/filesystem/operations.gti",
         "tests/unit/runtime_filesystem_tests.cpp",
         "docs/language/filesystem.md"
       ]
@@ -4679,8 +4679,8 @@
         "forward-list-algorithms"
       ],
       "evidence": [
-        "tests/fixtures/forward_list_algorithms.gti",
-        "tests/forward_list_runtime_test.py",
+        "tests/ui/stdlib/containers/forward_list/algorithms.gti",
+        "tests/ui/stdlib/containers/forward_list",
         "stdlib/std/forward_list.gti"
       ],
       "required_instantiations": [
@@ -4736,9 +4736,9 @@
         "move-only destructor-bearing item"
       ],
       "evidence": [
-        "tests/fixtures/container_swap.gti",
-        "tests/fixtures/container_swap_cleanup.gti",
-        "tests/container_swap_runtime_test.py"
+        "tests/ui/stdlib/containers/swap/values.gti",
+        "tests/ui/stdlib/containers/swap/cleanup.gti",
+        "tests/ui/stdlib/containers/swap"
       ]
     },
     {
@@ -4759,7 +4759,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -4947,14 +4947,12 @@
         "tests/fixtures/owning_function_schema.gti",
         "tests/fixtures/owning_function_mutable.gti",
         "tests/fixtures/owning_function_mutable_arguments.gti",
-        "tests/fixtures/owning_function_policy_failure.gti",
-        "tests/fixtures/inline_polymorphic_lifecycle.gti",
+        "tests/ui/callables/owning_function_policy_failure.gti",
+        "tests/slow/memory/inline_polymorphic_lifecycle.gti",
         "tests/owning_function_tests.cpp",
-        "tests/owning_function_policy_failure_test.py",
-        "tests/inline_polymorphic_runtime_test.py",
         "stdlib/std/functional.gti",
-        "tests/fixtures/owned_inline_callbacks.gti",
-        "tests/owned_inline_consumption_test.py"
+        "tests/ui/callables/owned_inline/callbacks.gti",
+        "tests/ui/callables/owned_inline"
       ]
     },
     {
@@ -4981,8 +4979,8 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/transfer_function_threads.gti",
         "tests/managed_thread_tests.cpp",
-        "tests/fixtures/owned_inline_callbacks.gti",
-        "tests/owned_inline_consumption_test.py"
+        "tests/ui/callables/owned_inline/callbacks.gti",
+        "tests/ui/callables/owned_inline"
       ]
     },
     {
@@ -5441,7 +5439,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -5592,7 +5590,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -5611,8 +5609,8 @@
         "non-owning immutable foreign byte address"
       ],
       "evidence": [
-        "tests/c_string_import_runtime_test.py",
-        "tests/fixtures/c_string_import.gti",
+        "tests/ui/stdlib/string/c_string_import",
+        "tests/ui/stdlib/string/c_string_import/import.gti",
         "tests/unit/resource_memory_runtime_tests.cpp"
       ]
     },
@@ -5706,11 +5704,11 @@
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
-        "tests/allocator_storage_runtime_test.py",
+        "tests/ui/stdlib/memory/allocator_storage",
         "tests/fixtures/storage_final_address.gti",
         "tests/fixtures/storage_release.gti",
-        "tests/arena_pool_runtime_test.py",
-        "tests/fixtures/allocator_storage.gti",
+        "tests/ui/stdlib/memory/arena_pool",
+        "tests/ui/stdlib/memory/allocator_storage/success.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
         "examples/120-immovable-storage.gti",
@@ -5795,11 +5793,11 @@
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
       ],
       "evidence": [
-        "tests/allocator_storage_runtime_test.py",
+        "tests/ui/stdlib/memory/allocator_storage",
         "tests/fixtures/storage_final_address.gti",
         "tests/fixtures/storage_release.gti",
-        "tests/arena_pool_runtime_test.py",
-        "tests/fixtures/allocator_storage.gti",
+        "tests/ui/stdlib/memory/arena_pool",
+        "tests/ui/stdlib/memory/allocator_storage/success.gti",
         "tests/fixtures/arena_pool.gti",
         "tests/fixtures/structural_relocation.gti",
         "examples/120-immovable-storage.gti",
@@ -6403,7 +6401,7 @@
         "tests/fixtures/mutex_basic.gti",
         "tests/fixtures/mutex_concurrent.gti",
         "tests/fixtures/mutex_move_only.gti",
-        "tests/mutex_runtime_test.py",
+        "tests/ui/stdlib/mutex",
         "tests/mutex_tests.cpp",
         "tests/mutex_tsan_test.py"
       ]
@@ -6476,11 +6474,10 @@
         "tests/fixtures/stdlib_surface_numeric.gti",
         "tests/fixtures/generic_callable_concepts.gti",
         "tests/ui/callables/concepts",
-        "tests/defined_integer_runtime_test.py",
-        "tests/numeric_boundaries_runtime_test.py",
-        "tests/fixtures/numeric_boundaries.gti",
-        "tests/fixtures/numeric_boundaries_oracle.cpp",
-        "tests/fixtures/numeric_boundaries_failure.gti",
+        "tests/ui/stdlib/numeric/defined_integer_boundaries.gti",
+        "tests/ui/stdlib/numeric",
+        "tests/ui/stdlib/numeric/boundaries.gti",
+        "tests/ui/stdlib/numeric/boundaries_failure.gti",
         "tests/fixtures/numeric_limits.gti"
       ]
     },
@@ -6519,14 +6516,14 @@
       "evidence": [
         "tests/fixtures/optional_lifecycle.gti",
         "tests/fixtures/optional_value.gti",
-        "tests/fixtures/optional_clone.gti",
+        "tests/ui/stdlib/optional/clone.gti",
         "tests/fixtures/optional_nested.gti",
         "tests/fixtures/optional_expected_composition.gti",
         "tests/ui/language/construction/expected_constructor_payload.gti",
-        "tests/fixtures/optional_constructor_failure.gti",
-        "tests/fixtures/optional_reset_failure.gti",
+        "tests/ui/stdlib/optional/constructor_failure.gti",
+        "tests/ui/stdlib/optional/reset_failure.gti",
         "tests/optional_compiler_tests.cpp",
-        "tests/optional_runtime_test.py",
+        "tests/ui/stdlib/optional",
         "stdlib/std/optional.gti"
       ]
     },
@@ -6606,7 +6603,7 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
-        "tests/panic_runtime_test.py",
+        "tests/ui/runtime/panic",
         "tests/panic_contract_tests.cpp",
         "stdlib/std/panic.gti",
         "tests/reference_parameter_packs_test.py",
@@ -6637,14 +6634,12 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_polymorphic.gti",
-        "tests/fixtures/inline_polymorphic_lifecycle.gti",
-        "tests/fixtures/inline_polymorphic_allocations.cpp",
-        "tests/inline_polymorphic_runtime_test.py",
+        "tests/slow/memory/inline_polymorphic_lifecycle.gti",
         "tests/polymorphic_storage_compiler_tests.cpp",
-        "tests/inline_closure_owner_runtime_test.py",
+        "tests/ui/callables/closure_objects",
         "stdlib/std/polymorphic.gti",
-        "tests/fixtures/owned_inline_consumption.gti",
-        "tests/owned_inline_consumption_test.py",
+        "tests/ui/callables/owned_inline/borrowed_receiver_rejected.gti",
+        "tests/ui/callables/owned_inline",
         "examples/135-inline-polymorphic-values.gti"
       ]
     },
@@ -6851,9 +6846,8 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_tryable.gti",
-        "tests/fixtures/tryable_propagation.gti",
+        "tests/ui/expected/tryable_propagation.gti",
         "tests/tryable_propagation_tests.cpp",
-        "tests/tryable_propagation_runtime_test.py",
         "tests/protocol_concept_tests.cpp",
         "examples/165-borrowed-payload-results.gti"
       ]
@@ -7331,7 +7325,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -7645,10 +7639,10 @@
       ],
       "evidence": [
         "examples/151-c-string-import.gti",
-        "tests/c_string_import_runtime_test.py",
-        "tests/fixtures/c_string_import.gti",
-        "tests/fixtures/c_string_import_null.gti",
-        "tests/fixtures/c_string_import_exhausted.gti"
+        "tests/ui/stdlib/string/c_string_import",
+        "tests/ui/stdlib/string/c_string_import/import.gti",
+        "tests/ui/stdlib/string/c_string_import/null.gti",
+        "tests/ui/stdlib/string/c_string_import/exhausted.gti"
       ]
     },
     {
@@ -7742,8 +7736,7 @@
       "evidence": [
         "tests/fixtures/span_owner_dependent.gti",
         "tests/fixtures/stdlib_surface_string.gti",
-        "tests/fixtures/string_index_range.gti",
-        "tests/string_index_range_runtime_test.py",
+        "tests/ui/stdlib/string/index_range.gti",
         "tests/fixtures/string_c_string.gti",
         "tests/fixtures/string_c_string.cpp",
         "tests/string_c_string_runtime_test.py",
@@ -7786,7 +7779,7 @@
         "tests/ui/stdlib/string/operations_errors",
         "tests/ui/borrow/container_views",
         "tests/fixtures/string_view_assignment.gti",
-        "tests/declaration_construction_runtime_test.py"
+        "tests/ui/classes/declaration_construction.gti"
       ]
     },
     {
@@ -7836,7 +7829,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -7855,8 +7848,8 @@
         "distinct reserved capacities"
       ],
       "evidence": [
-        "tests/fixtures/container_swap.gti",
-        "tests/container_swap_runtime_test.py"
+        "tests/ui/stdlib/containers/swap/values.gti",
+        "tests/ui/stdlib/containers/swap"
       ]
     },
     {
@@ -8222,7 +8215,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -8327,7 +8320,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -8353,7 +8346,7 @@
       "evidence": [
         "tests/fixtures/generic_clone.gti",
         "tests/ui/generics/clone",
-        "tests/concept_conditions_test.py"
+        "tests/ui/generics/concept_conditions"
       ]
     },
     {
@@ -8607,7 +8600,7 @@
       ],
       "evidence": [
         "tests/fixtures/removal_algorithms.gti",
-        "tests/removal_algorithms_test.py",
+        "tests/ui/stdlib/algorithm/removal",
         "examples/090-generic-algorithms.gti"
       ]
     },
@@ -8627,9 +8620,9 @@
         "move-only destructor-bearing item"
       ],
       "evidence": [
-        "tests/fixtures/container_swap.gti",
-        "tests/fixtures/container_swap_cleanup.gti",
-        "tests/container_swap_runtime_test.py"
+        "tests/ui/stdlib/containers/swap/values.gti",
+        "tests/ui/stdlib/containers/swap/cleanup.gti",
+        "tests/ui/stdlib/containers/swap"
       ]
     }
   ]

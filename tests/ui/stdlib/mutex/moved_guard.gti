@@ -1,0 +1,13 @@
+// A moved mutex and a moved guard still reach the one payload.
+//@ run-pass
+//@ execution-profile: concurrent
+import std.mutex;
+int main() {
+  std::mutex<int32_t> first{7};
+  std::mutex<int32_t> second = std::move(first);
+  mut std::mutex_guard<int32_t> guard = second.lock();  //~ WARN GTI-S2096
+  mut std::mutex_guard<int32_t> moved = std::move(guard);
+  mut int32_t& value = moved.get();
+  value = value + 1;
+  return value == 8 ? 0 : 1;
+}

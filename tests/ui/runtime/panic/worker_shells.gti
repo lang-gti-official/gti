@@ -1,0 +1,63 @@
+// A panic in a worker shell unwinds its locals; a cleanup failure escalates.
+//@ run-fail
+//@ revisions: panic cleanup
+//@ execution-profile: concurrent
+//@[panic] exit-code: 70
+//@[panic] stdout: 82
+//@[panic] stdout: 83
+//@[panic] stdout: 94
+//@[panic] stdout: 93
+//@[panic] stdout: 84
+//@[panic] stdout: 90
+//@[panic] stderr-contains: panic_worker_shells.gti:31: runtime error[GTI-R0017]: panic: "shell primary failure"
+//@[cleanup] exit-code: 70
+//@[cleanup] args: case
+//@[cleanup] stdout: 82
+//@[cleanup] stderr-contains: panic_worker_shells.gti:14: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at panic_worker_shells.gti:31 message="shell primary failure"; secondary [GTI-R0017] message="cleanup failed"
+// --- panic_worker_shells.gti
+import std.panic;
+import std.memory;
+import std.thread;
+import std.string;
+import std.vector;
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+void worker_failure(bool emergency) {
+  auto shared = std::make_shared<Guard>(93, false);
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<Guard>(std::size_t(1));
+  if (!allocated) { std::panic("storage allocation failed"); }
+  mut std::storage<Guard> storage = std::move(allocated).value();
+  storage.construct(std::size_t(0), Guard(94));
+  auto nested_started = std::thread::start([]() -> void {});
+  if (!nested_started) { std::panic("nested worker start failed"); }
+  std::thread nested = std::move(nested_started).value();
+  Guard skipped{83};
+  Guard failing{82, emergency};
+  std::panic("shell primary failure"); // shell-primary-site
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard parent{90};
+  bool emergency = argc > 1;
+  auto started = std::thread::start([emergency]() -> void {
+    Guard caller{84};
+    worker_failure(emergency);
+  });
+  if (!started) { return 99; }
+  mut std::thread worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) { return 98; }
+  return 0;
+}

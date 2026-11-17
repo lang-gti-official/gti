@@ -6,7 +6,6 @@
     "macos_"
   ],
   "tests": [
-    "atomic_end_to_end",
     "atomic_lsp",
     "atomic_semantic_ir",
     "atomic_tsan",
@@ -15,7 +14,6 @@
     "bindgen_pipeline",
     "c_abi_header_boundary",
     "cthread_condition_runtime",
-    "cthread_create_join_runtime",
     "cthread_mutex_runtime",
     "cthread_once_runtime",
     "cthread_runtime",
@@ -117,9 +115,7 @@
     "managed_thread_tsan",
     "mir_thread_local",
     "mutex_cleanup_failure_runtime",
-    "mutex_end_to_end",
     "mutex_lsp",
-    "mutex_move_cleanup_runtime",
     "mutex_semantic_ir",
     "mutex_shell_recipes",
     "mutex_tsan",
@@ -146,7 +142,6 @@
     "simd_semantic_ir",
     "source_debug_lldb",
     "thread_confined_callback_runtime",
-    "thread_local_end_to_end",
     "thread_local_semantic",
     "thread_local_syntax",
     "transfer_function_threads_tsan",

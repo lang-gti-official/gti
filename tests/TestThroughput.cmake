@@ -77,7 +77,6 @@ if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     callable_return_type_runtime
     consuming_range_runtime
-    ordered_search_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
     owner_chain_runtime borrowing_composition
     complete_containers composable_io_runtime
@@ -86,7 +85,6 @@ if(Python3_Interpreter_FOUND)
     paired_span_iterator_completion cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
-    dormant_capability_runtime
     expected_payload_pair_arguments_runtime
     generic_enum_instances_runtime generic_payload_enum_runtime hosted_constructor_identity_runtime
     hosted_exit_status_runtime
@@ -172,10 +170,8 @@ if(Python3_Interpreter_FOUND)
     failure_metadata 520
     allocator_raw_audit_independence 290
     operator_relay_pipeline 285
-    filesystem_operations_runtime 220
     language_coverage_corpus 170
     aggregate_projection_runtime 140
-    panic_runtime 140
     container_contract_failure 115
     cli_workflow 95
     mir_cutover_corpus_oracle 85

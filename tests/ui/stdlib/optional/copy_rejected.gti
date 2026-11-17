@@ -1,0 +1,9 @@
+// A move-only std::optional cannot be copy-initialized.
+//@ check-fail
+import std.optional;
+
+int main() {
+  std::optional<int32_t> source{1};
+  std::optional<int32_t> copied = source;  //~ ERROR GTI-S2003 Cannot initialize 'copied'
+  return copied.value();
+}
