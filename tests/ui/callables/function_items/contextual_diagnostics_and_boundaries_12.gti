@@ -1,0 +1,8 @@
+// Contextual diagnostics and boundaries: a named native-function context should keep the existing typed C callback conversion distinct from GTI function items.
+//@ check-pass
+using Callback = () -> void;
+void task() {}
+int main() {
+  Callback callback = task;
+  return 0;
+}

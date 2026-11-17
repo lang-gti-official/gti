@@ -1,0 +1,4 @@
+// General requires: an unambiguous unary receiver retains its actual call-argument span.
+concept readable<T> = requires(T& receiver) { { (receiver.read()) } -> int; };
+int use<T>(T& receiver) requires readable<T> { return 0; }
+int main() { int value = 1; return use(value); }  //~ ERROR GTI-S2029

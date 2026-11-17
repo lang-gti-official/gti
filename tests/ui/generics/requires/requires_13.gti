@@ -1,0 +1,41 @@
+// General requires: inferred results preserve existence, access and exact borrowed origins.
+//@ check-pass
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept edits<I> = requires(mut I&<cursor> cursor) {
+  { *cursor } -> mut auto&<cursor>;
+};
+struct Cell {
+  mut int value = 1;
+  int& operator*() { return this.value; }
+  mut int& operator*() mut { return this.value; }
+public:
+  Cell() = default;
+};
+struct Value { int operator*() { return 2; }  public: Value() = default; };
+struct Empty { public: Empty() = default; };
+T read<I,T>(I& cursor) requires observes<I> { return *cursor; }
+void write<I,T>(mut I& cursor, T value) requires edits<I> { *cursor = value; }
+bool same<I>(I& cursor, int value) requires observes<I> { return *cursor == value; }
+void exact<I>(mut I& cursor) requires edits<I> && requires(mut I&<input> input) {
+  { *input } -> mut int&<input>;
+} { *cursor = 3; }
+int main() {
+  static_assert(requires(Cell& cursor) { { *cursor }; });
+  static_assert(requires(Value& cursor) { { *cursor }; });
+  static_assert(!(requires(Empty& cursor) { { *cursor }; }));
+  static_assert(!(requires(mut Value&<cursor> cursor) {
+    { *cursor } -> mut auto&<cursor>;
+  }));
+  static_assert(!(requires(Cell&<cursor> cursor) {
+    { *cursor } -> mut auto&<cursor>;
+  }));
+  static_assert(!(requires(Cell&<left> left, Cell& right) {
+    { *right } -> auto&<left>;
+  }));
+  mut Cell cell{};
+  Value value{};
+  write(cell, 3);
+  exact(cell);
+  if (!same(cell, 3)) { return 9; }
+  return read<Cell,int>(cell) + read<Value,int>(value) - 5;
+}

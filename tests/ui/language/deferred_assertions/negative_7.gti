@@ -1,0 +1,5 @@
+// Negative: ordinary.
+namespace app {
+  void same(bool value) {}
+  #macro same(int value) {}  //~ ERROR GTI-S2099
+}

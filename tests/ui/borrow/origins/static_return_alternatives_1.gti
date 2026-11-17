@@ -1,0 +1,8 @@
+// Static return alternatives: a static alternative does not permit returning a local borrow.
+import std.string;
+std::string_view Dangling(bool empty) {
+  if (empty) { return ""; }
+  std::string local{"expired"};
+  return local.view();  //~ ERROR GTI-S2045
+}
+int main() { return 0; }

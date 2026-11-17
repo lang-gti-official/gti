@@ -1,0 +1,10 @@
+// Negative: mutable witness cannot upgrade const address.
+import std.memory;
+int main() {
+  mut int owner = 42;
+  unsafe {
+    const int* address = &owner;
+    mut int& value = std::assume_mut(address, owner);  //~ ERROR GTI-S2003 //~ ERROR GTI-S2017
+    return value;
+  }
+}

@@ -1,0 +1,36 @@
+// General requires: source sized_range preserves checked fixed-array size and exact read-only results.
+//@ check-pass
+import std.iterator;
+import std.vector;
+std::size_t measured<R>(R& range) requires std::sized_range<R> {
+  return range.size();
+}
+struct Cursor {
+  int value = 0;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(Cursor& other) { return false; }
+public:
+  Cursor() = default;
+};
+struct WrongSize {
+  Cursor begin() { return Cursor(); }
+  Cursor end() { return Cursor(); }
+  int size() { return 1; }
+public:
+  WrongSize() = default;
+};
+struct MutableSize {
+  Cursor begin() { return Cursor(); }
+  Cursor end() { return Cursor(); }
+  std::size_t size() mut { return std::size_t(1); }
+public:
+  MutableSize() = default;
+};
+int main() {
+  static_assert(!(requires(WrongSize& range) { { measured(range) } -> std::size_t; }));
+  static_assert(!(requires(MutableSize& range) { { measured(range) } -> std::size_t; }));
+  int[3] fixed = {1, 2, 3};
+  std::vector<int> dynamic{};
+  return measured(fixed) == std::size_t(3) && measured(dynamic) == std::size_t(0) ? 0 : 1;
+}

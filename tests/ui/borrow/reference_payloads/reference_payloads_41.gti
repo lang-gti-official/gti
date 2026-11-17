@@ -1,0 +1,9 @@
+// Reference payloads: rejected with GTI-S2022.
+//@ analyze-fail
+class Owner {
+  mut int value;
+public:
+  Owner() : value(42) {}
+  int& take() && { return this.value; }  //~ ERROR GTI-S2022
+};
+int main() { return 0; }

@@ -1,0 +1,2 @@
+// Migration and overload diagnostics: removed deferred attributes receive a migration diagnostic.
+[[deferred]] void old() {}  //~ ERROR GTI-S2099

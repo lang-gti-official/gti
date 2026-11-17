@@ -1,0 +1,16 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Root<lifetime a, lifetime b> {
+  int&<a> first;
+  int&<b> second;
+  Root(int&<a> first, int&<b> second) : first(first), second(second) {}
+};
+struct Swapped<lifetime a, lifetime b> : public Root<b, a> {
+  Swapped(int&<a> first, int&<b> second) : Root<b, a>(second, first) {}
+};
+int&<a> pick<lifetime a>(int&<a> input) {
+  int local = 9;
+  Swapped view{local, input};
+  return view.first;
+}
+int main() { int value = 7; return pick(value) - 7; }

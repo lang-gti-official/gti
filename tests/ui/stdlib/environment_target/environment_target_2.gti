@@ -1,0 +1,4 @@
+// Environment target: the program is accepted.
+//@ check-pass
+import std.environment;
+int main() { return 0; }

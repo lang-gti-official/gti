@@ -1,0 +1,8 @@
+// A macro argument of the wrong type is rejected at the invocation.
+// (From deferred_assertion_lsp_test.py.)
+import std.assert;
+namespace application {
+  /*😀*/ #macro check(int value) { std::assert!(value == 7); }
+  #macro check(bool value) { std::assert!(value); }
+}
+int main() { /*😀*/ application::check!("wrong"); return 0; }  //~ ERROR GTI-S2012

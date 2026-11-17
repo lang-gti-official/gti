@@ -1,0 +1,11 @@
+// Owning functions: owning callbacks reject noncopyable clone targets, inexact signatures and implicit wrapper copies without a compiler ICE.
+import std.functional;
+import std.memory;
+int main() {
+
+auto owned = std::make_unique<int>(7);
+auto callback = [owned = std::move(owned)]() -> int { return *owned; };
+std::function<int()> wrapper{std::move(callback)};  //~ ERROR GTI-S2029
+
+return 0;
+}

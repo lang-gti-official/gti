@@ -1,0 +1,26 @@
+// Exclusive reborrow loan graph: ordinary read-only owner dependencies should remain valid for a lexically bounded stored carrier.
+//@ check-pass
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+  void bump() mut { this.value += 1; }
+public:
+  Box() = default;
+};
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+int main() {
+  mut Box owner = Box();
+  mut int observed = 0;
+  {
+    View retained = View(owner.read());
+    observed = retained.get();
+  }
+  owner.bump();
+  return observed + owner.value - 5;
+}

@@ -1,0 +1,4 @@
+// std::map's subscript takes exactly the key type.
+//@ check-fail
+import std.map;
+int main() { mut std::map<int, int> values{}; return values[int64_t(1)]; }  //~ ERROR GTI-S2022 No exact overload

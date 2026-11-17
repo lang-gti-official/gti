@@ -1,0 +1,9 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+class Collection<T> { public: using view = View<T>; };
+int read<lifetime a>(int&<a> input) {
+  Collection<int>::view value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }

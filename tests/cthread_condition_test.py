@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real condition-variable runtime and public GTI predicate loops in eight modes."""
+"""Native condition runtime unit checks; the GTI clients are tests/ui/concurrency/cthread."""
 
 import pathlib
 import sys
@@ -36,28 +36,6 @@ def main():
             run([native])
             run([native, "destroy-waiting"], 86)
             run([native, "reacquire-failure"], 86)
-            for fixture in ("cthread_condition", "cthread_condition_concurrent", "cthread_condition_destroy"):
-                binary = output / f"{fixture}-{mode}"
-                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", *flags, *keep_cpp(flags), "--execution-profile", "concurrent", "-o", binary]
-                extra = [*sanitizers]
-                if fixture.endswith(("concurrent", "destroy")):
-                    extra += [fixtures / "cthread_condition_context.cpp"]
-                if extra:
-                    command += ["--", *extra]
-                run(command)
-                run([binary], 86 if fixture.endswith("destroy") else 0)
-                if is_cpp_mode(flags):
-                    generated = binary.with_suffix(".gti.cpp").read_text()
-                # The invalid-destroy fixture does not wait. Check the native
-                # operation it actually exercises; unused wait wrappers are
-                # correctly absent after reachable-only lowering.
-                operations = (("destroy",) if fixture.endswith("destroy")
-                              else ("wait", "timedwait", "destroy"))
-                if is_cpp_mode(flags):
-                    if ("// GTI verified-MIR body:" not in generated or
-                            any(f"::{native_spelling(generated, 'gti_rt_cnd_' + op + '_v1')}("
-                                not in generated for op in operations)):
-                        raise AssertionError(f"{fixture} lost its MIR/native-call witness")
             print(f"C-thread condition: {mode} passed", flush=True)
 
 

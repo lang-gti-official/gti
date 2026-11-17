@@ -1,0 +1,19 @@
+// Text reference dependencies: checked text reference rejects invalidation or escape before MIR.
+import std.string;
+struct TextReader {
+  std::string_view& text;
+  TextReader(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+  std::string_view read() { return this.text; }
+};
+std::size_t text_size(std::string_view& input, std::string_view& other) {
+  TextReader reader{input};
+  return reader.size() + other.size();
+}
+std::string_view& relay_text(std::string_view& input) { return input; }
+std::size_t relayed_size(std::string_view& input) {
+  TextReader reader{relay_text(input)};
+  std::string_view copied = reader.read();
+  return copied.size();
+}
+int main() { std::string owner = std::string("text"); mut std::string_view view = owner.view(); TextReader reader{view}; view = "changed"; return int(reader.size()); }  //~ ERROR GTI-S2017

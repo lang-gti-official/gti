@@ -1,0 +1,44 @@
+// Raw query budget: rejected with GTI-S2103.
+//@ analyze-fail
+//@ raw-pointer-audit: strict
+int main() { int value = 7; const int* pointer = Relay0(&value).pointer; unsafe { return *pointer - 7; } }  //~ ERROR GTI-S2103
+struct Relay0 { mut const int* pointer = nullptr; Relay0(const int* input) { this.pointer = Relay1(input).pointer; } };
+struct Relay1 { mut const int* pointer = nullptr; Relay1(const int* input) { this.pointer = Relay2(input).pointer; } };
+struct Relay2 { mut const int* pointer = nullptr; Relay2(const int* input) { this.pointer = Relay3(input).pointer; } };
+struct Relay3 { mut const int* pointer = nullptr; Relay3(const int* input) { this.pointer = Relay4(input).pointer; } };
+struct Relay4 { mut const int* pointer = nullptr; Relay4(const int* input) { this.pointer = Relay5(input).pointer; } };
+struct Relay5 { mut const int* pointer = nullptr; Relay5(const int* input) { this.pointer = Relay6(input).pointer; } };
+struct Relay6 { mut const int* pointer = nullptr; Relay6(const int* input) { this.pointer = Relay7(input).pointer; } };
+struct Relay7 { mut const int* pointer = nullptr; Relay7(const int* input) { this.pointer = Relay8(input).pointer; } };
+struct Relay8 { mut const int* pointer = nullptr; Relay8(const int* input) { this.pointer = Relay9(input).pointer; } };
+struct Relay9 { mut const int* pointer = nullptr; Relay9(const int* input) { this.pointer = Relay10(input).pointer; } };
+struct Relay10 { mut const int* pointer = nullptr; Relay10(const int* input) { this.pointer = Relay11(input).pointer; } };
+struct Relay11 { mut const int* pointer = nullptr; Relay11(const int* input) { this.pointer = Relay12(input).pointer; } };
+struct Relay12 { mut const int* pointer = nullptr; Relay12(const int* input) { this.pointer = Relay13(input).pointer; } };
+struct Relay13 { mut const int* pointer = nullptr; Relay13(const int* input) { this.pointer = Relay14(input).pointer; } };
+struct Relay14 { mut const int* pointer = nullptr; Relay14(const int* input) { this.pointer = Relay15(input).pointer; } };
+struct Relay15 { mut const int* pointer = nullptr; Relay15(const int* input) { this.pointer = Relay16(input).pointer; } };
+struct Relay16 { mut const int* pointer = nullptr; Relay16(const int* input) { this.pointer = Relay17(input).pointer; } };
+struct Relay17 { mut const int* pointer = nullptr; Relay17(const int* input) { this.pointer = Relay18(input).pointer; } };
+struct Relay18 { mut const int* pointer = nullptr; Relay18(const int* input) { this.pointer = Relay19(input).pointer; } };
+struct Relay19 { mut const int* pointer = nullptr; Relay19(const int* input) { this.pointer = Relay20(input).pointer; } };
+struct Relay20 { mut const int* pointer = nullptr; Relay20(const int* input) { this.pointer = Relay21(input).pointer; } };
+struct Relay21 { mut const int* pointer = nullptr; Relay21(const int* input) { this.pointer = Relay22(input).pointer; } };
+struct Relay22 { mut const int* pointer = nullptr; Relay22(const int* input) { this.pointer = Relay23(input).pointer; } };
+struct Relay23 { mut const int* pointer = nullptr; Relay23(const int* input) { this.pointer = Relay24(input).pointer; } };
+struct Relay24 { mut const int* pointer = nullptr; Relay24(const int* input) { this.pointer = Relay25(input).pointer; } };
+struct Relay25 { mut const int* pointer = nullptr; Relay25(const int* input) { this.pointer = Relay26(input).pointer; } };
+struct Relay26 { mut const int* pointer = nullptr; Relay26(const int* input) { this.pointer = Relay27(input).pointer; } };
+struct Relay27 { mut const int* pointer = nullptr; Relay27(const int* input) { this.pointer = Relay28(input).pointer; } };
+struct Relay28 { mut const int* pointer = nullptr; Relay28(const int* input) { this.pointer = Relay29(input).pointer; } };
+struct Relay29 { mut const int* pointer = nullptr; Relay29(const int* input) { this.pointer = Relay30(input).pointer; } };
+struct Relay30 { mut const int* pointer = nullptr; Relay30(const int* input) { this.pointer = Relay31(input).pointer; } };
+struct Relay31 { mut const int* pointer = nullptr; Relay31(const int* input) { this.pointer = Relay32(input).pointer; } };
+struct Relay32 { mut const int* pointer = nullptr; Relay32(const int* input) { this.pointer = Relay33(input).pointer; } };
+struct Relay33 { mut const int* pointer = nullptr; Relay33(const int* input) { this.pointer = Relay34(input).pointer; } };
+struct Relay34 { mut const int* pointer = nullptr; Relay34(const int* input) { this.pointer = Relay35(input).pointer; } };
+struct Relay35 { mut const int* pointer = nullptr; Relay35(const int* input) { this.pointer = Relay36(input).pointer; } };
+struct Relay36 { mut const int* pointer = nullptr; Relay36(const int* input) { this.pointer = Relay37(input).pointer; } };
+struct Relay37 { mut const int* pointer = nullptr; Relay37(const int* input) { this.pointer = Relay38(input).pointer; } };
+struct Relay38 { mut const int* pointer = nullptr; Relay38(const int* input) { this.pointer = Relay39(input).pointer; } };
+struct Relay39 { mut const int* pointer = nullptr; Relay39(const int* input) { this.pointer = input; } };

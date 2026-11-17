@@ -1,0 +1,2 @@
+// Consuming methods and value operators: invalid consuming-method use fails in the frontend (value-producing operators).
+class C { public: bool operator==(C& other) && { return true; }  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2022 //~ ERROR GTI-S2022

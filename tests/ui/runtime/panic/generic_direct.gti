@@ -1,0 +1,19 @@
+// A panic in a generic function reports the tracked caller site.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: panic_generic_direct.gti:13: runtime error[GTI-R0017]: panic: "generic tracked panic"
+// --- panic_generic_direct.gti
+import std.panic;
+
+[[track_caller]]
+T identity<T>(T value) { return value; }
+
+[[noreturn, track_caller]]
+void generic_leaf<T>(T value) { std::panic("generic tracked panic"); }
+
+[[noreturn, track_caller]]
+void generic_outer<T>(T value) { generic_leaf(value); }
+
+int main() {
+  generic_outer(identity(7)); // generic-direct-site
+}

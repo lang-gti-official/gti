@@ -1,0 +1,20 @@
+// Parameter payload reference returns: a by-value parameter cannot own a reference result.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+int32_t& inner(wrap value) {  //~ ERROR GTI-S2017
+  switch (value) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { wrap w = wrap::one(3); return inner(w) - 3; }

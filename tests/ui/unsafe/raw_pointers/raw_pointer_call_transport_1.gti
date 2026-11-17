@@ -1,0 +1,14 @@
+// Raw pointer call transport: unsummarized source calls must preserve possibly forwarded known origins.
+//@ raw-pointer-audit: strict
+struct Address {
+  const int* pointer = nullptr;
+  Address(const int* input) : pointer(input) {}
+public:
+  Address() = default;
+};
+int main() {
+  mut const int* pointer = nullptr;
+  { int gone = 5; pointer = &gone; }
+  Address address{pointer};
+  unsafe { return *address.pointer; }  //~ ERROR GTI-S2102
+}

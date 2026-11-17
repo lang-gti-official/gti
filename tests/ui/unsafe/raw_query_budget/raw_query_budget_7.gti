@@ -1,0 +1,6 @@
+// Raw query budget: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: warn
+const int* first(const int* p) { return second(p); }
+const int* second(const int* p) { return first(p); }
+int main() { int value = 7; const int* p = first(&value); unsafe { return *p; } }  //~ WARN GTI-S2103

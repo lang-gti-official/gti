@@ -1,0 +1,22 @@
+// Nested borrowed fields: nested one-owner fields must preserve shared aliases through construction, copying, moving and projected method calls.
+//@ check-pass
+class View {
+public:
+  int& item;
+  View(int& value) : item(value) {}
+  int& read() { return this.item; }
+};
+class Box<T> {
+public:
+  T value;
+  bool inserted;
+  Box(T value, bool inserted) : value(std::move(value)), inserted(inserted) {}
+};
+Box<View> make(int& owner) { return Box<View>(View(owner), true); }
+int main() {
+  int owner = 42;
+  auto result = make(owner);
+  auto copied = result;
+  auto nested = Box<Box<View>>(std::move(result), false);
+  return copied.value.read() + nested.value.value.read() - 84;
+}

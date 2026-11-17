@@ -1,0 +1,15 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+unsafe mut T&<a> borrow_mut<T, Owner, lifetime a>(T* address, mut Owner&<a> owner) { unsafe { return *address; } }
+struct View<lifetime a> {
+  int&<a> external; mut int local = 7;
+  View(int&<a> source) : external(source) {}
+  mut int& edit() mut { unsafe { return borrow_mut(&this.local, this); } }
+  int&<this> read() { unsafe { return *(&this.local); } }
+};
+int main() {
+  int external = 3; mut View view{external};
+  view.edit() = 11;
+  return view.read() - 11;
+}

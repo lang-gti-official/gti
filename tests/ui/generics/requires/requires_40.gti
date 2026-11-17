@@ -1,0 +1,27 @@
+// General requires: source consuming-call requirements preserve ordinary access, safety, arity and exact result checks.
+//@ check-pass
+import std.functional;
+concept task<F> = requires(F action) { { std::move(action)() } -> void; };
+void run<F>(F action) requires task<F> { std::move(action)(); }
+void forward<F>(F action) requires std::once_action<F> {
+  std::invoke_once(std::move(action));
+}
+struct Once { void operator()() && {}  public: Once() = default; };
+struct Read { void operator()() {}  public: Read() = default; };
+struct Mutable { void operator()() mut {}  public: Mutable() = default; };
+struct Wrong { int operator()() && { return 1; }  public: Wrong() = default; };
+struct NeedsArgument { void operator()(int value) {}  public: NeedsArgument() = default; };
+unsafe void unsafe_action() {}
+class Hidden { void operator()() {}  public: Hidden() = default; };
+int main() {
+  run(Once());
+  forward(Once());
+  forward(Read());
+  forward(Mutable());
+  forward([]() -> void {});
+  static_assert(!(requires(Wrong action) { { std::move(action)() } -> void; }));
+  static_assert(!(requires(NeedsArgument action) { { std::move(action)() } -> void; }));
+  static_assert(!(requires { { unsafe_action() } -> void; }));
+  static_assert(!(requires(Hidden action) { { std::move(action)() } -> void; }));
+  return 0;
+}

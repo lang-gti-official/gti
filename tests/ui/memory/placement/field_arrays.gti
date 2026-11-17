@@ -1,0 +1,35 @@
+// Pinned array fields are built in place in their owner.
+//@ run-pass
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+struct Group {
+  Pinned values[2][2] = {{Pinned(1), make(2)}, {relay(3), Pinned(4)}};
+  bool stable() { return this.values[0][0].stable() && this.values[1][1].stable(); }
+public:
+  Group() = default;
+};
+int main() {
+  { Group value{}; if (!value.stable()) { return 1; } }
+  return constructed == 1234 && destroyed == 4321 ? 0 : 2;
+}

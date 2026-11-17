@@ -1,0 +1,5 @@
+// Lifetimes: rejected with GTI-S2017.
+int& choose(int& first, int& second, bool pick_first) {  //~ ERROR GTI-S2017
+  if (pick_first) { return first; }
+  return second;
+}

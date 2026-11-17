@@ -1,0 +1,12 @@
+// Borrowed payload patterns: by-value payload extraction precedes a mutable sibling loan.
+//@ check-pass
+enum class pairing { both(int32_t left, int32_t right) };
+int main() {
+  mut pairing value = pairing::both(1, 2);
+  switch (value) {
+    case pairing::both(mut auto& left, right):
+      left += right;
+      break;
+  }
+  switch (value) { case pairing::both(left, right): return left - 3; }
+}

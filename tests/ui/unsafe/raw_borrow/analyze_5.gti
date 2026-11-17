@@ -1,0 +1,12 @@
+// Analyze: repaired loop address can create a checked borrow.
+//@ check-pass
+import std.memory;
+int main() {
+  int owner = 42;
+  mut const int* address = &owner;
+  for (mut int i = 0; i < 2; ++i) {
+    address = &owner;
+    unsafe { int& value = std::assume_ref(address, owner); if (value != 42) return 1; }
+  }
+  return 0;
+}

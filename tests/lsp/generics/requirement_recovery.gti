@@ -1,0 +1,93 @@
+// A requirement result that does not hold fails the concept; incomplete
+// requirement syntax recovers. (From general_requires_lsp_test.py.)
+import std.meta;
+// UTF-16 positioning: 🧮
+concept sums<T> = requires(T& left, T& right) { { left + right } -> bool; };
+concept integer_value<T> = std::meta::is_integral<T>();
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+concept cleanup_needed<T> = std::meta::has_active_cleanup<T>();
+concept dynamic_object<T> = std::meta::is_polymorphic<T>();
+concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T increment<T>(T value) requires integer_domain<T> { return value + 1; }
+T add<sums T>(T& left, T& right) { return left + right; }
+T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
+concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
+concept editable<C, T> = requires(mut C&<owner> owner) { { owner.edit() } -> mut T&<owner>; };
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept loop_checked<F, R, Result> = requires(mut F& function, R& range) { for (auto& element : range) { static_assert(requires { { function(element) } -> Result; }); } };
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept changes<I> = requires(mut I&<cursor> cursor) { { *cursor } -> mut auto&<cursor>; };
+class Window { int& first; public: Window(int& first) : first(first) {} };
+concept views<S> = requires(S&<view_source> view_source) { { view_source.view() } -> Window<view_source>; };
+concept infers_view<S> = requires(S&<carrier_source> carrier_source) { { carrier_source.view() } -> auto<carrier_source>; };
+int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }  //~ ERROR GTI-S2029
+// --- step 2
+import std.meta;
+// UTF-16 positioning: 🧮
+concept sums<T> = requires(T& left, T& right) { { left + right } -> T; };
+concept integer_value<T> = std::meta::is_integral<T>();
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+concept cleanup_needed<T> = std::meta::has_active_cleanup<T>();
+concept dynamic_object<T> = std::meta::is_polymorphic<T>();
+concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T increment<T>(T value) requires integer_domain<T> { return value + 1; }
+T add<sums T>(T& left, T& right) { return left + right; }
+T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
+concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
+concept editable<C, T> = requires(mut C&<owner> owner) { { owner.edit() } -> mut T&<owner>; };
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept loop_checked<F, R, Result> = requires(mut F& function, R& range) { for (auto& element : range) { static_assert(requires { { function(element) } -> Result; }); } };
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept changes<I> = requires(mut I&<cursor> cursor) { { *cursor } -> mut auto&<cursor>; };
+class Window { int& first; public: Window(int& first) : first(first) {} };
+concept views<S> = requires(S&<view_source> view_source) { { view_source.view() } -> Window<view_source>; };
+concept infers_view<S> = requires(S&<carrier_source> carrier_source) { { carrier_source.view() } -> auto<carrier_source>; };
+int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
+// --- step 3
+import std.meta;
+// UTF-16 positioning: 🧮
+concept sums<T> = requires(T& left, T& right) { { left + } -> T; };  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001
+concept integer_value<T> = std::meta::is_integral<T>();
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+concept cleanup_needed<T> = std::meta::has_active_cleanup<T>();
+concept dynamic_object<T> = std::meta::is_polymorphic<T>();
+concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T increment<T>(T value) requires integer_domain<T> { return value + 1; }
+T add<sums T>(T& left, T& right) { return left + right; }  //~ ERROR GTI-S2029
+T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
+concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
+concept editable<C, T> = requires(mut C&<owner> owner) { { owner.edit() } -> mut T&<owner>; };
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept loop_checked<F, R, Result> = requires(mut F& function, R& range) { for (auto& element : range) { static_assert(requires { { function(element) } -> Result; }); } };
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept changes<I> = requires(mut I&<cursor> cursor) { { *cursor } -> mut auto&<cursor>; };
+class Window { int& first; public: Window(int& first) : first(first) {} };
+concept views<S> = requires(S&<view_source> view_source) { { view_source.view() } -> Window<view_source>; };
+concept infers_view<S> = requires(S&<carrier_source> carrier_source) { { carrier_source.view() } -> auto<carrier_source>; };
+int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }
+// --- step 4
+import std.meta;
+// UTF-16 positioning: 🧮
+concept sums<T> = requires(T& left, T& right) { { left + right } -> T; };
+concept integer_value<T> = std::meta::is_integral<T>();
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept detached_object<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+concept cleanup_needed<T> = std::meta::has_active_cleanup<T>();
+concept dynamic_object<T> = std::meta::is_polymorphic<T>();
+concept integer_domain<T> = std::meta::is_signed_integral<T>() || std::meta::is_unsigned_integral<T>();
+T increment<T>(T value) requires integer_domain<T> { return value + 1; }
+T add<sums T>(T& left, T& right) { return left + right; }
+T twice<T>(T value) requires std::meta::is_integral<T>() { return value + value; }
+concept raw_read<T> = requires(T& value) { { unsafe { value.raw() } } -> int; };
+concept editable<C, T> = requires(mut C&<owner> owner) { { owner.edit() } -> mut T&<owner>; };
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept loop_checked<F, R, Result> = requires(mut F& function, R& range) { for (auto& element : range) { static_assert(requires { { function(element) } -> Result; }); } };
+concept observes<I> = requires(I& cursor) { { *cursor }; };
+concept changes<I> = requires(mut I&<cursor> cursor) { { *cursor } -> mut auto&<cursor>; };
+class Window { int& first; public: Window(int& first) : first(first) {} };
+concept views<S> = requires(S&<view_source> view_source) { { view_source.view() } -> Window<view_source>; };
+concept infers_view<S> = requires(S&<carrier_source> carrier_source) { { carrier_source.view() } -> auto<carrier_source>; };
+int main() { int left = 3; int right = 4; return add(left, right) == twice(left) + 1 ? 0 : 1; }

@@ -1,0 +1,22 @@
+// Instance cleanup cache: each concrete constexpr-selected body retains exact temporary cleanup effects independently of query order.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    int fourth = 3;
+    int fifth = 4;
+    return first + second + third + fourth + fifth;
+  } else {
+    bool seen = inspect(Cleanup());
+    return seen ? 1 : 0;
+  }
+}
+int main() { int& borrowed = value; int first = selected<0>(); int second = selected<1>(); return borrowed + first + second; }  //~ ERROR GTI-S2045

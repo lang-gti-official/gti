@@ -1,0 +1,3 @@
+// Analyze: lambda aliasing cannot invalidate, upgrade or retain a temporary environment.
+int main() { auto fn = []() -> int { return 1; };
+              auto& alias = fn; auto moved = std::move(fn); return alias(); }  //~ ERROR GTI-S2017

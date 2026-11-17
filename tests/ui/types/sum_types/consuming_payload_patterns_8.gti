@@ -1,0 +1,21 @@
+// Consuming payload patterns: concrete generic instances consume owning and passive payloads.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class state<T> { empty, engaged(T value) };
+T unwrap<T>(state<T> source, T fallback) {
+  switch (std::move(source)) {
+  case state<T>::engaged(value):
+    return value;
+  case state<T>::empty:
+    return fallback;
+  }
+}
+int main() {
+  resource taken =
+      unwrap<resource>(state<resource>::engaged(resource()), resource());
+  return unwrap<int32_t>(state<int32_t>::empty, 0);
+}

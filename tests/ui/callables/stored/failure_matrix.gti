@@ -1,0 +1,287 @@
+// Stored, direct, heap-stored and erased exact callables unwind body and capture-cleanup failures, alone and together, with the right primary.
+//@ run-pass
+//@ revisions: f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f21 f22 f23 f24 f25 f26 f27
+//@[f0] stdout: 1
+//@[f0] stdout: 2
+//@[f0] stdout: 9
+//@[f1] args: fail
+//@[f1] stdout: 1
+//@[f1] stdout: 2
+//@[f1] stdout: 9
+//@[f1] run-fail
+//@[f1] exit-code: 70
+//@[f1] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f2] args: fail fail
+//@[f2] stdout: 1
+//@[f2] stdout: 2
+//@[f2] stdout: 9
+//@[f2] run-fail
+//@[f2] exit-code: 70
+//@[f2] stderr-contains: main.gti:86: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f3] args: fail fail fail
+//@[f3] stdout: 1
+//@[f3] run-fail
+//@[f3] exit-code: 70
+//@[f3] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:86; secondary [GTI-R0002]
+//@[f4] args: fail fail fail fail
+//@[f4] stdout: 1
+//@[f4] stdout: 2
+//@[f4] stdout: 9
+//@[f4] run-fail
+//@[f4] exit-code: 70
+//@[f4] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f5] args: fail fail fail fail fail
+//@[f5] stdout: 1
+//@[f5] stdout: 2
+//@[f5] run-fail
+//@[f5] exit-code: 70
+//@[f5] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:86; secondary [GTI-R0002]
+//@[f6] args: fail fail fail fail fail fail
+//@[f6] stdout: 1
+//@[f6] stdout: 2
+//@[f6] run-fail
+//@[f6] exit-code: 70
+//@[f6] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:13; secondary [GTI-R0002]
+//@[f7] args: fail fail fail fail fail fail fail
+//@[f7] stdout: 1
+//@[f7] stdout: 2
+//@[f7] stdout: 9
+//@[f8] args: fail fail fail fail fail fail fail fail
+//@[f8] stdout: 1
+//@[f8] stdout: 2
+//@[f8] stdout: 9
+//@[f8] run-fail
+//@[f8] exit-code: 70
+//@[f8] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f9] args: fail fail fail fail fail fail fail fail fail
+//@[f9] stdout: 1
+//@[f9] stdout: 2
+//@[f9] stdout: 9
+//@[f9] run-fail
+//@[f9] exit-code: 70
+//@[f9] stderr-contains: main.gti:99: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f10] args: fail fail fail fail fail fail fail fail fail fail
+//@[f10] stdout: 1
+//@[f10] run-fail
+//@[f10] exit-code: 70
+//@[f10] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:99; secondary [GTI-R0002]
+//@[f11] args: fail fail fail fail fail fail fail fail fail fail fail
+//@[f11] stdout: 1
+//@[f11] stdout: 2
+//@[f11] stdout: 9
+//@[f11] run-fail
+//@[f11] exit-code: 70
+//@[f11] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f12] args: fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f12] stdout: 1
+//@[f12] stdout: 2
+//@[f12] run-fail
+//@[f12] exit-code: 70
+//@[f12] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:99; secondary [GTI-R0002]
+//@[f13] args: fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f13] stdout: 1
+//@[f13] stdout: 2
+//@[f13] run-fail
+//@[f13] exit-code: 70
+//@[f13] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:13; secondary [GTI-R0002]
+//@[f14] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f14] stdout: 1
+//@[f14] stdout: 2
+//@[f14] stdout: 9
+//@[f15] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f15] stdout: 1
+//@[f15] stdout: 2
+//@[f15] stdout: 9
+//@[f15] run-fail
+//@[f15] exit-code: 70
+//@[f15] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f16] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f16] stdout: 1
+//@[f16] stdout: 2
+//@[f16] stdout: 9
+//@[f16] run-fail
+//@[f16] exit-code: 70
+//@[f16] stderr-contains: main.gti:72: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f17] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f17] stdout: 1
+//@[f17] run-fail
+//@[f17] exit-code: 70
+//@[f17] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:72; secondary [GTI-R0002]
+//@[f18] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f18] stdout: 1
+//@[f18] stdout: 2
+//@[f18] stdout: 9
+//@[f18] run-fail
+//@[f18] exit-code: 70
+//@[f18] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f19] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f19] stdout: 1
+//@[f19] stdout: 2
+//@[f19] run-fail
+//@[f19] exit-code: 70
+//@[f19] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:72; secondary [GTI-R0002]
+//@[f20] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f20] stdout: 1
+//@[f20] stdout: 2
+//@[f20] run-fail
+//@[f20] exit-code: 70
+//@[f20] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:13; secondary [GTI-R0002]
+//@[f21] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f21] stdout: 1
+//@[f21] stdout: 2
+//@[f21] stdout: 9
+//@[f22] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f22] stdout: 1
+//@[f22] stdout: 2
+//@[f22] stdout: 9
+//@[f22] run-fail
+//@[f22] exit-code: 70
+//@[f22] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f23] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f23] stdout: 1
+//@[f23] stdout: 2
+//@[f23] stdout: 9
+//@[f23] run-fail
+//@[f23] exit-code: 70
+//@[f23] stderr-contains: main.gti:58: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f24] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f24] stdout: 1
+//@[f24] run-fail
+//@[f24] exit-code: 70
+//@[f24] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:58; secondary [GTI-R0002]
+//@[f25] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f25] stdout: 1
+//@[f25] stdout: 2
+//@[f25] stdout: 9
+//@[f25] run-fail
+//@[f25] exit-code: 70
+//@[f25] stderr-contains: main.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f26] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f26] stdout: 1
+//@[f26] stdout: 2
+//@[f26] run-fail
+//@[f26] exit-code: 70
+//@[f26] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:58; secondary [GTI-R0002]
+//@[f27] args: fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail fail
+//@[f27] stdout: 1
+//@[f27] stdout: 2
+//@[f27] run-fail
+//@[f27] exit-code: 70
+//@[f27] stderr-contains: main.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:13; secondary [GTI-R0002]
+// --- main.gti
+import std.string;
+import std.vector;
+import std.memory;
+
+class Token {
+  int identity;
+  int cleanup_divisor;
+public:
+  Token(int identity, int cleanup_divisor)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.identity);
+    int result = 1 / this.cleanup_divisor;
+  }
+  int read() { return this.identity; }
+};
+
+class Owner<T> {
+  T callback;
+public:
+  Owner(T callback) : callback(std::move(callback)) {}
+  int call(int divisor) { return this.callback(divisor); }
+};
+
+Owner<T> own<T>(T value) {
+  auto result = Owner<T>(std::move(value));
+  return std::move(result);
+}
+
+std::unique_ptr<Owner<T>> heap_own<T>(T value) {
+  auto result = std::make_unique<Owner<T>>(std::move(value));
+  return std::move(result);
+}
+
+interface Callback {
+  int call(int divisor);
+};
+
+class CallbackModel<T> : public Callback {
+  T callback;
+public:
+  CallbackModel(T callback) : callback(std::move(callback)) {}
+  int call(int divisor) override { return this.callback(divisor); }
+};
+
+std::unique_ptr<Callback> erase<T>(T value) {
+  auto model = std::make_unique<CallbackModel<T>>(std::move(value));
+  auto result = std::upcast_unique<Callback, CallbackModel<T>>(std::move(model));
+  return std::move(result);
+}
+
+int erased_stored(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  auto owner = erase(std::move(callback));
+  int divisor = argc < 3 || argc == 5 || argc == 7 ? 1 : 0;
+  int result = owner->call(divisor);
+  return result - 1;
+}
+
+int heap_stored(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  auto owner = heap_own(std::move(callback));
+  int divisor = argc < 3 || argc == 5 || argc == 7 ? 1 : 0;
+  int result = owner->call(divisor);
+  return result - 1;
+}
+
+int stored(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  auto owner = own(std::move(callback));
+  int result = owner.call(argc < 3 || argc == 5 || argc == 7 ? 1 : 0);
+  return result - 1;
+}
+
+int direct(int argc) {
+  Token caller{9, 1};
+  Token earlier{2, argc >= 5 ? 0 : 1};
+  Token token{1, argc == 2 || argc == 4 || argc == 7 ? 0 : 1};
+  auto callback = [earlier = std::move(earlier), token = std::move(token)](int divisor) -> int {
+    int other = earlier.read();
+    return token.read() / divisor;
+  };
+  int result = callback(argc < 3 || argc == 5 || argc == 7 ? 1 : 0);
+  return result - 1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc > 21) {
+    return erased_stored(argc - 21);
+  }
+  if (argc > 14) {
+    return heap_stored(argc - 14);
+  }
+  if (argc <= 7) {
+    return stored(argc);
+  }
+  return direct(argc - 7);
+}

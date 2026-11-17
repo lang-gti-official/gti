@@ -1,0 +1,5 @@
+// An environment line reaches only later commands, and a terminal is
+// one stream.
+$ sh -c "echo ${LATE-unset}"
+stdout: set early
+env LATE=now

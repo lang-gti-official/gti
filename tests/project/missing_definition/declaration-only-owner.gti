@@ -1,0 +1,1 @@
+class Observer<T> { public: Observer() = default; bool expired(); }; int main() { Observer<int> value{}; return value.expired() ? 0 : 1; }

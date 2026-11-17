@@ -1,0 +1,29 @@
+// Views loaded through raw pointers are the ownerless text stored there.
+//@ run-pass
+//@ stdout: beta
+//@ stdout: alpha
+//@ stdout: entry
+//@ stdout: c
+import std.string_view;
+// A view read through a raw pointer, its index or `->` is the view stored
+// there; the pointer formal is not its owner.
+struct Entry {
+  std::string_view name;
+  int id;
+};
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view wordAt(std::string_view* items, int32_t index) { unsafe { return items[index]; } }
+std::string_view nameAt(Entry* entry) { unsafe { return entry->name; } }
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view words[2] = {"alpha", "beta"};
+  kept = wordAt(&words[0], 1);
+  std::println(kept);
+  std::println(viewAt(&words[0]));
+  mut Entry entry{.name = "entry", .id = 1};
+  std::println(nameAt(&entry));
+  std::string_view blank[2] = {};
+  std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  std::println(grid[1][0]);
+  return blank[1].empty() && kept == "beta" ? 0 : 1;
+}

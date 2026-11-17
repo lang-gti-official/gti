@@ -1,0 +1,16 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+int&<a> through<lifetime a>(Derived<a>& view) { return view.value; }
+int&<a> direct<lifetime a>(Base<a>& view) { return view.value; }
+int main() {
+  int value = 7;
+  Derived view{value};
+  return through(view) + direct(view) - 14;
+}

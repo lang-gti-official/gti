@@ -1,0 +1,11 @@
+// Raw arithmetic lifetime: pointer arithmetic must not become a pointee read or conflict with a checked loan.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() {
+  mut int values[2] = {1, 2};
+  int* pointer = &values[0];
+  mut int& exclusive = values[0];
+  unsafe { auto offset = pointer + 1; }
+  exclusive = 3;
+  return exclusive;
+}

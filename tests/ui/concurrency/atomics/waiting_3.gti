@@ -1,0 +1,4 @@
+// Waiting: invalid wait order rejected before backend.
+//@ execution-profile: concurrent
+import std.atomic;
+int main() { std::atomic<int32_t> a{0}; a.wait(0, std::memory_order_acq_rel()); return 0; }  //~ ERROR GTI-S2012

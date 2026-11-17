@@ -1,0 +1,4 @@
+// std::exchange's previous value is not discardable: ignoring it is rejected.
+//@ check-fail
+import std.utility;
+int main() { mut int value = 1; std::exchange(value, 2); return 0; }  //~ ERROR GTI-S2009

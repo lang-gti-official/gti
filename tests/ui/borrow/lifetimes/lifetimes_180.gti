@@ -1,0 +1,8 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Number {
+  int value = 7;
+  Number() = default;
+  int& get() { return this.value; }
+};
+int main() { Number number{}; int& alias = number.get(); return alias - 7; }

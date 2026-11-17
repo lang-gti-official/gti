@@ -1,0 +1,10 @@
+// Confined callable results: predicate instantiation should reject non-bool callable results before backend lowering.
+bool accepts<Predicate>(int value, Predicate predicate) {
+  return predicate(value);  //~ ERROR GTI-S2046
+}
+
+int main() {
+  auto wrong = [](int value) -> int { return value; };
+  [[discard]] accepts(1, wrong);
+  return 0;
+}

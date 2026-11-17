@@ -1,0 +1,12 @@
+// Projected raw pointer origins: raw-field collection must not recurse through stored checked references.
+//@ check-pass
+//@ raw-pointer-audit: strict
+class Node {
+public:
+  Node& next;
+  const int* pointer = nullptr;
+  Node(Node& source, int tag) : next(source) {}
+  const int* address() { return this.pointer; }
+};
+const int* address(Node& node) { return node.pointer; }
+int main() { return 0; }

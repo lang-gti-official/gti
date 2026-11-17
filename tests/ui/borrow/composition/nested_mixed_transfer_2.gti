@@ -1,0 +1,19 @@
+// Nested mixed transfer: a generic nominal wrapper can retain every moved mixed dependency.
+//@ check-pass
+import std.utility;
+struct Mixed {
+  int& read;
+  mut int& write;
+  Mixed(int& a, mut int& b) : read(a), write(b) {}
+  int update() mut { write = read; return write; }
+};
+struct Envelope<T> {
+  mut T payload;
+  Envelope(T value) : payload(std::move(value)) {}
+};
+int main() {
+  int a = 42; mut int b = 0;
+  Mixed view{a, b};
+  mut Envelope<Mixed> outer{std::move(view)};
+return outer.payload.update() - 42;
+}

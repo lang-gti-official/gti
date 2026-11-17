@@ -1,0 +1,12 @@
+// Pack fold storage effects: an actual reference-local setup initializes the later slot before the earlier fold input is bound.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t first = 1;
+thread_local mut int32_t other = 2;
+int32_t initialize() { first = 3; return 4; } thread_local mut int32_t later = initialize(); void leaf<T>(int32_t& input, int32_t& second, T& element) {}
+void folded<Args...>(Args... args) {
+  int32_t& ready = later;
+  (leaf(first, ready, args), ...);
+}
+int main() { folded(1); return 0; }

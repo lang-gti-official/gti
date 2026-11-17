@@ -1,0 +1,9 @@
+// A program writing to a stdout pipe whose reader is gone dies of SIGPIPE,
+// as when started from a shell.
+//@ run-fail
+//@ stdout-closed
+//@ exit-signal: SIGPIPE
+int main() {
+  std::println("lost");
+  return 0;
+}

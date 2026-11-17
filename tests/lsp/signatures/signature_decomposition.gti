@@ -1,0 +1,15 @@
+// Deducing a signature pattern shows the concrete signature, and explicit
+// arguments that do not form one exact pack are rejected at the call.
+// (From function_signature_lsp_test.py.)
+//@ hover @unpack: int32_t(int32_t, bool)
+class Tag<S> { public: Tag() = default; };
+int unpack<R, Args...>(Tag<R(Args...)>& tag) { return 7; }
+int main() { Tag<int(int, bool)> tag{}; return /*@unpack*/unpack(tag); }
+// --- step 2
+class Tag<S> { public: Tag() = default; };
+int unpack<R, Args...>(Tag<R(Args...)>& tag) { return 7; }
+int main() { Tag<int(int, bool)> tag{}; return unpack<int, bool>(tag); }  //~ ERROR GTI-S2023 one exact type pack //~ ERROR GTI-S2003
+// --- step 3
+class Tag<S> { public: Tag() = default; };
+int unpack<R, Args...>(Tag<R(Args...)>& tag) { return 7; }
+int main() { Tag<int(int, bool)> tag{}; return unpack(tag); }

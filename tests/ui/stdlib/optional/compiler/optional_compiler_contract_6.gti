@@ -1,0 +1,12 @@
+// Optional compiler contract: an ordinary class with the optional-storage spelling must not mint compiler capability identity.
+//@ check-pass
+namespace ordinary {
+class optional_storage<T> {
+public:
+  optional_storage() {}
+};
+}
+int main() {
+  ordinary::optional_storage<int32_t> value{};
+  return 0;
+}

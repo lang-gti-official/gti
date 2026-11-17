@@ -1,0 +1,26 @@
+// Literal normalization and forwarding: forwarding, defaults and unevaluated owner expressions need verified MIR.
+//@ check-pass
+import std.source_location;
+import std.memory;
+int effect() { return 19; }
+#macro std::string_view named<T>(T argument) {
+  return std::expression_text!(argument);
+}
+#macro std::string_view nested<T>(T argument) { return named!(argument); }
+#macro std::string_view defaulted(int argument = 6 /* default */ + 1) {
+  return nested!(argument);
+}
+int main() {
+  std::string_view direct = std::expression_text!( effect( /* inside */ ) );
+  std::string_view forwarded = nested!((3 /* λ */ + 4));
+  std::string_view unicode = std::expression_text!("λβ");
+  std::string_view from_default = defaulted!();
+  mut std::unique_ptr<int> owner = std::make_unique<int>(7);
+  std::string_view named_owner = std::expression_text!(owner);
+  std::string_view moved = std::expression_text!(std::move(owner));
+  std::string_view borrowed = std::expression_text!(*owner);
+  owner.reset();
+  return int32_t(direct.size() + forwarded.size() + unicode.size() +
+                 from_default.size() + named_owner.size() + moved.size() +
+                 borrowed.size());
+}

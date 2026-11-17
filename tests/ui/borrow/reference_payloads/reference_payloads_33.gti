@@ -1,0 +1,10 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+enum Reading { empty, value(int& owner) };
+
+enum Outer { empty, wrapped(Reading reading) };
+Outer<a> make<lifetime a>(int&<a> owner) {
+
+  return Outer::wrapped(Reading::value(owner));
+}
+int main() { return 0; }

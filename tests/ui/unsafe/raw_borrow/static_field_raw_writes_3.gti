@@ -1,0 +1,15 @@
+// Static field raw writes: a class static field retains an expired direct write.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+struct Holder {
+  static mut const int* slot = &witness;
+  static void keep(const int* address) { slot = address; }
+  static const int* current() { return slot; }
+public:
+  Holder() = default;
+};
+
+int main() { { int gone = 1; Holder::slot = &gone; }
+  auto address = Holder::slot;
+  unsafe { int& value = std::assume_ref(address, witness); return value; } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2101 //~ ERROR GTI-S2101

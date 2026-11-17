@@ -1,0 +1,6 @@
+// A consteval payload enum built from a runtime value is rejected.
+//@ check-fail
+enum Choice { empty, value(int payload) };
+consteval Choice make(int value) { return Choice::value(value); }
+int use(int runtime) { Choice value = make(runtime); return 0; }  //~ ERROR GTI-S2057
+int main() { return use(7); }

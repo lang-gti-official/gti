@@ -3419,7 +3419,7 @@ and body analysis validates the returned reference against that contract.
 The selected referent and protecting root remain distinct in MIR. Owner
 reset, movement and unlinking conflict with the retained root loan; arbitrary
 raw-pointer reachability does not establish an owner dependency. The
-`borrow_origin` owner-chain regressions and `owner_chain_runtime` example cover
+`tests/ui/borrow/origins/` owner-chain regressions and `owner_chain_runtime` example cover
 both shared and mutable recursion, invalidation and escaping-reference
 rejections, return-loan verifier mutations and native cleanup.
 Synthesized range dereference retains the selected physical range-storage loan

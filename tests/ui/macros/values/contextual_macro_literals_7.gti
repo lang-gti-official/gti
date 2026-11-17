@@ -1,0 +1,4 @@
+// Contextual macro literals: invalid result macro must stop before emission.
+#macro accept(uint8_t value) {}
+#macro accept(uint16_t value) {}
+int main() { accept!(33); return 0; }  //~ ERROR GTI-S2013

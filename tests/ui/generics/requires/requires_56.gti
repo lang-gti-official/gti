@@ -1,0 +1,3 @@
+// General requires: an inferred value result without a result region diagnostic.
+concept c<S> = requires(S& s) { { s.view() } -> auto; };  //~ ERROR GTI-P0001
+int main() { return 0; }

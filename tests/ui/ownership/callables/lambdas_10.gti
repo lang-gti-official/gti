@@ -1,0 +1,42 @@
+// Lambdas: owned move capture should update source availability and reject general or non-movable init captures.
+import std.memory;
+
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+};
+
+class Immobile {
+public:
+  Immobile() {}
+  Immobile(Immobile& other) = delete;
+  Immobile(Immobile&& other) = delete;
+};
+
+class BorrowView {
+  int& value;
+
+public:
+  BorrowView(int& value) : value(value) {}
+};
+
+int main() {
+  Owner first{};
+  auto moved = [owned = std::move(first)]() -> int { return 1; };
+  auto use_after_move = [first]() -> int { return 2; };  //~ ERROR GTI-S2027 //~ ERROR GTI-S2018
+  Owner second{};
+  auto once = [owned = std::move(second)]() -> int { return 3; };
+  auto twice = [again = std::move(second)]() -> int { return 4; };  //~ ERROR GTI-S2018
+  int value = 1;
+  auto general = [renamed = value]() -> int { return renamed; };  //~ ERROR GTI-S2027
+  Immobile fixed{};
+  auto immobile = [owned = std::move(fixed)]() -> int { return 5; };  //~ ERROR GTI-S2018 //~ ERROR GTI-S2003
+  mut int number = 1;
+  int& alias = number;
+  BorrowView view{alias};
+  auto borrowed = [owned = std::move(view)]() -> int { return 6; };
+  return moved() + use_after_move() + once() + twice() + general() +
+         immobile() + borrowed();
+}

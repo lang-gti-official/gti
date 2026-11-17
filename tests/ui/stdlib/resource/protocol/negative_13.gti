@@ -1,0 +1,9 @@
+// Negative: raw resource operations remain unsafe after protocol introduction.
+import std.resource;
+import std.memory;
+
+int main() {
+  std::process_resource resource{};
+  auto raw = resource.allocate(std::layout(std::size_t(8), std::size_t(8)));  //~ ERROR GTI-S2055
+  return 0;
+}

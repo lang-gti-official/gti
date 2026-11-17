@@ -1,0 +1,3 @@
+// Primitive borrow initialization: copyint initialized local borrow.
+//@ check-pass
+int main() { mut int value = 1; int alias = value; return alias - 1; }  //~ WARN GTI-S2096

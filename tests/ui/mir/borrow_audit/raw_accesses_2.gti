@@ -1,0 +1,13 @@
+// Raw accesses: a loan MIR ended before the raw write is not live.
+//@ check-pass
+//@ raw-pointer-audit: warn
+int main() {
+  mut int value = 7;
+  unsafe {
+    auto pointer = &value;
+    int& loan = value;
+    int before = loan;
+    *pointer = before + 2;
+    return value;
+  }
+}

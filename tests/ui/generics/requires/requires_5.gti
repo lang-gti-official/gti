@@ -1,0 +1,5 @@
+// General requires: source numeric constraints quantify over forwarded pack elements.
+//@ check-pass
+int count<std::numeric Ts...>(Ts... values) { return 1; }
+int forward<std::numeric Ts...>(Ts... values) { return count(values...); }
+int main() { return forward(1, 2, 3) - 1; }

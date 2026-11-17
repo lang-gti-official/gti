@@ -1,0 +1,15 @@
+// Reference payloads: rejected with GTI-S2045.
+import std.panic;
+enum BorrowedCell<T> { empty, value(T& owner) };
+class GenericView<T> {
+  mut BorrowedCell<T> cell;
+public:
+  GenericView(T& owner) : cell(BorrowedCell<T>::value(owner)) {}
+  T& read() {
+    switch (this.cell) {
+    case BorrowedCell<T>::value(auto& owner): return owner;
+    case BorrowedCell<T>::empty: std::panic("empty");
+    }
+  }
+};
+GenericView<int> escape() { int local = 1; return GenericView<int>(local); } int main() { return 0; }  //~ ERROR GTI-S2045

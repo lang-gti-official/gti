@@ -63,10 +63,7 @@ def main() -> None:
         "tests/unit/semantic_request_reuse_tests.cpp",
         # Rechecks parsed syntax without a SourceManager to verify source-text
         # queries reject missing owning buffers; Frontend always supplies one.
-        "tests/expression_text_tests.cpp",
-        # Reuses one analyzer across requests to verify that raw-reference
-        # assertion state is cleared; the Frontend facade cannot expose this.
-        "tests/raw_borrow_tests.cpp",
+        "tests/unit/expression_text_api_tests.cpp",
         # Reuses one analyzer to verify snapshot-owned concrete enum rows are
         # cleared; independent Frontend snapshots cannot exercise that reset.
         "tests/generic_enum_declaration_tests.cpp",
@@ -76,10 +73,10 @@ def main() -> None:
         # Exercises the type-level scoped-task prerequisite query directly,
         # separately from permission to invoke a join-all source operation.
         "tests/scoped_thread_semantic_tests.cpp",
-        # Reuses one visitor to prove trusted catalog identities are reset and
-        # injects an invalid empty-pack destructor provider outcome; separate
-        # Frontend snapshots cannot expose either boundary.
-        "tests/thread_local_semantic_tests.cpp",
+        # Injects an invalid empty-pack destructor provider outcome and calls
+        # the instance provider directly for effect-budget value keys; the
+        # Frontend facade cannot expose either boundary.
+        "tests/unit/thread_local_semantic_api_tests.cpp",
         # Analyzes one parsed tree with and without source-debug collection to
         # prove collection preserves symbol identities and diagnostics;
         # separate Frontend snapshots would reparse into different trees.

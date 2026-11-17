@@ -1,0 +1,12 @@
+// Invalid effect query diagnostics: a genuinely open concrete dispatch remains an unknown storage effect rather than a deferred invalid-body diagnostic.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1;
+interface Callback { void call(); };
+void selected<uint64_t Mode>(Callback& callback) {
+  int& held = guarded;
+  callback.call();  //~ ERROR GTI-S2045
+  int copy = held;
+}
+void dispatch(Callback& callback) { selected<0>(callback); }
+int main() { return 0; }

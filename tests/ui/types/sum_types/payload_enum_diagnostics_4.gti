@@ -1,0 +1,9 @@
+// Payload enum diagnostics: payload-enum switches should require every variant or default.
+enum class Result { ok(int32_t value), error };
+int main() {
+  Result result = Result::ok(1);
+  switch (result) {  //~ ERROR GTI-S2067
+  case Result::ok(value):
+    return value;
+  }
+}

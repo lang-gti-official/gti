@@ -1,0 +1,21 @@
+// Dependent text call borrowed state: dependent and ownerless text relays verify.
+//@ check-pass
+import std.string;
+std::string_view relay(std::string_view value) { return value; }
+c_string crelay(c_string value) { return value; }
+std::string_view forward(std::string_view s) { return relay(s); }
+int main() {
+  std::string owner{"owned"};
+  std::string_view view = owner.view();
+  std::string_view direct = relay(owner.view());
+  std::string_view copied = relay(view);
+  std::string_view forwarded = forward(owner.view());
+  c_string native = crelay(owner.c_string());
+  std::string_view text = "lit";
+  std::string_view ownerless = relay(text);
+  return direct.size() + copied.size() + forwarded.size() +
+                     ownerless.size() ==
+                 uint64_t(18) && native != nullptr
+             ? 0
+             : 1;
+}

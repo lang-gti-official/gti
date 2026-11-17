@@ -1,0 +1,92 @@
+// Nested borrow chain loan ordering: retained borrows built from another borrowed call result should lower to verified MIR.
+//@ check-pass
+class Leaf {
+  mut int32_t value = 1;
+  mut int32_t counter = 0;
+
+public:
+  Leaf() {}
+  mut int32_t& write() mut { return this.value; }
+  mut int32_t& overflow() mut {
+    this.counter = 2147483647;
+    this.counter += 1;
+    return this.value;
+  }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+class Middle {
+  mut Leaf leaf = Leaf();
+
+public:
+  Middle() {}
+  mut Leaf& reach() mut { return this.leaf; }
+  Leaf& look() { return this.leaf; }
+  int32_t read() { return this.leaf.read(); }
+};
+
+class Pair {
+public:
+  mut Middle left = Middle();
+  mut Middle right = Middle();
+public:
+  Pair() = default;
+};
+
+class Top {
+public:
+  mut Pair pair = Pair();
+public:
+  Top() = default;
+};
+
+int32_t& pick(Leaf& candidate) { return candidate.observe(); }
+
+int32_t retained_argument() {
+  mut Pair pair = Pair();  //~ WARN GTI-S2096
+  int32_t& chosen = pick(pair.right.look());
+  return chosen;
+}
+
+int32_t retained_receiver() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.right.reach().write();
+  chosen = 8;
+  return pair.right.read();
+}
+
+int32_t two_level_chain() {
+  mut Top top = Top();
+  mut int32_t& chosen = top.pair.left.reach().write();
+  chosen = 6;
+  return top.pair.left.read();
+}
+
+int32_t retained_across_statements() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.left.reach().write();
+  int32_t observed = 30;
+  chosen = observed + 7;
+  return pair.left.read();
+}
+
+int32_t retained_chain_can_fail() {
+  mut Pair pair = Pair();
+  mut int32_t& chosen = pair.right.reach().overflow();
+  chosen = 5;
+  return pair.right.read();
+}
+
+int32_t single_level_contrast() {
+  mut Leaf leaf = Leaf();
+  mut int32_t& chosen = leaf.write();
+  chosen = 9;
+  return leaf.read();
+}
+
+int main() {
+  return retained_argument() + retained_receiver() + two_level_chain() +
+         retained_across_statements() + retained_chain_can_fail() +
+         single_level_contrast() - 66;
+}

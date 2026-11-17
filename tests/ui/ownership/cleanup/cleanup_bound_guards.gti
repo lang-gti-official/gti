@@ -1,0 +1,50 @@
+// Cleanup-bound source guards retain resources through normal/failure cleanup.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 42
+//@[default] stdout: 102
+//@[default] stdout: 41
+//@[default] stdout: 101
+//@[default] stdout: 40
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 102
+//@[fail] stdout: 41
+//@[fail] stdout: 101
+//@[fail] stdout: 40
+//@[fail] stderr-contains: cleanup_bound_guards.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- cleanup_bound_guards.gti
+import std.string;
+import std.vector;
+
+class Resource {
+public:
+  int value = 40;
+  ~Resource() { std::println(this.value); }
+public:
+  Resource() = default;
+};
+class Trace {
+  int id;
+public:
+  Trace(int id) : id(id) {}
+  ~Trace() { std::println(this.id); }
+};
+class Guard {
+  Resource& resource;
+  Trace trace;
+  int id;
+public:
+  Guard(Resource& resource, int id, int divisor) :
+      resource(resource), trace(Trace(100 + id)), id(id) {
+    int checked = 1 / divisor;
+  }
+  ~Guard() { std::println(this.resource.value + this.id); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{};
+  Guard first{resource, 1, 1};
+  Guard second{resource, 2, argc > 1 ? 0 : 1};
+  return 0;
+}

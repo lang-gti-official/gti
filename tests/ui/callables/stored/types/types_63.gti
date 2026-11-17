@@ -1,0 +1,60 @@
+// Stored callables: composed closure fields verify.
+//@ check-pass
+import std.string;
+import std.utility;
+struct Offset {
+  int amount;
+  Offset(int amount) : amount(amount) {}
+};
+class Holder<F> {
+public:
+  F callback;
+  Holder(F f) : callback(f) {}
+  int invoke() { return callback(); }
+};
+class Base {
+public:
+  int amount;
+  Base(int amount) : amount(amount) {}
+};
+class Derived<F> : public Base {
+public:
+  Holder<F> inner;
+  Derived(F f) : Base(10), inner(Holder<F>(f)) {}
+};
+class Named<F> {
+public:
+  Holder<F> inner;
+  std::string name;
+  Named(F f, std::string name) : inner(Holder<F>(f)), name(std::move(name)) {}
+};
+class Twice<F> {
+public:
+  Holder<F> inner;
+  F spare;
+  Twice(F f, F g) : inner(Holder<F>(f)), spare(std::move(g)) {}
+  int call_spare() { return spare(); }
+};
+int derived<F>(F f) {
+  Derived<F> value = Derived<F>(f);
+  return value.amount + value.inner.invoke();
+}
+int named<F>(F f) {
+  std::string label{"abc"};
+  Named<F> value = Named<F>(f, std::move(label));
+  return value.inner.invoke() + (value.name.size() == 3 ? 1 : 0);
+}
+int twice<F>(F f) {
+  Twice<F> value = Twice<F>(f, f);
+  return value.inner.invoke() + value.call_spare();
+}
+int main() {
+  int k = 3;
+  Offset offset{4};
+  return derived([k]() -> int { return k; }) +
+         derived([offset]() -> int { return offset.amount; }) +
+         named([k]() -> int { return k; }) +
+         named([offset]() -> int { return offset.amount; }) +
+         twice([k]() -> int { return k; }) +
+         twice([offset]() -> int { return offset.amount; }) - 50;
+}

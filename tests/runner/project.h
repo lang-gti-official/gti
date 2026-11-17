@@ -14,7 +14,18 @@
 namespace gti_test {
 
 struct ProjectCommand {
+  // `$ program ...` runs (`$ cd dir` moves); `env NAME=value` and
+  // `unset NAME` change the environment of later commands.
+  enum class Kind { Run, SetEnv, Unset };
+  Kind kind = Kind::Run;
   std::vector<std::string> argv;
+  // SetEnv/Unset: the variable and (SetEnv) its value, before `$DIR`,
+  // `$HOME` and `$PATH` are expanded.
+  std::string variable;
+  std::string value;
+  // `$ tty: program ...`: stdout and stderr are one pseudo-terminal, whose
+  // output the `stdout:` expectations match.
+  bool terminal = false;
   int writtenLine = 0;
   int exitCode = 0;
   // `stdout: text`, `stderr: text`, and the negated `!stdout:`/`!stderr:`.
@@ -24,8 +35,15 @@ struct ProjectCommand {
   std::vector<std::string> stderrLacks;
 };
 
+struct ProjectTranscript {
+  std::vector<ProjectCommand> commands;
+  // A `slow` line: the transcript has the slow tier's limit (only under a
+  // slow/ directory).
+  bool slow = false;
+};
+
 // Parses a transcript; problems go to `errors` as "line N: ...".
-[[nodiscard]] std::vector<ProjectCommand>
+[[nodiscard]] ProjectTranscript
 parseProjectTranscript(const std::string &text,
                        std::vector<std::string> &errors);
 

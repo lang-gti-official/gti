@@ -1,0 +1,8 @@
+// Owned callable transport: owned callable transport should reject borrowed view capture state.
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  std::string_view text = "borrowed";
+  auto operation = [text]() -> int { return 1; };
+  auto escaped = relay(std::move(operation));  //~ ERROR GTI-S2046 contains borrowed or raw-pointer capture state
+  return 0;
+}

@@ -1,0 +1,12 @@
+// Projected raw pointer origins: raw pointer fields must preserve conflicts with checked loans.
+//@ raw-pointer-audit: strict
+struct Address { mut int* pointer = nullptr;  public: Address() = default; };
+int main() {
+  mut int value = 7;
+  unsafe {
+    Address address = {.pointer = &value};
+    int& checked = value;
+    *address.pointer = 9;  //~ ERROR GTI-S2102
+    return checked;
+  }
+}

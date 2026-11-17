@@ -1,0 +1,8 @@
+// Borrowing captures: erased-reference-owner-conflict is rejected with a user diagnostic, not an ICE.
+import std.memory;
+int main() {
+  mut int owner = 3;
+  std::erased_object& erased = std::erase_ref(owner);
+  owner = 5;  //~ ERROR GTI-S2017
+  unsafe { int& restored = std::restore_ref<int>(erased); return restored; }
+}
