@@ -254,7 +254,6 @@ owners = [
   "protocol_format_hash_runtime",
   "reference_parameter_packs",
   "reference_parameter_pack_mir",
-  "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
   "instance_reuse_fixtures",
