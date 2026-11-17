@@ -1,0 +1,6 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+import std.memory;
+int consume<T>(T value) { return 0; }
+int relay<T, Args...>(Args... args) { return consume(T(args...)); }
+int main() { return relay<std::unique_ptr<int>>(std::make_unique<int>(7)); }

@@ -1,0 +1,4 @@
+// Diagnostics: the rejected mapper is one error, led by its explanation.
+expected<int, int> read() { return unexpected(1); }
+int global = 1; int& map(int e) { return global; }
+int main() { [[discard]] read().transform_error(map); return 0; }  //~ ERROR GTI-S2022

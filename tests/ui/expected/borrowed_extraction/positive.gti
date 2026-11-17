@@ -1,0 +1,96 @@
+// Positive: read-only extraction supports a noncopyable referent.
+//@ check-pass
+class Resource {
+  mut int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  int read() { return value; }
+  void set(int replacement) mut { value = replacement; }
+};
+expected<Resource&, int> lookup(Resource& owner, bool fail) {
+  if (fail) { return unexpected(9); }
+  return owner;
+}
+
+expected<Resource&, int> forwarded(Resource& owner) {
+  return ?lookup(owner, false);
+}
+Resource& required(Resource& owner) {
+  return lookup(owner, false).expect("required");
+}
+class Registry {
+  Resource owner;
+public:
+  Registry(int value) : owner(Resource(value)) {}
+  expected<Resource&, int> find() { return this.owner; }
+  expected<Resource&, int> forwarded() {
+    auto carrier = this.find();
+    return ?carrier;
+  }
+  Resource& required() {
+    auto carrier = this.find();
+    return std::move(carrier).expect("required receiver owner");
+  }
+};
+Resource global_owner{11};
+expected<Resource&, int> find_global() { return global_owner; }
+expected<int, int> read_other_origins(Registry& registry) {
+  auto receiver_carrier = registry.find();
+  Resource& first = ?receiver_carrier;
+  auto required_receiver = registry.find();
+  Resource& second = std::move(required_receiver).expect("receiver owner");
+  Resource& third = ?registry.forwarded();
+  Resource& fourth = registry.required();
+  auto global_carrier = find_global();
+  Resource& fifth = ?global_carrier;
+  auto required_global = find_global();
+  Resource& sixth = std::move(required_global).expect("global owner");
+  Resource& seventh = ?find_global();
+  Resource& eighth = find_global().expect("required global owner");
+  return first.read() + second.read() + third.read() + fourth.read() +
+      fifth.read() + sixth.read() + seventh.read() + eighth.read();
+}
+class Pinned {
+  int identity;
+public:
+  Pinned(int value) : identity(value) {}
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+  int read() { return identity; }
+};
+expected<Pinned&, int> find_pinned(Pinned& owner) { return owner; }
+expected<int, int> read_pinned(Pinned& owner) {
+  Pinned& first = ?find_pinned(owner);
+  Pinned& second = find_pinned(owner).expect("required pinned owner");
+  return first.read() + second.read();
+}
+expected<int, int> read(Resource& owner) {
+  auto source = lookup(owner, false);
+  Resource& first = ?source;
+  Resource& second = ?source;
+  Resource& third = ?forwarded(owner);
+  auto consumed = lookup(owner, false);
+  Resource& fourth = ?std::move(consumed);
+  auto demanded = lookup(owner, false);
+  Resource& fifth = std::move(demanded).expect("required");
+  Resource& sixth = required(owner);
+  return first.read() + second.read() + third.read() + fourth.read() +
+      fifth.read() + sixth.read();
+}
+int main() {
+  Registry registry{5};
+  auto other_origins = read_other_origins(registry);
+  if (!other_origins || other_origins.value() != 64) { return 3; }
+  Pinned pinned{3};
+  auto pinned_result = read_pinned(pinned);
+  if (!pinned_result || pinned_result.value() != 6) { return 2; }
+  mut Resource owner{7};
+  auto result = read(owner);
+  if (!result || result.value() != 42) { return 1; }
+  Resource& alias = lookup(owner, false).expect("required");
+  int observed = alias.read();
+  owner.set(8);
+  return observed + owner.read() - 15;
+}

@@ -1,0 +1,14 @@
+// Once: fresh immobile local/global once flags compile.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.cthread;
+std::once_flag shared{std::ONCE_FLAG_INIT};
+void initialize() {}
+int main() {
+  std::once_flag local{};
+  unsafe {
+    std::call_once(shared, initialize);
+    std::call_once(&local, initialize);
+  }
+  return 0;
+}

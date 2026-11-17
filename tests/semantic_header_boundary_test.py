@@ -66,7 +66,6 @@ def main() -> None:
         "tests/unit/expression_text_api_tests.cpp",
         # Reuses one analyzer to verify snapshot-owned concrete enum rows are
         # cleared; independent Frontend snapshots cannot exercise that reset.
-        "tests/generic_enum_declaration_tests.cpp",
         # Reuses one analyzer on the same AST to check that trusted-body
         # demand and lexical state are reset; separate Frontends cannot do so.
         "tests/trusted_body_analysis_tests.cpp",

@@ -1,0 +1,2 @@
+// Rejections: must reject: extern "C" { [[link_name("same")]] mut c_int first; void same(); } int main() { return 0; }.
+extern "C" { [[link_name("same")]] mut c_int first; void same(); } int main() { return 0; }  //~ ERROR GTI-S2054

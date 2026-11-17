@@ -1,0 +1,8 @@
+// Analyze: empty return has a complete checked construction.
+//@ check-pass
+struct Completion {
+  int value;
+  implicit Completion(int value = 42) : value(value) {}
+};
+Completion complete() { return; }
+int main() { return complete().value - 42; }

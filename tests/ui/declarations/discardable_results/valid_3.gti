@@ -1,0 +1,13 @@
+// Valid: [[discardable]] T identity<T>(T value) { return value; } struct Counter {   mut int value = 0;   [[discardable]] mut int&<this> add(int amount) mut {     this.value += amount; return this.value;   }   [[discardable]] static int constant() { return 7; } public:   Counter() = default; }; int main() { mut Counter c{}; c.add(1); c.add(2); Counter::constant(); identity(3); return c.value - 3; }.
+//@ check-pass
+[[discardable]] T identity<T>(T value) { return value; }
+struct Counter {
+  mut int value = 0;
+  [[discardable]] mut int&<this> add(int amount) mut {
+    this.value += amount; return this.value;
+  }
+  [[discardable]] static int constant() { return 7; }
+public:
+  Counter() = default;
+};
+int main() { mut Counter c{}; c.add(1); c.add(2); Counter::constant(); identity(3); return c.value - 3; }

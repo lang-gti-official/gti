@@ -1,0 +1,8 @@
+// Fold hir proof: two unrelated user folds have ordinary concrete call plans.
+//@ check-pass
+void touch<T>(mut int32_t& count, T& value) { count += 1; }
+void folded<Args...>(mut int32_t& count, Args... args) {
+  (touch(count, args), ...);
+  (touch(count, args), ...);
+}
+int main() { mut int32_t count = 0; folded(count, 1, 2); return count - 4; }

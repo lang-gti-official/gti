@@ -1,0 +1,47 @@
+// Callbacks: the program is accepted.
+//@ check-pass
+import std.memory;
+import std.functional;
+class Inspection {
+  std::erased_object& object;
+public:
+  Inspection(int& object) : object(std::erase_ref(object)) {}
+  int read() {
+    unsafe { int& value = std::restore_ref<int>(this.object); return value; }
+  }
+};
+class Reader {
+  int& value;
+public:
+  Reader(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+class HiddenReader {
+  std::erased_object& object;
+public:
+  HiddenReader(Reader& original, Reader& unrelated) : object(std::erase_ref(original)) {}
+};
+Reader& restore_reader(std::erased_object& object) {
+  unsafe { Reader& reader = std::restore_ref<Reader>(object); return reader; }
+}
+int read_erased(std::erased_object& object) {
+  unsafe { Reader& reader = std::restore_ref<Reader>(object); return reader.read(); }
+}
+int main() {
+  int owner = 7; Inspection view{owner};
+  Reader original{owner};
+  int other_owner = 19;
+  Reader unrelated{other_owner};
+  HiddenReader correlated{original, unrelated};
+  std::erased_object& hidden = std::erase_ref(original);
+  std::function_ptr<int(std::erased_object&)> opaque_pack{read_erased};
+  if (opaque_pack(hidden) != 7) return 3;
+  Reader& restored = restore_reader(hidden);
+  if (restored.read() != 7) return 1;
+  auto reader = [&owner](int value) -> int { return owner + value; };
+  std::function_ref<int(int)> callback{reader};
+  mut int count = 0;
+  mut auto writer = [mut &count](int value) -> int { count += value; return count; };
+  mut std::function_ref<int(int) mut> update{writer};
+  return view.read() + callback(1) + update(2) - 17;
+}

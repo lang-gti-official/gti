@@ -1,0 +1,2 @@
+// Reject: invalid member types have valid type-path syntax.
+class Box<T> { using hidden = T;  public: Box() = default; }; using Bad = Box<int>::hidden;  //~ ERROR GTI-S2007

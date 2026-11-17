@@ -1,0 +1,3 @@
+// Reject: invalid member types have valid type-path syntax.
+namespace user { struct Select<T> { using value_type = int;  public: Select() = default; }; }
+struct user::Select<bool> { using value_type = uint64_t;  public: Select() = default; };  //~ ERROR GTI-S2030

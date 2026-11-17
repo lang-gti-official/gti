@@ -1,0 +1,6 @@
+// Diagnostics: concrete generic reanalysis preserves the runtime profile requirement.
+import std.cthread;
+unsafe int32_t relay<T>(T ignored, std::thrd_t handle) {
+  unsafe { return std::thrd_join(handle, nullptr); }  //~ ERROR GTI-S2084
+}
+int main() { std::thrd_t handle = 0; unsafe { return relay(1, handle); } }  //~ ERROR GTI-S2084

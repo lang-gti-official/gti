@@ -1,0 +1,15 @@
+// Raw access: rejected with GTI-S2102.
+//@ raw-pointer-audit: strict
+struct Maker {
+  const int* operator+(int ignored) {
+    int dead = 7;
+    return &dead;
+  }
+public:
+  Maker() = default;
+};
+int main() {
+  Maker maker{};
+  const int* pointer = maker + 0;
+  unsafe { return *pointer; }  //~ ERROR GTI-S2102
+}

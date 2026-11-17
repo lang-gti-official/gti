@@ -1,0 +1,23 @@
+// Rejected: invalid profile or borrow has no code generation.
+class Packet<T, E> {
+  T payload;
+public:
+  Packet(T value) : payload(std::move(value)) {}
+  T& value() { return this.payload; }
+  int kind() { return 1; }
+};
+
+class Packet<T&, E> {
+  T& payload;
+public:
+  Packet(T& value) : payload(value) {}
+  T& value() { return this.payload; }
+  int kind() { return 3; }
+};
+
+int main() {
+  mut int owner = 42;
+  Packet<int&, int> reference{owner};
+  owner = 7;  //~ ERROR GTI-S2017
+  return reference.value();
+}

@@ -1,0 +1,2 @@
+// Analyze: unsupported capability predicate fails closed.
+[[unsafe_transfer(unknown_concept<T>)]] class Wrong<T> {}; int main() { return 0; }  //~ ERROR GTI-S2049 //~ ERROR GTI-S2059

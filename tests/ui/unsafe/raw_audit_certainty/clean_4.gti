@@ -1,0 +1,11 @@
+// Clean: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+const int* independent(const int* unused, const int* live) { return live; }
+
+int inspect(bool choice) {
+  int live = 1;
+  mut const int* pointer = nullptr;
+  { int dead = 2; pointer = &dead; }
+const int* selected = independent(pointer, &live); unsafe { return *selected; }}
+int main() { return 0; }

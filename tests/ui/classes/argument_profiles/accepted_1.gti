@@ -1,0 +1,10 @@
+// Accepted: argument profile is a valid source class.
+//@ check-pass
+class Done<E> {
+public:
+  int value;
+  implicit Done(int initial = 42) : value(initial) {}
+};
+Done<int> finish() { return; }
+T finish_generic<T>() { return; }
+int main() { return finish().value + finish_generic<Done<int>>().value - 84; }

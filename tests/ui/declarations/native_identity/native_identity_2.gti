@@ -1,0 +1,4 @@
+// Native identity: rejected with GTI-S2003.
+class Empty { public: Empty(nullptr_t value) {}  public: Empty() = default; };
+void take(Empty value) {}
+int main() { take(nullptr); return 0; }  //~ ERROR GTI-S2003

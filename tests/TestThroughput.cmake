@@ -212,10 +212,10 @@ set_property(TEST ${gti_throughput_tests} APPEND PROPERTY LABELS "coverage-full"
 set(gti_fast_feedback_tests
   compiler_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
-  raw_access_contract
-  mir_full_expression mir_program_initialization
+ 
+  mir_program_initialization
   optimizer_foundation optimizer_analyses optimizer_conformance
-  layout_query_pipeline native_record_pipeline bindgen_pipeline
+  native_record_pipeline bindgen_pipeline
   source_text_pipeline source_unit_services
   storage_adoption_contract
   parser_conditional_recovery
@@ -246,7 +246,6 @@ set(gti_slow_test_patterns
   "^gti_corpus$"
   # The corpus binaries' own fixtures (40-50 s of std-importing analyses
   # each) until they move to tests/ui.
-  "^body_analysis_order_fixtures$"
   "^instance_reuse_fixtures$"
   "^trusted_body_analysis_fixtures$"
   "^mir_cutover_corpus_oracle$"

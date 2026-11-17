@@ -1,0 +1,24 @@
+// Analyze: qualified aliases preserve namespaces, nesting, defaults and value generics through MIR.
+//@ check-pass
+namespace user {
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
+struct Box<T = int> {
+  using value_type = T;
+  using nested = Inner<T>;
+public:
+  Box() = default;
+};
+struct Fixed<T, uint64_t N> { using array_type = T[N];  public: Fixed() = default; };
+}
+using Value = user::Box<int>::nested::value_type;
+using Array = user::Fixed<int, 2>::array_type;
+user::Box<T>::value_type identity<T>(user::Box<T>::value_type value) {
+  return value;
+}
+int main() {
+  Value value = 7;
+  user::Box<>::value_type defaulted = 1;
+  Array items = {2, 3};
+  user::Box<uint64_t>::value_type wide = uint64_t(9);
+  return identity<int>(value) + defaulted + items[0] - 10;
+}

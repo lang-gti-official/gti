@@ -1,0 +1,9 @@
+// Generics: rejected with GTI-S2012.
+class State { public: int identity = 4; State() {} };
+class Token {
+  State state;
+private:
+  Token(State value) : state(value) {}
+};
+struct Wrapper { Token token; };
+int main() { Wrapper value{}; return 0; }  //~ ERROR GTI-S2012

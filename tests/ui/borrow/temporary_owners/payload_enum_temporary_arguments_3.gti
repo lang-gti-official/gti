@@ -1,0 +1,2 @@
+// Payload enum temporary arguments: mutable temporary enum borrows still require a named place.
+enum class state { empty, engaged(int value) }; void clear(mut state& s) { s = state::empty; } int main() { clear(state::engaged(1)); return 0; }  //~ ERROR GTI-S2017

@@ -1,0 +1,4 @@
+// Native callback rejections: callback-signature-mismatch.gti should be rejected by the native callback semantic boundary.
+using Callback = (int32_t) -> int32_t;
+int64_t wrong(int64_t value) { return value; }
+int main() { Callback callback = wrong; return 0; }  //~ ERROR GTI-S2076

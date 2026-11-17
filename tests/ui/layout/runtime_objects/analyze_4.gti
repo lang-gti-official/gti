@@ -1,0 +1,4 @@
+// Analyze: complete result and text carriers have queryable object layouts.
+//@ check-pass
+import std.memory;
+int main() { auto x = std::layout_of<expected<int, int>>(); auto y = std::layout_of<expected<void, int>>(); auto z = std::layout_of<c_string>(); return 0; }

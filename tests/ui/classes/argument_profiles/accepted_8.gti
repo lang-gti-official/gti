@@ -1,0 +1,40 @@
+// Accepted: argument profile is a valid source class.
+//@ check-pass
+class Packet<T, E> {
+  T payload;
+public:
+  Packet(T value) : payload(std::move(value)) {}
+  T& value() { return this.payload; }
+  int kind() { return 1; }
+};
+
+class Packet<T*, E> {
+  T* payload = nullptr;
+public:
+  Packet(T* value) : payload(value) {}
+  T* value() { return this.payload; }
+  int kind() { return 4; }
+public:
+  Packet() = default;
+};
+class Packet<const T*, E> {
+  const T* payload = nullptr;
+public:
+  Packet(const T* value) : payload(value) {}
+  const T* value() { return this.payload; }
+  int kind() { return 5; }
+public:
+  Packet() = default;
+};
+
+int main() {
+  mut int number = 7;
+  Packet<int*, bool> writable{&number};
+  Packet<const int*, bool> readable{&number};
+  Packet<int**, bool> nested{nullptr};
+  Packet<int, bool> value{3};
+  int* address = writable.value();
+  unsafe { *address = 8; }
+  return writable.kind() + readable.kind() + nested.kind() + value.kind() -
+      14;
+}

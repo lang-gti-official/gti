@@ -4042,7 +4042,7 @@
         "tests/cthread_condition_test.py",
         "tests/cthread_once_test.py",
         "tests/ui/stdlib/cthread",
-        "tests/cthread_tests.cpp",
+        "tests/ui/concurrency/cthread",
         "tests/fixtures/cthread_yield_call_count.cpp",
         "docs/language/concurrency.md"
       ]
@@ -5837,7 +5837,7 @@
       ],
       "evidence": [
         "examples/119-runtime-object-layout.gti",
-        "tests/runtime_object_layout_tests.cpp",
+        "tests/ui/layout/runtime_objects",
         "tests/runtime_object_layout_test.py",
         "docs/language/standard-library.md",
         "examples/181-general-object-layout.gti",
@@ -6682,7 +6682,7 @@
         "unrelated generic aggregates"
       ],
       "evidence": [
-        "tests/native_c_scalar_tests.cpp",
+        "tests/ui/declarations/native_c_scalars",
         "tests/unit/native_c_scalar_target_tests.cpp",
         "examples/123-native-c-scalars.gti",
         "docs/language/native-c-interop.md"

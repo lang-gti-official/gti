@@ -1,0 +1,5 @@
+// Native callable groundwork: int32_t foreign_limit; must describe external storage without GTI initialization.
+//@ check-pass
+using Transform = (int32_t) -> int32_t;
+extern "C" { int32_t foreign_limit; }
+int main() { return 0; }

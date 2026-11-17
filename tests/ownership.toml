@@ -107,7 +107,6 @@ owners = [
   "macro_result_parser",
   "procedural_declaration_example",
   "procedural_execution_example",
-  "generic_enum_declaration",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -168,7 +167,6 @@ owners = [
   "module_editor_recovery",
   "module_system_runtime",
   "module_initialization_runtime",
-  "include_removal",
   "frontend_cache_invalidation",
   "stdlib_module_boundaries",
   "stdlib_modules",
@@ -259,19 +257,12 @@ owners = [
   "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "qualified_type_members",
   "instance_reuse_fixtures",
   "trusted_body_analysis_fixtures",
-  "body_analysis_order_fixtures",
   "gti_corpus",
   "executable_entry_semantics",
-  "generic_initialization",
-  "lambda_reference",
-  "bounded_array_borrows",
   "bounded_array_borrows_runtime",
   "unsafe_function_contract",
-  "unsafe_expression_contract",
-  "discardable_result",
   "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
@@ -295,8 +286,6 @@ paths = [
 owners = [
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "temporary_owner_borrow",
-  "fresh_callable_borrow",
   "foreign_variable_borrow",
 ]
 consumers = [
@@ -324,7 +313,6 @@ paths = [
 owners = [
   "^constexpr_",
   "compile_limits",
-  "macro_fresh_callables",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -379,8 +367,6 @@ paths = [
   "include/gti/hir*",
 ]
 owners = [
-  "generic_layout",
-  "generic_initialization",
   "instance_reuse_fixtures",
   "view_fields",
   "field_symbol_identity",
@@ -390,7 +376,6 @@ owners = [
 consumers = [
   "reference_parameter_pack_mir",
   "reference_parameter_packs",
-  "mir_full_expression",
   "mir_program_initialization",
   "lowered_program_contract",
   "mir_cutover_corpus_oracle",
@@ -402,7 +387,6 @@ consumers = [
 area = "mir"
 risk = "shared"
 paths = [
-  "tests/borrow_origin_publication_tests.cpp",
   "tests/fixtures/borrowed_text_field_reborrow.gti",
   "tests/fixtures/temporary_cursor_cleanup_provider.gti",
   "tests/fixtures/receiver_field_carriers*.gti",
@@ -413,17 +397,11 @@ paths = [
 owners = [
   "reference_parameter_pack_mir",
   "^mir_",
-  "borrow_origin_publication",
-  "borrowing_callbacks_mir",
   "storage_adoption_contract",
   "cleanup_bound_borrow_mutations",
   "object_lifetime_contract",
   "source_sparse_storage_contract",
   "text_address_bridge_contract",
-  "raw_access_contract",
-  "borrowing_callback_alias_proof",
-  "borrowing_callback_relay_proof",
-  "borrowing_callback_restoration_return",
 ]
 consumers = [
   "protocol_requirements_runtime",
@@ -611,12 +589,9 @@ owners = [
   "llvm_raw_pointer_array_execution",
   "c_abi_header_boundary",
   "runtime_abi_inventory",
-  "runtime_object_layout_contract",
   "runtime_object_layout_runtime",
-  "layout_query_pipeline",
   "layout_query_native_boundary",
   "gti_unit_tests",
-  "native_c_scalar_pipeline",
   "native_record_pipeline",
   "native_record_c_oracle",
   "compact_owner_layout",
@@ -950,7 +925,6 @@ consumers = [
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
   "trusted_body_analysis_fixtures",
-  "body_analysis_order_fixtures",
   "gti_corpus",
 ]
 
@@ -1102,7 +1076,6 @@ owners = [
   "managed_thread_end_to_end",
   "scoped_parallel_threads",
   "cthread_runtime",
-  "cthread_semantic_ir",
 ]
 consumers = [
   "concurrency_composition_lsp",
@@ -1783,7 +1756,6 @@ owners = [
 consumers = [
   "language_coverage_corpus",
   "trusted_body_analysis_fixtures",
-  "body_analysis_order_fixtures",
   "gti_corpus",
   "native_packages",
 ]

@@ -1,0 +1,33 @@
+// Native identity: the program is accepted.
+//@ check-pass
+import std.meta;
+struct Score {
+  int value;
+  implicit Score(int initial, int offset = 2) : value(initial + offset) {}
+  Score(Score& other) = delete;
+  Score(Score&& other) = delete;
+};
+Score score(int value) { return value; }
+T construct<T>(int value) { return value; }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;
+}
+struct GenericBox<T> {
+  T value;
+  implicit GenericBox(T initial) : value(std::move(initial)) {}
+};
+GenericBox<T> boxed<T>(int value) { return value; }
+struct Factory { Score make(int value) { return value; }  public: Factory() = default; };
+int main() {
+  auto produce = [](int value) -> Score { return value; };
+  Score first = score(1);
+  Score second = construct<Score>(2);
+  Factory factory{};
+  Score third = factory.make(3);
+  Score fourth = produce(4);
+  auto signature = score;
+  Score fifth = reflected(signature, 5);
+  GenericBox<int> sixth = boxed<int>(6);
+  return first.value + second.value + third.value + fourth.value +
+         fifth.value + sixth.value - 31;
+}
