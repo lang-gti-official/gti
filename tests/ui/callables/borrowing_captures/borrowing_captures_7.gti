@@ -1,0 +1,9 @@
+// Borrowing captures: capture-last-use.
+//@ check-pass
+int main() {
+  mut int value = 3;
+  auto read = [&value]() -> int { return value; };
+  int previous = read();
+  value = 4;
+  return previous + value - 7;
+}

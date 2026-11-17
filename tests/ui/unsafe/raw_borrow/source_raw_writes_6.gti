@@ -1,0 +1,7 @@
+// Source raw writes: source-produced raw writes preserve callee expiry.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7; mut const int* pointer = &witness;
+int main() { relay(); unsafe { return std::assume_ref(pointer, witness); } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+void relay() { set(); }
+void set() { int gone = 1; pointer = &gone; }

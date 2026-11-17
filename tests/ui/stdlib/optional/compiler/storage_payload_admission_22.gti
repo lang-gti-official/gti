@@ -1,0 +1,8 @@
+// Storage payload admission: optional storage applies the same dependency rule to C-string views without relying on a public library spelling.
+import std.optional;
+import std.string;
+std::optional<c_string> escape() {
+  std::string owner{"owned"};
+  return std::optional<c_string>(owner.c_string());  //~ ERROR GTI-S2045
+}
+int main() { auto result = escape(); return 0; }

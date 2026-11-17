@@ -1,0 +1,17 @@
+// Type facts: a caller generic parameter cannot shadow an unrelated type alias inside the predicate declaration's lexical scope.
+namespace declaration_scope {
+  using Subject = int32_t;
+  constexpr bool can_copy<T>() {
+    return std::meta::is_copy_constructible<Subject>();  //~ ERROR GTI-S2024
+  }
+}
+concept claimed<Subject> = declaration_scope::can_copy<Subject>();
+void needs_copy<std::copy_constructible T>() {}
+void relay<Subject>() requires claimed<Subject> { needs_copy<Subject>(); }  //~ ERROR GTI-S2029
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+int main() { relay<MoveOnly>(); return 0; }  //~ ERROR GTI-S2029

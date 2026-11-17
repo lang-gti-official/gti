@@ -1,0 +1,12 @@
+// A read-only reference pack cannot forward into a mutable one.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+void mutate<Args...>(mut Args&... args) {}
+void forward<Args...>(Args&... args) { mutate(args...); }  //~ ERROR GTI-S2003
+int main() { mut Ticket value{}; forward(value); return 0; }  //~ WARN GTI-S2096

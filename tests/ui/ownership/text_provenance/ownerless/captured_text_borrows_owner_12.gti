@@ -1,0 +1,43 @@
+// Captured text borrows owner: captured text escapes are rejected at source.
+import std.string;
+import std.functional;
+struct Note {
+  std::string_view text;
+  int line;
+};
+class Token {
+public:
+  std::string_view text;
+  int n;
+  Token(std::string_view text, int n) : text(text), n(n) {}
+};
+class Label {
+public:
+  mut std::string_view text;
+  Label() : text("") {}
+  void set(std::string_view text) mut { this.text = text; }
+};
+enum class Message { text(std::string_view value), none };
+mut std::string_view kept = "";
+void keep(std::string_view text) { kept = text; }
+std::string_view same(std::string_view text) { return text; }
+Token make(std::string_view text) { return Token(text, 1); }
+std::string_view call<F>(F view) { return view(); }
+
+int sameScope(std::string_view v) {
+  auto f = [v]() -> std::string_view { return v; };
+  mut std::string_view later = "";
+  later = f();  //~ ERROR GTI-S2045
+  return int(later.size());
+}
+int outerScope() {
+  mut std::string_view outer = "";
+  {
+    std::string inner{"temporary"};
+    std::string_view w = inner.view();
+    auto h = [w]() -> std::string_view { return w; };
+    outer = h();  //~ ERROR GTI-S2045
+  }
+  return int(outer.size());
+}
+int main() { return sameScope("x") + outerScope(); }

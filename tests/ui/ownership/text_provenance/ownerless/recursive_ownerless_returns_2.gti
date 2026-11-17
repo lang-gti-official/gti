@@ -1,0 +1,9 @@
+// Recursive ownerless returns: a recursive text result is ownerless when its other returns are, and may be stored or relayed as such.
+//@ check-pass
+c_string loop(c_string s, int n) {
+  if (n == 0) {
+    return nullptr;
+  }
+  return loop(s, n - 1);
+}
+int main() { return loop(nullptr, 2) == nullptr ? 0 : 1; }

@@ -1,0 +1,7 @@
+// A thread-local initialiser that reads itself reports GTI-R0013.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0013
+thread_local mut int32_t value = seed();
+int32_t seed() { return value; }
+int main() { return value; }

@@ -1,0 +1,18 @@
+// The source-text contract in the editor: a BOM and CRLF line endings are
+// accepted (the first token, `int`, is a type at UTF-16 column 1 after the
+// BOM; the whole token array is pinned); formatting keeps the BOM,
+// normalises to LF and keeps non-ASCII text; a lone CR is one GTI-L0014 at
+// that character. (source_text_lsp_test.py; CRLF text, so a transcript.)
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "﻿int main() {\r\n  // café 😀\r\n  std::println(\"héllo 😀\");\r\n  return 0;\r\n}\r\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": "$URI"}}}}
+{"expect": {"id": 2, "result": {"data": [0, 1, 3, 1, 0, 0, 4, 4, 5, 3, 1, 2, 11, 15, 0, 1, 2, 3, 3, 8, 0, 5, 7, 5, 8, 0, 8, 10, 10, 0, 1, 2, 6, 0, 0, 0, 7, 1, 11, 0]}}}
+{"send": {"jsonrpc": "2.0", "id": 3, "method": "textDocument/formatting", "params": {"textDocument": {"uri": "$URI"}, "options": {"tabSize": 2, "insertSpaces": true}}}}
+{"expect": {"id": 3, "result": [{"range": "$ANY", "newText": "﻿int main() {\n  // café 😀\n  std::println(\"héllo 😀\");\n  return 0;\n}\n"}]}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int main() {\r  return 0;\n}\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": [{"code": "GTI-L0014", "range": {"start": {"line": 0, "character": 12}, "end": {"line": 0, "character": 13}}}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 3}, "contentChanges": [{"text": "int main() {\r\n  return 0;\r\n}\r\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 3, "diagnostics": []}}}

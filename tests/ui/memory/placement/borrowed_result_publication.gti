@@ -1,0 +1,40 @@
+// A returned class holding a mutable reference publishes in place and its destructor writes through once.
+//@ run-pass
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+class ReferenceResult {
+  mut int& value;
+public:
+  ReferenceResult(mut int& source) : value(source) {}
+  ~ReferenceResult() { this.value = this.value + 1; }
+  int read() { return this.value; }
+};
+ReferenceResult make_view(mut int& source) { return ReferenceResult(source); }
+ReferenceResult relay_view(mut int& source) { return make_view(source); }
+int main() {
+  mut int source = 41;
+  { ReferenceResult result = relay_view(source);
+    if (result.read() != 41) { return 1; } }
+  return source == 42 ? 0 : 2;
+}

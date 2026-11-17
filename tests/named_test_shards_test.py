@@ -88,9 +88,10 @@ class NamedShards(unittest.TestCase):
     def test_ci_keeps_native_aggregate_in_the_sanitizer_build(self):
         full = (ROOT / '.github/workflows/sanitizers.yml').read_text()
         build = full.split('- name: Build the targets the sanitizer subset runs', 1)[1].split('- name: Test compiler and driver libraries', 1)[0]
-        self.assertIn('pattern="${GTI_SANITIZER_TESTS}"', build)
-        self.assertIn('if [[ "${{ matrix.kind }}" == "compiler" ]]; then', build)
-        self.assertIn("pattern='^compiler_pipeline$'", build)
+        # The library partition also builds gti_test_ui's runner.
+        self.assertIn('pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"', build)
+        # The compiler aggregate's partitions left with the aggregate.
+        self.assertNotIn('compiler_pipeline', full)
         self.assertIn('--regex "${pattern}"', build)
         # The C++ emitter suites and their sanitizer job were removed with the
         # C++ backend's tests (docs/plans/test-suite-redesign.md).

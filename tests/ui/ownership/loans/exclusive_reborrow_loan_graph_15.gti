@@ -1,0 +1,20 @@
+// Exclusive reborrow loan graph: constructor arguments should use recursive transient-production access when validating aliases.
+class Box {
+  mut int value = 0;
+
+public:
+  int& expose() mut { return this.value; }
+public:
+  Box() = default;
+};
+class Inspector {
+public:
+  Inspector(int& first, int& second) {}
+public:
+  Inspector() = default;
+};
+int main() {
+  mut Box parent = Box();
+  Inspector inspector = Inspector(parent.expose(), parent.expose());  //~ ERROR GTI-S2017 Call creates overlapping reference accesses
+  return 0;
+}

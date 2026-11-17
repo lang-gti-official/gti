@@ -1,0 +1,4 @@
+// A failing consteval void call is rejected at compile time.
+//@ check-fail
+consteval void validate(int value) { int checked = 100 / value; }
+int main() { validate(0); return 0; }  //~ ERROR GTI-S2057

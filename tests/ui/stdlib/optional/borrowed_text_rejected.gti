@@ -1,0 +1,14 @@
+// Dynamic text borrowed from a local owner cannot be stored in an optional.
+//@ check-fail
+import std.optional;
+import std.string;
+
+std::optional<std::string_view> escape() {
+  std::string owner{"owned"};
+  return std::optional<std::string_view>(owner.view());  //~ ERROR GTI-S2045
+}
+
+int main() {
+  auto escaped = escape();
+  return escaped.value().size() == std::size_t(5) ? 0 : 1;
+}

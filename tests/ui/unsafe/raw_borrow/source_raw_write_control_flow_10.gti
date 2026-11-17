@@ -1,0 +1,9 @@
+// Source raw write control flow: readonly virtual receivers preserve stored mutable raw aliases.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+class Writer { public: Holder* out = nullptr;
+  Writer(Holder* value) : out(value) {}
+  virtual void write() { int gone = 1; unsafe { out->pointer = &gone; } }  public: Writer() = default; };
+int main() { mut Holder out{}; Writer writer{&out}; writer.write();
+  unsafe { return std::assume_ref(out.pointer, out); } }  //~ ERROR GTI-S2103

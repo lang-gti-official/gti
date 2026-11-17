@@ -1,0 +1,8 @@
+// Full expression cleanup: potential constructor failure retains cleanup of an initialized field even after its input parameter moved.
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+struct Wrapper<T> { Cleanup item; Wrapper(Cleanup source, int divisor) : item(std::move(source)) { int result = 1 / divisor; } }; int main() { int& borrowed = value; Wrapper<int> held{Cleanup(), 1}; return borrowed; }  //~ ERROR GTI-S2045

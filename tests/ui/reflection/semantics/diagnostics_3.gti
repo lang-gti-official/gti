@@ -1,0 +1,14 @@
+// Diagnostics: an identical diagnostic from every copy is reported once.
+import std.meta;
+struct Player {
+  uint32_t health = 100;
+  float speed = 1.5;
+public:
+  Player() = default;
+};
+int main() {
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    undefined_name = 1;  //~ ERROR GTI-S2001
+  }
+  return 0;
+}

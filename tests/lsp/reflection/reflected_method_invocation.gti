@@ -1,0 +1,49 @@
+// Invoking a reflected static method with a receiver is S2125 at the
+// argument; the result type of an unbound generic method is S2126 (no
+// backend error); both repairs are clean. (reflection_method_lsp_test.py;
+// the phase data and related locations are not asserted.)
+import std.meta;
+class Probe {
+public:
+  Probe() = default;
+  static int32_t value() { return 1; }
+  int32_t read() { return 2; }
+};
+int main() {
+  Probe probe{};
+  /*😀*/ return std::meta::method<Probe, 0>().invoke(probe);  //~ ERROR GTI-S2125
+}
+// --- step 2
+import std.meta;
+class Probe {
+public:
+  Probe() = default;
+  static int32_t value() { return 1; }
+  int32_t read() { return 2; }
+};
+int main() {
+  Probe probe{};
+  /*😀*/ return std::meta::method<Probe, 1>().invoke(probe);
+}
+// --- step 3
+import std.meta;
+class Probe {
+public:
+  Probe() = default;
+  T echo<T>(T value) { return value; }
+};
+int main() {
+  /*😀*/ auto description = std::meta::method<Probe, 0>().result().name();  //~ ERROR GTI-S2126
+  return int(description.size());
+}
+// --- step 4
+import std.meta;
+class Probe {
+public:
+  Probe() = default;
+  int32_t echo<T>(T value) { return 1; }
+};
+int main() {
+  /*😀*/ auto description = std::meta::method<Probe, 0>().result().name();
+  return int(description.size());
+}

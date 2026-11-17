@@ -1,0 +1,3 @@
+// Diagnostic: invalid result macro must stop before emission.
+#macro int& bad() { int saved = 1; return saved; }  //~ ERROR GTI-S2017
+int main() { int& value = bad!(); return value; }  //~ ERROR GTI-S2124 //~ ERROR GTI-S2017

@@ -1,0 +1,37 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+};
+class Reading {
+public:
+  int& external;
+  int code;
+  Reading(int& owner, int failure) : external(owner), code(failure) {}
+};
+for concept std::tryable<Reading> {
+  using value_type = int&;
+  using residual_type = Rejected;
+  bool has_value(Reading& value) { return value.code == 0; }
+  int&<a> take_value<lifetime a>(Reading<a> value) {
+    return value.external;
+  }
+  Rejected take_residual(Reading value) { return Rejected(value.code); }
+};
+class Status {
+public:
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected error) : code(error.code) {}
+};
+
+Status read(int& owner, int failure) {
+  Reading source{owner, failure};
+  int& value = ?std::move(source);
+  return Status(value);
+}
+int main() {
+  int owner = 7;
+  return read(owner, 0).code - 7;
+}

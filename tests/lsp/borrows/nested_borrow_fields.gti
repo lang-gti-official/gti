@@ -1,0 +1,56 @@
+// A reference field inside a pair keeps its hover type and definition;
+// writing the borrowed owner while the pair is live is a conflict at the
+// write, and incomplete member access recovers. (From nested_borrow_fields_lsp_test.py.)
+//@ hover @item: int32_t
+//@ definition @item: @field
+import std.utility;
+class View {
+public:
+  int& /*@field*/item;
+  View(int& item) : item(item) {}
+};
+int main() {
+  mut int owner = 41; owner = 42;
+  auto result = std::pair<View, bool>(View(owner), true);
+  // edit here
+  return result.first./*@item*/item - 42;
+}
+// --- step 2
+import std.utility;
+class View {
+public:
+  int& item;
+  View(int& item) : item(item) {}
+};
+int main() {
+  mut int owner = 41; owner = 42;
+  auto result = std::pair<View, bool>(View(owner), true);
+  /*😀*/ owner = 7;  //~ ERROR GTI-S2017
+  return result.first.item - 42;
+}
+// --- step 3
+import std.utility;
+class View {
+public:
+  int& item;
+  View(int& item) : item(item) {}
+};
+int main() {
+  mut int owner = 41; owner = 42;
+  auto result = std::pair<View, bool>(View(owner), true);
+  // edit here
+  return result.first. - 42;  //~ ERROR GTI-P0001
+}
+// --- step 4
+import std.utility;
+class View {
+public:
+  int& item;
+  View(int& item) : item(item) {}
+};
+int main() {
+  mut int owner = 41; owner = 42;
+  auto result = std::pair<View, bool>(View(owner), true);
+  // edit here
+  return result.first.item - 42;
+}

@@ -1,0 +1,6 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+
+Token identity(Token input) { return input; }
+int main() { auto value = identity(Token::empty); return 0; }

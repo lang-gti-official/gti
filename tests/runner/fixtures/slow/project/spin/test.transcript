@@ -1,0 +1,3 @@
+// A `slow` transcript under a slow/ directory has the slow tier's limit.
+slow
+$ bash -c "while [ $SECONDS -lt 3 ]; do :; done"

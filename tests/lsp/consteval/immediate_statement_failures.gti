@@ -1,0 +1,17 @@
+// A consteval void call and an implicit consteval default constructor are
+// evaluated; division by zero in either is reported at the invocation.
+// (From consteval_lsp_test.py.)
+consteval void validate(int value) { int checked = 100 / value; }
+struct Default { int value; implicit consteval Default() : value(42) {} };
+Default make() { return; }
+int main() { validate(2); return make().value - 42; }
+// --- step 2
+consteval void validate(int value) { int checked = 100 / value; }
+struct Default { int value; implicit consteval Default() : value(42) {} };
+Default make() { return; }
+int main() { validate(0); return make().value - 42; }  //~ ERROR GTI-S2057
+// --- step 3
+consteval void validate(int value) { int checked = 100 / value; }
+struct Default { int value; implicit consteval Default() : value(1 / 0) {} };  //~ ERROR GTI-S2004
+Default make() { return; }  //~ ERROR GTI-S2057
+int main() { validate(2); return make().value - 42; }

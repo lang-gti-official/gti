@@ -1,0 +1,24 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+import std.string;
+enum Observed { ready(int& value), failed(std::string error) };
+Observed<a> produce<lifetime a>(int&<a> owner, bool fail) {
+  if (fail) return Observed::failed(std::string("bad"));
+  return Observed::ready(owner);
+}
+int inspect(Observed& result, Observed& other) {
+  switch (result) {
+    case Observed::ready(value): return value;
+    case Observed::failed(auto& error): return int(error.size());
+  }
+}
+
+int main() {
+  int owner = 3;
+  mut auto result = produce(owner, true);
+  if (inspect(result, result) != 3) return 1;
+  switch (result) {
+    case Observed::ready(value): return value;
+case Observed::failed(mut auto& error): { error.append("!"); return int(error.size()) - 4; }
+  }
+}

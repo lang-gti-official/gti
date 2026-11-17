@@ -1,0 +1,29 @@
+// Consuming lambda: explicitly consumed lambda cannot be reused.
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+public:
+  Token(int identity) : identity(identity) {}
+  ~Token() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int later(int divisor) { std::println(3); return 6 / divisor; }
+int combine(int left, int right) { std::println(4); return left + right; }
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{9};
+  Token captured{1};
+  auto callback = [captured = std::move(captured)](int divisor) -> int {
+    std::println(2);
+    return captured.read() * 12 / divisor;
+  };
+  int body_divisor = argc == 2 ? 0 : 1;
+  int later_divisor = argc == 3 ? 0 : 1;
+  int value = combine(std::move(callback)(body_divisor), later(later_divisor));
+  int again = callback(1);  //~ ERROR GTI-S2018
+  std::println(5);
+  return value - 18;
+}

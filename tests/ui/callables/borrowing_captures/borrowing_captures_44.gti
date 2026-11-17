@@ -1,0 +1,7 @@
+// Borrowing captures: lambda-reference-result-escapes-local is rejected with a user diagnostic, not an ICE.
+int main() {
+  int cell = 4;
+  auto bad = [](int& value) -> int& { int local = value; return local; };  //~ ERROR GTI-S2017
+  int& view = bad(cell);
+  return view;
+}

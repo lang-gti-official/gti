@@ -1,0 +1,4 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+int& identity(int& value) { return value; }
+int main() { int value = 7; int& result = identity(value); return result - 7; }

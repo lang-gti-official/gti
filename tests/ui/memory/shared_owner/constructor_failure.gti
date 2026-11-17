@@ -1,0 +1,24 @@
+// A failing shared owner constructor rolls back its allocation.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 1
+//@ stdout: 7
+//@ stdout: 99
+//@ stderr-contains: runtime error[GTI-R0002]
+import std.memory;
+
+struct Prefix { Prefix() = default; ~Prefix() { std::println(7); } };
+struct Payload {
+  Prefix prefix{};
+  Payload(int divisor) {
+    std::println(1);
+    std::println(12 / divisor);
+  }
+  ~Payload() { std::println(8); }
+};
+struct Caller { Caller() = default; ~Caller() { std::println(99); } };
+int main() {
+  Caller caller{};
+  auto owner = std::make_shared<Payload>(0);
+  return 0;
+}

@@ -1,0 +1,10 @@
+// Pack fold storage effects: a fixed reference-local retains its exact persistent origin through the concrete target's hidden write.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2;
+void leaf<T>(int32_t& input, T& element) { guarded = 3; }
+void folded<Args...>(Args... args) {
+  int32_t& input = guarded;
+  (leaf(input, args), ...);  //~ ERROR GTI-S2045
+}
+int main() { folded(1); return 0; }

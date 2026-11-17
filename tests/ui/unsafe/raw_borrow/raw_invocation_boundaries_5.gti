@@ -1,0 +1,24 @@
+// Raw invocation boundaries: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+struct Holder {
+  mut const int* chosen = nullptr;
+  mut const int* other = nullptr;
+public:
+  Holder() = default;
+};
+struct Relay {
+  mut Holder inner = Holder();
+  Relay(const int* chosen, const int* other) {
+    this.inner.chosen = chosen;
+    this.inner.other = other;
+  }
+  Holder& operator->() { return this.inner; }
+public:
+  Relay() = default;
+};
+Relay make(const int* live) { int dead = 7; return Relay(live, &dead); }
+
+int main() { int live = 9; Relay value = make(&live);
+  unsafe { return std::assume_ref(value->chosen, live); } }

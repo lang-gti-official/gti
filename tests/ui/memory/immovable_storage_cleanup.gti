@@ -1,0 +1,58 @@
+// Fixed-address owning objects use the existing storage lifecycle matrix.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 2
+//@[default] stdout: 102
+//@[default] stdout: 1
+//@[default] stdout: 101
+//@[default] stdout: 99
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 102
+//@[fail] stdout: 1
+//@[fail] stdout: 101
+//@[fail] stdout: 99
+//@[fail] stderr-contains: immovable_storage_cleanup.gti:18: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- immovable_storage_cleanup.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+struct Part {
+  int id;
+  Part(int id) : id(id) {}
+  ~Part() { std::println(100 + this.id); }
+};
+
+class Fixed {
+  Part part;
+  std::string text;
+  int id;
+public:
+  Fixed(int id, int divisor)
+      : part(Part(id)), text(std::string("owning fixed object")), id(id) {
+    int checked = 1 / divisor;
+  }
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+  ~Fixed() { std::println(this.id); }
+};
+
+struct Tail {
+  ~Tail() { std::println(99); }
+public:
+  Tail() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Tail tail{};
+  std::allocator allocator{};
+  auto attempt = allocator.try_storage<Fixed>(std::size_t(2));
+  if (!attempt) { return 1; }
+  mut auto slots = std::move(attempt).value();
+  slots.emplace(std::size_t(0), 1, 1);
+  slots.emplace(std::size_t(1), 2, argc - 2);
+  auto moved = std::move(slots);
+  return 0;
+}

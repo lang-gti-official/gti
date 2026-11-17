@@ -1,0 +1,17 @@
+// Stored callables: captured cleanup has verified MIR.
+//@ check-pass
+class Token {
+  int divisor;
+public:
+  Token(int divisor) : divisor(divisor) {}
+  ~Token() { int checked = 1 / this.divisor; }
+  int read() { return this.divisor; }
+};
+int main() {
+  Token first{1};
+  Token second{1};
+  auto callback = [first = std::move(first), second = std::move(second)]() -> int {
+    return first.read() + second.read();
+  };
+  return callback() - 2;
+}

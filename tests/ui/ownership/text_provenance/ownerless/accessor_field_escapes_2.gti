@@ -1,0 +1,27 @@
+// Accessor field escapes: an accessor escape over a local owner is rejected at source: line.passOut();.
+import std.string;
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+void keepWord(Word& w) {
+  switch (w) {
+  case Word::text(v): kept = v; break;
+  case Word::none: break;
+  }
+}
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+  Word& pick(int index) { return this.word; }
+  void passOut() { keepWord(this.wordRef()); }
+  void passPick() { keepWord(this.pick(0)); }
+  void copyOut() {
+    Word w = this.wordRef();
+    switch (w) {
+    case Word::text(v): kept = v; break;
+    case Word::none: break;
+    }
+  }
+};
+int main() { std::string input{"dynamic"}; Line line = Line(input.view()); line.passOut(); return 0; }  //~ ERROR GTI-S2045

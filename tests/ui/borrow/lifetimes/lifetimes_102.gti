@@ -1,0 +1,16 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Root<T, lifetime a> {
+  T&<a> value;
+  Root(T&<a> input) : value(input) {}
+};
+struct Middle<T, lifetime a> : public Root<T, a> {
+  Middle(T&<a> input) : Root<T, a>(input) {}
+};
+struct Leaf<lifetime a> : public Middle<int, a> {
+  Leaf(int&<a> input) : Middle<int, a>(input) {}
+  int&<a> get() { return value; }
+};
+int&<a> read<lifetime a>(Leaf<a>& view) { return view.value; }
+int main() { int value = 7; Leaf view{value}; return read(view) + view.get() - 14; }

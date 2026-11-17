@@ -1,0 +1,20 @@
+// Protocol concepts: rejected with GTI-S2029.
+concept collection<T> {
+  typename element_type;
+  int size(T& value);
+};
+class Box<T> {
+public:
+  T item;
+  Box(T value) : item(value) {}
+};
+for <std::integral T> concept collection<Box<T>> {
+  using element_type = T;
+  int size(Box<T>& value) { return 1; }
+};
+
+int main() {
+  double half = 1.5;
+  Box<double> box{half};
+  return collection<Box<double>>::size(box);  //~ ERROR GTI-S2029
+}

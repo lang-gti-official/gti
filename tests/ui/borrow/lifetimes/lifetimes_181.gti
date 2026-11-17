@@ -1,0 +1,5 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+int observe<T, lifetime a>(T&<a> value) requires outlives<T, a> { return 7; }
+int inspect<T>(T value) { return observe(value); }
+int main() { return inspect(42) - 7; }

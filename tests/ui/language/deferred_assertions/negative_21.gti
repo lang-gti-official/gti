@@ -1,0 +1,12 @@
+// Negative: borrow.
+import std.string;
+void consume(std::string value) {}
+#macro choose(bool enabled, std::string value) {
+  if (enabled) { consume(value); }
+}
+int main() {
+  std::string owner{"owned"};
+  std::string_view borrowed = owner.view();
+  choose!(true, std::move(owner));  //~ ERROR GTI-S2017
+  return int(borrowed.size());
+}

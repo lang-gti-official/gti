@@ -1,0 +1,6 @@
+// Borrowing captures: exclusive-capture-readonly-source is rejected with a user diagnostic, not an ICE.
+int main() {
+  int value = 0;
+  mut auto callback = [mut &value]() -> int { return value; };  //~ ERROR GTI-S2017
+  return callback();
+}

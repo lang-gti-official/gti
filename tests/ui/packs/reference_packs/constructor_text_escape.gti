@@ -1,0 +1,15 @@
+// A constructor cannot store a text view beside a reference pack without a declared region.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+import std.string;
+struct Holder {
+  std::string_view value;
+  Holder<Args...>(std::string_view text, Args&... args) : value(text) {}
+};
+int main() { std::string text = "owner"; int n = 1; Holder holder{text.view(), n}; return 0; }  //~ ERROR GTI-S2023

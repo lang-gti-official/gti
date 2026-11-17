@@ -1,0 +1,18 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept observed_family<P> {
+  typename element<E>;
+  element<int, a> get<lifetime a>(P<a> source);
+};
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+for concept observed_family<Reading> {
+  using element<Value> = Value&;
+  int&<a> get<lifetime a>(Reading<a> value) { return value.external; }
+};
+observed_family<P>::element<int, a> relay<P, lifetime a>(P<a> value)
+  requires observed_family<P> { return observed_family<P>::get(std::move(value)); }
+int main() { int owner = 7; Reading view{owner}; int& result = relay(view); return result - 7; }

@@ -1,0 +1,13 @@
+// Lifetimes: rejected with GTI-S2127.
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+Derived<static> invalid() {
+  int value = 7;
+  Derived<static> escaped{value};  //~ ERROR GTI-S2127
+  return escaped;
+}

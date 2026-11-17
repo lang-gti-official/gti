@@ -1,0 +1,2 @@
+import "api/owning types/model \"quoted\".gti";
+int main() { geometry::Stamp value{}; return 0; }

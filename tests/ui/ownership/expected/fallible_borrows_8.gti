@@ -1,0 +1,17 @@
+// Fallible borrows: a fallible borrow may be passed by value and formed from an error.
+//@ check-pass
+enum class lookup_errc { missing };
+int read(expected<int&, lookup_errc> result) {
+  return result.has_value() ? result.value() : 0;
+}
+int direct() {
+  expected<int&, lookup_errc> result = unexpected(lookup_errc::missing);
+  return result.has_value() ? 1 : 0;
+}
+int main() {
+  mut int owner = 5;
+  expected<int&, lookup_errc> found = owner;
+  int seen = read(found);
+  owner = 6;
+  return seen + direct() - 5;
+}

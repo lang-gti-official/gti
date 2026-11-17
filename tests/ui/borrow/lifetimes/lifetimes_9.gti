@@ -1,0 +1,3 @@
+// Lifetimes: rejected with GTI-S2127.
+int&<a> wrong<lifetime a, lifetime b>(int&<a> left, int&<b> right) { return right; }  //~ ERROR GTI-S2127
+int main() { int left = 3; int right = 8; return wrong(left, right); }

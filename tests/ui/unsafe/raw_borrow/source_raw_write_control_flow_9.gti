@@ -1,0 +1,14 @@
+// Source raw write control flow: abstract source dispatch cannot become foreign unknown writes.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+void bad() { int gone = 1; pointer = &gone; }
+void reset() { pointer = &witness; }
+void unchanged() {}
+
+class Writer { public: virtual void write() = 0;  public: Writer() = default; };
+class Bad : public Writer { public: void write() override { bad(); }  public: Bad() = default; };
+int probe(Writer& writer) { writer.write();
+  unsafe { return std::assume_ref(pointer, witness); } }  //~ ERROR GTI-S2103
+int main() { Bad writer{}; return probe(writer); }  //~ ERROR GTI-S2103

@@ -1,0 +1,59 @@
+// Nested nominal results publish only on success, including erased callbacks.
+//@ run-pass
+//@ revisions: default callback later-argument
+//@[default] stdout: 6
+//@[default] stdout: 106
+//@[default] stdout: 8
+//@[default] stdout: 8
+//@[default] stdout: 90
+//@[default] stdout: 9
+//@[callback] run-fail
+//@[callback] args: callback
+//@[callback] exit-code: 70
+//@[callback] stdout: 90
+//@[callback] stdout: 9
+//@[callback] stderr-contains: nested_nominal_owned_callback.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-argument] run-fail
+//@[later-argument] args: later argument
+//@[later-argument] exit-code: 70
+//@[later-argument] stdout: 6
+//@[later-argument] stdout: 90
+//@[later-argument] stdout: 9
+//@[later-argument] stderr-contains: nested_nominal_owned_callback.gti:33: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- nested_nominal_owned_callback.gti
+import std.string;
+import std.vector;
+import std.functional;
+
+struct Packet {
+  int value;
+  Packet(int value) : value(value) { std::println(value); }
+};
+
+class Target {
+public:
+  ~Target() { std::println(90); }
+  Packet operator()(int divisor) { return Packet(12 / divisor); }
+public:
+  Target() = default;
+};
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+public:
+  Caller() = default;
+};
+
+void accept(Packet packet, int after) {
+  std::println(100 + packet.value);
+  std::println(after);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  std::move_only_function<Packet(int)> callback{Target()};
+  accept(callback(argc == 2 ? 0 : 2), 24 / (argc == 3 ? 0 : 3));
+  std::println(8);
+  return 0;
+}

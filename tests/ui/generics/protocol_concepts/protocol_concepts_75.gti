@@ -1,0 +1,20 @@
+// Protocol concepts: rejected with GTI-S2029.
+concept wrapped<T> {
+  typename value_type;
+  value_type unwrap(T value);
+};
+class box<std::equality_comparable T> {
+public:
+  T item;
+  box(T value) : item(value) {}
+};
+class Coin {
+public:
+  int id;
+  Coin(int value) : id(value) {}
+};
+for concept wrapped<box<Coin>> {  //~ ERROR GTI-S2029
+  using value_type = int;
+  int unwrap(box<Coin> value) { return value.item.id; }  //~ ERROR GTI-S2029
+};
+int main() { return 0; }

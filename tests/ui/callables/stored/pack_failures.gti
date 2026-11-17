@@ -1,0 +1,74 @@
+// A stored callable over a capture pack unwinds body and cleanup failures with the right primary.
+//@ run-pass
+//@ revisions: f0 f1 f2 f3 f4
+//@[f0] stdout: 2
+//@[f0] stdout: 1
+//@[f0] stdout: 9
+//@[f1] args: fail
+//@[f1] stdout: 2
+//@[f1] stdout: 1
+//@[f1] stdout: 9
+//@[f1] run-fail
+//@[f1] exit-code: 70
+//@[f1] stderr-contains: main.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f2] args: fail fail
+//@[f2] stdout: 2
+//@[f2] stdout: 1
+//@[f2] stdout: 9
+//@[f2] run-fail
+//@[f2] exit-code: 70
+//@[f2] stderr-contains: main.gti:18: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[f3] args: fail fail fail
+//@[f3] stdout: 2
+//@[f3] run-fail
+//@[f3] exit-code: 70
+//@[f3] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:18; secondary [GTI-R0002]
+//@[f4] args: fail fail fail fail
+//@[f4] stdout: 2
+//@[f4] stdout: 1
+//@[f4] run-fail
+//@[f4] exit-code: 70
+//@[f4] stderr-contains: main.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:12; secondary [GTI-R0002]
+// --- main.gti
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+  int cleanup_divisor;
+public:
+  Token(int identity, int cleanup_divisor)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.identity);
+    int result = 1 / this.cleanup_divisor;
+  }
+  int read() { return this.identity; }
+};
+
+void accept<Args...>(int divisor, Args... args) {
+  int checked = 1 / divisor;
+}
+
+void relay<Args...>(int divisor, Args... args) {
+  accept(divisor, args...);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  // The same generic declarations must keep distinct MIR bodies for empty,
+  // single-closure, mixed passive, and owned-capture argument packs.
+  relay(1);
+  int offset = 7;
+  auto single = [offset]() -> int { return offset; };
+  relay(1, std::move(single));
+  auto passive_left = [offset]() -> int { return offset; };
+  auto passive_right = [offset]() -> int { return offset; };
+  relay(1, std::move(passive_left), 7, std::move(passive_right));
+  Token caller{9, 1};
+  Token first{1, argc == 5 ? 0 : 1};
+  Token second{2, argc == 2 || argc == 4 || argc == 5 ? 0 : 1};
+  auto left = [first = std::move(first)]() -> int { return first.read(); };
+  auto right = [second = std::move(second)]() -> int { return second.read(); };
+  relay(argc == 3 || argc == 4 ? 0 : 1, std::move(left), 7, std::move(right));
+  return 0;
+}

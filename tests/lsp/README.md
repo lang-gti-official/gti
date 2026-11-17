@@ -39,16 +39,22 @@ using Net = demo::/*@use*/Config::Network;
 | `signature @m: text` | the signature help (labels and documentation) contains `text` (`!text`, `none`) |
 | `token @m: type` | the semantic token covering the marker has that legend type |
 | `rename @m new: @a @b …` | the edits start exactly at the markers; `: error [text]` expects an error containing `text` |
+| `prepare-rename @m: @a [placeholder]` | the renameable range starts at `@a` (and its placeholder is `placeholder`); `: none` expects no rename, `: error [text]` an error |
 | `code-action @m: "title"` | a quick fix whose title contains `title` is offered for the published diagnostics covering `@m`, and its edit is for the document's current version |
 | `code-action @m: "title" => step N` | ... and the document with the edit applied is `// --- step N` as code (comment lines, markers, annotations and runs of blanks aside) |
 | `code-action @m: "title" => text` | ... and the edited document contains `text` |
 | `no-code-action @m [: "title"]` | no quick fix (with that title) for the diagnostics covering `@m` |
-| `formatting: text` | the formatted document contains `text`; `unchanged` means formatting is a no-op |
+| `formatting: text` | the formatted document contains `text`; `unchanged` means formatting is a no-op; `"…"` keeps leading and trailing blanks, with `\n`, `\t`, `\"` and `\\` escapes |
+| `format-options: tabSize=4 insertSpaces=true` | the FormattingOptions of the test's `formatting` requests (default `tabSize=2 insertSpaces=true`); values are integers, `true`/`false` or text |
 | `symbols: a b !c` | the document-symbol tree contains `a` and `b` and not `c` |
 
 Published diagnostics for version 1 are matched by the same `//~ ERROR CODE
-[text]` annotations as tests/ui, exhaustively (errors and warnings). `--bless`
-rewrites those annotations, never the request expectations.
+[text]` annotations as tests/ui, exhaustively (errors and warnings).
+Information and hint diagnostics (severity 3 and 4) are `//~ INFO` and `//~
+HINT`; a test that writes one of a severity matches that severity
+exhaustively too, and other tests ignore it. `--bless` rewrites those
+annotations (INFO/HINT only in a test that already has one), never the
+request expectations.
 
 The server's own options are directives named after them, and a worker keeps
 one `gti_lsp` per distinct set (so the standard library is analysed once per
@@ -56,8 +62,13 @@ worker and option set): `//@ execution-profile: concurrent` (`gti_lsp
 --execution-profile concurrent`) and `//@ raw-pointer-audit: warn|strict`
 (`--raw-pointer-audit=`). With an audit each version publishes twice (the
 edit path's diagnostics, then the audit's); the annotations match the
-second. The limit is 3 s of wall time per test (plus the cold allowance for a
-server's first), since the work happens in the server.
+second. The limit is 3 s of the server's CPU time per test (plus the cold
+allowance for a server's first), since the work happens there; a loaded
+machine's waiting does not count. Wall time is only a hang guard: 30 s for
+any one awaited response or publication (both scaled by
+`GTI_TEST_TIME_SCALE`), reported as "no … within the hang guard", distinct
+from "over the CPU budget". The JSON report's `cpu` and the JUnit `cpu`
+property are that server CPU; `wall` and JUnit `time` the wall time.
 
 ### Several files and projects
 
@@ -116,7 +127,7 @@ waiting for the whole test deadline:
 | --- | --- |
 | `{"file": {"name": "main.gti", "text": "…"}}` | write a file in the test directory |
 | `{"send": {…}}` | send a message |
-| `{"expect": {…}}` | wait for a message that matches: objects by subset, arrays element-wise with equal length, `"$ANY"` matches anything. The response to the same `id`, or the notification with the same method, `uri` and `version`, is final: if it differs the test fails at once |
+| `{"expect": {…}}` | wait for a message that matches: objects by subset, arrays element-wise with equal length, `"$ANY"` matches anything, `{"$contains": […]}` an array with a distinct matching element for each listed one in any order (`[]`: any array), `{"$contains": "text"}` a string containing `text`, `{"$match": "regex"}` a string the regular expression (ECMAScript) is found in. The response to the same `id`, or the notification with the same method, `uri` and `version`, is final: if it differs the test fails at once |
 | `{"exit": N}` | wait for the server to exit with status N |
 
 `$URI` is the URI of `main.gti` in the test directory, `$DIR` its path and
@@ -133,5 +144,5 @@ against an older version's diagnostics (stale code actions), unsaved
 overlays that differ from the file on disk, files changed on disk while the
 server runs (`workspace/didChangeWatchedFiles`), fixes that a later
 publication adds (include suggestions), exact diagnostic columns and
-related information, and timing (debounce, cancellation latency) beyond
-message order.
+related information in marker tests (a transcript's `$contains` can), and
+timing (debounce, cancellation latency) beyond message order.

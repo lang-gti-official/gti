@@ -1,0 +1,33 @@
+// Expected propagation operator: expected propagation should reach verified MIR in functions and lambdas.
+//@ check-pass
+expected<int, int> leaf(bool fail, int error, int value) {
+  if (fail) { return unexpected(error); }
+  return value;
+}
+
+expected<int, int> sum(bool first, bool second) {
+  return ?leaf(first, 11, 20) + ?leaf(second, 12, 22);
+}
+
+expected<void, int> complete(bool fail) {
+  if (fail) { return unexpected(13); }
+  return;
+}
+
+expected<void, int> forward_void(bool fail) {
+  ?complete(fail);
+  return;
+}
+
+expected<int, int> copy_named(bool fail) {
+  expected<int, int> result = leaf(fail, 14, 40);
+  return ?result;
+}
+
+int main() {
+  auto forward = [](bool fail) -> expected<int, int> {
+    return ?leaf(fail, 15, 42);
+  };
+  expected<int, int> value = forward(false);
+  return value.value() - 42;
+}

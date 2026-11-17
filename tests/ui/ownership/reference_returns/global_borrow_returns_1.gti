@@ -1,0 +1,48 @@
+// Global borrow returns: an unsafe global/static dereference should be contained by its accessor while safe callers receive a checked mutable borrow.
+//@ check-pass
+class LayerStack {
+public:
+  void Update() mut {}
+public:
+  LayerStack() = default;
+};
+
+class Application {
+public:
+  static mut Application& Get() {
+    unsafe {
+      return *Application::app;
+    }
+  }
+
+  mut LayerStack& GetLayerStack() mut { return this.layers; }
+
+private:
+  mut LayerStack layers = LayerStack();
+  static mut Application* app = nullptr;
+public:
+  Application() = default;
+};
+
+mut int global_value = 1;
+mut int& global_value_ref() { return global_value; }
+
+void update_application() {
+  Application::Get().GetLayerStack().Update();
+  Application::Get().GetLayerStack().Update();
+}
+
+void update_application_in_scopes() {
+  {
+    mut Application& first = Application::Get();
+    first.GetLayerStack().Update();
+  }
+  mut Application& second = Application::Get();
+  second.GetLayerStack().Update();
+}
+
+int main() {
+  mut int& value = global_value_ref();
+  value += 1;
+  return value - 2;
+}

@@ -1,0 +1,9 @@
+// Tagged raw origins: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+class Base { public: mut const int* pointer = nullptr;  public: Base() = default; };
+class Derived : public Base { public: Derived() = default; };
+Derived address_of(int& owner) { mut Derived result{}; result.pointer = &owner; return result; }
+int main() { int live = 7; auto wrapped = address_of(live);
+  unsafe { return std::assume_ref(wrapped.pointer, live); } }

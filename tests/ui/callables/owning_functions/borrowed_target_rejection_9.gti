@@ -1,0 +1,22 @@
+// Borrowed target rejection: tracked borrowed classes, borrowing lambdas, function_ref and owned erased targets retain valid MIR.
+//@ check-pass
+import std.functional;
+import std.memory;
+
+class Reading {
+  int& value;
+public:
+  Reading(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+
+int main() {
+  int value = 7;
+  Reading local{value};
+  auto borrowed = [&value]() -> int { return value; };
+  std::function_ref<int()> view{borrowed};
+  auto owned = [value]() -> int { return value; };
+  std::function<int()> callback{std::move(owned)};
+  auto copy = callback.clone();
+  return local.get() + borrowed() + view() + callback() + copy() - 35;
+}

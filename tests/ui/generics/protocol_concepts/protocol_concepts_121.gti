@@ -1,0 +1,5 @@
+// Protocol concepts: rejected with GTI-S2017.
+concept reference_policy<P> { typename loan<E>; };
+struct Policy {};
+for concept reference_policy<Policy> { using loan<U> = mut U&; };
+int main() { mut int owner = 7; reference_policy<Policy>::loan<int> view = owner; return 0; }  //~ ERROR GTI-S2017

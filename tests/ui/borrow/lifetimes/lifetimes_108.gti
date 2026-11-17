@@ -1,0 +1,9 @@
+// Lifetimes: rejected with GTI-S2017.
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+int main() { mut int value = 7; Derived view{value}; value = 8; return view.value; }  //~ ERROR GTI-S2017

@@ -1,0 +1,49 @@
+// An overloaded operator's text result keeps its relayed owner borrowed.
+//@ run-pass
+//@ stdout: owned
+//@ stdout: owned
+//@ stdout: owned
+//@ stdout: literal
+//@ stdout: plain
+//@ stdout: plain!
+//@ stdout: owned!
+import std.string;
+// An overloaded operator's text result relays its receiver or an argument as
+// its summary says, as a method's does: the relayed owner stays borrowed
+// while the result is used, and ownerless text relays nothing.
+class Same {
+public:
+  Same() {}
+  std::string_view operator()(std::string_view s) { return s; }
+  std::string_view operator[](std::string_view s) { return s; }
+};
+class Plain {
+  mut std::string s;
+public:
+  Plain() : s("plain") {}
+  std::string_view operator()() { return this.s.view(); }
+  void grow() mut { this.s.append("!"); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R operator()(R text) { return text; }
+};
+int main() {
+  Same same{};
+  mut Plain plain{};
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  std::println(same(owner.view()));
+  std::println(same[owner.view()]);
+  std::println(echo(owner.view()));
+  std::string_view literal = same("literal");
+  owner.append("!");
+  std::println(literal);
+  std::println(plain());
+  plain.grow();
+  std::println(plain());
+  std::println(owner);
+  return 0;
+}

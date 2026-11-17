@@ -1,0 +1,14 @@
+// Reference call switch subjects: a switch cannot observe a reference into a temporary owner.
+enum Shape { circle(int radius), none };
+class Holder {
+public:
+  Shape shape;
+  Holder(int radius) : shape(Shape::circle(radius)) {}
+  Shape& shapeRef() { return this.shape; }
+};
+int main() {
+  switch (Holder(3).shapeRef()) {  //~ ERROR GTI-S2017
+  case Shape::circle(radius): return radius;
+  case Shape::none: return 0;
+  }
+}

@@ -1,0 +1,4 @@
+// A concept defined through a boolean helper grants no member facts.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+constexpr bool query<T>() { return requires(T& v) { { v.size() } -> uint64_t; }; } concept indirect<T> = query<T>(); uint64_t read<indirect T>(T& v) { return v.size(); }  //~ ERROR GTI-S2000 Member access requires

@@ -1,0 +1,35 @@
+// Shell escapes: local and by-value shells never escape: Shared& bad(Shared& source) { Shared local = source; return local; }.
+import std.utility;
+struct Counter { mut int value = 4;  public: Counter() = default; };
+class Shared {
+  Counter& counter;
+  mut int offset = 2;
+public:
+  Shared(Counter& source) : counter(source) {}
+  int read() { return this.counter.value + this.offset; }
+  void advance() mut { this.offset += 1; }
+};
+class Exclusive {
+  mut Counter& counter;
+public:
+  Exclusive(mut Counter& source) : counter(source) {}
+  int read() { return this.counter.value; }
+  void advance() mut { this.counter.value += 1; }
+};
+class SharedPair {
+  Counter& first;
+  Counter& second;
+public:
+  SharedPair(Counter& left, Counter& right) : first(left), second(right) {}
+  int read() { return this.first.value + this.second.value; }
+};
+struct Holder {
+  mut Exclusive stored;
+  Holder(Exclusive value) : stored(std::move(value)) {}
+  mut Exclusive& get() mut { return this.stored; }
+  Exclusive& inspect() { return this.stored; }
+};
+mut Exclusive& relay(mut Exclusive& value) { return value; }
+Exclusive& observe(Exclusive& value) { return value; }
+Shared& bad(Shared& source) { Shared local = source; return local; }  //~ ERROR GTI-S2017
+int main() { return 0; }
