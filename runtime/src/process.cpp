@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <new>
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -238,7 +238,9 @@ gti_rt_process_exec_v1(gti_c_string_view arguments, int32_t *nativeCode) {
     // buffer and allocate only the pointer table, never a second byte copy.
     std::size_t count = 0;
     for (std::size_t i = 0; i < arguments.length; ++i) {
-      if (arguments.data[i] == '\0') { ++count; }
+      if (arguments.data[i] == '\0') {
+        ++count;
+      }
     }
     std::vector<char *> argv;
     argv.reserve(count + 1);

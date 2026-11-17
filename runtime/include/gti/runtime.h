@@ -98,7 +98,7 @@ enum {
 // native_code (zero for invalid transport or unsupported platform). Argument
 // bytes are borrowed only for this call and argv[0] is the executable path.
 gti_process_error_v1 gti_rt_process_exec_v1(gti_c_string_view arguments,
-                                          int32_t *native_code);
+                                            int32_t *native_code);
 
 gti_process_error_v1 gti_rt_process_run_v1(gti_c_string_view arguments,
                                            int32_t *termination_kind,

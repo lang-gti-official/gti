@@ -17,6 +17,9 @@ int main() {
   std::process::command directory{"/"};
   auto denied = directory.exec();
   if (denied.code() != std::process::errc::execute_failed || denied.native_code() == 0) { return 5; }
+  std::process::command path_lookup{"sh"};
+  auto not_searched = path_lookup.exec();
+  if (not_searched.code() != std::process::errc::execute_failed || not_searched.native_code() == 0) { return 7; }
   mut std::process::command child{"/bin/sh"};
   child.arg("-c");
   child.arg("exit 7");

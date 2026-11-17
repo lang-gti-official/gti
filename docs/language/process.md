@@ -107,6 +107,8 @@ environment, working directory and POSIX-inherited descriptors (descriptors
 marked close-on-exec close). It never returns, does not run GTI destructors,
 and does not flush user-space stream buffers. Flush buffered output explicitly
 before calling when needed. Other POSIX exec inheritance/reset rules apply.
+Argument preparation allocates, so this safe wrapper is not async-signal-safe;
+use an appropriately prepared raw libc call where that guarantee is needed.
 
 On failure it returns `std::process::exec_error`, whose `code()` is a portable
 `errc` and `native_code()` is the immediately captured POSIX errno. Source
