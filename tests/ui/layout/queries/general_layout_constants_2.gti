@@ -1,0 +1,3 @@
+// General layout constants: a dependent query is checked after concrete substitution.
+uint64_t bytes<T>() { return sizeof(T); }  //~ ERROR GTI-S2063
+int main() { return int(bytes<void>()); }

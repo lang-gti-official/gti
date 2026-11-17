@@ -1,0 +1,3 @@
+// Boundaries: text view temporary retains full-expression owner.
+//@ check-pass
+import std.string; int measure(std::string_view& value) { return int(value.size()); } int main() { return measure(std::string("abcd").view()); }

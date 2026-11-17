@@ -1,0 +1,10 @@
+// General requires: a generic borrowed result cannot escape its local owner diagnostic.
+concept readable<C> = requires(C&<owner> owner) {
+  { owner.read() } -> int&<owner>;
+};
+int&<a> escape<C, lifetime a>(C&<a> input)
+    requires readable<C> && std::default_initializable<C> {
+  C local = C();
+  return local.read();  //~ ERROR GTI-S2017
+}
+int main() { return 0; }

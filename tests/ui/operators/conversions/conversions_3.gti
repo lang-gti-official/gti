@@ -1,0 +1,32 @@
+// Conversion operators: the program is accepted.
+//@ check-pass
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+struct Feet {
+  int value;
+  Feet(int amount) : value(amount) {}
+  implicit operator Meters() { return Meters(this.value / 3); }
+  implicit operator bool() { return this.value != 0; }
+};
+Meters global_length = Feet(9);
+Feet standard_lap = Feet(30);
+class Track {
+  Meters lap = standard_lap;
+  Meters start;
+public:
+  Track(Feet first) : start(first) {}
+  static Meters spare = Feet(3);
+  int total() { return this.lap.value + this.start.value; }
+};
+int main() {
+  Feet feet{12};
+  Meters local = feet;
+  bool nonzero = feet;
+  Track track{Feet(6)};
+  int implicit = 1;
+  return nonzero ? local.value + global_length.value + track.total() +
+                       Track::spare.value - implicit
+                 : 0;
+}

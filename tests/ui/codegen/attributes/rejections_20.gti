@@ -1,0 +1,2 @@
+// Rejections: arguments and unsupported annotation placements are rejected.
+int inline() { return 0; }  //~ ERROR GTI-P0002

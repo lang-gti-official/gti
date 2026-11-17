@@ -1,0 +1,15 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+import std.string;
+enum Packet { number(int value), text(std::string value) };
+Packet produce(bool text) {
+  if (text) return Packet::text(std::string("owned publication"));
+  return Packet::number(7);
+}
+int main() {
+  auto packet = produce(false);
+  switch (packet) {
+    case Packet::number(value): return value - 7;
+    case Packet::text(auto& value): return int(value.size());
+  }
+}

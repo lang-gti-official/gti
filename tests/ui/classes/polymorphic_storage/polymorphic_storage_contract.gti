@@ -1,0 +1,41 @@
+// Polymorphic storage contract: the installed polymorphic surface should pass semantic analysis.
+//@ check-pass
+import std.polymorphic;
+import std.string;
+
+interface meter {
+  int read();
+  void bump(int amount) mut;
+};
+
+class gauge : public meter {
+  mut int value;
+public:
+  gauge(int value) : value(value) {}
+  int read() override { return this.value; }
+  void bump(int amount) mut override { this.value = this.value + amount; }
+};
+
+class labelled : public meter {
+  std::string label;
+public:
+  labelled(std::string label) : label(std::move(label)) {}
+  int read() override { return int(this.label.size()); }
+  void bump(int amount) mut override {}
+};
+
+int observe(std::inline_polymorphic<meter, 32, 8>& value) {
+  return value.get().read();
+}
+
+int main() {
+  mut std::inline_polymorphic<meter, 32, 8> value{};
+  value.replace(gauge(3));
+  value.get().bump(1);
+  mut std::inline_polymorphic<meter, 32, 8> moved = std::move(value);
+  int inline_read = observe(moved);
+  moved.replace(labelled(std::string("abc")));
+  int boxed_read = observe(moved);
+  moved.reset();
+  return inline_read + boxed_read - 7;
+}

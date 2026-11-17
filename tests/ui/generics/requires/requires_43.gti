@@ -1,0 +1,53 @@
+// General requires: lookup metadata substitutes inherited owners and excludes overridden declarations without changing declaration reflection.
+//@ check-pass
+import std.meta;
+class Parent<T> {
+public:
+  virtual int sample() { return 1; }
+  T identity(T& value) { return value; }
+public:
+  Parent() = default;
+};
+class Child : public Parent<int> {
+public:
+  int sample() override { return 2; }
+public:
+  Child() = default;
+};
+constexpr bool exact_lookup<T>() {
+  mut int samples = 0;
+  mut int identities = 0;
+  mut bool exact = true;
+  constexpr for (auto method : std::meta::lookup_methods_of<T>()) {
+    if constexpr (method.name() == "sample") {
+      samples += 1;
+      if constexpr (!method.result().is_same<int>()) { exact = false; }
+    }
+    if constexpr (method.name() == "identity") {
+      identities += 1;
+      constexpr for (auto parameter : method.parameters()) {
+        if constexpr (!parameter.type().is_same<int&>()) { exact = false; }
+      }
+    }
+  }
+  return exact && samples == 1 && identities == 1;
+}
+struct Tag<T> {
+  constexpr Tag() {}
+  constexpr int id() { return 7; }
+};
+constexpr int type_only<T>() {
+  Tag<T> tag{};
+  return tag.id();
+}
+int main() {
+  static_assert(exact_lookup<Child>());
+  static_assert(type_only<Child>() == 7);
+  // Exact descriptor identity also proves that the overridden Parent::sample
+  // is absent, and that the inherited identity owner retains its int argument.
+  static_assert(std::meta::is_same<std::meta::lookup_method_list<Child>,
+      std::meta::list<std::meta::method<Parent<int>, 1>,
+                      std::meta::method<Child, 0>>>());
+  static_assert(std::meta::is_same<std::meta::parameter_type<Parent<int>, 1, 0>, int&>());
+  return 0;
+}

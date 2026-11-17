@@ -1,0 +1,4 @@
+// Full expression cleanup: an owning factory transfers its local cleanup obligation rather than treating an implicit return move as a destructor call.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1; void modify() { value = 2; } class Cleanup { public: Cleanup() {} Cleanup(Cleanup&) = delete; Cleanup(Cleanup&&) = default; ~Cleanup() { modify(); } }; Cleanup make() { Cleanup local{}; return local; } int main() { int& borrowed = value; Cleanup held = make(); int copied = borrowed; return copied; }

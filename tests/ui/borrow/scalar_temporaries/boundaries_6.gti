@@ -1,0 +1,3 @@
+// Boundaries: result may retain a different argument.
+//@ check-pass
+int&<a> select<lifetime a>(int&<a> source, int& ignored) { return source; } int main() { int source = 42; return select(source, 0) - 42; }

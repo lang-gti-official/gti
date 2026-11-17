@@ -1,0 +1,4 @@
+// Raw produced call origins: unresolved lambda and borrowed-storage source outputs must not become foreign pointers.
+//@ raw-pointer-audit: strict
+int main() { auto source = []() -> const int* { int gone = 1; return &gone; };
+  auto pointer = source(); unsafe { return *pointer; } }  //~ ERROR GTI-S2103

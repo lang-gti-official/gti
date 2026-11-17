@@ -1,0 +1,8 @@
+// Negatives: ordinary helpers cannot hide known type remains advisory with audit Warn.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+struct Item { int value = 0;  public: Item() = default; };
+struct Other { int value = 0;  public: Other() = default; };
+int main() { mut Item value{}; void* e = std::erase_address(&value);
+Other* p = std::typed_address<Other>(e); return 0; }  //~ WARN GTI-S2102

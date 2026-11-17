@@ -1,0 +1,5 @@
+// Layout class assertions: erased constexpr queries validate class assertions.
+struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); T value; };  //~ ERROR GTI-S2079
+constexpr uint64_t bytes<T>() { return sizeof(T); }
+static_assert(bytes<Bad<int>>() > uint64_t(0));  //~ ERROR GTI-S2057
+int main() { return 0; }

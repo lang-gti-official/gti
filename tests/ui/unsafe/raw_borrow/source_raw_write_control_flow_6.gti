@@ -1,0 +1,13 @@
+// Source raw write control flow: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+void bad() { int gone = 1; pointer = &gone; }
+void reset() { pointer = &witness; }
+void unchanged() {}
+
+int probe(bool run) { if (run) { bad(); } reset();
+  unsafe { return std::assume_ref(pointer, witness); } }
+int main() { return probe(true); }

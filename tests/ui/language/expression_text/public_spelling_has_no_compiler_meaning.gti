@@ -1,0 +1,11 @@
+// Public spelling has no compiler meaning: an unrelated ordinary declaration may use the public helper spelling.
+//@ check-pass
+import std.string;
+namespace std {
+  std::string_view expression_text(int value) { return "ordinary"; }
+}
+int main() {
+  mut int counter = 0;
+  std::string_view text = std::expression_text(++counter);
+  return counter;
+}

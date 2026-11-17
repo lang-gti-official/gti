@@ -1,0 +1,10 @@
+// Semantic boundaries: a guard should not cross the thread-transfer boundary.
+//@ execution-profile: concurrent
+import std.mutex;
+import std.thread;
+int main() {
+  std::mutex<int32_t> value{1};
+  mut std::mutex_guard<int32_t> guard = value.lock();
+  auto started = std::thread::start([owned = std::move(guard)]() -> void {});  //~ ERROR GTI-S2084
+  return 0;
+}

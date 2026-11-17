@@ -1,0 +1,11 @@
+// Contracts: terminal/caller fixture lowers completely.
+//@ check-pass
+import std.panic;
+[[noreturn, track_caller]] void fail(std::string_view reason) {
+  std::panic(reason);
+}
+
+[[track_caller]] void checked(bool okay) {
+  if (!okay) { fail("invalid state"); }
+}
+int main() { checked(true); return 0; }

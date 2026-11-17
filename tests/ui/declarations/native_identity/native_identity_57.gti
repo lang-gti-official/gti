@@ -1,0 +1,5 @@
+// Native identity: rejected with GTI-S2057.
+class Base { public: int32_t b = 0; };
+class Derived : public Base {};
+constexpr int32_t reads(Derived) { return 0; }  //~ ERROR GTI-S2057
+int main() { return 0; }

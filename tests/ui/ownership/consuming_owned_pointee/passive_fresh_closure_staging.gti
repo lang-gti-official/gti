@@ -1,0 +1,14 @@
+// Passive fresh closure staging: fresh passive callback constructors pass frontend.
+//@ check-pass
+import std.functional;
+import std.string;
+int main() {
+  std::move_only_function<void() &&> empty{[]() -> void {}};
+  std::move(empty)();
+  int identity = 9;
+  std::move_only_function<void() &&> captured{
+      [identity]() -> void { std::println(identity); }};
+  std::move(captured)();
+  std::function<int() &&> scalar{[]() -> int { return 4; }};
+  return std::move(scalar)() - 4;
+}

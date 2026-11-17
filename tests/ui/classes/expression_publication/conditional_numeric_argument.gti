@@ -1,0 +1,51 @@
+// A conditional numeric argument converts the selected value; an out-of-range conversion fails at its own site.
+//@ run-fail
+//@ revisions: left right alias generic
+//@[left] run-pass
+//@[left] exit-code: 0
+//@[left] stdout: 51
+//@[left] stdout: 51
+//@[right] run-pass
+//@[right] exit-code: 0
+//@[right] args: right
+//@[right] stdout: 52
+//@[right] stdout: 52
+//@[alias] args: alias failure
+//@[alias] stdout: 0
+//@[alias] stderr-contains: main.gti:27: runtime error[GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[generic] args: generic conversion failure
+//@[generic] stdout: 0
+//@[generic] stdout: 64
+//@[generic] stderr-contains: main.gti:20: runtime error[GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@ exit-code: 70
+// --- main.gti
+import std.vector;
+import std.string;
+
+using Index = uint8_t;
+
+class Pair<std::numeric T> {
+  mut int total = 0;
+public:
+  Pair() {}
+  [[discardable]] mut Pair<T>& set(T index, int left, int right) mut {
+    this.total = int(index) + left + right;
+    return this;
+  }
+  int read() { return this.total; }
+  ~Pair() { std::println(this.total); }
+};
+
+int generic_check<std::numeric T>(int input) {
+  mut Pair<T> pair{};
+  pair.set(T(input), input == 1 ? 10 : 20, input == 2 ? 30 : 40); // generic-failure
+  return pair.read();
+}
+
+int main(int argc, std::vector<std::string> args) {
+  mut Pair<Index> pair{};
+  int input = argc == 3 ? -1 : argc;
+  pair.set(Index(input), argc == 1 ? 10 : 20, argc == 2 ? 30 : 40); // alias-failure
+  int other = generic_check<uint8_t>(argc == 4 ? -1 : argc);
+  return pair.read() == other ? 0 : 1;
+}

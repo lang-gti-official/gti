@@ -1,0 +1,20 @@
+// Owning enum packs: pack expansion does not admit polymorphic owning enum transport.
+class Token {
+public:
+  Token() {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() {}
+};
+enum Event { Empty, Owned(Token token) };
+
+class Target<Args...> {
+public:
+  Target() {}
+  virtual void accept(Args... args) {}  //~ ERROR GTI-S2067
+};
+int main() {
+  Target<Event> target{};
+  target.accept(Event::Owned(Token()));
+  return 0;
+}

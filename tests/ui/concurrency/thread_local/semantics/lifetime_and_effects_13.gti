@@ -1,0 +1,3 @@
+// Lifetime and effects: prospective TLS return summaries never authorize a shadowing automatic local.
+//@ execution-profile: concurrent
+int& current() { thread_local int value = 1; { int value = 2; return value; } } int main() { return current(); }  //~ ERROR GTI-S2017

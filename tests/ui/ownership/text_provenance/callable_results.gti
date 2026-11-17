@@ -1,0 +1,34 @@
+// A callable's text result is what its target returns.
+//@ run-pass
+//@ stdout: hello
+//@ stdout: lit
+//@ stdout: large
+//@ stdout: other
+import std.functional;
+import std.string_view;
+// A callable's text result through a GTI invocation pointer is what its
+// target returns: a user-defined callable class, a lambda or a function item.
+class Greeter {
+public:
+  std::string_view greeting;
+  Greeter(std::string_view greeting) : greeting(greeting) {}
+  std::string_view operator()() { return this.greeting; }
+};
+std::string_view small(int n) { return n < 10 ? "small" : "large"; }
+std::string_view invoke(std::function_ptr<std::string_view(int)> pick, int n) { return pick(n); }
+mut std::string_view kept = "";
+int main() {
+  Greeter hello = Greeter("hello");
+  std::function_ref<std::string_view()> greet{hello};
+  kept = greet();
+  std::println(kept);
+  auto lit = []() -> std::string_view { return "lit"; };
+  std::function_ref<std::string_view()> viewed{lit};
+  std::println(viewed());
+  kept = invoke(std::function_ptr<std::string_view(int)>(small), 30);
+  std::println(kept);
+  auto zero = [](int n) -> std::string_view { return n == 0 ? "zero" : "other"; };
+  std::function_ptr<std::string_view(int)> viaLambda{zero};
+  std::println(viaLambda(1));
+  return kept == "large" ? 0 : 1;
+}

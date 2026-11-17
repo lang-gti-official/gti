@@ -1,0 +1,54 @@
+// Raw pointer constructor ranking: raw pointer ranking should require one candidate to dominate every argument across functions, methods, direct construction, and base construction.
+int32_t choose(int32_t* first, const int32_t* second,
+               const int32_t* third) { return 1; }
+int32_t choose(const int32_t* first, int32_t* second,
+               int32_t* third) { return 2; }
+
+class Selector {
+public:
+  int32_t select(int32_t* first, const int32_t* second,
+                 const int32_t* third) { return 1; }
+  int32_t select(const int32_t* first, int32_t* second,
+                 int32_t* third) { return 2; }
+public:
+  Selector() = default;
+};
+
+class PointerChoice {
+public:
+  PointerChoice(int32_t* first, const int32_t* second,
+                const int32_t* third) {}
+  PointerChoice(const int32_t* first, int32_t* second,
+                int32_t* third) {}
+public:
+  PointerChoice() = default;
+};
+
+class PointerBase {
+public:
+  PointerBase(int32_t* first, const int32_t* second,
+              const int32_t* third) {}
+  PointerBase(const int32_t* first, int32_t* second,
+              int32_t* third) {}
+public:
+  PointerBase() = default;
+};
+
+class PointerDerived : public PointerBase {
+public:
+  PointerDerived(int32_t* value) : PointerBase(value, value, value) {}  //~ ERROR GTI-S2013
+public:
+  PointerDerived() = default;
+};
+
+int main() {
+  mut int32_t value = 1;
+  mut int32_t* pointer = nullptr;
+  unsafe { pointer = &value; }
+  [[discard]] choose(pointer, pointer, pointer);  //~ ERROR GTI-S2013
+  Selector selector{};
+  [[discard]] selector.select(pointer, pointer, pointer);  //~ ERROR GTI-S2013
+  PointerChoice direct{pointer, pointer, pointer};  //~ ERROR GTI-S2013
+  PointerDerived derived{pointer};
+  return 0;
+}

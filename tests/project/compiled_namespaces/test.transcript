@@ -1,0 +1,56 @@
+// Namespaced compiled libraries: the automatic build runs, a consumer-only edit
+// reuses both bundles, a private or malformed function selection is rejected
+// without touching them, and a source-free consumer of both bundles checks and
+// runs while private types, functions and overloads, a wrong nominal type and a
+// borrow conflict are rejected. (From compiled_namespaces_test.py.)
+$ cd producer
+$ sh -c "printf '\\n[profiles.release]\\noptimization = 0\\n' >> gti.toml"
+$ cp gti.toml ../manifest.orig
+$ cp main.gti ../main.orig
+$ gti run app --release
+$ sh -c "cp build/gti/release/*/geometry.gtilib build/gti/release/*/telemetry.gtilib .."
+$ sh -c "echo '// Consumer-only edit.' >> main.gti"
+$ gti build app --release --verbose
+stderr: gti: cache hit (compiled library source/configuration/dependency fingerprints match)
+$ sh -c "sed 's/\"domain::geometry::make\"/\"domain::geometry::secret\"/' ../manifest.orig > gti.toml"
+$ gti build geometry --release
+? 65
+stderr: GTI-B0003
+stderr: exported by the root module
+$ sh -c "sed 's/\"domain::geometry::make\"/\"domain:::geometry::make\"/' ../manifest.orig > gti.toml"
+$ gti build geometry --release
+? 65
+stderr: GTI-B1005
+stderr: qualified by namespaces
+$ sh -c "cmp build/gti/release/*/geometry.gtilib ../geometry.gtilib && cmp build/gti/release/*/telemetry.gtilib ../telemetry.gtilib"
+$ mkdir ../consumer/dependencies
+$ cp ../geometry.gtilib ../telemetry.gtilib ../consumer/dependencies/
+$ cp ../main.orig ../consumer/main.gti
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti check app --release
+$ gti run app --release
+$ cp ../variants/private_type.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S
+$ cp ../variants/private_function.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S
+$ cp ../variants/private_overload.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S
+$ cp ../variants/wrong_nominal.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S
+$ cp ../variants/borrow_conflict.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ test ! -e api
+$ cmp dependencies/geometry.gtilib ../geometry.gtilib
+$ cmp dependencies/telemetry.gtilib ../telemetry.gtilib

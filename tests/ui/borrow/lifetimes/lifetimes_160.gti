@@ -1,0 +1,4 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+unsafe T&<a> borrow<T, Owner, lifetime a>(const T* address, Owner&<a> owner) { unsafe { return *address; } }
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> source) : external(source) {} int& read() { unsafe { return borrow(&this.local, this); } } }; struct Wrapper<lifetime a, lifetime owner> { View<a>&<owner> value; Wrapper(View<a>&<owner> input) : value(input) {} int& read() { return this.value.read(); } }; int main() { int value = 3; View view{value}; Wrapper wrapper{view}; return wrapper.read() - 7; }

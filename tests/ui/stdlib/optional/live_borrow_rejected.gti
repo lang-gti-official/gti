@@ -1,0 +1,10 @@
+// A mutable optional method is rejected while a payload borrow may be live.
+//@ check-fail
+import std.optional;
+
+int main() {
+  mut std::optional<int32_t> value{int32_t(7)};
+  mut int32_t& borrowed = value.value();
+  value.reset();  //~ ERROR GTI-S2017 may still be live
+  return borrowed;
+}

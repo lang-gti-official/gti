@@ -1,0 +1,16 @@
+// Generics: the program is accepted.
+//@ check-pass
+class Base {
+public:
+  int stamp = 5;
+  Base() {}
+  virtual int read() = 0;
+};
+class Derived : public Base {
+public:
+  int read() override { return this.stamp; }
+public:
+  Derived() = default;
+};
+struct Holder { Derived value;  public: Holder() = default; };
+int main() { Holder owner{}; return owner.value.read() - 5; }

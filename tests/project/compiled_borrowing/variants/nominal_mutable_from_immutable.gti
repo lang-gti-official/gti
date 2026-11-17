@@ -1,0 +1,2 @@
+import "api.gti";
+int main() { Sample x = {.value = 1}; mut Sample& v = edit_sample(x); return v.value; }

@@ -1,0 +1,2 @@
+// Unsafe and pointer diagnostics: a pointer-slot reference keeps reference access and unsafe pointee rules: int main() { mut int32_t a = 1; int32_t* pointers[1] = {&a}; for (auto& p : pointers) { unsafe { return *p; } } return 0; }.
+int main() { mut int32_t a = 1; int32_t* pointers[1] = {&a}; for (auto& p : pointers) { unsafe { return *p; } } return 0; }  //~ ERROR GTI-S2056

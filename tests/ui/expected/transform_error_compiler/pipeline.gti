@@ -1,0 +1,33 @@
+// Pipeline: owned scalar/void transforms and ? compose.
+//@ check-pass
+enum class Error { failed };
+namespace app {
+  Error map(int error) { return Error::failed; }
+  bool map(bool error) { return error; }
+}
+expected<int, int> read(bool fail) {
+  if (fail) { return unexpected(1); }
+  return 42;
+}
+expected<int, Error> transform(bool fail) {
+  return read(fail).transform_error(app::map);
+}
+expected<int, Error> propagate(bool fail) {
+  auto source = read(fail);
+  return ?std::move(source).transform_error(app::map);
+}
+expected<void, int> perform(bool fail) {
+  if (fail) { return unexpected(1); }
+  return;
+}
+expected<void, Error> transform_void(bool fail) {
+  ?perform(fail).transform_error(app::map);
+  return;
+}
+expected<T, Error> generic_transform<T>(expected<T, int> source) {
+  return std::move(source).transform_error(app::map);
+}
+int main() {
+  auto result = generic_transform<int>(read(false));
+  return result.value() - 42;
+}

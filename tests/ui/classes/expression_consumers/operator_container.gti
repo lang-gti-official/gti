@@ -1,0 +1,20 @@
+// A parenthesised operator result as a consumer that pushes it into a vector publishes one object.
+//@ run-pass
+import std.vector;
+class Value {
+  int number;
+public:
+  Value(int value) : number(value) {}
+  int get() { return this.number; }
+  Value twin() { return Value(this.number); }
+  Value operator+(Value& other) { return Value(this.number + other.number); }
+};
+int consume(Value value) { return value.get(); }
+Value relay(Value value) { return value; }
+
+int main() {
+Value named = Value(5);
+mut std::vector<Value> bag{};
+bool flag = true;
+bag.push_back((named + named)); return bag[std::size_t(0)].get() == 10 ? 0 : 1;
+}

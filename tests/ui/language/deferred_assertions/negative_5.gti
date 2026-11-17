@@ -1,0 +1,2 @@
+// Negative: namespace-scope template.
+[[test]] #macro wrong() {}  //~ ERROR GTI-S2099

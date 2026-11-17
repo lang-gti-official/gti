@@ -1,0 +1,8 @@
+// Invocation pointer text targets: a text-relaying invocation pointer target is rejected where it is formed: c_string(c_string).
+import std.functional;
+import std.string;
+c_string target(c_string native) { return native; }
+int main() {
+  std::function_ptr<c_string(c_string)> pointer{target};  //~ ERROR GTI-S2045
+  return 0;
+}

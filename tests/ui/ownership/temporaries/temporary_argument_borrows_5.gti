@@ -1,0 +1,8 @@
+// Temporary argument borrows: an explicit move from named storage should not count as fresh.
+class Report { public: Report() {} };
+void update(mut Report& report) {}
+int main() {
+  mut Report report = Report();
+  update(std::move(report));  //~ ERROR GTI-S2017
+  return 0;
+}

@@ -13,7 +13,7 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 
-SMOKE = "compiler_pipeline"
+SMOKE = "gti_test_ui"
 MARKER = re.compile(r"<!-- gti-validation-component: ([^\n]+) -->")
 BATCH_DIRECTORY = ".gti-validation/batches/"
 TIERS = {"T1", "T2", "T3"}
@@ -555,7 +555,6 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
 # maps to the prefix its parts share; an aggregate is dropped only when its
 # parts are registered.
 SHARDED_AGGREGATES = {
-    "compiler_pipeline": "compiler_pipeline_",
     "allocator_raw_audit_independence": "allocator_raw_audit_independence_",
     "body_analysis_order": "body_analysis_order_",
     "instance_reuse": "instance_reuse_",

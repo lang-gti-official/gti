@@ -1,0 +1,10 @@
+// Known raw pointer origins: copying a raw address must preserve known expired local provenance.
+//@ raw-pointer-audit: strict
+int main() {
+  mut const int* pointer = nullptr;
+  unsafe {
+    { int value = 42; pointer = &value; }
+    auto copied = pointer;
+    return *copied;  //~ ERROR GTI-S2101
+  }
+}

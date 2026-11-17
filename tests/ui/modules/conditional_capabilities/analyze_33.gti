@@ -1,0 +1,2 @@
+// Analyze: unsupported capability predicate fails closed.
+[[unsafe_transfer(requires(T& value) { value.read(); })]] class Wrong<T> {}; int main() { return 0; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001

@@ -1,0 +1,12 @@
+// Negative: assignment cannot silently replace the retained resource binding.
+import std.resource;
+import std.memory;
+
+int use(std::resource_ref<std::process_resource> first,
+        std::resource_ref<std::process_resource> second) {
+  mut std::resource_storage<int,std::process_resource> left{first};
+  std::resource_storage<int,std::process_resource> right{second};
+  left = std::move(right);  //~ ERROR GTI-S2003
+  return 0;
+}
+int main() { return 0; }

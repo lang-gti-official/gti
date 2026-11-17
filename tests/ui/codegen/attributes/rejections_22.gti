@@ -1,0 +1,2 @@
+// Rejections: arguments and unsupported annotation placements are rejected.
+struct S { [[inline(always)]] S() {} }; int main() { return 0; }  //~ ERROR GTI-P0002

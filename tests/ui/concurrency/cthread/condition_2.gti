@@ -1,0 +1,17 @@
+// Condition: rejected with GTI-S2084.
+import std.cthread;
+int main() {
+  mut std::cnd_t condition = 0;
+  mut std::mtx_t mutex = 0;
+  unsafe {
+    if (std::cnd_init(condition) != 0) { return 1; }  //~ ERROR GTI-S2084
+    if (std::mtx_init(mutex, std::mtx_plain) != 0) { return 2; }  //~ ERROR GTI-S2084
+    if (std::mtx_lock(mutex) != 0) { return 3; }  //~ ERROR GTI-S2084
+    int32_t status = std::cnd_timedwait(condition, mutex, std::timespec(int64_t(0), int64_t(0)));  //~ ERROR GTI-S2084
+    if (std::mtx_unlock(mutex) != 0) { return 5; }  //~ ERROR GTI-S2084
+    std::cnd_destroy(condition);  //~ ERROR GTI-S2084
+    std::mtx_destroy(mutex);  //~ ERROR GTI-S2084
+    if (status != std::thrd_timedout) { return 4; }
+  }
+  return 0;
+}

@@ -1,0 +1,7 @@
+// Borrowing captures: exclusive-reentrant-arguments is rejected with a user diagnostic, not an ICE.
+int invoke<F>(mut F& callback, mut int& value) { value += 1; return callback(); }
+int main() {
+  mut int value = 3;
+  mut auto update = [mut &value]() -> int { value += 1; return value; };
+  return invoke(update, value);  //~ ERROR GTI-S2017
+}

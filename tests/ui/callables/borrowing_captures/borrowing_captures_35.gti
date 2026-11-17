@@ -1,0 +1,4 @@
+// Borrowing captures: erased-reference-is-not-layout-storage is rejected with a user diagnostic, not an ICE.
+import std.memory;
+void require_layout<T>() requires std::layout_queryable<T> {}
+int main() { require_layout<std::erased_object>(); return 0; }  //~ ERROR GTI-S2029

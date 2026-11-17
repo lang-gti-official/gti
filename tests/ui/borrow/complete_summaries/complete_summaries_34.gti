@@ -1,0 +1,9 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+
+Token bounded<uint64_t N>() {
+  if constexpr (N == 0) { return Token::empty; }
+  else { return bounded<N - 1>(); }
+}
+int main() { auto value = bounded<40>(); return 0; }

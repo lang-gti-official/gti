@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Panic/try formatting twins: ownership, caller blame, cleanup and output errors."""
+"""Panic output errors against a stdout pipe closed before launch.
+
+The formatting outcomes (modes 0-7) are tests/ui/runtime/panic/adoption_formatting.gti;
+these need a closed pipe, which gti-test cannot provide.
+"""
 
 import argparse
 import os
@@ -34,14 +38,7 @@ def main():
     invalid = "Formatting failed: invalid format"
     unsupported = "Formatting failed: unsupported argument; convert the value to a supported type"
     output = "Output failed: stdout write failed"
-    cases = [(0, 0, "{raw}{{raw}}\n1 2 three\n", "")]
-    for mode, marker, message in (
-            (1, "invalid", invalid),
-            (2, "count", "Formatting failed: argument count mismatch"),
-            (3, "unsupported", unsupported),
-            (4, "append-zero", invalid), (5, "append-spec", invalid),
-            (6, "println-format", unsupported), (7, "wrapper", invalid)):
-        cases.append((mode, 70, "", cleanup + failure(marker, message)))
+    cases = []
     cases.append((8, 0, "", cleanup))
     for mode, marker in ((9, "println-io"), (10, "print-io"), (11, "raw-io"),
                          (12, "char-io"), (13, "integer-io"),

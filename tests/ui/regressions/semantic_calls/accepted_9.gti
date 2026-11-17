@@ -1,0 +1,12 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+class Parcel {
+public:
+  int value;
+  Parcel(int v) : value(v) {}
+  Parcel(Parcel&) = delete;
+  Parcel(Parcel&&) = default;
+};
+void consume<Args...>(int tag, Args... args) {}
+void consume<T>(int tag, T& value) {}
+int main() { Parcel p{42}; consume(1, p); return 0; }

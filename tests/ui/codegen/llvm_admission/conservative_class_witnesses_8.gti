@@ -1,0 +1,3 @@
+// Conservative class witnesses: nested payload and union storage retains its exact owning pending requirement and source identity.
+//@ check-pass
+enum class Choice { empty, held(int value) }; class Outer {public: Choice value=Choice::empty; public: Outer() = default; }; void accept(Outer& value){}

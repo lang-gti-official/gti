@@ -1,0 +1,4 @@
+// Native identity: the program is accepted.
+//@ check-pass
+constexpr int32_t reads(int32_t*) { return 0; }
+int main() { return 0; }

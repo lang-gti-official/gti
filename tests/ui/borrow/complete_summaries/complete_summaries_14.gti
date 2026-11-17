@@ -1,0 +1,5 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Exclusive { empty, value(mut int& owner) };
+void hold(mut int& owner) { auto carrier = Exclusive::value(owner); }
+int main() { return 0; }

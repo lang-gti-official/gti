@@ -1,0 +1,3 @@
+// Generics: rejected with GTI-S2023.
+class Owner<Args...> { public: void invoke(Args... args) {}  public: Owner() = default; };  //~ ERROR GTI-S2023
+int main() { Owner<void> value{}; return 0; }

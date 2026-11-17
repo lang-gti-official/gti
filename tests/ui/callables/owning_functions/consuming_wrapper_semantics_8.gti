@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: target result must match signature.
+import std.functional;
+import std.memory;
+int main() { std::function<int() &&> callback{[]() -> bool { return true; }}; return 0; }  //~ ERROR GTI-S2046

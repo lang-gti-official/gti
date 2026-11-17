@@ -1,0 +1,8 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept C<T> { int read(T& v); };
+concept D<T> { int read(T& v); };
+struct Box<T> { T value; };
+for <T> concept C<Box<T>> requires C<T> || D<T> {
+  int read(Box<T>& v) { return C<T>::read(v.value); }  //~ ERROR GTI-S2123
+};
+int main() { return 0; }

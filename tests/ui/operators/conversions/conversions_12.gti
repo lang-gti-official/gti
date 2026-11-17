@@ -1,0 +1,5 @@
+// Conversion operators: rejected with GTI-S2003.
+import std.optional;
+import std.string;
+std::optional<std::string> label(std::string named) { return named; }  //~ ERROR GTI-S2003
+int main() { return 0; }

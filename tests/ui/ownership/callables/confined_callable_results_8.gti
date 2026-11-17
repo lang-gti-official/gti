@@ -1,0 +1,26 @@
+// Confined callable results: nested result inference must not discard a borrowed aggregate's owner dependencies.
+struct View {
+  int& value;
+  View(int& source) : value(source) {}
+};
+class ViewSource {
+  int value = 7;
+public:
+  View operator()(int unused) { return View(this.value); }
+public:
+  ViewSource() = default;
+};
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));  //~ ERROR GTI-S2046 without references, tracked borrowed state, or lambda identity
+}
+class ReadView {
+public:
+  int operator()(View value) { return value.value; }
+public:
+  ReadView() = default;
+};
+int main() {
+  ViewSource inner{};
+  ReadView outer{};
+  return compose(outer, inner, 4);
+}

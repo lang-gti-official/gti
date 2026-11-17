@@ -20,7 +20,7 @@ plans and execution plans for accepted designs do not create new RFCs.
 
 The short version: write tests as
 [Writing Tests](../../../AGENTS.md#writing-tests) says, run focused checks
-(reproducer, owning tests, affected cross-phase consumers, `compiler_pipeline`,
+(reproducer, owning tests, affected cross-phase consumers, `gti_test_ui`,
 smoke), record them with `verify`,
 and `finish`: it labels the PR for a rollup (phase `rollup`) or, for Risk-system
 diffs and `--no-rollup`, queues it alone (phase `queued`). Never run the

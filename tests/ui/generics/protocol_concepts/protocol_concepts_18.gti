@@ -1,0 +1,11 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept writable<T> {
+  typename element;
+};
+for concept writable<int> {
+  using element = mut int&;
+};
+int main() {
+  return 0;
+}

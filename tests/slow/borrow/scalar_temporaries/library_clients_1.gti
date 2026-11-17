@@ -1,0 +1,12 @@
+// Library clients: set lookup and iterator algorithms.
+//@ check-pass
+//@ slow
+import std.set;
+import std.vector;
+import std.algorithm;
+int main() {
+  mut std::set<int> values{}; values.insert(80);
+  mut std::vector<int> sequence{}; sequence.push_back(2); sequence.push_back(3);
+  auto found = std::find(sequence.begin(), sequence.end(), 3);
+  return values.contains(80) && found != sequence.end() && std::count(sequence, 2) == 1 ? 0 : 1;
+}

@@ -1,0 +1,6 @@
+// Rejected source: raw pointer dereference does not confer owned-pointee consumption.
+interface Operation { int operator()(int value) &&; };
+int invoke(Operation* pointer, int value) {
+  unsafe { return std::move(*pointer)(value); }  //~ ERROR GTI-S2018
+}
+int main() { return 0; }

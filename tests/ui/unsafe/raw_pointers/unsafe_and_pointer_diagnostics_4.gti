@@ -1,0 +1,3 @@
+// Unsafe and pointer diagnostics: raw pointer locals and fields should never be indeterminate.
+struct Holder { mut int32_t* value; };  //~ ERROR GTI-S2056
+int main() { int32_t* local; return 0; }  //~ ERROR GTI-S2056

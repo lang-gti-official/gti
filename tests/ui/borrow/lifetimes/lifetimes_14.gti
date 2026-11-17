@@ -1,0 +1,12 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+int&<a> first<lifetime a>(int&<a> left, int&<a> right) { return left; }
+int main() {
+  int left = 3;
+  mut int right = 8;
+  int& result = first(left, right);
+  int saved = result;
+  right = 9;
+  return saved - 3;
+}

@@ -1,0 +1,44 @@
+// Dependency-owned nominal types keep one identity across compiled
+// libraries: the diamond builds and runs, a consumer-only edit rebuilds no
+// library, a private layout change rebuilds them all, and a consumer with
+// only the bundles (one interface at an escaped path) checks, runs, shares
+// the owner's types and is refused private types and conflicting loans.
+// (From compiled_type_forwarding_test.py, at the default release level.)
+slow
+unset CPATH
+unset C_INCLUDE_PATH
+unset CPLUS_INCLUDE_PATH
+unset LIBRARY_PATH
+unset SDKROOT
+$ cd producer
+$ gti run app --release
+$ touch ../before-edit
+$ sh -c "echo '// Consumer-only change.' >> main.gti"
+$ gti build app --release
+$ find build -name "*.gtilib" -newer ../before-edit
+!stdout: .gtilib
+$ sh -c "sed 's/int value = 91/int64_t value = 91/' geometry.gti > edited && mv edited geometry.gti"
+$ gti run app --release
+$ find build -name "*.gtilib" -newer ../before-edit
+stdout: geometry.gtilib
+stdout: drawing.gtilib
+stdout: processing.gtilib
+stdout: inspection.gtilib
+$ mkdir ../consumer/dependencies
+$ sh -c "cp $(find build -name '*.gtilib') ../consumer/dependencies/"
+$ cd ../consumer
+$ rm -rf ../producer
+$ gti check app --release
+$ gti run app --release
+$ cp variants/direct_owner.gti main.gti
+$ gti run app --release
+$ cp variants/private_type.gti main.gti
+$ gti check app --release
+? 65
+stderr: error[GTI-S
+$ cp variants/borrow_conflict.gti main.gti
+$ gti check app --release
+? 65
+stderr: error[GTI-S2017]
+$ find . -name ".gti-compiled-*.gti"
+!stdout: .gti

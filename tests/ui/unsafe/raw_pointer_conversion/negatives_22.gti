@@ -1,0 +1,6 @@
+// Negatives: backedge retains contradictory pointee remains unchecked with audit Off.
+//@ check-pass
+using E = void*; using P = int*;
+int main() { mut int a = 0; mut uint64_t b = 0; mut E e = E(&a);
+for (mut int i = 0; i < 2; i++) { P p = P(e); e = E(&b); }
+return 0; }

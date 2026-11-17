@@ -1,0 +1,23 @@
+// Exclusive reborrow loan graph: a receiver-derived result should conservatively protect its whole selected receiver rather than infer a callee-internal field.
+class Box {
+  mut int value = 0;
+
+public:
+  int& read() { return this.value; }
+  mut int& write() mut { return this.value; }
+public:
+  Box() = default;
+};
+class Boxes {
+public:
+  mut Box left = Box();
+  mut Box right = Box();
+  int& read_left() { return this.left.read(); }
+public:
+  Boxes() = default;
+};
+int sum(int& left, int& right) { return left + right; }
+int main() {
+  mut Boxes parent = Boxes();
+  return sum(parent.read_left(), parent.right.write());  //~ ERROR GTI-S2017 Call creates overlapping reference accesses
+}

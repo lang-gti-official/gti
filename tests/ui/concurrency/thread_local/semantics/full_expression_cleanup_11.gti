@@ -1,0 +1,9 @@
+// Full expression cleanup: transferring a temporary into an owner does not execute its eventual destructor at the initializer boundary.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+struct Wrapper { Cleanup item; Wrapper(Cleanup source) : item(std::move(source)) {} }; int main() { int& borrowed = value; Wrapper held{Cleanup()}; int copied = borrowed; return copied; }

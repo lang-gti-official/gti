@@ -1,0 +1,8 @@
+// Raw field witnesses: transport admission does not authorize arithmetic outside unsafe.
+struct Slot { mut int value = 7;  public: Slot() = default; };
+unsafe int consume(const Slot* pointer) { unsafe { return pointer->value; } }
+int main() {
+  mut Slot object{};
+  const Slot* pointer = &object;
+  return consume(pointer + 0);  //~ ERROR GTI-S2055 //~ ERROR GTI-S2055
+}

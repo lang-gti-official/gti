@@ -1,0 +1,8 @@
+// Scalar domain: class should be rejected at the public atomic constraint.
+//@ execution-profile: concurrent
+import std.atomic;
+class payload { public: payload() = default; };
+int main() {
+  std::atomic<payload> value{payload()};  //~ ERROR GTI-S2029
+  return 0;
+}

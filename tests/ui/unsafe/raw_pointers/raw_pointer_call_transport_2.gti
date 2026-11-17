@@ -1,0 +1,9 @@
+// Raw pointer call transport: unsummarized source calls must preserve possibly forwarded known origins.
+//@ raw-pointer-audit: strict
+int main() {
+  mut const int* pointer = nullptr;
+  { int gone = 5; pointer = &gone; }
+  auto output = identity(pointer);
+  unsafe { return *output; }  //~ ERROR GTI-S2102
+}
+const int* identity(const int* input) { return input; }

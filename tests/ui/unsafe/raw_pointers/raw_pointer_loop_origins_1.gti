@@ -1,0 +1,16 @@
+// Raw pointer loop origins: loop-carried raw origins must be checked at accesses on later iterations.
+//@ raw-pointer-audit: strict
+int read(int count) {
+  int initial = 1;
+  unsafe {
+    mut const int* pointer = &initial;
+    mut int result = 0;
+    for (mut int index = 0; index < count; index++) {
+      result += *pointer;  //~ ERROR GTI-S2102
+      int per_iteration = index;
+      pointer = &per_iteration;
+    }
+    return result;
+  }
+}
+int main() { return read(2); }

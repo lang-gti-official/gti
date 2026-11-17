@@ -1,0 +1,5 @@
+// Environment target: the program is accepted.
+//@ check-pass
+//@ target: arm64-apple-linux
+import std.environment;
+int main() { return 0; }

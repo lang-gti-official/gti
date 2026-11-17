@@ -1,0 +1,16 @@
+// Global borrow returns: two retained mutable borrows from one global accessor should conflict even when the first carrier is otherwise unused.
+class Application {
+public:
+  static mut Application& Get() {
+    unsafe { return *Application::app; }
+  }
+private:
+  static mut Application* app = nullptr;
+public:
+  Application() = default;
+};
+int main() {
+  mut Application& first = Application::Get();
+  mut Application& second = Application::Get();  //~ ERROR GTI-S2045
+  return 0;
+}

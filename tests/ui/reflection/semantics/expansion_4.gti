@@ -1,0 +1,12 @@
+// Expansion: get_mut through a read-only owner is rejected.
+import std.meta;
+struct Counter { mut { uint32_t hits = 0; }  public: Counter() = default; };
+int main() {
+  mut Counter counter = {.hits = uint32_t(1)};
+  Counter frozen = {.hits = uint32_t(1)};
+  constexpr for (auto field : std::meta::fields_of<Counter>()) {
+    field.get_mut(counter) = field.get(counter) + uint32_t(10);
+    field.get_mut(frozen) = uint32_t(0);  //~ ERROR GTI-S2112 //~ ERROR GTI-S2002
+  }
+  return int(counter.hits);
+}

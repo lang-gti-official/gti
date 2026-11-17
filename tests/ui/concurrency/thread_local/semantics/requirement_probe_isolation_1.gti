@@ -1,0 +1,11 @@
+// Requirement probe isolation: an unevaluated requirement does not publish speculative temporary cleanup into its caller's persistent effects.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+bool with_flag(Cleanup& input, bool flag) { return flag; }
+int main() { int& borrowed = value; bool checked = requires { { inspect(Cleanup()) } -> bool; }; return checked ? borrowed : 0; }

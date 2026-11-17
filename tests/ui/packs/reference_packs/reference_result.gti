@@ -1,0 +1,11 @@
+// A reference result cannot borrow from a parameter beside a reference pack without a declared region.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+int& escape<Args...>(int& value, Args&... args) { return value; }  //~ ERROR GTI-S2023
+int main() { int value = 3; Ticket ticket{}; escape(value, ticket); return 0; }  //~ ERROR GTI-S2009

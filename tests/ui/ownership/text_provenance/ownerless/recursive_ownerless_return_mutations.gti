@@ -1,0 +1,23 @@
+// Recursive ownerless return mutations: ownerless recursive results may be stored in static text.
+//@ check-pass
+mut std::string_view kept = "";
+std::string_view pick(std::string_view s, std::string_view t, int n) {
+  if (n == 0) {
+    return "done";
+  }
+  return pick(t, s, n - 1);
+}
+void keep(std::string_view a, std::string_view b) { kept = pick(a, b, 2); }
+std::string_view even(std::string_view s, int n) {
+  return n == 0 ? "even" : odd(s, n - 1);
+}
+std::string_view odd(std::string_view s, int n) {
+  if (n == 0) {
+    return "odd";
+  }
+  return even(s, n - 1);
+}
+int main() {
+  keep("x", "y");
+  return kept.size() == 4 && even("x", 3).size() == 3 ? 0 : 1;
+}

@@ -1,0 +1,22 @@
+// Execution: expected procedural diagnostic before code generation.
+// --- main.gti
+import "library.gti"; int main(){return unbound!({});}  //~ ERROR GTI-S2001
+// --- library.gti
+
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr inspect(std::syntax::tokens input){
+  auto whole=std::syntax::group(input,uint64_t(0));
+  auto origin=std::syntax::location(whole,uint64_t(0),uint64_t(1));
+  if(std::syntax::text(whole)!="{42}" ||
+     std::syntax::kind(whole,uint64_t(0))==std::syntax::kind(whole,uint64_t(1)) ||
+     !std::syntax::adjacent(whole,uint64_t(0))) {
+    return std::syntax::fail_related(origin,"unexpected input",origin);
+  }
+  return std::syntax::parse(std::syntax::slice(whole,uint64_t(1),uint64_t(2)));
+}
+export #macro(proc) std::syntax::expr unbound(std::syntax::tokens input){
+  auto origin=std::syntax::location(input,uint64_t(0),uint64_t(1));
+  return std::syntax::parse(std::syntax::reference(std::syntax::fresh("outside",origin)));
+}
+export constexpr int outside=42;

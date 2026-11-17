@@ -1,0 +1,17 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+class Writer<T> {
+public:
+  Writer() = default;
+  int write(T& value) requires std::integral<T> { return int(value); }
+};
+concept Writable<T> = requires(Writer<T>& writer, T& value) {
+  { writer.write(value) } -> int;
+};
+void sink<Writable First, Writable Args...>(First first, Args... args) {}
+concept Alias<T> = Writable<T>;
+concept More<T> = Writable<T> || Alias<T>;
+void forward<Writable First, More Args...>(First first, Args... args) {
+  sink(std::move(first), args...);
+}
+int main() { forward(1, 2, 3); return 0; }

@@ -1,0 +1,8 @@
+// Invalid effect query diagnostics: failed effect queries preserve canonical library diagnostic origins and independent body/result-type assertions, with or without a retained TLS borrow or a later independent valid query.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1;
+expected<int, int> read() { return unexpected(7); }
+void mapper(int value) {}
+int main() {
+[[discard]] read().transform_error(mapper); [[discard]] read().transform([](int value) -> void {}); return 0; }  //~ ERROR GTI-S2079 //~ ERROR GTI-S2079

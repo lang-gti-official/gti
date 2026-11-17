@@ -1,0 +1,12 @@
+// Accepted: generic result query follows exact lambda and selected function item types.
+//@ check-pass
+import std.meta;
+std::meta::callable_return_type<F> apply<F, T>(F& fn, T value) {
+  return fn(value);
+}
+int plus_one(int value) { return value + 1; }
+int main() {
+  auto mapper = [](int value) -> int { return value * 2; };
+  auto function = plus_one;
+  return apply(mapper, apply(function, 2)) - 6;
+}

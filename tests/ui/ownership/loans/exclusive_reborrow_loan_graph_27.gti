@@ -1,0 +1,12 @@
+// Exclusive reborrow loan graph: an implicit mutable receiver should conflict with an overlapping mutable reference argument.
+class Cell {
+  mut int value = 0;
+
+  void combine(mut int& other) mut { other += 1; }
+
+public:
+  void invalid() mut { combine(this.value); }  //~ ERROR GTI-S2017
+public:
+  Cell() = default;
+};
+int main() { return 0; }

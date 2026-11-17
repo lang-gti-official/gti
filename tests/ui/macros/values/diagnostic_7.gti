@@ -1,0 +1,4 @@
+// Diagnostic: invalid result macro must stop before emission.
+import std.string;
+#macro std::string identity(std::string value) { return value; }
+int main() { std::string value{"owned"}; std::string moved = identity!(value); return 0; }  //~ ERROR GTI-S2003

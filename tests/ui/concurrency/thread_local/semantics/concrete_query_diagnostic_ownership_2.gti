@@ -1,0 +1,12 @@
+// Concrete query diagnostic ownership: discarding a failed constant's nonexecuting effect root reports only the constant's error, not an internal one.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+constexpr uint64_t depth<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return depth<N - 1>() + 1; }  //~ ERROR GTI-S2105
+}
+constexpr uint64_t invalid = depth<200>();  //~ ERROR GTI-S2057
+
+thread_local mut int guarded = 1;
+void modify() { guarded = 2; }
+int main() { int& held = guarded; modify(); return held; }

@@ -1,0 +1,22 @@
+// Analyze: raw construction admits immovable final-address values, borrowed constructor inputs, and scalars.
+//@ check-pass
+import std.memory;
+class Stationary {
+  int value;
+public:
+  Stationary(int& divisor) : value(7 / divisor) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+};
+int main() {
+  Stationary* object = nullptr;
+  int* scalar = nullptr;
+  int divisor = 2;
+  unsafe {
+    std::construct_at(object, divisor);
+    std::construct_at(scalar, 9);
+    std::destroy_at(object);
+    std::destroy_at(scalar);
+  }
+  return 0;
+}

@@ -180,7 +180,7 @@ alone adds a provenance use and invalidates that proof; these passes leave
 the chain intact until a whole-literal replacement is available. LLVM consumes
 the existing verified literal contract, so this does not add a runtime check
 or conversion. The optimizer regression covers grouped minima at O0–O3;
-`literal_call_arguments_runtime` checks their native O0/O3 execution.
+`tests/ui/language/temporaries/literal_call_arguments.gti` checks their native O0/O3 execution.
 
 
 `dead-unused-computations` removes only a neutral `Compute` whose result has

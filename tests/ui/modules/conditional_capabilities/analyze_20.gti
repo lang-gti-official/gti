@@ -1,0 +1,2 @@
+// Analyze: malformed or conflicting conditional policies fail closed.
+[[unsafe_share(T)]] interface Wrong<T> {}; int main() { return 0; }  //~ ERROR GTI-S2059

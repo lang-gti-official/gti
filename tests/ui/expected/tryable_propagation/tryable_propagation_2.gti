@@ -1,0 +1,17 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+enum Pair { both(int& first, int& second) };
+int&<a> select<lifetime a>(mut Pair<a> input, bool choose) {
+  switch (std::move(input)) {
+    case Pair::both(first, second):
+      if (choose) return first;
+      return second;
+  }
+}
+int main() {
+  int first = 41;
+  int second = 42;
+  mut auto carrier = Pair::both(first, second);
+  int& selected = select(std::move(carrier), true);
+  return selected == 41 ? 0 : 1;
+}

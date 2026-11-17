@@ -1,0 +1,13 @@
+// Analyze: projected reference preserves exact origin.
+//@ check-pass
+import std.meta;
+std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& fn, int&<a> value, int& other) {
+  return fn(value);
+}
+int main() {
+  int owner = 42;
+  int other = 7;
+  auto same = [](int& value) -> int& { return value; };
+  int& result = borrow(same, owner, other);
+  return result;
+}

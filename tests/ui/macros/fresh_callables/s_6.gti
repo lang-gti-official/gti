@@ -1,0 +1,7 @@
+// S: direct fresh closure invocation does not acquire mutable access.
+#macro invoke<F>(F action) { action(); }
+int main() {
+  mut int value = 1;
+  invoke!([mut &value]() -> void { value += 1; });  //~ ERROR GTI-S2046
+  return 0;
+}

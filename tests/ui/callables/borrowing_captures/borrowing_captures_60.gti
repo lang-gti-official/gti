@@ -1,0 +1,16 @@
+// Borrowing captures: bound-carrier-capture-keeps-closure-bound is rejected with a user diagnostic, not an ICE.
+class Watcher {
+  int& target;
+public:
+  Watcher(int& target) : target(target) {}
+  int read() { return this.target; }
+  ~Watcher() { std::println(this.target); }
+};
+int main() {
+  mut int base = 4;
+  Watcher watcher = Watcher(base);
+  auto reader = [held = std::move(watcher)]() -> int { return held.read(); };
+  int first = reader();
+  base = 10;  //~ ERROR GTI-S2017
+  return first;
+}

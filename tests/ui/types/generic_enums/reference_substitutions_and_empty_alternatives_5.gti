@@ -1,0 +1,3 @@
+// Reference substitutions and empty alternatives: concrete reference substitutions and proven empty alternatives retain complete typed dependencies.
+//@ check-pass
+enum Event<T> { idle, item(T& value) }; int main() { int owner = 3; auto value = Event<int>::item(owner); return 0; }

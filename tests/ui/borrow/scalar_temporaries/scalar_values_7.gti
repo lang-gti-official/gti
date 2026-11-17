@@ -1,0 +1,8 @@
+// Scalar values: scalar producer ((42)).
+//@ check-pass
+enum Color { Red, Green };
+int read(int& value) { return value; }
+int make() { return 42; }
+Color pick() { return Color::Red; }
+bool red(Color& value) { return value == Color::Red; }
+int main() { return read(((42))) - 42; }

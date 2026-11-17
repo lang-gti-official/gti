@@ -1,0 +1,3 @@
+// Primitive borrow initialization: mut bool initialized local borrow.
+//@ check-pass
+int main() { mut bool value = true; mut bool& alias = value; return alias ? 0 : 1; }

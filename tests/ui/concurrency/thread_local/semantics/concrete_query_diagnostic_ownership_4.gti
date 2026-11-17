@@ -1,0 +1,7 @@
+// Concrete query diagnostic ownership: effect-query budget exhaustion defers diagnostic ownership to ordinary concrete discovery.
+//@ analyze-pass
+//@ no-prelude
+void chain<uint64_t N>() {
+  if constexpr (N != 0) { chain<N - 1>(); }
+}
+int main() { chain<65>(); return 0; }

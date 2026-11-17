@@ -1,0 +1,23 @@
+// General requires: call expression proofs support user functors and lambdas.
+//@ check-pass
+concept invokes<F, A, R> = requires(F& function, A& argument) {
+  { function(argument) } -> R;
+};
+R invoke<F, A, R>(F& function, A& argument) requires invokes<F, A, R> {
+  return function(argument);
+}
+int invoke_int<F>(F& function, int& argument) requires invokes<F, int, int> {
+  return function(argument);
+}
+struct AddOne {
+  int operator()(int& value) { return value + 1; }
+public:
+  AddOne() = default;
+};
+int main() {
+  int value = 4;
+  AddOne add_one{};
+  auto lambda = [](int& input) -> int { return input + 2; };
+  return invoke<AddOne, int, int>(add_one, value) == 5 &&
+         invoke_int(lambda, value) == 6 ? 0 : 1;
+}

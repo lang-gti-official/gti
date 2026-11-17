@@ -1,0 +1,45 @@
+// Direct initialization from a prvalue of a non-copyable, non-movable class
+// hovers as "no additional copy, move"; initializing it from a moved local
+// is an error, and the repair restores the hover.
+// (prvalue_direct_initialization_lsp_test.py)
+//@ hover @init: no additional copy, move
+//@ definition @init: @class
+class /*@class*/Fixed {
+public:
+  Fixed() {}
+  Fixed(Fixed&) = delete;
+  Fixed(Fixed&&) = delete;
+};
+Fixed /*@make*/make() { return Fixed(); }
+int main() {
+  Fixed source{};
+  /* 😀 */ Fixed result = /*@init*/Fixed(make());
+  return 0;
+}
+// --- step 2
+class /*@class*/Fixed {
+public:
+  Fixed() {}
+  Fixed(Fixed&) = delete;
+  Fixed(Fixed&&) = delete;
+};
+Fixed make() { return Fixed(); }
+int main() {
+  Fixed source{};
+  /* 😀 */ Fixed result = Fixed(std::move(source));  //~ ERROR GTI-S2018 //~ ERROR GTI-S2003
+  return 0;
+}
+// --- step 3
+//@ hover @init: no additional copy, move
+class /*@class*/Fixed {
+public:
+  Fixed() {}
+  Fixed(Fixed&) = delete;
+  Fixed(Fixed&&) = delete;
+};
+Fixed /*@make*/make() { return Fixed(); }
+int main() {
+  Fixed source{};
+  /* 😀 */ Fixed result = /*@init*/Fixed(make());
+  return 0;
+}

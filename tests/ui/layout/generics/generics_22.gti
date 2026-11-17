@@ -1,0 +1,2 @@
+// Generics: rejected with GTI-S2082.
+struct Node { Node next; }; int main() { Node object{}; return 0; }  //~ ERROR GTI-S2082

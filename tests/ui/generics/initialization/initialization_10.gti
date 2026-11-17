@@ -1,0 +1,8 @@
+// Initialization: the program is accepted.
+//@ check-pass
+int leaf<uint64_t N>() {
+  if constexpr (N == 0) { return 5; }
+  else { return leaf<N - 1>(); }
+}
+int first = leaf<63>();
+int main() { return first - 5; }

@@ -1,0 +1,26 @@
+// Synchronized guards through formals: guard-through-mutable-owner-accessor lowers to verified MIR.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.memory;
+import std.mutex;
+int32_t drain(mut std::unique_ptr<std::mutex<int32_t>>& vault) {
+  mut auto guard = vault->lock();
+  int32_t value = guard.get();
+  guard.get() = 0;
+  return value;
+}
+class bank {
+  mut std::unique_ptr<std::mutex<int32_t>> vault;
+public:
+  bank() : vault(std::make_unique<std::mutex<int32_t>>(1)) {}
+  int32_t bump() mut {
+    mut auto guard = this.vault->lock();
+    guard.get() += 1;
+    return guard.get();
+  }
+};
+int main() {
+  mut auto vault = std::make_unique<std::mutex<int32_t>>(7);
+  mut bank account = bank();
+  return drain(vault) == 7 && account.bump() == 2 ? 0 : 1;
+}

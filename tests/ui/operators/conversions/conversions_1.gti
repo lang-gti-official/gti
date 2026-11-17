@@ -1,0 +1,34 @@
+// Conversion operators: the program is accepted.
+//@ check-pass
+struct UserId {
+  int64_t value;
+  UserId(int64_t raw) : value(raw) {}
+};
+struct RawId {
+  int64_t raw;
+  RawId(int64_t value) : raw(value) {}
+  operator UserId() { return UserId(this.raw); }
+  implicit operator int64_t() { return this.raw; }
+};
+
+using Count = int64_t;
+using Account = UserId;
+struct Flag {
+  bool on;
+  Flag(bool value) : on(value) {}
+  operator bool() { return this.on; }
+};
+int main() {
+  RawId raw{int64_t(7)};
+  UserId user = UserId(raw);
+  Account account = Account(raw);
+  int64_t bits = int64_t(raw);
+  Count counted = Count(raw);
+  int64_t implicit_bits = raw;
+  Flag flag{true};
+  bool explicit_flag = bool(flag);
+  if (flag) {
+    return int(user.value + account.value + bits + counted + implicit_bits);
+  }
+  return explicit_flag ? 1 : 0;
+}

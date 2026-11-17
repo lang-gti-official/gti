@@ -1,0 +1,16 @@
+// Layout graph: layout queries memoize repeated complete-type subgraphs.
+//@ check-pass
+struct Node0 { uint8_t value; };
+struct Node1 { Node0 left; Node0 right; };
+struct Node2 { Node1 left; Node1 right; };
+struct Node3 { Node2 left; Node2 right; };
+struct Node4 { Node3 left; Node3 right; };
+struct Node5 { Node4 left; Node4 right; };
+struct Node6 { Node5 left; Node5 right; };
+struct Node7 { Node6 left; Node6 right; };
+struct Node8 { Node7 left; Node7 right; };
+struct Node9 { Node8 left; Node8 right; };
+struct Node10 { Node9 left; Node9 right; };
+struct Node11 { Node10 left; Node10 right; };
+struct Node12 { Node11 left; Node11 right; };
+int main() { uint64_t graph = sizeof(Node12); return 0; }

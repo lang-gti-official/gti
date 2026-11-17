@@ -1,0 +1,24 @@
+// Return from range for ends loop borrow: #395 a returned value reading the element keeps the borrow live.
+import std.string;
+import std.vector;
+struct Registry {
+  mut {
+    std::vector<std::string> names;
+    std::size_t count;
+  }
+  Registry() : names(std::vector<std::string>()), count(0) {}
+  [[discardable]] std::size_t fail() mut { return 0; }
+};
+[[discardable]] std::size_t add(mut Registry& r, std::string name) {
+  for (std::string& existing : r.names) {
+    if (existing == name) { return existing.size() + r.fail(); }  //~ ERROR GTI-S2017
+  }
+  r.count = r.count + std::size_t(1);
+  r.names.push_back(std::move(name));
+  return r.count;
+}
+int main() {
+  mut Registry r = Registry();
+  add(r, std::string("a"));
+  return int32_t(add(r, std::string("a")));
+}

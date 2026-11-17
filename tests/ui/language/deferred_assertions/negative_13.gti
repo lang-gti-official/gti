@@ -1,0 +1,5 @@
+// Negative: moved.
+import std.string;
+void consume(std::string value) {}
+#macro twice(std::string value) { consume(value); consume(value); }
+int main() { std::string owner{"owned"}; twice!(std::move(owner)); return 0; }  //~ ERROR GTI-S2018

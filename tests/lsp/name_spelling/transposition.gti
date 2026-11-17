@@ -1,0 +1,13 @@
+// An adjacent transposition offers an advisory replacement of only the name.
+//@ code-action @typo: "Replace with 'toolchain_entries'" => step 2
+int main() {
+  int toolchain_entries[2] = {1, 2};
+  for (auto& value : /*@typo*/toolchain_entires) { } //~ ERROR GTI-S2001
+  return 0;
+}
+// --- step 2
+int main() {
+  int toolchain_entries[2] = {1, 2};
+  for (auto& value : toolchain_entries) { }
+  return 0;
+}

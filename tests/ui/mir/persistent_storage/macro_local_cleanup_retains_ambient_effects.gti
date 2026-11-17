@@ -1,0 +1,16 @@
+// Macro local cleanup retains ambient effects: macro-local cleanup cannot hide mutation overlapping a live TLS borrow.
+thread_local mut int32_t first = 1;
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { first = 9; }
+};
+#macro int32_t with_cleanup(int32_t expression) {
+  Guard armed{};  //~ ERROR GTI-S2045
+  return expression;
+}
+int main() {
+  int32_t& borrowed = first;
+  int32_t copied = with_cleanup!(2);
+  return borrowed + copied;
+}

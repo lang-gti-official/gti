@@ -1,0 +1,9 @@
+// Rejected: invalid query/use is rejected before emission.
+int&<a> borrow<F, lifetime a>(F& fn, int&<a> value, int& other) { return fn(other); }  //~ ERROR GTI-S2017
+int main() {
+  int owner = 42;
+  int other = 7;
+  auto same = [](int& value) -> int& { return value; };
+  int& result = borrow(same, owner, other);
+  return result;
+}

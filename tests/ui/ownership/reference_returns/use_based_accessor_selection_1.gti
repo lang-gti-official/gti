@@ -1,0 +1,28 @@
+// Use based accessor selection: reads of a mutable owner through accessor pairs stay valid while one result is live.
+//@ check-pass
+struct Slot {
+  mut int32_t value = 2;
+  int32_t& get() { return this.value; }
+  mut int32_t& get() mut { return this.value; }
+  int32_t& operator[](std::size_t index) { return this.value; }
+  mut int32_t& operator[](std::size_t index) mut { return this.value; }
+  bool empty() { return this.value == 0; }
+public:
+  Slot() = default;
+};
+int32_t read(int32_t& value) { return value; }
+void write(mut int32_t& value) { value += 1; }
+
+int main() {
+  mut Slot slot{};
+  int32_t& held = slot.get();
+  int32_t copied = slot.get();
+  int32_t passed = read(slot.get());
+  int32_t& element = slot[std::size_t(0)];
+  bool tested = slot.get() == 2 && !slot.empty();
+  int32_t sum = held + copied + passed + element;
+  mut int32_t& edited = slot.get();
+  edited += sum;
+  write(slot.get());
+  return tested ? slot.get() : 0;
+}

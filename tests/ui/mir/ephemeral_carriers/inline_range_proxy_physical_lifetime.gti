@@ -1,0 +1,61 @@
+// Inline range proxy physical lifetime: inline readonly/exclusive proxies retain ordinary owning ranges and borrowed helper parameters.
+//@ check-pass
+class End {
+public:
+  End() {}
+};
+class Projection {
+  Buffer& source;
+public:
+  Projection(Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+};
+class Cursor {
+  mut Projection projection;
+  mut int position = 0;
+public:
+  Cursor(Buffer& source) : projection(Projection(source)) {}
+  Projection& operator*() { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class MutableProjection {
+  mut Buffer& source;
+public:
+  MutableProjection(mut Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+  mut int& write() mut { return this.source.write(); }
+};
+class MutableCursor {
+  mut MutableProjection projection;
+  mut int position = 0;
+public:
+  MutableCursor(mut Buffer& source) : projection(MutableProjection(source)) {}
+  MutableProjection& operator*() { return this.projection; }
+  mut MutableProjection& operator*() mut { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class Buffer {
+  mut int number = 4;
+public:
+  Buffer() {}
+  int& read() { return this.number; }
+  mut int& write() mut { return this.number; }
+  Cursor begin() { return Cursor(this); }
+  MutableCursor begin_mut() mut { return MutableCursor(this); }
+  End end() { int checked = this.number + 0; return End(); }
+};
+int inspect(Buffer& source) {
+  mut int total = 0;
+  for (auto& element : source) {
+    for (auto& inner : source) { total += element.read(); }
+  }
+  return total;
+}
+int main() {
+  mut Buffer buffer{};
+  int original = inspect(buffer);
+  for (mut auto& element : buffer) { element.write() += 1; }
+  return original + buffer.read() - 22;
+}

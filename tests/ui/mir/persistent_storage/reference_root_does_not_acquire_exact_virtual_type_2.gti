@@ -1,0 +1,24 @@
+// Reference root does not acquire exact virtual type: dynamic reference dispatch is valid without a conflicting persistent loan.
+//@ check-pass
+class Source {
+public:
+  virtual int32_t read() { return 1; }
+public:
+  Source() = default;
+};
+class Reader : public Source {
+public:
+  int32_t read() override { return 3; }
+public:
+  Reader() = default;
+};
+Source& relay(Source& input) { return input; }
+int32_t owned_copy(Source& input) {
+  Source copy = relay(input);
+  return copy.read();
+}
+int32_t inspect(Source& input) {
+  Source& alias = relay(input);
+  return alias.read();
+}
+int main() { Reader local{}; return inspect(local) + owned_copy(local); }

@@ -1,0 +1,19 @@
+// Positive: unrelated source-defined providers use the same structural protocol.
+//@ check-pass
+import std.resource;
+import std.memory;
+
+struct Budget {
+  unsafe expected<std::raw_allocation,std::alloc_errc> allocate(std::layout request) {
+    return unexpected(std::alloc_errc::resource_exhausted);
+  }
+  unsafe void release(std::raw_allocation allocation) {}
+public:
+  Budget() = default;
+};
+int use(std::resource_ref<Budget> resource) {
+  mut std::resource_storage<int,Budget> slots{resource};
+  auto attempt = slots.try_allocate(std::size_t(1));
+  return attempt ? 1 : 0;
+}
+int main() { Budget budget{}; unsafe { return use(std::bind_resource(budget)); } }

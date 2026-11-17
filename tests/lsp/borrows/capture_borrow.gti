@@ -1,0 +1,66 @@
+// A mutable borrow capture hovers with its type and formats unchanged in
+// spelling (the formatted text analyses clean); a shared capture cannot be
+// assigned through (S2002, no backend error), an empty capture recovers, and
+// writing the variable while the closure lives is S2017.
+// (borrowing_callbacks_lsp_test.py, first part)
+//@ hover @value: int32_t
+//@ formatting: [mut &value]
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [mut &value]() -> int { /*@value*/value += 2; return value; };
+  return update() - 5;
+}
+// --- step 2
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [mut &value]() -> int {
+    value += 2;
+    return value;
+  };
+  return update() - 5;
+}
+// --- step 3
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [&value]() -> int { value += 2; return value; };  //~ ERROR GTI-S2002 //~ ERROR GTI-S2027
+  return update() - 5;
+}
+// --- step 4
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [mut &value]() -> int { value += 2; return value; };
+  return update() - 5;
+}
+// --- step 5
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [mut &]() -> int { value += 2; return value; };  //~ ERROR GTI-P0001
+  return update() - 5;  //~ ERROR GTI-S2001
+}
+// --- step 6
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [mut &value]() -> int { value += 2; return value; };
+  return update() - 5;
+}
+// --- step 7
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [mut &value]() -> int { value += 2; return value; };
+  value = 7;  //~ ERROR GTI-S2017
+  return update() - 5;
+}
+// --- step 8
+int main() {
+  mut int value = 3;
+  // supplementary character: 😀
+  mut auto update = [mut &value]() -> int { value += 2; return value; };
+  return update() - 5;
+}

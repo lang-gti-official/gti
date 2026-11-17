@@ -1,0 +1,8 @@
+// The internal storage-adoption token is unavailable to application source.
+//@ check-fail
+import std.memory;
+int main() {
+  gti_internal::empty_storage_adoption token =  //~ ERROR GTI-S2058 unavailable to application source
+      gti_internal::empty_storage_adoption::trusted;  //~ ERROR GTI-S2058
+  return 0;
+}

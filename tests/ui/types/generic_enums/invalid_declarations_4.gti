@@ -1,0 +1,2 @@
+// Invalid declarations: invalid generic enum declarations or uninstantiated values fail before executable lowering.
+enum class Event<T> { empty };  //~ ERROR GTI-S2067

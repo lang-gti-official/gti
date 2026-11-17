@@ -1,0 +1,5 @@
+// Generics: the program is accepted.
+//@ check-pass
+class Inner { int field; public: Inner(int value) : field(value) {} };
+class Outer { public: Outer(Inner value) : inner(value) {} private: Inner inner; };
+int main() { Inner value{3}; Outer object{value}; return 0; }

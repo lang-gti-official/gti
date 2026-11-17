@@ -1,0 +1,2 @@
+// Reject: invalid member types have valid type-path syntax.
+struct Box<T> { using value_type = T;  public: Box() = default; }; using Bad = Box<int>::value_type<int>;  //~ ERROR GTI-S2030

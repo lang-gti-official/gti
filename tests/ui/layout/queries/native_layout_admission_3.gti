@@ -1,0 +1,3 @@
+// Native layout admission: erased native layout uses retain the backend admission fact.
+//@ check-pass
+struct Box { int value; }; constexpr uint64_t n = sizeof(Box); int main() { uint8_t buffer[n] = {}; return 0; }

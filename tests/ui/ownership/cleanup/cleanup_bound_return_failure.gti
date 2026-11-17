@@ -1,0 +1,78 @@
+// Cleanup-bound source guards retain resources through normal/failure cleanup.
+//@ run-pass
+//@ revisions: default trace trace-guard guard-cleanup-only
+//@[default] stdout: 55
+//@[default] stdout: 77
+//@[default] stdout: 42
+//@[default] stdout: 41
+//@[default] stdout: 99
+//@[trace] run-fail
+//@[trace] args: trace
+//@[trace] exit-code: 70
+//@[trace] stdout: 55
+//@[trace] stdout: 42
+//@[trace] stdout: 41
+//@[trace] stdout: 99
+//@[trace] stderr-contains: cleanup_bound_return_failure.gti:31: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[trace-guard] run-fail
+//@[trace-guard] args: trace guard
+//@[trace-guard] exit-code: 70
+//@[trace-guard] stdout: 55
+//@[trace-guard] stdout: 42
+//@[trace-guard] stdout: 41
+//@[trace-guard] stderr-contains: cleanup_bound_return_failure.gti:16: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at cleanup_bound_return_failure.gti:31; secondary [GTI-R0002]
+//@[guard-cleanup-only] run-fail
+//@[guard-cleanup-only] args: guard cleanup only
+//@[guard-cleanup-only] exit-code: 70
+//@[guard-cleanup-only] stdout: 55
+//@[guard-cleanup-only] stdout: 77
+//@[guard-cleanup-only] stdout: 42
+//@[guard-cleanup-only] stdout: 41
+//@[guard-cleanup-only] stdout: 99
+//@[guard-cleanup-only] stderr-contains: cleanup_bound_return_failure.gti:16: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- cleanup_bound_return_failure.gti
+import std.string;
+import std.vector;
+
+class Resource {
+public:
+  int divisor;
+  Resource(int divisor) : divisor(divisor) {}
+  ~Resource() { std::println(99); }
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() {
+    std::println(41);
+    int guard_cleanup = 7 / this.resource.divisor;
+  }
+};
+class Outer {
+  Guard guard;
+public:
+  Outer(Guard guard) : guard(std::move(guard)) {}
+  ~Outer() { std::println(42); }
+};
+class Trace {
+  int divisor;
+public:
+  Trace(int divisor) : divisor(divisor) {}
+  ~Trace() {
+    std::println(55);
+    int return_cleanup = 9 / this.divisor;
+  }
+};
+Outer acquire(Resource& resource, int divisor) {
+  Trace trace{divisor};
+  Guard guard{resource};
+  Outer result{std::move(guard)};
+  return std::move(result);
+}
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{argc > 2 ? 0 : 1};
+  auto published = acquire(resource, argc == 2 or argc == 3 ? 0 : 1);
+  std::println(77);
+  return 0;
+}

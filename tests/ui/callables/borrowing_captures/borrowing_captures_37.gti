@@ -1,0 +1,9 @@
+// Borrowing captures: function-ref-retains-shared-capture-origin is rejected with a user diagnostic, not an ICE.
+import std.functional;
+int main() {
+  mut int owner = 3;
+  auto callback = [&owner]() -> int { return owner; };
+  std::function_ref<int()> view{callback};
+  owner = 5;  //~ ERROR GTI-S2017
+  return view();
+}

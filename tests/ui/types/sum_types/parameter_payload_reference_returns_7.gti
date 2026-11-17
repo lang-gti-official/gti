@@ -1,0 +1,30 @@
+// Parameter payload reference returns: nested receiver payload selections retain caller-owned ancestry.
+//@ check-pass
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+enum class paint { coat(wrap shade, int32_t layers) };
+class can {
+  paint value;
+public:
+  can(paint value) : value(value) {}
+  int32_t& level() {
+    switch (this.value) {
+    case paint::coat(auto& shade, layers):
+      switch (shade) {
+      case wrap::one(auto& item): return item;
+      case wrap::two(auto& item): return item;
+      }
+    }
+  }
+};
+int main() { can c = can(paint::coat(wrap::two(4), 2)); return c.level() - 4; }

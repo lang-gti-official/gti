@@ -1,0 +1,5 @@
+// Shape witnesses: class construction and selected cleanup are independently inventoried.
+//@ build-pass
+//@ slow
+class Value { public: Value() {} ~Value() {} int read() { return 1; } };
+int main() { Value value{}; return value.read() - 1; }

@@ -1,0 +1,27 @@
+// Phase3: nested callable expansions respect the copy budget (the C++ test's 70 methods of 70 parameters against the default 4096 copies, shrunk to 12 x 12 against 100).
+//@ constexpr-for-copies: 100
+import std.meta;
+class Wide {
+public:
+  void m0(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m1(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m2(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m3(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m4(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m5(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m6(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m7(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m8(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m9(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m10(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+  void m11(int p0, int p1, int p2, int p3, int p4, int p5, int p6, int p7, int p8, int p9, int p10, int p11) {}
+};
+int main() {
+  mut uint64_t total = 0;
+  constexpr for (auto m : std::meta::methods_of<Wide>()) {
+    constexpr for (auto p : m.parameters()) {  //~ ERROR GTI-S2108
+      total = total + p.index();
+    }
+  }
+  return 0;
+}

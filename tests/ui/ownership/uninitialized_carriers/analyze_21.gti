@@ -1,0 +1,18 @@
+// Analyze: range relocation rejects non-bitwise, read-only, safe and signed-count uses.
+import std.memory;
+import std.string;
+struct Plain { int value = 8;  public: Plain() = default; };
+class Stationary {
+public:
+  Stationary(int value) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
+};
+class Holder<std::layout_queryable T> {
+  mut std::uninitialized<T> bytes{};
+public:
+  Holder() {}
+};
+void transfer(int* a, int* b) { unsafe { std::relocate_range_at(a, b, -1); } }int main() { return 0; }  //~ ERROR GTI-S2003

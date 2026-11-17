@@ -1,0 +1,10 @@
+// Storage payload admission: optional admission preserves static text views, fixed arrays, and expected payloads rather than borrowing sparse-storage exclusions.
+//@ check-pass
+import std.optional;
+import std.string;
+int main() {
+  std::optional<std::string_view> text{};
+  std::optional<int[2]> array{};
+  std::optional<expected<int, int>> result{};
+  return 0;
+}

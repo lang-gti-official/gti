@@ -1,0 +1,3 @@
+// Conservative class witnesses: exact interface and state-base metadata has bounded public representation witnesses.
+//@ check-pass
+interface Empty {}; void accept(Empty& value) {}

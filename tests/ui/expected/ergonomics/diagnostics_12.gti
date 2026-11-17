@@ -1,0 +1,2 @@
+// Diagnostics: the failure is one error, without consequences.
+int main() { expected<int, void> result = 1; return 0; }  //~ ERROR GTI-S2079

@@ -1,0 +1,29 @@
+// Moved exclusive parameter entry: noncopyable exclusive parameters retain their entry origin across generic movement and local transport without lexical cleanup.
+//@ check-pass
+import std.iterator;
+class UserPosition {
+  mut int& number;
+public:
+  UserPosition(mut int& number) : number(number) {}
+  UserPosition(UserPosition& other) = delete;
+  UserPosition(UserPosition&& other) = default;
+  int& operator*() { return this.number; }
+  mut int& operator*() mut { return this.number; }
+  void operator++() mut { this.number++; }
+  void operator--() mut { this.number--; }
+  void operator+=(std::ptrdiff_t amount) mut { this.number += int(amount); }
+  void operator-=(std::ptrdiff_t amount) mut { this.number -= int(amount); }
+};
+int transport<Position>(mut Position initial)
+    requires std::random_access_cursor<Position> && std::writes_to<Position, int> {
+  std::advance(initial, std::ptrdiff_t(1));
+  mut auto later = std::next(std::move(initial), std::ptrdiff_t(1));
+  mut auto final = std::prev(std::move(later));
+  *final = 42;
+  return *final;
+}
+int main() {
+  mut int number = 0;
+  int result = transport(UserPosition(number));
+  return number + result - 84;
+}

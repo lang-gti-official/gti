@@ -1,0 +1,12 @@
+// Semantic rejections: raw-thread-capture.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  int32_t value = 1;
+  unsafe {
+    int32_t* raw = &value;  //~ ERROR GTI-S2003
+    auto task = [raw]() -> void {};
+    auto started = std::thread::start(std::move(task));  //~ ERROR GTI-S2084
+  }
+  return 0;
+}

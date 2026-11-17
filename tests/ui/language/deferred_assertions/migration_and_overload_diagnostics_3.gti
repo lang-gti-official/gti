@@ -1,0 +1,3 @@
+// Migration and overload diagnostics: mixed macro/function names fail in either declaration order.
+void same(bool value) {}
+#macro same(int value) {}  //~ ERROR GTI-S2099

@@ -1,0 +1,7 @@
+// Fixtures: a constexpr definition declared later is still unavailable.
+import std.iterator;
+import std.list;
+
+static_assert(answer() == 42, "later");  //~ ERROR GTI-S2057
+constexpr int answer() { return 42; }
+int main() { return 0; }

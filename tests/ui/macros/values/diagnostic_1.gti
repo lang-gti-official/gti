@@ -1,0 +1,3 @@
+// Diagnostic: invalid result macro must stop before emission.
+#macro int bad(bool flag) { if (flag) { return 1; } }
+int main() { return bad!(false); }  //~ ERROR GTI-S2124

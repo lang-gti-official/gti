@@ -1,0 +1,19 @@
+// Derived reference arguments: a function item accepts a derived class object for an exact base-reference parameter through a generic callable.
+//@ check-pass
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + 1; }
+};
+int inspect(Operation& selected, int value) { return selected.run(value); }
+int update(mut Operation& selected, int value) { return selected.run(value); }
+int invoke<Function>(Function function) {
+  Increment concrete{};
+  return function(concrete, 40);
+}
+int invoke_mut<Function>(Function function) {
+  mut Increment concrete{};
+  return function(concrete, 41);
+}
+int main() { return invoke(inspect) + invoke_mut(update) - 83; }

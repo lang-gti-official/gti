@@ -1,0 +1,16 @@
+// Mutable stored dependencies: a live mutable carrier should exclude owner mutation and a second overlapping carrier.
+class MutView {
+  mut int& referent;
+public:
+  MutView(mut int& source) : referent(source) {}
+  mut int& get() mut { return this.referent; }
+};
+int main() {
+  mut int owner = 1;
+  mut MutView first = MutView(owner);
+  owner = 2;  //~ ERROR GTI-S2017 overlapping borrow may still be live
+  mut MutView second = MutView(owner);
+  mut int& first_value = first.get();
+  mut int& second_value = second.get();
+  return first_value + second_value;
+}

@@ -1,0 +1,5 @@
+// Raw field witnesses: a raw method receiver requires the dereferenced place witness.
+//@ build-pass
+//@ slow
+class Slot { public: int value = 7; int read() { return this.value; }  public: Slot() = default; };
+int main() { Slot object{}; unsafe { const Slot* pointer = &object; return pointer->read(); } }

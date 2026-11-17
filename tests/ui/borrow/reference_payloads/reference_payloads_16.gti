@@ -1,0 +1,8 @@
+// Reference payloads: the program is accepted.
+//@ analyze-pass
+enum Inner { empty, value(int& owner) };
+enum Outer { empty, some(Inner inner) };
+Outer<a> read<lifetime a>(int&<a> owner) {
+  return Outer::some(Inner::value(owner));
+}
+int main() { mut int owner = 3; auto result = read(owner); return 0; }  //~ WARN GTI-S2096

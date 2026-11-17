@@ -1,0 +1,4 @@
+// Negative: unsafe.
+unsafe bool inspect() { return true; }
+#macro ignored(bool value) {}
+int main() { ignored!(inspect()); return 0; }  //~ ERROR GTI-S2055

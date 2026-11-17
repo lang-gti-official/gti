@@ -1,0 +1,30 @@
+// Stored callables: different allocated callback models retain concrete MIR (the C++ trusted-memory fixture also imported the unused private memory capabilities).
+//@ check-pass
+import std.memory;
+
+class First<T> {
+  T callback;
+public:
+  First(T callback) : callback(std::move(callback)) {}
+  int call(int value) { return this.callback(value); }
+};
+class Second<T> {
+  T callback;
+public:
+  Second(T callback) : callback(std::move(callback)) {}
+  int call(int value) { return this.callback(value); }
+};
+std::unique_ptr<First<T>> first<T>(T callback) {
+  return std::make_unique<First<T>>(std::move(callback));
+}
+std::unique_ptr<Second<T>> second<T>(T callback) {
+  return std::make_unique<Second<T>>(std::move(callback));
+}
+int main() {
+  int offset = 7;
+  auto left = [offset](int value) -> int { return offset + value; };
+  auto right = [offset](int value) -> int { return offset - value; };
+  auto one = first(std::move(left));
+  auto two = second(std::move(right));
+  return one->call(5) + two->call(3) - 16;
+}

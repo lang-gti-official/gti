@@ -1,0 +1,2 @@
+// Nested pointer types: immutable-slot-address should retain mandatory pointer checking.
+int main() { int* p = nullptr; int** s = &p; return 0; }  //~ ERROR GTI-S2003

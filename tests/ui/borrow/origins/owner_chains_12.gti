@@ -1,0 +1,21 @@
+// Owner chains: temporary-owner is rejected by ownership checking.
+import std.memory;
+struct Node {
+  mut int value;
+  mut std::unique_ptr<Node> next;
+  Node(int value, std::unique_ptr<Node> next)
+      : value(value), next(std::move(next)) {}
+};
+int& element(Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element(*node.next, position - 1);
+}
+mut int& element_mut(mut Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element_mut(*node.next, position - 1);
+}
+
+int main() {
+  auto& value = element(*std::make_unique<Node>(1, std::unique_ptr<Node>()), 0);  //~ ERROR GTI-S2017
+  return value;
+}

@@ -1,0 +1,20 @@
+// Restoring a typed pointer through a byte-transport function: under the
+// `strict` raw-pointer audit the result contradicting its source is a GTI-S2102 error
+// at the call, and a repaired document has no audit finding.
+// (raw_pointer_conversion_lsp_test.py, source_result_policy.)
+//@ raw-pointer-audit: strict
+using Address = void*;
+using Bytes = uint8_t*;
+using Pointer = int*;
+Address byte_transport(Address address) {
+  Bytes bytes = Bytes(address);
+  return Address(bytes);
+}
+Target restore<Target>(Address address) { return Target(address); }
+int main() {
+  Address address = byte_transport(nullptr);
+  /*😀*/ Pointer result = restore<Pointer>(address);  //~ ERROR GTI-S2102 Raw pointer result may contradict
+  return result == nullptr ? 0 : 1;
+}
+// --- step 2
+int main() { return 0; }

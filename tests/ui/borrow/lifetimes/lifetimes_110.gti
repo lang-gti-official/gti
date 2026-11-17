@@ -1,0 +1,10 @@
+// Lifetimes: rejected with GTI-S2045.
+struct Base<lifetime a> {
+  mut int&<a> value;
+  Base(mut int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  mut int&<a> other;  //~ ERROR GTI-S2045
+  Derived(mut int&<a> input) : Base<a>(input), other(input) {}
+};
+int main() { return 0; }

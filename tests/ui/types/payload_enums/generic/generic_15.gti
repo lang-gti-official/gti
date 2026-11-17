@@ -1,0 +1,16 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+enum Signal<T> { None, Value(T value) };
+enum Tag { Zero, One };
+struct Packet<T> {
+  T value;
+  Packet(T item) : value(item) {}
+};
+T construct<T, Args...>(Args... args) { return T(args...); }
+int main() {
+  auto empty = construct<Packet<Signal<int>>>(Signal<int>::None);
+  auto number = construct<Packet<Signal<int>>>(Signal<int>::Value(7));
+  auto flag = construct<Packet<Signal<bool>>>(Signal<bool>::Value(true));
+  auto tag = construct<Packet<Tag>>(Tag::One);
+  return 0;
+}
