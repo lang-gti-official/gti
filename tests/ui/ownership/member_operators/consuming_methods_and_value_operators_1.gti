@@ -1,0 +1,29 @@
+// Consuming methods and value operators: ordinary methods and value operators should select consuming owned receivers.
+//@ check-pass
+class Builder {
+public:
+  mut int value = 0;
+  Builder(int n) : value(n) {}
+  Builder(Builder& other) = delete;
+  Builder(Builder&& other) = default;
+  int finish() { return this.value; }
+  int finish() mut { return this.value + 10; }
+  int finish() && { return this.value + 20; }
+  Builder append(int n) && { this.value += n; return std::move(this); }
+  Builder operator/(int n) { return Builder(this.value + n); }
+  Builder operator/(int n) && { this.value += n; return std::move(this); }
+public:
+  Builder() = default;
+};
+Builder make() { return Builder(1); }
+int main() {
+  Builder base = Builder(1);
+  mut Builder writable = Builder(2);
+  int read = base.finish();
+  int changed = writable.finish();
+  int fresh = make().append(2).finish();
+  int chain = (base / 3 / 4).finish();
+  int moved = std::move(writable).append(3).finish();
+  int conditional = (read == 1 ? make() : Builder(4)).finish();
+  return read + changed + fresh + chain + moved + conditional + base.finish() - 111;
+}

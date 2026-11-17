@@ -1,0 +1,14 @@
+// Pipeline: C-style create/join completes the frontend.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.cthread;
+int32_t worker(void* context) { return context == nullptr ? 42 : 7; }
+int main() {
+  mut std::thrd_t handle = 0;
+  mut int32_t result = 0;
+  unsafe {
+    if (std::thrd_create(handle, worker, nullptr) != std::thrd_success) { return 1; }
+    if (std::thrd_join(handle, result) != std::thrd_success) { return 2; }
+  }
+  return result == 42 ? 0 : 3;
+}

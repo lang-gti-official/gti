@@ -1,0 +1,21 @@
+// Standard concat: concat expands to static literal storage under both trusted-body policies.
+//@ check-pass
+// --- main.gti
+
+import std.string;
+constexpr std::string_view empty = std::concat!({});
+constexpr std::string_view value = std::concat!({"a", /* separator */ "b",});
+constexpr std::string_view binary = std::concat!({"\0", "7", "\x41", "B", "\\", "n"});
+constexpr std::string_view unicode = std::concat!({"\u00E9", "\U0001F600", "é"});
+static_assert(empty.size() == 0);
+static_assert(value == "ab");
+static_assert(binary.size() == 6);
+int invoke<F>(F callback) { return callback(); }
+int main() {
+  if (invoke([]() -> int { return 42; }) != 42) { return 2; }
+  return value == "ab" && binary.size() == 6 && binary[0] == '\0' &&
+      binary[1] == '7' && binary[2] == 'A' && binary[3] == 'B' &&
+      binary[4] == '\\' && binary[5] == 'n' && unicode.size() == 8 ? 0 : 1;
+}
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) std::syntax::expr html(std::syntax::tokens input) { return std::syntax::parse(std::syntax::literal("42", std::syntax::location(input, uint64_t(0), uint64_t(1)))); }

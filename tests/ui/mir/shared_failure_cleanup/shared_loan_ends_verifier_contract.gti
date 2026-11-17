@@ -1,0 +1,18 @@
+// Shared loan ends verifier contract: the shared loan fixture lowers.
+//@ check-pass
+class Guard {
+  int32_t divisor;
+public:
+  Guard(int32_t divisor) : divisor(divisor) {}
+  ~Guard() { int32_t checked = 100 / this.divisor; }
+  int32_t get() { return this.divisor; }
+};
+int32_t run(int32_t p) {
+  Guard a = Guard(1);
+  Guard& view = a;
+  if (p == 1) { return 1; }
+  Guard b = Guard(2);
+  if (p == 2) { return 2; }
+  return view.get();
+}
+int main() { return run(1) - 1; }

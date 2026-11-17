@@ -1,0 +1,3 @@
+// A private default constructor is unavailable outside the class.
+//@ check-fail
+class Value { Value() = default; }; int main() { Value value{}; return 0; }  //~ ERROR GTI-S2007

@@ -1,0 +1,5 @@
+// General requires: mut on an inferred value result diagnostic.
+concept c<S> = requires(mut S&<s> s) {
+  { s.view() } -> mut auto<s>;  //~ ERROR GTI-P0001
+};  //~ ERROR GTI-P0001
+int main() { return 0; }

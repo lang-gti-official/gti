@@ -1,0 +1,5 @@
+// Failed constexpr observation: value() on a failed constexpr result should be rejected by semantic evaluation.
+import std.numeric;
+constexpr int8_t invalid =
+    std::checked_add(int8_t(127), int8_t(1)).value();  //~ ERROR GTI-S2057
+int after = 42;

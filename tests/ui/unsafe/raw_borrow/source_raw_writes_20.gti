@@ -1,0 +1,7 @@
+// Source raw writes: source raw formal relay preserves callee expiry.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+unsafe void set(Holder* out) { int gone = 1; unsafe { out->pointer = &gone; } }
+unsafe void relay(Holder* out) { unsafe { set(out); } }
+int main() { mut Holder out{}; unsafe { relay(&out); return std::assume_ref(out.pointer, out); } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

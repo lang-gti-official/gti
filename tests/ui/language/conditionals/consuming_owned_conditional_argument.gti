@@ -1,0 +1,46 @@
+// Borrowed receivers survive a conditional fallible argument after an owning one.
+//@ run-pass
+//@ revisions: default failure
+//@[default] stdout: accepted
+//@[default] stdout: 7
+//@[default] stdout: 12
+//@[failure] run-fail
+//@[failure] args: failure
+//@[failure] exit-code: 70
+//@[failure] stdout: 7
+//@[failure] stderr-contains: consuming_owned_conditional_argument.gti:27: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- consuming_owned_conditional_argument.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+class Token {
+  int id;
+public:
+  Token(int id) : id(id) {}
+  Token(Token&& other) = default;
+  ~Token() { std::println(this.id); }
+};
+class Box {
+  mut std::unique_ptr<Token> owner;
+public:
+  Box(std::unique_ptr<Token> value) : owner(std::move(value)) {}
+  std::unique_ptr<Token> release() && { return std::move(this.owner); }
+};
+struct Receiver {
+  mut int total = 0;
+  void accept(std::unique_ptr<Token> token, int value) mut {
+    this.total += value;
+    std::println("accepted");
+  }
+public:
+  Receiver() = default;
+};
+int divide(int value) { return 12 / value; }
+int main(int argc, std::vector<std::string> args) {
+  mut Receiver receiver{};
+  Box box{std::make_unique<Token>(7)};
+  receiver.accept(std::move(box).release(), divide(argc == 2 ? 0 : 1));
+  std::println(receiver.total);
+  return 0;
+}

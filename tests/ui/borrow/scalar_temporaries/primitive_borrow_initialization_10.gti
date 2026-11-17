@@ -1,0 +1,3 @@
+// Primitive borrow initialization: float initialized local borrow.
+//@ check-pass
+int main() { mut float value = 1.0; float& alias = value; return int(alias) - 1; }  //~ WARN GTI-S2096

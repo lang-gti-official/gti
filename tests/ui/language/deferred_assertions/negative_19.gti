@@ -1,0 +1,3 @@
+// Negative: within that macro.
+#macro invalid() { break; }  //~ ERROR GTI-S2099
+int main() { while (true) { invalid!(); } return 0; }  //~ ERROR GTI-S2124 //~ ERROR GTI-S2009 //~ WARN GTI-S2095

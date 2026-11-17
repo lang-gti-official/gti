@@ -89,8 +89,8 @@ class SourceStdlibCI(unittest.TestCase):
 
     def test_owners_consumers_and_regressions_are_mandatory(self):
         names = source.test_entries(['stdlib/std/algorithm.gti', 'tests/generic_algorithm_cluster_test.py'])
-        for name in ['compiler_pipeline', 'stdlib_surface', 'stdlib_surface_manifest',
-                     'generic_algorithm_cluster', 'generic_algorithm_errors', 'practical_examples']:
+        for name in ['^gti_test_ui(_[0-9]+)?$', 'stdlib_surface', 'stdlib_surface_manifest',
+                     'generic_algorithm_cluster', 'practical_examples']:
             self.assertIn(name, names)
         with patch.object(source, 'git', return_value='examples/unregistered/new.gti\0'), self.assertRaisesRegex(ValueError, 'nested example coverage'):
             source.test_entries(['stdlib/std/algorithm.gti', 'examples/unregistered/new.gti'])
@@ -329,7 +329,6 @@ class SourceStdlibCI(unittest.TestCase):
             self.assertIn(required, lane)
         self.assertNotIn('cmake --install', lane)
         self.assertNotIn('continue-on-error', lane)
-        self.assertIn('GTI_COMPILER_TEST_ISOLATE_CASES ON', (ROOT / 'cmake/ReuseToolchain.cmake').read_text())
         full = (ROOT / '.github/workflows/full-validation.yml').read_text()
         self.assertIn("needs.plan.outputs.mode == 'full'", full.split('\n  package:\n')[1])
         self.assertNotIn('\n  package:\n', text)

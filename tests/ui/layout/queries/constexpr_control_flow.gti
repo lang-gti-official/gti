@@ -1,0 +1,16 @@
+// Constexpr control flow: layout constants should participate in constexpr branching and switch-case constant matching.
+//@ check-pass
+constexpr uint64_t word_bytes = sizeof(uint32_t);
+
+int main() {
+  if constexpr (word_bytes == 4) {
+    switch (alignof(uint32_t)) {
+    case uint64_t(4):
+      return 0;
+    default:
+      return 1;
+    }
+  } else {
+    return 2;
+  }
+}

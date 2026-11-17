@@ -1,0 +1,3 @@
+// Shared parent call arguments: shared parent call returns a scalar beside a live child.
+//@ check-pass
+int read(int& value) { return value; } void keep(int& value) {} void write(mut int& value) { value += 1; } int main() { mut int owner = 1; mut int& parent = owner; int& child = parent; int answer = read(parent); return answer + child - 2; }

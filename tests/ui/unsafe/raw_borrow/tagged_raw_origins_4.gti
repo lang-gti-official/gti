@@ -1,0 +1,9 @@
+// Tagged raw origins: tagged and inherited raw fields preserve callee expiry.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
+enum class Event { address(Address value), empty };
+Event dangling() { int dead = 7; Address result{.pointer = &dead}; return Event::address(result); }
+int main() { auto event = dangling(); switch (event) {
+  case Event::address(value): unsafe { return *value.pointer; }  //~ ERROR GTI-S2102
+  case Event::empty: return 0; } }

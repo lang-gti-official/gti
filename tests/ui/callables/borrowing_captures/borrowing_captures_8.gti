@@ -1,0 +1,11 @@
+// Borrowing captures: shared-reentrant-arguments.
+//@ check-pass
+int invoke<F>(F& callback, int& value) {
+  int result = callback();
+  return result + value;
+}
+int main() {
+  int value = 3;
+  auto read = [&value]() -> int { return value; };
+  return invoke(read, value) - 6;
+}

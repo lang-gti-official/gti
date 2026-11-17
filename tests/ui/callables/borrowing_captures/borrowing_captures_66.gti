@@ -1,0 +1,40 @@
+// Borrowing captures: capture-reference-aliases.
+//@ check-pass
+class Box {
+  int value;
+public:
+  Box(int value) : value(value) {}
+  int& get() { return this.value; }
+};
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  Box box{5};
+  Pair pair{};
+  mut int count = 1;
+  mut int bumped = 0;
+  auto read = [&box, &pair]() -> int {
+    int& accessor = box.get();
+    int& again = accessor;
+    Pair& whole = pair;
+    int& left = whole.left;
+    int& right = pair.right;
+    return accessor + again + left + right;
+  };
+  {
+    mut auto bump = [mut &count]() -> int {
+      mut int& alias = count;
+      alias += 1;
+      int& seen = count;
+      int before = seen;
+      count += 1;
+      return before;
+    };
+    bumped = bump();
+  }
+  return read() == 15 && count == 3 && bumped == 2 ? 0 : 1;
+}

@@ -1,0 +1,2 @@
+import "api.gti";
+int main() { int x = 1; mut int& v = edit(x); return v; }

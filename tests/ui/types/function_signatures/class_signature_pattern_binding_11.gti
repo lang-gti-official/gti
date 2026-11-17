@@ -1,0 +1,2 @@
+// Class signature pattern binding: invalid class pattern must fail in the frontend: class C<R(Args...)> { public: C() = default; }; class C<S> {};.
+class C<R(Args...)> { public: C() = default; }; class C<S> {};  //~ ERROR GTI-S2006

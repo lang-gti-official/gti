@@ -1,0 +1,13 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept selecting<T> {
+  typename element;
+  element<a> choose<lifetime a>(element<a> source, element other);
+};
+struct Marker<T> { int tag; };
+for <T> concept selecting<Marker<T>> {
+  using element = T;
+  T choose(T source, T other) { return source; }
+};
+
+int main() { return selecting<Marker<int>>::choose(7, 3) - 7; }

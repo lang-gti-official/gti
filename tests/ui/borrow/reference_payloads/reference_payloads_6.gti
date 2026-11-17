@@ -1,0 +1,16 @@
+// Reference payloads: rejected with GTI-S2067.
+enum Selected { empty, value(int& owner) };
+int main() {
+  int x = 5;
+  Selected a = Selected::value(x);
+  Selected b = a;
+  mut int got = 0;
+  switch (std::move(a)) {  //~ ERROR GTI-S2067
+  case Selected::value(owner): got = owner; break;
+  case Selected::empty: return 1;
+  }
+  switch (b) {
+  case Selected::value(owner): return got + owner - 10;
+  case Selected::empty: return 2;
+  }
+}

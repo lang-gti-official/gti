@@ -1,0 +1,2 @@
+// Lifetimes: rejected with GTI-S2127.
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} }; int&<static> invalid(View<static> view) { return view.local; } int main() { return 0; }  //~ ERROR GTI-S2127

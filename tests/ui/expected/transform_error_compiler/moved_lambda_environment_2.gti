@@ -1,0 +1,12 @@
+// Moved lambda environment: a moved mapper cannot be reused even though its invocation was read-only.
+struct Resource { ~Resource() {}  public: Resource() = default; };
+expected<int, int> read() { return unexpected(7); }
+int main() {
+  Resource resource{};
+  auto mapper = [owned = std::move(resource)](int error) -> int {
+    return error;
+  };
+  auto result = read().transform_error(std::move(mapper));
+  [[discard]] mapper(1);  //~ ERROR GTI-S2018
+  return result.error() - 7;
+}

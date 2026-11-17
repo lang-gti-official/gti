@@ -1,0 +1,17 @@
+// Text owner publication: a checked text view cannot escape its local reference carrier owner.
+import std.memory;
+class ByteOwner {
+  uint8_t& byte;
+public:
+  ByteOwner(uint8_t& byte) : byte(byte) {}
+  uint8_t& get() { return this.byte; }
+};
+std::string_view escape() {
+  uint8_t byte = uint8_t(104);
+  ByteOwner owner{byte};
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
+    return std::assume_string_view(first, std::size_t(1), owner);  //~ ERROR GTI-S2045
+  }
+}
+int main() { return int(escape().size()); }

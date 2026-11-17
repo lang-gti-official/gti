@@ -1,0 +1,2 @@
+// Bounded arrays: parent upgrade uses valid existing syntax.
+void change(int[2]& x) { mut int[2]& r = x; r[0] = 3; }  //~ ERROR GTI-S2017

@@ -1,0 +1,9 @@
+// std::map's subscript requires a default-initializable mapped type.
+//@ check-fail
+import std.map;
+class NoDefault { public:
+  int value; NoDefault(int initial) : value(initial) {}
+  NoDefault(NoDefault& other) = delete;
+  NoDefault(NoDefault&& other) = default;
+};
+int main() { mut std::map<int, NoDefault> values{}; return values[1].value; }  //~ ERROR GTI-S2029 default_initializable<NoDefault>

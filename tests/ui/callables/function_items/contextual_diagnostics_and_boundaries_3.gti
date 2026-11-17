@@ -1,0 +1,3 @@
+// Contextual diagnostics and boundaries: stored items cannot erase unsafe contracts, infer generic targets without context, or acquire a C ABI address.
+unsafe void work() {}
+int main() { auto item = work; return 0; }  //~ ERROR GTI-S2090

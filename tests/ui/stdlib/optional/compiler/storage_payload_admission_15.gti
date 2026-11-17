@@ -1,0 +1,5 @@
+// Storage payload admission: an inferred local enum binding may hold dynamic text, including moved views.
+//@ check-pass
+import std.string;
+enum Text { empty, value(std::string_view text) };
+int main() { std::string owner{"owned"}; std::string_view view = owner.view(); auto text = Text::value(std::move(view)); return 0; }

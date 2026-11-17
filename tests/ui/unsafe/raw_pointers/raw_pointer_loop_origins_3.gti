@@ -1,0 +1,19 @@
+// Raw pointer loop origins: loop transfer must reach a fixed point through copies and aliases.
+//@ raw-pointer-audit: strict
+int read(int count) {
+  int initial = 1;
+  unsafe {
+    mut const int* first = &initial;
+    mut const int* second = &initial;
+    mut int result = 0;
+    for (mut int index = 0; index < count; index++) {
+      auto alias = first;
+      result += *alias;  //~ ERROR GTI-S2102
+      first = second;
+      int per_iteration = index;
+      second = &per_iteration;
+    }
+    return result;
+  }
+}
+int main() { return read(3); }

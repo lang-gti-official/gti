@@ -1,0 +1,98 @@
+// Linear cleanup scaling: constructions: scaling fixture lowers.
+//@ check-pass
+mut int32_t zero = 0;
+class Owner {
+  int32_t divisor;
+public:
+  Owner(int32_t divisor) : divisor(10 / divisor) {}
+  ~Owner() { int32_t checked = 10 / this.divisor; }
+};
+void step(int32_t at) {
+  if (at == zero) {
+    int32_t failure = 1 / zero;
+  }
+}
+int32_t run(int32_t divisor) {
+  Owner owner1 = Owner(divisor);
+  Owner owner2 = Owner(divisor);
+  Owner owner3 = Owner(divisor);
+  Owner owner4 = Owner(divisor);
+  Owner owner5 = Owner(divisor);
+  Owner owner6 = Owner(divisor);
+  Owner owner7 = Owner(divisor);
+  Owner owner8 = Owner(divisor);
+  Owner owner9 = Owner(divisor);
+  Owner owner10 = Owner(divisor);
+  Owner owner11 = Owner(divisor);
+  Owner owner12 = Owner(divisor);
+  Owner owner13 = Owner(divisor);
+  Owner owner14 = Owner(divisor);
+  Owner owner15 = Owner(divisor);
+  Owner owner16 = Owner(divisor);
+  Owner owner17 = Owner(divisor);
+  Owner owner18 = Owner(divisor);
+  Owner owner19 = Owner(divisor);
+  Owner owner20 = Owner(divisor);
+  Owner owner21 = Owner(divisor);
+  Owner owner22 = Owner(divisor);
+  Owner owner23 = Owner(divisor);
+  Owner owner24 = Owner(divisor);
+  Owner owner25 = Owner(divisor);
+  Owner owner26 = Owner(divisor);
+  Owner owner27 = Owner(divisor);
+  Owner owner28 = Owner(divisor);
+  Owner owner29 = Owner(divisor);
+  Owner owner30 = Owner(divisor);
+  Owner owner31 = Owner(divisor);
+  Owner owner32 = Owner(divisor);
+  Owner owner33 = Owner(divisor);
+  Owner owner34 = Owner(divisor);
+  Owner owner35 = Owner(divisor);
+  Owner owner36 = Owner(divisor);
+  Owner owner37 = Owner(divisor);
+  Owner owner38 = Owner(divisor);
+  Owner owner39 = Owner(divisor);
+  Owner owner40 = Owner(divisor);
+  Owner owner41 = Owner(divisor);
+  Owner owner42 = Owner(divisor);
+  Owner owner43 = Owner(divisor);
+  Owner owner44 = Owner(divisor);
+  Owner owner45 = Owner(divisor);
+  Owner owner46 = Owner(divisor);
+  Owner owner47 = Owner(divisor);
+  Owner owner48 = Owner(divisor);
+  Owner owner49 = Owner(divisor);
+  Owner owner50 = Owner(divisor);
+  Owner owner51 = Owner(divisor);
+  Owner owner52 = Owner(divisor);
+  Owner owner53 = Owner(divisor);
+  Owner owner54 = Owner(divisor);
+  Owner owner55 = Owner(divisor);
+  Owner owner56 = Owner(divisor);
+  Owner owner57 = Owner(divisor);
+  Owner owner58 = Owner(divisor);
+  Owner owner59 = Owner(divisor);
+  Owner owner60 = Owner(divisor);
+  Owner owner61 = Owner(divisor);
+  Owner owner62 = Owner(divisor);
+  Owner owner63 = Owner(divisor);
+  Owner owner64 = Owner(divisor);
+  Owner owner65 = Owner(divisor);
+  Owner owner66 = Owner(divisor);
+  Owner owner67 = Owner(divisor);
+  Owner owner68 = Owner(divisor);
+  Owner owner69 = Owner(divisor);
+  Owner owner70 = Owner(divisor);
+  Owner owner71 = Owner(divisor);
+  Owner owner72 = Owner(divisor);
+  Owner owner73 = Owner(divisor);
+  Owner owner74 = Owner(divisor);
+  Owner owner75 = Owner(divisor);
+  Owner owner76 = Owner(divisor);
+  Owner owner77 = Owner(divisor);
+  Owner owner78 = Owner(divisor);
+  Owner owner79 = Owner(divisor);
+  Owner owner80 = Owner(divisor);
+  return 0;
+}
+int main() { return run(1); }

@@ -1,0 +1,41 @@
+// Library-typed escapes in user terms: a view of a temporary string
+// (S2045), a function_ref to a closure over a local (S2127, cannot extend
+// local storage), and a std::function capturing a local by reference
+// (S2018); each repair is clean. (lifetime_parameters_lsp_test.py, third
+// part; slow tier: std.string and std.functional)
+import std.string;
+int main() {
+  /* 😀 */ auto borrowed = std::string("hello").view();  //~ ERROR GTI-S2045
+  return int(borrowed.size());
+}
+// --- step 2
+import std.string;
+int main() {
+  /* 😀 */ std::string owner = std::string("hello"); auto borrowed = owner.view();
+  return int(borrowed.size());
+}
+// --- step 3
+import std.functional;
+std::function_ref<int()> invalid() {
+  /* 😀 */ int value = 1;
+  /* 😀 */ auto callback = [&value]() -> int { return value; };
+  std::function_ref<int()> result{callback};
+  /* 😀 */ return result;  //~ ERROR GTI-S2127 cannot extend local storage
+}
+int main() { auto call = invalid(); return call(); }
+// --- step 4
+import std.functional;
+std::function<int()> invalid() {
+  int value = 1;
+  /* 😀 */ std::function<int()> callback{[&value]() -> int { return value; }};  //~ ERROR GTI-S2018
+  return callback;
+}
+int main() { auto call = invalid(); return call(); }
+// --- step 5
+import std.functional;
+std::function<int()> invalid() {
+  int value = 1;
+  /* 😀 */ std::function<int()> callback{[value]() -> int { return value; }};
+  return callback;
+}
+int main() { auto call = invalid(); return call(); }

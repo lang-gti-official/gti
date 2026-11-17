@@ -1,0 +1,137 @@
+// Lambda error mappers run, capture, clean up, and keep the primary failure across a cleanup failure.
+//@ run-pass
+//@ revisions: c0 c1 c2 c3 c4 c5 c6
+//@[c0] stdout: 1
+//@[c0] stdout: 80
+//@[c0] stdout: 3
+//@[c0] stdout: 99
+//@[c1] args: error
+//@[c1] stdout: 1
+//@[c1] stdout: 2
+//@[c1] stdout: 80
+//@[c1] stdout: 3
+//@[c1] stdout: 99
+//@[c2] args: error fail
+//@[c2] stdout: 1
+//@[c2] stdout: 2
+//@[c2] stdout: 80
+//@[c2] stdout: 99
+//@[c2] run-fail
+//@[c2] exit-code: 70
+//@[c2] stderr-contains: main.gti:50: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c3] args: named generic void
+//@[c3] stdout: 1
+//@[c3] stdout: 1
+//@[c3] stdout: 1
+//@[c3] stdout: 3
+//@[c3] stdout: 80
+//@[c3] stdout: 99
+//@[c4] args: success capture cleanup failure
+//@[c4] stdout: 1
+//@[c4] stdout: 81
+//@[c4] stdout: 99
+//@[c4] run-fail
+//@[c4] exit-code: 70
+//@[c4] stderr-contains: main.gti:11: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c5] args: mapper-secondary mapper-secondary mapper-secondary mapper-secondary mapper-secondary
+//@[c5] stdout: 1
+//@[c5] stdout: 2
+//@[c5] stdout: 81
+//@[c5] run-fail
+//@[c5] exit-code: 70
+//@[c5] stderr-contains: main.gti:11: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:50; secondary [GTI-R0002]
+//@[c6] args: later-secondary later-secondary later-secondary later-secondary later-secondary later-secondary
+//@[c6] stdout: 1
+//@[c6] stdout: 81
+//@[c6] run-fail
+//@[c6] exit-code: 70
+//@[c6] stderr-contains: main.gti:11: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:60; secondary [GTI-R0002]
+// --- main.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+class Guard {
+  int identity;
+public:
+  Guard(int identity) : identity(identity) {}
+  ~Guard() {
+    std::println(identity);
+    if (identity == 81) { std::println(1 / (identity - 81)); }
+  }
+  int read() { return identity; }
+};
+
+struct Offset {
+  int value;
+  Offset(int value) : value(value) {}
+  Offset(Offset& source) = default;
+};
+
+expected<int, int> produce(bool fail) {
+  std::println(1);
+  if (fail) { return unexpected(7); }
+  return 42;
+}
+
+expected<void, int> perform(bool fail) {
+  if (fail) { return unexpected(7); }
+  return;
+}
+
+expected<T, int> generic_map<T>(expected<T, int> value, int extra) {
+  return std::move(value).transform_error([extra](int error) -> int {
+    return error + extra;
+  });
+}
+
+int consume(expected<int, int> value, int after) {
+  return value.has_value() ? value.value() + after : value.error() + after;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{99};
+  auto resource = std::make_unique<Guard>(argc >= 5 ? 81 : 80);
+  if (argc <= 3 || argc == 5 || argc == 6) {
+    auto mapped = produce(argc != 1 && argc != 5).transform_error(
+        ([owned = std::move(resource), argc](int error) -> int {
+          std::println(2);
+          return owned->read() + error + 1 / (argc == 6 ? 0 : 3 - argc);
+        }));
+    std::println(3);
+    return mapped.has_value() ? (mapped.value() == 42 ? 0 : 1)
+                             : (mapped.error() == 88 ? 0 : 2);
+  }
+  if (argc == 7) {
+    return consume(produce(true).transform_error(
+        [owned = std::move(resource)](int error) -> int {
+          return owned->read() + error;
+        }), 1 / (argc - 7));
+  }
+  int extra = 5;
+  auto mapper = [owned = std::move(resource), extra](int error) -> int {
+    return owned->read() + error + extra;
+  };
+  auto first = produce(true).transform_error(mapper);
+  auto second = produce(false).transform_error(mapper);
+  auto third = perform(true).transform_error([](int error) -> int { return error + 1; });
+  auto fourth = perform(false).transform_error([](int error) -> int { return error + 1; });
+  auto fifth = generic_map<int>(produce(true), extra);
+  auto sixth = perform(true).transform_error(
+      [moved = std::move(extra)](int error) -> int { return moved + error; });
+  Offset offset{5};
+  auto seventh = perform(true).transform_error(
+      [offset](int error) -> int { return offset.value + error; });
+  for (mut int index = 0; index < 3; index += 1) {
+    auto scalar = perform(true).transform_error(
+        [index](int error) -> int { return index + error; });
+    auto copied = perform(true).transform_error(
+        [offset](int error) -> int { return offset.value + error; });
+    if (scalar.error() != index + 7 || copied.error() != 12) { return 5; }
+  }
+  if (first.error() != 92 || second.value() != 42 || third.error() != 8 ||
+      !fourth.has_value() || fifth.error() != 12 || sixth.error() != 12 ||
+      seventh.error() != 12) { return 4; }
+  std::println(3);
+  return 0;
+}

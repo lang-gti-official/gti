@@ -1,0 +1,34 @@
+// General requires: independent source object-layout and borrow-state policies.
+//@ check-pass
+import std.memory;
+import std.meta;
+struct Payload { int value = 0;  public: Payload() = default; };
+struct Borrowed {
+  int& value;
+  Borrowed(int& source) : value(source) {}
+};
+concept complete_object<T> = std::meta::has_object_layout<T>();
+concept independent<T> = complete_object<T> && std::meta::is_borrow_free<T>();
+uint64_t bytes<T>() requires complete_object<T> { return std::layout_of<T>().bytes; }
+unsafe void retire<T>(T* address) requires complete_object<T> {
+  unsafe { std::destroy_at<T>(address); }
+}
+std::uninitialized<T> slot<T>() requires independent<T> && std::bitwise_relocatable<T> {
+  return std::uninitialized<T>();
+}
+int main() {
+  static_assert(std::meta::has_object_layout<Payload>());
+  static_assert(std::meta::has_object_layout<Borrowed>());
+  static_assert(!std::meta::has_object_layout<void>());
+  static_assert(std::meta::is_borrow_free<Payload>());
+  static_assert(!std::meta::is_borrow_free<Borrowed>());
+  static_assert(!std::meta::is_borrow_free<int&>());
+  static_assert(std::meta::is_borrow_free<int*>());
+  static_assert(std::meta::is_raw_pointer<int*>());
+  static_assert(std::meta::type<void*>().is_raw_pointer());
+  static_assert(!std::meta::is_raw_pointer<int>());
+  static_assert(!std::meta::is_raw_pointer<int&>());
+  static_assert(!std::meta::is_raw_pointer<std::unique_ptr<int>>());
+  auto vacant = slot<Payload>();
+  return bytes<Payload>() > uint64_t(0) ? 0 : 1;
+}

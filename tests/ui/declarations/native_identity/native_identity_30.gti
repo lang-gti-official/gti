@@ -1,0 +1,5 @@
+// Native identity: the program is accepted.
+//@ check-pass
+struct Empty { implicit Empty() {} };
+Empty finish() { return; }
+int main() { auto value = finish(); return 0; }

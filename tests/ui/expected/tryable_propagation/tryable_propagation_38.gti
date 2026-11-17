@@ -1,0 +1,46 @@
+// Tryable propagation: rejected with GTI-S2086.
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+};
+class Checked<T> {
+public:
+  T value;
+  int code;
+  Checked(T payload, int failure) : value(payload), code(failure) {}
+  Checked(Checked<T>& other) = delete;
+  Checked(Checked<T>&& other) = default;
+};
+for <std::copyable T> concept std::tryable<Checked<T>> {
+  using value_type = T;
+  using residual_type = Rejected;
+  bool has_value(Checked<T>& result) { return result.code == 0; }
+  T<a> take_value<lifetime a>(Checked<T, a> result) { return result.value; }
+  Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
+};
+class Status {
+public:
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected rejected) : code(rejected.code) {}
+};
+Checked<int> make(int value, int failure) {
+  return Checked<int>(value, failure);
+}
+
+enum class Code {
+  ok,
+  failed,
+};
+for concept std::tryable<Code> {
+  using value_type = void;
+  using residual_type = Rejected;
+  bool has_value(Code& code) { return code == Code::ok; }
+  void take_value(Code code) {}
+  Rejected take_residual(Code code) { return Rejected(1); }
+};
+Status coded() {
+  ?Code::failed;  //~ ERROR GTI-S2086
+  return Status(0);
+}
+int main() { return 0; }

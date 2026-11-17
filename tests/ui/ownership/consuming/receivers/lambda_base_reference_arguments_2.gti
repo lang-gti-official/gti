@@ -1,0 +1,9 @@
+// Lambda base reference arguments: an unrelated class or read-only derived object for a lambda's base reference fails in semantics, not in MIR.
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + 1; }
+};
+class Unrelated { public: Unrelated() {} };
+int main() { auto read = [](Operation& s, int v) -> int { return s.run(v); }; Unrelated other{}; return read(other, 40); }  //~ ERROR GTI-S2003

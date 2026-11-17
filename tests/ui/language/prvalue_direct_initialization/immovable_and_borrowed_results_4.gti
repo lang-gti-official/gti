@@ -1,0 +1,6 @@
+// Immovable and borrowed results: fresh initialization does not bypass a deleted real move or escape loan.
+class Fixed { public: Fixed() {} Fixed(Fixed&) = delete;
+               Fixed(Fixed&&) = delete; };
+               Fixed make() { return Fixed(); }
+               void consume(Fixed value) {}
+               int main() { consume(Fixed(make())); return 0; }  //~ ERROR GTI-S2018

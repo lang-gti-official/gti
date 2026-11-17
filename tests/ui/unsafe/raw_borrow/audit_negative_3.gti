@@ -1,0 +1,11 @@
+// Audit negative: raw assertion obligations cannot disappear through virtual dispatch.
+//@ raw-pointer-audit: strict
+class Provider {
+public:
+  virtual int&<a> read<lifetime a>(const int* address, int&<a> owner) {  //~ ERROR GTI-S2103
+    unsafe { return *address; }
+  }
+public:
+  Provider() = default;
+};
+int main() { return 0; }

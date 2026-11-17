@@ -1,0 +1,12 @@
+// Exclusive reborrow loan graph: a reborrow chain ending in a local object must not escape.
+class Cell {
+public:
+  Cell() = default;
+  mut int& invalid() mut {
+    mut int local = 1;
+    mut int& parent = local;
+    mut int& child = parent;
+    return child;  //~ ERROR GTI-S2017
+  }
+};
+int main() { return 0; }

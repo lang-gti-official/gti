@@ -1,0 +1,42 @@
+// A retained argument reference stays valid across statements.
+//@ run-pass
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  mut int32_t& write() mut { return this.value; }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+  void store(int32_t next) mut { this.value = next; }
+};
+
+class Boxes {
+public:
+  Boxes() = default;
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+class Pair {
+public:
+  Pair() {}
+  mut int32_t first = 3;
+  mut int32_t second = 4;
+};
+
+int32_t& pick(int32_t& candidate) { return candidate; }
+
+int main() {
+  mut int32_t v = 0;
+  v = 12;
+  int32_t& chosen = pick(v);
+  int32_t other = 30;
+  if (chosen + other != 42) {
+    return 1;
+  }
+  if (chosen != 12) {
+    return 2;
+  }
+  return 0;
+}

@@ -1,0 +1,2 @@
+// Invalid signatures: generic signature storage must fail before backend entry.
+class Box<T> { T value{};  public: Box() = default; }; using A = void(); int main() { Box<A> bad{}; return 0; }  //~ ERROR GTI-S2038

@@ -1,0 +1,16 @@
+// Contextual callable arguments: selected parameter contextualizes callback: return combine((callback(3)), callback(2));.
+//@ check-pass
+int combine(int left, int right) { return left + right; }
+class Sink { public: Sink(int value) {}  public: Sink() = default; };
+class Invoke { public: int operator()(int value) { return value; }  public: Invoke() = default; };
+int exact<T>(T value) { return 0; }
+int choose(int selector, int value) { return value; }
+int choose(bool selector, bool value) { return 0; }
+class Owner<T> {
+  T callback;
+public:
+  Owner(T callback) : callback(std::move(callback)) {}
+  int call() { return combine(this.callback(3), 2); }
+};
+Owner<T> own<T>(T callback) { return Owner<T>(std::move(callback)); }
+int invoke<T>(T callback) { return combine((callback(3)), callback(2)); } int main() { auto callback = [](int value) -> int { return value; }; return invoke(std::move(callback)); }

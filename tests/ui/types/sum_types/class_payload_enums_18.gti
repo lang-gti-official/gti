@@ -1,0 +1,16 @@
+// Class payload enums: array storage admission does not silently enable owning array captures.
+import std.memory;
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  auto callback = [items = std::move(values)]() -> int32_t { return 0; };  //~ ERROR GTI-S2067
+  return callback();
+}

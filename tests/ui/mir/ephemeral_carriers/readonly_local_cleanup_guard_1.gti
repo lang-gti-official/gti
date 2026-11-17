@@ -1,0 +1,26 @@
+// Readonly local cleanup guard: cleanup guard retains an ordinary or iteration-local readonly reference through its exact checked parent.
+//@ check-pass
+class Guard {
+  char& value;
+public:
+  Guard(char& source) : value(source) {}
+  ~Guard() { int check = 1 / (this.value == 'a' ? 1 : 0); }
+};
+class Finish { public: Finish() = default; };
+class Cursor {
+public:
+  Cursor() = default;
+  char operator*() { return 'a'; }
+  void operator++() mut {}
+  bool operator!=(Finish finish) { return true; }
+};
+class Sequence {
+public:
+  Sequence() = default;
+  Cursor begin() { return Cursor(); }
+  Finish end() { return Finish(); }
+};
+int main() {
+  char unrelated = 'b';
+  char& decoy = unrelated;
+char owner = 'a'; char& value = owner; Guard guard{value}; return 0;}

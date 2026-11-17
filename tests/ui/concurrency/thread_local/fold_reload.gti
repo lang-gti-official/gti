@@ -1,0 +1,18 @@
+// Each fold element reads the thread-local value again after the previous element wrote it.
+//@ run-pass
+//@ stdout: 0
+//@ stdout: 1
+//@ stdout: 2
+import std.format;
+thread_local mut int32_t repeated = 0;
+void observe_reload<T>(int32_t snapshot, mut int32_t& live, T& element) {
+  std::println("{}", snapshot);
+  live += 1;
+}
+void fold_reload<Args...>(Args... args) {
+  (observe_reload(repeated, repeated, args), ...);
+}
+int main() {
+  fold_reload(1, 2, 3);
+  return repeated == 3 ? 0 : 1;
+}

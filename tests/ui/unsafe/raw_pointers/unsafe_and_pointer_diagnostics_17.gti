@@ -1,0 +1,2 @@
+// Unsafe and pointer diagnostics: a pointer-slot reference keeps reference access and unsafe pointee rules: [[c_abi]] struct Pair { mut int32_t* left; }; extern "C" { Pair make_pair(); } int main() { mut Pair pair = unsafe { make_pair() }; int32_t*& left = pair.left; return 0; }.
+[[c_abi]] struct Pair { mut int32_t* left; }; extern "C" { Pair make_pair(); } int main() { mut Pair pair = unsafe { make_pair() }; int32_t*& left = pair.left; return 0; }  //~ ERROR GTI-S2056

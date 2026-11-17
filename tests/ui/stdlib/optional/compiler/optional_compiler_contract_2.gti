@@ -1,0 +1,11 @@
+// Optional compiler contract: invalid emplacement must use ordinary source constructor diagnostics rather than reaching the native backend.
+import std.optional;
+struct Payload {
+  int value;
+  Payload(int value) : value(value) {}
+};
+int main() {
+  mut std::optional<Payload> slot{};
+  [[discard]] slot.emplace("invalid");  //~ ERROR GTI-S2012
+  return 0;
+}

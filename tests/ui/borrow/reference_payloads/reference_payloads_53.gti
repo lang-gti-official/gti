@@ -1,0 +1,35 @@
+// Reference payloads: rejected with GTI-S2018.
+//@ analyze-fail
+enum Slot { item(int& value), empty };
+Slot borrow_slot(int& owner, bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(owner);
+}
+enum Edit { item(mut int& value), empty };
+Edit edit_slot(mut int& owner) { return Edit::item(owner); }
+int sum_parameter(Slot& slot, int count) {
+  mut int total = 0;
+  mut int index = 0;
+  while (index < count) {
+    index += 1;
+    switch (slot) {
+    case Slot::item(auto& value): total += value; break;
+    case Slot::empty: continue;
+    }
+  }
+  return total;
+}
+
+void take(Slot slot) {}
+int main() {
+  int owner = 3;
+  auto slot = borrow_slot(owner, true);
+  for (mut int index = 0; index < 2; index += 1) {  //~ ERROR GTI-S2018
+    switch (slot) {
+    case Slot::item(auto& value): if (value != 3) { return 1; } break;
+    case Slot::empty: return 2;
+    }
+    take(std::move(slot));
+  }
+  return 0;
+}

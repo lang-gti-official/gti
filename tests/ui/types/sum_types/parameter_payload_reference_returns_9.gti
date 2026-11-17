@@ -1,0 +1,24 @@
+// Parameter payload reference returns: a lambda returns a payload borrowed from its parameter.
+//@ check-pass
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+int main() {
+  auto pick = [](wrap& value) -> int32_t& {
+    switch (value) {
+    case wrap::one(auto& item): return item;
+    case wrap::two(auto& item): return item;
+    }
+  };
+  wrap w = wrap::two(6);
+  return pick(w) - 6;
+}

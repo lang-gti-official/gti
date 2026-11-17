@@ -1,0 +1,12 @@
+import "api/owning types/model \"quoted\".gti";
+import "api/drawing.gti";
+int main() {
+  mut geometry::Point value{};
+  geometry::Point copy = drawing::point(value);
+  {
+    mut geometry::Point& loan = drawing::edit(value);
+    loan.x = 21;
+  }
+  if (value.x != 21 || copy.x != 3) { return 1; }
+  return 0;
+}

@@ -1,0 +1,2 @@
+// Signature pack deduction: metadata-deduced pack constraints must check every element and admit an empty pack.
+class Types<Args...> { public: Types() = default; }; int integral<std::integral Args...>(Types<Args...>& types) { return 0; } int main() { Types<int, bool> types{}; return integral(types); }  //~ ERROR GTI-S2029 //~ ERROR GTI-S2003

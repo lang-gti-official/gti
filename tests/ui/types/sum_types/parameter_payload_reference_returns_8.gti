@@ -1,0 +1,25 @@
+// Parameter payload reference returns: nested payload of a local copy cannot escape.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+enum class paint { coat(wrap shade, int32_t layers) };
+int32_t& level(paint& value) {
+  paint copy = value;
+  switch (copy) {
+  case paint::coat(auto& shade, layers):
+    switch (shade) {
+    case wrap::one(auto& item): return item;  //~ ERROR GTI-S2017
+    case wrap::two(auto& item): return item;  //~ ERROR GTI-S2017
+    }
+  }
+}
+int main() { paint p = paint::coat(wrap::one(3), 2); return level(p) - 3; }

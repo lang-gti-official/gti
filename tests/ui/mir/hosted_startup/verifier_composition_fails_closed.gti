@@ -1,0 +1,19 @@
+// Verifier composition fails closed: the complete MIR verifier component set should admit valid MIR.
+//@ check-pass
+import std.string;
+import std.vector;
+using arguments_type = std::vector<std::string>;
+
+class Texts {
+  mut arguments_type first = arguments_type();
+  mut arguments_type second = arguments_type();
+public:
+  Texts() {}
+};
+
+mut int32_t startup_value = 1 + 2;
+
+int main(mut int argc, mut arguments_type argv) {
+  Texts texts{};
+  return argc + startup_value;
+}

@@ -2,3 +2,8 @@
 stdout: before any command
 $ gti check
 ? x
+env 9BAD=x
+unset A B
+$ tty: gti check
+stderr: on the terminal
+slow

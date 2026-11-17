@@ -1,0 +1,19 @@
+// Generics: the program is accepted.
+//@ check-pass
+class NoDefault {
+  int value;
+public:
+  NoDefault(int value) : value(value) {}
+};
+class Choice<T> {
+public:
+  Choice() requires std::default_initializable<T> {}
+  Choice(int value) {}
+};
+class Holder<T> {
+  Choice<T> child;
+public:
+  Holder() : child(Choice<T>(1)) {}
+};
+
+int main() { Holder<NoDefault> object{}; return 0; }

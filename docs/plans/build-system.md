@@ -56,7 +56,7 @@ flags. Metadata, cache identity, build/check and read-only editor facts share
 that selection; dependency target/profile flags remain local to their own
 consumer builds. Inactive-name diagnostic facts preserve typo checking without
 warning on deliberately disabled consumer switches. The runnable
-`examples/scoped-configuration` project and `scoped_configuration_defines` gate
+`examples/scoped-configuration` project and its `tests/project/scoped_configuration_defines` transcript
 cover dev/release, distinct executable/test
 targets, CLI additions, cached rebuilds and source-order undefinition.
 
@@ -1820,7 +1820,7 @@ Fresh-session type registries remap their IDs and validate canonical declaration
 closure against lowered facts. Checked read/mutable reference parameters and
 whole-parameter borrowed returns preserve semantic/MIR origin and access rules;
 consumer escape and overlapping-loan rejection use ordinary analysis. The
-`compiled_value_types` and `compiled_borrow_library` examples remove producer
+`compiled_value_types` and `compiled_borrowing` project transcripts remove producer
 sources before consumer analysis and execution. Custom ownership/drop, borrowed
 record fields, projected/conditional returns, generic definitions and constexpr
 queries still require richer contracts. These bounded additions do not complete F1/F2.
@@ -1830,7 +1830,7 @@ namespace identity, inherited namespace exports, overload visibility and private
 layout dependencies. Virtual interfaces use private root aliases to preserve
 resolved types through namespace shadowing. `compiled_namespaces` distributes two
 libraries with same-leaf types/functions and checks source-free execution and
-borrowing at O0/O1/O3. Nested class-owned declarations and nominal
+borrowing (`tests/project/compiled_namespaces`, at O0). Nested class-owned declarations and nominal
 types from ordinary non-root source modules still need richer ownership contracts.
 
 Cross-library nominal progress: the interface records each type's defining

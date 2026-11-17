@@ -1,0 +1,11 @@
+// A mutable reference pack cannot bind one object twice.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+void touch<Args...>(mut Args&... args) {}
+int main() { mut Ticket value{}; touch(value, value); return 0; }  //~ ERROR GTI-S2017

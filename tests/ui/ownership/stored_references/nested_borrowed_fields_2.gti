@@ -1,0 +1,9 @@
+// Nested borrowed fields: a mutable stored reference can publish a read-only receiver borrow.
+//@ check-pass
+class View {
+  mut int& item;
+public:
+  View(mut int& value) : item(value) {}
+  int& get() { return this.item; }
+};
+int main() { mut int owner = 42; View view{owner}; return view.get(); }

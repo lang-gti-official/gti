@@ -1,0 +1,12 @@
+// General requires: alternative result origins cannot invent a common owner diagnostic.
+concept from_receiver<C> = requires(C&<owner> owner, int& input) {
+  { owner.select(input) } -> int&<owner>;
+};
+concept from_argument<C> = requires(C& owner, int&<input> input) {
+  { owner.select(input) } -> int&<input>;
+};
+int&<a> select<C, lifetime a>(C&<a> owner, int& input)
+    requires from_receiver<C> || from_argument<C> {
+  return owner.select(input);  //~ ERROR GTI-S2000 //~ ERROR GTI-S2017
+}
+int main() { return 0; }

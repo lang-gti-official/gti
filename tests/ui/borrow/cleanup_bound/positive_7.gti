@@ -1,0 +1,37 @@
+// Positive: stored reference accessor retains the external owner.
+//@ check-pass
+import std.utility;
+mut int observed = 0;
+struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed += this.resource.value; }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item) : item(std::move(item)) {}
+};
+
+class Mixed<lifetime r> {
+  Resource&<r> resource;
+  mut int local;
+public:
+  Mixed(Resource&<r> resource) : resource(resource), local(7) {}
+  int& get() { return this.local; }
+  // The external referent's region, not the receiver's: Rust's
+  // `fn external(&self) -> &'r Resource`.
+  Resource&<r> external() { return this.resource; }
+  void reset() mut { this.local = 9; }
+  ~Mixed() {}
+};
+
+int main() { Resource resource{}; mut Mixed mixed{resource};
+  Resource& external = mixed.external(); mixed.reset(); return external.value - 7; }

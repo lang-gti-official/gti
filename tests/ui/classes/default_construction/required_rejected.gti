@@ -1,0 +1,3 @@
+// A class with only a parameterised constructor has no default construction.
+//@ check-fail
+struct Value { int value = 7; Value(int input) : value(input) {} }; int main() { Value value{}; return 0; }  //~ ERROR GTI-S2012

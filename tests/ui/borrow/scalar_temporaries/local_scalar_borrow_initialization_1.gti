@@ -1,0 +1,3 @@
+// Local scalar borrow initialization: initialized scalar admits a local shared or mutable reference.
+//@ check-pass
+int main() { mut int x = 1; int& borrowed = x; return borrowed - 1; }  //~ WARN GTI-S2096

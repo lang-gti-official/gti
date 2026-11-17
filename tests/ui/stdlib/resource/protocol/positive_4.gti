@@ -1,0 +1,25 @@
+// Positive: moving the resource owner does not move final-address elements.
+//@ check-pass
+import std.resource;
+import std.memory;
+
+class Fixed {
+  int value;
+public:
+  Fixed(int value) : value(value) {}
+  Fixed(Fixed& other) = delete;
+  Fixed(Fixed&& other) = delete;
+  int read() { return this.value; }
+};
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_storage<Fixed, std::process_resource> slots{resource};
+  auto allocated = slots.try_allocate(std::size_t(1));
+  if (!allocated) { return 1; }
+  slots.emplace(std::size_t(0), 42);
+  auto moved = std::move(slots);
+  return moved.get(std::size_t(0)).read() - 42;
+}
+int main() {
+  std::process_resource resource{};
+  unsafe { return use(std::bind_resource(resource)); }
+}

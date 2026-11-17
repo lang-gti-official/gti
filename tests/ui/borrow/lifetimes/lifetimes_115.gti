@@ -1,0 +1,10 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+int initial_score() { return 7; }
+struct Fixed<int&<source>> {
+  int&<source> value;
+  int score = initial_score();
+  Fixed(int&<source> input, int initial_score) : value(input) {}
+};
+int main() { int value = 2; Fixed<int&> holder{value, 99}; return holder.score - 7; }

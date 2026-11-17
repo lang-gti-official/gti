@@ -1,0 +1,21 @@
+// Analyze: retained-shell rollback control compiles.
+//@ check-pass
+import std.utility;
+mut int observed = 0;
+struct Resource { int value = 7;  public: Resource() = default; };
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed = this.resource.value; }
+  Resource& read() { return this.resource; }
+};
+
+class Box {
+  Guard item;
+public:
+  Box(Guard item, int divisor) : item(std::move(item)) {
+    int checked = 7 / divisor;
+  }
+};
+int main() { Resource resource{}; Box box{Guard(resource), 1}; return 0; }

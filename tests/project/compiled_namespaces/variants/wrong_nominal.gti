@@ -1,0 +1,2 @@
+import "api/geometry.gti"; import "api/telemetry.gti";
+int main() { domain::telemetry::Point value{}; domain::geometry::Point wrong = domain::geometry::echo(value); return 0; }

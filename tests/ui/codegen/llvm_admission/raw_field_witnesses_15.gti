@@ -1,0 +1,2 @@
+// Raw field witnesses: read-only writes and nonexistent fields reject at the semantic owner.
+class Slot { public: mut int value = 0;  public: Slot() = default; }; int main() { Slot object{}; unsafe { const Slot* pointer = &object; pointer->value = 1; } return 0; }  //~ ERROR GTI-S2000

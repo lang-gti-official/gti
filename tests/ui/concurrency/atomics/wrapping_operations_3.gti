@@ -1,0 +1,3 @@
+// Wrapping operations: invalid wrapping calls reject in semantics.
+import std.atomic;
+int main() { std::atomic<int> x{0}; x.fetch_add_wrapping(1, 0); return 0; }  //~ ERROR GTI-S2012

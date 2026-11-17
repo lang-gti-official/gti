@@ -1,0 +1,45 @@
+// Payload enum temporary arguments: fresh payload-enum values are borrowed for one call.
+//@ check-pass
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() {}
+  int read() { return this.id; }
+};
+enum class state { empty, engaged(int value) };
+enum class owned { empty, held(Tracked item) };
+state make(int v) {
+  if (v < 0) {
+    return state::empty;
+  }
+  return state::engaged(v);
+}
+owned hold(int v) { return owned::held(Tracked(v)); }
+bool engaged(state& s) {
+  switch (s) {
+  case state::engaged:
+    return true;
+  case state::empty:
+    return false;
+  }
+}
+bool held(owned& o) {
+  switch (o) {
+  case owned::held:
+    return true;
+  case owned::empty:
+    return false;
+  }
+}
+
+int main() {
+  bool constructed = engaged(state::engaged(1));
+  bool unit = engaged(state::empty);
+  bool returned = engaged(make(2));
+  bool owning = held(hold(3));
+  bool unitOwning = held(owned::empty);
+  return constructed && !unit && returned && owning && !unitOwning ? 0 : 1;
+}

@@ -1,0 +1,4 @@
+// Native identity: rejected with GTI-S2007.
+class Hidden { implicit Hidden(int value) {}  public: Hidden() = default; };
+Hidden make() { return 1; }  //~ ERROR GTI-S2007
+int main() { return 0; }

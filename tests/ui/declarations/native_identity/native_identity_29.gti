@@ -1,0 +1,3 @@
+// Native identity: rejected with GTI-S2121.
+struct Pair { implicit Pair(int a, int b) {}  public: Pair() = default; };  //~ ERROR GTI-S2121
+int main() { return 0; }

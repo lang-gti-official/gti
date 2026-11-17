@@ -1,0 +1,28 @@
+// Consuming payload patterns: a terminal consumed subject leaves the whole switch unreachable.
+//@ check-pass
+import std.panic;
+
+class resource {
+  int32_t id;
+public:
+  resource(int32_t value) : id(value) {}
+  ~resource() {}
+  int32_t read() { return this.id; }
+};
+enum class data {
+  empty,
+  some(resource item),
+  pair(resource left, resource right),
+  mixed(resource item, int32_t code),
+};
+data make(int32_t id) { return data::some(resource(id)); }
+
+[[noreturn]] data never() { std::panic("never"); }
+int main() {
+  switch (never()) {
+  case data::some(item):
+    return item.read();
+  default:
+    return 0;
+  }
+}

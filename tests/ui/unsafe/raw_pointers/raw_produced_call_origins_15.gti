@@ -1,0 +1,9 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: returned-global-alias-write.
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+mut Address address{};
+int main() {
+  Address* alias = destination();
+  unsafe { { int gone = 5; alias->pointer = &gone; } return *address.pointer; }  //~ ERROR GTI-S2102
+}
+Address* destination() { return &address; }

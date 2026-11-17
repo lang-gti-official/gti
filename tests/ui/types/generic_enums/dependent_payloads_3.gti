@@ -1,0 +1,12 @@
+// Dependent payloads: generic owner syntax survives idempotent formatting and reanalysis.
+//@ check-pass
+enum Message<T> {
+  idle,
+  item(T payload)
+};
+using Count = Message<int>;
+int main() {
+  auto result = Count::item(7);
+  auto direct = Message<bool>::item(true);
+  return 0;
+}

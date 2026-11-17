@@ -1,0 +1,23 @@
+// Phase3: construct rejects a class with declared constructors.
+import std.meta;
+class Guarded {
+public:
+  Guarded(int32_t start) : value(start) {}
+private:
+  int32_t value;
+};
+struct Plain { int32_t a = 0; bool b = false;  public: Plain() = default; };
+enum class fail { nope };
+struct producer {
+  expected<std::meta::field_type<T, I>, fail> produce<T, uint64_t I>(std::meta::field<T, I> field) mut {
+    return std::meta::field_type<T, I>(1);  //~ ERROR GTI-S2014
+  }
+public:
+  producer() = default;
+};
+int main() {
+  mut producer source{};
+  mut auto fine = std::meta::construct<Plain, fail, producer>(source);
+  mut auto rejected = std::meta::construct<Guarded, fail, producer>(source);  //~ ERROR GTI-S2118
+  return fine ? 0 : 1;
+}

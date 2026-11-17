@@ -1,0 +1,23 @@
+// Protocol concepts: rejected with GTI-S2127.
+concept observed<T> {
+  typename element;
+  element<a> get<lifetime a>(T<a> source);
+};
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+for concept observed<Reading> {
+  using element = int&;
+  int&<a> get<lifetime a>(Reading<a> value) {
+    return value.external;
+  }
+};
+
+int&<a> escape<lifetime a>(int&<a> owner) {
+  int local = 3;
+  Reading view{local};
+  return observed<Reading>::get(view);  //~ ERROR GTI-S2127
+}
+int main() { return 0; }

@@ -1,0 +1,7 @@
+// Borrowing captures: exclusive-capture-copy is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int value = 0;
+  mut auto callback = [mut &value]() -> int { value += 1; return value; };
+  mut auto copy = callback;  //~ ERROR GTI-S2003
+  return copy();
+}

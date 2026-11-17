@@ -1,0 +1,6 @@
+// Lifetimes: rejected with GTI-S2017.
+enum State { value(int item) };
+int&<a> bad<lifetime a>(int&<a> caller) {
+  State local = State::value(7);
+  switch (local) { case State::value(auto& payload): return payload; }  //~ ERROR GTI-S2017
+}

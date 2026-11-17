@@ -1,0 +1,6 @@
+// Diagnostics: concurrent native entry does not admit unrelated signatures.
+//@ execution-profile: concurrent
+import std.cthread;
+using Wrong = (int32_t) -> int32_t;
+int32_t work(int32_t value) { return value; }
+int main() { Wrong callback = work; return 0; }  //~ ERROR GTI-S2076

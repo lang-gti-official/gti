@@ -1,0 +1,3 @@
+// Rejected: reference source query.
+import std.memory;
+int main() { auto x = std::layout_of<int&>(); return 0; }  //~ ERROR GTI-S2029

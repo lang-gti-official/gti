@@ -1,0 +1,4 @@
+// Source result audit policy: source helper cannot remove pointee constness.
+using Pointer = int*;
+Pointer restore(const void* address) { return Pointer(address); }  //~ ERROR GTI-S2014
+int main() { return 0; }

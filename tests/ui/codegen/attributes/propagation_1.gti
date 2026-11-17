@@ -1,0 +1,31 @@
+// Codegen attributes: source function and method annotations are accepted and reach LLVM as inlinehint, noinline and cold.
+//@ check-pass
+//@ snapshot: llvm-ir
+// CHECK: attributes #{{[0-9]+}} = { inlinehint
+// CHECK: attributes #{{[0-9]+}} = { noinline
+// CHECK: attributes #{{[0-9]+}} = { cold inlinehint
+// CHECK: attributes #{{[0-9]+}} = { cold noinline
+// CHECK: attributes #{{[0-9]+}} = { cold "
+[[inline]] int hinted(int value) { return value + 1; }
+[[cold, noinline]] int uncommon(int value) { return value - 1; }
+[[cold, inline]] int rare_hint(int value) { return value; }
+[[noinline]] T identity<T>(T value) { return value; }
+struct Reader {
+  Reader() = default;
+  [[inline]] int read();
+};
+int Reader::read() { return 4; }
+interface Operation { int call(); };
+class Implementation : public Operation {
+public:
+  Implementation() = default;
+  [[cold]] int call() override { return 3; }
+};
+[[inline]] constexpr int compile_time() { return 5; }
+static_assert(compile_time() == 5);
+int main() {
+  Reader reader{};
+  Implementation implementation{};
+  return hinted(uncommon(rare_hint(identity<int>(reader.read())))) - 4 +
+         implementation.call() - 3 + compile_time() - 5;
+}

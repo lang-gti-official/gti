@@ -1,0 +1,5 @@
+// Shape witnesses: new thread-local storage and lifetime operations cannot drift behind coverage.
+//@ build-pass
+//@ slow
+thread_local mut int visits = 0;
+int main() { visits += 1; return visits - 1; }

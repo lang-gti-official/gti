@@ -1,0 +1,12 @@
+// Semantic rejections: thread move assignment should stop in semantics with a correction that does not repeat the already-written std::move.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  auto first_started = std::thread::start([]() -> void {});
+  auto second_started = std::thread::start([]() -> void {});
+  if (!first_started.has_value() || !second_started.has_value()) { return 1; }
+  mut std::thread first = std::move(first_started).value();
+  mut std::thread second = std::move(second_started).value();
+  first = std::move(second);  //~ ERROR GTI-S2003
+  return 0;
+}

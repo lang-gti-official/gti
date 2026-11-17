@@ -1,0 +1,30 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+import std.string;
+import std.panic;
+enum Choice { borrowed(int& value), owned(std::string value) };
+class Envelope {
+  mut Choice choice;
+public:
+  Envelope(int& value) : choice(Choice::borrowed(value)) {}
+  Envelope(std::string value) : choice(Choice::owned(std::move(value))) {}
+  int& take() && {
+    switch (this.choice) {
+    case Choice::borrowed(auto& value): return value;
+    case Choice::owned: std::panic("no borrowed value");
+    }
+  }
+};
+class DirectReference {
+  int& value;
+public:
+  DirectReference(int& owner) : value(owner) {}
+};
+int main() {
+  int owner = 42;
+  mut auto borrowed = Envelope(owner);
+  auto owned = Envelope(std::string("owned"));
+  auto direct = DirectReference(owner);
+  int& retained = std::move(borrowed).take();
+  return retained == 42 ? 0 : 1;
+}

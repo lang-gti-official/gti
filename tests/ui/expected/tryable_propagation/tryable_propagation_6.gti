@@ -1,0 +1,18 @@
+// Tryable propagation: rejected with GTI-S2017.
+enum Pair { both(int& first, int& second) };
+int&<a> select<lifetime a>(mut Pair<a> input, bool choose) {
+  switch (std::move(input)) {
+    case Pair::both(first, second):
+      if (choose) return first;
+      return second;
+  }
+}
+int main() {
+  int first = 41;
+  mut int second = 42;
+  mut auto carrier = Pair::both(first, second);
+  int& selected = select(std::move(carrier), true);
+  int& alias = selected;
+  second = 19;  //~ ERROR GTI-S2017
+  return alias == 41 ? 0 : 1;
+}

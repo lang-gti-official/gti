@@ -1,0 +1,5 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+int&<a> first<lifetime a, lifetime b>(int&<a> left, int&<b> right) { return left; }
+int main() { int left = 3; int right = 8; return first(left, right) - 3; }

@@ -1,0 +1,20 @@
+// Reference formal sibling field write: #394 reference-formal-same-field.gti overlapping the iterated field stays rejected.
+import std.vector;
+struct State {
+  mut {
+    std::vector<int> dirty;
+    std::vector<int> visited;
+  }
+  State() : dirty(std::vector<int>()), visited(std::vector<int>()) {}
+};
+void clear(mut State& st) {
+  for (int word : st.dirty) { st.dirty[std::size_t(0)] = 1; }  //~ ERROR GTI-S2017
+}
+
+int main() {
+  mut State st = State();
+  st.visited.push_back(5);
+  st.dirty.push_back(0);
+  clear(st);
+  return st.visited[std::size_t(0)];
+}

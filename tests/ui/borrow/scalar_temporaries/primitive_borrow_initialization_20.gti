@@ -1,0 +1,3 @@
+// Primitive borrow initialization: mut nullptr_t initialized local borrow.
+//@ check-pass
+int main() { mut nullptr_t value = nullptr; mut nullptr_t& alias = value; return alias == nullptr ? 0 : 1; }

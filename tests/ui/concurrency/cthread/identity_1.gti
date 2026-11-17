@@ -1,0 +1,7 @@
+// Identity: safe identity queries require neither concurrency profile nor thread creation support.
+//@ check-pass
+import std.cthread;
+int main() {
+  std::thrd_t identity = std::thrd_current();
+  return std::thrd_equal(identity, std::thrd_current()) == 1 ? 0 : 1;
+}

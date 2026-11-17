@@ -1,0 +1,101 @@
+// Numeric boundary failures report the library site after cleaning up the caller.
+//@ run-fail
+//@ revisions: argc2 argc3 argc4 argc5 argc6 argc7 argc8 argc9 argc10 argc11 argc12 argc13 argc14 argc15
+//@[argc2] exit-code: 70
+//@[argc2] args: x
+//@[argc2] stdout: cleaned
+//@[argc2] stderr-contains: <std/numeric>:
+//@[argc2] stderr-contains: GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[argc3] exit-code: 70
+//@[argc3] args: x x
+//@[argc3] stdout: cleaned
+//@[argc3] stderr-contains: <std/numeric>:
+//@[argc3] stderr-contains: GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[argc4] exit-code: 70
+//@[argc4] args: x x x
+//@[argc4] stdout: cleaned
+//@[argc4] stderr-contains: <std/numeric>:
+//@[argc4] stderr-contains: GTI-R0001]: integer_overflow in
+//@[argc5] exit-code: 70
+//@[argc5] args: x x x x
+//@[argc5] stdout: cleaned
+//@[argc5] stderr-contains: <std/numeric>:
+//@[argc5] stderr-contains: GTI-R0001]: integer_overflow in
+//@[argc6] exit-code: 70
+//@[argc6] args: x x x x x
+//@[argc6] stdout: cleaned
+//@[argc6] stderr-contains: <std/numeric>:
+//@[argc6] stderr-contains: GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[argc7] exit-code: 70
+//@[argc7] args: x x x x x x
+//@[argc7] stdout: cleaned
+//@[argc7] stderr-contains: <std/numeric>:
+//@[argc7] stderr-contains: GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[argc8] exit-code: 70
+//@[argc8] args: x x x x x x x
+//@[argc8] stdout: cleaned
+//@[argc8] stderr-contains: <std/numeric>:
+//@[argc8] stderr-contains: GTI-R0001]: integer_overflow in
+//@[argc9] exit-code: 70
+//@[argc9] args: x x x x x x x x
+//@[argc9] stdout: cleaned
+//@[argc9] stderr-contains: <std/numeric>:
+//@[argc9] stderr-contains: GTI-R0001]: integer_overflow in
+//@[argc10] exit-code: 70
+//@[argc10] args: x x x x x x x x x
+//@[argc10] stdout: cleaned
+//@[argc10] stderr-contains: <std/numeric>:
+//@[argc10] stderr-contains: GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[argc11] exit-code: 70
+//@[argc11] args: x x x x x x x x x x
+//@[argc11] stdout: cleaned
+//@[argc11] stderr-contains: <std/numeric>:
+//@[argc11] stderr-contains: GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[argc12] exit-code: 70
+//@[argc12] args: x x x x x x x x x x x
+//@[argc12] stdout: cleaned
+//@[argc12] stderr-contains: <std/numeric>:
+//@[argc12] stderr-contains: GTI-R0001]: integer_overflow in
+//@[argc13] exit-code: 70
+//@[argc13] args: x x x x x x x x x x x x
+//@[argc13] stdout: cleaned
+//@[argc13] stderr-contains: <std/numeric>:
+//@[argc13] stderr-contains: GTI-R0001]: integer_overflow in
+//@[argc14] exit-code: 70
+//@[argc14] args: x x x x x x x x x x x x x
+//@[argc14] stdout: cleaned
+//@[argc14] stderr-contains: <std/numeric>:
+//@[argc14] stderr-contains: GTI-R0001]: integer_overflow in
+//@[argc15] exit-code: 70
+//@[argc15] args: x x x x x x x x x x x x x x
+//@[argc15] stdout: cleaned
+//@[argc15] stderr-contains: <std/numeric>:
+//@[argc15] stderr-contains: GTI-R0001]: integer_overflow in
+import std.numeric;
+import std.string;
+import std.vector;
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println("cleaned"); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard = Guard();
+  if (argc == 2) { std::println(std::gcd(int8_t(-128), int8_t(0))); }
+  if (argc == 3) { std::println(std::gcd(int16_t(-32768), int16_t(0))); }
+  if (argc == 4) { std::println(std::gcd(int32_t(-2147483648), int32_t(0))); }
+  if (argc == 5) { std::println(std::gcd(int64_t(-9223372036854775808), int64_t(0))); }
+  if (argc == 6) { std::println(std::lcm(int8_t(127), int8_t(2))); }
+  if (argc == 7) { std::println(std::lcm(int16_t(32767), int16_t(2))); }
+  if (argc == 8) { std::println(std::lcm(int32_t(2147483647), int32_t(2))); }
+  if (argc == 9) { std::println(std::lcm(int64_t(9223372036854775807), int64_t(2))); }
+  if (argc == 10) { std::println(std::lcm(uint8_t(255), uint8_t(2))); }
+  if (argc == 11) { std::println(std::lcm(uint16_t(65535), uint16_t(2))); }
+  if (argc == 12) { std::println(std::lcm(uint32_t(4294967295), uint32_t(2))); }
+  if (argc == 13) { std::println(std::lcm(uint64_t(18446744073709551615), uint64_t(2))); }
+  if (argc == 14) { std::println(std::lcm(int64_t(-9223372036854775808), int64_t(1))); }
+  if (argc == 15) { std::println(std::gcd(int64_t(-9223372036854775808), int64_t(-9223372036854775808))); }
+  return 42;
+}

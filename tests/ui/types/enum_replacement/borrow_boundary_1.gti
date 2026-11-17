@@ -1,0 +1,6 @@
+// Borrow boundary: borrowed enum control remains valid without replacement.
+//@ check-pass
+import std.string;
+enum BorrowedEvent { empty, borrowed(int& owner), owned(std::string value) };
+
+int main() { int owner = 3; auto value = BorrowedEvent::borrowed(owner); return 0; }

@@ -1,0 +1,3 @@
+// Layout graph: invalid layout query 'layout-interface.gti' should produce one focused GTI-S2063 without a fix-it.
+interface Reader { int read(); };
+uint64_t query() { return alignof(Reader); }  //~ ERROR GTI-S2063

@@ -1,0 +1,5 @@
+// Negatives: known type survives erasure remains advisory with audit Warn.
+//@ check-pass
+//@ raw-pointer-audit: warn
+using E = void*; using P = uint64_t*;
+int main() { mut int value = 0; E e = E(&value); P p = P(e); return 0; }  //~ WARN GTI-S2101 //~ WARN GTI-S2101

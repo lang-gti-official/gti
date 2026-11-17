@@ -1,0 +1,93 @@
+// A failing place target precedes right-side effects; reserved and exclusive chains drain on failure.
+//@ run-fail
+//@ revisions: case0 case1 case2 case3 case4
+//@[case0] exit-code: 70
+//@[case0] stdout: row
+//@[case0] stdout: cell
+//@[case0] stdout: access guard
+//@[case0] stdout: rhs
+//@[case0] stdout: guard
+//@[case0] stderr-contains: GTI-R0002
+//@[case1] exit-code: 70
+//@[case1] args: x
+//@[case1] stdout: row
+//@[case1] stdout: cell
+//@[case1] stdout: access guard
+//@[case1] stdout: guard
+//@[case1] stderr-contains: GTI-R0007
+//@[case2] exit-code: 70
+//@[case2] args: x x
+//@[case2] stdout: row
+//@[case2] stdout: cell
+//@[case2] stdout: access guard
+//@[case2] stdout: rhs
+//@[case2] stdout: guard
+//@[case2] stderr-contains: GTI-R0002
+//@[case3] exit-code: 70
+//@[case3] args: x x x
+//@[case3] stdout: named cell
+//@[case3] stdout: access guard
+//@[case3] stdout: rhs
+//@[case3] stdout: guard
+//@[case3] stderr-contains: GTI-R0002
+//@[case4] exit-code: 70
+//@[case4] args: x x x x
+//@[case4] stdout: named cell
+//@[case4] stdout: access guard
+//@[case4] stdout: guard
+//@[case4] stderr-contains: GTI-R0007
+import std.string;
+import std.vector;
+class Guard { public: Guard() {} ~Guard() { std::println("guard"); } };
+class AccessGuard {
+public:
+  AccessGuard() {}
+  ~AccessGuard() { std::println("access guard"); }
+};
+class Row {
+  mut int32_t cells[2] = {1, 1};
+public:
+  Row() {}
+  mut int32_t& operator[](std::size_t i) mut {
+    AccessGuard guard{};
+    std::println("cell");
+    return this.cells[i];
+  }
+  mut int32_t& slot(std::size_t i) mut {
+    AccessGuard guard{};
+    std::println("named cell");
+    return this.cells[i];
+  }
+};
+class Grid {
+  mut Row rows[2] = {};
+public:
+  Grid() {}
+  mut Row& operator[](std::size_t i) mut {
+    std::println("row");
+    return this.rows[i];
+  }
+};
+int32_t rhs(int32_t divisor) {
+  std::println("rhs");
+  return 10 / divisor;
+}
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  mut Grid grid{};
+  if (argc == 1) {
+    grid[std::size_t(0)][std::size_t(0)] = rhs(argc - 1);
+  } else if (argc == 2) {
+    grid[std::size_t(0)][std::size_t(2)] = rhs(argc - 1);
+  } else if (argc == 3) {
+    grid[std::size_t(0)][std::size_t(0)] += rhs(argc - 3);
+  } else {
+    mut Row row{};
+    if (argc == 4) {
+      row.slot(std::size_t(0)) = rhs(argc - 4);
+    } else {
+      row.slot(std::size_t(2)) = rhs(argc - 4);
+    }
+  }
+  return 0;
+}

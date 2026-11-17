@@ -1,0 +1,14 @@
+// Fresh expected arguments: fresh owning expected arguments lower.
+//@ check-pass
+struct Resource {
+  int id;
+  Resource(int value) : id(value) { int checked = 1 / value; }
+  ~Resource() { std::println(id); }
+};
+expected<Resource, int> make(int id) { return Resource(id); }
+Resource make_resource(int id) { return Resource(id); }
+
+void consume(expected<Resource, int> first, Resource second, Resource third) {}
+void exercise() { consume(make(1), Resource(2), Resource(3)); }
+
+int main() { exercise(); return 0; }

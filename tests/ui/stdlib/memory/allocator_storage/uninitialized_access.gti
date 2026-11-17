@@ -1,0 +1,16 @@
+// Reading an unconstructed storage slot reports GTI-R0010.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0010
+//@ stderr-contains: invalid_storage_state
+//@ stderr-contains: uninitialized_access
+//@ stderr-contains: <std/detail/memory_storage>
+import std.memory;
+
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int32_t> values = std::move(allocated).value();  //~ WARN GTI-S2096
+  return values.get(std::size_t(0));
+}

@@ -1,0 +1,20 @@
+// A subscript store reserves its write loan, evaluates the right side, then activates the loan.
+//@ check-pass
+//@ snapshot: mir
+//@ mir-function: main
+// CHECK: loan1 kind=1 {{.*}} two-phase=1
+// CHECK: call {{.*}} loan=1 {{.*}}
+// CHECK-NOT: activate-borrow {{.*}} loan=1
+// CHECK: call {{.*}} loan=2 {{.*}}
+// CHECK-NOT: activate-borrow {{.*}} loan=1
+// CHECK: end-borrow {{.*}} loan=2
+// CHECK: activate-borrow {{.*}} loan=1
+// CHECK-NEXT: assign
+// CHECK-NEXT: end-borrow {{.*}} loan=1
+import std.vector;
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  values[std::size_t(0)] = values[std::size_t(0)] + 2;
+  return 0;
+}

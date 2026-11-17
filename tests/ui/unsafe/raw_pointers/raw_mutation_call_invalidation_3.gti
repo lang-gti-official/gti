@@ -1,0 +1,7 @@
+// Raw mutation call invalidation: active global pointer carriers retain lexical expiry.
+//@ raw-pointer-audit: strict
+mut const int* pointer = nullptr;
+int main() {
+  { int local = 1; pointer = &local; }
+  unsafe { return *pointer; }  //~ ERROR GTI-S2101
+}

@@ -1,0 +1,12 @@
+// Raw access: the program is accepted.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() {
+  mut int owner = 7;
+  const int* pointer = &owner;
+  auto compare = [pointer]() -> bool { return pointer != nullptr; };
+  mut int& held = owner;
+  bool nonnull = compare();
+  held = 8;
+  return nonnull ? held : 0;
+}

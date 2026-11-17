@@ -1,0 +1,2 @@
+// Unsafe and pointer diagnostics: a pointer-slot reference keeps reference access and unsafe pointee rules: int main() { int32_t* pointer = nullptr; mut int32_t*& slot = pointer; return 0; }.
+int main() { int32_t* pointer = nullptr; mut int32_t*& slot = pointer; return 0; }  //~ ERROR GTI-S2017

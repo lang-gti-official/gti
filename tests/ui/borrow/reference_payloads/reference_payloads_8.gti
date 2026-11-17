@@ -1,0 +1,14 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+enum Pair { empty, both(mut int& first, mut int& second) };
+int inspect(mut Pair input) {
+  switch (input) {
+  case Pair::both(mut auto& first, mut auto& second): {
+    auto& child = first;
+    second = 9;
+    return child + second;
+  }
+  case Pair::empty: return 0;
+  }
+}
+int main() { mut int a = 1; mut int b = 2; return inspect(Pair::both(a, b)) - 11; }  //~ WARN GTI-S2096 //~ WARN GTI-S2096

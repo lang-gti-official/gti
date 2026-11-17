@@ -1,0 +1,3 @@
+// Rejects: vector consuming receiver requires an explicit move.
+import std.vector; int main() { mut std::vector<int> values{};
+    for (auto value : values.into_range()) {} return 0; }  //~ ERROR GTI-S2022 //~ ERROR GTI-S2022

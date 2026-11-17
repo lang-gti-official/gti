@@ -1,0 +1,17 @@
+// Borrowing captures: capture-field-write-while-whole-alias-live is rejected with a user diagnostic, not an ICE.
+class Pair {
+public:
+  mut int left = 2;
+  mut int right = 3;
+  Pair() {}
+};
+int main() {
+  mut Pair pair{};
+  mut auto touch = [mut &pair]() -> void {
+    mut Pair& whole = pair;
+    pair.left = 1;  //~ ERROR GTI-S2017
+    whole.right = 2;
+  };
+  touch();
+  return pair.left;
+}

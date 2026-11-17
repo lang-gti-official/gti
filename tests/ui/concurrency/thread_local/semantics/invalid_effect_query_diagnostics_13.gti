@@ -1,0 +1,4 @@
+// Invalid effect query diagnostics: failed function/constructor/destructor/field effect queries cannot emit MIR or contaminate another concrete specialization in either query order.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1; class Selected<T> { public: Selected() = default; ~Selected() { static_assert(sizeof(T) == uint64_t(4), "exact instance body"); } };int main() { int& held = guarded; Selected<int64_t> bad{}; Selected<int32_t> good{}; return held; }  //~ ERROR GTI-S2079

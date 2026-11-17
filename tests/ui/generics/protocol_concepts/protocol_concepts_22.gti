@@ -1,0 +1,10 @@
+// Protocol concepts: rejected with GTI-S2127.
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+int&<a> invalid<lifetime a>(Reading<a> first, Reading second) {
+  return second.external;  //~ ERROR GTI-S2127
+}
+int main() { return 0; }

@@ -1,0 +1,11 @@
+// Known raw pointer origins: derived raw array addresses must not retain a false disjoint index.
+//@ raw-pointer-audit: strict
+int main() {
+  mut int values[2] = {1, 2};
+  unsafe {
+    auto pointer = &values[0];
+    int& loan = values[1];
+    *(pointer + 1) = 9;  //~ ERROR GTI-S2102
+    return loan;
+  }
+}

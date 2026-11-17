@@ -1,0 +1,4 @@
+// General requires: pack forwarding does not invent missing element constraints diagnostic.
+int count<std::numeric Ts...>(Ts... values) { return 1; }
+int forward<Ts...>(Ts... values) { return count(values...); }  //~ ERROR GTI-S2029
+int main() { return forward(1); }

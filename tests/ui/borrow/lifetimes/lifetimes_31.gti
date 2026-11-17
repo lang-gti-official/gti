@@ -1,0 +1,6 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Cell<T> { T value; int size() { return 1; } };
+struct Outer<T> { Cell<T> cell; int size() { return this.cell.size(); } };
+int main() { return 0; }

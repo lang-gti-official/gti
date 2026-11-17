@@ -1,0 +1,4 @@
+// Macro result storage effects: non-discardable macro results retain the ordinary exact call diagnostic and explicit-discard fix without bypassing cleanup.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int required() { return 1; } int main() { required!(); return 0; }  //~ ERROR GTI-S2009

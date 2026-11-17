@@ -1,0 +1,23 @@
+// Exclusive reborrow loan graph: a child loan may return in a carrier with the same proven owner.
+//@ check-pass
+class View {
+  int& value;
+
+public:
+  View(int& source) : value(source) {}
+  int& get() { return this.value; }
+};
+
+class Cell {
+  mut int value = 0;
+
+public:
+  View expose() mut {
+    mut int& parent = this.value;
+    int& child = parent;
+    return View(child);
+  }
+public:
+  Cell() = default;
+};
+int main() { return 0; }

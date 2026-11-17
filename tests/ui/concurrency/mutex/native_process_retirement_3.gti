@@ -1,0 +1,5 @@
+// Native process retirement: even infallible source destructors remain outside native retirement.
+//@ execution-profile: concurrent
+import std.mutex;
+class Owned { public: ~Owned() {} Owned() = default; }; std::mutex<Owned> global{Owned()};  //~ ERROR GTI-S2061
+int main() { return 0; }

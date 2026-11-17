@@ -1,0 +1,7 @@
+// S: callable results do not export checked capture borrows.
+#macro F keep<F>(F expression) { return expression; }
+int main() {
+  int value = 7;
+  auto callback = keep!([&value]() -> int { return value; });  //~ ERROR GTI-S2124
+  return callback();  //~ ERROR GTI-S2000
+}

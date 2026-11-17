@@ -1,0 +1,12 @@
+// A live cursor keeps the vector borrowed across std::erase_if.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.array;
+import std.map;
+class Once {
+public:
+  Once() = default;
+  bool operator()(int& value) && { return true; }
+};
+int main() { mut std::vector<int> values = {1, 2}; auto cursor = values.begin(); std::erase_if(values, [](int& v) -> bool { return true; }); return *cursor; return 0; }  //~ WARN GTI-S2095 //~ ERROR GTI-S2017

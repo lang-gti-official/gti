@@ -1,0 +1,5 @@
+// Operators: temporary cursor preserves stable external origin.
+//@ check-pass
+class Cursor { int& source; public: Cursor(int& value) : source(value) {} bool operator==(Cursor& other) { return this.source == other.source; } };
+Cursor cursor(int& source) { return Cursor(source); }
+int main() { int owner = 7; return cursor(owner) == cursor(owner) ? 0 : 1; }

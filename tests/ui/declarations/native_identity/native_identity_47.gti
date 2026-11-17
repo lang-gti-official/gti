@@ -1,0 +1,3 @@
+// Native identity: the program is accepted.
+//@ check-pass
+int32_t f(int32_t&); int main() { return 0; }

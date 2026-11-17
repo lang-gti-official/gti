@@ -1,0 +1,8 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+enum Link<lifetime a> { value(int&<a> item) };
+int&<a> select<lifetime a>(Link<a>& link) {
+  switch (link) { case Link<a>::value(auto& payload): return payload; }
+}
+int main() { int value = 7; auto link = Link<_>::value(value); return select(link) - 7; }

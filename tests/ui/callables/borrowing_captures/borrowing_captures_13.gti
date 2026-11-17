@@ -1,0 +1,8 @@
+// Borrowing captures: borrow-then-move-capture is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int value = 3;
+  auto read = [&value, copied = std::move(value)]() -> int {  //~ ERROR GTI-S2017
+    return value + copied;
+  };
+  return read();
+}

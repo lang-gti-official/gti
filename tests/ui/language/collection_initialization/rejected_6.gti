@@ -1,0 +1,2 @@
+// Rejected: invalid collection must stop compilation.
+class C { C(){} static C collection_init(uint64_t n){return C();} static C collection_insert(C c, int x){return std::move(c);} }; int main(){ C c = {}; return 0; }  //~ ERROR GTI-S2092

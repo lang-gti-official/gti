@@ -1,0 +1,2 @@
+namespace tea { int main() { return 0; } }
+int main() { return tea::main(); }

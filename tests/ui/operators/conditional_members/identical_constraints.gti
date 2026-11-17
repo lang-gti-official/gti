@@ -1,0 +1,3 @@
+// Two conditional operators with the same signature are duplicates whatever their constraints.
+//@ check-fail
+class V<T> { public: bool operator()(T value) requires std::numeric<T> { return true; } bool operator()(T value) requires std::copyable<T> { return false; } };  //~ ERROR GTI-S2011 Duplicate overload signature

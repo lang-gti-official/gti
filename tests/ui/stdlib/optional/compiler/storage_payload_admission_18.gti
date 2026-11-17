@@ -1,0 +1,5 @@
+// Storage payload admission: moving owner-dependent text does not erase its loan at a fixed-array or dynamic-storage boundary.
+import std.string;
+import std.vector;
+struct Holder { std::string_view text; };
+int main() { std::string owner{"owned"}; std::string_view view = owner.view(); mut std::vector<std::string_view> values{}; values.push_back(std::move(view)); return 0; }  //~ ERROR GTI-S2045

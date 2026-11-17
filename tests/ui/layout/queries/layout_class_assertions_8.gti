@@ -1,0 +1,7 @@
+// Layout class assertions: branching assertions stop after the first resource failure.
+struct Loop<T> {
+  static_assert(sizeof(Loop<T*>) > uint64_t(0) &&  //~ ERROR GTI-S2063
+                sizeof(Loop<T*>) > uint64_t(0));
+  int value;
+};
+int main() { uint64_t n = sizeof(Loop<int>); return 0; }

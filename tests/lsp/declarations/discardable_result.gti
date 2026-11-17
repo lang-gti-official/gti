@@ -1,0 +1,22 @@
+// Discarding a non-discardable result is S2009; marking the function
+// [[discardable]] clears it and shows in hover, through incomplete edits,
+// and a statement-level [[discard]] also accepts it.
+// (discardable_result_lsp_test.py)
+int value() { return 7; }
+int main() { /*😀*/ value(); return 0; }  //~ ERROR GTI-S2009
+// --- step 2
+//@ hover @call: [[discardable]]
+[[discardable]] int value() { return 7; }
+int main() { /*😀*/ v/*^call*/alue(); return 0; }
+// --- step 3
+[[discardable( int value() { return 7; }  //~ ERROR GTI-P0001
+int main() { /*😀*/ value(); return 0; }
+// --- step 4
+[[discardable]] int value() { return 7; }
+int main() { /*😀*/ value(); return 0; }
+// --- step 5
+int value() { return 7; }
+int main() { /*😀*/ value(); return 0; }  //~ ERROR GTI-S2009
+// --- step 6
+int value() { return 7; }
+int main() { /*😀*/ [[discard]] value(); return 0; }

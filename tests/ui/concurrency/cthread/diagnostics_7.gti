@@ -1,0 +1,8 @@
+// Diagnostics: the same concrete generic wrapper is valid in the concurrent profile.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.cthread;
+unsafe int32_t relay<T>(T ignored, std::thrd_t handle) {
+  unsafe { return std::thrd_join(handle, nullptr); }
+}
+int main() { std::thrd_t handle = 0; unsafe { return relay(1, handle); } }

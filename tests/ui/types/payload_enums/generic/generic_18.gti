@@ -1,0 +1,21 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+class Carrier {
+  int& owner;
+public:
+  Carrier(int& value) : owner(value) {}
+  int read() { return this.owner; }
+};
+enum Holder { none, item(Carrier value) };
+int inspect(Holder& held) {
+  switch (held) {
+    case Holder::none: return 0;
+    case Holder::item(auto& value): return value.read();
+  }
+}
+int main() {
+  int owner = 7;
+  Carrier value = Carrier(owner);
+  Holder held = Holder::item(value);
+  return inspect(held) - 7;
+}

@@ -1,0 +1,2 @@
+// Signature deduction: void remains invalid in object positions after substitution: class Box<T> { using Bad = int(T);  public: Box() = default; }; int main() { Box<void> box{}; return 0; }.
+class Box<T> { using Bad = int(T);  public: Box() = default; }; int main() { Box<void> box{}; return 0; }  //~ ERROR GTI-S2093

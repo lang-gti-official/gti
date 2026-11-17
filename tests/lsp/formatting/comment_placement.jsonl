@@ -1,0 +1,15 @@
+// Formatting keeps own-line comments on their own lines and trailing
+// comments after their statements: formatted text needs no edit, and
+// unformatted text becomes it in one edit (tab size 4).
+// (comment_placement_lsp_test.py; the formatted text is exact, so a transcript.)
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int answer() {\n    int y = 2;\n    // own line\n    /* own block */\n    return y; // trailing\n}\n// after function\nint main() {\n    return answer() - 2; /* trailing */\n}\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting", "params": {"textDocument": {"uri": "$URI"}, "options": {"tabSize": 4, "insertSpaces": true}}}}
+{"expect": {"id": 2, "result": []}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "int answer(){int y=2;\n// own line\n/* own block */\nreturn y;// trailing\n}\n// after function\nint main(){return answer()-2;/* trailing */}\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 3, "method": "textDocument/formatting", "params": {"textDocument": {"uri": "$URI"}, "options": {"tabSize": 4, "insertSpaces": true}}}}
+{"expect": {"id": 3, "result": [{"range": "$ANY", "newText": "int answer() {\n    int y = 2;\n    // own line\n    /* own block */\n    return y; // trailing\n}\n// after function\nint main() {\n    return answer() - 2; /* trailing */\n}\n"}]}}

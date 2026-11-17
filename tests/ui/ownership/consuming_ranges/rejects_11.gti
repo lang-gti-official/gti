@@ -1,0 +1,2 @@
+// Rejects: raw object extraction requires explicit unsafe permission.
+import std.memory; int main() { int* p = nullptr; auto value = std::take_at(p); return 0; }  //~ ERROR GTI-S2055

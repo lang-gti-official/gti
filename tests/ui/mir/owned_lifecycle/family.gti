@@ -1,0 +1,126 @@
+// Family: the owned lifecycle fixture should pass the frontend.
+//@ check-pass
+import std.string;
+
+mut int32_t close_bits = 0;
+mut int32_t first_close = 0;
+
+class ScopeFlag {
+public:
+  int32_t bit;
+
+  ScopeFlag(int32_t value) : bit(value) {}
+
+  ~ScopeFlag() {
+    close_bits = close_bits | this.bit;
+    if (first_close == 0) {
+      first_close = this.bit;
+    }
+  }
+};
+
+void consume(ScopeFlag flag) {}
+
+int32_t run_scopes() {
+  close_bits = 0;
+  first_close = 0;
+  int32_t scalar = 7;
+  {
+    ScopeFlag outer = ScopeFlag(1);
+    {
+      mut ScopeFlag inner = ScopeFlag(2);  //~ WARN GTI-S2096
+      consume(std::move(inner));
+    }
+  }
+  if (close_bits != 3) {
+    return 1;
+  }
+  if (first_close != 2) {
+    return 2;
+  }
+  if (scalar != 7) {
+    return 3;
+  }
+  return 0;
+}
+
+class CompatibilityDefaultField {
+public:
+  int32_t bit = 4;
+
+  CompatibilityDefaultField(int32_t value) : bit(value) {}
+
+  ~CompatibilityDefaultField() {
+    close_bits = close_bits | this.bit;
+  }
+public:
+  CompatibilityDefaultField() = default;
+};
+
+int32_t compatibility_default_field() {
+  CompatibilityDefaultField value = CompatibilityDefaultField(4);
+  return value.bit;
+}
+
+int32_t compatibility_checked(int32_t value) {
+  return value + 1;
+}
+
+static int32_t body_ordered_seed = 7;
+
+class BodyOrderedOwner {
+public:
+  BodyOrderedOwner(std::string value)
+      : first(value.clone()), second(std::move(value)) {
+    first.append("!");
+  }
+
+  std::size_t first_size() {
+    return first.size();
+  }
+
+  std::size_t second_size() {
+    return second.size();
+  }
+
+  int32_t preserved_value() {
+    return preserved;
+  }
+
+private:
+  mut std::string first = std::string("");
+  mut std::string second = std::string("");
+  int32_t preserved = body_ordered_seed;
+public:
+  BodyOrderedOwner() = default;
+};
+
+int32_t body_ordered_owner() {
+  mut BodyOrderedOwner value = BodyOrderedOwner(std::string("hello"));  //~ WARN GTI-S2096
+  if (value.first_size() != std::size_t(6)) {
+    return 1;
+  }
+  if (value.second_size() != std::size_t(5)) {
+    return 2;
+  }
+  if (value.preserved_value() != 7) {
+    return 3;
+  }
+  return 0;
+}
+
+int main() {
+  if (run_scopes() != 0) {
+    return 1;
+  }
+  if (compatibility_default_field() != 4) {
+    return 2;
+  }
+  if (compatibility_checked(4) != 5) {
+    return 3;
+  }
+  if (body_ordered_owner() != 0) {
+    return 4;
+  }
+  return 0;
+}

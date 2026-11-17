@@ -1,0 +1,30 @@
+// gti/inspectMacroExpansion: advertised at initialize, shows a nested
+// expansion read-only for the current version, refuses a stale version
+// (-32801), uses an open overlay of an imported macro rather than its disk
+// text, and answers null off a macro or for a closed document.
+// (From deferred_assertion_lsp_test.py.)
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"experimental": {"macroExpansionProvider": {"method": "gti/inspectMacroExpansion", "readOnly": true}}}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "void use(int value) {}\n#macro local(int value) { int saved = value; use(saved); }\n#macro relay(int value) { local!(value); }\nint main() { int saved = 7; /*😀*/ relay!(saved); return 0; }\n"}}
+{"file": {"name": "policy.gti", "text": "export module policy;\nexport #macro external(int value) { if (value == 1) {} }\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "void use(int value) {}\n#macro local(int value) { int saved = value; use(saved); }\n#macro relay(int value) { local!(value); }\nint main() { int saved = 7; /*😀*/ relay!(saved); return 0; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "gti/inspectMacroExpansion", "params": {"textDocument": {"uri": "$URI", "version": 1}, "position": {"line": 3, "character": 37}}}}
+{"expect": {"id": 2, "result": {"readOnly": true, "version": 1, "languageId": "gti", "truncated": false, "range": {"start": {"line": 3, "character": 35}, "end": {"line": 3, "character": 48}}, "text": "// Explanatory GTI macro expansion; read-only, not executable source.\n// Arguments remain expressions: repeated uses repeat evaluation.\n// __macro_local_N labels distinguish checked hygienic bindings.\n{\n  // Nested macro expansion:\n    {\n      int saved__macro_local_1 = saved;\n      use(saved__macro_local_1);\n    }\n}\n", "declaration": {"uri": "$URI", "range": {"start": {"line": 2, "character": "$ANY"}, "end": "$ANY"}}}}}
+{"send": {"jsonrpc": "2.0", "id": 3, "method": "gti/inspectMacroExpansion", "params": {"textDocument": {"uri": "$URI", "version": 0}, "position": {"line": 3, "character": 35}}}}
+{"expect": {"id": 3, "error": {"code": -32801}}}
+{"send": {"jsonrpc": "2.0", "id": 4, "method": "gti/inspectMacroExpansion", "params": {"textDocument": {"uri": "$URI", "version": 1}, "position": {"line": 3, "character": 50}}}}
+{"expect": {"id": 4, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "file://$DIR/policy.gti", "languageId": "gti", "version": 1, "text": "export module policy;\nexport #macro external(int value) { if (value == 2) {} }\n"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 2}, "contentChanges": [{"text": "import \"policy.gti\";\nint main() { external!(7); return 0; }\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 2, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 5, "method": "gti/inspectMacroExpansion", "params": {"textDocument": {"uri": "$URI", "version": 2}, "position": {"line": 1, "character": 14}}}}
+{"expect": {"id": 5, "result": {"text": "// Explanatory GTI macro expansion; read-only, not executable source.\n// Arguments remain expressions: repeated uses repeat evaluation.\n// __macro_local_N labels distinguish checked hygienic bindings.\n{\n  if ((7 == 2))\n    {\n    }\n}\n", "declaration": {"uri": "file://$DIR/policy.gti", "range": "$ANY"}}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {"textDocument": {"uri": "$URI"}}}}
+{"send": {"jsonrpc": "2.0", "id": 6, "method": "gti/inspectMacroExpansion", "params": {"textDocument": {"uri": "$URI", "version": 2}, "position": {"line": 0, "character": 1}}}}
+{"expect": {"id": 6, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 17, "text": "int main() { return 0; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 17, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 7, "method": "gti/inspectMacroExpansion", "params": {"textDocument": {"uri": "$URI", "version": 17}, "position": {"line": 0, "character": 1}}}}
+{"expect": {"id": 7, "result": null}}

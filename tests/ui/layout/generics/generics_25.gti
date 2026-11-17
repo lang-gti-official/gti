@@ -1,0 +1,3 @@
+// Generics: rejected with GTI-S2026.
+struct Overflow<uint64_t N> { Overflow<N + 1> next; int value = 1;  public: Overflow() = default; };  //~ ERROR GTI-S2026
+int main() { Overflow<18446744073709551615> object{}; return 0; }

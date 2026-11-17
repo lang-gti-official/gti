@@ -1,0 +1,205 @@
+// Public callable concepts select read, mut and once invocation through a confined boundary in verified MIR, and run.
+//@ run-pass
+//@ slow
+//@ snapshot: mir
+//@ mir-function: inspect
+//@ mir-function: inspect_twice
+//@ mir-function: apply_once
+// CHECK: function inspect
+// CHECK: callable-boundary=confined {{.*}}callable-invocation=read
+// CHECK: function inspect_twice
+// CHECK: callable-boundary=confined {{.*}}callable-invocation=mut
+// CHECK: function apply_once
+// CHECK: callable-boundary=confined {{.*}}callable-invocation=once
+import std.algorithm;
+import std.functional;
+import std.numeric;
+import std.vector;
+
+mut int32_t action_calls = 0;
+
+class is_positive {
+public:
+  bool operator()(int32_t& value) { return value > 0; }
+public:
+  is_positive() = default;
+};
+
+class alternating_positive {
+  mut int32_t calls;
+
+public:
+  alternating_positive() : calls(0) {}
+  bool operator()(int32_t& value) mut {
+    this.calls++;
+    return value > 0 && this.calls % 2 == 1;
+  }
+};
+
+class once_offset {
+  int32_t offset;
+
+public:
+  once_offset(int32_t value) : offset(value) {}
+  int32_t operator()(int32_t& value) && { return value + this.offset; }
+};
+
+class descending {
+public:
+  bool operator()(int32_t& left, int32_t& right) {
+    return left > right;
+  }
+public:
+  descending() = default;
+};
+
+class add_values {
+public:
+  int32_t operator()(int32_t& left, int32_t& right) {
+    return left + right;
+  }
+public:
+  add_values() = default;
+};
+
+class times_three {
+public:
+  int32_t operator()(int32_t& value) { return value * 3; }
+public:
+  times_three() = default;
+};
+
+class sum_values {
+  mut int32_t sum;
+
+public:
+  sum_values() : sum(0) {}
+  void operator()(int32_t& value) mut { this.sum += value; }
+  int32_t result() { return this.sum; }
+};
+
+class mark_read_action {
+public:
+  void operator()() { action_calls++; }
+public:
+  mark_read_action() = default;
+};
+
+class mark_mut_action {
+public:
+  void operator()() mut { action_calls++; }
+public:
+  mark_mut_action() = default;
+};
+
+class mark_once_action {
+public:
+  void operator()() && { action_calls++; }
+public:
+  mark_once_action() = default;
+};
+
+bool inspect<Callable>(int32_t value, Callable callable)
+  requires std::read_callable<Callable, int32_t, bool> {
+  return callable(value);
+}
+
+bool inspect_twice<Callable>(int32_t first, int32_t second,
+                             mut Callable callable)
+  requires std::predicate<Callable, int32_t> {
+  return callable(first) && !callable(second);
+}
+
+int32_t apply_once<Callable>(int32_t value, Callable callable)
+  requires std::once_callable<Callable, int32_t, int32_t> {
+  return std::move(callable)(value);
+}
+
+// A generic body proves a callable relation for a dependent class instance
+// or lambda from its substituted operator() signature.
+class less_of<std::totally_ordered T> {
+public:
+  less_of() {}
+  bool operator()(T& left, T& right) { return left < right; }
+};
+
+bool ordered_by<T, Compare>(T& left, T& right, mut Compare compare)
+  requires std::comparator<Compare, T> {
+  return compare(left, right);
+}
+
+bool ordered_generic<std::totally_ordered T>(T& left, T& right) {
+  return ordered_by(left, right, less_of<T>()) &&
+         ordered_by(left, right,
+                    [](T& first, T& second) -> bool { return first < second; });
+}
+
+void sort_generic<std::relocatable T>(mut std::vector<T>& values)
+  requires std::vector_element<T> && std::totally_ordered<T> {
+  std::sort(values, less_of<T>());
+}
+
+int main() {
+  if (!inspect(3, is_positive()) ||
+      !inspect(3, [](int32_t& value) -> bool { return value == 3; }) ||
+      !inspect_twice(5, 5, alternating_positive()) ||
+      apply_once(7, once_offset(4)) != 11) {
+    return 1;
+  }
+
+  mut std::vector<int32_t> values =
+      std::vector<int32_t>({3, 1, 4, 2});
+  std::sort(values, descending());
+  if (values[std::size_t(0)] != 4 || values[std::size_t(1)] != 3 ||
+      values[std::size_t(2)] != 2 || values[std::size_t(3)] != 1) {
+    return 2;
+  }
+
+  if (!std::all_of(values, is_positive()) ||
+      !std::any_of(values, [](int32_t& value) -> bool { return value == 2; }) ||
+      std::none_of(values, is_positive()) ||
+      std::count_if(values,
+                    [](int32_t& value) -> bool { return value >= 3; }) != 2) {
+    return 3;
+  }
+
+  sum_values summed = std::for_each(values, sum_values());
+  if (summed.result() != 10) {
+    return 4;
+  }
+
+  mut std::vector<int32_t> transformed =
+      std::vector<int32_t>(std::size_t(4));
+  std::transform(values, transformed, times_three());
+  if (transformed[std::size_t(0)] != 12 ||
+      transformed[std::size_t(3)] != 3) {
+    return 5;
+  }
+
+  int32_t accumulated = std::accumulate(
+      values.begin(), values.end(), int32_t(0), add_values());
+  if (accumulated != 10) {
+    return 6;
+  }
+
+  std::invoke_once(mark_read_action());
+  std::invoke_once(mark_mut_action());
+  std::invoke_once(mark_once_action());
+  if (action_calls != 3) {
+    return 7;
+  }
+
+  int32_t low = 1;
+  int32_t high = 2;
+  if (!ordered_generic(low, high) || ordered_generic(high, low)) {
+    return 8;
+  }
+  mut std::vector<int32_t> generic_values = std::vector<int32_t>({3, 1, 2});
+  sort_generic(generic_values);
+  if (generic_values[std::size_t(0)] != 1 ||
+      generic_values[std::size_t(1)] != 2 ||
+      generic_values[std::size_t(2)] != 3) {
+    return 9;
+  }
+  return 0;
+}

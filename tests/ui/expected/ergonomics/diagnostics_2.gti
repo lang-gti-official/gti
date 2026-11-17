@@ -1,0 +1,4 @@
+// Diagnostics: invalid expected operation stops in semantics.
+expected<int, int> read() { return 7; }
+int map(bool value) { return 0; }
+int main() { /* 😀 */ [[discard]] read().transform(map); return 0; }  //~ ERROR GTI-S2090

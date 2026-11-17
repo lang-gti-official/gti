@@ -1,0 +1,22 @@
+// Retained lambda field receiver: retained stored lambda reaches verified MIR.
+//@ check-pass
+class Token { public: Token() {} ~Token() {} int read() { return 7; } };
+class Owner<T, Args...> {
+  mut T field;
+public:
+  Owner(T field) : field(std::move(field)) {}
+  int operator()(Args... args) && { return ((std::move(this.field)))(args...); }
+};
+int invoke<T>(T callable) {
+  Owner<T, int> owner{std::move(callable)};
+  return std::move(owner)(5);
+}
+int main() {
+  Token token{};
+  auto callable = [token = std::move(token)](int value) -> int {
+    return token.read() + value;
+  };
+  auto unrelated = [](int value) -> int { return value; };
+  int unused = unrelated(0);
+  return invoke(std::move(callable)) - 12;
+}

@@ -1,0 +1,37 @@
+// Scalar and operator temporaries retain ordered evaluation and cleanup.
+//@ run-fail
+//@ revisions: default cleanup-fails
+//@[default] exit-code: 70
+//@[default] stdout: 2
+//@[default] stdout: 1
+//@[default] stdout: 9
+//@[default] stderr-contains: noreturn_temporary_borrow.gti:18: runtime error[GTI-R0017]: panic: "terminal"
+//@[cleanup-fails] args: cleanup-fails
+//@[cleanup-fails] exit-code: 70
+//@[cleanup-fails] stdout: 2
+//@[cleanup-fails] stderr-contains: noreturn_temporary_borrow.gti:12: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at noreturn_temporary_borrow.gti:18 message="terminal"; secondary [GTI-R0017] message="cleanup"
+// --- noreturn_temporary_borrow.gti
+import std.panic;
+import std.string;
+import std.vector;
+
+class Owner {
+  int id;
+  bool fail;
+public:
+  Owner(int id, bool fail) : id(id), fail(fail) {}
+  ~Owner() {
+    std::println(this.id);
+    if (this.fail) { std::panic("cleanup"); } // cleanup-panic
+  }
+};
+
+[[noreturn]]
+void stop(int& first, Owner& left, Owner& right, int& last) {
+  std::panic("terminal"); // terminal-panic
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Owner outer{9, false};
+  stop(1, Owner(1, false), Owner(2, argc > 1), 2);
+}

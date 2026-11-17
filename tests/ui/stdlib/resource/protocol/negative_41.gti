@@ -1,0 +1,14 @@
+// Negative: a live vector element prevents growth or mutable access: mut int& slot = values.get_mut(std::size_t(0));   slot = 9;.
+import std.resource;
+import std.memory;
+
+import std.resource_vector;
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_vector<int,std::process_resource> values{resource};
+  values.emplace_back(42);
+  int& element = values.get(std::size_t(0));
+  mut int& slot = values.get_mut(std::size_t(0));  //~ ERROR GTI-S2017
+  slot = 9;
+  return element;
+}
+int main() { return 0; }

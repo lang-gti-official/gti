@@ -1,0 +1,2 @@
+// Layout diagnostics: invalid layout query 'layout-query-reference.gti' should produce one focused GTI-S2063 without a fix-it.
+uint64_t query(int32_t& value) { return alignof(int32_t&); }  //~ ERROR GTI-S2063

@@ -1,0 +1,40 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+import std.panic;
+enum Slot { present(int& value), absent };
+class Reading {
+  mut Slot slot;
+public:
+  Reading(int& value) : slot(Slot::present(value)) {}
+  Reading() : slot(Slot::absent) {}
+  bool empty() {
+    switch (this.slot) {
+    case Slot::present: return false;
+    case Slot::absent: return true;
+    }
+  }
+  int& view() {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("absent");
+    }
+  }
+  int& take() && {
+    switch (this.slot) {
+    case Slot::present(auto& value): return value;
+    case Slot::absent: std::panic("absent");
+    }
+  }
+};
+Reading<a> read<lifetime a>(int&<a> owner, bool absent) {
+  if (absent) return Reading();
+  return Reading(owner);
+}
+int main() {
+  int owner = 42;
+  auto view = read(owner, false);
+  auto missing = read(owner, true);
+  auto consumed = read(owner, false);
+  int& retained = std::move(consumed).take();
+  return view.view() == retained && missing.empty() ? 0 : 1;
+}

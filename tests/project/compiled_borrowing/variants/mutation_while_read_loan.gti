@@ -1,0 +1,2 @@
+import "api.gti";
+int main() { mut int x = 1; int& v = read(x); store(x, 2); return v; }

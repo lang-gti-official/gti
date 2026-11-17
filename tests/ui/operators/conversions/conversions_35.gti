@@ -1,0 +1,5 @@
+// Conversion operators: rejected with GTI-S2022.
+interface Describable {
+  operator int();  //~ ERROR GTI-S2022
+};
+int main() { return 0; }

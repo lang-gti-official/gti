@@ -1,0 +1,53 @@
+// A member requirement hovers with its member and clause, its receiver
+// navigates to the requirement parameter, a mutating member fails it
+// (S2029), a broken requirement is a parse error, and the formatted text
+// is a fixed point. (member_requirement_lsp_test.py)
+//@ hover @concept: snapshot()
+//@ hover @concept: requires
+//@ definition @receiver: @param
+concept snapshots<T> = requires(T& /*@param*/item) { { /*@receiver*/item.snapshot() } -> T; };
+struct Item { Item snapshot() { Item result{}; return result; }  public: Item() = default; };
+T copy<T>(T& item) requires /*@concept*/snapshots<T> { return item.snapshot(); }
+int main() { Item item{}; auto result = copy(item); return 0; }
+// --- step 2
+concept snapshots<T> = requires(T& item) { { item.snapshot() } -> T; };
+struct Item { Item snapshot() mut { Item result{}; return result; }  public: Item() = default; };
+T copy<T>(T& item) requires snapshots<T> { return item.snapshot(); }
+int main() { Item item{}; auto result = copy(item); return 0; }  //~ ERROR GTI-S2029
+// --- step 3
+concept snapshots<T> = requires(T& item) { { item.snapshot( } -> T; };  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001
+struct Item { Item snapshot() { Item result{}; return result; }  public: Item() = default; };
+T copy<T>(T& item) requires snapshots<T> { return item.snapshot(); }  //~ ERROR GTI-S2049 //~ ERROR GTI-S2000
+int main() { Item item{}; auto result = copy(item); return 0; }
+// --- step 4
+//@ formatting: T copy<T>(T& item)
+//@ formatting: requires snapshots<T> {
+concept snapshots<T> = requires(T& item) { { item.snapshot() } -> T; };
+struct Item { Item snapshot() { Item result{}; return result; }  public: Item() = default; };
+T copy<T>(T& item) requires snapshots<T> { return item.snapshot(); }
+int main() { Item item{}; auto result = copy(item); return 0; }
+// --- step 5
+//@ formatting: unchanged
+concept snapshots<T> = requires(T & item) {
+  {
+    item.snapshot()
+  }
+  ->T;
+};
+struct Item {
+  Item snapshot() {
+    Item result{};
+    return result;
+  }
+public:
+  Item() = default;
+};
+T copy<T>(T& item)
+  requires snapshots<T> {
+  return item.snapshot();
+}
+int main() {
+  Item item{};
+  auto result = copy(item);
+  return 0;
+}

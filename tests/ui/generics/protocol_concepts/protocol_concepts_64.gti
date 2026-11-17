@@ -1,0 +1,9 @@
+// Protocol concepts: rejected with GTI-S2123.
+for <T> concept std::tryable<T*> {  //~ ERROR GTI-S2123
+  using value_type = T*;
+  using residual_type = T*;
+  bool has_value(T*& value) { return value != nullptr; }
+  T* take_value(T* value) { return value; }
+  T* take_residual(T* value) { return value; }
+};
+int main() { return 0; }

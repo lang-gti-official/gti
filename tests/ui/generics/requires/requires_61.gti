@@ -1,0 +1,10 @@
+// General requires: source index policy retains the exact by-value offset signature diagnostic.
+import std.iterator;
+struct Cursor {
+  mut int value = 0;
+  mut int& operator[](std::ptrdiff_t& offset) mut { return this.value; }
+public:
+  Cursor() = default;
+};
+void require_cursor<I>() requires std::subscripts_to_mut<I, int> {}
+int main() { require_cursor<Cursor>(); return 0; }  //~ ERROR GTI-S2029

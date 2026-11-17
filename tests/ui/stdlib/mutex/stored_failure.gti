@@ -1,0 +1,32 @@
+// A failure while a stored mutex reference is locked drops the payload once.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: 7
+//@ stderr-contains: stored-failure.gti:17: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- stored-failure.gti
+import std.mutex;
+class Payload {
+  int32_t id;
+public:
+  Payload(int32_t id) : id(id) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() { std::println(this.id); }
+};
+class User {
+  std::mutex<Payload>& owner;
+public:
+  User(std::mutex<Payload>& owner) : owner(owner) {}
+  void fail() {
+    auto guard = this.owner.lock();
+    int32_t zero = 0;
+    int32_t failed = 12 / zero;
+  }
+};
+int main() {
+  std::mutex<Payload> owner{Payload(7)};
+  User user{owner};
+  user.fail();
+  return 0;
+}

@@ -1,0 +1,102 @@
+// A subscript store reads its right side before the write borrow activates, for user and library subscripts.
+//@ run-pass
+import std.string;
+import std.vector;
+
+mut int32_t stamp = 0;
+
+class GlobalSlot {
+public:
+  GlobalSlot() = default;
+  mut int32_t value = 0;
+
+  int32_t& operator[](std::size_t index) { return this.value; }
+  mut int32_t& operator[](std::size_t index) mut { return this.value; }
+};
+
+mut GlobalSlot global_slot = GlobalSlot();
+
+class MutableValue {
+public:
+  MutableValue() = default;
+  mut int32_t value = 0;
+
+  void bump() mut { this.value++; }
+  int32_t read() { return this.value; }
+};
+
+class MutableHandle {
+public:
+  MutableHandle() = default;
+  mut MutableValue value = MutableValue();
+
+  MutableValue& operator->() { return this.value; }
+  mut MutableValue& operator->() mut { return this.value; }
+};
+
+class MutableSlots {
+public:
+  MutableSlots() = default;
+  mut MutableHandle value = MutableHandle();
+
+  MutableHandle& operator[](std::size_t index) { return this.value; }
+  mut MutableHandle& operator[](std::size_t index) mut { return this.value; }
+};
+
+std::size_t traced_index() {
+  stamp = stamp * 10 + 1;
+  return std::size_t(0);
+}
+
+int32_t traced_value() {
+  stamp = stamp * 10 + 2;
+  return 40;
+}
+
+void bump<std::numeric T>(mut std::vector<T>& values, T delta) {
+  values[std::size_t(0)] = values[std::size_t(0)] + delta;
+}
+
+int main() {
+  global_slot[std::size_t(0)] = 9;
+  if (global_slot[std::size_t(0)] != 9) {
+    return 6;
+  }
+
+  mut MutableSlots slots = MutableSlots();
+  slots[std::size_t(0)]->bump();
+  if (slots[std::size_t(0)]->read() != 1) {
+    return 7;
+  }
+
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  values.push_back(10);
+
+  values[std::size_t(0)] = values[std::size_t(0)] + 2;
+  if (values[std::size_t(0)] != 5) {
+    return 1;
+  }
+
+  values[std::size_t(0)] = values[std::size_t(1)] + values[std::size_t(0)];
+  if (values[std::size_t(0)] != 15) {
+    return 2;
+  }
+
+  bump(values, 5);
+  if (values[std::size_t(0)] != 20) {
+    return 3;
+  }
+
+  values[traced_index()] = traced_value();
+  if (values[std::size_t(0)] != 40 || stamp != 12) {
+    return 4;
+  }
+
+  mut std::string text = std::string("ab");
+  text[std::size_t(0)] = text[std::size_t(1)];
+  if (text[std::size_t(0)] != 'b') {
+    return 5;
+  }
+  return 0;
+}

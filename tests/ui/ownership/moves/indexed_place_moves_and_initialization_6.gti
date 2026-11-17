@@ -1,0 +1,11 @@
+// Indexed place moves and initialization: loop backedges should require an exact moved element to be restored.
+struct Record { int value; Record(int initial) : value(initial) {} };
+int main() {
+  mut Record values[1] = {Record(1)};
+  mut int index = 0;
+  while (index < 2) {  //~ ERROR GTI-S2018
+    Record consumed = std::move(values[0]);
+    index++;
+  }
+  return 0;
+}

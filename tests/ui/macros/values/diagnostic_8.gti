@@ -1,0 +1,5 @@
+// Diagnostic: invalid result macro must stop before emission.
+import std.string;
+#macro std::string inner(std::string argument) { return argument; }
+#macro std::string outer() { std::string saved{"owned"}; return inner!(saved); }
+int main() { std::string value = outer!(); return 0; }  //~ ERROR GTI-S2003

@@ -1,0 +1,34 @@
+// Conversion operators: the program is accepted.
+//@ check-pass
+import std.string;
+class Builder {
+  mut std::string text;
+public:
+  Builder(std::string_view start) : text(start) {}
+  implicit operator std::string() && { return std::move(this.text); }
+};
+struct Counter {
+  mut int calls = 0;
+  operator int() { return this.calls; }
+  operator int() mut {
+    this.calls++;
+    return this.calls;
+  }
+public:
+  Counter() = default;
+};
+Builder make() { return Builder("made"); }
+int main() {
+  std::string made = make();
+  Builder named{"named"};
+  std::string moved = std::move(named);
+  std::string explicit_made = std::string(Builder("explicit"));
+  mut Counter counter{};
+  Counter fixed{};
+  int first = int(counter);
+  int read = int(fixed);
+  std::println(made);
+  std::println(moved);
+  std::println(explicit_made);
+  return first + read;
+}
