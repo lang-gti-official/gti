@@ -467,9 +467,26 @@ A method result written in a region its class binds names the receiver's
 stored fields in that region. When nothing in the class stores the region,
 as in a callable pattern `class Local<R&<result>(R&<result>)>` with
 `R&<result> invoke(R&<result> value)`, the parameters written in it are its
-suppliers, exactly as for a method's own binder. A class that also stores
-the region does not yet combine its receiver fields with such parameters;
-returning the parameter there remains rejected. Such a result never borrows
+suppliers, exactly as for a method's own binder. When the class does store
+the region, its suppliers are the union of the receiver's fields stored in it
+and every parameter lane written in it, as `choose` names both of its inputs:
+
+```gti
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  int&<a> get_or(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+};
+```
+
+A caller keeps the receiver's stored referents and every such argument
+borrowed while the result is live, so writing `fallback` or mutating the
+table then is GTI-S2017, and a temporary or local argument cannot let the
+result escape. A parameter in another region still cannot supply it. Such a
+result never borrows
 storage the receiver owns (GTI-S2127), so a consuming method may return it,
 by reference or as a carrier like `View<a> take() &&`: it outlives the
 consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
@@ -622,8 +639,6 @@ accepts are still rejected, never the reverse:
 - A region cannot travel through a type argument: `transform` with a mapper
   returning `int&<static>` is rejected (GTI-S2022), unlike Rust's
   `Result::map` over a `U` that carries a lifetime.
-- A result region cannot name both the receiver's stored region and a
-  parameter (`int&<a> operator()(int&<a> input) &&` in `C<lifetime a>`).
 - A relay through more than one stored reference of a by-value carrier
   (`c.referent.next`) is a GTI-S2085 supplier rejection.
 - A carrier from a virtual call cannot serve as a temporary receiver

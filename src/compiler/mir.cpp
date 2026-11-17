@@ -3427,10 +3427,12 @@ verifyMirLoanFlow(const MirBody &body, std::size_t owner,
                    independentOwnedInput))
                 return false;
               // A call result several inputs may own retains each further
-              // input under that input's own authority, as a stored loan does.
+              // input under that input's own authority, as a stored loan
+              // does, or an owned local input under its ordinary ownership.
               if (loan.kind == MirLoanKind::CallResult && !loan.entry &&
-                  !loan.escapes && child != loan.source && authority != 0 &&
-                  authority != loan.parent)
+                  !loan.escapes && child != loan.source &&
+                  ((authority != 0 && authority != loan.parent) ||
+                   independentOwnedInput))
                 return false;
               return std::none_of(
                   parentSources.begin(), parentSources.end(),

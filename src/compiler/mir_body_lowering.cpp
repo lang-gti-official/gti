@@ -10653,6 +10653,16 @@ private:
         }
         HirValue dependency = value;
         dependency.borrowArgument = parameter;
+        // A stored class region's named lanes supply beside the receiver:
+        // each lane is an argument dependency with its own field mapping.
+        if (value.borrowOrigin == BorrowOriginKind::Receiver) {
+          dependency.borrowOrigin = BorrowOriginKind::Argument;
+          std::erase_if(dependency.borrowFields,
+                        [&](const BorrowedFieldOrigin &mapping) {
+                          return mapping.origin != BorrowOriginKind::Argument ||
+                                 mapping.parameter != parameter;
+                        });
+        }
         const MirPlaceId source = borrowOriginPlace(dependency, originCall);
         const MirLoanId inherited = operandLoan(originCall.operands[parameter]);
         const AccessMode access =
@@ -14824,8 +14834,19 @@ private:
           // even when an accessor selects a different runtime referent. Keep
           // the owner loan here; reference initialization separately captures
           // the checked descendant call-result address before its loan ends.
+          // A call result that also borrows further suppliers (a stored
+          // class region's parameter lanes) is no alias of the owner loan.
           if (transient == nullptr || retained == nullptr ||
               bindingReferenceAccess(binding) != AccessMode::ReadOnly ||
+              (transient->kind == MirLoanKind::CallResult &&
+               !transient->additionalDependencies.empty() &&
+               std::any_of(transient->additionalDependencies.begin(),
+                           transient->additionalDependencies.end(),
+                           [&](const MirLoanDependency &dependency) {
+                             return dependency.source != 0 &&
+                                    !retained->protectsSource(
+                                        dependency.source);
+                           })) ||
               (!sameBorrowSource(transient->source, retained->source) &&
                !retainableCallResultChain(existing, reuseLoan, valueId,
                                           bindingReferenceAccess(binding)) &&

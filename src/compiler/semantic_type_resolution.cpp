@@ -5797,6 +5797,13 @@ auto SemanticVisitor::Impl::validateCurrentReturnBorrowSource(
     // fewer of its suppliers.
   }
   if (function->returnBorrowOrigin == BorrowOriginKind::Receiver) {
+    // A stored class region's parameter lanes supply it beside the receiver.
+    if (function->declaration != nullptr)
+      for (const auto supplier : function->returnBorrowParameters)
+        if (supplier < function->bodyDeclaration()->parameters().size() &&
+            isParameterDerivedBorrow(
+                value, function->bodyDeclaration()->parameters()[supplier]))
+          return;
     if (!isReceiverDerivedBorrow(value)) {
       Diagnostic diagnostic = makeDiagnostic(
           std::move(code), DiagnosticPhase::Semantics, expressionToken(value),

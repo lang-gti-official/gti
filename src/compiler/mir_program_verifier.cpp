@@ -2232,6 +2232,19 @@ mirFieldTypeThroughBases(const MirProgram &program,
                 functionTarget->completeReturnBorrow->dependencies.begin(),
                 functionTarget->completeReturnBorrow->dependencies.end(),
                 [&](const auto &dependency) {
+                  // A named parameter lane of a stored class region is the
+                  // caller's own argument, never the consumed temporary.
+                  if (dependency.origin == BorrowOriginKind::Argument)
+                    return std::find(
+                               functionTarget->returnBorrowParameters.begin(),
+                               functionTarget->returnBorrowParameters.end(),
+                               dependency.parameter) !=
+                               functionTarget->returnBorrowParameters.end() &&
+                           functionTarget->returnBorrowOrigin ==
+                               BorrowOriginKind::Receiver &&
+                           (!referenceResult ||
+                            dependency.resultFields.empty()) &&
+                           dependency.access == AccessMode::ReadOnly;
                   return dependency.origin == BorrowOriginKind::Receiver &&
                          (!referenceResult ||
                           dependency.resultFields.empty()) &&
@@ -7715,11 +7728,51 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
             "shell and stored authority",
             block.id);
     }
-    if (instance.returnBorrowOrigin == BorrowOriginKind::Receiver &&
-        source->root != MirPlaceRootKind::This) {
-      return verificationFailure(
-          body, instance.id,
-          "receiver-dependent return does not originate from this", block.id);
+    // A stored class region's contract also names parameter lanes: a
+    // return may originate from this or from exactly one named lane, and
+    // every other owner it publishes must be one of them too.
+    const auto namedReceiverLane = [&](const MirPlace &place) {
+      if (instance.returnBorrowOrigin != BorrowOriginKind::Receiver ||
+          place.root != MirPlaceRootKind::Binding)
+        return false;
+      const std::size_t element =
+          place.projections.size() == 1 &&
+                  place.projections.front().kind ==
+                      MirProjectionKind::PackElement &&
+                  place.projections.front().constantIndex
+              ? static_cast<std::size_t>(
+                    *place.projections.front().constantIndex)
+              : 0;
+      return std::any_of(
+          instance.returnBorrowParameters.begin(),
+          instance.returnBorrowParameters.end(), [&](std::size_t parameter) {
+            const auto formal = mir_detail::returnOriginFormal(
+                instance.parameterTypes, instance.parameterBindings, parameter);
+            return formal && formal->binding == place.binding &&
+                   formal->elementWithinBinding == element;
+          });
+    };
+    if (instance.returnBorrowOrigin == BorrowOriginKind::Receiver) {
+      auto sources = loan->additionalSources();
+      sources.insert(sources.begin(), loan->source);
+      for (const auto id : sources) {
+        const auto canonical = borrowSourceForPlace(body, id, 0);
+        const auto *place = canonical ? body.findPlace(*canonical) : nullptr;
+        if (place == nullptr || (place->root != MirPlaceRootKind::This &&
+                                 !namedReceiverLane(*place))) {
+          MirVerificationResult rejected = verificationFailure(
+              body, instance.id,
+              "receiver-dependent return does not originate from this or "
+              "a named parameter lane",
+              block.id);
+          if (place != nullptr && place->root == MirPlaceRootKind::Binding &&
+              !rejected.errors.empty())
+            rejected.errors.back().borrow = {
+                .kind = MirBorrowRejectionKind::Supplier,
+                .loan = *block.terminator.returnLoan};
+          return rejected;
+        }
+      }
     }
     if (instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
         (source->root != MirPlaceRootKind::Binding || [&] {
@@ -7751,7 +7804,8 @@ staticStorageLoan(const MirProgram &program, const MirBody &body,
                                          .loan = *block.terminator.returnLoan};
       return rejected;
     }
-    if (!instance.returnBorrowParameters.empty()) {
+    if (instance.returnBorrowOrigin == BorrowOriginKind::Argument &&
+        !instance.returnBorrowParameters.empty()) {
       // Each supplier is one formal, or one lane of a formal pack.
       using Supplier = std::pair<HirBindingId, std::size_t>;
       std::set<Supplier> expected;
@@ -16244,8 +16298,16 @@ completeBorrowMappingIsWellFormed(const MirProgram &program,
   if (result == resultInventory->end())
     return false;
   if (function.explicitReturnBorrowOrigin) {
-    if (mapping.origin != function.returnBorrowOrigin ||
-        (mapping.origin == BorrowOriginKind::Argument &&
+    // A stored class region's contract is the union of the receiver's
+    // fields in it and the parameter lanes it names (RFC 0004).
+    const bool namedLane =
+        function.returnBorrowOrigin == BorrowOriginKind::Receiver &&
+        mapping.origin == BorrowOriginKind::Argument &&
+        std::find(function.returnBorrowParameters.begin(),
+                  function.returnBorrowParameters.end(),
+                  mapping.parameter) != function.returnBorrowParameters.end();
+    if ((mapping.origin != function.returnBorrowOrigin && !namedLane) ||
+        (mapping.origin == BorrowOriginKind::Argument && !namedLane &&
          mapping.parameter != function.returnBorrowParameter &&
          std::find(function.returnBorrowParameters.begin(),
                    function.returnBorrowParameters.end(), mapping.parameter) ==

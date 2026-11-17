@@ -1755,7 +1755,10 @@ auto SemanticVisitor::Impl::signatureCompleteReturnBorrow(
       if (!method)
         return std::nullopt;
       receiverSupplies = true;
-      parametersSupply = false;
+      // A stored class region is also supplied by the parameter lanes
+      // written in it (RFC 0004): the contract is their union.
+      parametersSupply = !function.returnBorrowParameters.empty();
+      namedParameters = function.returnBorrowParameters;
       break;
     case BorrowOriginKind::Argument:
       receiverSupplies = false;

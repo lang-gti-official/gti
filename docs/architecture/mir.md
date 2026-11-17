@@ -3342,6 +3342,19 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+A method result in a region its class stores has a union contract: origin
+`Receiver` for the receiver's fields stored in that region plus the named
+parameter lanes written in it, carried in `returnBorrowParameters` (empty for
+a receiver-only result) and stated exactly by `completeReturnBorrow`. The
+program verifier admits an `Argument` mapping in such a contract only for a
+named lane, checks each return's source and every additional source against
+`this` or a named lane, and lets a consumed temporary receiver relay a named
+lane, never the temporary itself. At a call, the result loan keeps the
+receiver's stored dependency as its parent and each named lane's argument as
+an additional dependency, an owned local argument under its ordinary
+ownership, so a reference binding retains that call-result loan rather than
+the receiver's owner loan alone.
+
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly
 or through a child loan) is still used. Lowering a body takes two passes. The
