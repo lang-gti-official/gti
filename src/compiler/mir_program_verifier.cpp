@@ -5149,17 +5149,35 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
       // list and thereby erase shell identity or mix permissions.
       if (shellResult) {
         const auto *source = body.findPlace(loan->source);
-        // A view stored in a class or payload-enum field holds only text that
-        // every writer proved ownerless, so a reference to it through the
-        // receiver carries no external dependency.
-        const bool ownerlessTextField =
+        // A text reference into an owning record has a physical owner but
+        // no separate stored dependency: checked field/array writers prove
+        // the text ownerless. The same contract applies when the record is
+        // an argument, including the explicit owner of a verified raw borrow.
+        // Unwrap its reference formal, not the returned text reference.
+        const SemanticType *textOwner = source ? &source->type : nullptr;
+        if (textOwner && textOwner->kind == SemanticType::Reference &&
+            textOwner->arguments.size() == 1)
+          textOwner = &textOwner->arguments.front();
+        // A lowered range iterator can retain the source through a Local
+        // loan rather than a Stored group. Prove the exact retained owner's
+        // layout, not merely the iterator's missing dependency metadata.
+        const auto *rangeOwner = opaqueRangeCarrier && receiverLoan &&
+                                         receiverLoan->storedDependency == 0
+                                     ? body.findPlace(receiverLoan->source)
+                                     : nullptr;
+        const bool ownerlessRangeText =
+            rangeOwner &&
+            (rangeOwner->type.kind == SemanticType::Class ||
+             rangeOwner->type.kind == SemanticType::Array) &&
+            findStoredCarrierReferences(program, rangeOwner->type).empty();
+        const bool ownerlessTextOwner =
             source != nullptr &&
             (instruction.info.type.kind == SemanticType::StringView ||
              instruction.info.type.kind == SemanticType::CString) &&
-            instruction.borrowOrigin == BorrowOriginKind::Receiver &&
-            (source->type.kind == SemanticType::Class ||
-             source->type.kind == SemanticType::Enum) &&
-            findStoredCarrierReferences(program, source->type).empty();
+            (((textOwner->kind == SemanticType::Class ||
+               textOwner->kind == SemanticType::Enum) &&
+              findStoredCarrierReferences(program, *textOwner).empty()) ||
+             ownerlessRangeText);
         // A carrier of the view an accessor returned holds exactly that
         // result loan's stored dependency, which is none when the accessor's
         // own result was proved to hold ownerless text.
@@ -5176,7 +5194,7 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
             isCarrierReferenceResult(program, instruction);
         const bool independentText =
             source && (independentlyStaticTextBinding(program, body, *source) ||
-                       ownerlessTextField || ownerlessAccessorText);
+                       ownerlessTextOwner || ownerlessAccessorText);
         if ((loan->storedDependency == 0 && !independentText) ||
             !loan->additionalSources().empty() ||
             !instruction.borrowArguments.empty())
