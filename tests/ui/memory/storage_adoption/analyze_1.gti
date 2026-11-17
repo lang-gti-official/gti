@@ -1,0 +1,21 @@
+// Analyze: application-defined payload uses public manual lifetime operations.
+//@ check-pass
+import std.memory;
+
+import std.panic;
+class Payload {
+  int value;
+public:
+  Payload(int value) : value(value) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = delete;
+  ~Payload() { std::panic("payload cleanup"); }
+};
+int main() {
+  mut std::uninitialized<Payload> slot{};
+  unsafe {
+    [[discard]] std::construct_at(slot.data(), 42);
+    std::destroy_at(slot.data());
+  }
+  return 0;
+}

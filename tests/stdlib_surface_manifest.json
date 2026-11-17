@@ -4294,7 +4294,7 @@
         "string"
       ],
       "evidence": [
-        "tests/source_prefix_owner_tests.cpp",
+        "tests/ui/memory/source_prefix_owner",
         "tests/source_sparse_storage_tests.cpp",
         "tests/fixtures/process_storage_policy.gti",
         "tests/ui/stdlib/process/storage_query_policy.gti",
@@ -5895,7 +5895,7 @@
         "examples/125-manual-object-lifetimes.gti",
         "examples/128-inline-object-pool.gti",
         "tests/ui/ownership/uninitialized_carriers",
-        "tests/object_lifetime_tests.cpp",
+        "tests/ui/memory/object_lifetime",
         "docs/language/raw-pointers.md"
       ]
     },

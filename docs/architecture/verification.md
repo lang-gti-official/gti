@@ -262,7 +262,7 @@ named methods to retain owned fields like call operators. The conditional
 receiver runtime oracle explicitly checks the revised reverse-field cleanup
 order; extraction into a separate local retains its own lifetime.
 
-`llvm_admission` checks exact branch-temporary publication and mutations of
+`tests/ui/codegen/llvm_admission/` checks exact branch-temporary publication and mutations of
 its origin, availability and root. `tests/ui/callables/owned_inline` executes
 LLVM O0/O3 with an unrelated application interface and a named consuming
 ticket method. It checks zero allocations for eligible function, clone,
@@ -6480,7 +6480,7 @@ Example 113 builds and runs with zero diagnostics. These focused gates use the
 optimized Release compiler; they do not constitute full Phase 1 acceptance.
 
 The first prerequisite generalizes final-slot constructor preflight from prefix
-to sparse storage. `prefix_constructor_contract` now also checks sparse exact
+to sparse storage. `tests/ui/memory/prefix_constructor/` now also checks sparse exact
 index pairing, source constructor identity, prepared-owner transfer and failure
 propagation. Mutations are rejected by both MIR verification and independent
 backend admission. Negative public calls reject escaping emplaced references
@@ -6611,7 +6611,7 @@ rejection, receiver raw fields, retained reference-field witnesses and the
 polymorphic assertion barrier. The runtime matrix also exercises an unrelated
 source-defined raw-backed view. All nine focused/adjacent gates pass locally:
 the six raw/syntax/LSP/manifest gates plus `unsafe_function_contract`,
-`prefix_constructor_contract` and `optimizer_conformance`. Example 112 builds
+`tests/ui/memory/prefix_constructor/` and `optimizer_conformance`. Example 112 builds
 and runs with zero diagnostics. The existing optimized ownership suite also
 passes all 61 named tests. These checkpoint results are not full Phase 1
 acceptance. A subsequent emission-only adversarial probe exposed callee-local
@@ -6678,7 +6678,7 @@ elements in growable or relocating paths. `tests/lsp/resources` checks the
 same unsafe-call and borrow-conflict diagnostics, navigation to the library
 declarations and member completion through the language server.
 `resource_memory_runtime` independently checks the process-memory
-size/alignment/status boundary. `storage_adoption_contract` checks public
+size/alignment/status boundary. `tests/ui/memory/storage_adoption/` checks public
 source-defined ownership and that retired private storage names have no magic
 meaning. General object-lifetime contracts and runtime object-layout gates own
 typed placement and its malformed-MIR cases.
@@ -8042,7 +8042,7 @@ outcomes, including an owning Expected argument followed by conditional and
 fallible arguments. These counts describe the registered scope, not a claim
 that a pending execution has passed.
 
-`prefix_constructor_contract` checks exact selected constructor roles, prepared
+`tests/ui/memory/prefix_constructor/` checks exact selected constructor roles, prepared
 owner slots, capacity preflight, and independently rejected malformed handoffs.
 Its native counterpart combines owning values, references, owner-backed text,
 and raw pointers with constructor, argument, capacity, and cleanup failures
@@ -8882,7 +8882,7 @@ later-argument failure have exact traces and source records in all eight modes.
 ownership, propagation, and Invoke publication, including malformed missing
 parameter metadata.
 
-`prefix_constructor_contract` and `vector_prepared_constructor_runtime` add the mixed
+`tests/ui/memory/prefix_constructor/` and `vector_prepared_constructor_runtime` add the mixed
 owning/reference/owner-dependent-text/unsafe-pointer argument boundary.
 Capacity failure must destroy staged owners without entering the constructor;
 later-argument failure must likewise preserve earlier staged cleanup.
@@ -11260,7 +11260,7 @@ deletion, and do not replace their independent execution gates.
 
 | Gate | Evidence |
 | --- | --- |
-| `llvm_admission` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks. Sealed virtual calls retain all matching-root implementations and transitive helpers, including unsupported targets, without demanding unrelated families. Exact hierarchy call/return loans have positive source witnesses and forged producer/access/type/return-loan rejection. Scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
+| `tests/ui/codegen/llvm_admission/` | Every typed ledger row has a milestone/predicate; unknown values and sentinels reject; snapshot/target/policy identity survives; sealed entry/dependency reachability separates dormant metadata from required execution, with conservative all-body fallbacks. Sealed virtual calls retain all matching-root implementations and transitive helpers, including unsupported targets, without demanding unrelated families. Exact hierarchy call/return loans have positive source witnesses and forged producer/access/type/return-loan rejection. Scalar, array, borrow, cleanup, native and TLS shapes are inventoried; pending generation carries source provenance and emits no artifact. |
 | `llvm_dispatch_execution` static-owner/reference composition | The runnable `examples/llvm/borrowed-hierarchy-owners.gti` and derived cases execute readonly/mutable interface and concrete-base returns, forwarding already-adjusted references, unique reset/empty reset, shared cloning/last release and exactly-once cleanup at LLVM O0-O3. Failure cleanup preserves the original failure/source; a wrong-trace mutation must produce secondary failure. Local-reference escape, mutable return from readonly input and owner reset while a view is retained reject with artifact preservation. Exact existing C++ text-vocabulary failures are recorded, not counted as comparison passes. |
 | `llvm_dispatch_execution` nested generated transfers | `examples/llvm/nested-hierarchy-transfer.gti` checks independent copied field state and chained moves through containing records with exact nested cleanup, with C++20/23 O3 and LLVM O0-O3 execution. Failure after movement drains the surviving fields once; a wrong-trace control rejects. The layout gate mutates nested deleted/source-defined/borrowed-field policies and cleanup recipes, and proves fresh moves select the shared generated-relocation helper without publishing during preflight. |
 | `llvm_coverage_evidence` | Every executable implementation claim names a registered execution test and a `gti.llvm.execution-evidence/v2` manifest profile derived from that test's runnable case dictionary, with explicit `execution-profile` metadata. Producers default to `single-threaded`; concurrent profiles explicitly select `concurrent`. The probe models hosted execution, enables thread capability only on supported host targets, and preserves the complete target through analysis and lowering; the audit checks the observed profile key. Missing tags, unknown values (including `sequential`), unknown override keys and v1 manifests reject. CMake producers use one deferred registry service rather than editing the audit; malformed, duplicate, non-CTest or missing-script registrations, a CTest command that runs a different script, and missing/unsupported manifest contracts fail mutation controls. Stable source IDs carry repository/inline origin plus the SHA-256 of the exact UTF-8 source. A test-only admission probe verifies that the profile's real GTI sources reach the exact ledger row; unknown fields, stale hashes, dangling sources, stale tests/profiles, synthetic pending passes and unavailable gates also reject. Reports bind the compiled identity to live repository HEAD/cleanliness and record build configuration, platform, compiler and LLVM identity while retaining distinct `passed`, `failed`, `unrun` and `unavailable` observations. Structural completeness, fully observed execution and production readiness are separate: unrun evidence, dirty/stale source and explicit implemented-evidence gaps remain promotion blockers. Row linkage is not substituted for successful execution, cleanup/failure evidence or a second platform run. |

@@ -1,0 +1,16 @@
+// Shape witnesses: evaluated stored-reference addresses are admitted through the sealed loan stage.
+//@ build-pass
+//@ slow
+mut int visits = 0;
+mut int& selected(mut int& input) { visits += 1; return input; }
+class View {
+  mut int& value;
+public:
+  View(mut int& input) : value(selected(input)) {}
+  void write() mut { this.value = 42; }
+};
+int main() {
+  mut int value = 1;
+  { mut View view{value}; view.write(); }
+  return value - 42;
+}

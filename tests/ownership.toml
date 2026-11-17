@@ -397,9 +397,7 @@ paths = [
 owners = [
   "reference_parameter_pack_mir",
   "^mir_",
-  "storage_adoption_contract",
   "cleanup_bound_borrow_mutations",
-  "object_lifetime_contract",
   "source_sparse_storage_contract",
   "text_address_bridge_contract",
 ]

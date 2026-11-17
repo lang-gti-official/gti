@@ -1,0 +1,3 @@
+// Shape witnesses: scalar equality admission cannot hide an unimplemented array comparison.
+//@ check-pass
+int main() { int left[2] = {1, 2}; int right[2] = {1, 2}; return left == right ? 0 : 1; }

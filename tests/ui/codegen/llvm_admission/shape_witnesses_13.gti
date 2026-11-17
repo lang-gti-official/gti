@@ -1,0 +1,8 @@
+// Shape witnesses: nested integral enum arrays remain outside the enum array witness.
+//@ check-pass
+enum class Phase : uint8_t { idle, running };
+struct Grid {
+  Phase cells[2][2];
+  Grid(Phase a, Phase b) : cells({{a, b}, {b, a}}) {}
+};
+int main() { Grid grid = Grid(Phase::idle, Phase::running); return 0; }

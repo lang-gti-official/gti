@@ -247,19 +247,10 @@ add_test(NAME borrow_carrier_receivers COMMAND gti_borrow_carrier_receiver_tests
 add_executable(gti_process_provider_target_tests process_provider_target_tests.cpp)
 target_link_libraries(gti_process_provider_target_tests PRIVATE gti_compiler gti_compiler)
 add_test(NAME process_provider_target_contract COMMAND gti_process_provider_target_tests)
-add_executable(gti_storage_adoption_tests storage_adoption_tests.cpp)
-target_link_libraries(gti_storage_adoption_tests PRIVATE gti_compiler gti_llvm_backend)
-add_test(NAME storage_adoption_contract COMMAND gti_storage_adoption_tests)
 
-add_executable(gti_object_lifetime_tests object_lifetime_tests.cpp)
-target_link_libraries(gti_object_lifetime_tests PRIVATE gti_compiler gti_llvm_backend)
-add_test(NAME object_lifetime_contract COMMAND gti_object_lifetime_tests)
 add_executable(gti_text_address_bridge_tests text_address_bridge_tests.cpp)
 target_link_libraries(gti_text_address_bridge_tests PRIVATE gti_compiler gti_compiler)
 add_test(NAME text_address_bridge_contract COMMAND gti_text_address_bridge_tests)
-add_executable(gti_source_prefix_owner_tests source_prefix_owner_tests.cpp)
-target_link_libraries(gti_source_prefix_owner_tests PRIVATE gti_compiler gti_llvm_backend)
-add_test(NAME source_prefix_owner_contract COMMAND gti_source_prefix_owner_tests)
 add_executable(gti_source_sparse_storage_tests source_sparse_storage_tests.cpp)
 target_link_libraries(gti_source_sparse_storage_tests PRIVATE gti_compiler gti_llvm_backend)
 add_test(NAME source_sparse_storage_contract COMMAND gti_source_sparse_storage_tests)
@@ -670,9 +661,6 @@ add_test(NAME source_unit_services COMMAND gti_source_unit_services_tests)
 
 
 
-add_executable(gti_prefix_constructor_tests prefix_constructor_tests.cpp)
-target_link_libraries(gti_prefix_constructor_tests PRIVATE gti_llvm_backend)
-add_test(NAME prefix_constructor_contract COMMAND gti_prefix_constructor_tests)
 add_test(NAME vector_empty_constructor_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/vector_empty_constructor_runtime_test.py" $<TARGET_FILE:gti>)
@@ -1061,10 +1049,6 @@ target_link_libraries("gti_llvm_backend_foundation_tests"
                       PRIVATE gti_llvm_backend)
 add_test(NAME llvm_backend_foundation COMMAND gti_llvm_backend_foundation_tests)
 
-add_executable("gti_llvm_admission_tests"
-               "${PROJECT_SOURCE_DIR}/tests/llvm_admission_tests.cpp")
-target_link_libraries("gti_llvm_admission_tests" PRIVATE gti_llvm_backend)
-add_test(NAME llvm_admission COMMAND gti_llvm_admission_tests)
 
 add_executable(gti_llvm_atomic_contract_tests llvm_atomic_contract_tests.cpp)
 target_include_directories(gti_llvm_atomic_contract_tests SYSTEM PRIVATE ${GTI_LLVM_INCLUDE_DIRS})
