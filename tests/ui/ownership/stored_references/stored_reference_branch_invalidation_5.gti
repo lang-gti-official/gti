@@ -1,0 +1,5 @@
+// Stored reference branch invalidation: a terminating conditional should rely on path cleanup instead of creating an unreachable join endpoint.
+//@ check-pass
+import std.string;
+int consume(bool choose) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (choose) { char first = *iterator; return 1; } else { return 0; } }  //~ WARN GTI-S2096
+int main() { return 0; }

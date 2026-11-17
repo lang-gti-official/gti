@@ -1,0 +1,4 @@
+// Consteval: exact nullptr construction publishes an immediate record value.
+//@ check-pass
+struct P { int value; consteval P(nullptr_t ignored) : value(42) {} };
+int main() { P p = nullptr; return p.value - 42; }

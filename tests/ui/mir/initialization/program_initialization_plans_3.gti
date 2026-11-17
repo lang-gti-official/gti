@@ -1,0 +1,14 @@
+// Program initialization plans: forcing one grouped reference boundary should retain storage access only at that exact boundary without clearing an earlier substitution for the same program-storage symbol.
+//@ run-pass
+class SubstitutionLocality {
+public:
+  static int32_t inspect(int32_t& value) { return value; }
+  static mut int32_t first = SubstitutionLocality::later;
+  static constexpr int32_t later = -7;
+  static mut int32_t forced =
+      SubstitutionLocality::inspect((SubstitutionLocality::later));
+public:
+  SubstitutionLocality() = default;
+};
+int main() { return SubstitutionLocality::first +
+                    SubstitutionLocality::forced + 7 == -7 ? 0 : 1; }

@@ -1,0 +1,24 @@
+// Read only range loans: moving an owned range into loop storage should invalidate later reuse of the original owner.
+interface IteratorContract<T> { T& operator*(); void operator++() mut; };
+class Iterator : public IteratorContract<int> {
+  mut int current;
+public:
+  Iterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(Iterator& other) { return this.current != other.current; }
+};
+class Range {
+public:
+  Range() {}
+  Range(Range& other) = delete;
+  Range(Range&& other) = default;
+  Iterator begin() { return Iterator(0); }
+  Iterator end() { return Iterator(1); }
+};
+int main() {
+  mut Range range = Range();
+  for (auto& value : std::move(range)) { break; }
+  Iterator invalid = range.begin();  //~ ERROR GTI-S2018
+  return 0;
+}

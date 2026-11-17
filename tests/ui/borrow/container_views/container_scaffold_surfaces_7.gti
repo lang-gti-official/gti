@@ -1,0 +1,18 @@
+// Container scaffold surfaces: a text view can relay a checked nested owner dependency.
+//@ check-pass
+import std.string;
+class Label {
+  mut std::string text = std::string("abc");
+public:
+  std::string_view view() { return text.view(); }
+  void edit() mut { this.text.clear(); }
+public:
+  Label() = default;
+};
+
+std::string_view relay(Label& value) { return value.view(); }
+int main() {
+  Label value{};
+  auto view = relay(value);
+  return int(view.size());
+}

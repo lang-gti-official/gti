@@ -204,6 +204,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
 | Use temporary owning allocations and deterministic cleanup during constant evaluation | [153: constexpr allocation](153-constexpr-allocation.gti) |
 | Build strings, vectors and your own containers at compile time | [195: constexpr owned containers](195-constexpr-owned-containers.gti) |
+| Loop over arrays, vectors and your own ranges at compile time | [198: constexpr range-for](198-constexpr-range-for.gti) |
 | Initialize a string or class from one value of another type with an implicit constructor | [154: declaration construction](154-declaration-construction.gti) |
 | Convert a value to another type with an explicit or `implicit` conversion operator | [155: conversion operators](155-conversion-operators.gti) |
 | Give types associated types and operations from outside them, and use them from generic code | [157: protocol concepts](157-protocol-concepts.gti) |
@@ -242,6 +243,12 @@ recoverable errors, and returns nonzero if its demonstrated invariant fails.
 The numbered examples run without arguments or external services. The HTTP
 recipe opts into networking only when you supply a URL. Its local test server
 is a teaching helper, not a production server.
+
+Every top-level `examples/*.gti` must analyse to verified MIR with no
+diagnostics: the per-commit `gti_test_examples` entry in
+`tests/gti_test.cmake` checks them with `gti-test` and lists the few it
+excludes, each with its reason. Subdirectories hold project-style examples and
+the modules other examples import.
 
 ## Numerical index
 
@@ -326,7 +333,7 @@ is a teaching helper, not a production server.
 | `075-bounded-arena-pool.gti` | fixed-capacity typed arenas and reusable pools with checked owner-tied access |
 | `076-scalar-atomics.gti` | share-safe integer fetch operations and sleeping completion with acquire wait/notification across managed threads |
 | `077-callable-concepts.gti` | exact reusable predicate, operation, and consuming-action contracts |
-| `owning-enum-packs/main.gti` | store owning string/JSON enum alternatives through variadic map construction, replace and erase them (covered by `enum_pack_runtime`) |
+| `owning-enum-packs/main.gti` | store owning string/JSON enum alternatives through variadic map construction, replace and erase them (pack mechanics run by `tests/ui/packs/`) |
 | `078-owning-payload-enums.gti` | closed payload enums that directly own active-cleanup alternatives |
 | `079-class-scoped-type-aliases.gti` | access-controlled aliases declared as class members |
 | `080-function-items.gti` | exact namespace free functions passed to confined generic callables, including deduced argument packs |
@@ -392,6 +399,7 @@ is a teaching helper, not a production server.
 | `142-constexpr-builders.gti` | checked mutable constexpr references, result propagation, constructor reference arguments/defaults, generated defaults, enum states, mutable arrays and reflection-driven field mutation, with runtime parity |
 | `153-constexpr-allocation.gti` | transient exclusive allocation, source-defined destruction and a passive result that survives constant evaluation, with runtime parity |
 | `195-constexpr-owned-containers.gti` | compile-time `std::string` building, a `std::vector<std::string>`, and an application container over `std::storage`, sizing a fixed array, with runtime parity |
+| `198-constexpr-range-for.gti` | range-based `for` in `constexpr` functions over a fixed array, a vector temporary, a mutable `std::array` and an application range whose cursor refers to it, with `break`, `continue` and a computed table size, with runtime parity |
 | `154-declaration-construction.gti` | `implicit` constructors letting declarations construct `std::string` from a literal and an application class from an `int`, a field default and constructor initializer doing the same, a constructor without `implicit` called explicitly, and `std::string` assignment from a view |
 | `155-conversion-operators.gti` | an explicit conversion operator to a strongly typed identifier, an `implicit` one that a declaration may use, and a consuming conversion from a temporary and an explicitly moved builder |
 | `156-borrowing-callbacks.gti` | shared/exclusive local and receiver captures, mutable and read-only lambda parameter results through local aliases, call-scoped fresh callable borrows, direct signature-erased callable views, generic stored callbacks, and stateless GTI invocation pointers |
@@ -932,4 +940,4 @@ success exits with 0 and prints nothing.
 
 The [constant character conversion example](constant-character/main.gti) shows
 explicit fitting integer constants, constexpr calls and value-generic code units.
-It is registered by `testCharactersAndStringViews` in `compiler_pipeline`.
+`gti_test_examples` checks it.

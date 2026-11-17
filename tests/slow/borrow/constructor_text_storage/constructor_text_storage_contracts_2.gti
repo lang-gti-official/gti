@@ -1,0 +1,24 @@
+// Constructor text storage contracts: a local value may hold dynamic text from a named owner.
+//@ slow
+//@ check-pass
+import std.string;
+import std.utility;
+import std.memory;
+struct Label {
+  std::string_view text;
+  constexpr Label(std::string_view input = "default") : text((input)) {}
+};
+struct Box<T> {
+  T value;
+  Box(T input) : value(std::move(input)) {}
+};
+struct CLabel {
+  c_string text;
+  CLabel(c_string input) : text(input) {}
+};
+struct Borrowed {
+  std::string_view& text;
+  Borrowed(std::string_view& input) : text(input) {}
+  std::size_t size() { return this.text.size(); }
+};
+int main() { std::string owner = std::string("abc"); CLabel saved{owner.c_string()}; Label label{owner.view()}; return int(label.text.size()) - 3; }

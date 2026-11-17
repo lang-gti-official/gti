@@ -1,0 +1,29 @@
+// Split method definitions in a module implementation unit: a signature type the implementation does not import directly is a visibility error (GTI-S2024), not a signature mismatch (GTI-S2120), and binds once imported; for a returned, a by-value and a pointer parameter type. (From compiler_declarations_tests.cpp testOutOfClassMethods.)
+$ cd app
+$ cp variants/api_1.gti src/api.gti
+$ cp variants/hidden_1.gti src/api_impl.gti
+$ gti check
+? 65
+stderr: error[GTI-S2024]
+!stderr: GTI-S2120
+$ cp variants/visible_1.gti src/api_impl.gti
+$ gti check
+stdout: Diagnostics: 0 errors
+$ cp variants/api_2.gti src/api.gti
+$ cp variants/hidden_2.gti src/api_impl.gti
+$ gti check
+? 65
+stderr: error[GTI-S2024]
+!stderr: GTI-S2120
+$ cp variants/visible_2.gti src/api_impl.gti
+$ gti check
+stdout: Diagnostics: 0 errors
+$ cp variants/api_3.gti src/api.gti
+$ cp variants/hidden_3.gti src/api_impl.gti
+$ gti check
+? 65
+stderr: error[GTI-S2024]
+!stderr: GTI-S2120
+$ cp variants/visible_3.gti src/api_impl.gti
+$ gti check
+stdout: Diagnostics: 0 errors

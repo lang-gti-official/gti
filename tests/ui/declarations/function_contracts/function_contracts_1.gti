@@ -1,0 +1,2 @@
+// Function contracts: the hosted entry point cannot demand a nonexistent GTI caller.
+[[track_caller]] int main() { return 0; }  //~ ERROR GTI-S2099 hosted entry point

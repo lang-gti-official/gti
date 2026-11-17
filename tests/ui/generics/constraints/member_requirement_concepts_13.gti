@@ -1,0 +1,4 @@
+// Member requirement concepts: a disjunction must not grant a member absent from another alternative.
+concept snapshots<T> = requires(T& x) { { x.snapshot() } -> T; };
+concept maybe_snapshot<T> = snapshots<T> || std::copy_constructible<T>;
+T invalid<T>(T& x) requires maybe_snapshot<T> { return x.snapshot(); }  //~ ERROR GTI-S2000

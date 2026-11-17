@@ -1,0 +1,2 @@
+// Default parameters: a default expression should be checked against its concrete parameter type.
+int invalid(int value = true) { return value; }  //~ ERROR GTI-S2077 parameter requires 'int32_t'

@@ -1,0 +1,20 @@
+// A C++ section and native-args reach the native build as after `gti --`.
+//@ run-pass
+//@ native-args: -DNATIVE_SCALE=3
+// --- main.gti
+extern "C" {
+  int32_t native_scaled(int32_t value);
+}
+int main() {
+  return native_scaled(7) - 21;
+}
+// --- scale.cpp
+#include <cstdint>
+#include <vector>
+extern "C" std::int32_t native_scaled(std::int32_t value) {
+  std::vector<std::int32_t> values(NATIVE_SCALE, value);
+  std::int32_t total = 0;
+  for (std::int32_t item : values)
+    total += item;
+  return total;
+}

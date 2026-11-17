@@ -2469,6 +2469,14 @@ public:
            (base != nullptr && base->requiresNativeObjectLayout());
   }
   void requireNativeObjectLayout() const { nativeObjectLayout_ = true; }
+  // This model's own mark (not its base's), for a discarded attempt to
+  // restore.
+  [[nodiscard]] bool nativeObjectLayoutMarked() const {
+    return nativeObjectLayout_;
+  }
+  void restoreNativeObjectLayoutMark(bool marked) const {
+    nativeObjectLayout_ = marked;
+  }
   [[nodiscard]] SourceDebugProfile sourceDebugProfile() const {
     return sourceDebugProfile_;
   }
@@ -2769,6 +2777,10 @@ public:
     auto *previous = functionDemandSink;
     functionDemandSink = sink;
     return previous;
+  }
+  // Whether the current sink recorded a lookup of `id`.
+  [[nodiscard]] bool functionDemandRecorded(FunctionId id) const {
+    return functionDemandSink != nullptr && functionDemandSink->contains(id);
   }
 
   [[nodiscard]] const LambdaInfo *findLambda(const Lambda &declaration) const;

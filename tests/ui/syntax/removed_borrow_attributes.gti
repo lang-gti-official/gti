@@ -1,0 +1,9 @@
+// RFC 0004 removed `[[borrowed_from]]`; writing it, or an unknown or
+// malformed function attribute, is a parse error naming the replacement.
+// (From borrow_origin_syntax_tests.cpp testMalformedAttributes.)
+//@ parse-fail
+[[borrowed_from(owner)]] int& a(int& owner) { return owner; }  //~ ERROR GTI-P0001 '[[borrowed_from]]' was removed
+[[track_caller, borrowed_from(owner)]] int& b(int& owner) { return owner; }  //~ ERROR GTI-P0001 '[[borrowed_from]]' was removed
+[[noreturn(owner)]] int& c(int& owner) { return owner; }  //~ ERROR GTI-P0001 Unknown function attribute
+[[unknown(owner)]] int& d(int& owner) { return owner; }  //~ ERROR GTI-P0001 Unknown function attribute
+concept readable<C> = requires(C& owner) { { owner.read() } -> int& [[borrowed_from(owner)]]; };  //~ ERROR GTI-P0001 names its supplier with a region //~ ERROR GTI-P0001

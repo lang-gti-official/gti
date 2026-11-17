@@ -1,0 +1,15 @@
+main.gti:4:55: warning[GTI-S2095]: Statement is unreachable.
+ 4 | consteval int fail() { std::panic("say \"no\"\nnow"); return 0; }  //~ WARN GTI-S2095
+   |                                                       ^~~~~~~~~
+main.gti:5:26: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 5 | int main() { return fail(); }  //~ ERROR GTI-S2057
+   |                          ^
+main.gti:4:52: note: Compile-time evaluation panicked: "say \"no\"\nnow"
+ 4 | consteval int fail() { std::panic("say \"no\"\nnow"); return 0; }  //~ WARN GTI-S2095
+   |                                                    ^
+main.gti:4:15: note: Immediate declaration is here.
+ 4 | consteval int fail() { std::panic("say \"no\"\nnow"); return 0; }  //~ WARN GTI-S2095
+   |               ^~~~
+main.gti:5:26: note: Constant evaluation requested here.
+ 5 | int main() { return fail(); }  //~ ERROR GTI-S2057
+   |                          ^

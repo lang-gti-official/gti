@@ -1,0 +1,8 @@
+// Recovery finding diagnostics: a malformed payload binding does not hide real return fallthrough.
+enum class Command { stop, move(int x, int y) };
+int run(Command command) {  //~ ERROR GTI-S2031
+  switch (command) {
+  case Command::stop: return 0;
+  case Command::move(x): break;  //~ ERROR GTI-S2067
+  }
+}

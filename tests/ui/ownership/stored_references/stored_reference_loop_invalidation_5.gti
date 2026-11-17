@@ -1,0 +1,4 @@
+// Stored reference loop invalidation: continue should preserve a loop-carried loan until the next condition and eventual exit.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); mut int count = 0; while (count < 2) { count++; if (count == 1) { continue; } char current = *iterator; } value.push_back('!'); return 0; }

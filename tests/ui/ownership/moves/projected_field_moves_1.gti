@@ -1,0 +1,39 @@
+// Projected field moves: writable fields should support explicit moves with definite reinitialization.
+//@ check-pass
+import std.memory;
+
+struct Node<T> {
+  T value;
+  mut std::unique_ptr<Node<T>> next;
+
+public:
+  Node(T initial, std::unique_ptr<Node<T>> next_node)
+      : value(initial), next(std::move(next_node)) {}
+};
+
+class LinkedList<T> {
+  mut std::unique_ptr<Node<T>> head = std::unique_ptr<Node<T>>();
+
+public:
+  void push_front(T value) mut {
+    this.head =
+        std::make_unique<Node<T>>(value, std::move(this.head));
+  }
+
+  void pop_front() mut {
+    mut auto removed = std::move(this.head);
+    this.head = std::move(removed->next);
+  }
+
+  T front() { return this.head->value; }
+public:
+  LinkedList() = default;
+};
+
+int main() {
+  mut LinkedList<int> values = LinkedList<int>();
+  values.push_front(1);
+  values.push_front(2);
+  values.pop_front();
+  return values.front() - 1;
+}

@@ -1,0 +1,4 @@
+main.gti:4:35: error[GTI-S2003]: Argument 1 has type 'int32_t' but the parameter requires 'uint8_t'.
+ 4 | int main() { uint8_t value = take(256); return 0; }  //~ ERROR GTI-S2003
+   |                                   ^~~
+help: Integer literal '256' does not fit the parameter type 'uint8_t'; a literal adopts an integer parameter type only when its value is representable.

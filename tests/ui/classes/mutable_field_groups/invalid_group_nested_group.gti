@@ -1,0 +1,2 @@
+// Mutable field groups: invalid group contents (nested group) get a focused parser diagnostic: already mutable.
+struct Bad { mut { mut { int value = 0; } } int recovered = 1; };  //~ ERROR GTI-P0001 already mutable //~ ERROR GTI-P0001

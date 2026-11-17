@@ -1,0 +1,10 @@
+// Program initialization plans: later-storage proof should close over exact non-generic GTI calls.
+class Globals {
+public:
+  static int32_t read_later() { return Globals::later; }
+  static mut int32_t first = Globals::read_later();  //~ ERROR GTI-S2068
+  static mut int32_t later = 1;
+public:
+  Globals() = default;
+};
+int main() { return Globals::first; }

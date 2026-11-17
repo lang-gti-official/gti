@@ -1725,6 +1725,7 @@ void run() {
 // borrow check (RFC 0004 phase 2); MIR is the authority for both.
 #include "../src/compiler/mir_borrow_audits.h"
 #include "gti/frontend.h"
+#include "gti/mir_verifier.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -1940,10 +1941,199 @@ int main() {
              lang::auditMirPersistentStorageBorrows(accepted.mir).empty(),
          "an ended loan admits the persistent-storage access");
 }
+void replacedRecordAndPackProofs() {
+  const std::string copyAssignmentSource = R"(
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int first_owner = 1;
+  mut int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  first_owner = 3;
+  return left.referent - 2;
+}
+)";
+  const lang::FrontendResult copyAssignment = lang::Frontend().analyze(
+      "stored-carrier-copy-assignment.gti", copyAssignmentSource);
+  expect(copyAssignment.canGenerateCode() &&
+             lang::verifyMirProgram(copyAssignment.mir).valid(),
+         "whole-record shared replacement releases the previous owner and "
+         "retains the replacement's referent");
+  auto referenceCallSource =
+      std::string("int read_reference(int& value) { return value; }\n") +
+      copyAssignmentSource;
+  referenceCallSource.replace(
+      referenceCallSource.find("return left.referent - 2;"),
+      std::string_view("return left.referent - 2;").size(),
+      "return read_reference(left.referent) - 2;");
+  const auto referenceCall = lang::Frontend().analyze(
+      "stored-carrier-replaced-reference-argument.gti", referenceCallSource);
+  expect(referenceCall.canGenerateCode() &&
+             lang::verifyMirProgram(referenceCall.mir).valid(),
+         "passing a replaced record's referent to a helper uses its current "
+         "owner rather than retaining the previous value's dependency");
+  auto referenceReturnSource = referenceCallSource;
+  referenceReturnSource.replace(
+      0, std::string_view("int read_reference").size(), "int& read_reference");
+  const auto referenceReturn = lang::Frontend().analyze(
+      "stored-carrier-replaced-reference-return.gti", referenceReturnSource);
+  expect(referenceReturn.canGenerateCode() &&
+             lang::verifyMirProgram(referenceReturn.mir).valid(),
+         "a reference-returning helper preserves the current field referent");
+  if (referenceReturn.canGenerateCode()) {
+    auto forged = referenceReturn.mir;
+    bool changed = false;
+    for (const auto &candidate : forged.functionInstances()) {
+      auto &body = const_cast<lang::MirFunctionInstance &>(candidate).body;
+      for (auto &block : body.blocks)
+        for (auto &call : block.instructions) {
+          if (call.kind != lang::MirInstructionKind::Call ||
+              call.borrowOrigin != lang::BorrowOriginKind::Argument ||
+              !call.loan)
+            continue;
+          auto *loan = const_cast<lang::MirLoan *>(body.findLoan(*call.loan));
+          if (!loan || loan->kind != lang::MirLoanKind::CallResult)
+            continue;
+          for (const auto &previous : body.loans) {
+            if (previous.kind != lang::MirLoanKind::Stored || previous.entry ||
+                previous.source == loan->source)
+              continue;
+            // A live, type-correct previous owner is nevertheless the wrong
+            // result origin. Remove parent links so identity is the failing
+            // proof, rather than a malformed parent/child relationship.
+            loan->source = previous.source;
+            loan->parent = 0;
+            loan->storedDependency = 0;
+            changed = true;
+            break;
+          }
+        }
+    }
+    const auto verification = lang::verifyMirProgram(forged);
+    expect(
+        changed &&
+            std::any_of(
+                verification.errors.begin(), verification.errors.end(),
+                [](const auto &error) {
+                  return error.message.find(
+                             "selected receiver or argument source identity") !=
+                         std::string::npos;
+                }),
+        "independent staged-input flow rejects a result forged to the "
+        "previous record owner");
+  }
+  auto invalidAssignmentSource = copyAssignmentSource;
+  invalidAssignmentSource.replace(
+      invalidAssignmentSource.find("first_owner = 3"),
+      std::string_view("first_owner = 3").size(), "second_owner = 3");
+  const auto invalidAssignment = lang::Frontend().analyze(
+      "stored-carrier-copy-assignment-owner.gti", invalidAssignmentSource);
+  expect(!invalidAssignment.canGenerateCode() &&
+             std::any_of(invalidAssignment.diagnostics.begin(),
+                         invalidAssignment.diagnostics.end(),
+                         [](const auto &d) { return d.code == "GTI-S2017"; }),
+         "whole-record shared replacement still protects its new referent");
+
+  {
+    const auto mixed = lang::Frontend().analyze(
+        "mixed-reference-pack-contents.gti", R"gti(
+import std.string;
+class Reading {
+public:
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+int read(std::string_view& first, Reading& middle, std::string_view& last) {
+  return first == "first" && middle.value == 7 && last == "last" ? 0 : 1;
+}
+int through_pack<Args...>(Args&... args) { return read(args...); }
+int main() {
+  mut std::string first{"first"};
+  std::string last{"last"};
+  int number = 7;
+  Reading middle{number};
+  std::string_view a = first.view();
+  std::string_view b = last.view();
+  return through_pack(a, middle, b);
+}
+)gti",
+        {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+    expect(mixed.canGenerateCode() && lang::verifyMirProgram(mixed.mir).valid(),
+           "reference pack lanes preserve text and user-record contents like "
+           "ordinary reference formals");
+    if (mixed.canGenerateCode()) {
+      auto forged = mixed.mir;
+      bool changed = false;
+      for (const auto &candidate : forged.functionInstances()) {
+        auto &body = const_cast<lang::MirFunctionInstance &>(candidate).body;
+        for (const auto &candidateLoan : body.loans) {
+          auto &loan = const_cast<lang::MirLoan &>(candidateLoan);
+          const auto *source = body.findPlace(loan.source);
+          if (loan.kind != lang::MirLoanKind::Parameter || !loan.entry ||
+              !loan.storedDependency || !source ||
+              source->projections.size() != 1 ||
+              source->projections.front().kind !=
+                  lang::MirProjectionKind::PackElement ||
+              source->type.kind != lang::SemanticType::Reference ||
+              source->type.arguments.size() != 1 ||
+              source->type.arguments.front().kind !=
+                  lang::SemanticType::StringView)
+            continue;
+          loan.storedDependency = 0;
+          changed = true;
+          break;
+        }
+        if (changed)
+          break;
+      }
+      expect(changed && !lang::verifyMirProgram(forged).valid(),
+             "a text reference pack lane cannot lose its independently "
+             "verified external-content dependency");
+      auto wrongLane = mixed.mir;
+      bool switched = false;
+      for (const auto &candidate : wrongLane.functionInstances()) {
+        auto &body = const_cast<lang::MirFunctionInstance &>(candidate).body;
+        lang::MirLoan *first = nullptr;
+        for (const auto &candidateLoan : body.loans) {
+          auto &loan = const_cast<lang::MirLoan &>(candidateLoan);
+          const auto *source = body.findPlace(loan.source);
+          if (loan.kind != lang::MirLoanKind::Parameter || !loan.entry ||
+              !loan.storedDependency || !source ||
+              source->projections.size() != 1 ||
+              source->projections.front().kind !=
+                  lang::MirProjectionKind::PackElement ||
+              source->type.kind != lang::SemanticType::Reference ||
+              source->type.arguments.size() != 1 ||
+              source->type.arguments.front().kind !=
+                  lang::SemanticType::StringView)
+            continue;
+          if (!first) {
+            first = &loan;
+          } else {
+            first->storedDependency = loan.storedDependency;
+            switched = true;
+            break;
+          }
+        }
+        if (switched)
+          break;
+      }
+      expect(switched && !lang::verifyMirProgram(wrongLane).valid(),
+             "distinct text reference lanes cannot exchange their content "
+             "authorities even when their types match");
+    }
+  }
+}
 } // namespace
 
 int main() {
   carrier_flow_tests::run();
+  replacedRecordAndPackProofs();
   rawAccesses();
   persistentStorageAuthority();
   return failures == 0 ? 0 : 1;

@@ -1,0 +1,9 @@
+// Array cleanup: shared handle arrays need exact cleanup.
+//@ check-pass
+import std.memory;
+
+int main() {
+  mut std::shared_ptr<int> handles[2][2] = {};
+  handles[0][1] = std::make_shared<int>(7);
+  return 0;
+}

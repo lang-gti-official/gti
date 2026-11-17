@@ -1,0 +1,2 @@
+// [[test]] rejects parameters, reported at the attribute.
+[[test]] void invalid(int value) {}  //~ ERROR GTI-S2099

@@ -1,0 +1,30 @@
+// A C section is compiled as C (C17) and linked with the program.
+//@ run-pass
+// --- main.gti
+[[c_abi]]
+struct Samples {
+  mut int32_t values[4];
+  mut int32_t count;
+};
+extern "C" {
+  Samples* native_samples();
+}
+int main() {
+  unsafe {
+    Samples* s = native_samples();
+    return s->values[2] - 7;
+  }
+}
+// --- samples.h
+#include <stdint.h>
+struct Samples {
+  int32_t values[4];
+  int32_t count;
+};
+// --- samples.c
+#include "samples.h"
+_Static_assert(sizeof(struct Samples) == 20, "Samples C ABI size");
+struct Samples *native_samples(void) {
+  static struct Samples samples = {{4, 0, 7, 8}, 4};
+  return &samples;
+}

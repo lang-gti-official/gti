@@ -1,0 +1,8 @@
+// A constant out-of-bounds index into a fresh fixed array is rejected.
+//@ check-fail
+int32_t[3] make(int32_t first) {
+  int32_t[3] values = {first, 2, 3};
+  return values;
+}
+int32_t read(int32_t index) { return make(1)[3]; }  //~ ERROR GTI-S2016
+int main() { return read(3); }

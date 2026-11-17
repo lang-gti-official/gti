@@ -1,0 +1,13 @@
+// Constructor-local generics: a structurally unmatched parameter pattern reports a focused constructor-local inference failure, with its declaration note and inference-only hint.
+//@ snapshot: diagnostics
+class Wrapper<T> { public: Wrapper() = default; };
+class Missing {
+public:
+  Missing<T>(Wrapper<T> value) {}
+public:
+  Missing() = default;
+};
+int main() {
+  Missing value = Missing(1);  //~ ERROR GTI-S2023
+  return 0;
+}

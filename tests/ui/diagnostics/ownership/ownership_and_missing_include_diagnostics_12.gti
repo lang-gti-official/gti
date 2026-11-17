@@ -1,0 +1,14 @@
+// Ownership and missing include diagnostics: replacement cannot outlive its new owner.
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+int main() {
+  int outer = 1;
+  mut View view{outer};
+  {
+    int inner = 2;
+    view = View(inner);
+  }
+  return view.value;  //~ ERROR GTI-S2017 owner or retained dependency has become unavailable
+}

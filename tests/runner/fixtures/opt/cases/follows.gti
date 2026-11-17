@@ -1,0 +1,8 @@
+// Without `//@ opt:` a run test follows --opt / GTI_TEST_OPT: optimized, the
+// local lives in a register.
+//@ run-pass
+//@ snapshot: llvm-ir
+// CHECK: define
+// CHECK-NOT: alloca
+int twice(int value) { mut int doubled = value; doubled *= 2; return doubled; }
+int main() { return twice(2) - 4; }

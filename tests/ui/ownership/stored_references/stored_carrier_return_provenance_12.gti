@@ -1,0 +1,16 @@
+// Replacing a shared carrier releases the previous owner and retains the new one.
+//@ run-pass
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int main() {
+  mut int first_owner = 1;
+  int second_owner = 2;
+  mut ReadCarrier left = ReadCarrier(first_owner);
+  ReadCarrier right = ReadCarrier(second_owner);
+  left = right;
+  first_owner = 3;
+  return left.referent - 2;
+}

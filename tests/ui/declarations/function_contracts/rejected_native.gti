@@ -1,0 +1,7 @@
+// Function contracts: the function-contract diagnostic rejects native.
+[[noreturn]] void stop() { while (true) {} }
+[[noreturn]] int stop_number() { while (true) {} }
+[[noreturn]] bool stop_test() { while (true) {} }
+int identity(int value) { return value; }
+extern "C" { [[track_caller]] void run(); }  //~ ERROR GTI-S2099
+int main() { return 0; }

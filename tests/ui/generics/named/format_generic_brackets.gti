@@ -1,0 +1,5 @@
+// Named generics: the formatter keeps compact generic angle brackets, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+class Box<T>{T value;public:Box(T value):value(value){}T get(){return this.value;}};T identity<T>(T value){return value;}int main(){Box<Box<int>> nested=Box<Box<int>>(Box<int>(1));int value=identity<int>(1);return value;}

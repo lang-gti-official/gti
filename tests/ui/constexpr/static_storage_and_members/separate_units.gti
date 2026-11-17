@@ -1,0 +1,12 @@
+// Static storage and members: different source units isolate static names from sibling symbols and aliases.
+//@ check-pass
+// --- main.gti
+import "left.gti";
+import "right.gti";
+int main() { return left_value() + right_value() - 3; }
+// --- left.gti
+export module left;
+using SharedName = int; static int value = 1; static int helper() { return value; } export int left_value() { SharedName local = helper(); return local; }
+// --- right.gti
+export module right;
+static int SharedName = 2; static int value = 2; static int helper() { return value; } export int right_value() { return helper(); }

@@ -1,0 +1,2 @@
+// The module-owned concept std::input_iterator is not ambient.
+concept selected<T> = std::input_iterator<T>;  //~ ERROR GTI-S2089 Unknown concept 'std::input_iterator'

@@ -1,0 +1,4 @@
+// Stored reference loop invalidation: a loop break should converge through the same loan-exit state as the condition-false edge.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (true) { char current = *iterator; break; } value.push_back('!'); return 0; }

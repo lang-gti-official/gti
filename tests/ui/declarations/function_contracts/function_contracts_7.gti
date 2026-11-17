@@ -1,0 +1,5 @@
+// Function contracts: terminal and caller-tracked contracts can precede an unsafe namespace function attribute.
+//@ check-pass
+[[noreturn, track_caller]] unsafe void halt() { while (true) {} }
+void invoke() { unsafe { halt(); } }
+int main() { return 0; }

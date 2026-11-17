@@ -1,0 +1,12 @@
+// Compile-time depth: Constructor-driven recursion stops at the same limit.
+constexpr int32_t count(int32_t remaining) {
+  if (remaining == 0) { return 0; }
+  return count(remaining - 1) + 1;
+}
+struct Tally {
+  int32_t total;
+  constexpr Tally(int32_t remaining) : total(count(remaining)) {}
+};
+constexpr int32_t total = Tally(511).total;  //~ ERROR GTI-S2057 call depth exceeded
+static_assert(total == 511);  //~ ERROR GTI-S2057
+int main() { return 0; }

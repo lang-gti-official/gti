@@ -1,0 +1,13 @@
+// Dependent carrier representation closure: dependent carrier closure must verify.
+//@ check-pass
+struct Leaf<T> { T value; Leaf(T value) : value(std::move(value)) {} };
+struct Wrapper<T> { Leaf<T> leaf; Wrapper(T value) : leaf(Leaf<T>(std::move(value))) {} };
+struct Independent<T> { T value; };
+class Owner<T> {
+  using value_type = T;
+public:
+  Owner() {}
+  Wrapper<T> result(T value) { return Wrapper<T>(std::move(value)); }
+  Independent<int> concrete();
+};
+int main() { Owner<int> owner{}; auto value = owner.result(42); return value.leaf.value - 42; }

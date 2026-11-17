@@ -1,0 +1,2 @@
+// A test whose .mir file has no snapshot directive.
+int main() { return 0; }

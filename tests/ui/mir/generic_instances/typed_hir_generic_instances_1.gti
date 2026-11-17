@@ -1,0 +1,28 @@
+// Typed hir generic instances: typed HIR should recheck valid concrete ownership transfers.
+//@ run-pass
+import std.memory;
+
+struct Widget {
+public:
+  int value = 7;
+public:
+  Widget() = default;
+};
+
+T transfer<T>(T value) {
+  return std::move(value);
+}
+
+class Holder<T> {
+  T value;
+public:
+  Holder(T value) : value(std::move(value)) {}
+};
+
+int main() {
+  mut std::unique_ptr<Widget> owner = std::make_unique<Widget>();  //~ WARN GTI-S2096
+  mut std::unique_ptr<Widget> transferred = transfer(std::move(owner));  //~ WARN GTI-S2096
+  Holder<std::unique_ptr<Widget>> holder =
+      Holder<std::unique_ptr<Widget>>(std::move(transferred));
+  return 0;
+}

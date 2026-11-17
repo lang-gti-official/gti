@@ -1,0 +1,27 @@
+// Source defined storage: completed-value insertion should require movability; storage prevents owner forgery, extra construct arguments, copies, and mutation while a receiver-tied element borrow remains live.
+import std.memory;
+
+class fixed_value {
+public:
+  fixed_value() {}
+  fixed_value(fixed_value& other) = delete;
+  fixed_value(fixed_value&& other) = delete;
+};
+
+int main() {
+  std::storage<int32_t> forged = std::storage<int32_t>();  //~ ERROR GTI-S2012
+  std::allocator allocator = std::allocator();
+  auto pinned = allocator.try_storage<fixed_value>(std::size_t(1));
+  if (!pinned) { return 2; }
+  mut auto fixed = std::move(pinned).value();
+  fixed.construct(std::size_t(0), fixed_value());  //~ ERROR GTI-S2029 //~ ERROR GTI-S2018
+  mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int32_t> values = std::move(allocated).value();
+  values.construct(std::size_t(0), int32_t(42));
+  values.construct(std::size_t(0), int32_t(1), int32_t(2));  //~ ERROR GTI-S2005
+  int32_t& borrowed = values.get(std::size_t(0));
+  values.destroy(std::size_t(0));
+  std::storage<int32_t> copied = values;  //~ ERROR GTI-S2003
+  return borrowed;
+}

@@ -1,0 +1,17 @@
+// Reflected get_mut is a mutable use of its owning binding: the binding's mut is required and not warned.
+//@ check-pass
+import std.meta;
+struct Point {
+  mut int x = 1;
+  mut int y = 2;
+public:
+  Point() = default;
+};
+int main() {
+  mut Point point = Point();
+  mut int total = 0;
+  constexpr for (auto field : std::meta::fields_of<Point>()) {
+    total += field.get_mut(point);
+  }
+  return total;
+}

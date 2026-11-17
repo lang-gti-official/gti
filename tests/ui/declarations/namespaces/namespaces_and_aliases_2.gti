@@ -1,0 +1,11 @@
+// Namespaces and aliases: mixed shorthand and explicit blocks should reopen the same namespaces and retain parent-scope lookup and alias targets.
+//@ check-pass
+namespace outer::inner { int original() { return 3; } }
+namespace outer {
+  namespace inner::detail { int value() { return original(); } }
+}
+namespace outer::inner::detail {
+  int forward() { return value(); }
+}
+namespace shortcut = outer::inner::detail;
+int main() { return shortcut::forward() - 3; }

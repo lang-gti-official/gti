@@ -1487,6 +1487,46 @@
       }
     },
     {
+      "id": "http-url-components",
+      "mode": "run",
+      "source": "tests/fixtures/http_url_components.gti",
+      "optimizations": [
+        "O0",
+        "O3"
+      ],
+      "expected": {
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    {
+      "id": "http-url-literal-invalid",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/http_url_literal_invalid.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "URL literal port is not a decimal number from 0 to 65535"
+        ]
+      }
+    },
+    {
+      "id": "http-url-literal-runtime",
+      "mode": "diagnostic",
+      "source": "tests/fixtures/http_url_literal_runtime.gti",
+      "optimization": "O0",
+      "expected": {
+        "exit_code": 65,
+        "stderr_contains": [
+          "GTI-S2057",
+          "std::http::url::parse"
+        ]
+      }
+    },
+    {
       "id": "http-url-operators",
       "mode": "run",
       "source": "tests/fixtures/http_url_operators.gti",
@@ -3870,7 +3910,7 @@
         "runtime/src/chrono.cpp",
         "stdlib/std/chrono.gti",
         "tests/fixtures/stdlib_surface_chrono.gti",
-        "tests/runtime_chrono_tests.cpp"
+        "tests/unit/runtime_chrono_tests.cpp"
       ]
     },
     {
@@ -4198,7 +4238,7 @@
         "weak-ptr"
       ],
       "evidence": [
-        "tests/shared_ownership_tests.cpp",
+        "tests/ui/stdlib/memory/shared_owner",
         "tests/shared_ownership_runtime_test.py",
         "tests/borrowing_capture_tests.cpp"
       ]
@@ -4501,7 +4541,7 @@
       ],
       "evidence": [
         "tests/filesystem_operations_runtime_test.py",
-        "tests/runtime_filesystem_tests.cpp",
+        "tests/unit/runtime_filesystem_tests.cpp",
         "docs/language/filesystem.md"
       ]
     },
@@ -4593,7 +4633,7 @@
         "tests/reference_parameter_packs_test.py",
         "tests/consteval_runtime_test.py",
         "tests/fixtures/checked_literal_arguments.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -4925,7 +4965,6 @@
         "tests/fixtures/owning_function_policy_failure.gti",
         "tests/fixtures/inline_polymorphic_lifecycle.gti",
         "tests/owning_function_tests.cpp",
-        "tests/owning_function_runtime_test.py",
         "tests/owning_function_policy_failure_test.py",
         "tests/inline_polymorphic_runtime_test.py",
         "stdlib/std/functional.gti",
@@ -4990,6 +5029,7 @@
         "std::http::request::max_response_bytes",
         "std::http::request::redirect_limit",
         "std::http::request::redirects_policy",
+        "std::http::request::rejection",
         "std::http::request::request",
         "std::http::request::schemes_policy",
         "std::http::request::set_body",
@@ -5019,23 +5059,29 @@
         "std::http::streaming_response::status",
         "std::http::streaming_response::streaming_response",
         "std::http::url::add_query_parameter",
+        "std::http::url::checked",
         "std::http::url::clear_query",
         "std::http::url::clone",
         "std::http::url::has_explicit_port",
+        "std::http::url::has_query",
         "std::http::url::host",
         "std::http::url::https",
         "std::http::url::operator/",
         "std::http::url::operator/=",
         "std::http::url::parse",
+        "std::http::url::path",
         "std::http::url::port",
         "std::http::url::push_path_segment",
+        "std::http::url::query",
         "std::http::url::scheme",
         "std::http::url::set_query_parameter",
         "std::http::url::string",
-        "std::http::url::view"
+        "std::http::url::view",
+        "std::http::url_literal::url_literal"
       ],
       "case_ids": [
         "http",
+        "http-url-components",
         "http-url-operators"
       ],
       "required_instantiations": [
@@ -5043,14 +5089,39 @@
         "string_view and owned-url request/client overloads",
         "read-only named URL cloning, consuming operator chains, mutable path append and borrow rejection",
         "bounded streaming std::io::reader with independent request/client lifetime, generic short writer, cancellation, limits and late transport errors",
-        "same-origin and secure redirects with method conversion, header stripping and a shared deadline"
+        "same-origin and secure redirects with method conversion, header stripping and a shared deadline",
+        "compile-time checked URL literals, single-buffer component views, in-place builders and URL formatting",
+        "infallible request builders whose refused headers or CA paths surface from send before any connection"
       ],
       "evidence": [
         "docs/language/http.md",
         "stdlib/std/http.gti",
+        "tests/fixtures/http_url_components.gti",
         "tests/fixtures/stdlib_surface_http.gti",
         "tests/http_runtime_test.py",
         "tests/http_url_operators_test.py"
+      ]
+    },
+    {
+      "id": "http.url-literal-rejections",
+      "source": "stdlib/std/http.gti",
+      "status": "unsupported",
+      "operations": [
+        "std::http::url::checked<invalid URL literal>",
+        "std::http::url::checked<runtime text>"
+      ],
+      "case_ids": [
+        "http-url-literal-invalid",
+        "http-url-literal-runtime"
+      ],
+      "reason": "url_literal validates its text with an implicit consteval constructor, so an invalid literal stops compilation with the parser's reason and runtime text must use url::parse.",
+      "required_instantiations": [
+        "out-of-range port in a literal",
+        "runtime string argument"
+      ],
+      "evidence": [
+        "tests/fixtures/http_url_literal_invalid.gti",
+        "tests/fixtures/http_url_literal_runtime.gti"
       ]
     },
     {
@@ -5091,7 +5162,7 @@
       ],
       "evidence": [
         "tests/composable_io_runtime_test.py",
-        "tests/runtime_io_tests.cpp",
+        "tests/unit/runtime_io_tests.cpp",
         "docs/language/io.md"
       ]
     },
@@ -5269,7 +5340,7 @@
         "tests/fixtures/json_parity.gti",
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
-        "tests/json_dynamic_runtime_test.py",
+        "tests/slow/stdlib/json/dynamic",
         "tests/reflection_runtime_test.py"
       ]
     },
@@ -5558,7 +5629,7 @@
       "evidence": [
         "tests/c_string_import_runtime_test.py",
         "tests/fixtures/c_string_import.gti",
-        "tests/resource_memory_runtime_tests.cpp"
+        "tests/unit/resource_memory_runtime_tests.cpp"
       ]
     },
     {
@@ -5789,7 +5860,7 @@
         "tests/runtime_object_layout_test.py",
         "docs/language/standard-library.md",
         "examples/181-general-object-layout.gti",
-        "tests/general_object_layout_test.py"
+        "tests/ui/layout/general_object_layout.gti"
       ]
     },
     {
@@ -5845,7 +5916,6 @@
         "tests/uninitialized_carrier_tests.cpp",
         "tests/uninitialized_carrier_runtime_test.py",
         "tests/object_lifetime_tests.cpp",
-        "tests/object_construction_runtime_test.py",
         "tests/object_relocation_runtime_test.py",
         "docs/language/raw-pointers.md"
       ]
@@ -5909,7 +5979,7 @@
       "evidence": [
         "tests/fixtures/shared_ownership_upcast.gti",
         "tests/shared_ownership_runtime_test.py",
-        "tests/shared_ownership_tests.cpp",
+        "tests/ui/stdlib/memory/shared_owner",
         "stdlib/std/memory.gti"
       ]
     },
@@ -6005,7 +6075,7 @@
         "tests/fixtures/weak_ownership_threads.gti",
         "tests/fixtures/shared_ownership_release_race.gti",
         "tests/fixtures/weak_ownership_failure.gti",
-        "tests/shared_ownership_tests.cpp",
+        "tests/ui/stdlib/memory/shared_owner",
         "tests/shared_ownership_runtime_test.py",
         "tests/shared_ownership_failure_test.py",
         "tests/shared_ownership_threads_test.py"
@@ -6246,11 +6316,11 @@
         "tests/reflection_runtime_test.py",
         "tests/reflection_tests.cpp",
         "stdlib/std/meta.gti",
-        "tests/fixtures/reflection_attributes.gti",
-        "tests/fixtures/reflection_construct.gti",
-        "tests/fixtures/reflection_callables.gti",
-        "tests/fixtures/reflection_deferred_range.gti",
-        "tests/fixtures/reflection_defaults.gti",
+        "tests/slow/reflection/attributes.gti",
+        "tests/ui/reflection/construct.gti",
+        "tests/ui/reflection/callables.gti",
+        "tests/ui/reflection/deferred_range.gti",
+        "tests/ui/reflection/defaults.gti",
         "tests/fixtures/reflection_method_invoke.gti",
         "tests/reflection_method_runtime_test.py",
         "examples/185-reflected-method-dispatch.gti"
@@ -6480,10 +6550,9 @@
         "tests/fixtures/optional_clone.gti",
         "tests/fixtures/optional_nested.gti",
         "tests/fixtures/optional_expected_composition.gti",
-        "tests/fixtures/expected_constructor_payload.gti",
+        "tests/ui/language/construction/expected_constructor_payload.gti",
         "tests/fixtures/optional_constructor_failure.gti",
         "tests/fixtures/optional_reset_failure.gti",
-        "tests/constructor_field_publication_test.py",
         "tests/optional_compiler_tests.cpp",
         "tests/optional_runtime_test.py",
         "stdlib/std/optional.gti"
@@ -6570,7 +6639,7 @@
         "stdlib/std/panic.gti",
         "tests/reference_parameter_packs_test.py",
         "tests/fixtures/checked_format_panic.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -6642,7 +6711,7 @@
       ],
       "evidence": [
         "tests/native_c_scalar_tests.cpp",
-        "tests/native_c_scalar_target_tests.cpp",
+        "tests/unit/native_c_scalar_target_tests.cpp",
         "tests/native_c_scalar_runtime_test.py",
         "examples/123-native-c-scalars.gti",
         "docs/language/native-c-interop.md"
@@ -6735,7 +6804,7 @@
         "deleted-move rejection"
       ],
       "evidence": [
-        "tests/compiler_declarations_tests.cpp",
+        "tests/ui/generics/move_construction",
         "tests/fixtures/optional_nested.gti",
         "stdlib/prelude.gti"
       ]
@@ -6851,7 +6920,7 @@
         "stdlib/std/process.gti",
         "tests/fixtures/stdlib_surface_process.gti",
         "tests/process_runtime_test.py",
-        "tests/runtime_process_tests.cpp"
+        "tests/unit/runtime_process_tests.cpp"
       ]
     },
     {
@@ -7139,7 +7208,7 @@
         "stdlib/std/resource.gti",
         "examples/allocator-support/arena.gti",
         "tests/resource_protocol_tests.cpp",
-        "tests/resource_memory_runtime_tests.cpp",
+        "tests/unit/resource_memory_runtime_tests.cpp",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/fixtures/raw_resource_movement.gti",
         "tests/programmable_allocators_runtime_test.py",
@@ -7272,7 +7341,7 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -7746,8 +7815,8 @@
       ],
       "evidence": [
         "tests/string_operations_runtime_test.py",
-        "tests/string_operations_errors_test.py",
-        "tests/compiler_declarations_tests.cpp",
+        "tests/ui/stdlib/string/operations_errors",
+        "tests/ui/borrow/container_views",
         "tests/fixtures/string_view_assignment.gti",
         "tests/declaration_construction_runtime_test.py"
       ]
@@ -7996,7 +8065,7 @@
         "tests/annotated_test_suite_test.py",
         "examples/annotated-tests/tests/main.gti",
         "tests/fixtures/testing_assertions.gti",
-        "tests/testing_assertions_runtime_test.py",
+        "tests/ui/stdlib/testing/assertions",
         "tests/fixtures/protocol_testing_assertions.gti",
         "tests/protocol_format_hash_runtime_test.py"
       ]
@@ -8271,7 +8340,7 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/protocol_format_hash_runtime_test.py",
         "tests/fixtures/legacy_hash_policy_state.gti",
-        "tests/stdlib_api_contracts_test.py"
+        "tests/ui/stdlib/contracts"
       ]
     },
     {
@@ -8316,7 +8385,7 @@
       ],
       "evidence": [
         "tests/fixtures/generic_clone.gti",
-        "tests/generic_clone_runtime_test.py",
+        "tests/ui/generics/clone",
         "tests/concept_conditions_test.py"
       ]
     },

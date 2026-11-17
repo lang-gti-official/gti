@@ -1,0 +1,21 @@
+// Compile time conditionals: #error parses in declaration, member and block contexts, and an inactive one does not affect semantics.
+//@ check-pass
+#if target.os == "blocked"
+#error "This target is not supported."
+#endif
+
+class PlatformState {
+#if target.os == "blocked"
+#error "PlatformState is unavailable on this target."
+#endif
+  int value = 1;
+public:
+  PlatformState() = default;
+};
+
+int main() {
+#if target.os == "blocked"
+#error "No entry point is available for this target."
+#endif
+  return 0;
+}

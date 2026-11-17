@@ -1,0 +1,4 @@
+// An unterminated quote in args is an invalid test.
+//@ run-pass
+//@ args: "open
+int main() { return 0; }

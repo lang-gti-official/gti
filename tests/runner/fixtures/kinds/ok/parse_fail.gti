@@ -1,0 +1,6 @@
+// parse-fail stops after the parser: the undefined name is never analysed.
+//@ parse-fail
+int main() {
+  int a = 1
+  return undefined_name;  //~ ERROR GTI-P0001
+}

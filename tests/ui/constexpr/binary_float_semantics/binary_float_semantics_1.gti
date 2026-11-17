@@ -1,0 +1,28 @@
+// Binary float semantics: binary32 literals, arithmetic, comparisons, conversions, and calls should participate in compiler-owned constexpr evaluation.
+//@ check-pass
+constexpr float sum = 0.1 + 0.2;
+constexpr float rounded = float(16777217);
+constexpr int truncated = int(3.9);
+constexpr float negative_zero = -0.0;
+constexpr float nan = 0.0 / 0.0;
+constexpr bool ordered = sum > 0.2;
+constexpr bool zeros_equal = negative_zero == 0.0;
+constexpr bool nan_equal = nan == nan;
+constexpr bool nan_not_equal = nan != nan;
+constexpr float half(float value) { return value / 2.0; }
+constexpr float result = half(1.0);
+constexpr float advance(float value) {
+  mut float current = value;
+  current += 1;
+  current++;
+  return current;
+}
+constexpr float advanced = advance(0.5);
+int main() {
+  if constexpr (ordered and zeros_equal and !nan_equal and nan_not_equal and
+                truncated == 3 and result == 0.5 and advanced == 2.5) {
+    return 0;
+  } else {
+    return discarded_float_branch_is_not_analyzed;
+  }
+}

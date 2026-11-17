@@ -1,0 +1,67 @@
+// Structural requires and accumulate: trailing structural requirements should admit an exact iterator, distinct sentinel, owner-tied std iterator, and numeric accumulator.
+//@ slow
+//@ check-pass
+import std.iterator;
+import std.numeric;
+import std.vector;
+
+concept compatible_sentinel<Sentinel, Iterator> =
+    std::sentinel_for<Sentinel, Iterator>;
+
+T local_accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> &&
+           compatible_sentinel<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T> {
+  for (; first != last; ++first) {
+    init = T(std::move(init) + *first);
+  }
+  return init;
+}
+
+T forward_accumulate<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init)
+  requires std::input_iterator<Iterator> &&
+           compatible_sentinel<Sentinel, Iterator> &&
+           std::accumulates_into<Iterator, T> {
+  return std::accumulate(std::move(first), std::move(last), std::move(init));
+}
+
+class NumberSentinel {
+  int limit;
+
+public:
+  NumberSentinel(int value) : limit(value) {}
+  int position() { return this.limit; }
+};
+
+class NumberIterator {
+  mut int current;
+
+public:
+  NumberIterator(int value) : current(value) {}
+  int& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(NumberSentinel& sentinel) {
+    return this.current != sentinel.position();
+  }
+};
+
+int main() {
+  int local = local_accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  int standard = std::accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  int forwarded =
+      forward_accumulate(NumberIterator(1), NumberSentinel(5), 0);
+  mut std::vector<int> values{};
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  int owned = std::accumulate(values.begin(), values.end(), 0);
+  values.push_back(4);
+  mut std::vector<int8_t> narrowValues{};
+  narrowValues.push_back(int8_t(1));
+  narrowValues.push_back(int8_t(2));
+  int8_t narrow = std::accumulate(
+      narrowValues.begin(), narrowValues.end(), int8_t(0));
+  return local + standard + forwarded + owned + narrow - 39;
+}

@@ -1,0 +1,25 @@
+// Move construction capability: deleted construction and cleanup-bound assignment remain distinct constraint failures.
+class Frozen {
+public:
+  Frozen() {}
+  Frozen(Frozen&& other) = delete;
+};
+class Cursor {
+  int& source;
+public:
+  Cursor(int& value) : source(value) {}
+  ~Cursor() { int observed = this.source; }
+};
+bool constructible<T>(T& value) requires std::move_constructible<T> { return true; }
+bool assignable<T>(T& value) requires std::movable<T> { return true; }
+bool cannot_strengthen<std::move_constructible T>(T& value) {
+  return assignable(value);  //~ ERROR GTI-S2029
+}
+int main() {
+  Frozen frozen;  //~ ERROR GTI-S2000
+  int source = 7;
+  Cursor cursor{source};
+  [[discard]] constructible(frozen);  //~ ERROR GTI-S2029
+  [[discard]] assignable(cursor);  //~ ERROR GTI-S2029
+  return 0;
+}

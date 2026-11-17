@@ -33,39 +33,25 @@ def verify_algorithm_partitions(tests):
     if properties.get("TIMEOUT", 0) < 900 or not properties.get("RUN_SERIAL"):
         raise AssertionError("generic algorithm breadth keeps its serial bound")
 
-def verify_trusted_body_partitions(tests, repository):
-    # The module-based stdlib package is built/executed by stdlib_package_runtime.
-    expected = sorted(path.resolve() for path in (repository / "examples").glob("*.gti"))
-    partitions = [test for test in tests
-                  if test["name"].startswith("trusted_body_analysis")]
-    if {test["name"] for test in partitions} != {
-            f"trusted_body_analysis_{index}" for index in range(4)}:
-        raise AssertionError("trusted-body matrix must have four partitions")
-    actual = []
-    expected_timeout = scaled_timeout(600)
-    for test in partitions:
-        command = test.get("command", [])
-        # CMake is present at configure time, so CTest exposes this command
-        # even before the native target is built. No stub executable is used.
-        if (len(command) < 6 or pathlib.Path(command[0]).stem != "cmake" or
-                command[1:3] != ["-E", "env"]):
-            raise AssertionError("trusted-body partition changed its launcher")
-        command = command[3:]
-        if (pathlib.Path(command[0]).stem != "gti_trusted_body_analysis_tests" or
-                pathlib.Path(command[1]).resolve() != repository):
-            raise AssertionError("trusted-body partition changed its harness or root")
-        actual.extend(pathlib.Path(arg).resolve() for arg in command[2:])
-        properties = {item["name"]: item["value"] for item in test["properties"]}
-        if (not properties.get("RUN_SERIAL") or
-                properties.get("TIMEOUT") != expected_timeout):
-            raise AssertionError(
-                f"{test['name']}: trusted-body partition requires serial execution "
-                f"with TIMEOUT={expected_timeout}; found "
-                f"RUN_SERIAL={properties.get('RUN_SERIAL')}, "
-                f"TIMEOUT={properties.get('TIMEOUT')}")
-    if not expected or sorted(actual) != expected:
-        raise AssertionError("trusted-body corpus is incomplete or duplicated")
-
+def verify_corpus_walk(tests, repository):
+    # One gti-corpus entry walks the example corpus in the daily slow tier; the
+    # old per-binary corpus partitions are gone.
+    corpus = [test for test in tests if test["name"] == "gti_corpus"]
+    if len(corpus) != 1:
+        raise AssertionError("the corpus walk must be one gti_corpus entry")
+    command = corpus[0].get("command", [])
+    if (not command or pathlib.Path(command[0]).stem != "gti-corpus" or
+            "--root" not in command or
+            pathlib.Path(command[command.index("--root") + 1]).resolve() != repository):
+        raise AssertionError("gti_corpus changed its tool or root")
+    properties = {item["name"]: item["value"] for item in corpus[0]["properties"]}
+    if "slow" not in properties.get("LABELS", []):
+        raise AssertionError("gti_corpus must run in the slow tier")
+    stale = [test["name"] for test in tests
+             if re.match(r"^(body_analysis_order|instance_reuse|trusted_body_analysis)(_[0-9]+)?$",
+                         test["name"])]
+    if stale:
+        raise AssertionError(f"old corpus partitions are registered again: {stale}")
 
 def inventory(build):
     # `ctest --show-only` writes LastTest.log. Query a copy of only the generated
@@ -140,7 +126,7 @@ def verify(tests, repository):
     if not feedback or feedback == names:
         raise AssertionError("fast feedback must be a nonempty partial selection")
     verify_algorithm_partitions(tests)
-    verify_trusted_body_partitions(tests, repository)
+    verify_corpus_walk(tests, repository)
     return found
 
 

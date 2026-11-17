@@ -1,0 +1,3 @@
+// Structured bindings: mutable patterns retain exclusive access to the owner.
+struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
+int main() { mut Item items[1] = {Item(1, 2)}; for (mut auto& [a, b] : items) { items[0].first = 7; a += b; } return 0; }  //~ ERROR GTI-S2017

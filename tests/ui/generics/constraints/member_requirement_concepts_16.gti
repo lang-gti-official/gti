@@ -1,0 +1,2 @@
+// Member requirement concepts: member queries must not silently treat consuming references as read-only references.
+concept bad<T> = requires(T&& x) { { x.clone() } -> T; };  //~ ERROR GTI-P0001

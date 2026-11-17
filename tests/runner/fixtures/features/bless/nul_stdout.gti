@@ -1,0 +1,14 @@
+// Bless writes output holding NUL bytes to a sibling .stdout file.
+//@ run-pass
+//@ stdout: wrong
+// --- main.gti
+extern "C" {
+  void native_emit();
+}
+int main() {
+  native_emit();
+  return 0;
+}
+// --- emit.c
+#include <stdio.h>
+void native_emit(void) { fwrite("x\0y\n", 1, 4, stdout); }

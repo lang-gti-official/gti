@@ -1,0 +1,46 @@
+// Mutable field groups: mutable field groups should compile as ordinary mutable fields.
+//@ check-pass
+#define FIELD_GROUP_ACTIVE
+
+struct Counter {
+public:
+  mut {
+    int first = 1;
+#ifdef FIELD_GROUP_ACTIVE
+    int second = 2;
+#else
+    int second = 20;
+#endif
+  }
+
+  int identity = 4;
+
+  void increment() mut {
+    this.first++;
+    this.second++;
+  }
+
+  int value() {
+    return this.first + this.second + this.identity;
+  }
+public:
+  Counter() = default;
+};
+
+[[c_abi]] struct GroupedNative {
+  mut {
+    int32_t x;
+    int32_t y;
+  }
+};
+
+[[c_abi]] struct ExpandedNative {
+  mut int32_t x;
+  mut int32_t y;
+};
+
+int main() {
+  mut Counter counter = Counter();
+  counter.increment();
+  return counter.value() == 9 ? 0 : 1;
+}

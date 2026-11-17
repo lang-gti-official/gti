@@ -1,0 +1,4 @@
+// Stored reference loop invalidation2: a loan first created in a for initializer should retain lexical loop-scope cleanup instead of gaining a duplicate loop endpoint.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); for (mut auto iterator = value.begin(); false; ++iterator) { char current = *iterator; } value.push_back('!'); return 0; }

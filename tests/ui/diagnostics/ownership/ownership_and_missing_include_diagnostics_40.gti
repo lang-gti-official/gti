@@ -1,0 +1,3 @@
+// Ownership and missing include diagnostics: repairing syntax restores the compiler-owned missing-include fix.
+using values = std::vector<int>;  //~ ERROR GTI-S2089
+enum Broken { item(int value) };

@@ -1,0 +1,11 @@
+// Dependent requires argument admission: pure first-pass clause formation must not lose unknown argument diagnostics.
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+
+int read<T>(T value) requires std::copyable<NoSuchType> { return 0; }  //~ ERROR GTI-S2000
+int main() { return 0; }

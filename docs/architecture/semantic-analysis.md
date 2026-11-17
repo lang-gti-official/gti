@@ -944,16 +944,19 @@ orders, follow the same rule.
 
 `TrustedBodyAnalysis::Deferred` is a test mode of `FrontendOptions` that
 analyses compiler-trusted bodies after the application bodies, in reverse
-lexical order. The `body_analysis_order` test proves that it produces the same
-diagnostics as the complete pass over the examples and the standard-library
-tests, and checks fixtures for both orders of the moved-return generic, global
+lexical order. The `order` invariant of the slow-tier `gti-corpus` walk
+(`tests/corpus/gti_corpus.cpp`) proves that it produces the same diagnostics
+as the complete pass over the examples and the standard-library tests;
+`body_analysis_order_fixtures` checks fixtures for both orders of the moved-return generic, global
 and `constexpr` visibility across a demand, and mutually recursive demands.
 `TrustedBodyAnalysis::Reachable` extends that infrastructure for artifact
 builds and editor snapshots/completion. Function lookups during body analysis
 record demand in a scoped sink. Deferred trusted functions are analyzed to a
 fixed point, in their original declaration contexts. Declaration registration,
-all application/package bodies, entry-file bodies, constant definitions and
-virtual/interface instance methods remain checked. Ordinary static interface
+all application/package bodies, entry-file bodies and virtual/interface
+instance methods remain checked. Trusted constexpr definitions are deferred
+like other trusted bodies and are demanded by the compile-time path that needs
+them (see "Compile-Time Body Demand" below). Ordinary static interface
 helpers follow the same demand rules as other static functions. Constructors and destructors are not
 deferred. The only cross-snapshot semantic reuse is the bounded reuse of
 concrete instance analyses described under "Instance Reuse Across Snapshots";
@@ -1001,6 +1004,82 @@ cannot change emitted identities or macro isolation. This deliberately costs
 an additional analysis only when an optional audit is requested.
 This bounded staging avoids unchecked code generation without
 claiming that all generic dependencies are known from declaration-time calls.
+
+#### Compile-Time Body Demand
+
+Constant evaluation, concept and expression requirements, conformance
+operations and procedural macros read body-derived facts of the functions they
+reach, which may be deferred trusted bodies (#398). Readiness is one table per
+body-analysis context, `BodyContext` (`semantic_body_context.h`), keyed by
+body kind and id: a body is `Analysed`, `InProgress`, `Deferred` or `HeldBack`
+(analysed in an adopted preamble, not yet reached). The request's root
+analyzer owns its context; the program-effect worker, which completes bodies
+in a private context of its own, owns a fork and hands back what it could not
+meet; every other worker shares its creator's. Only an owner changes a state.
+
+- A compile-time path asks `requireBody`. The owner, in the body phase and
+  outside instance analysis, makes a pending body final in place (analysing a
+  deferred body or reaching a held-back one); anywhere else the need is
+  recorded and the facts are unavailable.
+- A query or staged evaluation runs as an attempt (`withBodyDemands`). Its
+  needs are the ones recorded while it is open, by any analyzer sharing the
+  context. A need arises only where a body-derived fact is read or a body
+  would execute: `requireBody` at the readers, a staged closure's pending
+  primary body, a pending constexpr callee the staged evaluator reaches at run
+  time, and, when a staged closure cannot be lowered or verified, each pending
+  constexpr callee it would have executed. Looking a function up, for example
+  as an overload candidate, is not a need. An attempt with none is clean. A
+  resolving attempt restores one
+  `AttemptCheckpoint` (diagnostics, constexpr steps and exhaustion,
+  requirement-query work, the native-layout mark), completes its needs in
+  declaration order and repeats, bounded; otherwise its needs pass to the
+  enclosing attempt, or to the request. While a resolving attempt is open a
+  sharing worker records a pending body instead of analysing it privately.
+  Concrete instance analysis after the body phase (`withLateDemand`) runs on
+  the same scope, with late demand and preamble reach as its resolvers.
+- Caches stay sound. Staged results and closures are journaled in the open
+  attempt and written only when it ends clean; class-assertion outcomes,
+  preamble concept proofs, program-effect results and retained instance
+  analyses are not recorded when a need arose while computing them. Staged
+  result keys count pending constexpr definitions as available, so demanding
+  one does not change a key; lowering uses only completed definitions.
+- A request that still has a need, valid or not, is repeated by the frontend
+  with those bodies required, before and after concrete discovery, under the
+  late-demand round bound. The trusted-body parity tests assert that the
+  example corpus, with and without a preamble, needs no such round.
+- `FrontendOptions::deferConstexprBodies = false` keeps constexpr definitions
+  eager; it exists so tests can compare both on one binary.
+
+Transitional state and scope. This is a first step toward demand-driven
+analysis, not a query system:
+
+- Readiness is being consolidated, not yet unified. `BodyContext` is the
+  authority for whether a deferred or held-back body's facts may be read in a
+  context, and the only state compile-time paths and the request net consult.
+  Three older records remain beside it, each with its own role:
+  - `deferredBodies` and `deferredBodyIndex` hold a deferred declaration's
+    context, which the drain and late demand use to analyse it in place;
+  - `analyzedBodies` records which bodies this analyzer has run
+    `analyzeFunctionBody` for (`pendingDeferredBody` reads both);
+  - `constexprDefinitionsAnalyzed` gates execution of a completed constexpr
+    definition.
+
+  The obligation that keeps them consistent is checked under
+  `GTI_COMPILER_VALIDATION`: for the context's owner, a tracked body is
+  `Deferred` exactly when it is in `deferredBodyIndex` and not in
+  `analyzedBodies`. A worker that shares a context but is not its owner may
+  hold a private analysis outside resolving attempts. That analysis serves
+  only that worker, and the shared table does not record it.
+- Attempts record which unavailable bodies a computation needed and keep
+  provisional results out of caches. They are not a general dependency graph:
+  nothing here tracks dependencies across source edits or invalidates results
+  incrementally.
+- `BodyKey` is an extension point, not a persistent identity. Bodies are still
+  found by AST pointer, and ids are session-local. A stored (pre-analysed)
+  state would also need stable identities, serialisation, validity checks and
+  a defined per-body semantic record.
+- Only analysis scheduling changes. Constant-evaluation semantics and the
+  staged MIR evaluator, which executes them, are unchanged.
 
 Text-return relay predeclaration consults the owning class's registered instance
 fields for implicit receiver spellings as well as explicit `this` paths.
@@ -2185,8 +2264,8 @@ processes. Include-fix trials of such a compilation run without the cache.
   never served under another preamble of the same units.
 
 `FrontendWorkMetrics` reports preamble builds and adoptions with their time,
-the held-back bodies and how many were reached. The `trusted_body_analysis`
-parity gate analyses every example and standard-library test fresh, resumed
+the held-back bodies and how many were reached. The `trusted` invariant
+of `gti-corpus` analyses every example and standard-library test fresh, resumed
 from a preamble twice (built, then adopted) and completely over a preamble,
 and requires the application-located diagnostics of the complete check, a
 subset of its library diagnostics under bounded analysis and exactly its
@@ -2258,7 +2337,7 @@ The cache is bounded by entries, estimated bytes and generations (LRU), and a
 generation whose units have the same paths but other syntax supersedes the
 earlier one. `FrontendWorkMetrics` reports reuse hits, misses (with rejected
 entries), ineligible requests, stores and the time spent validating and
-copying entries. The `instance_reuse` test analyses every example fresh and
+copying entries. The `reuse` invariant of `gti-corpus` analyses every example fresh and
 then twice through one cache and requires identical diagnostics, HIR inventory
 and MIR modulo a single program-wide alpha-renaming of body-local symbols,
 keyed by exact HIR binding identity and source declaration identity/role.
@@ -2876,6 +2955,17 @@ Each root expression/predicate query additionally shares a 16,384-type-node
 work budget across its isolated workers. It is charged before copying query
 arguments or identities, bounding recursively expanding generic operator
 requirements even when every nested query has a distinct type.
+
+Forking a query worker copies the request session, whose bulk is the sealed
+declaration catalog. Body analysis never edits a sealed catalog, so a worker's
+copy is still identical to its creator's when the query ends: it returns to a
+small idle pool on the creating analyzer, and the next query's worker takes it
+instead of copying the catalog again. The creator's catalog is only moved
+aside, never copied, while the rest of the session is copied. This changes no
+query input, and every query is still evaluated: requirement results are not
+cached, because distinct queries dominate (an unused `import std.json` forks
+about 40 workers, none of them repeated). `FrontendWorkMetrics` reports
+`semanticQueryWorkers` and `semanticQueryCatalogReuses`.
 
 The nullary consuming-use concept is now a source expression query over an
 owned synthetic binding and `std::move(binding)()`. Its compound shape remains

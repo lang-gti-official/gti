@@ -1,0 +1,4 @@
+// Defaults for the directive-less fixtures below (as examples/ has).
+//@ allow-warnings
+// --- scoped.gti
+//@ execution-profile: concurrent

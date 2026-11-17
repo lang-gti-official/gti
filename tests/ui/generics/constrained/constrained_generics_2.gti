@@ -1,0 +1,71 @@
+// Constrained generics: exact lifecycle and comparison capabilities should accept matching primitives and nominal classes.
+//@ check-pass
+class Rank {
+  int value;
+
+public:
+  Rank() : value(0) {}
+  Rank(int value) : value(value) {}
+  int get() { return this.value; }
+
+  bool operator==(Rank& other) { return this.value == other.value; }
+  bool operator!=(Rank& other) { return this.value != other.value; }
+  bool operator<(Rank& other) { return this.value < other.value; }
+  bool operator<=(Rank& other) { return this.value <= other.value; }
+  bool operator>(Rank& other) { return this.value > other.value; }
+  bool operator>=(Rank& other) { return this.value >= other.value; }
+};
+
+class MoveOnly {
+  int value;
+
+public:
+  MoveOnly() : value(0) {}
+  MoveOnly(int value) : value(value) {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+bool equivalent<std::equality_comparable T>(T left, T right) {
+  return left == right;
+}
+
+T earlier<std::totally_ordered T>(T left, T right) {
+  if (left < right) { return left; }
+  return right;
+}
+
+T legacy_earlier<std::ordered T>(T left, T right) {
+  return earlier(left, right);
+}
+
+T copy_value<std::copyable T>(T value) { return value; }
+T move_value<std::movable T>(T value) { return std::move(value); }
+T default_value<std::default_initializable T>() { return T(); }
+bool ordered_equal<std::totally_ordered T>(T left, T right) {
+  return equivalent(left, right);
+}
+T numeric_copy<std::numeric T>(T value) { return copy_value(value); }
+T copy_move<std::copyable T>(T value) {
+  return move_value(std::move(value));
+}
+
+int main() {
+  Rank first = Rank(1);
+  Rank second = Rank(2);
+  bool same = equivalent(first, first);
+  Rank lower = earlier(first, second);
+  Rank legacy = legacy_earlier(first, second);
+  Rank copied = copy_value(first);
+  Rank moved_copy = copy_move(first);
+  Rank zero = default_value<Rank>();
+  int copied_number = numeric_copy(4);
+  MoveOnly source = MoveOnly(3);
+  MoveOnly moved = move_value(std::move(source));
+  if (same and ordered_equal(first, first) and lower.get() == 1 and
+      legacy.get() == 1 and copied.get() == 1 and moved_copy.get() == 1 and
+      zero.get() == 0 and copied_number == 4) {
+    return 0;
+  }
+  return 1;
+}

@@ -1,0 +1,3 @@
+// Static assertions: a false static assertion should use its full condition span and dedicated diagnostic code.
+static_assert(false, "declared invariant");  //~ ERROR GTI-S2079
+int main() { return 0; }

@@ -1,0 +1,3 @@
+// Stored reference branch invalidation4: mutation before a later nested use should remain rejected with borrow-origin context and the narrowing hint.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { if (true) { value.push_back('!'); char first = *iterator; } } return 0; }  //~ ERROR GTI-S2017

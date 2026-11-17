@@ -1,0 +1,3 @@
+// Structured bindings: lookahead keeps typed auto array syntax for semantic diagnostics.
+//@ parse-pass
+int main() { auto[2] values = {1, 2}; return 0; }

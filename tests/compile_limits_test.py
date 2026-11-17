@@ -28,6 +28,7 @@ LIMIT_KEYS = (
     "syntax-depth",
     "constexpr-for-elements",
     "constexpr-for-copies",
+    "error-limit",
 )
 
 # A user-defined accumulator: the limit is a language rule, not a library one.
@@ -262,11 +263,50 @@ def test_lsp(lsp, root):
         session.close()
 
 
+def test_error_limit(gti, lsp, root):
+    source = "void broken() {\n" + "\n".join(
+        f"missing_{index}();" for index in range(40)) + "\n}\n"
+    path = root / "error-limit.gti"
+    write(path, source)
+    for flags, limit in (([], 20), (["--error-limit", "3"], 3),
+                         (["--error-limit=0"], 0)):
+        result = run([gti, str(path), "--emit-mir", "-o", str(root / "errors.mir"),
+                      *flags], root, 65)
+        assert ("GTI-D0002" in result.stderr) == (limit != 0), result.stderr
+        assert ("missing_39" in result.stderr) == (limit == 0), result.stderr
+    for value in ("-1", "x", "4294967296"):
+        run([gti, str(path), "--error-limit", value], root, 64)
+        run([lsp, "--error-limit", value], root, 64)
+    run([lsp, "--error-limit"], root, 64)
+    run([lsp, "--error-limit", "0", "--error-limit", "1"], root, 64)
+    app = root / "error-limit-editor"
+    path = app / "src/main.gti"
+    write(path, source)
+    write(app / "gti.toml", manifest("error-limit-editor", "error-limit = 5\n"))
+    for arguments, limit in (([], 5), (["--error-limit=3"], 3),
+                             (["--error-limit", "0"], 0)):
+        session = LspSession(lsp, arguments)
+        try:
+            initialize(session)
+            uri = open_document(session, path, source)
+            diagnostics = diagnostics_for(session, uri, version=1)
+            errors = [item for item in diagnostics if item.get("severity") == 1]
+            assert len(errors) == (limit + 1 if limit else 40), errors
+            assert sum(item.get("code") == "GTI-D0002" for item in errors) == bool(limit), errors
+            session.send({"jsonrpc": "2.0", "method": "textDocument/didChange",
+                          "params": {"textDocument": {"uri": uri, "version": 2},
+                                     "contentChanges": [{"text": "int main() { return 0; }\n"}]}})
+            assert diagnostics_for(session, uri, version=2) == []
+        finally:
+            session.close()
+
+
 def main():
     gti = pathlib.Path(sys.argv[1]).resolve()
     lsp = pathlib.Path(sys.argv[2]).resolve()
     with tempfile.TemporaryDirectory(prefix="gti-compile-limits-") as directory:
         root = pathlib.Path(directory).resolve()
+        test_error_limit(str(gti), str(lsp), root)
         test_direct(str(gti), root)
         test_project(str(gti), root)
         test_dependency(str(gti), root)

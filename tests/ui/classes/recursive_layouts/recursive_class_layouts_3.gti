@@ -1,0 +1,4 @@
+// Recursive class layouts: fixed arrays should preserve their by-value recursive layout edge.
+struct Branch {
+  Branch children[2];  //~ ERROR GTI-S2082 //~ ERROR GTI-S2000
+};

@@ -1,0 +1,1 @@
+Preserve borrowed text dependencies in `auto` value declarations, including regex match results, so inferred declarations accept the same local uses and enforce the same lifetime checks as explicitly typed declarations.

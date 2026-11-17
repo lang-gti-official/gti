@@ -1,0 +1,17 @@
+// Shared borrowed array elements preserve their owners through pack forwarding.
+//@ check-pass
+import std.memory;
+
+class BorrowCarrier {
+  int32_t& source;
+public:
+  BorrowCarrier(int32_t& source) : source(source) {}
+  int32_t read() { return this.source; }
+};
+int32_t consume<Args...>(Args... args) { return 0; }
+int main() {
+  int32_t source = 1;
+  BorrowCarrier values[1] = {BorrowCarrier(source)};
+  int32_t consumed = consume(values);
+  return values[0].read() - 1 + consumed;
+}

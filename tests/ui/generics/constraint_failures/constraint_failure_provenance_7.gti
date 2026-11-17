@@ -1,0 +1,7 @@
+// Constraint failure provenance: each failed disjunction branch must retain its own exact leaf explanation without combining unrelated proof facts.
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+concept readable<T> = snapshots<T> || serializes<T>;
+int read<T>(T& value) requires readable<T> { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item value{}; return read(value); }  //~ ERROR GTI-S2029 any alternative

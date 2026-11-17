@@ -1,0 +1,3 @@
+// Source-defined concepts: a malformed concept explanation (unquoted) is a syntax error.
+//@ parse-fail
+[[unsatisfied(text)]] concept c<T> = std::integral<T>;  //~ ERROR GTI-P0001

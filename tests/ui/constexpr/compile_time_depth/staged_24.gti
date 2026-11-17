@@ -1,0 +1,12 @@
+// Compile-time depth: 24 nested staged evaluations fit a 24-call limit.
+//@ check-pass
+//@ constexpr-depth: 24
+constexpr int32_t chain<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else {
+    if constexpr (chain<N - 1>() >= 0) { return int32_t(N); }
+    else { return -1; }
+  }
+}
+static_assert(chain<23>() == 23);
+int main() { return 0; }

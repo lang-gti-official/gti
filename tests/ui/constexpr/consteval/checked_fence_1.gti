@@ -1,0 +1,7 @@
+// Consteval: the checked-argument fence rejects this program in semantics.
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) { int proof = 1 / (value > 0 ? 1 : 0); }
+};
+int consume(Checked checked, int runtime) { return checked.value + runtime; }
+int main(){return consume(0,0);}  //~ ERROR GTI-S2057

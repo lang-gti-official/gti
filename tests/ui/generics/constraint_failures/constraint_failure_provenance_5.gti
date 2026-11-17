@@ -1,0 +1,5 @@
+// Constraint failure provenance: multiple occurrences of one inferred parameter retain a call-site diagnostic instead of arbitrarily blaming its first argument.
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+int read<T>(T& first, T& second) requires snapshots<T> { return first.snapshot(); }
+struct Item { public: Item() = default; };
+int main() { Item value{}; return read(value, value); }  //~ ERROR GTI-S2029

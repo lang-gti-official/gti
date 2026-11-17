@@ -1,0 +1,3 @@
+// Constexpr bindings: default aggregate synthesis should consume the same deterministic constexpr step budget as explicit expressions.
+//@ constexpr-steps: 4096
+constexpr int32_t values[4096] = {};  //~ ERROR GTI-S2057 bounded evaluation limit

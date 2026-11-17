@@ -41,6 +41,7 @@ public:
   Parser(Parser &&) noexcept;
   Parser &operator=(Parser &&) noexcept;
 
+  void setErrorLimit(std::size_t limit);
   Program parse();
   ExprPtr parseExpression();
   [[nodiscard]] bool hadError() const;

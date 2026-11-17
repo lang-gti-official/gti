@@ -1509,3 +1509,11 @@ argument placeholders (or a braced input placeholder for procedural macros).
 An existing marker, generic clause or argument list suppresses duplicate call
 syntax. The missing-marker diagnostic publishes a machine-applicable insertion
 fix through the normal versioned repair contract.
+
+### Analysis error limit
+
+`gti_lsp --error-limit N` overrides the root package's `[limits].error-limit`
+setting for editor requests. The default is 20; zero is unlimited. See the
+[shared analysis budget](diagnostics.md#analysis-error-budget). The terminal
+`GTI-D0002` diagnostic is published with the errors, and a subsequent corrected
+snapshot replaces it normally.

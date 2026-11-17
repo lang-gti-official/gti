@@ -1,0 +1,71 @@
+// Inheritance and interfaces: public state, interface, and generic inheritance should pass the frontend.
+//@ check-pass
+interface Renderable {
+  int render(int frame);
+};
+
+interface Named {
+  int name_id();
+};
+
+class Entity {
+public:
+  Entity(int id) : id(id) {}
+  virtual int tick(int frame) { return frame + this.id; }
+  virtual int tick(float frame) { return 10; }
+
+private:
+  int id;
+};
+
+class Sprite : public Entity, public Renderable, public Named {
+public:
+  Sprite(int id) : Entity(id) {}
+  int tick(int frame) override { return frame + 2; }
+  int inherited_tick() { return tick(1.5); }
+  int render(int frame) override { return this.tick(frame); }
+  int name_id() override { return 7; }
+};
+
+interface Reader<T> {
+  T read();
+};
+
+class Box<T> : public Reader<T> {
+  T value;
+
+public:
+  Box(T initial) : value(initial) {}
+  T read() override { return this.value; }
+};
+
+class ClassContract {
+public:
+  virtual int class_only() = 0;
+public:
+  ClassContract() = default;
+};
+
+class ClassImplementation : public ClassContract {
+public:
+  int class_only() override { return 1; }
+public:
+  ClassImplementation() = default;
+};
+
+int invoke(Renderable& renderable) {
+  return renderable.render(3);
+}
+
+int invoke_direct(Sprite& sprite) {
+  return sprite.render(3);
+}
+
+int main() {
+  Sprite sprite{4};
+  Box<int> box{3};
+  Reader<int>& reader = box;
+  int inherited_overload = sprite.tick(1.5);
+  return invoke(sprite) + invoke_direct(sprite) + inherited_overload +
+         sprite.inherited_tick() + reader.read() - 33;
+}

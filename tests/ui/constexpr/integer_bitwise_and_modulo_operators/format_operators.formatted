@@ -1,0 +1,7 @@
+// Integer bitwise and modulo operators: the formatter uses C++ spacing for integer operators.
+//@ parse-pass
+//@ snapshot: format
+int value = (mask & 3) | ((mask ^ 1) << 2);
+int mod = value % 7;
+int inv = ~value;
+int shifted = value >> 1;

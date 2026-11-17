@@ -1,0 +1,7 @@
+main.gti:8:38: error[GTI-S2017]: Cannot read storage while an overlapping mutable borrow may still be live.
+ 8 |   std::mutex_guard<int32_t> second = owner.lock();  //~ ERROR GTI-S2017
+   |                                      ^~~~~
+main.gti:7:48: note: Retained borrow originates here. This borrows 'owner'.
+ 7 |   std::mutex_guard<int32_t> first = owner.lock();
+   |                                                ^
+help: This borrow protects a resource until its carrier is destroyed, not merely until its last read. End the carrier's scope before accessing the owner again.

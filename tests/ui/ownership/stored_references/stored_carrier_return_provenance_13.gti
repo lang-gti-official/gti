@@ -1,0 +1,8 @@
+// Stored carrier return provenance: a mutable owner-loan carrier should reject copy construction at the attempted source alias.
+import std.vector;
+int use() {
+  mut std::vector<int> values = std::vector<int>({1});
+  mut auto cursor = values.begin_mut();
+  auto copied = cursor;  //~ ERROR GTI-S2003
+  return 0;
+}

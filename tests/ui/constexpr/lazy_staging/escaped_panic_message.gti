@@ -1,0 +1,5 @@
+// A compile-time panic message is quoted with escapes.
+//@ snapshot: diagnostics
+import std.panic;
+consteval int fail() { std::panic("say \"no\"\nnow"); return 0; }  //~ WARN GTI-S2095
+int main() { return fail(); }  //~ ERROR GTI-S2057

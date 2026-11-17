@@ -1,0 +1,3 @@
+// Static assertions: a malformed static assertion is diagnosed precisely (Expect '(') and parsing recovers at the declaration boundary.
+//@ parse-fail
+static_assert; int recovered() { return 0; }  //~ ERROR GTI-P0001 Expect '('

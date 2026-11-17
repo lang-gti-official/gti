@@ -1,0 +1,14 @@
+// Container scaffold surfaces: owner-tracked source storage retains a dynamic view dependency.
+//@ slow
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.detail.memory_storage;
+import std.string;
+import std.memory;
+
+int main() {
+  std::string text = std::string("abc");
+  mut std::detail::prefix_owner<std::string_view> stored =
+      std::detail::prefix_owner<std::string_view>(uint64_t(1));
+  stored.append_value(text.view());
+  return 0;
+}

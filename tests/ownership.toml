@@ -117,7 +117,7 @@ owners = [
   "source_unit_services",
   "block_comment_pipeline",
   "borrow_origin_syntax",
-  "foreign_variable_syntax",
+  "gti_unit_tests",
   "nested_type_syntax",
   "pack_fold_syntax",
   "thread_local_syntax",
@@ -141,7 +141,7 @@ consumers = [
   "module_editor_recovery",
   "tree_sitter_queries",
   "constructor_formatting",
-  "lambda_formatting",
+  "gti_unit_tests",
 ]
 
 [[area]]
@@ -154,7 +154,7 @@ paths = [
 ]
 owners = [
   "constructor_formatting",
-  "lambda_formatting",
+  "gti_unit_tests",
   "block_comment_pipeline",
   "pack_fold_syntax",
   "nested_type_syntax",
@@ -259,7 +259,7 @@ owners = [
   "include_suggestions",
   "macro_expansion_queries",
   "module_queries",
-  "generic_method_tooling",
+  "gti_unit_tests",
   "documentation_index",
 ]
 consumers = [
@@ -305,11 +305,11 @@ owners = [
   "reference_payload_semantics",
   "borrowing_capture_semantics",
   "protocol_concepts",
-  "protected_members",
   "qualified_type_members",
-  "instance_reuse",
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "instance_reuse_fixtures",
+  "trusted_body_analysis_fixtures",
+  "body_analysis_order_fixtures",
+  "gti_corpus",
   "thread_local_semantic",
   "executable_entry_semantics",
   "generic_discovery",
@@ -365,7 +365,6 @@ owners = [
   "temporary_owner_borrow",
   "fresh_callable_borrow",
   "foreign_variable_borrow",
-  "shared_ownership_pipeline",
 ]
 consumers = [
   "procedural_syntax",
@@ -375,7 +374,6 @@ consumers = [
   "mir_cutover_corpus_oracle",
   "language_coverage_corpus",
   "lowered_program_corpus_census",
-  "mir_census_regression",
   "typed_differential_smoke",
   "feature_interaction_smoke",
 ]
@@ -395,10 +393,7 @@ owners = [
   "^constexpr_",
   "compile_limits",
   "macro_values_semantic_ir",
-  "macro_values_runtime",
   "macro_fresh_callables",
-  "macro_fresh_callable_runtime",
-  "global_borrow_carriers_runtime",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -421,7 +416,6 @@ owners = [
   "checked_integer_overflow_runtime",
   "numeric_boundaries_runtime",
   "contextual_numeric_literals_runtime",
-  "float_text_runtime",
 ]
 consumers = [
   "^constexpr_",
@@ -460,7 +454,7 @@ owners = [
   "generic_discovery",
   "generic_layout",
   "generic_initialization",
-  "instance_reuse",
+  "instance_reuse_fixtures",
   "ownerless_text_contracts",
   "view_fields",
   "field_symbol_identity",
@@ -477,7 +471,6 @@ consumers = [
   "mir_cutover_corpus_oracle",
   "language_coverage_corpus",
   "lowered_program_corpus_census",
-  "mir_census_regression",
 ]
 
 [[area]]
@@ -657,7 +650,6 @@ consumers = [
   "feature_interaction_smoke",
   "issues_117_120_regressions",
   "issues_208_210_211_regressions",
-  "issues_212_214_regressions",
 ]
 
 [[area]]
@@ -709,11 +701,10 @@ owners = [
   "runtime_object_layout_runtime",
   "layout_query_pipeline",
   "layout_query_native_boundary",
-  "native_c_scalar_target",
+  "gti_unit_tests",
   "native_c_scalar_pipeline",
   "native_record_pipeline",
   "native_record_c_oracle",
-  "general_object_layout_runtime",
   "compact_owner_layout",
   "compact_owner_layout_runtime",
   "environment_target_capability",
@@ -788,10 +779,7 @@ paths = [
 ]
 owners = [
   "runtime_abi_inventory",
-  "runtime_execution_boundary",
-  "runtime_failure_boundary",
-  "runtime_io_boundary",
-  "runtime_process_boundary",
+  "gti_unit_tests",
   "c_abi_header_boundary",
 ]
 consumers = [
@@ -839,7 +827,7 @@ owners = [
   "scoped_thread_runtime",
   "scoped_thread_join_boundary",
   "scoped_thread_c_header",
-  "thread_local_runtime_registry",
+  "gti_unit_tests",
   "managed_thread_end_to_end",
   "managed_thread_tsan",
   "scoped_parallel_threads",
@@ -911,7 +899,7 @@ paths = [
   "tests/llvm_owner_provider_integration_test.py",
 ]
 owners = [
-  "resource_memory_runtime",
+  "gti_unit_tests",
   "allocation_abort_runtime",
   "allocation_default_argument_runtime",
   "allocator_storage_runtime",
@@ -941,7 +929,7 @@ paths = [
   "runtime/include/gti/runtime_failure.h",
 ]
 owners = [
-  "runtime_failure_boundary",
+  "gti_unit_tests",
   "runtime_failure_subprocess",
   "runtime_failure_header_coexistence",
   "panic_runtime",
@@ -966,8 +954,7 @@ paths = [
   "runtime/include/gti/embedding.h",
 ]
 owners = [
-  "runtime_execution_boundary",
-  "runtime_embedding_context",
+  "gti_unit_tests",
   "embedding_foundation",
   "embedding_header_c17_oracle",
   "embedding_header_cpp20_oracle",
@@ -995,15 +982,12 @@ paths = [
 owners = [
   "charconv_runtime_boundary",
   "charconv_runtime",
-  "float_text_runtime",
   "c_string_import_runtime",
   "string_c_string_runtime",
   "cmath_runtime",
 ]
 consumers = [
   "format_output_matrix_runtime",
-  "json_runtime",
-  "json_dynamic_runtime",
 ]
 
 [[area]]
@@ -1025,29 +1009,24 @@ paths = [
   "runtime/include/gti/tcp.h",
 ]
 owners = [
-  "chrono_runtime_boundary",
-  "constexpr_chrono_runtime",
+  "gti_unit_tests",
   "environment_runtime_boundary",
   "environment_c_header",
   "environment_runtime",
-  "filesystem_runtime_boundary",
   "filesystem_operations_runtime",
   "filesystem_path_runtime",
-  "runtime_io_boundary",
   "composable_io_runtime",
-  "runtime_process_boundary",
   "process_runtime",
   "process_resource_policy",
   "process_capture_failure",
   "process_group_identity",
-  "random_engine_runtime",
   "http_runtime",
   "http_url_operators",
 ]
 consumers = [
   "practical_examples",
-  "expected_filesystem_prerequisites_runtime",
-  "test_runner",
+  "^gti_test_ui(_shard_[1-4])?$",
+  "gti_unit_tests",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1058,8 +1037,6 @@ consumers = [
 area = "stdlib"
 paths = [
   "stdlib/",
-  "tests/stdlib_api_contracts_test.py",
-  "tests/fixtures/set_swap_contract.gti",
 ]
 owners = [
   "stdlib_surface",
@@ -1070,16 +1047,15 @@ owners = [
   "stdlib_include_sweep",
   "stdlib_discardable",
   "stdlib_adoption_runtime",
-  "stdlib_api_contracts",
 ]
 consumers = [
   "language_coverage_corpus",
   "practical_examples",
-  "mir_census_regression",
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "trusted_body_analysis_fixtures",
+  "body_analysis_order_fixtures",
+  "gti_corpus",
 ]
 
 [[area]]
@@ -1219,9 +1195,7 @@ owners = [
   "protocol_format_hash_runtime",
   "reference_parameter_packs",
   "string_operations_runtime",
-  "string_operations_errors",
   "string_ordering_runtime",
-  "string_owned_output_runtime",
   "string_index_range_runtime",
   "string_c_string_runtime",
   "text_view_iterator_runtime",
@@ -1229,8 +1203,6 @@ owners = [
   "extensible_formatting_runtime",
   "format_output_matrix_runtime",
   "charconv_runtime",
-  "float_text_runtime",
-  "json_runtime",
 ]
 consumers = [
   "extensible_formatting_lsp",
@@ -1295,7 +1267,7 @@ owners = [
   "polymorphic_owner_cleanup_runtime",
 ]
 consumers = [
-  "resource_memory_runtime",
+  "gti_unit_tests",
   "llvm_memory_execution",
 ]
 
@@ -1316,13 +1288,12 @@ owners = [
   "optional_compiler_contract",
   "panic_runtime",
   "panic_adoption_runtime",
-  "testing_assertions_runtime",
   "deferred_assertions_runtime",
   "source_location_runtime",
   "annotated_test_suites",
 ]
 consumers = [
-  "test_runner",
+  "gti_unit_tests",
   "test_command_controls",
 ]
 
@@ -1347,8 +1318,6 @@ owners = [
   "composable_io_runtime",
   "process_runtime",
   "environment_runtime",
-  "constexpr_chrono_runtime",
-  "random_engine_runtime",
   "cmath_runtime",
   "http_runtime",
   "http_url_operators",
@@ -1396,7 +1365,7 @@ owners = [
   "persistent_declaration_process",
   "compiled_scalar_library",
   "compiled_interface_types",
-  "compiled_borrow_contract",
+  "gti_unit_tests",
 ]
 consumers = [
   "compiled_primitive_library",
@@ -1408,7 +1377,7 @@ consumers = [
   "compiled_dependency_project",
   "compiled_primitive_cost",
   "compiled_scalar_library_cost",
-  "library_bundle",
+  "gti_unit_tests",
 ]
 risk = "system"
 
@@ -1452,7 +1421,7 @@ paths = [
   "include/gti/driver/dependencies.h",
 ]
 owners = [
-  "package_registry_model",
+  "gti_unit_tests",
   "package_registry_cli",
   "package_registry_auth_model",
   "package_registry_auth_cli",
@@ -1468,11 +1437,10 @@ paths = [
   "include/gti/driver/test_report.h",
 ]
 owners = [
-  "test_runner",
+  "gti_unit_tests",
   "test_report",
   "test_command_controls",
   "annotated_test_suites",
-  "testing_assertions_runtime",
 ]
 consumers = []
 
@@ -1951,14 +1919,14 @@ paths = [
 ]
 owners = [
   "practical_examples",
-  "mir_census_regression",
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
 ]
 consumers = [
   "language_coverage_corpus",
-  "^trusted_body_analysis_[0-3]$",
-  "body_analysis_order",
+  "trusted_body_analysis_fixtures",
+  "body_analysis_order_fixtures",
+  "gti_corpus",
   "native_packages",
 ]
 
@@ -2042,3 +2010,68 @@ paths = ["tests/codegen_attribute_tests.cpp", "examples/llvm/codegen-attributes.
 owners = ["codegen_attribute_contract", "codegen_attribute_runtime"]
 consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
 risk = "shared"
+
+# Directory-runner infrastructure owns its checks and every source shard.
+[[area]]
+area = "source-test-runner"
+paths = ["tests/runner/", "tests/gti_test.cmake", "scripts/convert_runtime_wrappers.py"]
+owners = ["^gti_test_ui(_shard_[1-4])?$"]
+consumers = ["cmake_test_ownership", "test_throughput_registration"]
+risk = "system"
+
+# Source files are discovered at runtime, so CMake cannot infer their owners.
+[[area]]
+area = "source-test-inventory"
+paths = [
+  "tests/ui/", "tests/project/", "tests/lsp/",
+  "tests/slow/borrow/retained-storage/",
+  "tests/slow/borrow/constructor_text_storage/constructor_text_storage_contracts_2.gti",
+  "tests/slow/borrow/span_owner_dependent.gti",
+  "tests/slow/classes/construction/implicit_return_construction_1.gti",
+  "tests/slow/codegen/o0_shared_failure_channels.gti",
+  "tests/slow/generics/clone/generic_clone.gti",
+  "tests/slow/generics/structural_requires/structural_requires_and_accumulate_1.gti",
+  "tests/slow/generics/symbolic_auto_locals/symbolic_auto_local_binding_1.gti",
+  "tests/slow/language/construction/constructor_borrow_replacement_many.gti",
+  "tests/slow/language/expected/expected_class_argument.gti",
+  "tests/slow/language/expected/expected_class_assignment.gti",
+  "tests/slow/language/expected/expected_conditional_arms.gti",
+  "tests/slow/language/expected/expected_conditional_assignment.gti",
+  "tests/slow/language/expected/owned_expected_error.gti",
+  "tests/slow/macros/values_runtime.gti",
+  "tests/slow/ownership/consuming/consuming_conditional_receiver.gti",
+  "tests/slow/ownership/consuming/consuming_prepared_receiver.gti",
+  "tests/slow/ownership/loans/switch_and_break_loan_flow_1.gti",
+  "tests/slow/ownership/owners_and_storage/fixed_array_pack_forwarding.gti",
+  "tests/slow/ownership/owners_and_storage/variadic_storage_construction_and_vector_1.gti",
+  "tests/slow/ownership/owners_and_storage/variadic_storage_construction_and_vector_2.gti",
+  "tests/slow/ownership/ranges/forward_iterator_contracts_and_binary_search_1.gti",
+  "tests/slow/stdlib/build/build.gti",
+  "tests/slow/stdlib/charconv/charconv_constexpr_integer.gti",
+  "tests/slow/stdlib/contracts/set_swap_contract.gti",
+  "tests/slow/stdlib/imports/tcp_private_handle.gti",
+  "tests/slow/stdlib/imports/tcp_stream_copy.gti",
+  "tests/slow/stdlib/json/dynamic/borrowed_element_growth.gti",
+  "tests/slow/stdlib/memory/arena_pool.gti",
+  "tests/slow/stdlib/regex/regex_result_escape.gti",
+  "tests/slow/stdlib/set/complete_sets.gti",
+  "tests/slow/stdlib/vector/constexpr_range_for_views.gti",
+  "tests/slow/constexpr/lazy_staging/lazy_staging_and_compile_time_panic_2.gti",
+  "tests/slow/ownership/stored_references/writable_and_movement_iterator_capabilities_1.gti",
+
+  "tests/slow/borrow/container_views/nested_text_view_in_raw_storage.gti",
+  "tests/slow/stdlib/regex/regex_subject_mutation.gti",
+  "tests/slow/stdlib/assert/deferred_assertions.gti",
+  "tests/slow/stdlib/assert/deferred_assertions_ndebug.gti",
+  "tests/slow/stdlib/charconv/format.gti",
+  "tests/slow/stdlib/format/integral_enum_formatting_temporary.gti",
+  "tests/slow/stdlib/io/composable_io.gti",
+  "tests/slow/stdlib/encoding/encoding.gti",
+  "tests/slow/language/construction/object_construction.gti",
+  "tests/slow/language/construction/object_construction_owned.gti",
+  "tests/slow/language/construction/object_construction_reference.gti",
+  "tests/slow/language/construction/borrowed_array_cleanup.gti",
+  "tests/slow/language/construction/borrowed_vector_cleanup.gti",
+]
+owners = ["^gti_test_ui(_shard_[1-4])?$"]
+consumers = []

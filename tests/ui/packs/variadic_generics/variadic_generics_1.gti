@@ -1,0 +1,39 @@
+// Variadic generics: final function type packs should infer, forward, and preserve exact concrete MIR parameter roles across equivalent pack groupings.
+//@ check-pass
+class Packed<T...> { public: Packed() = default; };
+void consume<Args...>(Args... values) {}
+
+void route<Rest...>(int first, Rest... rest) { consume(rest...); }
+void route<Rest...>(bool first, Rest... rest) { consume(rest...); }
+
+void relay<Args...>(Args... values) {
+  consume(values...);
+  consume(0, values...);
+  route(1, values...);
+}
+
+T first<T, Rest...>(T value, Rest... rest) {
+  relay(rest...);
+  return value;
+}
+
+class Forwarder {
+public:
+  void send<Args...>(Args... values) {
+    relay(values...);
+  }
+public:
+  Forwarder() = default;
+};
+
+int main() {
+  Packed<int, bool> metadata{};
+  consume();
+  relay(1, true, "gti");
+  int inferred = first(7, false, "tail");
+  int explicit_types = first<int, std::string_view>(9, "tail");
+  Forwarder forwarder = Forwarder();
+  forwarder.send(uint64_t(3), "method");
+  if (inferred == 7 and explicit_types == 9) { return 0; }
+  return 1;
+}

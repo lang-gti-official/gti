@@ -1,0 +1,18 @@
+// Move-only assignment results: a generic relay returning its move-only assignment is rejected at the instantiated operator.
+import std.memory;
+import std.utility;
+class Tracked {
+public:
+  int32_t x;
+  Tracked(int32_t x) : x(x) {}
+  ~Tracked() {}
+  int32_t get() { return this.x; }
+};
+struct Holder {
+  mut Tracked t;
+  Holder(Tracked t) : t(std::move(t)) {}
+};
+int32_t take(Tracked t) { return t.x; }
+T relay<T>(mut T a, T b) { return (a = std::move(b)); }  //~ ERROR GTI-S2003
+int32_t f() { return relay(Tracked(1), Tracked(5)).x; }
+int main() { return 0; }

@@ -1,0 +1,2 @@
+// [[test]] rejects a non-void result, reported at the attribute.
+[[test]] int invalid() { return 0; }  //~ ERROR GTI-S2099

@@ -9,9 +9,9 @@ class span_sentinel {
   size_t final_position;
 
 public:
-  span_sentinel(size_t position) : final_position(position) {}
+  constexpr span_sentinel(size_t position) : final_position(position) {}
 
-  size_t position() {
+  constexpr size_t position() {
     return this.final_position;
   }
 };
@@ -23,13 +23,13 @@ class span_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
   size_t final_position;
 
 public:
-  span_iterator(std::detail::prefix_owner<T>& source, size_t position, size_t end)
+  constexpr span_iterator(std::detail::prefix_owner<T>& source, size_t position, size_t end)
       : data(source), current_position(position), first_position(position), final_position(end) {
     if (position > end) { gti_internal::index_bounds_check(position, end); }
     if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
   }
 
-  span_iterator(std::detail::prefix_owner<T>& source, size_t begin,
+  constexpr span_iterator(std::detail::prefix_owner<T>& source, size_t begin,
                 size_t position, size_t end)
       : data(source), current_position(position), first_position(begin), final_position(end) {
     if (begin > position) { gti_internal::index_bounds_check(begin, position); }
@@ -37,7 +37,7 @@ public:
     if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
   }
 
-  T& operator*() {
+  constexpr T& operator*() {
     mut size_t position = this.current_position;
     if constexpr (Reverse != 0) {
       position = detail::checked_iterator_position(position, this.first_position,
@@ -47,29 +47,29 @@ public:
     unsafe { return this.data.read_unchecked(position); }
   }
 
-  T& operator->() { return *this; }
+  constexpr T& operator->() { return *this; }
 
-  void operator++() mut {
+  constexpr void operator++() mut {
     this.current_position = detail::checked_iterator_step<Reverse>(
         this.current_position, this.first_position, this.final_position);
   }
 
-  void operator--() mut {
+  constexpr void operator--() mut {
     this.current_position = detail::checked_iterator_step<Reverse, 1>(
         this.current_position, this.first_position, this.final_position);
   }
 
-  void operator+=(ptrdiff_t offset) mut {
+  constexpr void operator+=(ptrdiff_t offset) mut {
     this.current_position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
   }
 
-  void operator-=(ptrdiff_t offset) mut {
+  constexpr void operator-=(ptrdiff_t offset) mut {
     this.current_position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse == 0);
   }
 
-  T& operator[](ptrdiff_t offset) {
+  constexpr T& operator[](ptrdiff_t offset) {
     mut size_t position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
     if constexpr (Reverse != 0) {
@@ -80,29 +80,29 @@ public:
     unsafe { return this.data.read_unchecked(position); }
   }
 
-  ptrdiff_t operator-(span_sentinel sentinel) {
+  constexpr ptrdiff_t operator-(span_sentinel sentinel) {
     if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
     return detail::checked_iterator_difference(this.current_position, sentinel.position());
   }
 
-  ptrdiff_t operator-(span_iterator<T, Reverse>& other) {
+  constexpr ptrdiff_t operator-(span_iterator<T, Reverse>& other) {
     if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
     return detail::checked_iterator_difference(this.current_position, other.current_position);
   }
 
-  bool operator!=(span_sentinel sentinel) {
+  constexpr bool operator!=(span_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
 
-  bool operator!=(span_iterator<T, Reverse>& other) {
+  constexpr bool operator!=(span_iterator<T, Reverse>& other) {
     return this.current_position != other.current_position;
   }
 
-  bool operator==(span_sentinel sentinel) {
+  constexpr bool operator==(span_sentinel sentinel) {
     return this.current_position == sentinel.position();
   }
 
-  bool operator==(span_iterator<T, Reverse>& other) {
+  constexpr bool operator==(span_iterator<T, Reverse>& other) {
     return this.current_position == other.current_position;
   }
 };
@@ -113,20 +113,20 @@ class mutable_span_iterator<std::layout_queryable T, uint64_t Reverse = 0> {
   size_t first_position;
   size_t final_position;
 public:
-  mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
+  constexpr mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
                         size_t begin, size_t end)
       : data(source), current_position(begin), first_position(begin), final_position(end) {
     if (begin > end) { gti_internal::index_bounds_check(begin, end); }
     if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
   }
-  mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
+  constexpr mutable_span_iterator(mut std::detail::prefix_owner<T>& source,
                         size_t begin, size_t position, size_t end)
       : data(source), current_position(position), first_position(begin), final_position(end) {
     if (begin > position) { gti_internal::index_bounds_check(begin, position); }
     if (position > end) { gti_internal::index_bounds_check(position, end); }
     if (end > source.length()) { gti_internal::index_bounds_check(end, source.length()); }
   }
-  T& operator*() {
+  constexpr T& operator*() {
     mut size_t position = this.current_position;
     if constexpr (Reverse != 0) {
       position = detail::checked_iterator_position(position, this.first_position,
@@ -135,7 +135,7 @@ public:
     gti_internal::index_bounds_check(position, this.final_position);
     unsafe { return this.data.read_unchecked(position); }
   }
-  mut T& operator*() mut {
+  constexpr mut T& operator*() mut {
     mut size_t position = this.current_position;
     if constexpr (Reverse != 0) {
       position = detail::checked_iterator_position(position, this.first_position,
@@ -144,25 +144,25 @@ public:
     gti_internal::index_bounds_check(position, this.final_position);
     unsafe { return this.data.read_mut_unchecked(position); }
   }
-  T& operator->() { return *this; }
-  mut T& operator->() mut { return *this; }
-  void operator++() mut {
+  constexpr T& operator->() { return *this; }
+  constexpr mut T& operator->() mut { return *this; }
+  constexpr void operator++() mut {
     this.current_position = detail::checked_iterator_step<Reverse>(
         this.current_position, this.first_position, this.final_position);
   }
-  void operator--() mut {
+  constexpr void operator--() mut {
     this.current_position = detail::checked_iterator_step<Reverse, 1>(
         this.current_position, this.first_position, this.final_position);
   }
-  void operator+=(ptrdiff_t offset) mut {
+  constexpr void operator+=(ptrdiff_t offset) mut {
     this.current_position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
   }
-  void operator-=(ptrdiff_t offset) mut {
+  constexpr void operator-=(ptrdiff_t offset) mut {
     this.current_position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse == 0);
   }
-  T& operator[](ptrdiff_t offset) {
+  constexpr T& operator[](ptrdiff_t offset) {
     mut size_t position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
     if constexpr (Reverse != 0) {
@@ -172,7 +172,7 @@ public:
     gti_internal::index_bounds_check(position, this.final_position);
     unsafe { return this.data.read_unchecked(position); }
   }
-  mut T& operator[](ptrdiff_t offset) mut {
+  constexpr mut T& operator[](ptrdiff_t offset) mut {
     mut size_t position = detail::checked_iterator_position(
         this.current_position, this.first_position, this.final_position, offset, Reverse != 0);
     if constexpr (Reverse != 0) {
@@ -182,24 +182,24 @@ public:
     gti_internal::index_bounds_check(position, this.final_position);
     unsafe { return this.data.read_mut_unchecked(position); }
   }
-  ptrdiff_t operator-(span_sentinel sentinel) {
+  constexpr ptrdiff_t operator-(span_sentinel sentinel) {
     if constexpr (Reverse != 0) { return detail::checked_iterator_difference(sentinel.position(), this.current_position); }
     return detail::checked_iterator_difference(this.current_position, sentinel.position());
   }
-  ptrdiff_t operator-(mutable_span_iterator<T, Reverse>& other) {
+  constexpr ptrdiff_t operator-(mutable_span_iterator<T, Reverse>& other) {
     if constexpr (Reverse != 0) { return detail::checked_iterator_difference(other.current_position, this.current_position); }
     return detail::checked_iterator_difference(this.current_position, other.current_position);
   }
-  bool operator!=(span_sentinel sentinel) {
+  constexpr bool operator!=(span_sentinel sentinel) {
     return this.current_position != sentinel.position();
   }
-  bool operator==(span_sentinel sentinel) {
+  constexpr bool operator==(span_sentinel sentinel) {
     return this.current_position == sentinel.position();
   }
-  bool operator!=(mutable_span_iterator<T, Reverse>& other) {
+  constexpr bool operator!=(mutable_span_iterator<T, Reverse>& other) {
     return this.current_position != other.current_position;
   }
-  bool operator==(mutable_span_iterator<T, Reverse>& other) {
+  constexpr bool operator==(mutable_span_iterator<T, Reverse>& other) {
     return this.current_position == other.current_position;
   }
 };
@@ -211,7 +211,7 @@ export class span<std::layout_queryable T, lifetime source> {
   size_t first_position;
   size_t element_count;
 
-  void validate_subspan(size_t offset, size_t count) {
+  constexpr void validate_subspan(size_t offset, size_t count) {
     if (offset > this.element_count) {
       gti_internal::index_bounds_check(offset, this.element_count);
     }
@@ -228,7 +228,7 @@ public:
 
   // The source owner, not a raw address, retains the checked dependency.
   // Public containers provide as_span() factories over this same contract.
-  span(std::detail::prefix_owner<T>&<source> source, size_t offset, size_t count)
+  constexpr span(std::detail::prefix_owner<T>&<source> source, size_t offset, size_t count)
       : data(source), first_position(offset), element_count(count) {
     if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
     size_t remaining = source.length() - offset;
@@ -236,20 +236,20 @@ public:
   }
 
   /// Returns the number of elements in this view.
-  size_t size() {
+  constexpr size_t size() {
     return this.element_count;
   }
 
   /// Returns whether this view contains no elements.
-  bool empty() {
+  constexpr bool empty() {
     return this.element_count == 0;
   }
 
-  T& front() {
+  constexpr T& front() {
     return this.at(size_t(0));
   }
 
-  T& back() {
+  constexpr T& back() {
     mut size_t index = size_t(0);
     if (this.element_count > 0) {
       index = this.element_count - 1;
@@ -257,63 +257,63 @@ public:
     return this.at(index);
   }
 
-  T& at(size_t index) {
+  constexpr T& at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
     unsafe { return this.get_unchecked(index); }
   }
 
   /// The caller proves index < size(); the view's owner loan is retained.
-  unsafe T& get_unchecked(size_t index) {
+  unsafe constexpr T& get_unchecked(size_t index) {
     unsafe {
       return this.data.read_unchecked(
           gti_internal::integer_wrapping_add(this.first_position, index));
     }
   }
 
-  T& operator[](size_t index) {
+  constexpr T& operator[](size_t index) {
     return this.at(index);
   }
 
-  span<T, source> first(size_t count) {
+  constexpr span<T, source> first(size_t count) {
     this.validate_subspan(size_t(0), count);
     return span<T>(this.data, this.first_position, count);
   }
 
-  span<T, source> last(size_t count) {
+  constexpr span<T, source> last(size_t count) {
     this.validate_subspan(size_t(0), count);
     return span<T>(this.data,
                    this.first_position + (this.element_count - count), count);
   }
 
-  span<T, source> subspan(size_t offset, size_t count) {
+  constexpr span<T, source> subspan(size_t offset, size_t count) {
     this.validate_subspan(offset, count);
     return span<T>(this.data, this.first_position + offset, count);
   }
 
-  detail::span_iterator<T> begin() {
+  constexpr detail::span_iterator<T> begin() {
     return detail::span_iterator<T>(this.data, this.first_position,
                                     this.first_position + this.element_count);
   }
 
-  detail::span_sentinel end() {
+  constexpr detail::span_sentinel end() {
     return detail::span_sentinel(this.first_position + this.element_count);
   }
 
-  detail::span_iterator<T> end_iterator() {
+  constexpr detail::span_iterator<T> end_iterator() {
     size_t end = this.first_position + this.element_count;
     return detail::span_iterator<T>(this.data, this.first_position, end, end);
   }
 
-  detail::span_iterator<T> cbegin() { return this.begin(); }
-  detail::span_sentinel cend() { return this.end(); }
+  constexpr detail::span_iterator<T> cbegin() { return this.begin(); }
+  constexpr detail::span_sentinel cend() { return this.end(); }
 
-  const_reverse_iterator rbegin() {
+  constexpr const_reverse_iterator rbegin() {
     size_t end = this.first_position + this.element_count;
     return const_reverse_iterator(this.data, this.first_position, end, end);
   }
-  detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
-  const_reverse_iterator crbegin() { return this.rbegin(); }
-  detail::span_sentinel crend() { return this.rend(); }
+  constexpr detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
+  constexpr const_reverse_iterator crbegin() { return this.rbegin(); }
+  constexpr detail::span_sentinel crend() { return this.rend(); }
 };
 
 /// An exclusive, move-only view of initialized contiguous elements.
@@ -323,7 +323,7 @@ export class mutable_span<std::layout_queryable T> {
   size_t first_position;
   size_t element_count;
 
-  void validate_subspan(size_t offset, size_t count) {
+  constexpr void validate_subspan(size_t offset, size_t count) {
     if (offset > this.element_count) {
       gti_internal::index_bounds_check(offset, this.element_count);
     }
@@ -339,7 +339,7 @@ public:
   using const_reverse_iterator = detail::span_iterator<T, 1>;
   using sentinel = detail::span_sentinel;
 
-  mutable_span(mut std::detail::prefix_owner<T>& source,
+  constexpr mutable_span(mut std::detail::prefix_owner<T>& source,
                size_t offset, size_t count)
       : data(source), first_position(offset), element_count(count) {
     if (offset > source.length()) { gti_internal::index_bounds_check(offset, source.length()); }
@@ -347,93 +347,93 @@ public:
     if (count > remaining) { gti_internal::index_bounds_check(count, remaining); }
   }
 
-  size_t size() { return this.element_count; }
-  bool empty() { return this.element_count == 0; }
+  constexpr size_t size() { return this.element_count; }
+  constexpr bool empty() { return this.element_count == 0; }
 
-  T& at(size_t index) {
+  constexpr T& at(size_t index) {
     gti_internal::index_bounds_check(index, this.element_count);
     unsafe { return this.get_unchecked(index); }
   }
-  mut T& at(size_t index) mut {
+  constexpr mut T& at(size_t index) mut {
     gti_internal::index_bounds_check(index, this.element_count);
     unsafe { return this.get_unchecked_mut(index); }
   }
   /// The caller proves index < size(); the view's owner loan is retained.
-  unsafe T& get_unchecked(size_t index) {
+  unsafe constexpr T& get_unchecked(size_t index) {
     unsafe {
       return this.data.read_unchecked(
           gti_internal::integer_wrapping_add(this.first_position, index));
     }
   }
-  unsafe mut T& get_unchecked_mut(size_t index) mut {
+  unsafe constexpr mut T& get_unchecked_mut(size_t index) mut {
     unsafe {
       return this.data.read_mut_unchecked(
           gti_internal::integer_wrapping_add(this.first_position, index));
     }
   }
-  T& operator[](size_t index) { return this.at(index); }
-  mut T& operator[](size_t index) mut { return this.at(index); }
-  T& front() { return this.at(size_t(0)); }
-  mut T& front() mut { return this.at(size_t(0)); }
-  T& back() {
+  constexpr T& operator[](size_t index) { return this.at(index); }
+  constexpr mut T& operator[](size_t index) mut { return this.at(index); }
+  constexpr T& front() { return this.at(size_t(0)); }
+  constexpr mut T& front() mut { return this.at(size_t(0)); }
+  constexpr T& back() {
     mut size_t index = 0;
     if (this.element_count > 0) { index = this.element_count - 1; }
     return this.at(index);
   }
-  mut T& back() mut {
+  constexpr mut T& back() mut {
     mut size_t index = 0;
     if (this.element_count > 0) { index = this.element_count - 1; }
     return this.at(index);
   }
 
-  mutable_span<T> subspan(size_t offset, size_t count) mut {
+  constexpr mutable_span<T> subspan(size_t offset, size_t count) mut {
     this.validate_subspan(offset, count);
     return mutable_span<T>(this.data, this.first_position + offset, count);
   }
-  mutable_span<T> first(size_t count) mut {
+  constexpr mutable_span<T> first(size_t count) mut {
     this.validate_subspan(size_t(0), count);
     return mutable_span<T>(this.data, this.first_position, count);
   }
-  mutable_span<T> last(size_t count) mut {
+  constexpr mutable_span<T> last(size_t count) mut {
     this.validate_subspan(size_t(0), count);
     return mutable_span<T>(this.data, this.first_position + (this.element_count - count), count);
   }
-  span<T> as_span() {
+  constexpr span<T> as_span() {
     return span<T>(this.data, this.first_position, this.element_count);
   }
-  detail::span_iterator<T> begin() {
+  constexpr detail::span_iterator<T> begin() {
     return detail::span_iterator<T>(this.data, this.first_position,
                                     this.first_position + this.element_count);
   }
-  detail::mutable_span_iterator<T> begin_mut() mut {
+  constexpr detail::mutable_span_iterator<T> begin_mut() mut {
     return detail::mutable_span_iterator<T>(this.data, this.first_position,
                                            this.first_position + this.element_count);
   }
-  detail::span_sentinel end() {
+  constexpr detail::span_sentinel end() {
     return detail::span_sentinel(this.first_position + this.element_count);
   }
-  detail::span_iterator<T> end_iterator() {
+  constexpr detail::span_iterator<T> end_iterator() {
     size_t end = this.first_position + this.element_count;
     return detail::span_iterator<T>(this.data, this.first_position, end, end);
   }
-  detail::mutable_span_iterator<T> end_mut() mut {
+  constexpr detail::mutable_span_iterator<T> end_mut() mut {
     size_t end = this.first_position + this.element_count;
     return detail::mutable_span_iterator<T>(this.data, this.first_position, end, end);
   }
-  detail::span_iterator<T> cbegin() { return this.begin(); }
-  detail::span_sentinel cend() { return this.end(); }
-  const_reverse_iterator rbegin() {
+  constexpr detail::span_iterator<T> cbegin() { return this.begin(); }
+  constexpr detail::span_sentinel cend() { return this.end(); }
+  constexpr const_reverse_iterator rbegin() {
     size_t end = this.first_position + this.element_count;
     return const_reverse_iterator(this.data, this.first_position, end, end);
   }
-  detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
-  const_reverse_iterator crbegin() { return this.rbegin(); }
-  detail::span_sentinel crend() { return this.rend(); }
-  reverse_iterator rbegin_mut() mut {
+  constexpr detail::span_sentinel rend() { return detail::span_sentinel(this.first_position); }
+  constexpr const_reverse_iterator crbegin() { return this.rbegin(); }
+  constexpr detail::span_sentinel crend() { return this.rend(); }
+  constexpr reverse_iterator rbegin_mut() mut {
     size_t end = this.first_position + this.element_count;
     return reverse_iterator(this.data, this.first_position, end, end);
   }
-  reverse_iterator rend_mut() mut {
+  constexpr reverse_iterator rend_mut() mut {
     return reverse_iterator(this.data, this.first_position, this.first_position,
                             this.first_position + this.element_count);
   }

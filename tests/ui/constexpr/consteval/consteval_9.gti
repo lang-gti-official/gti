@@ -1,0 +1,29 @@
+// Consteval: immediate arguments with concrete parameter types defer unresolved layout, value and requirement inputs to each concrete instance.
+//@ check-pass
+consteval uint64_t immediate_size(uint64_t value) { return value; }
+consteval bool immediate_flag(bool value) { return value; }
+constexpr uint64_t width<T>() { return immediate_size(sizeof(T)); }
+constexpr uint64_t count<uint64_t N>() { return immediate_size(N + 1); }
+uint64_t array_width<uint64_t N>() { return immediate_size(sizeof(int[N])); }
+bool readable<T>() {
+  return immediate_flag(requires(T& value) { { value.read() } -> int; });
+}
+struct Reader { int read() { return 1; } };
+struct Empty {};
+struct Counted<uint64_t N> {
+  uint64_t value;
+  consteval Counted() : value(N) {}
+};
+uint64_t constructed_count<uint64_t N>() {
+  Counted<N> value{};
+  return value.value;
+}
+static_assert(width<int>() == uint64_t(4));
+static_assert(width<int64_t>() == uint64_t(8));
+static_assert(count<4>() == uint64_t(5));
+static_assert(count<9>() == uint64_t(10));
+int main() {
+  return array_width<3>() == uint64_t(12) && readable<Reader>() &&
+         !readable<Empty>() && constructed_count<3>() == uint64_t(3) &&
+         constructed_count<8>() == uint64_t(8) ? 0 : 1;
+}

@@ -1,0 +1,9 @@
+// Contextual signed integer literals: out-of-range signed literal operands should produce one precise contextual range diagnostic without a unary cascade.
+int main() {
+  uint8_t value = 5;
+  bool first = value == -1;  //~ ERROR GTI-S2004
+  bool reversed = (-1) == value;  //~ ERROR GTI-S2004
+  bool ordered = value < (-1);  //~ ERROR GTI-S2004
+  bool positive = value == +256;  //~ ERROR GTI-S2004
+  return 0;
+}

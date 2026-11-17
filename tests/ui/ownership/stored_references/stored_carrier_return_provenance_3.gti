@@ -1,0 +1,20 @@
+// Stored carrier return provenance: mutable owned storage is independent of the carrier's read-only external dependency.
+//@ check-pass
+class MixedStorage<T> {
+  T& external;
+  mut T local;
+public:
+  MixedStorage(T& external, T local) : external(external), local(local) {}
+  T& get() { return this.local; }
+  mut T& get_mut() mut { return this.local; }
+  T implicit_read() { T& value = get(); return value; }
+  T& external_value() { return this.external; }
+  ~MixedStorage() {}
+};
+int main() {
+  int external = 4;
+  mut MixedStorage<int> owner{external, 7};
+  mut int& element = owner.get_mut();
+  element = 9;
+  return owner.implicit_read() + owner.external_value() - 13;
+}
