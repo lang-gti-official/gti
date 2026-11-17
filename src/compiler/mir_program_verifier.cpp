@@ -5161,10 +5161,12 @@ independentlyStaticTextBinding(const MirProgram &program, const MirBody &body,
         // A lowered range iterator can retain the source through a Local
         // loan rather than a Stored group. Prove the exact retained owner's
         // layout, not merely the iterator's missing dependency metadata.
-        const auto *rangeOwner = opaqueRangeCarrier && receiverLoan &&
-                                         receiverLoan->storedDependency == 0
-                                     ? body.findPlace(receiverLoan->source)
-                                     : nullptr;
+        const auto *rangeOwner =
+            instruction.borrowOrigin == BorrowOriginKind::Receiver &&
+                    opaqueRangeCarrier && receiverLoan &&
+                    receiverLoan->storedDependency == 0
+                ? body.findPlace(receiverLoan->source)
+                : nullptr;
         const bool ownerlessRangeText =
             rangeOwner &&
             (rangeOwner->type.kind == SemanticType::Class ||
