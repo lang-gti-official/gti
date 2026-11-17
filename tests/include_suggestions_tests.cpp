@@ -189,6 +189,63 @@ void trialsDoNotBuildPreambles() {
          "speculation never populates the caller's preamble cache on a miss");
 }
 
+void boundedCandidateScans() {
+  Fixture f;
+  f.write("stdlib/prelude.gti", "namespace std {}\n");
+  f.write("stdlib/module-map.json",
+          R"({"modules":{"a":"std/a.gti","b":"std/b.gti"}})");
+  f.write("stdlib/std/a.gti", "export module a; namespace std { int noise() { "
+                              "Missing value{}; return 0; } }");
+  f.write("stdlib/std/b.gti",
+          "export module b; export import \"detail/types.gti\";");
+  f.write("stdlib/std/detail/types.gti",
+          "export module detail.types; namespace std { export struct Missing "
+          "{}; }");
+  f.options.suggestIncludes = false;
+  f.options.includeSearchRoots.clear();
+  f.options.includeDiscoveryCache =
+      std::make_shared<lang::IncludeDiscoveryCache>();
+  const auto base = lang::Frontend(f.options).analyze(
+      f.root / "main.gti",
+      "using Selected = std::Missing; int main() { return 0; }",
+      {f.root / "stdlib/prelude.gti"}, {}, {f.root / "stdlib"});
+  const auto discover = [&] {
+    return lang::discoverIncludeSuggestions(
+        base, f.options, f.root / "main.gti", {f.root / "stdlib/prelude.gti"},
+        {}, {f.root / "stdlib"}, {});
+  };
+  f.options.includeDiscoveryLimits.maximumCandidateScans = 0;
+  expect(discover().budgetExhausted &&
+             f.options.includeDiscoveryCache->stats().scanMisses == 0,
+         "zero scan allowance performs no candidate analysis");
+  f.options.includeDiscoveryLimits.maximumCandidateScans = 1;
+  const auto limited = discover();
+  expect(limited.budgetExhausted &&
+             f.options.includeDiscoveryCache->stats().scanMisses == 1 &&
+             f.options.includeDiscoveryCache->stats().trials == 0,
+         "candidate preparation is capped even before any useful trial");
+  f.options.includeDiscoveryLimits.maximumCandidateScans = 2;
+  const auto advice = discover();
+  expect(
+      std::any_of(advice.diagnostics.begin(), advice.diagnostics.end(),
+                  [](const auto &d) { return !d.fixes.empty(); }),
+      "a narrow re-export remains discoverable after an unrelated reference");
+  expect(f.options.includeDiscoveryCache->stats().trials == 1,
+         "the re-exported declaration receives semantic confirmation");
+}
+
+void lexicalDeclarationPriority() {
+  Fixture f;
+  f.options.includeDiscoveryLimits.maximumCandidateScans = 1;
+  f.write("a_use.gti",
+          "export module a_use; int noise() { Named value{}; return 0; }");
+  f.write("z_api.gti", "export module z_api; export struct Named {};");
+  const auto result =
+      f.analyze("using Selected = Named; int main() { return 0; }");
+  expect(!fixes(result).empty(),
+         "a type declaration ranks before a mere use under a single-scan cap");
+}
+
 void namedModulePriority() {
   Fixture f;
   f.options.includeDiscoveryLimits.maximumTrials = 1;
@@ -707,6 +764,7 @@ int profile(const std::filesystem::path &root, bool preamble, bool bounded,
     Fixture f;
     f.options.includeSearchRoots.clear();
     f.options.includeDiscoveryLimits.maximumTrials = 1000;
+    f.options.includeDiscoveryLimits.maximumCandidateScans = 1000;
     if (bounded)
       f.options.includeDiscoveryLimits = {};
     f.options.includeDiscoveryLimits.collectTimings = true;
@@ -752,6 +810,8 @@ int main(int argc, char **argv) {
                    argc > 4 && std::string(argv[4]) == "bounded",
                    argc > 5 ? argv[5] : "");
   boundedDiscovery();
+  boundedCandidateScans();
+  lexicalDeclarationPriority();
   namedModulePriority();
   trialsDoNotBuildPreambles();
   discoveryReusesCandidateScans();

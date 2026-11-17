@@ -23,7 +23,8 @@ public:
   // Every token spelling of one exact source text. Rows are immutable.
   struct Lexicon {
     std::uint64_t digest = 0;
-    std::vector<std::string> spellings; // sorted and unique
+    std::vector<std::string> spellings;     // sorted and unique
+    std::set<std::string> typeDeclarations; // ranking hints, never proof
     std::size_t reexports = 0;
     bool hadError = false;
 
@@ -453,6 +454,17 @@ std::shared_ptr<const Lexicon> lexiconFor(IncludeDiscoveryCache::Rows &rows,
     if (tokens[index - 1].kind == TokenKind::EXPORT &&
         tokens[index].kind == TokenKind::IMPORT)
       ++row->reexports;
+  // Prefer an actual type-declaration spelling to a use in a function body.
+  // Attributes, generated declarations and aliases can evade this pattern;
+  // absence therefore never removes a candidate.
+  for (std::size_t index = 1; index < tokens.size(); ++index) {
+    const auto previous = tokens[index - 1].kind;
+    if (tokens[index].kind == TokenKind::IDENTIFIER &&
+        (previous == TokenKind::CLASS || previous == TokenKind::STRUCT ||
+         previous == TokenKind::ENUM || previous == TokenKind::USING ||
+         previous == TokenKind::CONCEPT))
+      row->typeDeclarations.insert(tokens[index].lexeme);
+  }
   row->spellings.reserve(tokens.size());
   for (const auto &token : tokens)
     row->spellings.push_back(token.lexeme);
@@ -689,11 +701,15 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   IncludeSuggestionResult advice{.diagnostics = result.diagnostics};
   const auto started = std::chrono::steady_clock::now();
   std::size_t trialsRun = 0;
+  std::size_t scansRun = 0;
   const auto exhausted = [&] {
     const auto &limits = options.includeDiscoveryLimits;
     advice.budgetExhausted =
         trialsRun >= limits.maximumTrials ||
-        (limits.timeBudget != std::chrono::milliseconds::max() &&
+        limits.maximumCandidateScans == 0 ||
+        limits.timeBudget <= std::chrono::milliseconds::zero() ||
+        (trialsRun != 0 &&
+         limits.timeBudget != std::chrono::milliseconds::max() &&
          std::chrono::steady_clock::now() - started >= limits.timeBudget);
     return advice.budgetExhausted;
   };
@@ -796,6 +812,7 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   const SourceUnit *entryUnit = std::as_const(result.sourceGraph)
                                     .findUnit(result.sourceGraph.entryUnit());
   std::vector<std::pair<std::size_t, Candidate>> prepared;
+  std::set<std::filesystem::path> declaresRequestedType;
   for (const auto &candidate : searchCandidates) {
     if (stopped())
       return advice;
@@ -839,6 +856,10 @@ IncludeSuggestionResult discoverIncludeSuggestions(
                       [&](const auto &name) { return lexicon->spells(name); })))
       continue;
 
+    if (std::any_of(requested.begin(), requested.end(), [&](const auto &name) {
+          return lexicon->typeDeclarations.contains(name);
+        }))
+      declaresRequestedType.insert(candidate.path);
     prepared.emplace_back(lexicon->reexports, candidate);
   }
   // Prefer direct public APIs and smaller facades. Once a precise import is
@@ -849,7 +870,9 @@ IncludeSuggestionResult discoverIncludeSuggestions(
     // This makes a focused module likely to receive the bounded proof budget
     // before unrelated surfaces with common member names such as set/value.
     const bool named = requested.contains(entry.second.path.stem().string());
-    return std::tuple{entry.first != 0, !named, entry.first, entry.second.path};
+    return std::tuple{entry.first != 0, !named,
+                      !declaresRequestedType.contains(entry.second.path),
+                      entry.first, entry.second.path};
   };
   std::sort(prepared.begin(), prepared.end(),
             [&](const auto &left, const auto &right) {
@@ -858,8 +881,11 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   for (const auto &[reexports, candidate] : prepared) {
     if (stopped())
       return advice;
-    if (exhausted())
+    if (exhausted() ||
+        scansRun >= options.includeDiscoveryLimits.maximumCandidateScans) {
+      advice.budgetExhausted = true;
       break;
+    }
     if (reexports &&
         std::none_of(advice.diagnostics.begin(), advice.diagnostics.end(),
                      [](const auto &diagnostic) {
@@ -869,6 +895,7 @@ IncludeSuggestionResult discoverIncludeSuggestions(
       continue;
     const auto &text = overrides.at(candidate.path.string());
 
+    ++scansRun;
     auto scan = rows.scan(candidate.path.string());
     const bool reused = scan && reusable(*scan, context, current);
     rows.countScan(reused);

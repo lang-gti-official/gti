@@ -1320,15 +1320,19 @@ whose bodies live in registered implementations. Candidate discovery remains a
 syntax filter; a speculative compile validates the selected canonical exported
 symbol and the actual requesting program before offering an edit.
 
-Optional discovery has a per-invocation allowance of eight speculative analyses
-and a 250 ms cooperative time budget, configurable through
-`FrontendOptions::includeDiscoveryLimits`. The budget is checked between
-operations; an in-flight load, parse, or analysis can exceed it. Exhaustion
+Optional discovery has per-invocation caps of sixteen candidate scans and eight
+speculative analyses, plus a 250 ms cooperative time budget, configurable through
+`FrontendOptions::includeDiscoveryLimits`. Within the scan cap, one confirmation
+may finish before elapsed time prevents additional work. Elapsed preparation
+time alone therefore cannot suppress the first confirmation, including one for
+a declaration exposed through re-exports. A zero allowance disables work. The budget is checked between
+operations; preparation and an in-flight analysis can exceed it. Exhaustion
 preserves ordinary diagnostics and finalizes already-proved fixes; it does not
 cancel or invalidate the original snapshot. This bounds repeated speculation,
 not the latency of one analysis. Direct modules take precedence over facades,
-and a filename matching a requested name gets priority within that ordering;
-this is a search heuristic, never semantic evidence.
+and a filename matching a requested name gets priority within that ordering.
+Lexical type-declaration spellings rank before mere uses of a name. These are
+search heuristics, never semantic evidence or reasons to exclude a candidate.
 
 Trials reuse matching cached preambles but defer construction on a miss, since
 an inserted import changes the graph used in the preamble key. Discovery never

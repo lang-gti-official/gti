@@ -27,11 +27,13 @@ struct IncludeSearchRoot {
 };
 
 // Optional enrichment must not perform an unbounded sequence of full analyses.
-// The time budget is cooperative between operations: an in-flight parse or
-// analysis can exceed it. Zero disables work; milliseconds::max() removes only
-// the time limit (useful for deterministic tests and profiling).
+// Candidate scans and trials have deterministic caps. One confirmation may
+// finish within the scan cap before the cooperative time budget prevents more
+// work: slow preparation must not starve every otherwise valid suggestion.
+// Zero disables work; milliseconds::max() removes only the time limit.
 struct IncludeDiscoveryLimits {
   std::size_t maximumTrials = 8;
+  std::size_t maximumCandidateScans = 16;
   std::chrono::milliseconds timeBudget{250};
   // Detailed frontend accounting is opt-in to keep ordinary enrichment cheap.
   bool collectTimings = false;
