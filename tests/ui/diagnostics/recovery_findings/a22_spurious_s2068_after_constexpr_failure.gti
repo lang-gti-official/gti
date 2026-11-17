@@ -1,0 +1,8 @@
+// Recovery reproducer a22-spurious-s2068-after-constexpr-failure: only the owning diagnostic is reported, located at its cause.
+// A22: a failed generic constexpr binding is followed by a spurious GTI-S2068.
+constexpr uint64_t depth<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return depth<N - 1>() + 1; }  //~ ERROR GTI-S2105
+}
+constexpr uint64_t too_deep = depth<200>();  //~ ERROR GTI-S2057
+int main() { return int32_t(too_deep); }

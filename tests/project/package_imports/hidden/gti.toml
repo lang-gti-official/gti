@@ -1,0 +1,8 @@
+manifest-version = 1
+
+[package]
+name = "hidden"
+version = "1.0.0"
+
+[modules]
+value = "src/value.gti"

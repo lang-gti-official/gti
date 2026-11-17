@@ -1,0 +1,2 @@
+// Contextual numeric literals: literal context must independently preserve each semantic boundary.
+void exact(uint8_t value) {} int main() { exact(256); return 0; }  //~ ERROR GTI-S2003

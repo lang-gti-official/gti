@@ -1,0 +1,13 @@
+// Ownership and missing include diagnostics: move causes across many branch joins are bounded to four sorted transfer sites, with the omitted ones disclosed.
+//@ snapshot: diagnostics
+struct Ticket {
+  mut int code = 7;
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+struct Holder { mut Ticket field = Ticket();  public: Holder() = default; };
+
+void examine(int path) { Ticket source{};
+if (path == 0) { Ticket destination = std::move(source); } else if (path == 1) { Ticket destination = std::move(source); } else if (path == 2) { Ticket destination = std::move(source); } else if (path == 3) { Ticket destination = std::move(source); } else if (path == 4) { Ticket destination = std::move(source); } else { Ticket destination = std::move(source); }
+int code = source.code; }  //~ ERROR GTI-S2018

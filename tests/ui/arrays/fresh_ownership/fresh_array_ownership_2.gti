@@ -1,0 +1,10 @@
+// Fresh array ownership: each array element still requires its exact ownership operation.
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(int value) {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+
+int main() { Pinned original{}; Pinned values[1] = {original}; return 0; }  //~ ERROR GTI-S2003

@@ -1,0 +1,16 @@
+// Fresh array ownership: fresh array initialization does not require element movement.
+//@ check-pass
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(int value) {}
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+};
+
+int main() {
+  Pinned values[2] = {Pinned(1), Pinned(2)};
+  Pinned nested[2][1] = {{Pinned(3)}, {Pinned(4)}};
+  Pinned empty[2] = {};
+  return 0;
+}

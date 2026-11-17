@@ -1,0 +1,3 @@
+// Switch and break loan flow: a use after the loop must prevent a premature break-path endpoint.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (true) { char current = *iterator; value.push_back('!'); break; } char later = *iterator; return 0; }  //~ ERROR GTI-S2017

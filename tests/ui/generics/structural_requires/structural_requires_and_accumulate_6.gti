@@ -1,0 +1,6 @@
+// Structural requires and accumulate: generic forwarding should require the outer declaration to prove the callee's exact structural contract with owned public application context and no compiler-private leaf context.
+import std.numeric;
+T invalid_forward<Iterator, Sentinel, std::numeric T>(
+    mut Iterator first, Sentinel last, mut T init) {
+  return std::accumulate(std::move(first), std::move(last), std::move(init));  //~ ERROR GTI-S2029 'std::input_iterator<Iterator>'
+}

@@ -1,0 +1,2 @@
+// Default parameters: a default in an unsupported context (lambda parameters) is rejected.
+int main() { auto fn = [](int value = 1) -> int { return value; }; return 0; }  //~ ERROR GTI-S2077 lambda parameters

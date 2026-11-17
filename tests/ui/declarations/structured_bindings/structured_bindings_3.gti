@@ -1,0 +1,11 @@
+// Structured bindings: owning and borrowed range patterns should reach verified MIR.
+//@ check-pass
+struct Entry<T> { mut T key; mut T value; Entry(T k, T v) : key(k), value(v) {} };
+int main() {
+  mut Entry<int> entries[2] = {Entry<int>(1, 2), Entry<int>(3, 4)};  //~ WARN GTI-S2096
+  mut int sum = 0;
+  for (auto [key, value] : entries) { sum += key + value; }
+  for (auto& [key, value] : entries) { sum += key + value; }
+  for (mut auto& [key, value] : entries) { key += 1; value += key; }
+  return sum - 20;
+}

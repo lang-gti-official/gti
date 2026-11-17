@@ -97,9 +97,10 @@ default. Existing implementation plans may track accepted follow-up work and
 link the RFC. Create an ADR only when the rationale is significant and durable,
 linking its proposal rather than duplicating it.
 
-Validate architectural changes with focused structural tests plus the relevant
-matrix in
-[`docs/architecture/verification.md`](../../../docs/architecture/verification.md).
+Validate architectural changes with focused tests written as
+[Writing Tests](../../../AGENTS.md#writing-tests) says, plus the affected consumers that
+[`docs/architecture/verification.md`](../../../docs/architecture/verification.md)
+records.
 For implementation work, use the `agent-workflow` and `finish-release` skills
 after local validation for PR integration, local-main sync and version policy.
 Respect required PR checks; post-merge packaging does not block completion. Do

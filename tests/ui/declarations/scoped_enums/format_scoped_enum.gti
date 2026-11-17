@@ -1,0 +1,5 @@
+// Scoped enums: the formatter produces stable C++-style scoped enum layout.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+enum class State:uint8_t{Idle,Running=4,Stopped,};

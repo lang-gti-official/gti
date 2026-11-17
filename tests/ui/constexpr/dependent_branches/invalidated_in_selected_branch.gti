@@ -1,0 +1,4 @@
+// Dependent constexpr branch deferral retains concrete flow, declaration checks and resource limits (a mutation in the selected branch invalidates a live view).
+import std.string;
+int bad<uint64_t N>() { mut std::string text = std::string("text"); std::string_view view = text.view(); if constexpr(N == 0) { text.clear(); } return int(view.size()); }  //~ ERROR GTI-S2017 borrow
+int main() { return bad<0>(); }

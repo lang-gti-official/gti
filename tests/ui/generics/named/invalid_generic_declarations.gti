@@ -1,0 +1,36 @@
+// Named generics: duplicate, shadowing and same-name parameters, arity, impossible void metadata, conflicting and missing inference, duck-typed operators, explicit type-argument arity and a generic entry point are rejected semantically.
+//@ error-limit: 0
+class Duplicate<T, T> { public: Duplicate() = default; };  //~ ERROR GTI-S2000
+class SameName<SameName> { public: SameName() = default; };  //~ ERROR GTI-S2000
+class Shadow<T> {
+public:
+  T replace<T>(T value) { return value; }  //~ ERROR GTI-S2000
+public:
+  Shadow() = default;
+};
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+T identity<T>(T value) { return value; }
+T choose<T>(T left, T right) { return left; }
+T unsupported_add<T>(T left, T right) { return left + right; }  //~ ERROR GTI-S2004
+bool unsupported_equal<T>(T left, T right) { return left == right; }  //~ ERROR GTI-S2000
+T make<T>();
+int ordinary(int value) { return value; }
+int main<T>() { return 0; }  //~ ERROR GTI-S2000
+
+int use() {
+  Box missing = Box(1);  //~ ERROR GTI-S2000 //~ ERROR GTI-S2026 //~ ERROR GTI-S2012
+  Box<int, bool> excessive = Box<int, bool>(1);  //~ ERROR GTI-S2000 //~ ERROR GTI-S2026
+  Box<void> impossible = Box<void>(1);  //~ ERROR GTI-S2012 //~ ERROR GTI-S2003
+  int mismatch = identity<int>(true);  //~ ERROR GTI-S2003
+  int conflict = choose(1, true);  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+  int unknown = make();  //~ ERROR GTI-S2023
+  int excessive_types = identity<int, bool>(1);  //~ ERROR GTI-S2026
+  int not_generic = ordinary<int>(1);  //~ ERROR GTI-S2000
+  return 0;
+}

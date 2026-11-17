@@ -158,6 +158,8 @@
   binding: (identifier) @variable)
 (range_for_declaration
   name: (identifier) @variable)
+(range_structured_binding
+  name: (identifier) @variable)
 (static_variable_declaration
   name: (identifier) @variable)
 (class_body

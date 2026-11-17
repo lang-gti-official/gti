@@ -1,0 +1,5 @@
+// Concurrency type capabilities: capability policy misuse gives one focused semantic diagnostic per invalid attribute without parser cascades.
+[[transfer]] class WrongPositive { public: WrongPositive() = default; };  //~ ERROR GTI-S2059
+[[unsafe_share]] interface WrongInterface {};  //~ ERROR GTI-S2059
+[[no_share, unsafe_share]] class Conflicting { public: Conflicting() = default; };  //~ ERROR GTI-S2059
+[[mystery]] struct UnknownPolicy { public: UnknownPolicy() = default; };  //~ ERROR GTI-S2059

@@ -9,7 +9,7 @@ export namespace std::detail {
 // begin < position <= end. These checks also prove that the following ordinary
 // checked addition/subtraction cannot overflow/underflow before publication.
 // Reverse and Decrement are compile-time cursor policies, not runtime flags.
-size_t checked_iterator_step<uint64_t Reverse = 0, uint64_t Decrement = 0>(
+constexpr size_t checked_iterator_step<uint64_t Reverse = 0, uint64_t Decrement = 0>(
     size_t position, size_t begin, size_t end) {
   if constexpr ((Reverse != 0) != (Decrement != 0)) {
     gti_internal::require_container_argument(begin < position && position <= end);
@@ -19,7 +19,7 @@ size_t checked_iterator_step<uint64_t Reverse = 0, uint64_t Decrement = 0>(
   return position + size_t(1);
 }
 
-size_t checked_iterator_position(size_t position, size_t begin, size_t end,
+constexpr size_t checked_iterator_position(size_t position, size_t begin, size_t end,
                                  ptrdiff_t offset, bool subtract = false) {
   gti_internal::require_container_argument(begin <= position && position <= end);
   bool negative = offset < 0;
@@ -35,7 +35,7 @@ size_t checked_iterator_position(size_t position, size_t begin, size_t end,
 
 // Reverse cursors retain the forward one-past base position. Element access
 // selects base - 1 only after the directional jump has itself been checked.
-size_t checked_iterator_element(size_t position, size_t begin, size_t end,
+constexpr size_t checked_iterator_element(size_t position, size_t begin, size_t end,
                                 ptrdiff_t offset, bool reverse = false) {
   mut size_t selected = checked_iterator_position(position, begin, end, offset, reverse);
   if (reverse) {
@@ -47,7 +47,7 @@ size_t checked_iterator_element(size_t position, size_t begin, size_t end,
 
 // Subtract unsigned coordinates before converting. Large absolute positions
 // can still have a small representable distance, and INT64_MIN is valid.
-ptrdiff_t checked_iterator_difference(size_t left, size_t right) {
+constexpr ptrdiff_t checked_iterator_difference(size_t left, size_t right) {
   size_t maximum = size_t(9223372036854775807);
   if (left >= right) {
     size_t magnitude = left - right;

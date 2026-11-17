@@ -1,0 +1,66 @@
+// Range-based for over std::vector runs during constant evaluation through
+// the same source-defined cursors as at run time, including control flow,
+// nested and mutable traversal, and an owned range temporary.
+//@ run-pass
+import std.vector;
+
+constexpr std::vector<int> make_values(int count) {
+  mut std::vector<int> values{};
+  for (mut int i = 1; i <= count; i++) { values.push_back(i); }
+  return values;
+}
+
+constexpr int vector_sum() {
+  std::vector<int> values = make_values(3);
+  mut int sum = 0;
+  for (auto x : values) { sum += x; }
+  return sum;
+}
+
+constexpr int vector_control() {
+  std::vector<int> values = make_values(8);
+  mut int sum = 0;
+  for (auto& x : values) {
+    if (x % 2 == 0) { continue; }
+    if (x > 6) { break; }
+    sum += x;
+  }
+  return sum;
+}
+
+constexpr int vector_nested_return() {
+  std::vector<int> values = make_values(4);
+  for (auto a : values) {
+    for (auto b : values) {
+      if (a * b == 6) { return a * 10 + b; }
+    }
+  }
+  return 0;
+}
+
+constexpr int vector_mutate() {
+  mut std::vector<int> values = make_values(3);
+  for (mut auto& x : values) { x = x * x; }
+  mut int sum = 0;
+  for (auto x : values) { sum += x; }
+  return sum;
+}
+
+// The range is an owned temporary destroyed after the loop.
+constexpr int vector_temporary() {
+  mut int sum = 0;
+  for (auto x : make_values(5)) { sum += x; }
+  return sum;
+}
+
+static_assert(vector_sum() == 6);
+static_assert(vector_control() == 9);
+static_assert(vector_nested_return() == 23);
+static_assert(vector_mutate() == 14);
+static_assert(vector_temporary() == 15);
+
+int main() {
+  if (vector_sum() != 6 || vector_control() != 9 || vector_nested_return() != 23) { return 1; }
+  if (vector_mutate() != 14 || vector_temporary() != 15) { return 2; }
+  return 0;
+}

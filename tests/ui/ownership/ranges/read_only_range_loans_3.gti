@@ -1,0 +1,14 @@
+// Read only range loans: read-only range diagnostics should reject mutation, escaping element loans, mutable bindings, and unsupported range forms.
+int& escape_element() {  //~ ERROR GTI-S2017
+  int values[2] = {1, 2};
+  for (auto& value : values) { return value; }
+  return values[0];
+}
+
+int main() {
+  int values[2] = {1, 2};
+  for (auto& value : values) { value = 3; }  //~ ERROR GTI-S2002
+  for (mut auto& value : values) { value = 4; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2083
+  for (int value : 42) { return value; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2022 //~ ERROR GTI-S2083
+  return 0;
+}

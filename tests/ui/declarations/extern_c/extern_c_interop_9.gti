@@ -1,0 +1,5 @@
+// Extern c interop: a namespaced C declaration must not collide with the unmangled GTI entry point.
+namespace native {
+extern "C" { [[link_name("main")]] int32_t native_main(); }  //~ ERROR GTI-S2054
+}
+int main() { return native::native_main(); }

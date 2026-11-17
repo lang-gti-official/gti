@@ -1,0 +1,2 @@
+// Out-of-class methods: a separate definition cannot rescue an unsupplied result region.
+struct Relay { static int&<a> choose<lifetime a>(int& input, int& unused); }; int& Relay::choose(int& value, int& other) { return value; } int main() { return 0; }  //~ ERROR GTI-S2127 //~ ERROR GTI-S2017

@@ -1,0 +1,11 @@
+// Concurrent global policy: the concurrent profile rejects mutable external, internal and class-static storage with one diagnostic per declaration.
+//@ execution-profile: concurrent
+mut int namespace_count = 0;  //~ ERROR GTI-S2060 requires namespace global
+static mut int internal_count = 0;  //~ ERROR GTI-S2060
+class Registry {
+public:
+  static mut int current = 0;  //~ ERROR GTI-S2060 requires static field 'current' to be immutable
+public:
+  Registry() = default;
+};
+int main() { return namespace_count + internal_count + Registry::current; }

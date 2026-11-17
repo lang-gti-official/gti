@@ -1,0 +1,15 @@
+// Stored carrier return provenance: an ordinary reference-return summary should not launder a same-typed projection of the carried referent.
+class Node {
+public:
+  Node& next;
+  Node(Node& source, int tag) : next(source) {}
+};
+class NodeCarrier {
+public:
+  Node& referent;
+  NodeCarrier(Node& source) : referent(source) {}
+};
+Node& project(Node& source) { return source.next; }
+Node& escape_through_helper(NodeCarrier carrier) {
+  return project(carrier.referent);  //~ ERROR GTI-S2085
+}

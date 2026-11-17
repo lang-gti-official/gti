@@ -1,0 +1,8 @@
+// Contextual integer literal arguments: an exact int32_t candidate should win the first tier, so the uint64_t overload is never selected by a plain literal.
+int pick(int value) { return value; }
+uint64_t pick(uint64_t value) { return value; }
+
+int main() {
+  uint64_t mismatch = pick(5);  //~ ERROR GTI-S2003 Cannot initialize 'mismatch' of type 'uint64_t' with a value of type 'int32_t'
+  return 0;
+}

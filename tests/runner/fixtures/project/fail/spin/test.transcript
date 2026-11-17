@@ -1,0 +1,2 @@
+// A command over the transcript's CPU budget times out.
+$ sh -c "while :; do :; done"

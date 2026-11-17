@@ -1,0 +1,4 @@
+// Stored reference standard string ranges: a retained string iterator should release its owner after its last straight-line use.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); char first = *iterator; value.push_back('!'); return 0; }

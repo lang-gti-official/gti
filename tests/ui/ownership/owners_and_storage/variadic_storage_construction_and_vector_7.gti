@@ -1,0 +1,26 @@
+// Variadic storage construction and vector: storage relocation should reject an element with deleted move construction before backend generation.
+import std.memory;
+std::storage<T> fixture_storage<T>(uint64_t count) requires std::storage_element<T> {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<T>(count);
+  return std::move(allocated).expect("test storage allocation");
+}
+
+class Stationary {
+  int32_t value = 0;
+
+public:
+  Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
+};
+
+int main() {
+  mut std::storage<Stationary> source =
+      fixture_storage<Stationary>(uint64_t(1));
+  mut std::storage<Stationary> destination =
+      fixture_storage<Stationary>(uint64_t(1));
+  source.emplace(uint64_t(0));
+  source.relocate_to(destination, uint64_t(1));  //~ ERROR GTI-S2029
+  return 0;
+}

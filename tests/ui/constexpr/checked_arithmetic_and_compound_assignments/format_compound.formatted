@@ -1,0 +1,17 @@
+// Checked arithmetic and compound assignments: the formatter spaces every compound operator, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+void update(mut int value) {
+  value *= 2;
+  value /= 2;
+  value %= 3;
+  value &= 1;
+  value |= 2;
+  value ^= 3;
+  value <<= 1;
+  value >>= 1;
+}
+int main() {
+  return 0;
+}

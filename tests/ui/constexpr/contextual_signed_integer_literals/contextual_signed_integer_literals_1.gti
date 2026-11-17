@@ -1,0 +1,6 @@
+// Contextual signed integer literals: signed literal operands should adopt the other integer operand's exact type through HIR.
+//@ check-pass
+bool matches_boundaries(int8_t narrow, int32_t wide, int64_t widest) {
+  return narrow == -1 and (-128) <= narrow and
+         wide == -2147483648 and widest == -(9223372036854775808);
+}

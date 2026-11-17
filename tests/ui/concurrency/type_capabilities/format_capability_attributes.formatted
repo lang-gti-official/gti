@@ -1,0 +1,7 @@
+// Concurrency type capabilities: capability attributes format idempotently with C++-familiar declaration placement.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+[[no_transfer, no_share]] class NativeHandle {
+  int descriptor = 0;
+};

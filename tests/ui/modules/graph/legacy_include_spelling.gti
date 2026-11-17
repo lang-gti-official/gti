@@ -1,0 +1,7 @@
+// The removed include spelling gets one migration diagnostic.
+// --- main.gti
+include "branch.gti"  //~ ERROR GTI-I0009
+int main() { return 0; }
+// --- branch.gti
+export module branch;
+export int branch_value() { return 1; }

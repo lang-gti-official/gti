@@ -1,0 +1,7 @@
+// Standard string: std::print and std::println should accept every type satisfying the fixed-width integral constraint.
+//@ check-pass
+int main() {
+  std::print(int8_t(-128));
+  std::println(uint64_t(18446744073709551615));
+  return 0;
+}

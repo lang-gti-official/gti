@@ -1,0 +1,23 @@
+// Writable and movement iterator capabilities: a forward-only cursor should fail std::bidirectional_iterator.
+import std.iterator;
+
+class ForwardOnly {
+  mut int32_t value = 0;
+
+public:
+  ForwardOnly() {}
+  int32_t& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(ForwardOnly& other) { return false; }
+};
+
+void walk_back<Iterator>(mut Iterator iterator)
+  requires std::bidirectional_iterator<Iterator> {
+  --iterator;
+}
+
+int use() {
+  mut ForwardOnly cursor = ForwardOnly();
+  walk_back(std::move(cursor));  //~ ERROR GTI-S2029 satisfy concept 'std::bidirectional_iterator
+  return 0;
+}

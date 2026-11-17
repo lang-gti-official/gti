@@ -1,0 +1,2 @@
+// This receiver keyword: this should be rejected outside an instance method.
+int main() { return this.value; }  //~ ERROR GTI-S2000

@@ -1,0 +1,10 @@
+// Program initialization plans: lexical and temporary cleanup should close over exact destructor effects before accepting a program initializer.
+class Probe {
+public:
+  Probe() {}
+  ~Probe() { Probe::later = 1; }
+  static int32_t make_probe() { Probe probe = Probe(); return 1; }
+  static mut int32_t first = Probe::make_probe();  //~ ERROR GTI-S2068
+  static mut int32_t later = 0;
+};
+int main() { return Probe::first; }

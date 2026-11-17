@@ -1,0 +1,34 @@
+// Concrete application special members: generic applications over move-only and scalar payloads should verify.
+//@ check-pass
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+};
+
+enum class state<T> { empty, engaged(T value) };
+
+class maybe<T> {
+  mut state<T> slot;
+public:
+  maybe() : slot(state<T>::empty) {}
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+  int get() { return 1; }
+};
+
+class box<T> {
+  mut T item;
+public:
+  box() requires std::default_initializable<T> : item(T()) {}
+  box(T value) : item(std::move(value)) {}
+  int get() { return 1; }
+};
+
+int main() {
+  maybe<Tracked> owned = maybe<Tracked>(Tracked(3));
+  maybe<int> scalar = maybe<int>();
+  box<Tracked> boxed = box<Tracked>(Tracked(5));
+  box<int> zero = box<int>();
+  return owned.get() + scalar.get() + boxed.get() + zero.get() - 4;
+}

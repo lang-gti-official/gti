@@ -9,13 +9,14 @@
 
 namespace lang {
 
-// Per-request compile-time resource limits: implementation quantities in the
-// sense of C++ [implimits]. A limit bounds one request (one constexpr binding,
-// static assertion, array extent, value-generic argument, compile-time branch
-// condition, immediate invocation, macro invocation or `constexpr for`
-// statement) and never accumulates across a module or compilation. The
-// language reference guarantees each limit's minimum; programs that stay
-// within every minimum are portable, and the compiler's defaults may exceed it.
+// Analysis and per-request compile-time resource limits: implementation
+// quantities in the sense of C++ [implimits]. A limit bounds one request (one
+// constexpr binding, static assertion, array extent, value-generic argument,
+// compile-time branch condition, immediate invocation, macro invocation or
+// `constexpr for` statement) and never accumulates across a module or
+// compilation. The language reference guarantees each limit's minimum; programs
+// that stay within every minimum are portable, and the compiler's defaults may
+// exceed it.
 //
 // One value of this type configures a whole compilation: the command line
 // overrides the root package's `[limits]` table, which overrides these
@@ -24,6 +25,9 @@ namespace lang {
 // expansion, and editor analysis) reads the same value, and it participates
 // in every cache and build identity whose result it can change.
 struct CompileLimits {
+  // Errors per frontend analysis, unlike the per-evaluation budgets below.
+  // Zero disables this limit. Warnings and notes do not count.
+  std::size_t errorLimit = 20;
   // Constant-evaluation steps per request (Clang -fconstexpr-steps).
   std::size_t constexprSteps = 1048576;
   // Nested constant-evaluation calls, including staged evaluation, per
@@ -72,7 +76,8 @@ struct CompileLimitInfo {
 [[nodiscard]] const CompileLimitInfo &
 compileLimitInfo(std::size_t CompileLimits::*field);
 
-// A setting is a decimal integer in [1, maximum]. On failure the result is
+// A setting is a decimal integer in [1, maximum] (or [0, maximum] for
+// error-limit, where zero means unlimited). On failure the result is
 // empty and `error` explains why, without naming where the value came from.
 [[nodiscard]] std::optional<std::size_t>
 parseCompileLimitValue(const CompileLimitInfo &limit, std::string_view text,

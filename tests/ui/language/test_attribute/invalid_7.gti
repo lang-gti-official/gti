@@ -1,0 +1,2 @@
+// [[test]] rejects a member function, reported at the attribute.
+struct Owner { [[test]] void invalid() {}  public: Owner() = default; };  //~ ERROR GTI-S2099

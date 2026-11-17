@@ -1,0 +1,5 @@
+// Stored reference branch invalidation3: a nested path that mutates and terminates should end at its branch entry without shortening a later sibling-path use.
+//@ check-pass
+import std.string;
+int consume(bool stop) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { if (stop) { value.push_back('!'); return 1; } char first = *iterator; } return 0; }
+int main() { return consume(false); }

@@ -610,6 +610,20 @@ int main() { auto text = Text::value("static"); return 0; }
                !hasDiagnosticCode(rejected.diagnostics, "GTI-S2045") &&
                !hasDiagnosticCode(rejected.diagnostics, "GTI-B0001"),
            "enum payload use protects the retained owner after moving a view");
+    const auto escapingPayload = lang::Frontend().analyze(
+        "dynamic-text-payload-escape.gti",
+        "import std.string;\nenum Text { empty, value(std::string_view "
+        "text) };\n"
+        "Text escape() { std::string owner{\"owned\"}; "
+        "std::string_view view = owner.view(); auto text = Text::value(" +
+            expression +
+            "); return text; }\nint main() { auto text = escape(); return 0; }",
+        {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    expect(!escapingPayload.canGenerateCode() &&
+               hasDiagnosticCode(escapingPayload.diagnostics, "GTI-S2017") &&
+               !hasDiagnosticCode(escapingPayload.diagnostics, "GTI-B0001"),
+           "ordinary enum storage of dynamic text, including moved views, "
+           "cannot escape its owner");
   }
 
   for (const std::string storage :

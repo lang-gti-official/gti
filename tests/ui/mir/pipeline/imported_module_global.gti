@@ -1,0 +1,8 @@
+// Frontend backend and optimization pipeline: an imported module's exported global is analysed with its importer.
+//@ check-pass
+// --- main.gti
+import "dependency.gti";
+int main() { return dependency_value; }
+// --- dependency.gti
+export module gti_source_overlay_dependency;
+export int dependency_value = 0;

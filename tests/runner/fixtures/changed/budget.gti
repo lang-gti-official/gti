@@ -1,0 +1,3 @@
+// Passes using three quarters of its limit: over the --changed budget.
+//@ runner-fault: three-quarters
+int main() { return 0; }

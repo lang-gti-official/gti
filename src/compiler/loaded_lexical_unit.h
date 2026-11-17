@@ -24,6 +24,7 @@ struct LexicalUnitRequest {
   std::uint64_t sourceGeneration = 0;
   std::uint64_t knownSourceDigest = 0;
   std::string_view cacheContext;
+  std::size_t errorLimit = 0;
 };
 
 struct LoadedLexicalUnit {

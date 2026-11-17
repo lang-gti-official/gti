@@ -1,0 +1,9 @@
+// Complete range concepts and algorithms: range_of should reject a complete range whose exact referent differs.
+import std.iterator;
+bool accepts<Range>(Range& values) requires std::range_of<Range, int16_t> {
+  return true;
+}
+int main() {
+  int32_t[2] values = {1, 2};
+  return accepts(values) ? 0 : 1;  //~ ERROR GTI-S2029
+}

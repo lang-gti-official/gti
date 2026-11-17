@@ -1,0 +1,111 @@
+// Range-based for at compile time. The same loops over a fixed array, a
+// std::vector, a std::array and an application's own range run during
+// constant evaluation and at run time. Nothing is recognized by name: each
+// range's begin()/end() and its cursor's operators are ordinary constexpr
+// members, and a cursor that keeps a reference to its range writes through it.
+import std.array;
+import std.vector;
+
+// Tile weights for a small level, keyed by tile kind.
+constexpr int path_cost() {
+  int weights[5] = {1, 1, 4, 1, 9};
+  mut int cost = 0;
+  for (auto weight : weights) {
+    // Impassable tiles end the walk.
+    if (weight >= 9) { break; }
+    cost += weight;
+  }
+  return cost;
+}
+
+// Spawn points produced by a vector, filtered with continue.
+constexpr std::vector<int> spawn_points(int count) {
+  mut std::vector<int> points{};
+  for (mut int i = 0; i < count; i++) { points.push_back(i * 3); }
+  return points;
+}
+
+constexpr int even_spawns(int count) {
+  mut int found = 0;
+  for (auto point : spawn_points(count)) {
+    if (point % 2 != 0) { continue; }
+    found += 1;
+  }
+  return found;
+}
+
+// A mutable loop scales a std::array in place before it is summed.
+constexpr int scaled_budget(int factor) {
+  mut std::array<int, 3> budget = std::array<int, 3>({2, 3, 5});
+  for (mut auto& slice : budget) { slice = slice * factor; }
+  mut int total = 0;
+  for (auto& slice : budget) { total += slice; }
+  return total;
+}
+
+// An application range: a ring of lights and a cursor that refers to it.
+class LightRing {
+  mut int levels[4];
+public:
+  constexpr LightRing(int base) : levels({base, base + 2, base + 4, base + 6}) {}
+  constexpr int& level(std::size_t index) { return this.levels[index]; }
+  constexpr mut int& level_mut(std::size_t index) mut { return this.levels[index]; }
+  constexpr LightCursor begin() { return LightCursor(this, std::size_t(0)); }
+  constexpr LightWriter begin_mut() mut { return LightWriter(this, std::size_t(0)); }
+  constexpr LightEnd end() { return LightEnd(std::size_t(4)); }
+};
+
+class LightEnd {
+  std::size_t at;
+public:
+  constexpr LightEnd(std::size_t at) : at(at) {}
+  constexpr std::size_t position() { return this.at; }
+};
+
+class LightCursor {
+  LightRing& ring;
+  mut std::size_t index;
+public:
+  constexpr LightCursor(LightRing& ring, std::size_t index) : ring(ring), index(index) {}
+  constexpr int& operator*() { return this.ring.level(this.index); }
+  constexpr void operator++() mut { this.index = this.index + std::size_t(1); }
+  constexpr bool operator!=(LightEnd end) { return this.index != end.position(); }
+};
+
+class LightWriter {
+  mut LightRing& ring;
+  mut std::size_t index;
+public:
+  constexpr LightWriter(mut LightRing& ring, std::size_t index) : ring(ring), index(index) {}
+  constexpr int& operator*() { return this.ring.level(this.index); }
+  constexpr mut int& operator*() mut { return this.ring.level_mut(this.index); }
+  constexpr void operator++() mut { this.index = this.index + std::size_t(1); }
+  constexpr bool operator!=(LightEnd end) { return this.index != end.position(); }
+};
+
+// Dims every light, then reports the brightest one.
+constexpr int brightest_after_dimming(int base) {
+  mut LightRing ring = LightRing(base);
+  for (mut auto& level : ring) { level = level - 1; }
+  mut int brightest = 0;
+  for (auto level : ring) {
+    if (level > brightest) { brightest = level; }
+  }
+  return brightest;
+}
+
+constexpr int level_cost = path_cost();
+static_assert(level_cost == 7);
+static_assert(even_spawns(6) == 3);
+static_assert(scaled_budget(10) == 100);
+static_assert(brightest_after_dimming(1) == 6);
+
+int main() {
+  // A compile-time loop result sizes a table.
+  int cost_table[level_cost] = {};
+  if (sizeof(int[level_cost]) != sizeof(int) * std::size_t(7)) { return 1; }
+  // The same functions agree at run time.
+  if (path_cost() != level_cost || even_spawns(6) != 3) { return 2; }
+  if (scaled_budget(10) != 100 || brightest_after_dimming(1) != 6) { return 3; }
+  return 0;
+}

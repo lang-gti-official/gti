@@ -70,6 +70,10 @@
   "[" @delimiter
   "]" @delimiter) @container
 
+(range_structured_binding
+  "[" @delimiter
+  "]" @delimiter) @container
+
 (discarded_expression_statement
   "[[" @delimiter
   "]]" @delimiter) @container

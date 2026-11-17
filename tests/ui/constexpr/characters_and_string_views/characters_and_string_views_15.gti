@@ -1,0 +1,2 @@
+// Characters and string views: aliases must preserve the character conversion rule.
+using CodeUnit = char; char convert(int runtime) { return CodeUnit(true); }  //~ ERROR GTI-S2014

@@ -1,0 +1,16 @@
+// Compile time conditionals: configuration is source-local; flags defined before an import do not enter the module, and the module's do not escape.
+//@ check-pass
+// --- main.gti
+#define BEFORE_IMPORT
+import "flags.gti";
+#ifdef FROM_IMPORT
+#error "module flags escaped"
+#endif
+int main() { return imported_value(); }
+// --- flags.gti
+export module flags;
+#ifdef BEFORE_IMPORT
+#error "importer flags entered module"
+#endif
+#define FROM_IMPORT
+export int imported_value() { return 0; }

@@ -1,0 +1,63 @@
+// Consteval: fifty identical immediate constructions, each a 1000-iteration loop, fit the default request budget.
+//@ check-pass
+struct Checked {
+  int value;
+  implicit consteval Checked(int value) : value(value) {
+    mut int total = 0;
+    for (mut int index = 0; index < 1000; index++) { total += index; }
+  }
+};
+int consume(Checked checked) { return checked.value; }
+int main() { mut int total = 0;
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  total += consume(7);
+  return total - 350;
+}

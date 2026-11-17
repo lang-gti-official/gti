@@ -1,0 +1,17 @@
+// Variadic generics: a bounded call pack fold should select and lower every concrete element in source order.
+//@ check-pass
+void touch<T>(mut int& count, T& value) { count++; }
+void other<T>(mut int& count, T& value) { count += 10; }
+
+int visit_all<Values...>(Values... values) {
+  mut int count = 0;
+  (touch(count, values), ...);
+  return count;
+}
+
+int main() {
+  mut int count = 0;
+  int value = 1;
+  other(count, value);
+  return visit_all(1, true, uint64_t(3)) - 3;
+}

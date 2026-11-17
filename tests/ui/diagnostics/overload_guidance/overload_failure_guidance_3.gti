@@ -1,0 +1,4 @@
+// Overload failure guidance: defaults and generic packs must not be misreported as arity failures.
+int select(int value, int tail = 0) { return value; }
+int select(bool value) { return 0; }
+int main() { return select("wrong", 2); }  //~ ERROR GTI-S2012

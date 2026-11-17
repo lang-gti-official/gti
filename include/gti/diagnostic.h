@@ -100,6 +100,16 @@ hasErrorDiagnostics(std::span<const Diagnostic> diagnostics) {
   return false;
 }
 
+// Cooperative frontend work budget. Inspect committed diagnostics only: a
+// speculative query may discard its errors and must not consume this budget.
+[[nodiscard]] std::size_t
+errorDiagnosticCount(std::span<const Diagnostic> diagnostics);
+[[nodiscard]] bool errorLimitReached(std::span<const Diagnostic> diagnostics,
+                                     std::size_t limit);
+// Retains at most limit errors and emits one terminal diagnostic. Returns
+// true when analysis must stop. Zero means unlimited.
+bool applyErrorLimit(std::vector<Diagnostic> &diagnostics, std::size_t limit);
+
 // Immutable diagnostic presentation policy resolved by a driver adapter.
 // Warning groups are compiler-owned stable names such as `unused-mut`; only
 // diagnostics whose registered severity is Warning can be suppressed.

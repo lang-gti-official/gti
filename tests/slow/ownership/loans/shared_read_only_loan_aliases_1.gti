@@ -1,0 +1,46 @@
+// Shared read only loan aliases: shared read-only aliases should end after every carrier's final reachable use.
+//@ slow
+//@ check-pass
+import std.string;
+
+int sequential_aliases() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::string::const_iterator& alias = iterator;
+  std::string::const_iterator& second_alias = alias;
+  char first = *iterator;
+  char second = *alias;
+  char third = *second_alias;
+  value.push_back('!');
+  return 0;
+}
+
+int conditional_aliases(bool use_original) {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::string::const_iterator& alias = iterator;
+  if (use_original) {
+    char first = *iterator;
+  } else {
+    char second = *alias;
+  }
+  value.push_back('!');
+  return 0;
+}
+
+int loop_aliases() {
+  mut std::string value = std::string("gti");
+  mut auto iterator = value.begin();
+  std::string::const_iterator& alias = iterator;
+  mut int index = 0;
+  while (index < 2) {
+    if (index == 0) {
+      char first = *iterator;
+    } else {
+      char second = *alias;
+    }
+    index++;
+  }
+  value.push_back('!');
+  return 0;
+}

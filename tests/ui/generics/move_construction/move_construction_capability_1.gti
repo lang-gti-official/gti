@@ -1,0 +1,19 @@
+// Move construction capability: construction-only user cursors and stronger symbolic contracts should satisfy move construction without requiring assignment.
+//@ check-pass
+class Cursor {
+  int& source;
+public:
+  Cursor(int& value) : source(value) {}
+};
+bool accepts<T>(T& value) requires std::move_constructible<T> { return true; }
+bool from_movable<std::movable T>(T& value) { return accepts(value); }
+bool from_relocation<std::relocatable T>(T& value) { return accepts(value); }
+bool from_either<T>(T& value)
+  requires std::movable<T> || std::relocatable<T> { return accepts(value); }
+int main() {
+  int source = 7;
+  Cursor cursor{source};
+  if (accepts(cursor) && from_movable(source) && from_relocation(source) &&
+      from_either(source)) { return 0; }
+  return 1;
+}

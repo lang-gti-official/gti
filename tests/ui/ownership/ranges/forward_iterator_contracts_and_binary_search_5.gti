@@ -1,0 +1,17 @@
+// Forward iterator contracts and binary search: a read-receiver method on a by-value mut cursor parameter must pass MIR verification: the entry loan protects the caller's storage, not the carrier object itself.
+//@ check-pass
+import std.iterator;
+import std.vector;
+
+bool probe<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  return first != last;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>(std::size_t(2));
+  auto last = values.end();
+  bool inside = probe(values.begin_mut(), last);
+  return inside ? 0 : 1;
+}

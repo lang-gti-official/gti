@@ -1,0 +1,27 @@
+// A generic enum's variant completes with its substituted payload types,
+// through an alias and through explicit arguments with a value parameter.
+// (generic_enum_lsp_test.py, completion details.)
+//@ completion-detail @alias item: int32_t payload, int64_t detail
+//@ completion @alias: item idle
+//@ completion-detail @explicit item: bool payload, bool detail
+// --- main.gti
+import "messages.gti";
+using Count = Message<int32_t>;
+int main() {
+  /* 😀 */ auto first = Count::/*@alias*/item(1, int64_t(2));
+  auto second = Message<bool, bool, 7>::/*@explicit*/item(true, false);
+  switch (first) {
+    case Message<int32_t>::idle: return 1;
+    case Message<int32_t>::item(payload, detail): break;
+  }
+  switch (second) {
+    case Message<bool, bool, 7>::idle: return 2;
+    case Message<bool, bool, 7>::item(payload, detail): return 0;
+  }
+}
+// --- messages.gti
+export module messages;
+export enum Message<T, U = int64_t, uint64_t Channel = 3> {
+  idle,
+  item(T payload, U detail)
+};

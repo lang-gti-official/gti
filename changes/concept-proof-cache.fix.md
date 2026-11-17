@@ -1,0 +1,1 @@
+Speed up concept-requirement checking by reusing sealed declaration-catalog copies across requirement-query workers; `import std` and similar programs analyze about 15-20% faster with unchanged output.

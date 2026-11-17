@@ -1,0 +1,4 @@
+// Function contracts: an incomplete function attribute is a declaration-neutral parser error and the next function is recovered.
+//@ parse-fail
+[[noreturn void broken() {}  //~ ERROR GTI-P0001
+int recovered() { return 0; }

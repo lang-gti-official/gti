@@ -1,0 +1,8 @@
+// Consteval: checked constructors observe exact constant references and trailing defaults.
+//@ check-pass
+struct Checked {
+  int value;
+  implicit consteval Checked(int& value, int extra = 2) : value(value + extra) {}
+};
+int use(Checked checked) { return checked.value; }
+int main() { return use(3) - 5; }

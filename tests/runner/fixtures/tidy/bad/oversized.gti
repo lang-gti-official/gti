@@ -1,0 +1,3 @@
+// An expected file over the size limit.
+//@ snapshot: format
+int main() { return 0; }

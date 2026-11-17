@@ -1,0 +1,7 @@
+// Constructor-local generics: a constructor-local type parameter is not visible to later class members.
+class Scoped {
+public:
+  Scoped<T>(T value) {}
+  T leak;  //~ ERROR GTI-S2000 //~ ERROR GTI-S2000
+};
+int main() { return 0; }

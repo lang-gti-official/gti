@@ -1,0 +1,22 @@
+// Arrow non-class referents: text members are called through a checked operator-> returning a string_view reference, and through optional's arrow.
+//@ snapshot: mir
+//@ mir-function: main
+// Arrow text members lower to their builtin observers.
+// CHECK: intrinsic=string-view-size
+// CHECK: intrinsic=string-view-empty
+//@ check-pass
+import std.string;
+import std.optional;
+class Label {
+public:
+  std::string_view text;
+  Label(std::string_view text) : text(text) {}
+  std::string_view& operator->() { return this.text; }
+};
+int main() {
+  Label label = Label("label");
+  std::string_view text = "text";
+  std::optional<std::string_view> maybe = text;
+  uint64_t total = label->size() + maybe->size() + label->end().position();
+  return label->empty() || total != 14 ? 1 : 0;
+}

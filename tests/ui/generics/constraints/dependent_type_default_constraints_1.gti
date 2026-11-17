@@ -1,0 +1,17 @@
+// Dependent type default constraints: dependent defaults should defer unresolved constraints and an explicit argument should bypass an unused default.
+//@ check-pass
+class Ordered<std::totally_ordered T> { public: Ordered() = default; };
+class NotOrdered { public: NotOrdered() = default; };
+class Holder<T, Compare = Ordered<T>> { public: Holder() = default; };
+class Nested<T, Compare = Holder<T>> { public: Nested() = default; };
+class Constrained<T, std::integral U = T> { public: Constrained() = default; };
+
+int main() {
+  Holder<int> ordinary{};
+  Holder<NotOrdered, int> customized{};
+  Nested<int> nested{};
+  Nested<NotOrdered, int> nested_customized{};
+  Constrained<int> constrained{};
+  Constrained<double, int> constrained_customized{};
+  return 0;
+}

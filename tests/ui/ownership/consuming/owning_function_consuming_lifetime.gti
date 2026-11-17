@@ -1,0 +1,95 @@
+// Consuming erased callbacks retain captures through the caller expression.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6 run7
+//@[run1] stdout: 1
+//@[run1] stdout: 2
+//@[run1] stdout: 3
+//@[run1] stdout: 7
+//@[run1] stdout: 5
+//@[run1] stdout: 99
+//@[run2] run-fail
+//@[run2] args: case
+//@[run2] exit-code: 70
+//@[run2] stdout: 1
+//@[run2] stdout: 7
+//@[run2] stdout: 99
+//@[run2] stderr-contains: owning_function_consuming_lifetime.gti:36: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: case case
+//@[run3] exit-code: 70
+//@[run3] stdout: 1
+//@[run3] stdout: 2
+//@[run3] stdout: 7
+//@[run3] stdout: 99
+//@[run3] stderr-contains: owning_function_consuming_lifetime.gti:20: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: case case case
+//@[run4] exit-code: 70
+//@[run4] stdout: 99
+//@[run4] stderr-contains: <std/detail/memory_core>:
+//@[run4] stderr-contains: : runtime error[GTI-R0008]: empty_owner_access in dereference
+//@[run5] run-fail
+//@[run5] args: case case case case
+//@[run5] exit-code: 70
+//@[run5] stdout: 1
+//@[run5] stdout: 2
+//@[run5] stdout: 3
+//@[run5] stdout: 7
+//@[run5] stdout: 99
+//@[run5] stderr-contains: owning_function_consuming_lifetime.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run6] run-fail
+//@[run6] args: case case case case case
+//@[run6] exit-code: 70
+//@[run6] stdout: 1
+//@[run6] stdout: 7
+//@[run6] stderr-contains: owning_function_consuming_lifetime.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at owning_function_consuming_lifetime.gti:36; secondary [GTI-R0002]
+//@[run7] run-fail
+//@[run7] args: case case case case case case
+//@[run7] exit-code: 70
+//@[run7] stdout: 1
+//@[run7] stdout: 2
+//@[run7] stdout: 7
+//@[run7] stderr-contains: owning_function_consuming_lifetime.gti:13: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at owning_function_consuming_lifetime.gti:20; secondary [GTI-R0002]
+// --- owning_function_consuming_lifetime.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+class Token {
+  int identity;
+  int cleanup_divisor;
+public:
+  Token(int identity, int cleanup_divisor = 1)
+      : identity(identity), cleanup_divisor(cleanup_divisor) {}
+  ~Token() {
+    std::println(this.identity);
+    int checked = 1 / this.cleanup_divisor;
+  }
+  int read() { return 14; }
+};
+
+int later(int divisor) {
+  std::println(2);
+  return 6 / divisor;
+}
+
+int combine(int first, int second) {
+  std::println(3);
+  return first + second;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Token caller{99};
+  mut std::move_only_function<int() &&> callback{};
+  if (argc != 4) {
+    Token resource{7, argc >= 5 ? 0 : 1};
+    int divisor = argc == 2 || argc == 6 ? 0 : 1;
+    callback.replace([value = std::move(resource), divisor]() -> int {
+      std::println(1);
+      return value.read() / divisor;
+    });
+  }
+  int result = combine(std::move(callback)(), later(argc == 3 || argc == 7 ? 0 : 1));
+  std::println(5);
+  return result - 20;
+}

@@ -1,0 +1,1 @@
+export module main; export int answer() { return 42; }

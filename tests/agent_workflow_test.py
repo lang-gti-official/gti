@@ -43,6 +43,7 @@ class GitHub:
         self.ready_calls = []
         self.pending_checks = False
         self.auto_calls = []
+        self.dequeue_calls = []
         self.lose_auto_response = False
         self.reject_disable = False
 
@@ -147,6 +148,10 @@ class GitHub:
             pr["auto_merge"] = None
             return {"disablePullRequestAutoMerge": {"clientMutationId": None}}
         if "dequeuePullRequest" in query:
+            # GitHub's DequeuePullRequestInput takes `id`, not `pullRequestId`.
+            if "dequeuePullRequest(input: {id: $id})" not in query:
+                raise Error("InputObject 'DequeuePullRequestInput' doesn't accept argument 'pullRequestId'")
+            self.dequeue_calls.append(pr["number"])
             pr["in_queue"] = False
             return {"dequeuePullRequest": {"clientMutationId": None}}
         if "markPullRequestReadyForReview" in query:
@@ -539,9 +544,26 @@ class Lifecycle(unittest.TestCase):
         self.api.queue_async = True
         self.flow.finish("task", "description", rollup=False)
         self.checkpoint("new head after queue entry\n")
+        self.assertEqual(self.api.dequeue_calls, [1])
         self.assertFalse(self.api.prs[0]["in_queue"])
         self.assertIsNone(self.api.prs[0]["auto_merge"])
         self.assertNotIn("queued", self.flow.load("task"))
+
+    def test_pr_only_and_reconcile_dequeue_queued_pr(self):
+        self.ready()
+        self.api.queue_async = True
+        self.flow.finish("task", "description", rollup=False)
+        self.assertTrue(self.api.prs[0]["in_queue"])
+        self.flow.finish("task", "description", pr_only=True)
+        self.assertEqual(self.api.dequeue_calls, [1])
+        self.assertFalse(self.api.prs[0]["in_queue"])
+        self.assertNotIn("queued", self.flow.load("task"))
+        self.flow.finish("task", "description", rollup=False)
+        self.assertTrue(self.api.prs[0]["in_queue"])
+        self.advance_remote()
+        self.flow.reconcile("task")
+        self.assertEqual(self.api.dequeue_calls, [1, 1])
+        self.assertFalse(self.api.prs[0]["in_queue"])
 
     def test_changed_head_cannot_arm_auto_merge(self):
         self.ready()

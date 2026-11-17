@@ -1,0 +1,12 @@
+// std::try_print rejects an unformattable argument 1 at its public contract.
+//@ check-fail
+import std.panic;
+import std.format;
+import std.string;
+struct Opaque { int value = 1; public: Opaque() = default; };
+int main() {
+  Opaque opaque{};
+  mut std::string output{};
+  auto result = std::try_print("{} {} {}", 1, opaque, 3);  //~ ERROR GTI-S2029 std::formattable<Opaque>
+  return 0;
+}

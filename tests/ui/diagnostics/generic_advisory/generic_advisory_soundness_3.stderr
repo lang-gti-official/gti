@@ -1,0 +1,4 @@
+main.gti:4:26: warning[GTI-S2096]: Mutable binding 'unused' is never used mutably.
+ 4 | T identity<T>(T value) { mut int unused = 1; return value; }  //~ WARN GTI-S2096
+   |                          ^~~
+help: Remove unnecessary 'mut'

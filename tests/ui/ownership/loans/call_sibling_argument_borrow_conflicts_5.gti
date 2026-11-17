@@ -1,0 +1,14 @@
+// Call sibling argument borrow conflicts: an exclusive borrow consumed by a nested call still holds its owner loan through the full expression, so a sibling read is rejected at semantics.
+import std.vector;
+
+int32_t drain<Iterator>(Iterator cursor) {
+  return 0;
+}
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(drain(values.begin_mut()), values.end());  //~ ERROR GTI-S2017
+  return 0;
+}

@@ -1,0 +1,1 @@
+Extended `gti-test` with compile-limit, target and analyze-only directives, shell-like `args`, a global `--opt`/`GTI_TEST_OPT` override, `--filter`, `--slowest`, a CPU budget report and stricter bless.

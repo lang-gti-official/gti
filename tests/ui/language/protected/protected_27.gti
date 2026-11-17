@@ -1,0 +1,4 @@
+// Protected members: rejected with GTI-S2007.
+class Base<T> { protected: T value; public: Base(T x) : value(x) {} };
+struct D<T> : public Base<T> { D(T x) : Base<T>(x) {} T bad(Base<T>& b) { return b.value; } };  //~ ERROR GTI-S2007
+int main() { D<int> d{1}; Base<int> b{2}; return d.bad(b); }

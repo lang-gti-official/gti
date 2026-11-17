@@ -1036,6 +1036,7 @@ struct SemanticPreambleBuild::State {
   SourceDebugProfile sourceDebugProfile = SourceDebugProfile::None;
   CompileLimits limits;
   bool reuseConstantEvaluations = true;
+  bool deferConstexprBodies = true;
   std::shared_ptr<SemanticPreambleCache> cache;
   // A deferred build first looks for a preamble another build stored since
   // the analysis that deferred it missed the cache.
@@ -1073,6 +1074,7 @@ SemanticPreambleBuild::run(const std::atomic<bool> *cancellation,
       &state->sources, RawPointerAuditMode::Off, state->requireDefinitions,
       TrustedBodyAnalysis::Complete, state->sourceDebugProfile, state->limits);
   builder.setConstantEvaluationReuse(state->reuseConstantEvaluations);
+  builder.setConstexprBodyDeferral(state->deferConstexprBodies);
   builder.setCancellation(cancellation);
   // The preamble owns the prefix program; this build no longer needs it.
   std::shared_ptr<const SemanticPreamble> preamble =
@@ -1109,6 +1111,7 @@ FrontendResult Frontend::analyze(
   SourceLoader sourceLoader(options.workMetrics, options.cache,
                             &options.sourceGenerations, &options.sourceDigests,
                             frontendCacheContext);
+  sourceLoader.setErrorLimit(options.limits.errorLimit);
   const auto sourceLoadStart = std::chrono::steady_clock::now();
   {
     const PhaseTimeScope timeScope("gti-source-load");
@@ -1131,7 +1134,9 @@ FrontendResult Frontend::analyze(
   append(result.diagnostics, sourceLoader.errors());
   result.sourceValid = !sourceLoader.hadError();
   result = finishAnalysis(entryPath, std::move(result));
-  if (options.suggestIncludes && !options.completionOffset &&
+  applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+  if (!errorLimitReached(result.diagnostics, options.limits.errorLimit) &&
+      options.suggestIncludes && !options.completionOffset &&
       options.stopAfter != FrontendPhase::Parsing) {
     addIncludeSuggestions(result, options, entryPath, preludePaths,
                           sourceOverrides, standardLibraryRoots,
@@ -1154,11 +1159,15 @@ Frontend::analyzeLoaded(const std::filesystem::path &entryPath,
   result.sources = std::move(sources);
   result.diagnostics = std::move(sourceDiagnostics);
   result.sourceValid = sourceValid;
-  return finishAnalysis(entryPath, std::move(result));
+  result = finishAnalysis(entryPath, std::move(result));
+  applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+  return result;
 }
 
 FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                                         FrontendResult result) const {
+  if (applyErrorLimit(result.diagnostics, options.limits.errorLimit))
+    return result;
   if (!result.sourceValid && !options.analyzeRecoveredSourceGraph) {
     return result;
   }
@@ -1190,6 +1199,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       semanticCacheContext(options) +
       "\nlimits:" + compileLimitsIdentity(options.limits) +
       (options.reuseConstantEvaluations ? "" : "\nconstant-reuse:off") +
+      (options.deferConstexprBodies ? "" : "\nconstexpr-bodies:eager") +
       "\nsource-owners:" +
       (result.sourceGraph.sourceOwners()
            ? result.sourceGraph.sourceOwners()->resolutionIdentity()
@@ -1273,6 +1283,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         Parser parser(std::move(parserTokens), source == nullptr
                                                    ? std::string_view{}
                                                    : std::string_view{*source});
+        const std::size_t parseErrorLimit =
+            options.limits.errorLimit == 0
+                ? 0
+                : options.limits.errorLimit -
+                      errorDiagnosticCount(result.diagnostics);
+        parser.setErrorLimit(parseErrorLimit);
         Program parsed = parser.parse();
         if (parser.completionContext()) {
           result.syntaxCompletion = parser.completionContext();
@@ -1285,7 +1301,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
             parser.lifetimeNames().empty()
                 ? nullptr
                 : std::make_shared<const LifetimeNames>(parser.lifetimeNames());
-        if (options.cache) {
+        if (options.cache &&
+            !errorLimitReached(parser.errors(), parseErrorLimit)) {
           options.cache->storeParsed(
               key, estimatedInputBytes,
               {.declarations = unitDeclarations,
@@ -1301,6 +1318,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       collectExportRequests(unitDeclarations, *unit, options.target);
       declarations.insert(declarations.end(), unitDeclarations.begin(),
                           unitDeclarations.end());
+      if (applyErrorLimit(result.diagnostics, options.limits.errorLimit)) {
+        // Source-unit declaration ranges still describe the completed prefix.
+        // Keep that AST alive for syntax-only editor queries.
+        result.program = Program(std::move(declarations));
+        return result;
+      }
       ++completed;
       if (options.progress != nullptr) {
         progress.update(unit->path.string(), completed);
@@ -1393,6 +1416,7 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
                     .limits = options.limits,
                     .reuseConstantEvaluations =
                         options.reuseConstantEvaluations,
+                    .deferConstexprBodies = options.deferConstexprBodies,
                     .cache = options.preambleCache,
                     .deferred = options.deferPreambleBuild}));
         if (options.deferPreambleBuild) {
@@ -1424,15 +1448,19 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   };
   for (std::size_t attempt = 0;; ++attempt) {
     result.diagnostics.resize(preSemanticDiagnostics);
+    CompileLimits semanticLimits = options.limits;
+    if (semanticLimits.errorLimit != 0)
+      semanticLimits.errorLimit -= errorDiagnosticCount(result.diagnostics);
     semanticOwner = std::make_unique<SemanticVisitor>(
         options.target, &result.sourceGraph, options.toolingOccurrences,
         options.workMetrics, &result.sources, options.rawPointerAudit,
         requireDefinitions, trustedBodies, options.sourceDebugProfile,
-        options.limits);
+        semanticLimits);
     SemanticVisitor &semantic = *semanticOwner;
     semantic.requireFunctionBodies(requiredBodies);
     semantic.setCancellation(options.cancellation);
     semantic.setConstantEvaluationReuse(options.reuseConstantEvaluations);
+    semantic.setConstexprBodyDeferral(options.deferConstexprBodies);
     if (preamble != nullptr) {
       semantic.adoptPreamble(preamble, preambleDeclarations);
       if (options.workMetrics != nullptr)
@@ -1580,6 +1608,8 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       }
     }
     append(result.diagnostics, semantic.errors());
+    if (applyErrorLimit(result.diagnostics, options.limits.errorLimit))
+      return result;
     const std::size_t semanticDiagnosticCount = semantic.errors().size();
     // Complete the requested inference phases before applying CI policy, so
     // Strict and Warn discover the same concrete bodies and audit findings.
@@ -1605,6 +1635,27 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
         result.semanticValid = false;
       }
     }
+    // Request-level net (#398): a compile-time path that needed a deferred
+    // body where it could not be completed leaves a need behind. Whatever
+    // the request's validity, it is repeated with those bodies required,
+    // under the same bounded rounds as late demand, so a missed demand site
+    // costs time rather than correctness. The corpus asserts it never fires.
+    if (result.sourceValid && !options.completionOffset &&
+        trustedBodies == TrustedBodyAnalysis::Reachable) {
+      const std::size_t previousCount = requiredBodies.size();
+      for (const FunctionDecl *body : semantic.unmetBodyDemands())
+        requiredBodies.insert(body);
+      if (requiredBodies.size() != previousCount) {
+        if (options.workMetrics != nullptr)
+          ++options.workMetrics->semanticDemandRounds;
+        if (attempt >= 2) {
+          trustedBodies = TrustedBodyAnalysis::Complete;
+          if (options.workMetrics != nullptr)
+            ++options.workMetrics->semanticDemandFallbacks;
+        }
+        continue;
+      }
+    }
     if (!result.sourceValid || !result.semanticValid ||
         options.completionOffset ||
         options.stopAfter == FrontendPhase::Semantics) {
@@ -1622,7 +1673,12 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
       const PhaseTimeScope timeScope("gti-hir-lowering");
       const ProgressScope progress(options.progress,
                                    ProgressPhase::HirLowering);
-      HirLoweringScope scope{.reachablePrefix = options.lowerReachableOnly};
+      HirLoweringScope scope{
+          .errorLimit = options.limits.errorLimit == 0
+                            ? 0
+                            : options.limits.errorLimit -
+                                  errorDiagnosticCount(result.diagnostics),
+          .reachablePrefix = options.lowerReachableOnly};
       if (options.lowerReachableOnly && !options.lowerEntryUnitOnly) {
         std::vector<std::pair<std::size_t, std::size_t>> complete;
         for (const SourceUnit &unit : result.sourceGraph.sourceUnits()) {
@@ -1681,10 +1737,22 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
     for (std::size_t index = semanticDiagnosticCount;
          index < semanticErrors.size(); ++index)
       result.diagnostics.push_back(semanticErrors[index]);
+    if (errorLimitReached(hir.diagnostics, options.limits.errorLimit) ||
+        errorLimitReached(result.diagnostics, options.limits.errorLimit)) {
+      append(result.diagnostics, hir.diagnostics);
+      applyErrorLimit(result.diagnostics, options.limits.errorLimit);
+      result.semanticValid = false;
+      return result;
+    }
     if (semantic.lateDemandFailed()) {
       for (const FunctionDecl *body : semantic.lateDemandedBodies())
         hir.requiredSemanticBodies.push_back(body);
     }
+    // The net again: concrete discovery can leave a need that late demand
+    // could not meet.
+    if (trustedBodies == TrustedBodyAnalysis::Reachable)
+      for (const FunctionDecl *body : semantic.unmetBodyDemands())
+        hir.requiredSemanticBodies.push_back(body);
     if (hir.requiredSemanticBodies.empty()) {
       // Final HIR: only now may its instance analyses serve later snapshots.
       semantic.publishInstanceAnalyses();
@@ -1712,6 +1780,10 @@ FrontendResult Frontend::finishAnalysis(const std::filesystem::path &entryPath,
   result.hirValid = hir.valid();
   result.hir = std::move(hir.program);
   append(result.diagnostics, hir.diagnostics);
+  if (applyErrorLimit(result.diagnostics, options.limits.errorLimit)) {
+    result.semanticValid = false;
+    return result;
+  }
   // Concrete instance discovery can demand semantic analysis while lowering
   // HIR. Its source errors are still semantic failures, not valid semantics
   // followed by an unexplained HIR failure.

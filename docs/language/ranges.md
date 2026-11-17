@@ -32,6 +32,36 @@ byte-slice transports.
 
 ## Range protocol
 
+### Structured bindings
+
+Range loops can decompose a fixed-array element or the public direct fields of
+an element record, in declaration order:
+
+```gti
+for (auto [key, value] : entries) { use(key, value); }
+for (auto& [key, value] : entries) { use(key, value); }
+for (mut auto& [key, value] : entries) { update(key, value); }
+```
+
+The first form owns the current element under the normal value-binding rules:
+copying from a borrowed range requires a copyable element, while a consuming
+range transfers the element. The second form borrows the current element.
+The first two forms create read-only projections. The explicit `mut auto&`
+form selects normal mutable iteration and creates mutable references to each
+component. It requires mutable access to every component (record fields must themselves
+permit mutation, such as fields declared `mut`); it cannot upgrade a
+stored read-only reference. Disjoint fields can be mutated independently while
+the exclusive iteration loan prevents conflicting access to the range.
+Decomposition adds no copies or allocations. Their checked references cannot outlive the current iteration
+or invalidate its range. Moving an individual component is not supported.
+
+The number of names must match the number of components. Private fields,
+inherited storage and nested patterns are not supported. Mutable value patterns
+(`mut auto [a, b]`) are not supported; use `mut auto&` for mutable projections.
+This syntax applies to ordinary range-for loops, not classic for initializers
+or compile-time expansion loops. Local structured declarations retain their
+existing owning-only rules.
+
 ### Consuming values
 
 An owned range can yield independent values through an exact read-only
@@ -284,6 +314,44 @@ ordinary ownership rules.
 `GTI-S2083` diagnoses an immutable owner or a nominal range without the exact
 mutable endpoint. Ordinary retained-loan diagnostics diagnose overlapping
 access and invalidation attempts.
+
+## Constant evaluation
+
+A range-based `for` executes in a `constexpr` function reached from
+`static_assert`, a constant initializer, an array extent or a procedural
+macro, using the same plan as at run time. Constant execution runs the
+verified MIR of that plan; no separate compile-time loop rule exists.
+
+- A fixed `T[N]` traverses by checked index, by value, by reference or by
+  mutable reference.
+- A nominal range runs its ordinary `begin()`, `end()` or `begin_mut()`
+  members and its cursor's `operator!=`, `operator*` and `operator++`. These
+  members, and anything they call, must be `constexpr`; the compiler grants
+  nothing by type name. `std::vector`, `std::span`, `std::mutable_span` and
+  `std::array` declare their cursor protocol `constexpr`.
+- A cursor that stores a reference to its range designates that range during
+  evaluation, so mutable traversal writes the range itself. The cursor is
+  execution-local and never becomes a published constant.
+- `break`, `continue`, `return` and nested loops follow the ordinary control
+  flow, and an owned range temporary is destroyed after the loop exactly once.
+- A checked cursor operation that fails, such as stepping past the end or
+  reading the end position, fails the constant request with that defined
+  failure rather than producing a value.
+
+`vector<T>::into_range()` is not yet `constexpr`: its consuming range uses
+declaration-default fields and a draining destructor that the constant
+profile does not execute.
+
+```gti
+constexpr int sum_of_squares(int count) {
+  mut std::vector<int> values{};
+  for (mut int i = 1; i <= count; i++) { values.push_back(i * i); }
+  mut int sum = 0;
+  for (auto value : values) { sum += value; }
+  return sum;
+}
+static_assert(sum_of_squares(3) == 14);
+```
 
 ## Complete-range concepts
 
@@ -753,7 +821,7 @@ Retaining a search result keeps that owner borrowed: mutation, movement, and
 destruction cannot invalidate it. Array/list/deque mutable cursors can also be
 bound locally under the existing nominal stored-reference rules, retaining an
 exclusive owner borrow; they cannot escape a local owner. Vector cursors also
-support this local and by-value algorithm transport (`mut_cursor_runtime`),
+support this local and by-value algorithm transport (`tests/ui/borrow/mut_cursor/`),
 preserving the caller's exclusive storage loan rather than borrowing the
 parameter shell. Copying an exclusive cursor and overlapping owner access
 remain rejected. This slice adds neither

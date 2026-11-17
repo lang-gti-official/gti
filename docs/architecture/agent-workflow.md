@@ -343,7 +343,7 @@ python3 scripts/remote_runner.py --runner ubuntu-6 configure
 python3 scripts/remote_runner.py --runner ubuntu-8 configure
 python3 scripts/remote_runner.py hosts
 python3 scripts/remote_runner.py status --all
-python3 scripts/remote_runner.py run --target gti_runtime_failure_tests --ctest-regex '^runtime_failure_boundary$'
+python3 scripts/remote_runner.py run --target gti_unit_tests --ctest-regex '^gti_unit_tests$'
 ```
 
 For a compiler feature, build the compiler and applicable test targets in the
@@ -615,8 +615,8 @@ similarly named fork branch cannot be adopted or modified. Closed task branches
 are not reused.
 
 Checkpoint publication is distinct from validation. The agent selects suitable
-checks using the owning skill and `verify-change`, with optimized compilers,
-required examples and cross-phase evidence. Verification records are operational
+checks using the owning skill and `verify-change`, with optimized compilers
+and cross-phase evidence; new tests follow [Writing Tests](../../AGENTS.md#writing-tests). Verification records are operational
 evidence, not a security attestation or a replacement for code review. Each
 record includes executed commands, head, base and time. Any changed commit or
 dirty source requires verifying again; an advancing main does not, because the
@@ -720,7 +720,9 @@ validates it, and reviewers check a change's evidence against it. Its
 selection is a lower bound that the author extends from the changed
 invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
 source file has an area or a stated reason, and the `test_ownership_map`
-CTest requires every named test to be registered.
+CTest requires every named test to be registered. A new test under `tests/ui/`,
+`tests/lsp/`, `tests/project/` or `tests/unit/` needs no map entry: the
+directory-walking `gti_test_ui` and `gti_unit_tests` entries own them.
 
 The compiler-smoke execution covers scalar control flow and owning strings in
 a vector at O0/O3. The GTI executable itself is always optimized. Each plan
@@ -901,9 +903,8 @@ CTest label is assigned in one place, `gti_slow_test_patterns` in
 `merge-shards`/`ci-gate` still prove each platform ran its per-commit
 inventory exactly once. `slow.yml` proves its own sets the same way with
 `platform:test-set` keys.
-Four long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`,
-`body_analysis_order`, `instance_reuse`) are also registered as per-suite,
-per-source or corpus-partition entries; a sharded run executes the parts and
+Long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`) are
+also registered as per-suite or per-source entries; a sharded run executes the parts and
 skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
 across workers instead of one 16–54-minute test ending a shard alone. The
 `gate` set (`GATE_EXCLUDED`) further omits C++-backend-only variants whose
@@ -1040,7 +1041,9 @@ quarantined test removes its entry in the same change.
 
 A ready, full-mode pull request declares its evidence in a `Validation:` block
 in its body. The `T0` (reproducer or new regression) and `T1` (owning tests)
-items list CTest names only; other items are prose for reviewers.
+items list CTest names only; other items are prose for reviewers. A new
+`gti-test` case is declared as `gti_test_ui` (a `tests/unit/` case as
+`gti_unit_tests`), never by a per-test name.
 `validation_checks.py declared` parses the block: the plan job rejects a missing
 or malformed declaration, and the `fast` job re-runs the declared tests by exact
 name on both platforms. Each one must be registered and enabled. The body is

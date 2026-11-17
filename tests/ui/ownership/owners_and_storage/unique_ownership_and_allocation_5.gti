@@ -1,0 +1,11 @@
+// Unique ownership and allocation: nullptr assignment should require an exact nullptr_t operator rather than a raw-pointer overload.
+class PointerOnly {
+public:
+  PointerOnly() {}
+  void operator=(int* value) mut {}
+};
+int main() {
+  mut PointerOnly value = PointerOnly();
+  value = nullptr;  //~ ERROR GTI-S2003
+  return 0;
+}

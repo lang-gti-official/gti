@@ -1,0 +1,14 @@
+// Fixed arrays: a chained dynamic element access is bounds-checked over the complete projected place and the backend accepts it.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: index_out_of_bounds
+int main() {
+  mut int32_t matrix[2][3] = {};
+  mut uint64_t row = uint64_t(0);
+  while (row < uint64_t(9)) {
+    row = row + uint64_t(1);
+  }
+  uint64_t column = uint64_t(1);
+  matrix[row][column] = 7;
+  return int(matrix[row][column]);
+}

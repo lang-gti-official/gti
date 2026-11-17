@@ -276,6 +276,8 @@ auto SemanticVisitor::Impl::callableParameterContract(
   if (function == nullptr) {
     return nullptr;
   }
+  checkBodyFactRead(function->bodyDeclaration(), functionId,
+                    "a callable parameter contract");
   if (function->parameterPack && !function->parameterTypes.empty())
     parameterIndex =
         std::min(parameterIndex, function->parameterTypes.size() - 1);
@@ -2209,6 +2211,7 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
           return !std::all_of(scope.begin(), scope.end(), openAssumption);
         });
     std::optional<ConstraintFailure> proof;
+    const std::uint64_t needsBefore = bodyNeedSerial();
     if (closedAssumptions) {
       struct RestoreScopes {
         std::vector<std::vector<AppliedConceptRequirement>> &scopes;
@@ -2220,10 +2223,14 @@ auto SemanticVisitor::Impl::firstConceptApplicationFailure(
     } else {
       proof = evaluateConceptApplication(requirement);
     }
+    // A proof outlives the request (it is shared through the preamble), so
+    // one that depended on an unavailable body is never recorded.
     if (!proof) {
-      adoptedPreamble->recordConceptProof(proofKey());
-      if (workMetrics != nullptr)
-        ++workMetrics->semanticConceptProofRecords;
+      if (bodyNeedSerial() == needsBefore) {
+        adoptedPreamble->recordConceptProof(proofKey());
+        if (workMetrics != nullptr)
+          ++workMetrics->semanticConceptProofRecords;
+      }
       return std::nullopt;
     }
     if (!closedAssumptions)
@@ -4819,6 +4826,18 @@ auto SemanticVisitor::Impl::validateConfinedCallableArguments(
     const CallableCandidate &candidate, const CallableCandidate &,
     const std::vector<SemanticType> &argumentTypes, const ExprList &arguments)
     -> bool {
+  // Demand before record: the target's callable parameter contracts below
+  // are body-derived, so its body is requested before they are read, as
+  // recordResolvedCall requests it before the call's own facts.
+  if (!argumentTypes.empty()) {
+    const FunctionInfo *target = semanticModel.findFunction(candidate.id);
+    if (target == nullptr && instanceBaseModel != nullptr)
+      target = instanceBaseModel->findFunction(candidate.id);
+    if (target != nullptr) {
+      ensureBodyAnalyzed(*target);
+      (void)requireBody(target->bodyDeclaration());
+    }
+  }
   bool valid = true;
   for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
     const CallableParameterContract *sourceContract =
@@ -8141,8 +8160,12 @@ auto SemanticVisitor::Impl::recordResolvedCall(
   }
   // Whether the callee returns a moved parameter is a body-derived fact; ask
   // for the body first so the answer is the same whatever the source order.
+  // ensureBodyAnalyzed also advances the lexical pass to an application
+  // body; requireBody is the readiness contract for a deferred or held-back
+  // trusted body, and records a need where this context cannot complete it.
   if (declarationInfo != nullptr) {
     ensureBodyAnalyzed(*declarationInfo);
+    (void)requireBody(declarationInfo->bodyDeclaration());
   }
   // Restoration authority is a checked-body fact, not part of the sealed
   // overload signature. Refresh it after an on-demand body, and materialize
@@ -8151,6 +8174,9 @@ auto SemanticVisitor::Impl::recordResolvedCall(
       semanticModel.findFunction(function.id);
   if (restoreDeclaration == nullptr && instanceBaseModel != nullptr)
     restoreDeclaration = instanceBaseModel->findFunction(function.id);
+  if (restoreDeclaration != nullptr && !function.virtualMethod)
+    checkBodyFactRead(restoreDeclaration->bodyDeclaration(), function.id,
+                      "a call record");
   bool restoresReferenceResult = false;
   std::vector<RestoredBorrowField> restoredFields;
   if (!function.virtualMethod && restoreDeclaration != nullptr &&

@@ -1,0 +1,24 @@
+// Constexpr string view inspection: text inspection composes with constant calls, fields, extents, generic values, and early branch selection.
+//@ check-pass
+constexpr uint64_t count(std::string_view text) { return text.size(); }
+constexpr char at(std::string_view text, int32_t offset) { return text[offset]; }
+constexpr std::string_view identity(std::string_view text) { return text; }
+struct Label {
+  std::string_view text;
+  constexpr Label(std::string_view initial) : text(initial) {}
+  constexpr uint64_t size() { return this.text.size(); }
+};
+struct Capacity<uint64_t N> { int values[N] = {};  public: Capacity() = default; };
+constexpr std::string_view text = identity("a\0z");
+constexpr Label label = Label(text);
+constexpr uint64_t length = count(text);
+static_assert(length == 3 && !text.empty() && "".empty());
+static_assert(at(text, 0) == 'a' && at(text, 1) == '\0' && at(text, 2) == 'z');
+static_assert(label.size() == length);
+static_assert(identity("z").size() == 1);
+int buffer[length] = {};
+Capacity<length> capacity{};
+int main() {
+  if constexpr (text.size() == 3) { return 0; }
+  else { return unselected_invalid_name; }
+}

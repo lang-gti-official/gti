@@ -1,0 +1,11 @@
+// Compile-time depth: Nested staged evaluation shares the call-depth limit.
+//@ constexpr-depth: 24
+constexpr int32_t chain<uint64_t N>() {  //~ ERROR GTI-S2031
+  if constexpr (N == 0) { return 0; }
+  else {
+    if constexpr (chain<N - 1>() >= 0) { return int32_t(N); }  //~ ERROR GTI-S2057 //~ ERROR GTI-S2057
+    else { return -1; }
+  }
+}
+static_assert(chain<24>() == 24);  //~ ERROR GTI-S2057
+int main() { return 0; }

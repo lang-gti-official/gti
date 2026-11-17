@@ -1,0 +1,7 @@
+// Formatting that changes on a second pass fails the test.
+//@ check-pass
+//@ format-stable
+//@ runner-fault: format-drift
+int main() {
+  return 0;
+}

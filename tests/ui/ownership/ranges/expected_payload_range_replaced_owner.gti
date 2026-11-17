@@ -1,0 +1,19 @@
+// Expected payload range loans: assigning the payload owner inside its range loop conflicts with the element loan.
+import std.string;
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+class box {
+public:
+  box(expected<std::string, int32_t> initial)
+      : value(std::move(initial)) {}
+  mut expected<std::string, int32_t> value;
+};
+
+void replace_owner() {
+  mut auto text = make_text();
+  for (auto& byte : text.value()) { text = make_text(); }  //~ ERROR GTI-S2017
+}
+int main() { return 0; }

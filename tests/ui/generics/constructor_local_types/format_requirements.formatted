@@ -1,0 +1,13 @@
+// Constructor-local generics: constructor requirements format idempotently and end before an initializer-list colon.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+class Box {
+  int value;
+public:
+  Box<std::integral T>(T input)
+    requires std::copyable<T> : value(int(input)) {};
+};
+int main() {
+  return 0;
+}

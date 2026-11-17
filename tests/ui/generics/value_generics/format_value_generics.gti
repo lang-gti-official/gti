@@ -1,0 +1,4 @@
+// Value generics: value generic defaults and dependent expressions format idempotently.
+//@ parse-pass
+//@ snapshot: format
+class StaticArray<T,uint64_t N>{T values[N]={}; public: StaticArray() = default; };StaticArray<int,4> values=StaticArray<int,4>();T choose<T=int,uint64_t N=2+1>(){return T();}

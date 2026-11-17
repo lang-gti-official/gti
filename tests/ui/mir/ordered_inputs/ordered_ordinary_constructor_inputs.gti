@@ -1,0 +1,43 @@
+// Ordered ordinary constructor inputs: ordinary constructors should lower supported arguments through a verified ordered parameter schedule.
+//@ run-pass
+class CopiedValue {
+  int value;
+public:
+  CopiedValue(int input) : value(input) {}
+};
+
+class MovedValue {
+  int value;
+public:
+  MovedValue(int input) : value(input) {}
+  MovedValue(MovedValue& other) = delete;
+  MovedValue(MovedValue&& other) = default;
+  ~MovedValue() {}
+};
+
+class Product {
+public:
+  Product(int scalar, int& observed, mut int& changed, CopiedValue copied,
+          MovedValue moved, MovedValue temporary) {
+    changed += scalar;
+  }
+public:
+  Product() = default;
+};
+
+class Empty {
+public:
+  Empty() {}
+};
+
+int main() {
+  mut int observed = 2;  //~ WARN GTI-S2096
+  mut int changed = 3;
+  CopiedValue copied = CopiedValue(1);
+  CopiedValue copied_again = CopiedValue(copied);
+  MovedValue moved = MovedValue(2);
+  Product product = Product(4, observed, changed, copied_again,
+                            std::move(moved), MovedValue(3));
+  Empty empty = Empty();
+  return changed - 7;
+}

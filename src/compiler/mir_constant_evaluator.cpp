@@ -226,7 +226,8 @@ private:
     if (!node->value ||
         (node->value->kind == ConstantAggregateKind::TransientOwner ||
          node->value->kind == ConstantAggregateKind::TransientSyntax ||
-         node->value->kind == ConstantAggregateKind::TransientPointer))
+         node->value->kind == ConstantAggregateKind::TransientPointer ||
+         node->value->kind == ConstantAggregateKind::TransientReference))
       return ConstantEvaluationFailure::InvalidOperands;
     for (const auto &item : node->value->elements)
       if (const auto failure = persistentValue(item, depth + 1);
@@ -334,12 +335,17 @@ private:
         instance->compilerCapability != CompilerCapabilityTypeKind::None ||
         instance->kind == ClassKind::Union || instance->polymorphic ||
         !instance->bases.empty() || !instance->structuralBases.empty() ||
-        instance->lifecycleBoundBorrowCarrier ||
-        instance->traits.containsBorrowedState)
+        instance->lifecycleBoundBorrowCarrier)
       return false;
+    // A checked reference field is stored as a request-local designator of
+    // its referent (formReference). Like a raw pointer, its referent is
+    // checked where it is accessed, so a cursor may refer to its own class.
+    // A carrier whose cleanup still uses its borrow stays excluded above.
     return std::all_of(instance->declaredFields.begin(),
                        instance->declaredFields.end(),
                        [&](const MirClassFieldInfo &field) {
+                         if (field.type.kind == SemanticType::Reference)
+                           return field.type.arguments.size() == 1;
                          return storageType(field.type, depth + 1);
                        });
   }
@@ -399,6 +405,10 @@ private:
     // The executing frame that owns a frame-local place, or zero. A pointer
     // outlives its frame only as a dangling value that no access accepts.
     std::size_t frameSerial = 0;
+    // An element of a fixed array: location designates the array, and
+    // pointer arithmetic may move within [0, arrayLength].
+    std::uint64_t arrayLength = 0;
+    bool arrayElement = false;
   };
 
   struct Loan {
@@ -412,6 +422,9 @@ private:
     std::vector<std::optional<ConstantValue>> values;
     std::vector<std::optional<ConstantValue>> places;
     std::vector<std::optional<Loan>> loans;
+    // The designation an ended loan held. Only a live successor loan formed
+    // from a place rooted at the ended loan may still resolve through it.
+    std::vector<std::optional<Location>> endedLoans;
     std::vector<std::optional<Location>> references;
     std::vector<std::optional<Location>> valueReferences;
     std::vector<std::size_t> placeEpochs;
@@ -587,13 +600,27 @@ private:
            std::equal(left.begin(), left.end(), right.begin());
   }
 
+  // A place whose last projection selects a stored-reference field
+  // designates that field's referent, as a reference binding does, unless
+  // `shell` asks for the field itself (binding it at initialization).
   ConstantEvaluation locate(Frame &frame, MirPlaceId id, Location &location,
-                            bool writing = false) {
+                            bool writing = false, bool shell = false,
+                            bool successor = false) {
     const auto *place = frame.body.findPlace(id);
     if (!place || !observedStorageType(place->type))
       return {.failure = ConstantEvaluationFailure::UnsupportedType};
     const MirPlace *binding = nullptr;
-    if (place->root == MirPlaceRootKind::Loan) {
+    if (place->root == MirPlaceRootKind::Loan && successor && !writing &&
+        place->loan < frame.loans.size() && !frame.loans[place->loan] &&
+        place->loan < frame.endedLoans.size() &&
+        frame.endedLoans[place->loan]) {
+      // A successor loan was formed from this place after its root loan
+      // ended, as a range element loan re-parents a dereference result.
+      const auto &ended = *frame.endedLoans[place->loan];
+      if (!charge(ended.path.size()))
+        return {.failure = ConstantEvaluationFailure::ResourceLimit};
+      location = ended;
+    } else if (place->root == MirPlaceRootKind::Loan) {
       if (place->loan >= frame.loans.size() || !frame.loans[place->loan])
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
       const auto &loan = *frame.loans[place->loan];
@@ -676,6 +703,20 @@ private:
       if (projection.kind == MirProjectionKind::Dereference && index == 0 &&
           binding && binding->type.kind == SemanticType::Reference)
         continue;
+      if (projection.kind == MirProjectionKind::Dereference && projectedType &&
+          projectedType->kind == SemanticType::Reference) {
+        location.type = projectedType;
+        const auto stored = readLocation(location);
+        if (!stored)
+          return stored;
+        Location target;
+        const auto resolved = resolveReference(*stored.value, target);
+        if (resolved.failure != ConstantEvaluationFailure::None)
+          return resolved;
+        location = std::move(target);
+        projectedType = location.type;
+        continue;
+      }
       if (projection.kind == MirProjectionKind::Dereference && projectedType &&
           projectedType->kind == SemanticType::UniqueOwner) {
         location.type = projectedType;
@@ -767,6 +808,20 @@ private:
       }
       location.path.push_back(projection);
     }
+    if (!shell && projectedType &&
+        projectedType->kind == SemanticType::Reference &&
+        !place->projections.empty() &&
+        place->projections.back().kind == MirProjectionKind::Field) {
+      location.type = projectedType;
+      const auto stored = readLocation(location);
+      if (!stored)
+        return stored;
+      Location target;
+      const auto resolved = resolveReference(*stored.value, target);
+      if (resolved.failure != ConstantEvaluationFailure::None)
+        return resolved;
+      location = std::move(target);
+    }
     location.type = &observedType(place->type);
     // locate's success has no value; callers distinguish it by failure.
     return {};
@@ -845,7 +900,9 @@ private:
         return {.failure = ConstantEvaluationFailure::NonConstantReference};
       const auto &loan = *frame.loans[input.loan];
       if (input.place) {
-        const auto result = locate(frame, input.place, location);
+        const auto *formed = frame.body.findLoan(input.loan);
+        const auto result = locate(frame, input.place, location, false, false,
+                                   formed && formed->source == input.place);
         if (result.failure != ConstantEvaluationFailure::None)
           return result;
       } else {
@@ -947,6 +1004,76 @@ private:
     return {.value = pointerValue(type, decoded->base, decoded->offset)};
   }
 
+  // ----------------------------------------------------- stored references
+
+  // A stored-reference field holds a designator of the referent it was bound
+  // to, never a copy. The designator outlives neither that referent's frame
+  // nor its allocation generation; every access through it is re-validated.
+  ConstantValue referenceValue(const SemanticType &type, std::size_t base) {
+    ConstantAggregate node{.kind = ConstantAggregateKind::TransientReference,
+                           .identity = base,
+                           .exactType =
+                               std::make_shared<const SemanticType>(type)};
+    return makeConstantAggregate(std::move(node));
+  }
+
+  ConstantEvaluation formReference(const Location &referent,
+                                   const SemanticType &type) {
+    if (type.kind != SemanticType::Reference || type.arguments.size() != 1 ||
+        (type.referenceAccess == AccessMode::Mutable &&
+         referent.access != AccessMode::Mutable))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (!charge(1))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    PointerBase base{.location = referent};
+    base.location.access = type.referenceAccess;
+    if (referent.allocation)
+      base.regionEpoch = heap[referent.allocation - 1]->epoch;
+    else if (referent.frame)
+      base.frameSerial = referent.frame->serial;
+    referenceBases.push_back(std::move(base));
+    return {.value = referenceValue(type, referenceBases.size())};
+  }
+
+  // Resolves a stored reference to the referent location it designates.
+  ConstantEvaluation resolveReference(const ConstantValue &value,
+                                      Location &location) {
+    const auto *node = std::get_if<ConstantAggregateValue>(&value);
+    if (!node || !node->value ||
+        node->value->kind != ConstantAggregateKind::TransientReference ||
+        node->value->identity == 0 ||
+        node->value->identity > referenceBases.size())
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    const auto &base = referenceBases[node->value->identity - 1];
+    if (!baseAlive(base))
+      return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    if (base.location.allocation) {
+      const auto &region = *heap[base.location.allocation - 1];
+      if (!region.live || region.epoch != base.regionEpoch)
+        return {.failure = ConstantEvaluationFailure::NonConstantReference};
+    }
+    if (!charge(base.location.path.size() + 1))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    location = base.location;
+    return {};
+  }
+
+  ConstantEvaluation convertReference(const ConstantValue &value,
+                                      const SemanticType &type) {
+    const auto *node = std::get_if<ConstantAggregateValue>(&value);
+    if (!node || !node->value ||
+        node->value->kind != ConstantAggregateKind::TransientReference ||
+        !node->value->exactType ||
+        node->value->exactType->kind != SemanticType::Reference ||
+        node->value->exactType->arguments != type.arguments ||
+        (type.referenceAccess == AccessMode::Mutable &&
+         node->value->exactType->referenceAccess != AccessMode::Mutable))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (*node->value->exactType == type)
+      return {.value = value};
+    return {.value = referenceValue(type, node->value->identity)};
+  }
+
   std::optional<std::uint64_t> slotCount(const Allocation &region) const {
     if (!region.typed)
       return std::nullopt;
@@ -1021,6 +1148,19 @@ private:
         location.cell = static_cast<std::size_t>(offset);
         return {};
       }
+    }
+    if (base.arrayElement) {
+      // One past the last element may be formed but not accessed.
+      const auto count = static_cast<std::int64_t>(base.arrayLength);
+      if (offset < 0 || offset > count || (access && offset == count))
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      if (offset == count)
+        return {};
+      location = base.location;
+      location.path.push_back(
+          {.kind = MirProjectionKind::Index,
+           .constantIndex = static_cast<std::uint64_t>(offset)});
+      return {};
     }
     if (offset != 0)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -1200,6 +1340,8 @@ private:
     }
     if (type.kind == SemanticType::RawPointer)
       return convertPointer(value, type);
+    if (type.kind == SemanticType::Reference)
+      return convertReference(value, type);
     if (type.kind != SemanticType::UniqueOwner)
       return convertConstantToType(value, type);
     if (std::holds_alternative<NullConstant>(value))
@@ -1308,8 +1450,9 @@ private:
     if (!converted)
       return converted;
     // A raw pointer's pointee access (const T* / T*) may differ; it still
-    // designates the same element.
-    if (type.kind == SemanticType::RawPointer)
+    // designates the same element. A stored reference's access may narrow.
+    if (type.kind == SemanticType::RawPointer ||
+        type.kind == SemanticType::Reference)
       return converted;
     if (*converted.value != value)
       return {.failure = ConstantEvaluationFailure::InvalidOperands};
@@ -1327,7 +1470,8 @@ private:
     if (!aggregate)
       return converted;
     if (type.kind == SemanticType::UniqueOwner ||
-        type.kind == SemanticType::RawPointer || syntaxType(type))
+        type.kind == SemanticType::RawPointer ||
+        type.kind == SemanticType::Reference || syntaxType(type))
       return converted;
     if (type.kind == SemanticType::TypePack) {
       for (std::size_t index = 0; index < type.arguments.size(); ++index) {
@@ -1476,7 +1620,7 @@ private:
 
   ConstantEvaluation writePlace(Frame &frame, MirPlaceId id,
                                 const ConstantValue &value,
-                                bool initializing = false) {
+                                bool initializing = false, bool shell = false) {
     const auto *target = frame.body.findPlace(id);
     if (target && target->root == MirPlaceRootKind::This && frame.receiver &&
         frame.address.kind == MirBodyKind::Constructor && initializing &&
@@ -1504,9 +1648,11 @@ private:
       return converted;
     }
     Location location;
-    const auto located = locate(frame, id, location, true);
+    const auto located = locate(frame, id, location, true, shell);
     if (located.failure != ConstantEvaluationFailure::None)
       return located;
+    if (shell)
+      location.type = &target->type;
     if (!initializing && location.access != AccessMode::Mutable)
       return {.failure = ConstantEvaluationFailure::UnsupportedExpression};
     auto written = writeLocation(location, value, initializing);
@@ -1736,6 +1882,17 @@ private:
       if (!left || !right || !domain || left->base == 0 || right->base == 0 ||
           pointerBases[left->base - 1].location.allocation !=
               pointerBases[right->base - 1].location.allocation)
+        return {.failure = ConstantEvaluationFailure::InvalidOperands};
+      // Fixed-array element pointers subtract only within one array.
+      const auto &x = pointerBases[left->base - 1];
+      const auto &y = pointerBases[right->base - 1];
+      if ((x.arrayElement || y.arrayElement) &&
+          (!x.arrayElement || !y.arrayElement || !baseAlive(x) ||
+           !baseAlive(y) || x.location.frame != y.location.frame ||
+           x.location.root != y.location.root ||
+           x.location.cell != y.location.cell ||
+           x.location.slot != y.location.slot ||
+           x.location.path != y.location.path))
         return {.failure = ConstantEvaluationFailure::InvalidOperands};
       const auto difference = left->offset - right->offset;
       return {.value = makeConstantInteger(
@@ -1979,7 +2136,13 @@ private:
     // The ordinary verifier owns loan conflicts and endpoints. Execution
     // retains their exact constant-cell origins rather than freezing copies.
     if (instruction.kind == MirInstructionKind::EndBorrow && instruction.loan) {
-      frame.loans[*instruction.loan].reset();
+      auto &loan = frame.loans[*instruction.loan];
+      if (loan) {
+        if (frame.endedLoans.empty())
+          frame.endedLoans.resize(frame.loans.size());
+        frame.endedLoans[*instruction.loan] = std::move(loan->location);
+      }
+      loan.reset();
       return {};
     }
     if (instruction.kind == MirInstructionKind::ActivateBorrow &&
@@ -2004,7 +2167,12 @@ private:
       return fail(frame, ConstantEvaluationFailure::UnsupportedExpression,
                   "Operation is outside the constant MIR execution profile.");
     }
-    if (instruction.kind == MirInstructionKind::Lifecycle) {
+    // Lifecycle events are applied by the block walker. Range-cursor parking
+    // is a compile-time permission transition for the verifier; it neither
+    // starts nor ends a lifetime, so constant execution has nothing to do.
+    if (instruction.kind == MirInstructionKind::Lifecycle ||
+        instruction.kind == MirInstructionKind::ParkRangeCursor ||
+        instruction.kind == MirInstructionKind::RestoreRangeCursor) {
       return {};
     }
     if (instruction.kind == MirInstructionKind::Call &&
@@ -2113,10 +2281,41 @@ private:
       } else {
         const std::size_t owner =
             !location.allocation && location.frame ? location.frame->serial : 0;
-        pointerBases.push_back(
-            {location,
-             location.allocation ? heap[location.allocation - 1]->epoch : 0,
-             false, false, owner});
+        PointerBase base{
+            location,
+            location.allocation ? heap[location.allocation - 1]->epoch : 0,
+            false, false, owner};
+        // The address of a fixed-array element is an element pointer within
+        // that array, which pointer arithmetic may move as at run time.
+        if (!location.path.empty() &&
+            location.path.back().kind == MirProjectionKind::Index &&
+            location.path.back().constantIndex &&
+            location.path.back().selection == 0) {
+          auto container = location;
+          container.path.pop_back();
+          const auto *element = location.type;
+          container.type = nullptr;
+          const auto &backing = storage(container);
+          const auto array =
+              backing && container.epoch == epoch(container)
+                  ? project(*backing, container.path, *element, 0)
+                  : ConstantEvaluation{
+                        .failure =
+                            ConstantEvaluationFailure::NonConstantReference};
+          const auto *aggregate =
+              array ? std::get_if<ConstantAggregateValue>(&*array.value)
+                    : nullptr;
+          if (aggregate && aggregate->value &&
+              aggregate->value->kind == ConstantAggregateKind::Array) {
+            offset =
+                static_cast<std::int64_t>(*location.path.back().constantIndex);
+            base.location = std::move(container);
+            base.location.type = element;
+            base.arrayElement = true;
+            base.arrayLength = aggregate->value->elements.size();
+          }
+        }
+        pointerBases.push_back(std::move(base));
       }
       if (!charge(1))
         return stepLimitFailure(frame);
@@ -2185,15 +2384,40 @@ private:
     case MirInstructionKind::Borrow:
       if (instruction.loan && arguments.size() == 1) {
         Location location;
+        const auto &borrowed = instruction.operands.front();
+        const auto *formed = frame.body.findLoan(*instruction.loan);
+        const auto *source =
+            formed ? frame.body.findPlace(formed->source) : nullptr;
+        // A loan operand without a place names only the parent provenance.
+        // When the new loan re-parents a place designated through an ended
+        // loan, such as a range element taken from its dereference result,
+        // it designates that place.
+        const bool reparented =
+            borrowed.kind == MirOperandKind::Loan && borrowed.place == 0 &&
+            source && source->root == MirPlaceRootKind::Loan &&
+            source->loan != borrowed.loan &&
+            source->loan < frame.loans.size() && !frame.loans[source->loan];
         const auto located =
-            locateOperand(frame, instruction.operands.front(), location);
+            reparented ? locate(frame, source->id, location, false, false, true)
+                       : locateOperand(frame, borrowed, location);
         if (located.failure != ConstantEvaluationFailure::None)
           return fail(frame, located.failure);
-        const auto *loan = frame.body.findLoan(*instruction.loan);
+        if (reparented) {
+          Location parent;
+          const auto checked = locateOperand(frame, borrowed, parent);
+          if (checked.failure != ConstantEvaluationFailure::None)
+            return fail(frame, checked.failure);
+          if (parent.access != AccessMode::Mutable)
+            location.access = AccessMode::ReadOnly;
+        }
+        const auto *loan = formed;
         if (!loan || (loan->access == AccessMode::Mutable &&
                       location.access != AccessMode::Mutable))
           return fail(frame, ConstantEvaluationFailure::InvalidOperands);
         location.access = loan->access;
+        const auto published = publishStoredField(frame, *loan, location);
+        if (published.failure != ConstantEvaluationFailure::None)
+          return fail(frame, published.failure);
         frame.loans[*instruction.loan] =
             Loan{std::move(location), !loan->twoPhase};
         evaluated.value = arguments.front();
@@ -2248,6 +2472,16 @@ private:
           // The receiver stage forwards one already-materialized object;
           // it is not a second owning object with independent field state.
           reference = std::move(location);
+        } else if (instruction.info.type.kind == SemanticType::Reference &&
+                   instruction.operands.front().place) {
+          // A loaded reference still designates its referent, including one
+          // read from a stored-reference field.
+          Location location;
+          const auto located =
+              locateOperand(frame, instruction.operands.front(), location);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          reference = std::move(location);
         }
         evaluated.value = arguments.front();
       }
@@ -2273,6 +2507,26 @@ private:
             frame.references.resize(frame.places.size());
           frame.references[root] = std::move(location);
           evaluated.value = arguments.front();
+          break;
+        }
+        // Binding a stored-reference field designates the operand's
+        // referent; it never copies the referent into the carrier.
+        if (instruction.kind == MirInstructionKind::Initialize && target &&
+            target->type.kind == SemanticType::Reference &&
+            !target->projections.empty() &&
+            target->projections.back().kind == MirProjectionKind::Field) {
+          Location referent;
+          const auto located =
+              locateOperand(frame, instruction.operands.front(), referent);
+          if (located.failure != ConstantEvaluationFailure::None)
+            return fail(frame, located.failure);
+          const auto formed = formReference(referent, target->type);
+          if (!formed)
+            return fail(frame, formed.failure);
+          evaluated = writePlace(frame, *instruction.destination, *formed.value,
+                                 true, true);
+          if (evaluated)
+            evaluated.value = arguments.front();
           break;
         }
         if (instruction.kind == MirInstructionKind::Assign &&
@@ -2485,16 +2739,21 @@ private:
           if (value)
             evaluated.value = makeConstantInteger(*value, *domain);
         }
-      } else if (instruction.intrinsic == IntrinsicKind::ArraySize &&
+      } else if ((instruction.intrinsic == IntrinsicKind::ArraySize ||
+                  instruction.intrinsic == IntrinsicKind::ArrayRangeBegin) &&
                  instruction.receiver && arguments.empty() &&
                  instruction.receiver->type.kind == SemanticType::Array) {
         // Observe the represented receiver, not merely a type spelling: a
         // runtime/uninitialized array is not a constant by virtue of its size.
+        // The fixed-array range plan's endpoints are the zero index and the
+        // sealed extent, exactly as native lowering produces them.
         const auto array = operand(frame, *instruction.receiver);
         if (!array)
           return fail(frame, array.failure);
         evaluated.value = makeConstantInteger(
-            {.magnitude = instruction.receiver->type.arrayLength},
+            {.magnitude = instruction.intrinsic == IntrinsicKind::ArraySize
+                              ? instruction.receiver->type.arrayLength
+                              : 0},
             {.width = 64, .signedValue = false});
       } else if (instruction.functionTarget &&
                  instruction.intrinsic == IntrinsicKind::None) {
@@ -2863,11 +3122,14 @@ private:
       if (!reference) {
         if (!instruction.result || !evaluated)
           return fail(frame, ConstantEvaluationFailure::UnsupportedExpression);
+        // The instruction's fresh result is an owned temporary: its loan,
+        // such as an exclusive cursor carrier's, decides the access.
         reference = Location{.frame = &frame,
                              .root = MirPlaceRootKind::Value,
                              .cell = *instruction.result,
                              .epoch = frame.valueEpochs[*instruction.result],
-                             .type = &observedType(instruction.info.type)};
+                             .type = &observedType(instruction.info.type),
+                             .access = loan->access};
       }
       if (loan->access == AccessMode::Mutable &&
           reference->access != AccessMode::Mutable)
@@ -2916,6 +3178,7 @@ private:
         function->definitionKind != MirDefinitionKind::Source ||
         (function->returnBorrowOrigin != BorrowOriginKind::None &&
          function->returnType.kind != SemanticType::Reference &&
+         function->returnType.kind != SemanticType::Class &&
          function->returnType != SemanticType::StringView) ||
         function->entryKind != ProgramEntryKind::None ||
         function->linkage != LanguageLinkage::Gti ||
@@ -2984,7 +3247,8 @@ private:
                        ConstructorInitializerTargetKind::Field &&
                    initializer.field == field.symbol &&
                    !initializer.generatedDefault &&
-                   !initializer.storesReference &&
+                   initializer.storesReference ==
+                       (field.type.kind == SemanticType::Reference) &&
                    !initializer.constructorTarget;
           });
       if (count != 1)
@@ -3010,6 +3274,19 @@ private:
               place->projections[0].field == field.symbol)
             ++writes;
         }
+      }
+      if (writes == 0 && field.type.kind == SemanticType::Reference) {
+        // A stored-reference field is bound by exactly one Stored loan, the
+        // sealed field-publication contract native lowering also follows.
+        if (std::count_if(constructor->body.loans.begin(),
+                          constructor->body.loans.end(),
+                          [&](const MirLoan &loan) {
+                            return loan.kind == MirLoanKind::Stored &&
+                                   loan.storedField == field.symbol;
+                          }) != 1)
+          return {.failure = ConstantEvaluationFailure::UnsupportedExpression,
+                  .body = {MirBodyKind::Constructor, id}};
+        continue;
       }
       if (writes == 0) {
         // A text field publishes through the constructor record rather than
@@ -3068,6 +3345,49 @@ private:
                        AccessMode::Mutable);
   }
 
+  // A constructor's Stored loan naming a reference field binds that field
+  // to the loan's referent; a carrier-valued field only records provenance.
+  ConstantEvaluation publishStoredField(Frame &frame, const MirLoan &loan,
+                                        const Location &referent) {
+    if (frame.address.kind != MirBodyKind::Constructor ||
+        loan.kind != MirLoanKind::Stored || loan.storedField == 0)
+      return {};
+    const auto *constructor =
+        program.findConstructorInstance(frame.address.owner);
+    const auto *owner =
+        constructor ? program.findClassInstance(constructor->owner) : nullptr;
+    if (!owner)
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    const auto field =
+        std::find_if(owner->declaredFields.begin(), owner->declaredFields.end(),
+                     [&](const MirClassFieldInfo &candidate) {
+                       return candidate.symbol == loan.storedField;
+                     });
+    if (field == owner->declaredFields.end())
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    if (field->type.kind != SemanticType::Reference)
+      return {};
+    auto *aggregate =
+        frame.receiver ? std::get_if<ConstantAggregateValue>(&*frame.receiver)
+                       : nullptr;
+    if (!aggregate || !aggregate->value ||
+        std::any_of(aggregate->value->fields.begin(),
+                    aggregate->value->fields.end(),
+                    [&](const ConstantAggregateField &item) {
+                      return item.symbol == field->symbol;
+                    }))
+      return {.failure = ConstantEvaluationFailure::InvalidOperands};
+    auto formed = formReference(referent, field->type);
+    if (!formed)
+      return formed;
+    if (!charge(aggregate->value->fields.size() + 1))
+      return {.failure = ConstantEvaluationFailure::ResourceLimit};
+    auto updated = *aggregate->value;
+    updated.fields.push_back({field->symbol, std::move(*formed.value)});
+    frame.receiver = makeConstantAggregate(std::move(updated));
+    return {};
+  }
+
   MirConstantEvaluation
   executeBody(const MirBody &body, MirBodyAddress address,
               const SemanticType &returnType,
@@ -3122,49 +3442,17 @@ private:
     }
     for (const auto &loan : body.loans) {
       const auto *source = body.findPlace(loan.source);
-      const auto *dependency = body.findLoan(loan.storedDependency);
-      // A constant text value owns its literal bytes in ConstantValue. A
-      // checked reference formal still carries the ordinary MIR's separate
-      // owner witness, but needs no transient allocation or stored-reference
-      // object to execute. Keep both entry loans and their verified endpoints;
-      // this does not admit nominal stored carriers or runtime text storage.
-      const bool constantTextDependency =
-          source && source->root == MirPlaceRootKind::Binding &&
-          source->initiallyAvailable && source->projections.empty() &&
-          source->type.kind == SemanticType::Reference &&
-          source->type.referenceAccess == AccessMode::ReadOnly &&
-          source->type.arguments.size() == 1 &&
-          source->type.arguments.front().kind == SemanticType::StringView &&
-          loan.access == AccessMode::ReadOnly && dependency &&
-          dependency->entry && dependency->kind == MirLoanKind::Stored &&
-          dependency->access == AccessMode::ReadOnly &&
-          dependency->source == loan.source &&
-          dependency->storedDependency == 0 &&
-          dependency->designatedFields.empty() &&
-          dependency->additionalDependencies.empty();
-      // Owner-aware reads of supported, borrow-free records carry a separate
-      // verified content witness too. It is not an embedded reference value:
-      // storageType still rejects reference-bearing records and capabilities.
-      const auto *dependencySource =
-          dependency ? body.findPlace(dependency->source) : nullptr;
-      const bool supportedStoredDependency =
-          dependency && dependency->kind == MirLoanKind::Stored &&
-          !dependency->lifecycleBound &&
-          dependency->additionalSources().empty() && dependencySource &&
-          observedStorageType(dependencySource->type);
-      if ((loan.storedDependency != 0 && !constantTextDependency &&
-           !supportedStoredDependency) ||
-          !loan.additionalSources().empty() || loan.lifecycleBound ||
-          source == nullptr || !observedStorageType(source->type)) {
-        return fail(
-            frame, ConstantEvaluationFailure::UnsupportedType,
-            "Constant MIR only admits checked loans to supported "
-            "values, without stored reference carriers. stored=" +
-                std::to_string(loan.storedDependency) + " additional=" +
-                std::to_string(loan.additionalSources().size()) +
-                " lifecycle=" + std::to_string(loan.lifecycleBound) +
-                " supported-source=" +
-                std::to_string(source && observedStorageType(source->type)));
+      // A loan's stored dependencies and alternative owners are verified
+      // provenance: execution designates exactly the place its Borrow or
+      // entry binding selected, and a stored-reference field designates its
+      // referent (formReference). A dependency retained until cleanup
+      // belongs to a carrier whose destructor still uses it, which stays
+      // outside this profile.
+      if (loan.lifecycleBound || source == nullptr ||
+          !observedStorageType(source->type)) {
+        return fail(frame, ConstantEvaluationFailure::UnsupportedType,
+                    "Constant MIR only admits checked loans to supported "
+                    "values, without cleanup-bound reference carriers.");
       }
     }
     // Refuse optimizer-dependent eligibility, including rewrites in untaken
@@ -3252,12 +3540,22 @@ private:
       const auto value = readLocation(location);
       if (!value)
         return fail(frame, value.failure);
+      // A carrier's self-sourced Stored entry loan states the dependency its
+      // stored reference retains, which may be exclusive under a read-only
+      // receiver. It grants no access to the carrier itself: accesses go
+      // through the stored reference's own designator.
+      const bool carrierProvenance =
+          loan.kind == MirLoanKind::Stored && loan.storedField == 0;
       if (loan.access == AccessMode::Mutable &&
-          location.access != AccessMode::Mutable)
+          location.access != AccessMode::Mutable && !carrierProvenance)
         return fail(
             frame, ConstantEvaluationFailure::InvalidOperands,
             "Entry loan requests mutable access to a read-only origin.");
-      location.access = loan.access;
+      if (!carrierProvenance)
+        location.access = loan.access;
+      const auto published = publishStoredField(frame, loan, location);
+      if (published.failure != ConstantEvaluationFailure::None)
+        return fail(frame, published.failure);
       frame.loans[loan.id] = Loan{std::move(location), true};
     }
     while (const auto *block = body.findBlock(frame.block)) {
@@ -3677,6 +3975,8 @@ private:
   bool stepLimitReached = false;
   std::vector<std::unique_ptr<Allocation>> heap;
   std::vector<PointerBase> pointerBases;
+  // Designators held by stored-reference fields (TransientReference).
+  std::vector<PointerBase> referenceBases;
   std::unordered_set<std::size_t> liveFrames;
   std::size_t frameSerials = 0;
   std::unordered_map<SymbolId, std::size_t> programStorage;

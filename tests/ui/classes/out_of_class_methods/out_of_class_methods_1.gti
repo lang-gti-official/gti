@@ -1,0 +1,20 @@
+// Out of class methods: separate static and receiver method bodies retain canonical identity and defaults.
+//@ check-pass
+namespace demo {
+interface Factory { static int make(int n = 7); };
+class Counter {
+  mut int count = 0;
+public:
+  Counter() {}
+  int read();
+  void add(int amount) mut;
+};
+int Factory::make(int value) { return value; }
+int Counter::read() { return this.count; }
+void Counter::add(int value) mut { this.count += value; }
+}
+int main() {
+  mut demo::Counter count{};
+  count.add(demo::Factory::make());
+  return count.read() - 7;
+}

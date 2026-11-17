@@ -1,0 +1,15 @@
+// Logical operator spellings: && and || (either spelling) short-circuit: the right operand runs only when the left does not decide.
+//@ run-pass
+bool observed(bool value, mut int& count) {
+  count = count + 1;
+  return value;
+}
+int main() {
+  mut int count = 0;
+  bool a = false && observed(true, count);
+  bool b = true or observed(true, count);
+  bool c = true and observed(false, count);
+  bool d = false || observed(true, count);
+  if (a || !b || c || !d) { return 1; }
+  return count == 2 ? 0 : 2;
+}

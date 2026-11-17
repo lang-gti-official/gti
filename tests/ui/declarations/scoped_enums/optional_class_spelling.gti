@@ -1,0 +1,3 @@
+// Scoped enums: the optional class spelling parses as the same scoped enum construct.
+//@ parse-pass
+enum Legacy { Value }; int main() { return 0; }

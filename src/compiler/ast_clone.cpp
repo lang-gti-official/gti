@@ -627,8 +627,8 @@ private:
       }
       auto copy = std::make_shared<StructuredBindingDecl>(
           tok(node.autoKeyword()), tok(node.leftBracket()), std::move(bindings),
-          tok(node.rightBracket()), tok(node.equal()),
-          expr(node.initializer()));
+          tok(node.rightBracket()), tok(node.equal()), expr(node.initializer()),
+          node.isRangeProjection());
       for (std::size_t index = 0; index < node.bindings().size(); ++index) {
         result.statements.emplace(&node.bindings()[index],
                                   &copy->bindings()[index]);

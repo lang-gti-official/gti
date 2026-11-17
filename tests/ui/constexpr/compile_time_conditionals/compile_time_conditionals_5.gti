@@ -1,0 +1,4 @@
+// Compile time conditionals: malformed boolean compile conditions should use the focused parser diagnostic.
+#if defined(DEBUG) &&  //~ WARN GTI-S2075
+int main() { return 0; }  //~ ERROR GTI-P0003
+#endif

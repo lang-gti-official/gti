@@ -383,7 +383,11 @@ public:
   }
   unsafe constexpr void append_value_unchecked(T value) mut requires std::move_constructible<T> {
     unsafe {
-      std::initialize_owned_at(this.buffer.address() + this.live, this, std::move(value));
+      if constexpr (std::relocatable<T> && !std::meta::is_text<T>()) {
+        std::detail::construct_value_at(this.buffer.address() + this.live, std::move(value));
+      } else {
+        std::initialize_owned_at(this.buffer.address() + this.live, this, std::move(value));
+      }
     }
     this.live = integer_wrapping_add(this.live, uint64_t(1));
   }
@@ -410,10 +414,16 @@ public:
   unsafe constexpr void relocate_to_unchecked(mut prefix_slots<T, Lease>& destination) mut
       requires std::move_constructible<T> {
     unsafe {
-      for (mut uint64_t index = 0; index < this.live;
-           index = integer_wrapping_add(index, uint64_t(1))) {
-        std::relocate_owned_at(destination.buffer.address() + index, destination,
-                              this.buffer.address() + index, this);
+      if constexpr (std::relocatable<T> && !std::meta::is_text<T>()) {
+        // This contract excludes checked borrowed content. Keep the bulk
+        // transfer and its length postcondition for these ordinary objects.
+        this.buffer.relocate_to(destination.buffer, this.live);
+      } else {
+        for (mut uint64_t index = 0; index < this.live;
+             index = integer_wrapping_add(index, uint64_t(1))) {
+          std::relocate_owned_at(destination.buffer.address() + index, destination,
+                                this.buffer.address() + index, this);
+        }
       }
     }
     destination.live = this.live;

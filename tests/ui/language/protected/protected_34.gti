@@ -1,0 +1,4 @@
+// Protected members: the program is accepted.
+//@ check-pass
+class Base<T> { protected: using Hidden = T;  public: Base() = default; };
+struct Derived : public Base<int> { int good() { Base<int>::Hidden value = 1; return value; }  public: Derived() = default; };
