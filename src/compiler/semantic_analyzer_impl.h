@@ -9,6 +9,7 @@
 #include "gti/frontend_work.h"
 #include "gti/generic_instantiation_limits.h"
 #include "gti/instance_analysis_cache.h"
+#include "gti/lowered_program.h"
 #include "gti/object_layout.h"
 #include "gti/standard_library.h"
 #include "gti/support.h"

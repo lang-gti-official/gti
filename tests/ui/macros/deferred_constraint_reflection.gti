@@ -1,0 +1,10 @@
+// A typed macro constraint demands deferred constexpr reflection methods.
+import std.meta;
+struct Reading {
+  int value;
+  Reading(int value) : value(value) {}
+  bool operator==(Reading& other) { return this.value == other.value; }
+  bool operator!=(Reading& other) { return this.value != other.value; }
+};
+#macro check<T>(T value) requires std::equality_comparable<T> {}
+int main() { Reading value{3}; check!(value); return 0; }
