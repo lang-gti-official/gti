@@ -1,0 +1,4 @@
+// Native bindings with conflicting native scalar contracts are rejected across namespaces.
+namespace first { extern "C" { c_long target(c_long value); } }
+namespace second { extern "C" { c_longlong target(c_longlong value); } }  //~ ERROR GTI-S2054 conflicting function signatures
+int main() { return 0; }

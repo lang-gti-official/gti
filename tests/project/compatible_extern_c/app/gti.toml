@@ -1,0 +1,10 @@
+manifest-version = 1
+[package]
+name = "consumer"
+version = "1.0.0"
+[dependencies]
+first = { path = "../first" }
+second = { path = "../second" }
+[targets.app]
+kind = "executable"
+root = "src/main.gti"

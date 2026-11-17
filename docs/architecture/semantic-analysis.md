@@ -1975,8 +1975,14 @@ recursive unsafe-call classification when a record contains a raw pointer.
 An `extern "C"` function retains two identities when it uses
 `[[link_name("symbol")]]`: namespace lookup and tooling use the declared GTI
 name, while `CallableDeclaration::externalSymbol` stores the validated portable
-C identifier. Program-global duplicate-symbol, reserved-`main`, generated
-header, and root-storage collision checks use the external symbol. HIR and MIR
+C identifier. Program-global native-symbol compatibility, reserved-`main`, generated
+header, and root-storage collision checks use the external symbol. Repeated C
+function bindings compare resolved signatures and safety contracts in semantics,
+including pointer access, target scalar/nominal identity, unsafe/noreturn,
+return-borrow facts and the resolved counted-array parameter index. Compatible
+bindings preserve separate declaration/tooling identities; same-scope repeats
+retain one lookup candidate. LLVM reuses the exact native function declaration,
+without reconstructing compatibility from lowered machine types. HIR and MIR
 copy that resolved fact; they do not reparse the attribute or derive the symbol
 from the source name.
 
