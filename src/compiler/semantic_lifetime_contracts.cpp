@@ -692,12 +692,17 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
   // in that reference's region as the receiver sees it: read through each
   // carrier field's lifetime arguments and each base class's, so a
   // `Pair<a, b>` field or a base's field supplies the region it binds there.
-  using Regions = std::vector<std::pair<std::string, std::string>>;
-  const auto mappedRegion = [](const Regions &map, const std::string &name) {
+  // A region this walk cannot name (an elided slot, `_`, or a binder it does
+  // not see) is unknown: the general place proof stands for it.
+  using Regions =
+      std::vector<std::pair<std::string, std::optional<std::string>>>;
+  const auto mappedRegion =
+      [](const Regions &map,
+         const std::string &name) -> std::optional<std::string> {
     for (const auto &[from, to] : map)
       if (from == name)
         return to;
-    return std::string{}; // an elided, anonymous region
+    return std::nullopt;
   };
   const auto bindRegions = [&](const ClassDecl &declaration,
                                const std::vector<TypeRef> &arguments,
@@ -705,7 +710,7 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
     Regions bound;
     const auto binders = declaration.lifetimeParameters();
     for (std::size_t index = 0; index < binders.size(); ++index) {
-      std::string region;
+      std::optional<std::string> region;
       if (index < arguments.size() &&
           arguments[index].name.segments.size() == 1 &&
           arguments[index].name.last().lexeme != "_")
@@ -746,7 +751,7 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
   };
   struct Crossing {
     std::string field;
-    std::string region;
+    std::optional<std::string> region;
     Token declared;
   };
   // Nullopt when the place crosses no stored reference this walk resolves.
@@ -759,6 +764,13 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
     for (const auto &binder :
          classInfo(owner).declaration->lifetimeParameters())
       map.emplace_back(binder.name.lexeme, binder.name.lexeme);
+    // Regions a callable pattern binds name themselves too.
+    std::vector<std::string> patternRegions;
+    for (const auto &pattern :
+         classInfo(owner).declaration->genericArgumentPatterns())
+      collectRegionNames(pattern, patternRegions);
+    for (const auto &region : patternRegions)
+      map.emplace_back(region, region);
     for (const auto &projection : place.projections) {
       if (projection.kind == PlaceProjectionKind::ConstantIndex ||
           projection.kind == PlaceProjectionKind::DynamicIndex)
@@ -773,7 +785,7 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
         return std::nullopt;
       const TypeRef &type = field->type();
       if (type.reference) {
-        std::string region;
+        std::optional<std::string> region;
         if (type.referenceLifetime &&
             type.referenceLifetime->name.kind == TokenKind::IDENTIFIER)
           region = mappedRegion(map, type.referenceLifetime->name.lexeme);
@@ -790,11 +802,9 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
   };
   for (const auto &place : places) {
     const auto crossed = firstCrossing(place);
-    if (!crossed || crossed->region == lifetime.region)
+    if (!crossed || !crossed->region || *crossed->region == lifetime.region)
       continue;
-    const std::string held = crossed->region.empty()
-                                 ? std::string("an elided region")
-                                 : "region '" + crossed->region + "'";
+    const std::string held = "region '" + *crossed->region + "'";
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2127", DiagnosticPhase::Semantics, expressionToken(value),
         "The result declares region '" + lifetime.region +
