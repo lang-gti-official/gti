@@ -89,7 +89,7 @@ class SourceStdlibCI(unittest.TestCase):
 
     def test_owners_consumers_and_regressions_are_mandatory(self):
         names = source.test_entries(['stdlib/std/algorithm.gti', 'tests/generic_algorithm_cluster_test.py'])
-        for name in ['gti_test_ui', 'stdlib_surface', 'stdlib_surface_manifest',
+        for name in ['^gti_test_ui(_[0-9]+)?$', 'stdlib_surface', 'stdlib_surface_manifest',
                      'generic_algorithm_cluster', 'practical_examples']:
             self.assertIn(name, names)
         with patch.object(source, 'git', return_value='examples/unregistered/new.gti\0'), self.assertRaisesRegex(ValueError, 'nested example coverage'):

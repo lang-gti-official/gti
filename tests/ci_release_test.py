@@ -712,6 +712,9 @@ def gti_test_tiers_contract(root):
     assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
     assert "python3 tests/runner/check.py build-sanitized/gti-test" in step
     assert 'pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"' in compiler
+    # The compiler-API checks that left the aggregate for tests/unit keep a
+    # sanitized run in the library subset.
+    assert "GTI_SANITIZER_TESTS: '^gti_unit_tests$|" in compiler
     assert "${{ runner.temp }}/sanitizers-gti-test.xml" in compiler
 
 

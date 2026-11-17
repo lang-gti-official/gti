@@ -10031,7 +10031,9 @@ every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
 default becomes an hour). Its three compiler partitions, which ran only
 `compiler_pipeline` (the instrumented ownership suite alone took more than
 three hours on 2026-11-04, run 41837802931), left with that aggregate: the
-instrumented `gti-test` run analyses its cases. The job runs
+instrumented `gti-test` run analyses its cases with the sanitized compiler,
+and the library subset runs `gti_unit_tests`, which holds the aggregate's
+API-only checks. The job runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
 rather than the whole generated-C++ corpus, and omits `failure_metadata`:
 both exceeded an hour under ASan on the 6-core runner and remain the plain

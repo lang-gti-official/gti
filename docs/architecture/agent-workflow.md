@@ -657,9 +657,10 @@ The sanitizer jobs below run in `sanitizers.yml`, daily on the nightly commit,
 not in full validation (see "Primary Targets" in `verification.md`). The
 sanitizer jobs retain per-case outcomes and durations. Missing, stale, failed
 or timed-out case evidence fails the gate.
-The compiler sanitizer job builds only the targets of its library subset and
+The compiler sanitizer job builds only the targets of its library subset
+(which includes `gti_unit_tests`, the compiler-API checks) and
 `gti_test_ui`, whose instrumented `gti-test` run analyses the `tests/ui`
-cases; this avoids filling runner disks with unexecuted sanitizer binaries.
+and `tests/project` cases; this avoids filling runner disks with unexecuted sanitizer binaries.
 The LLVM backend sanitizer job runs the backend's test binaries and its cheap
 control harnesses (`GTI_LLVM_SANITIZER_TESTS` in `sanitizers.yml`) in the
 same sanitized tree under the LLVM-only backend policy. The `llvm_*` execution
