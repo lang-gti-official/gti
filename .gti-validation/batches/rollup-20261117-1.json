@@ -1,0 +1,321 @@
+{
+  "schema": 1,
+  "base": "783d3972f46de3ac460dcaaf6ef075ae285f1eeb",
+  "members": [
+    {
+      "pr": 501,
+      "head": "3c3bd4b00dcc7057c9eed22d7f78e6e4560336f2",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #501: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui",
+          "lifetime_semantics",
+          "lifetime_pipeline"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "lifetime_native",
+          "borrow_origin",
+          "borrow_origin_publication",
+          "local_reference_inference",
+          "ephemeral_carrier_mir",
+          "complete_borrow_summaries",
+          "scalar_temporary_borrow",
+          "temporary_owner_borrow",
+          "reference_payload_semantics",
+          "view_fields",
+          "lowered_program_contract",
+          "optimizer_conformance",
+          "semantic_call_regressions"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #501; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "compiler_pipeline",
+          "lifetime_native",
+          "borrow_origin",
+          "borrow_origin_publication",
+          "local_reference_inference",
+          "ephemeral_carrier_mir",
+          "complete_borrow_summaries",
+          "scalar_temporary_borrow",
+          "temporary_owner_borrow",
+          "reference_payload_semantics",
+          "view_fields",
+          "lowered_program_contract",
+          "optimizer_conformance",
+          "semantic_call_regressions"
+        ]
+      }
+    },
+    {
+      "pr": 511,
+      "head": "71346139560d244798e1175f6be96ab003a298f4",
+      "plan": {
+        "tier": "T1",
+        "rationale": "Rollup member #511: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "constructor_formatting"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "block_comment_pipeline",
+          "gti_unit_tests",
+          "nested_type_syntax",
+          "pack_fold_syntax",
+          "block_comment_lsp",
+          "cli_workflow",
+          "comment_placement_lsp",
+          "concept_conditions_lsp",
+          "conditional_member_operators_lsp",
+          "export_placement_lsp",
+          "lsp_protocol",
+          "reference_parameter_packs_lsp"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #511; a rollup reproduces no member failure"
+        }
+      }
+    },
+    {
+      "pr": 515,
+      "head": "899b28700dfb8f5bc8b62cc0fce84d087a16972b",
+      "plan": {
+        "tier": "T1",
+        "rationale": "Rollup member #515: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "filesystem_path_runtime"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "filesystem_operations_runtime",
+          "stdlib_surface_manifest",
+          "release_version_policy",
+          "cut_release_policy"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #515; a rollup reproduces no member failure"
+        }
+      }
+    },
+    {
+      "pr": 517,
+      "head": "3320329173c9974fb6522c69a20522a3b0c0d5b5",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #517: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "native_c_scalar_pipeline",
+          "unsafe_function_contract",
+          "function_signature_types",
+          "llvm_native_c_abi",
+          "llvm_native_c_contract_preflight",
+          "llvm_native_c_scalar_execution",
+          "llvm_native_c_indirect_execution",
+          "llvm_native_c_counted_input"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #517; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "compiler_pipeline",
+          "native_c_scalar_pipeline",
+          "unsafe_function_contract",
+          "function_signature_types",
+          "llvm_native_c_abi",
+          "llvm_native_c_contract_preflight",
+          "llvm_native_c_scalar_execution",
+          "llvm_native_c_indirect_execution",
+          "llvm_native_c_counted_input"
+        ]
+      }
+    },
+    {
+      "pr": 514,
+      "head": "c1afee2882da7d6acc3d26a8ffbd2c29401ab359",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #514: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "compiler_pipeline",
+          "lifetime_semantics",
+          "lifetime_native",
+          "lifetime_pipeline",
+          "lifetime_syntax",
+          "lifetime_parameters_lsp",
+          "complete_borrow_summaries",
+          "consuming_receiver_types",
+          "forward_list_iterator_runtime",
+          "mir_verifier_hardening",
+          "mir_borrow_audit",
+          "ephemeral_carrier_mir",
+          "ephemeral_carrier_receiver_runtime",
+          "borrow_carrier_receivers",
+          "borrow_carrier_receivers_runtime",
+          "borrowed_receiver_carriers_regressions",
+          "borrow_origin",
+          "borrow_origin_runtime",
+          "borrow_origin_publication",
+          "borrowed_from_equivalence",
+          "nested_borrow_fields",
+          "borrowing_composition",
+          "borrowing_composition_pipeline",
+          "cleanup_bound_borrow",
+          "cleanup_bound_borrow_runtime",
+          "text_view_iterator_compiler",
+          "text_view_iterator_runtime",
+          "user_dual_range_lifetime",
+          "reference_parameter_pack_mir",
+          "general_requires_semantics",
+          "borrowing_capture_semantics",
+          "bounded_array_borrows",
+          "callable_return_type",
+          "concept_conditions",
+          "conditional_member_operators",
+          "conversion_operators",
+          "function_signature_types",
+          "generic_discovery",
+          "generic_initialization",
+          "lambda_reference",
+          "local_reference_inference",
+          "owning_function_types",
+          "protocol_concepts",
+          "qualified_type_members",
+          "reference_payload_semantics",
+          "semantic_call_regressions",
+          "semantic_call_regressions_runtime",
+          "stored_callable_types",
+          "tryable_propagation",
+          "unsafe_expression_contract",
+          "unsafe_function_contract",
+          "scalar_temporary_borrow",
+          "temporary_owner_borrow",
+          "raw_borrow_contract",
+          "object_lifetime_contract",
+          "retained_borrowed_call_result_runtime",
+          "nested_borrow_chain_runtime",
+          "lowered_program_contract",
+          "executable_entry_semantics"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #514; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "compiler_pipeline",
+          "lifetime_semantics",
+          "lifetime_native",
+          "lifetime_pipeline",
+          "lifetime_syntax",
+          "lifetime_parameters_lsp",
+          "complete_borrow_summaries",
+          "consuming_receiver_types",
+          "forward_list_iterator_runtime",
+          "mir_verifier_hardening",
+          "mir_borrow_audit",
+          "ephemeral_carrier_mir",
+          "ephemeral_carrier_receiver_runtime",
+          "borrow_carrier_receivers",
+          "borrow_carrier_receivers_runtime",
+          "borrowed_receiver_carriers_regressions",
+          "borrow_origin",
+          "borrow_origin_runtime",
+          "borrow_origin_publication",
+          "borrowed_from_equivalence",
+          "nested_borrow_fields",
+          "borrowing_composition",
+          "borrowing_composition_pipeline",
+          "cleanup_bound_borrow",
+          "cleanup_bound_borrow_runtime",
+          "text_view_iterator_compiler",
+          "text_view_iterator_runtime",
+          "user_dual_range_lifetime",
+          "reference_parameter_pack_mir",
+          "general_requires_semantics",
+          "borrowing_capture_semantics",
+          "bounded_array_borrows",
+          "callable_return_type",
+          "concept_conditions",
+          "conditional_member_operators",
+          "conversion_operators",
+          "function_signature_types",
+          "generic_discovery",
+          "generic_initialization",
+          "lambda_reference",
+          "local_reference_inference",
+          "owning_function_types",
+          "protocol_concepts",
+          "qualified_type_members",
+          "reference_payload_semantics",
+          "semantic_call_regressions",
+          "semantic_call_regressions_runtime",
+          "stored_callable_types",
+          "tryable_propagation",
+          "unsafe_expression_contract",
+          "unsafe_function_contract",
+          "scalar_temporary_borrow",
+          "temporary_owner_borrow",
+          "raw_borrow_contract",
+          "object_lifetime_contract",
+          "retained_borrowed_call_result_runtime",
+          "nested_borrow_chain_runtime",
+          "lowered_program_contract",
+          "executable_entry_semantics"
+        ]
+      }
+    }
+  ]
+}
