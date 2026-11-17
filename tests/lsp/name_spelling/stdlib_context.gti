@@ -1,0 +1,7 @@
+// Imported declarations do not prevent local spelling suggestions.
+//@ code-action @typo: "Replace with 'counter'" => return counter;
+import std.string;
+int main() {
+  int counter = 1;
+  return /*@typo*/coutner; //~ ERROR GTI-S2001
+}

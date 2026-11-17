@@ -13500,8 +13500,11 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
       } else {
         report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
                "GTI-S2001");
-        diagnostics.back().missingIncludeName = expr.name().lexeme;
         suggestVisibleLocalName(expr.name(), diagnostics.back());
+        // Import advice rewrites diagnostics with import fixes to GTI-S2089.
+        // An existing lexical repair is not a missing-import diagnostic.
+        if (diagnostics.back().fixes.empty())
+          diagnostics.back().missingIncludeName = expr.name().lexeme;
       }
     }
     requestSession.recoveryCauses.insert_or_assign(
