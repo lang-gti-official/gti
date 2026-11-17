@@ -1,0 +1,12 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+enum Reading { empty, item(int& value) };
+
+int inspect(mut Reading input) {
+  switch (input) {
+case Reading::item(value): return value;
+
+  case Reading::empty: return 0;
+  }
+}
+int main() { int x = 7; return inspect(Reading::item(x)) - 7; }

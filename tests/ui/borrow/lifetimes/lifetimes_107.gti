@@ -1,0 +1,14 @@
+// Lifetimes: rejected with GTI-S2017.
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+};
+int&<a> leak<lifetime a>(int&<a> input) {
+  int local = 3;
+  Derived view{local};
+  return view.value;  //~ ERROR GTI-S2017
+}
+int main() { int value = 7; return leak(value); }

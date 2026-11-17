@@ -35,8 +35,9 @@ of the assertions that follow), and runs it as its CTest entries do.
 the passing test's own compiler run reported (the exact error-code set, or
 acceptance), with directives for the recorded options (execution profile,
 definition closure, audit mode, limits, defines, target, stop phase);
-anything gti-test cannot express (other preludes, extra source files,
-package roots, repository fixtures) is flagged. Loops over computed sources
+sibling source files become `// --- name` sections, a repository fixture is
+kept with its path in the report, and anything gti-test cannot express (other
+preludes, other extra source files, package roots) is flagged. Loops over computed sources
 and helper indirection need no specification.
 
 usage:
@@ -1453,12 +1454,21 @@ def plan(cases: list[Case], spec: FileSpec, existing: dict[str, str]):
         if case.source is None or case.flags:
             flagged.append(case)
             continue
-        # Compared without surrounding blank space: a rendered file always
-        # ends in one newline whatever the literal did.
+        # Compared without surrounding blank space (a rendered file always
+        # ends in one newline whatever the literal did) and, against existing
+        # tests, without the source's own leading comments (a fixture's).
         body = case.source.strip()
-        if body in existing and not case.directives and \
+        lines = body.splitlines()
+        while lines and (lines[0].startswith("//") or not lines[0].strip()):
+            lines.pop(0)
+        uncommented = "\n".join(lines).strip()
+        if body not in existing and uncommented in existing:
+            body_key = uncommented
+        else:
+            body_key = body
+        if body_key in existing and not case.directives and \
                 case.mode == "check":
-            case.flags.append(f"duplicate of existing {existing[body]}")
+            case.flags.append(f"duplicate of existing {existing[body_key]}")
             flagged.append(case)
             continue
         keyed = body + "\0" + "\0".join(case.directives)
@@ -2115,8 +2125,9 @@ def cases_from_trace(path: Path, trace_file: Path, spec: FileSpec) -> list[Case]
             case.directives.append(f"target: {record['target']}")
         if not record["preludes"]:
             if case.mode == "check":
-                case.flags.append("analysed without the prelude in a check "
-                                  "mode")
+                # gti-test's check modes always load the prelude; the
+                # compiler-run comparison catches a source that needs it gone.
+                case.differences.append("C++ analysed without the prelude")
             else:
                 case.directives.append("no-prelude")
         else:
@@ -2128,9 +2139,18 @@ def cases_from_trace(path: Path, trace_file: Path, spec: FileSpec) -> list[Case]
                                         "trusted prelude unit")
             elif others:
                 case.flags.append(f"other preludes: {others}")
-        overrides = [name for name, body in record["overrides"].items()
-                     if body != record["source"]]
-        if overrides:
+        overrides = {name: body for name, body in record["overrides"].items()
+                     if body != record["source"]}
+        siblings = {Path(name).name: body for name, body in overrides.items()
+                    if Path(name).parent == Path(record["entry"]).parent and
+                    name.endswith(".gti")}
+        if overrides and len(siblings) == len(overrides) and \
+                "main.gti" not in siblings:
+            # Sibling source files become `// --- name` sections.
+            case.source = "// --- main.gti\n" + record["source"].rstrip() + \
+                "\n" + "".join(f"// --- {name}\n{body.rstrip()}\n"
+                                for name, body in sorted(siblings.items()))
+        elif overrides:
             case.flags.append("extra source files: " +
                               ", ".join(sorted(overrides)))
         if record["packages"]:
@@ -2140,7 +2160,10 @@ def cases_from_trace(path: Path, trace_file: Path, spec: FileSpec) -> list[Case]
         entry = Path(record["entry"])
         if entry.is_absolute() and str(entry).startswith(str(ROOT)) and \
                 "/build" not in str(entry) and entry.is_file():
-            case.flags.append(f"repository file {entry.relative_to(ROOT)}")
+            # Kept as a case; the report lists the fixture so the caller can
+            # delete it when nothing else uses it, or drop the case when
+            # another harness already compiles and runs it.
+            case.carried.append(f"fixture: {entry.relative_to(ROOT)}")
         if record["recovered"]:
             case.differences.append("recovered-program analysis")
         cases.append(case)

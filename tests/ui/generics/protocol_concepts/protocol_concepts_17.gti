@@ -1,0 +1,28 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept editable<T> {
+  typename element;
+  element<a> get<lifetime a>(T<a> value);
+};
+class Editing {
+public:
+  mut int& value;
+  Editing(mut int& owner) : value(owner) {}
+};
+for concept editable<Editing> {
+  using element = mut int&;
+  mut int&<a> get<lifetime a>(mut Editing<a> value) {
+    return value.value;
+  }
+};
+editable<T>::element<a> relay<T, lifetime a>(mut T<a> value)
+    requires editable<T> {
+  return editable<T>::get(std::move(value));
+}
+int main() {
+  mut int owner = 4;
+  Editing view{owner};
+  mut int& value = relay(std::move(view));
+  value = 8;
+  return value - 8;
+}

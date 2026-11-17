@@ -1,0 +1,5 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Tag<lifetime a> { int value = 7; Tag() = default; };
+int read<lifetime a>(Tag<a> tag) requires outlives<Tag<a>, static> { return tag.value; }
+int main() { Tag tag{}; return read(tag) - 7; }

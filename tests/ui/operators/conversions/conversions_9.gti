@@ -1,0 +1,10 @@
+// Conversion operators: the program is accepted.
+//@ check-pass
+struct Source {
+  int value = 7;
+  implicit operator int() { return this.value; }
+public:
+  Source() = default;
+};
+T convert<T>(Source value) { return value; }
+int main() { return convert<int>(Source()) - 7; }

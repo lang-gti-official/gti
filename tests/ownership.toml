@@ -264,9 +264,6 @@ owners = [
   "semantic_header_boundary",
   "semantic_header_self_containment",
   "general_requires_semantics",
-  "reference_payload_semantics",
-  "borrowing_capture_semantics",
-  "protocol_concepts",
   "qualified_type_members",
   "instance_reuse_fixtures",
   "trusted_body_analysis_fixtures",
@@ -275,8 +272,6 @@ owners = [
   "executable_entry_semantics",
   "generic_discovery",
   "generic_initialization",
-  "tryable_propagation",
-  "borrow_origin",
   "lambda_reference",
   "local_reference_inference",
   "bounded_array_borrows",
@@ -284,13 +279,10 @@ owners = [
   "unsafe_function_contract",
   "unsafe_expression_contract",
   "discardable_result",
-  "conversion_operators",
   "function_signature_types",
   "callable_return_type",
-  "stored_callable_types",
   "semantic_call_regressions",
   "^gti_test_ui(_[0-9]+)?$",
-  "owning_function_types",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -313,7 +305,6 @@ paths = [
 owners = [
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "complete_borrow_summaries",
   "cleanup_bound_borrow",
   "temporary_owner_borrow",
   "fresh_callable_borrow",
@@ -345,7 +336,6 @@ paths = [
 owners = [
   "^constexpr_",
   "compile_limits",
-  "macro_values_semantic_ir",
   "macro_fresh_callables",
 ]
 consumers = [
@@ -441,10 +431,7 @@ owners = [
   "ephemeral_carrier_mir",
   "borrowing_callbacks_mir",
   "storage_adoption_contract",
-  "resource_protocol_contract",
-  "complete_borrow_summaries",
   "cleanup_bound_borrow_mutations",
-  "uninitialized_carrier_contract",
   "object_lifetime_contract",
   "source_sparse_storage_contract",
   "text_address_bridge_contract",
@@ -1185,7 +1172,6 @@ paths = [
   "stdlib/std/source_location.gti",
 ]
 owners = [
-  "optional_compiler_contract",
   "panic_adoption_runtime",
   "deferred_assertions_runtime",
   "source_location_runtime",

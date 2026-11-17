@@ -1,0 +1,10 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+concept Pair<T, lifetime a, lifetime b> {
+  void use(int&<a> first, int&<b> second) requires outlives<a, b>;
+};
+for<lifetime a, lifetime b> concept Pair<int, a, b> {
+  void use(int&<a> first, int&<b> second) requires outlives<a, b> {}
+};
+int main() { return 0; }

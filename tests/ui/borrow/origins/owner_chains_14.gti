@@ -1,0 +1,20 @@
+// Owner chains: raw-is-not-owned is rejected by ownership checking.
+import std.memory;
+struct Node {
+  mut int value;
+  mut std::unique_ptr<Node> next;
+  Node(int value, std::unique_ptr<Node> next)
+      : value(value), next(std::move(next)) {}
+};
+int& element(Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element(*node.next, position - 1);
+}
+mut int& element_mut(mut Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element_mut(*node.next, position - 1);
+}
+
+struct RawNode { mut int value; mut RawNode* next = nullptr; };
+int& unchecked(RawNode& root) { return root.next->value; }  //~ ERROR GTI-S2055
+int main() { return 0; }

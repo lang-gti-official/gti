@@ -1,0 +1,10 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+import std.string;
+enum Owned { item(std::string text), empty };
+Owned move_result() {
+  auto original = Owned::item(std::string("error"));
+  auto relocated = std::move(original);
+  return relocated;
+}
+int main() { auto value = move_result(); return 0; }

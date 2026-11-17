@@ -1,0 +1,3 @@
+// Owning functions: a borrowed parameter pack cannot authorize returning a local reference.
+int& escape<Args...>(Args... args) { int local = 7; return local; }  //~ ERROR GTI-S2017
+int main() { int local = 4; return escape<int&>(local); }

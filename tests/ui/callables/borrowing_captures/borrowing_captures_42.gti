@@ -1,0 +1,10 @@
+// Borrowing captures: invocation-pointer-reference-result.
+//@ check-pass
+import std.functional;
+int& left(int& value, int ignored) { return value; }
+int main() {
+  int cell = 4;
+  std::function_ptr<int&(int&, int)> pointer{left};
+  int& view = pointer(cell, 1);
+  return view - 4;
+}

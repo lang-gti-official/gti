@@ -1,0 +1,30 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+[[c_abi]] struct NativeAddress { mut const int* address; mut int stamp; };
+[[c_abi]] struct NativeBatch { NativeAddress records[2]; };
+[[c_abi]] union NativeChoice { int integer; const int* address; };
+extern "C" {
+  NativeAddress native_address();
+  NativeBatch native_batch();
+  NativeChoice native_choice();
+}
+enum NativeEvent {
+  address(NativeAddress value), batch(NativeBatch value),
+  choice(NativeChoice value), empty
+};
+int main() {
+  unsafe {
+    NativeAddress address = native_address();
+    NativeBatch batch = native_batch();
+    NativeChoice choice = native_choice();
+    NativeEvent first = NativeEvent::address(address);
+    NativeEvent second = NativeEvent::batch(batch);
+    NativeEvent third = NativeEvent::choice(choice);
+    switch (first) {
+      case NativeEvent::address(value): return value.stamp;
+      case NativeEvent::batch: return 1;
+      case NativeEvent::choice: return 2;
+      case NativeEvent::empty: return 3;
+    }
+  }
+}

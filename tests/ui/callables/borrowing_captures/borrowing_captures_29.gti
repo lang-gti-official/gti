@@ -1,0 +1,3 @@
+// Borrowing captures: invocation-pointer-has-no-default is rejected with a user diagnostic, not an ICE.
+import std.functional;
+int main() { std::function_ptr<int()> pointer{}; return pointer(); }  //~ ERROR GTI-S2012

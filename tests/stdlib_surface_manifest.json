@@ -3696,7 +3696,7 @@
         "explicit ! invocation syntax and missing-marker insertion diagnostics"
       ],
       "evidence": [
-        "tests/deferred_assertion_tests.cpp",
+        "tests/ui/language/deferred_assertions",
         "tests/deferred_assertion_runtime_test.py",
         "examples/172-deferred-assertions.gti",
         "examples/174-typed-macros.gti",
@@ -4234,7 +4234,7 @@
       ],
       "evidence": [
         "tests/ui/stdlib/memory/shared_owner",
-        "tests/borrowing_capture_tests.cpp"
+        "tests/ui/callables/borrowing_captures"
       ]
     },
     {
@@ -4784,7 +4784,7 @@
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp",
+        "tests/ui/callables/borrowing_captures",
         "examples/156-borrowing-callbacks.gti"
       ]
     },
@@ -4852,7 +4852,7 @@
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp",
+        "tests/ui/callables/borrowing_captures",
         "examples/156-borrowing-callbacks.gti",
         "stdlib/std/detail/function_pointer.gti"
       ]
@@ -4949,7 +4949,7 @@
         "tests/fixtures/owning_function_mutable_arguments.gti",
         "tests/ui/callables/owning_function_policy_failure.gti",
         "tests/slow/memory/inline_polymorphic_lifecycle.gti",
-        "tests/owning_function_tests.cpp",
+        "tests/ui/callables/owning_functions",
         "stdlib/std/functional.gti",
         "tests/ui/callables/owned_inline/callbacks.gti",
         "tests/ui/callables/owned_inline"
@@ -5640,7 +5640,7 @@
       "evidence": [
         "stdlib/std/memory.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp"
+        "tests/ui/callables/borrowing_captures"
       ]
     },
     {
@@ -5894,7 +5894,7 @@
       "evidence": [
         "examples/125-manual-object-lifetimes.gti",
         "examples/128-inline-object-pool.gti",
-        "tests/uninitialized_carrier_tests.cpp",
+        "tests/ui/ownership/uninitialized_carriers",
         "tests/object_lifetime_tests.cpp",
         "docs/language/raw-pointers.md"
       ]
@@ -6527,7 +6527,7 @@
         "tests/ui/language/construction/expected_constructor_payload.gti",
         "tests/ui/stdlib/optional/constructor_failure.gti",
         "tests/ui/stdlib/optional/reset_failure.gti",
-        "tests/optional_compiler_tests.cpp",
+        "tests/ui/stdlib/optional/compiler",
         "tests/ui/stdlib/optional",
         "stdlib/std/optional.gti"
       ]
@@ -6852,8 +6852,8 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_tryable.gti",
         "tests/ui/expected/tryable_propagation.gti",
-        "tests/tryable_propagation_tests.cpp",
-        "tests/protocol_concept_tests.cpp",
+        "tests/ui/expected/tryable_propagation",
+        "tests/ui/generics/protocol_concepts",
         "examples/165-borrowed-payload-results.gti"
       ]
     },
@@ -7118,7 +7118,7 @@
         "examples/121-programmable-allocators.gti",
         "tests/fixtures/programmable_allocators.gti",
         "tests/programmable_allocators_runtime_test.py",
-        "tests/resource_protocol_tests.cpp",
+        "tests/ui/stdlib/resource/protocol",
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
         "tests/fixtures/resource_vector_constructor_rollback.gti",
@@ -7176,7 +7176,7 @@
       "evidence": [
         "stdlib/std/resource.gti",
         "examples/allocator-support/arena.gti",
-        "tests/resource_protocol_tests.cpp",
+        "tests/ui/stdlib/resource/protocol",
         "tests/unit/resource_memory_runtime_tests.cpp",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/fixtures/raw_resource_movement.gti",
@@ -7229,7 +7229,7 @@
         "tests/fixtures/resource_constructor_rollback.gti",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/programmable_allocators_runtime_test.py",
-        "tests/resource_protocol_tests.cpp",
+        "tests/ui/stdlib/resource/protocol",
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
         "tests/fixtures/resource_vector_constructor_rollback.gti"

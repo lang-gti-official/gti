@@ -1,0 +1,10 @@
+// Protocol concepts: rejected with GTI-S2030.
+concept identity_family<P> { typename value<T>; };
+struct Policy {};
+for concept identity_family<Policy> { using value<U> = U; };
+
+struct Holder<T> {
+  using Ref = identity_family<Policy>::value<T>;  //~ ERROR GTI-S2030
+  Holder() = default;
+};
+int main() { Holder<int&> value{}; return 0; }

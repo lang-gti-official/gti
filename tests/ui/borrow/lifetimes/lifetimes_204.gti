@@ -1,0 +1,6 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+int choose(int first, int second = 5) { return first + second; }
+int choose(bool first, int second) { return second; }
+int relay<Args...>(Args... values) { return choose(values...); }
+int main() { return relay(3) + relay(true, 4) - 12; }

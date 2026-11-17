@@ -1,0 +1,9 @@
+// Conversion operators: the program is accepted.
+//@ check-pass
+struct Reading {
+  int value;
+  Reading(int source) : value(source) {}
+  implicit operator int() { return this.value; }
+};
+int read(Reading value) { return value; }
+int main() { return read(Reading(7)) - 7; }

@@ -1,0 +1,4 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+Token staged() { return Token::item(7); } int main() { return 0; }

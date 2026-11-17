@@ -1,0 +1,2 @@
+// Negative: within that macro.
+#macro wrong() { continue; }  //~ ERROR GTI-S2099

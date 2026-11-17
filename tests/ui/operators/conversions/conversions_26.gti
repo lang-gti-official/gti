@@ -1,0 +1,11 @@
+// Conversion operators: rejected with GTI-S2000.
+struct Counter {
+  mut int calls = 0;
+  operator int() mut {
+    this.calls++;
+    return this.calls;
+  }
+public:
+  Counter() = default;
+};
+int main() { Counter fixed{}; return int(fixed); }  //~ ERROR GTI-S2000

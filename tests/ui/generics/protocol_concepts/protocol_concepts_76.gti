@@ -1,0 +1,20 @@
+// Protocol concepts: rejected with GTI-S2029.
+concept labeled<T> {
+  typename label_type;
+};
+class holder<std::copy_constructible T> {
+public:
+  T item;
+  holder(T value) : item(value) {}
+};
+class Ticket {
+public:
+  int id;
+  Ticket(int value) : id(value) {}
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+for concept labeled<holder<Ticket>> {  //~ ERROR GTI-S2029
+  using label_type = int;
+};
+int main() { return 0; }

@@ -1,0 +1,18 @@
+// Feasible lifecycle sources: literal feasibility refines a generic owning local's move source.
+//@ check-pass
+import std.string;
+struct Owned {
+  std::string text;
+  Owned() : text(std::string("owned")) {}
+  bool empty() { return this.text.empty(); }
+};
+#macro own<T>(bool active, T expression) {
+  if (active) { T local = expression; }
+}
+int main() {
+  Owned owner{};
+  bool dynamic = owner.empty();
+  own!(false, std::move(owner));
+  own!(true, std::move(owner));
+  return dynamic ? 1 : 0;
+}

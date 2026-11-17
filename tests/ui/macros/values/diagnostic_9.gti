@@ -1,0 +1,9 @@
+// Diagnostic: invalid result macro must stop before emission.
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+};
+#macro Pinned pinned() { return Pinned(); }
+int main() { Pinned value = pinned!(); return 0; }  //~ ERROR GTI-S2124 //~ ERROR GTI-S2003

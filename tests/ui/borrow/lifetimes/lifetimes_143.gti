@@ -1,0 +1,13 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Callback<R(Args...), lifetime environment> {
+  int&<environment> value;
+  Callback(int&<environment> input) : value(input) {}
+  int read() { return this.value; }
+};
+int read<lifetime a>(int&<a> input) {
+  Callback<int(int), a> explicitView{input};
+  Callback<int(int)> inferredView{input};
+  return explicitView.read() + inferredView.read();
+}
+int main() { int value = 7; return read(value) - 14; }

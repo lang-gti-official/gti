@@ -1,0 +1,32 @@
+// Optional compiler contract: the installed optional surface should pass semantic analysis.
+//@ check-pass
+import std.optional;
+
+class payload {
+  mut int32_t stored;
+
+public:
+  payload(int32_t value) : stored(value) {}
+  payload(payload& other) = delete;
+  payload(payload&& other) = default;
+  ~payload() {}
+  void set(int32_t value) mut { this.stored = value; }
+  int32_t get() { return this.stored; }
+};
+
+int main() {
+  std::optional<payload> constructed{payload(int32_t(3))};
+  if (constructed.value().get() != int32_t(3)) {
+    return 2;
+  }
+  mut std::optional<payload> value{};
+  [[discard]] value.emplace(int32_t(4));
+  value.value().set(int32_t(5));
+  if (!value.has_value() || value.value().get() != int32_t(5)) {
+    return 1;
+  }
+  mut std::optional<payload> moved{std::move(value)};
+  moved.reset();
+  std::optional<int32_t> fixed{int32_t(7)};
+  return fixed.value() - int32_t(7);
+}

@@ -1,0 +1,2 @@
+// Lifetimes: rejected with GTI-S2127.
+int&<static> forever(int& input) { return input; }  //~ ERROR GTI-S2127

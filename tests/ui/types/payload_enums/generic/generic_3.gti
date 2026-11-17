@@ -1,0 +1,36 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+class Resource {
+public:
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+class Single {
+  Resource child;
+public:
+  Single() : child(Resource()) {}
+};
+class Multiple {
+  Resource first;
+  Resource second;
+public:
+  Multiple() : first(Resource()), second(Resource()) {}
+};
+class WithDestructor {
+  Resource child;
+public:
+  WithDestructor() : child(Resource()) {}
+  ~WithDestructor() {}
+};
+enum Choice { none, left(Resource value), right(Resource value) };
+enum Pair { none, both(Resource first, Resource second) };
+int main() {
+  Single single{};
+  Multiple multiple{};
+  WithDestructor destructor{};
+  auto choice = Choice::right(Resource());
+  auto pair = Pair::both(Resource(), Resource());
+  return 0;
+}

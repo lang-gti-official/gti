@@ -1,0 +1,7 @@
+// Borrowing captures: erased-private-factory-remains-private is rejected with a user diagnostic, not an ICE.
+import std.memory;
+int main() {
+  int owner = 3;
+  auto& erased = gti_internal::erase_reference(owner);  //~ ERROR GTI-S2058
+  return 0;
+}

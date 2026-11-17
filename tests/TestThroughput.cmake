@@ -216,8 +216,8 @@ set(gti_fast_feedback_tests
   mir_full_expression mir_program_initialization mir_hosted_startup
   optimizer_foundation optimizer_analyses optimizer_conformance
   layout_query_pipeline native_record_pipeline bindgen_pipeline
-  source_text_pipeline source_unit_services optional_compiler_contract
-  storage_adoption_contract resource_protocol_contract ephemeral_carrier_mir
+  source_text_pipeline source_unit_services
+  storage_adoption_contract ephemeral_carrier_mir
   parser_conditional_recovery
 )
 foreach(suite IN LISTS gti_fast_feedback_tests)
