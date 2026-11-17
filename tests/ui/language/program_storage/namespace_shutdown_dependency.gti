@@ -1,0 +1,11 @@
+// A transitive destructor cannot read storage whose program lifetime ended.
+void touch();
+class Probe {
+public:
+  Probe() {}
+  ~Probe() { touch(); }
+};
+Probe first{};
+mut int later = 7;
+void touch() { std::println(later); } //~ ERROR GTI-S2061 lifetime has already ended
+int main() { return 0; }
