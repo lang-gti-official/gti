@@ -1,0 +1,18 @@
+// A closed stderr reports write_failed through both targeted recoverable overloads.
+//@ run-pass
+// --- main.gti
+import std.format;
+extern "C" { int close_stderr(); }
+int main() {
+  if (close_stderr() != 0) { return 1; }
+  auto literal = std::try_println(std::cerr, "message");
+  int number = 7;
+  auto formatted = std::try_println(std::cerr, "message {}", number);
+  if (literal || formatted) { return 2; }
+  if (literal.error() != std::print_errc::write_failed) { return 3; }
+  if (formatted.error() != std::print_errc::write_failed) { return 4; }
+  return 0;
+}
+// --- helper.c
+#include <unistd.h>
+int close_stderr(void) { return close(2); }

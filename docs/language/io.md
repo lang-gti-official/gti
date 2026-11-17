@@ -549,6 +549,30 @@ runtime call. A host error can still leave a prefix written: output is not
 transactional. `print_errc` preserves each format category and additionally
 reports `write_failed`.
 
+Importing `std.format` also provides explicit standard-output destinations:
+
+```gti
+std::println(std::cerr, "gtiup: {}", message);
+auto result = std::try_println(std::cerr, "gtiup: {}", message);
+std::println(std::cout, "finished");
+```
+
+`std::cout` and `std::cerr` are immutable `std::output_target` values, not
+owning streams. They acquire no resources, require no dynamic initialization,
+and select stdout or stderr respectively. Calls without a destination retain
+stdout behavior. Targeted `println` and `try_println` support literal text and
+checked format patterns with borrowed arguments. Their `runtime_println` and
+`try_runtime_println` counterparts explicitly accept dynamic patterns.
+Formatting and newline construction finish before a single counted write;
+formatting failure writes nothing, but a host error can leave a written prefix.
+`try_println` reports `print_errc::write_failed`; the convenience form panics
+at the caller and names the failed destination. As with existing printing,
+allocation failure follows the ordinary allocation-failure policy.
+These selectors do not change buffering or flush automatically, and are not
+C++ iostreams: insertion operators and file/writer destinations are not part
+of this overload family. The destination adds no heap allocation; formatting
+uses the same owning line buffer as the existing recoverable stdout API.
+
 With **only one text argument**, all four print functions write literally,
 including braces. This preserves the prelude's raw-output contract without
 making semantics depend on whether `std.format` is included. In contrast,

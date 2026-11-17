@@ -4586,7 +4586,12 @@
         "std::try_runtime_format",
         "std::try_runtime_format_to",
         "std::try_runtime_print",
-        "std::try_runtime_println"
+        "std::try_runtime_println",
+        "std::output_target",
+        "std::cout",
+        "std::cerr",
+        "std::println(target,text)",
+        "std::try_println(target,pattern,Args...)"
       ],
       "case_ids": [
         "format",
@@ -4620,7 +4625,9 @@
         "tests/ui/packs/reference_packs/function_text_escape.gti",
         "tests/ui/constexpr/consteval",
         "tests/fixtures/checked_literal_arguments.gti",
-        "tests/ui/stdlib/contracts"
+        "tests/ui/stdlib/contracts",
+        "tests/ui/stdlib/format/output_targets.gti",
+        "tests/ui/stdlib/format/output_target_error.gti"
       ]
     },
     {

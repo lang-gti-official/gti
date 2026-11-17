@@ -2,6 +2,7 @@ export module format;
 import "detail/charconv_parse.gti";
 
 import std.charconv;
+import std.cstdio;
 import std.meta;
 import std.string;
 import std.utility;
@@ -30,7 +31,7 @@ export enum class format_errc {
   unsupported_argument,
 };
 
-/// Formatting errors and stdout submission failure are distinct recoverable
+/// Formatting errors and output submission failure are distinct recoverable
 /// outcomes. Allocation still follows GTI's defined allocation-failure policy.
 export enum class print_errc {
   invalid_format,
@@ -38,6 +39,11 @@ export enum class print_errc {
   unsupported_argument,
   write_failed,
 };
+
+/// Non-owning standard output destinations; no stream state or initialization.
+export enum class output_target { standard_output, standard_error };
+export constexpr output_target cout = output_target::standard_output;
+export constexpr output_target cerr = output_target::standard_error;
 
 /// Parsed replacement-field presentation. A zero type means the default
 /// presentation for the selected argument type.
@@ -1168,6 +1174,25 @@ void panic_print_error(print_errc error) {
   panic("Output failed: unknown error");
 }
 
+expected<void, print_errc> submit_print(output_target target, string_view text) {
+  if (target == output_target::standard_error) {
+    auto result = try_write_stderr(text);
+    if (!result) { return unexpected(print_errc::write_failed); }
+    return;
+  }
+  auto result = try_write_stdout(text);
+  if (!result) { return unexpected(print_errc::write_failed); }
+  return;
+}
+
+[[noreturn, track_caller]]
+void panic_target_print_error(output_target target, print_errc error) {
+  if (error == print_errc::write_failed && target == output_target::standard_error) {
+    panic("Output failed: stderr write failed");
+  }
+  panic_print_error(error);
+}
+
 expected<void, print_errc> submit_print(string_view text) {
   // The prelude's counted stdout entry checks complete submission already.
   // Avoid importing the unrelated FILE/descriptor layer just for its status.
@@ -1242,6 +1267,60 @@ void runtime_println_impl<Args...>(string_view pattern, Args&... args) {
   if (!result) {
     detail::panic_print_error(result.error());
   }
+}
+
+/// Targeted literal output preserves braces and submits the newline with the text.
+export expected<void, print_errc> try_println(output_target target, string_view text) {
+  mut string line = string(text);
+  line.push_back('\n');
+  return detail::submit_print(target, line.view());
+}
+
+export [[track_caller]]
+void println(output_target target, string_view text) {
+  auto result = try_println(target, text);
+  if (!result) { detail::panic_target_print_error(target, result.error()); }
+}
+
+expected<void, print_errc>
+try_target_println_impl<Args...>(output_target target, string_view pattern, Args&... args) {
+  mut auto formatted = try_runtime_format_impl(pattern, args...);
+  if (!formatted) {
+    return unexpected(detail::print_format_error(formatted.error()));
+  }
+  formatted.value().push_back('\n');
+  return detail::submit_print(target, formatted.value().view());
+}
+
+export [[track_caller]]
+expected<void, print_errc> try_println<formattable Args...>(output_target target, format_pattern<Args...> pattern, Args&... args) {
+  return try_target_println_impl(target, pattern.text, args...);
+}
+
+export [[track_caller]]
+void println<formattable Args...>(output_target target, format_pattern<Args...> pattern, Args&... args) {
+  auto result = try_target_println_impl(target, pattern.text, args...);
+  if (!result) { detail::panic_target_print_error(target, result.error()); }
+}
+
+export [[track_caller]]
+expected<void, print_errc> try_runtime_println(output_target target, string_view pattern) {
+  return try_target_println_impl(target, pattern);
+}
+export [[track_caller]]
+expected<void, print_errc> try_runtime_println<formattable First, formattable Args...>(output_target target, string_view pattern, First& first, Args&... args) {
+  return try_target_println_impl(target, pattern, first, args...);
+}
+
+export [[track_caller]]
+void runtime_println(output_target target, string_view pattern) {
+  auto result = try_target_println_impl(target, pattern);
+  if (!result) { detail::panic_target_print_error(target, result.error()); }
+}
+export [[track_caller]]
+void runtime_println<formattable First, formattable Args...>(output_target target, string_view pattern, First& first, Args&... args) {
+  auto result = try_target_println_impl(target, pattern, first, args...);
+  if (!result) { detail::panic_target_print_error(target, result.error()); }
 }
 
 // Checked literals and explicitly requested dynamic patterns share execution.
