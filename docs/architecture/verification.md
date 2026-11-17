@@ -9926,7 +9926,7 @@ into the tiers of the redesign's §7:
 
 | Tier | Entries | How |
 | --- | --- | --- |
-| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_4` (`gti-test --shard i/4`), `gti_test_examples`, `gti_unit_tests` | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
+| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_8` (`gti-test --shard i/8`), `gti_test_examples`, `gti_unit_tests` | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
 | Pull request budget (Linux, advisory) | cases the PR adds or changes | `scripts/gti_test_budget.py` runs `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`; a case whose warm CPU time exceeds half its scaled limit becomes a warning annotation and a job-summary row, not a failure, until the rule is calibrated (below); other failures of changed cases still fail |
 | Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
@@ -9960,6 +9960,16 @@ and five used 40% or more; a pull request that edits one of those can be
 flagged if its hosted runner is more than about 2.1 to 2.5 times slower. LSP
 cases are held to wall time, which is noisier. The per-case JUnit reports
 give the hosted ratio to recalibrate the scale against.
+
+With the stacked C++ and Python conversions (umbrella #496) `tests/ui` holds
+about 6,800 files. Four shards then took 118-137 s each locally (ctest `-j 8`),
+while hosted macOS runs of the stacked PRs took 383-432 s for shards of
+1,100 cases (about 3x local), so the count went to eight. Those hosted runs
+also timed out single cases at 4.0-4.7 s CPU against the scaled 4 s check
+limit and one LSP case at 6.52 s against 6 s (3.1x its 2.08 s local CPU):
+six LSP cases using 1.7 s or more of server CPU and thirteen `tests/ui`
+cases at 75-94% of their limit locally, or seen timing out hosted, moved to
+`tests/slow`.
 
 `gti-test` has no global `-O3` override, so the slow tier does not yet re-run
 `tests/ui`'s run cases at `-O3`; cases that declare `//@ opt: O3` run at `-O3`

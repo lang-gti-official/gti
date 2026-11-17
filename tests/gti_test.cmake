@@ -50,8 +50,10 @@ math(EXPR gti_test_time_scale "2 * ${gti_test_timeout_scale}")
 #   tests/project and tests/lsp cases. Validation blocks cite this name.
 # - gti_test_ui_<i>: shard i of tests/ui (`gti-test --shard i/N`, by a stable
 #   hash of the path). Raise gti_test_ui_shards when a shard nears two
-#   minutes locally.
-set(gti_test_ui_shards 4)
+#   minutes locally. At 6,800 files four shards took 118-137 s each locally
+#   and hosted macOS runs about 3x slower, near the 600 s bound; eight keep
+#   each shard near a minute locally.
+set(gti_test_ui_shards 8)
 gti_test_report(gti_test_ui gti_test_ui_report)
 add_test(NAME gti_test_ui
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/runner/check.py"
