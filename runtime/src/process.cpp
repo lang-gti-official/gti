@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <new>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -216,4 +217,46 @@ extern "C" std::int32_t gti_rt_run_process_v1(gti_c_string_view arguments) {
     return 128 + terminationValue;
   }
   return 127;
+}
+
+extern "C" gti_process_error_v1
+gti_rt_process_exec_v1(gti_c_string_view arguments, int32_t *nativeCode) {
+  if (nativeCode == nullptr) {
+    return GTI_PROCESS_INVALID_ARGUMENT_V1;
+  }
+  *nativeCode = 0;
+  if (arguments.data == nullptr || arguments.length == 0 ||
+      arguments.length > SIZE_MAX || arguments.data[0] == '\0' ||
+      arguments.data[arguments.length - 1] != '\0') {
+    return GTI_PROCESS_INVALID_ARGUMENT_V1;
+  }
+#if defined(_WIN32)
+  return GTI_PROCESS_UNSUPPORTED_V1;
+#else
+  try {
+    // POSIX execv does not modify argument bytes. Borrow the source-owned
+    // buffer and allocate only the pointer table, never a second byte copy.
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < arguments.length; ++i) {
+      if (arguments.data[i] == '\0') { ++count; }
+    }
+    std::vector<char *> argv;
+    argv.reserve(count + 1);
+    argv.push_back(const_cast<char *>(arguments.data));
+    for (std::size_t i = 0; i + 1 < arguments.length; ++i) {
+      if (arguments.data[i] == '\0') {
+        argv.push_back(const_cast<char *>(arguments.data + i + 1));
+      }
+    }
+    argv.push_back(nullptr);
+    ::execv(argv.front(), argv.data());
+    // Snapshot before any cleanup can change the thread-local errno.
+    *nativeCode = errno;
+  } catch (const std::bad_alloc &) {
+    *nativeCode = ENOMEM;
+  } catch (const std::length_error &) {
+    *nativeCode = E2BIG;
+  }
+  return GTI_PROCESS_EXECUTE_FAILED_V1;
+#endif
 }

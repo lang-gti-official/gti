@@ -94,6 +94,45 @@ redirection, environment mutation, working-directory override, timeout,
 cancellation, or process-group policy. Those require explicit ownership and
 deadlock contracts rather than additions to this synchronous result.
 
+## Replacing The Current Process
+
+`command::exec()` invokes POSIX `execv` using the executable's exact path.
+Unlike `run()` (which uses PATH lookup), it never searches `PATH`. A relative
+path is resolved against the current working directory. The executable spelling
+is also `argv[0]`; each `arg()` supplies one following element, including empty
+arguments. No shell parsing or executable fallback occurs.
+
+On success the current process image is replaced, retaining its process ID,
+environment, working directory and POSIX-inherited descriptors (descriptors
+marked close-on-exec close). It never returns, does not run GTI destructors,
+and does not flush user-space stream buffers. Flush buffered output explicitly
+before calling when needed. Other POSIX exec inheritance/reset rules apply.
+
+On failure it returns `std::process::exec_error`, whose `code()` is a portable
+`errc` and `native_code()` is the immediately captured POSIX errno. Source
+validation failures return `invalid_argument` and native code zero; native
+execution failures return `execute_failed` (including native allocation failure
+with `ENOMEM`). The command remains intact and can be inspected or retried.
+There is no success value, and the method is not `noreturn` because failure
+returns. The operation is POSIX-only, like the rest of this module.
+
+```gti
+import std.process;
+int main() {
+  mut std::process::command command{"/bin/echo"};
+  command.arg("one argument containing spaces");
+  auto failure = command.exec();
+  // Reached only if the process image could not be replaced.
+  return failure.native_code() == 0 ? 1 : 2;
+}
+```
+
+The source owns and validates the argument bytes. The native boundary builds
+one pointer table borrowing those bytes, invokes `execv`, and captures errno
+before cleanup. It does not duplicate the strings, fork, or wait. The raw
+`libc.unistd` package already exposes `execv`, `execvp`, and `execve` for unsafe
+callers requiring direct argv/environment control.
+
 ## Termination Status
 
 A successful `run()` means that GTI obtained a child termination status; it
