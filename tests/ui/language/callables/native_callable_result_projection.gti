@@ -1,3 +1,6 @@
+// Source-defined mapped results retain native and cleanup behavior.
+//@ run-pass
+// --- native_callable_result_projection.gti
 import std.meta;
 using PointerGetter = () -> int32_t*;
 using ReadOnlyGetter = () -> const int32_t*;
@@ -27,3 +30,25 @@ int main() {
     return *pointer == 19 && *readonly == 23 && value == 42 ? 0 : 1;
   }
 }
+// --- native_callable_result_projection.cpp
+#include <cstdint>
+
+namespace {
+std::int32_t value = 19;
+const std::int32_t readonlyValue = 23;
+std::int32_t *pointerGetter() { return &value; }
+const std::int32_t *readonlyGetter() { return &readonlyValue; }
+std::int32_t scalarGetter() { return 42; }
+void voidGetter() {}
+} // namespace
+
+extern "C" auto projection_pointer_getter() -> std::int32_t *(*)() {
+  return pointerGetter;
+}
+extern "C" auto projection_readonly_getter() -> const std::int32_t *(*)() {
+  return readonlyGetter;
+}
+extern "C" auto projection_scalar_getter() -> std::int32_t (*)() {
+  return scalarGetter;
+}
+extern "C" auto projection_void_getter() -> void (*)() { return voidGetter; }

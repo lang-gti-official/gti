@@ -1,3 +1,8 @@
+// Contextual arithmetic before raw writes, checked failures after them.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: pointer_fields_bad_field_replacement.gti:168: runtime error[GTI-R0001]: integer_overflow in addition
+// --- pointer_fields_bad_field_replacement.gti
 import std.memory;
 
 unsafe void initialize_field_target(int* address, int value) {
@@ -283,8 +288,8 @@ int main() {
     if (false) return aliasing.bad_field_alias();
     if (false) return addresses.bad_field_redirect();
     if (false) return addresses.bad_field_old_address();
-    if (false) return addresses.bad_field_replacement();
-    if (false) return addresses.bad_member_value();
+    if (true) return addresses.bad_field_replacement();
+    if (false) return addresses.bad_member_value();  //~ WARN GTI-S2095
     if (false) {
       AddressPair existing{&pair[1], &pair[1]};
       return existing.bad_member_conditional();
@@ -323,5 +328,5 @@ int main() {
     std::destroy_at(&pair[1]);
     if (offset.constructed_member_offset() != 8) return 9;
   }
-  return 0;
+  return 0;  //~ WARN GTI-S2095
 }

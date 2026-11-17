@@ -1,3 +1,5 @@
+// Source-defined mapped results retain native and cleanup behavior.
+//@ run-pass
 import std.meta;
 
 std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& function, int&<a> value) {

@@ -1,3 +1,18 @@
+// Bound native secondary-record storage without changing cleanup execution.
+//@ run-pass
+//@ revisions: default primary primary-secondary
+//@[primary] run-fail
+//@[primary] args: primary
+//@[primary] exit-code: 70
+//@[primary] stderr-contains: many_fallible_scope_guards.gti:14: runtime error[GTI-R0017]: panic: "first cleanup failure"
+//@[primary-secondary] run-fail
+//@[primary-secondary] args: primary secondary
+//@[primary-secondary] exit-code: 70
+//@[primary-secondary] stdout: 48
+//@[primary-secondary] stdout: 47
+//@[primary-secondary] stdout: 46
+//@[primary-secondary] stderr-contains: many_fallible_scope_guards.gti:17: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at many_fallible_scope_guards.gti:14 message="first cleanup failure"; secondary [GTI-R0017] message="second cleanup failure"
+// --- many_fallible_scope_guards.gti
 import std.panic;
 import std.string;
 import std.vector;

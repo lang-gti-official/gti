@@ -1,3 +1,8 @@
+// Contextual arithmetic before raw writes, checked failures after them.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: scalar_addresses_bad_return_choice.gti:168: runtime error[GTI-R0001]: integer_overflow in addition
+// --- scalar_addresses_bad_return_choice.gti
 import std.memory;
 
 int copied_address() {
@@ -198,8 +203,8 @@ int main() {
   if (false) return bad_pointer_alias();
   if (false) return bad_lifetime();
   if (false) return bad_return_write();
-  if (false) return bad_return_choice(true);
-  if (false) return bad_return_redirect();
+  if (true) return bad_return_choice(true);
+  if (false) return bad_return_redirect();  //~ WARN GTI-S2095
   if (false) return bad_return_alias();
   return 0;
 }

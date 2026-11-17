@@ -1,3 +1,8 @@
+// Contextual arithmetic before raw writes, checked failures after them.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: constructed_addresses_bad_constructed_replacement.gti:104: runtime error[GTI-R0001]: integer_overflow in addition
+// --- constructed_addresses_bad_constructed_replacement.gti
 import std.memory;
 
 unsafe int constructed_scalar(int* address) {
@@ -159,8 +164,8 @@ int main() {
     }
     if (false) return bad_constructed_conditional(&pair[1], false);
     if (false) return bad_constructed_alias(storage.data());
-    if (false) return bad_constructed_replacement(storage.data());
-    if (false) return bad_constructed_call_write(storage.data());
+    if (true) return bad_constructed_replacement(storage.data());
+    if (false) return bad_constructed_call_write(storage.data());  //~ WARN GTI-S2095
     if (false) return bad_constructed_second_alias(storage.data(), storage.data());
     if (false) return bad_constructed_parameter(storage.data());
     if (false) return bad_constructed_redirect(storage.data(), &pair[1]);
@@ -177,5 +182,5 @@ int main() {
     std::destroy_at(&pair[1]);
     if (constructed_pair(&pair[0]) != 16) return 3;
   }
-  return 0;
+  return 0;  //~ WARN GTI-S2095
 }

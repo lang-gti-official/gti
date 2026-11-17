@@ -74,7 +74,6 @@ endforeach()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
-    callable_return_type_runtime
     consuming_range_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
     owner_chain_runtime borrowing_composition
@@ -92,15 +91,12 @@ if(Python3_Interpreter_FOUND)
     lambda_pack_invocation_runtime
     nested_borrow_fields
     programmable_allocators_runtime
-    shared_accessor_range_runtime
     scoped_parallel_threads
     source_prefix_owner_runtime source_resource_prefix_runtime
     source_text_address_runtime source_prefix_string_runtime
-    many_fallible_scope_guards_runtime
-    optimizer_raw_context_runtime optimizer_object_context_runtime
+    optimizer_object_context_runtime
     cleanup_context_scope_runtime
     unordered_map
-    vector_empty_constructor_runtime
     stdlib_modules
     stdlib_surface
   )

@@ -1,10 +1,22 @@
+// Contextual arithmetic before raw writes, checked failures after them.
+//@ run-pass
+//@ revisions: default overflow
+//@[default] stdout: 8
+//@[default] stdout: 2147483647
+//@[overflow] run-fail
+//@[overflow] args: overflow
+//@[overflow] exit-code: 70
+//@[overflow] stdout: 8
+//@[overflow] stdout: 2147483647
+//@[overflow] stderr-contains: optimizer_raw_context.gti:18: runtime error[GTI-R0001]: integer_overflow in addition
+// --- optimizer_raw_context.gti
 import std.string;
 import std.vector;
 
 int before_raw(mut int& destination, int input) {
   int result = input + 1;
   unsafe {
-    mut int* address = &destination;
+    mut int* address = &destination;  //~ WARN GTI-S2096
     *address = 2147483647;
   }
   return result;
@@ -12,7 +24,7 @@ int before_raw(mut int& destination, int input) {
 
 int after_raw(mut int& destination) {
   unsafe {
-    mut int* address = &destination;
+    mut int* address = &destination;  //~ WARN GTI-S2096
     *address = 2147483647;
   }
   return destination + 1;
@@ -21,7 +33,7 @@ int after_raw(mut int& destination) {
 int stable_after_raw(mut int& destination, int input) {
   int copy = input;
   unsafe {
-    mut int* address = &destination;
+    mut int* address = &destination;  //~ WARN GTI-S2096
     *address = 2147483647;
   }
   return input + copy;
@@ -30,7 +42,7 @@ int stable_after_raw(mut int& destination, int input) {
 unsafe int declared_step(int input) { return input + 1; }
 unsafe int declared_raw_step(mut int& destination, int input) {
   unsafe {
-    mut int* address = &destination;
+    mut int* address = &destination;  //~ WARN GTI-S2096
     *address = 2147483647;
   }
   return input + 1;

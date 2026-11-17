@@ -591,10 +591,6 @@ if(Python3_Interpreter_FOUND)
       $<TARGET_FILE:gti> "${CMAKE_CXX_COMPILER}" $<TARGET_FILE:gti_runtime>
       $<TARGET_FILE:gti_runtime_thread_tests>)
   set_tests_properties(cleanup_context_scope_runtime PROPERTIES TIMEOUT 300)
-  add_test(NAME many_fallible_scope_guards_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/many_fallible_scope_guards_runtime_test.py"
-      $<TARGET_FILE:gti>)
-  set_tests_properties(many_fallible_scope_guards_runtime PROPERTIES TIMEOUT 300)
 
   add_test(NAME object_destroy_scalar_runtime
            COMMAND ${Python3_EXECUTABLE}
@@ -661,10 +657,6 @@ add_test(NAME source_unit_services COMMAND gti_source_unit_services_tests)
 
 
 
-add_test(NAME vector_empty_constructor_runtime
-  COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/vector_empty_constructor_runtime_test.py" $<TARGET_FILE:gti>)
-set_tests_properties(vector_empty_constructor_runtime PROPERTIES TIMEOUT 240)
 add_test(NAME vector_prepared_constructor_runtime
   COMMAND "${Python3_EXECUTABLE}"
           "${PROJECT_SOURCE_DIR}/tests/vector_prepared_constructor_runtime_test.py" $<TARGET_FILE:gti>)
@@ -674,10 +666,6 @@ add_test(NAME prefix_generated_transport_runtime
           "${PROJECT_SOURCE_DIR}/tests/prefix_generated_transport_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(prefix_generated_transport_runtime PROPERTIES TIMEOUT 240)
 
-add_test(NAME shared_accessor_range_runtime
-  COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/shared_accessor_range_runtime_test.py" $<TARGET_FILE:gti>)
-set_tests_properties(shared_accessor_range_runtime PROPERTIES TIMEOUT 240)
 
 add_test(
   NAME semantic_header_boundary
@@ -791,10 +779,6 @@ add_test(NAME optimizer_object_context_runtime
 # GNU 15.2 Linux completed 435 cases at the old 300s aggregate bound. Allow
 # its sanitized tail without changing per-case compile/execution deadlines.
 set_tests_properties(optimizer_object_context_runtime PROPERTIES TIMEOUT 600)
-add_test(NAME optimizer_raw_context_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/optimizer_raw_context_runtime_test.py"
-    $<TARGET_FILE:gti>)
-set_tests_properties(optimizer_raw_context_runtime PROPERTIES TIMEOUT 300)
 
 add_executable("gti_optimizer_analysis_tests"
                "${PROJECT_SOURCE_DIR}/tests/optimizer_analysis_tests.cpp")
@@ -898,9 +882,6 @@ add_test(NAME source_expected_example_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
           $<TARGET_FILE:gti> "${PROJECT_SOURCE_DIR}/examples/169-source-expected.gti" --ownership-checks)
 set_tests_properties(source_expected_example_runtime PROPERTIES TIMEOUT 300)
-add_test(NAME callable_return_type_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/callable_return_type_runtime_test.py" $<TARGET_FILE:gti>)
-set_tests_properties(callable_return_type_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_borrow_origin_syntax_tests "${PROJECT_SOURCE_DIR}/tests/borrow_origin_syntax_tests.cpp")
 target_link_libraries(gti_borrow_origin_syntax_tests PRIVATE gti_compiler)
 add_test(NAME borrow_origin_syntax COMMAND gti_borrow_origin_syntax_tests)

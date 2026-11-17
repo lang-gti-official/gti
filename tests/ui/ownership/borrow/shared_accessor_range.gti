@@ -1,3 +1,15 @@
+// Read-only range elements retain their exact accessor result until last use.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 90
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 3
+//@[fail] stdout: 5
+//@[fail] stdout: 90
+//@[fail] stderr-contains: shared_accessor_range.gti:50: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- shared_accessor_range.gti
 import std.vector;
 import std.string;
 

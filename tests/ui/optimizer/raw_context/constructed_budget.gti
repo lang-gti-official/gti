@@ -1,3 +1,5 @@
+// Contextual arithmetic before raw writes, checked failures after them.
+//@ run-pass
 import std.memory;
 
 unsafe void seed0(int* address) {
