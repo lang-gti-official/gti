@@ -1,0 +1,12 @@
+// Pack special member construction: cleanup-free pack movement reaches the backend without an active result drop.
+//@ build-pass
+class Item {
+  int number;
+public:
+  Item(int initial) : number(initial) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  int value() { return this.number; }
+};
+T construct<T, Args...>(Args... args) { return T(args...); }
+int main() { Item item = construct<Item>(Item(7)); return item.value() - 7; }

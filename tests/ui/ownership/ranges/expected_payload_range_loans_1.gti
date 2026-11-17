@@ -1,0 +1,74 @@
+// Expected payload range loans: named Expected payloads should form verified read-only range loans.
+//@ check-pass
+import std.string;
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+interface CounterIteratorContract {
+  int32_t& operator*();
+  void operator++() mut;
+};
+
+class CounterIterator : public CounterIteratorContract {
+  mut int32_t current;
+public:
+  CounterIterator(int32_t value) : current(value) {}
+  int32_t& operator*() override { return this.current; }
+  void operator++() mut override { this.current += 1; }
+  bool operator!=(CounterIterator& other) {
+    return this.current != other.current;
+  }
+};
+
+class CounterRange {
+  int32_t first;
+  int32_t last;
+public:
+  CounterRange(int32_t first, int32_t last) : first(first), last(last) {}
+  CounterIterator begin() { return CounterIterator(this.first); }
+  CounterIterator end() { return CounterIterator(this.last); }
+};
+
+expected<CounterRange, int32_t> make_range(int32_t first, int32_t last) {
+  return CounterRange(first, last);
+}
+
+// Read-only owners select the read-only value() accessor; a `mut` owner
+// selects the mutable one, whose read-only loop shares its mutable loan.
+int count_parameter(expected<std::string, int32_t> text) {
+  mut int count = 0;
+  for (auto& outer : text.value()) {
+    for (auto& inner : text.value()) {
+      count += 1;
+      if (count == 1) { continue; }
+    }
+    if (count == 4) { break; }
+  }
+  return count;
+}
+
+int return_from_loop(expected<std::string, int32_t> text) {
+  for (auto& byte : text.value()) { return 2; }
+  return 1;
+}
+
+int nominal_ranges() {
+  auto values = make_range(1, 4);
+  mut int32_t total = 0;
+  for (auto& value : values.value()) { total += value; }
+  auto empty = make_range(0, 0);
+  for (auto& value : empty.value()) { return 1; }
+  return total - 6;
+}
+
+int main() {
+  auto first = make_text();
+  mut int count = 0;
+  for (auto& byte : first.value()) { count += 1; }
+  auto second = make_text();
+  auto third = make_text();
+  return count + count_parameter(std::move(second)) +
+         return_from_loop(std::move(third)) + nominal_ranges() - 8;
+}

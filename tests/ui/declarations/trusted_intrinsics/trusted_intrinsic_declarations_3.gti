@@ -1,0 +1,4 @@
+// Trusted intrinsic declarations: an ordinary mutable reference relay should use the same exact argument dependency proof without acquiring an intrinsic.
+//@ check-pass
+mut int& expose(mut int& value) { return value; }
+int main() { return 0; }

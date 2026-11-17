@@ -1,0 +1,4 @@
+// Requires disjunction: a generic body must not use a capability supplied by only one disjunction branch.
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+T invalid_remainder<scalar T>(T value) { return value % value; }  //~ ERROR GTI-S2004
+int main() { return 0; }

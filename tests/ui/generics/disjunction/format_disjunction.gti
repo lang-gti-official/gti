@@ -1,0 +1,6 @@
+// Requires disjunction: the formatter keeps keyword aliases and normalizes spacing for parenthesized disjunctions, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+concept scalar<T>=std::integral<T>||std::floating_point<T>;
+T select<T>(T value)requires(std::integral<T>or std::floating_point<T>)and std::copyable<T>{return value;}

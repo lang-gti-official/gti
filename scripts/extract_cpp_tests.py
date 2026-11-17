@@ -751,32 +751,133 @@ SPECS: dict[str, FileSpec] = {
         }),
     "shared_ownership_tests.cpp": FileSpec(
         area="stdlib/memory/shared_owner", topic="Shared ownership"),
-    "compiler_declarations_tests.cpp": FileSpec(
-        area="generics/constraints", topic="Constraints",
-        # testInterfaceStaticMethods stays C++: it asserts GTI-S2106 under
-        # requireFunctionDefinitions, which check mode does not apply.
-        only=("testInferredVoidGenericArguments",
-              "testDependentTypeDefaultConstraints",
-              "testStructuralClassConstraints",
-              "testDependentRequiresArgumentAdmission",
-              "testMemberRequirementConcepts",
-              "testExactMemberSignatureConcepts",
-              "testInterfaceStaticAmbiguity"),
-        review_policy={
-            name: "the C++ test asserts rejection (or one code of it); the "
-                  "compiler's complete code set was read and matches the "
-                  "case's stated reason"
-            for name in ("testInterfaceStaticAmbiguity",
-                         "testMemberRequirementConcepts",
-                         "testExactMemberSignatureConcepts",
-                         "testStructuralClassConstraints")}),
     "compiler_ownership_tests.cpp": FileSpec(
         area="ownership/stored_references", topic="Ownership",
-        # Most named ownership tests assert MIR loan/cleanup structure and
-        # wait for MIR snapshots; these three are accept/reject shaped.
-        only=("testStoredReferenceLoopInvalidation3",
-              "testStoredReferenceLoopInvalidation4",
-              "testWritableAndMovementIteratorCapabilities"),
+        helpers={
+            "analyzeWithMemory": Helper(
+                "analyze", source_arg=1, name_arg=0,
+                prefix="import std.memory;\n"),
+            # The file's fixture_storage<T> application helper.
+            "analyzeSourceStorageFixture": Helper(
+                "analyze", source_arg=1, name_arg=0,
+                prefix="import std.memory;\n"
+                       "std::storage<T> fixture_storage<T>(uint64_t count) "
+                       "requires std::storage_element<T> {\n"
+                       "  std::allocator allocator{};\n"
+                       "  auto allocated = allocator.try_storage<T>(count);\n"
+                       "  return std::move(allocated).expect("
+                       "\"test storage allocation\");\n"
+                       "}\n"),
+            # Quoted private imports become a private standard-library copy
+            # exposing the detail module.
+            "analyzePrivateMemoryFixture": Helper(
+                "analyze", source_arg=1, name_arg=0,
+                prefix="//@ stdlib-overlay: std/detail/memory_storage.gti\n"
+                       "import std.memory;\n"
+                       "import std.detail.memory_storage;\n"),
+            "analyzeTrustedPrivateMemoryFixture": Helper(
+                "analyze", source_arg=1, name_arg=0,
+                prefix="//@ stdlib-overlay: std/detail/memory_storage.gti\n"
+                       "import std.memory;\n"
+                       "import std.detail.memory_storage;\n",
+                differences=("trusted entry",)),
+            "analyzeTrustedMemoryFixture": Helper(
+                "analyze", source_arg=1, name_arg=0,
+                prefix="//@ stdlib-overlay: "
+                       "std/detail/memory_capabilities.gti\n"
+                       "import std.memory;\n"
+                       "import std.detail.memory_capabilities;\n",
+                differences=("trusted entry",)),
+            "mirRejectsAlone": Helper("reject", source_arg=1, name_arg=0),
+            # Local lambdas. testExclusiveReborrowLoanGraph's rejects/accepts
+            # analyse without the prelude; the cases do not use it, and the
+            # comparison runs them with it.
+            "rejects": Helper(
+                "reject", default_code="GTI-S2017",
+                dropped=("no GTI-B0001", "message fragment"),
+                differences=("analysed without the prelude",)),
+            "accepts": Helper(
+                "accept", differences=("analysed without the prelude",)),
+            # testBorrowedCallableConditionals' reject(name, source, fragment)
+            # (analyzeWithMemory); testComposedCarrierFunctionTransfer's
+            # reject(name, body, code) is assembled at run time and flagged.
+            "reject": Helper(
+                "reject", source_arg=1, name_arg=0,
+                prefix="import std.memory;\n",
+                dropped=("message fragment", "no GTI-B0001")),
+        },
+        # Named tests outside the stored-reference family land by topic.
+        areas={
+            "testOwnershipSemanticFoundation": "ownership/moves",
+            "testExplicitValueMoves": "ownership/moves",
+            "testImplicitReturnMoves": "ownership/moves",
+            "testEdgeSensitiveMoveFlow": "ownership/moves",
+            "testProjectedFieldMoves": "ownership/moves",
+            "testIndexedPlaceMovesAndInitialization": "ownership/moves",
+            "testMoveOnlyAssignmentResultUse": "ownership/moves",
+            "testExclusiveReborrowLoanGraph": "ownership/loans",
+            "testDisjointFieldReceiverBorrowsThroughReferenceParameters": "ownership/loans",
+            "testSharedReadOnlyLoanAliases": "ownership/loans",
+            "testSwitchAndBreakLoanFlow": "ownership/loans",
+            "testNestedBorrowChainLoanOrdering": "ownership/loans",
+            "testSharedPayloadSiblingReborrows": "ownership/loans",
+            "testCallSiblingArgumentBorrowConflicts": "ownership/loans",
+            "testNonNullReferences": "ownership/reference_returns",
+            "testGlobalReferencePlaces": "ownership/reference_returns",
+            "testGlobalBorrowReturns": "ownership/reference_returns",
+            "testReceiverTiedReferenceReturns": "ownership/reference_returns",
+            "testArgumentTiedReferenceReturns": "ownership/reference_returns",
+            "testNestedMemberReferenceReturnForwarding": "ownership/reference_returns",
+            "testProjectedAccessorReturnLoanOrder": "ownership/reference_returns",
+            "testReferenceArgumentRuntimePlaceCoherence": "ownership/reference_returns",
+            "testGeneralOwnerDependentReturns": "ownership/reference_returns",
+            "testUseBasedAccessorSelection": "ownership/reference_returns",
+            "testRetainedBorrowedCallResults": "ownership/reference_returns",
+            "testExpressionJoinsKeepAssignmentPlaces": "ownership/reference_returns",
+            "testForwardIteratorContractsAndBinarySearch": "ownership/ranges",
+            "testCompleteRangeConceptsAndAlgorithms": "ownership/ranges",
+            "testRangeBasedForAndIteratorProtocol": "ownership/ranges",
+            "testReadOnlyRangeLoans": "ownership/ranges",
+            "testPassiveCleanupRangeTemporary": "ownership/ranges",
+            "testExpectedPayloadRangeLoans": "ownership/ranges",
+            "testSourceOwnedExpectedRangeOrigins": "ownership/ranges",
+            "testMutableRangeLoans": "ownership/ranges",
+            "testUniqueOwnershipAndAllocation": "ownership/owners_and_storage",
+            "testUniqueOwnerSwap": "ownership/owners_and_storage",
+            "testPolymorphicUniqueOwnerUpcast": "ownership/owners_and_storage",
+            "testSourceDefinedStorage": "ownership/owners_and_storage",
+            "testFixedArrayPackForwarding": "ownership/owners_and_storage",
+            "testVariadicStorageConstructionAndVector": "ownership/owners_and_storage",
+            "testAggregateOwnershipTraits": "ownership/lifecycle",
+            "testDefaultedDefaultLifecycle": "ownership/lifecycle",
+            "testDestructorsAndActiveDropState": "ownership/lifecycle",
+            "testFieldInitializerRollbackAndFailureEdges": "ownership/lifecycle",
+            "testConstructorRollbackSpansLocalCleanup": "ownership/lifecycle",
+            "testDefaultFieldRollbackEntersConstructor": "ownership/lifecycle",
+            "testOwnedParameterStageArmsRollback": "ownership/lifecycle",
+            "testConstructorPartialRollbackRepresentation": "ownership/lifecycle",
+            "testRestrictedMemberOperators": "ownership/member_operators",
+            "testArrowNonClassReferents": "ownership/member_operators",
+            "testCallableMemberOperators": "ownership/member_operators",
+            "testConsumingCallableOperators": "ownership/member_operators",
+            "testConsumingMethodsAndValueOperators": "ownership/member_operators",
+            "testLambdas": "ownership/callables",
+            "testConfinedCallableParameters": "ownership/callables",
+            "testConfinedCallableResults": "ownership/callables",
+            "testBorrowedCallableConditionals": "ownership/callables",
+            "testOwnedCallableTransport": "ownership/callables",
+            "testExpectedValues": "ownership/expected",
+            "testFallibleBorrows": "ownership/expected",
+            "testExpectedPropagationOperator": "ownership/expected",
+            "testEphemeralBorrowedCarrierReceivers": "ownership/temporaries",
+            "testMutableTemporaryReceivers": "ownership/temporaries",
+            "testVirtualTemporaryReceivers": "ownership/temporaries",
+            "testGeneratedDefaultTemporaryArgumentBorrows": "ownership/temporaries",
+            "testGeneratedDefaultConstructionContexts": "ownership/temporaries",
+            "testTemporaryArgumentBorrows": "ownership/temporaries",
+            "testConditionalTemporaryArgumentBorrows": "ownership/temporaries",
+            "testCleanupOwningTemporaryArguments": "ownership/temporaries",
+        },
         review_policy={
             name: "the C++ test asserts rejection; the reported code "
                   "(GTI-S2017 invalidated loan, GTI-S2029 unsatisfied "

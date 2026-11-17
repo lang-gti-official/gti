@@ -1,0 +1,4 @@
+// Extern C interop: an extern C definition is rejected and recovery keeps the following declarations.
+//@ parse-fail
+extern "C" { int32_t native() { return 1; } }  //~ ERROR GTI-P0001
+int main() { return 0; }

@@ -63,8 +63,12 @@ worker and option set): `//@ execution-profile: concurrent` (`gti_lsp
 (`--raw-pointer-audit=`). With an audit each version publishes twice (the
 edit path's diagnostics, then the audit's); the annotations match the
 second. The limit is 3 s of the server's CPU time per test (plus the cold
-allowance for a server's first), since the work happens there; the reported
-time is that CPU, and wall time is only a backstop at three times the limit.
+allowance for a server's first), since the work happens there; a loaded
+machine's waiting does not count. Wall time is only a hang guard: 30 s for
+any one awaited response or publication (both scaled by
+`GTI_TEST_TIME_SCALE`), reported as "no … within the hang guard", distinct
+from "over the CPU budget". The JSON report's `cpu` and the JUnit `cpu`
+property are that server CPU; `wall` and JUnit `time` the wall time.
 
 ### Several files and projects
 

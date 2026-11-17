@@ -1,0 +1,45 @@
+// Contextual array arguments: contextual arrays and explicit value arguments should reject duplicate generic shapes, missing array context, invalid argument kinds/counts, and ambiguous overloads at the GTI layer.
+int scalar(int value) { return value; }
+int fixed(int values[2]) { return values[0]; }
+int ambiguous(int values[2]) { return 1; }
+int ambiguous(int64_t values[2]) { return 2; }
+int duplicate<uint64_t N>(int values[N]) { return 1; }
+int duplicate<uint64_t M>(int values[M]) { return 2; }  //~ ERROR GTI-S2011
+int uninferable<uint64_t N>() { return int(N); }
+int explicit_extent<uint64_t N>(int values[N]) { return values[0]; }
+T no_common_type<T, uint64_t N>(T values[N]) { return values[0]; }
+T type_only<T>(T value) { return value; }
+int two_extents<uint64_t N, uint64_t M>(int first[N], int second[M]) {
+  return first[0] + second[0];
+}
+
+class DuplicateConstructor {
+public:
+  DuplicateConstructor<uint64_t N>(int values[N]) {}
+  DuplicateConstructor<uint64_t M>(int values[M]) {}  //~ ERROR GTI-S2011 //~ ERROR GTI-S2026
+public:
+  DuplicateConstructor() = default;
+};
+
+class ShadowedConstructor<uint64_t N> {
+public:
+  ShadowedConstructor<uint64_t N>(int values[N]) {}  //~ ERROR GTI-S2026
+public:
+  ShadowedConstructor() = default;
+};
+
+int main() {
+  int no_context = scalar({1});  //~ ERROR GTI-S2015
+  int wrong_count = fixed({1, 2, 3});  //~ ERROR GTI-S2015
+  int wrong_element = fixed({1, true});  //~ ERROR GTI-S2003
+  int unresolved = uninferable();  //~ ERROR GTI-S2026
+  int no_common = no_common_type({1, 2});  //~ ERROR GTI-S2023
+  int explicit_value = explicit_extent<2>({1, 2});
+  int wrong_kind = type_only<2>(1);  //~ ERROR GTI-S2026 //~ ERROR GTI-S2026
+  int missing_type_before_value = no_common_type<2>({1, 2});  //~ ERROR GTI-S2026 //~ ERROR GTI-S2023
+  int wrong_value_count = two_extents<2>({1, 2}, {3, 4});  //~ ERROR GTI-S2026
+  int value_then_type = no_common_type<2, int>({1, 2});  //~ ERROR GTI-S2026
+  int non_generic_value = scalar<2>(1);  //~ ERROR GTI-S2000
+  int ambiguous_value = ambiguous({1, 2});  //~ ERROR GTI-S2013
+  return 0;
+}

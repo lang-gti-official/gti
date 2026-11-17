@@ -876,6 +876,7 @@ int main(int argc, char **argv) {
   engineOptions.limits.run *= scale;
   engineOptions.limits.slow *= scale;
   engineOptions.limits.lsp *= scale;
+  engineOptions.limits.lspHang *= scale;
   engineOptions.limits.project *= scale;
   engineOptions.limits.coldAllowance *= scale;
   if (options.isolate && !fs::exists(engineOptions.gti)) {
@@ -1033,7 +1034,10 @@ int main(int argc, char **argv) {
 
   const auto backstop = [&](const TestFile &test) {
     const Limits &limits = engineOptions.limits;
-    return 4 * limits.forTest(test) + 2 * limits.coldAllowance;
+    // An LSP test's waits are bounded by its hang guard, not its budget.
+    const bool lsp = test.mode == Mode::Lsp || test.mode == Mode::LspTranscript;
+    return 4 * limits.forTest(test) + 2 * limits.coldAllowance +
+           (lsp ? 2 * limits.lspHang : 0.0);
   };
   const auto reap = [&](Worker &worker, bool killedForTime) {
     if (worker.pid > 0) {
@@ -1172,13 +1176,17 @@ int main(int argc, char **argv) {
       junit << "  <testcase classname=\""
             << xmlEscape(fs::path(test.display).parent_path().generic_string())
             << "\" name=\"" << xmlEscape(test.display) << "\" time=\""
-            << fixed(outcome.wall, 3) << "\"";
+            << fixed(outcome.wall, 3) << "\">";
+      // The CPU the limit judges (the server's, for LSP tests) beside the
+      // wall time in `time`.
+      junit << "<properties><property name=\"cpu\" value=\""
+            << fixed(outcome.cpu, 3) << "\"/></properties>";
       if (outcome.status == Status::Pass) {
-        junit << "/>\n";
+        junit << "</testcase>\n";
       } else if (outcome.status == Status::Skip) {
-        junit << "><skipped/></testcase>\n";
+        junit << "<skipped/></testcase>\n";
       } else {
-        junit << "><failure type=\"" << statusName(outcome.status)
+        junit << "<failure type=\"" << statusName(outcome.status)
               << "\" message=\"" << statusName(outcome.status) << ' '
               << modeName(test.mode) << "\">" << xmlEscape(outcome.detail)
               << "</failure></testcase>\n";

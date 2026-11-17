@@ -1,0 +1,32 @@
+// Value generics: invalid value parameter kinds, order, defaults, arguments and extents are rejected semantically.
+//@ error-limit: 0
+class WrongType<T, int N> { public: WrongType() = default; };  //~ ERROR GTI-S2026
+class WrongOrder<uint64_t N, T> { public: WrongOrder() = default; };  //~ ERROR GTI-S2026
+class NeedsValue<T, uint64_t N> { public: NeedsValue() = default; };
+class ImmutableValue<uint64_t N> {
+public:
+  void overwrite() { N = 2; }  //~ ERROR GTI-S2026
+public:
+  ImmutableValue() = default;
+};
+uint64_t invalid_function<uint64_t N>() { return N; }
+T same_default<T>(T value) { return value; }
+T same_default<T = int>(T value) { return value; }  //~ ERROR GTI-S2011
+NeedsValue<int, int> wrong_value;  //~ ERROR GTI-S2026 //~ ERROR GTI-S2000
+NeedsValue<4, 4> wrong_type;  //~ ERROR GTI-S2026 //~ ERROR GTI-S2000
+NeedsValue<int, Missing> missing_value;  //~ ERROR GTI-S2026 //~ ERROR GTI-S2000
+int invalid_extent[Missing] = {};  //~ ERROR GTI-S2026 //~ ERROR GTI-S2015
+class MissingAfterDefault<T = int, U> { public: MissingAfterDefault() = default; };  //~ ERROR GTI-S2026
+class ForwardDefault<T = U, U = int> { public: ForwardDefault() = default; };  //~ ERROR GTI-S2023
+class ForwardValue<uint64_t N = M, uint64_t M = 2> { public: ForwardValue() = default; };  //~ ERROR GTI-S2026
+class BadValueDefault<uint64_t N = 1 / 0> { public: BadValueDefault() = default; };  //~ ERROR GTI-S2026
+class BadValueUnderflow<uint64_t N = 1 - 2> { public: BadValueUnderflow() = default; };  //~ ERROR GTI-S2026
+class BadValueOverflow<uint64_t N = 18446744073709551615 + 1> { public: BadValueOverflow() = default; };  //~ ERROR GTI-S2026
+class BadValueName<uint64_t N = Missing> { public: BadValueName() = default; };  //~ ERROR GTI-S2026
+void default_pack<T = int, Args...>() {}  //~ ERROR GTI-S2023 //~ ERROR GTI-S2023
+class ConstructorDefault {
+public:
+  ConstructorDefault<T = int>(T value) {}  //~ ERROR GTI-S2026
+public:
+  ConstructorDefault() = default;
+};

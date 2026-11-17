@@ -1,0 +1,4 @@
+// Named generics: the formatter does not treat a relational expression as a generic type.
+//@ parse-pass
+//@ snapshot: format
+bool result=a < b > c;

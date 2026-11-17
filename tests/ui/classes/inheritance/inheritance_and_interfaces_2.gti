@@ -1,0 +1,96 @@
+// Inheritance and interfaces: invalid inheritance and interface programs should be rejected.
+interface Broken {
+public:
+  Broken() {}  //~ ERROR GTI-S2041
+  int state = 0;  //~ ERROR GTI-S2041
+  int body() { return 1; }  //~ ERROR GTI-S2041
+};
+
+interface LegacyPureSyntax {
+  int old_style() = 0;  //~ ERROR GTI-S2041
+};
+
+class Left { public: Left() = default; };
+class Right { public: Right() = default; };
+class TooMany : public Left, public Right { public: TooMany() = default; };  //~ ERROR GTI-S2040
+class HiddenBase : Left { public: HiddenBase() = default; };  //~ ERROR GTI-S2040
+
+interface RootContract { int root(); };
+interface LeftContract : public RootContract {};
+interface RightContract : public RootContract {};  //~ ERROR GTI-S2040
+interface DiamondContract : public LeftContract, public RightContract {};
+interface InvalidInterfaceBase : public Left { int invalid(); };  //~ ERROR GTI-S2040
+
+class CycleLeft : public CycleRight {};
+class CycleRight : public CycleLeft {};  //~ ERROR GTI-S2040
+
+class Abstract {
+public:
+  virtual int work(int value) = 0;
+public:
+  Abstract() = default;
+};
+
+class Missing : public Abstract { public: Missing() = default; };
+class Accidental : public Abstract {
+public:
+  int work(int value) { return value; }  //~ ERROR GTI-S2042
+public:
+  Accidental() = default;
+};
+class ReturnMismatch : public Abstract {
+public:
+  bool work(int value) override { return true; }  //~ ERROR GTI-S2042
+public:
+  ReturnMismatch() = default;
+};
+
+class RequiresArgument {
+  int stored;
+
+public:
+  RequiresArgument(int value) : stored(value) {}
+};
+class MissingBaseInitializer : public RequiresArgument {
+public:
+  MissingBaseInitializer() {}  //~ ERROR GTI-S2040
+};
+
+class Plain {
+public:
+  int read() { return 1; }
+public:
+  Plain() = default;
+};
+class HidesPlain : public Plain {
+public:
+  int read() override { return 2; }  //~ ERROR GTI-S2042
+public:
+  HidesPlain() = default;
+};
+
+class PrivateState {
+  int secret = 1;
+public:
+  PrivateState() = default;
+};
+class LeaksPrivateState : public PrivateState {
+public:
+  int leak() { return secret; }  //~ ERROR GTI-S2007
+public:
+  LeaksPrivateState() = default;
+};
+
+class Concrete : public Abstract {
+public:
+  int work(int value) override { return value; }
+public:
+  Concrete() = default;
+};
+int consume(Abstract& value) { return value.work(1); }
+int main() {
+  Missing missing{};  //~ ERROR GTI-S2044
+  Concrete concrete{};
+  Abstract sliced = concrete;  //~ ERROR GTI-S2003
+  return consume(concrete);
+}

@@ -1,0 +1,21 @@
+// Native generic carrier closure: a dormant dependent generic carrier should validate.
+//@ check-pass
+class Leaf<T> {
+  T value;
+
+public:
+  Leaf(T value) : value(value) {}
+  T get() { return this.value; }
+};
+
+class DormantCarrier<T> {
+  Leaf<T> value;
+
+public:
+  DormantCarrier(Leaf<T> value) : value(value) {}
+};
+
+int main() {
+  Leaf<int> value = Leaf<int>(7);
+  return value.get();
+}

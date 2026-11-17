@@ -1,0 +1,11 @@
+// Program initialization plans: the same closed destructor effect should be accepted when its program storage step is earlier.
+//@ run-pass
+class Probe {
+public:
+  Probe() {}
+  ~Probe() { Probe::earlier = 1; }
+  static mut int32_t earlier = 0;
+  static int32_t make_probe() { Probe probe = Probe(); return 1; }
+  static mut int32_t result = Probe::make_probe();
+};
+int main() { return Probe::result == 1 ? 0 : 1; }

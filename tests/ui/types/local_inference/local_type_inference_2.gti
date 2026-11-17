@@ -1,0 +1,23 @@
+// Local type inference: auto diagnostics should explain every unsupported declaration and inference context.
+auto global = 1;  //~ ERROR GTI-S2028 limited to local bindings
+
+class InvalidField {
+  auto value = 1;  //~ ERROR GTI-S2028
+public:
+  InvalidField() = default;
+};
+
+auto inferred_return() { return 1; }  //~ ERROR GTI-S2028 initialized local binding
+int inferred_parameter(auto value) { return 0; }  //~ ERROR GTI-S2028
+void perform() {}
+
+int main() {
+  mut int value = 1;
+  auto fixed = value;
+  fixed = 2;  //~ ERROR GTI-S2002 immutable binding 'fixed'
+  auto missing;  //~ ERROR GTI-S2028 requires an initializer
+  auto array[2] = {1, 2};  //~ ERROR GTI-S2028 array extents //~ ERROR GTI-S2015 requires a fixed array type from its context
+  auto values = {1, 2};  //~ ERROR GTI-S2015
+  auto no_value = perform();  //~ ERROR GTI-S2028 complete value type
+  return 0;
+}

@@ -1,0 +1,10 @@
+// Requires disjunction: a failed trailing disjunction should report the operator and both unsatisfied alternatives.
+class marker { public: marker() {} };
+T require_scalar<T>(T value)
+  requires std::integral<T> || std::floating_point<T> {
+  return value;
+}
+int main() {
+  marker value = require_scalar(marker());  //~ ERROR GTI-S2029 any alternative in the requires clause
+  return 0;
+}

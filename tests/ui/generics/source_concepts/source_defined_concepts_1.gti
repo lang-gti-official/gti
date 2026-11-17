@@ -1,0 +1,21 @@
+// Source defined concepts: source-defined concept aliases and conjunctions should propagate their exact capabilities.
+//@ check-pass
+concept arithmetic_value<T> = std::numeric<T> && std::copyable<T>;
+concept signed_arithmetic<T> =
+    arithmetic_value<T> and std::signed_numeric<T>;
+
+T numeric_identity<std::numeric T>(T value) { return value; }
+
+T twice<signed_arithmetic T>(T value) {
+  return T(value + value);
+}
+
+T forward<signed_arithmetic T>(T value) {
+  return numeric_identity(value);
+}
+
+int main() {
+  int result = forward(twice(3));
+  if (result == 6) { return 0; }
+  return 1;
+}

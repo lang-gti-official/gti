@@ -1,0 +1,2 @@
+export module types;
+export namespace demo { struct Parcel<T> { T value; }; }

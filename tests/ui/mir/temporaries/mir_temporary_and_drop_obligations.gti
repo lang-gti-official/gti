@@ -1,0 +1,52 @@
+// Mir temporary and drop obligations: temporary and lexical drop obligations should verify across calls, conditionals, short-circuiting, loops, and returns.
+//@ run-pass
+class Token {
+public:
+  int value;
+  Token(int input) : value(input) {}
+  ~Token() {}
+  operator bool() { return this.value != 0; }
+};
+
+class Marker {
+public:
+  Marker(int input) {}
+  ~Marker() {}
+public:
+  Marker() = default;
+};
+
+Token make_token(int value) { return Token(value); }
+
+class Holder {
+  Token field = make_token(10);
+  Token other = make_token(11);
+public:
+  Holder() = default;
+};
+
+int consume(Token left, Token right) {
+  return left.value + right.value;
+}
+
+void observe(bool value) {}
+
+int lifetime(bool choose) {
+  [[discard]] make_token(0);
+  [[discard]] Marker(10);
+  [[discard]] consume(make_token(1), make_token(2));
+  Token selected = choose ? make_token(3) : make_token(4);
+  bool short_circuit = false && make_token(5);
+  observe(choose && (make_token(8), make_token(18), true));
+  observe(choose ? (make_token(9), true) : false);
+  for (mut int index = 0; index < 2; index++) {
+    [[discard]] make_token(index);
+    if (index == 0) {
+      continue;
+    }
+    break;
+  }
+  return consume(make_token(6), make_token(7));
+}
+
+int main() { return lifetime(true) - 13; }

@@ -1,0 +1,48 @@
+main.gti:17:55: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 17 | int32_t f1(mut Tracked p, Tracked q) { Tracked r = (p = std::move(q)); return r.x; }  //~ ERROR GTI-S2003
+    |                                                       ^
+help: Assign in its own statement, then use the target.
+main.gti:18:50: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 18 | Tracked f2(mut Tracked p, Tracked q) { return (p = std::move(q)); }  //~ ERROR GTI-S2003
+    |                                                  ^
+help: Assign in its own statement, then use the target.
+main.gti:19:54: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 19 | int32_t f3(mut Tracked p, Tracked q) { return take(p = std::move(q)); }  //~ ERROR GTI-S2003
+    |                                                      ^
+help: Assign in its own statement, then use the target.
+main.gti:20:50: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 20 | int32_t f4(mut Tracked p, Tracked q) { return (p = std::move(q)).get(); }  //~ ERROR GTI-S2003
+    |                                                  ^
+help: Assign in its own statement, then use the target.
+main.gti:21:50: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 21 | int32_t f5(mut Tracked p, Tracked q) { return (p = std::move(q)).x; }  //~ ERROR GTI-S2003
+    |                                                  ^
+help: Assign in its own statement, then use the target.
+main.gti:22:61: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 22 | int32_t f6(mut Tracked a, mut Tracked b, Tracked q) { a = b = std::move(q); return a.x; }  //~ ERROR GTI-S2003
+    |                                                             ^
+help: Assign in its own statement, then use the target.
+main.gti:23:58: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 23 | int32_t f7(mut Tracked p, Tracked q) { Tracked r = (1, p = std::move(q)); return r.x; }  //~ ERROR GTI-S2003
+    |                                                          ^
+help: Assign in its own statement, then use the target.
+main.gti:24:78: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 24 | int32_t f8(bool c, mut Tracked p, Tracked q, Tracked r) { Tracked s = c ? (p = std::move(q)) : std::move(r); return s.x; }  //~ ERROR GTI-S2003
+    |                                                                              ^
+help: Assign in its own statement, then use the target.
+main.gti:25:51: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 25 | int32_t f9(mut Holder h, Tracked q) { return (h.t = std::move(q)).x; }  //~ ERROR GTI-S2003
+    |                                                   ^
+help: Assign in its own statement, then use the target.
+main.gti:26:79: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 26 | int32_t f10(Tracked q) { mut Tracked[1] ts = {Tracked(1)}; Tracked r = (ts[0] = std::move(q)); return r.x; }  //~ ERROR GTI-S2003
+    |                                                                               ^
+help: Assign in its own statement, then use the target.
+main.gti:27:52: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'Tracked'; it would copy the target.
+ 27 | Tracked f11(mut Tracked& p, Tracked q) { return (p = std::move(q)); }  //~ ERROR GTI-S2003
+    |                                                    ^
+help: Assign in its own statement, then use the target.
+main.gti:28:107: error[GTI-S2003]: Cannot use the result of an assignment of move-only type 'std::unique_ptr<int32_t>'; it would copy the target.
+ 28 | int32_t f12(mut std::unique_ptr<int32_t> u, std::unique_ptr<int32_t> v) { std::unique_ptr<int32_t> w = (u = std::move(v)); return *w; }  //~ ERROR GTI-S2003
+    |                                                                                                           ^
+help: Assign in its own statement, then use the target.

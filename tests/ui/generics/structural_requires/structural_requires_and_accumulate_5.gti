@@ -1,0 +1,23 @@
+// Structural requires and accumulate: bounded trailing requirements should reject virtual, pure, and interface contracts whose dispatch cannot preserve them.
+class AbstractValues<T> {
+public:
+  virtual T concrete() requires std::numeric<T> { return T(0); }  //~ ERROR GTI-S2049 not supported on polymorphic methods
+  virtual T abstract() requires std::numeric<T> = 0;  //~ ERROR GTI-S2049
+public:
+  AbstractValues() = default;
+};
+
+interface ValueContract<T> {
+  T value() requires std::numeric<T>;  //~ ERROR GTI-S2049
+};
+
+interface PlainContract<T> {
+  T inherited();
+};
+
+class DerivedValues<T> : public PlainContract<T> {
+public:
+  T inherited() requires std::numeric<T> override { return T(0); }  //~ ERROR GTI-S2049
+public:
+  DerivedValues() = default;
+};

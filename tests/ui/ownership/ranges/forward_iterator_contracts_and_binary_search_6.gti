@@ -1,0 +1,22 @@
+// Forward iterator contracts and binary search: an iterator-pair loop whose condition read-borrows a by-value mut cursor parameter must pass MIR verification across the loop backedge.
+//@ check-pass
+import std.iterator;
+import std.vector;
+
+int32_t drain<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, int32_t> {
+  mut int32_t total = 0;
+  while (first != last) {
+    total = total + *first;
+    ++first;
+  }
+  return total;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({3, 4, 5});
+  auto last = values.end();
+  return drain(values.begin_mut(), last) == 12 ? 0 : 1;
+}

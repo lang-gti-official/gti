@@ -1,0 +1,4 @@
+// Stored reference branch invalidation: a retained borrow used on both conditional paths should end once after their merge.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { char left = *iterator; } else { char right = *iterator; } value.push_back('!'); return 0; }

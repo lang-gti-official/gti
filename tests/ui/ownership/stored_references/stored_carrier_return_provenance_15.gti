@@ -1,0 +1,14 @@
+// Stored carrier return provenance: dropping a copied or moved alias must not end the owner loan while another carrier remains live.
+import std.vector;
+int use() {
+  mut std::vector<int> values = std::vector<int>({1, 2});
+  mut auto first = values.begin();
+  {
+    auto copied = first;
+    mut auto moved = std::move(copied);
+    int observed = *moved;
+  }
+  values.push_back(3);  //~ ERROR GTI-S2017
+  int still_live = *first;
+  return still_live;
+}

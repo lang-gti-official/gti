@@ -1,0 +1,12 @@
+// Source-defined concepts: directly included concepts resolve through namespace aliases.
+//@ check-pass
+// --- main.gti
+import "concepts.gti";
+namespace cap = capabilities;
+T use<cap::signed_value T>(T value) { return value; }
+int main() { return use(1) - 1; }
+// --- concepts.gti
+export module concepts;
+export namespace capabilities {
+concept signed_value<T> = std::signed_numeric<T>;
+}

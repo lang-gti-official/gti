@@ -1,0 +1,7 @@
+// Program initialization plans: generic class statics should remain outside the whole-program plan until their language-level qualified identity is supported.
+class Registry<T> {
+public:
+  static mut int32_t value = 0;  //~ ERROR GTI-S2039
+public:
+  Registry() = default;
+};

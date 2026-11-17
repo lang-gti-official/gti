@@ -1,0 +1,4 @@
+// Extern c interop: ordinary GTI bodyless functions should remain valid declarations.
+//@ check-pass
+int32_t native_like(int32_t value);
+int main() { return native_like(7); }

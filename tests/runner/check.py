@@ -637,6 +637,40 @@ def lsp_self_test(runner):
     expect("line 3: expected a message matching" in
            block(out, "FAIL", "wrong_transcript.jsonl") and "seen: " in out,
            "a transcript mismatch shows what was seen", out)
+    # The budget is the server's CPU: replies that are slow in wall time
+    # pass, a server burning CPU fails, a server that never publishes hits
+    # the hang guard. The shim stands in for gti_lsp (the first test of a
+    # server is cold, so the second is the one judged).
+    shim = ROOT / "tests/runner/lsp_shim.py"
+    pair = (FIXTURES / "lsp/ok/requests.gti", FIXTURES / "lsp/ok/diagnostics.gti")
+    shimmed = {"GTI_TEST_SHIM_SERVER": str(runner.parent / "gti_lsp"),
+               "GTI_TEST_TIME_SCALE": "0.5"}
+    with tempfile.TemporaryDirectory() as directory:
+        report = Path(directory) / "junit.xml"
+        code, out = run(runner, *pair, "--lsp", shim, "--jobs", "1",
+                        "--junit", report,
+                        env=shimmed | {"GTI_TEST_SHIM_MODE": "slow",
+                                       "GTI_TEST_SHIM_SECONDS": "0.4"})
+        walls = [float(case.get("time")) for case in
+                 ElementTree.parse(report).getroot().iter("testcase")]
+        cpus = [float(prop.get("value")) for prop in
+                ElementTree.parse(report).getroot().iter("property")]
+        expect(code == 0 and "RESULT ok: 2 passed" in out and
+               max(walls) > 1.5 and len(cpus) == 2 and max(cpus) < 1.5,
+               "replies slow in wall time pass the CPU budget, and JUnit "
+               "reports both times", out + report.read_text())
+    code, out = run(runner, *pair, "--lsp", shim, "--jobs", "1",
+                    env=shimmed | {"GTI_TEST_SHIM_MODE": "spin",
+                                   "GTI_TEST_SHIM_SECONDS": "2"})
+    expect(code == 1 and "over the CPU budget: gti_lsp used" in out and
+           "RESULT fail: 1 passed, 0 failed, 0 ice, 1 timeout" in out,
+           "a server burning CPU exceeds the budget", out)
+    code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp", shim,
+                    env=shimmed | {"GTI_TEST_SHIM_MODE": "hang",
+                                   "GTI_TEST_TIME_SCALE": "0.05"})
+    expect(code == 1 and "within the hang guard" in out and
+           "over the CPU budget" not in out,
+           "a server that never publishes hits the hang guard", out)
     code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp",
                     "/usr/bin/true")
     expect(code == 1 and "could not start /usr/bin/true" in out,

@@ -1,0 +1,3 @@
+// Exact qualified class specializations: a malformed exact key should use the exact-specialization diagnostic family.
+namespace demo { class Value<T> { public: Value() = default; }; }
+class demo::Value<int, bool> {};  //~ ERROR GTI-S2078 requires 1 generic type argument

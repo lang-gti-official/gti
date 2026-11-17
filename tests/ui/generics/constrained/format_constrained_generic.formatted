@@ -1,0 +1,10 @@
+// Constrained generics: constrained generic declarations format idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+T minimum<std::totally_ordered T>(T left, T right) {
+  if (left < right) {
+    return left;
+  }
+  return right;
+}

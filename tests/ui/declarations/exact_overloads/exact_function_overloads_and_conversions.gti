@@ -1,0 +1,39 @@
+// Exact function overloads and conversions: exact namespace and method overloads should validate.
+//@ check-pass
+namespace math {
+uint64_t pow(uint64_t base, uint64_t exponent) { return base * exponent; }
+float pow(float base, float exponent) { return base * exponent; }
+}
+
+struct Selector<T, U> {
+  T apply(T value) { return value; }
+  U apply(U value) { return value; }
+public:
+  Selector() = default;
+};
+
+struct Receiver {
+  mut int value = 0;
+  int inspect() { return this.value; }
+  int inspect() mut {
+    this.value += 1;
+    return this.value;
+  }
+public:
+  Receiver() = default;
+};
+
+int main() {
+  uint64_t base = uint64_t(2);
+  uint64_t exponent = uint64_t(8);
+  uint64_t whole = math::pow(base, exponent);
+  float decimal = math::pow(2.0, 8.0);
+  Selector<int, float> selector = Selector<int, float>();
+  int selected = selector.apply(2);
+  float selected_decimal = selector.apply(2.0);
+  Receiver read_only = Receiver();
+  mut Receiver writable = Receiver();
+  int read_result = read_only.inspect();
+  int write_result = writable.inspect();
+  return int(whole) + selected + read_result + write_result;
+}

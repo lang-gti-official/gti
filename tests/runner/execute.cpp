@@ -442,11 +442,11 @@ Outcome Engine::runProject(const TestFile &test) {
   return outcome;
 }
 
-// LSP tests are measured in the server's CPU time while the test runs (the
-// work happens there), so a loaded or slower machine's waiting does not
-// count; wall time is only a backstop, three times the limit. A worker's
-// first LSP test (or any transcript, which starts its own server) may also
-// spend the cold allowance analysing the standard library.
+// LSP tests are judged on the language server's CPU time while the test runs
+// (the work happens there), so a loaded machine's waiting never counts. Wall
+// time is only a hang guard for each awaited message. A worker's first LSP
+// test (or any transcript, which starts its own server) may also spend the
+// cold allowance analysing the standard library.
 Outcome Engine::runLsp(const TestFile &test) {
   Outcome outcome;
   const EngineOptions &options = state->options;
@@ -459,9 +459,12 @@ Outcome Engine::runLsp(const TestFile &test) {
   bool cold = test.mode == Mode::LspTranscript;
   LspResult result;
   if (test.mode == Mode::LspTranscript) {
+    // Silent and idle servers still fail at once (runLspTranscript); a
+    // busy one only at the hang guard.
     result = runLspTranscript(options.lsp, test, directory,
-                              start + 3 * limit + options.limits.coldAllowance,
-                              limit);
+                              start + options.limits.lspHang +
+                                  options.limits.coldAllowance,
+                              options.limits.lspHang);
   } else {
     std::string key;
     for (const std::string &argument : test.serverArguments)
@@ -488,13 +491,13 @@ Outcome Engine::runLsp(const TestFile &test) {
     const double cpuBefore = server->cpuSeconds();
     result = runLspTest(
         *server, test, directory, state->toolchain.standardLibrary.root,
-        start + 3 * limit + (cold ? options.limits.coldAllowance : 0.0));
+        options.limits.lspHang + (cold ? options.limits.coldAllowance : 0.0));
     const double cpuAfter = server->cpuSeconds();
     if (cpuBefore >= 0 && cpuAfter >= cpuBefore)
       result.serverCpu = cpuAfter - cpuBefore;
   }
   outcome.wall = lspClock() - start;
-  // Wall time when the server's CPU could not be read (it exited).
+  // Wall time only when the server's CPU could not be read (it exited).
   outcome.cpu = result.serverCpu.value_or(outcome.wall);
   outcome.cold = cold;
   if (result.crashed || result.timedOut) {
@@ -523,9 +526,11 @@ Outcome Engine::runLsp(const TestFile &test) {
     outcome.detail = detail;
   } else if (!cold && outcome.cpu > limit) {
     outcome.status = Status::Timeout;
-    outcome.detail = "over the limit: gti_lsp used " +
-                     std::to_string(outcome.cpu) + " s of CPU > " +
-                     std::to_string(limit) + " s\n";
+    outcome.detail = "over the CPU budget: gti_lsp used " +
+                     std::to_string(outcome.cpu).substr(0, 5) + " s of CPU > " +
+                     std::to_string(limit).substr(0, 5) + " s (" +
+                     std::to_string(outcome.wall).substr(0, 5) +
+                     " s of wall time)\n";
   }
   return outcome;
 }

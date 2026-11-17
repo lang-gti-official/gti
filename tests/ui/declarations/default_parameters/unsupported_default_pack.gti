@@ -1,0 +1,2 @@
+// Default parameters: a default in an unsupported context (parameter pack) is rejected.
+void relay<Args...>(Args... values = 1) {}  //~ ERROR GTI-S2077 parameter pack

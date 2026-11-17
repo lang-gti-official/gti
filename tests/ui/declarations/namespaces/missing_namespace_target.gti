@@ -1,0 +1,7 @@
+// Namespaces and aliases: an alias or qualified call naming a missing namespace is rejected.
+namespace engine {}
+namespace gfx = engine::missing;  //~ ERROR GTI-S2000
+int main() {
+  engine::missing::render();  //~ ERROR GTI-S2000
+  return 0;
+}

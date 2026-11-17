@@ -1,0 +1,49 @@
+// Default parameters: free-function, method, constructor, base-constructor, owned, generic, and constexpr defaults should lower through verified MIR.
+//@ check-pass
+mut int side_effects = 0;
+
+int advance() {
+  side_effects += 1;
+  return side_effects;
+}
+
+int ordinary(int first, int second = advance(), int third = advance()) {
+  return first + second + third;
+}
+
+class Token {
+public:
+  Token() {}
+  int method(int value = advance()) { return value; }
+  static int static_method(int value = advance()) { return value; }
+};
+
+int consume(Token token = Token()) { return 11; }
+
+class Base {
+public:
+  Base(int value = 8) {}
+};
+
+class Derived : public Base {
+public:
+  Derived() {}
+};
+
+T generic_default<T>(T value = 7) { return value; }
+
+constexpr int constant_default(int value = 6) { return value; }
+constexpr int folded = constant_default();
+
+int main() {
+  int omitted = ordinary(1);
+  int explicit_values = ordinary(1, 8, 9);
+  Token token = Token();
+  int method_value = token.method();
+  int static_value = Token::static_method();
+  int owned_value = consume();
+  Derived derived = Derived();
+  int generic_value = generic_default<int>();
+  return omitted + explicit_values + method_value + static_value +
+         owned_value + generic_value + folded;
+}

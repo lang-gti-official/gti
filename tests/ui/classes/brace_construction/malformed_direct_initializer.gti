@@ -1,0 +1,11 @@
+// Direct brace construction: a malformed direct initializer keeps the later declarations.
+//@ parse-fail
+class Sample {
+public:
+  Sample(int value) {}
+};
+int main() {
+  Sample broken{1;  //~ ERROR GTI-P0001
+  Sample retained{2};
+  return retained.value;
+}

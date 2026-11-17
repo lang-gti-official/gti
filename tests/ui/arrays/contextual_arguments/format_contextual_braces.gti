@@ -1,0 +1,5 @@
+// Contextual array arguments: contextual brace arguments and explicit value generics format idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+int total<uint64_t N>(int values[N]){return values[0];}int main(){return total<3>({1,2,3});}

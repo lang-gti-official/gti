@@ -1,0 +1,8 @@
+// Constructor-local generics: the standard string constructor rejects an iterator whose read-only element referent is not exactly char.
+import std.string;
+import std.vector;
+int main() {
+  mut std::vector<int> values = std::vector<int>();
+  std::string text = std::string(values.begin(), values.end());  //~ ERROR GTI-S2029
+  return 0;
+}

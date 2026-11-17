@@ -1,0 +1,25 @@
+// Forward iterator contracts and binary search: forward_iterator should reject a distinct-sentinel-only cursor at the constrained call with the structural reason.
+import std.iterator;
+
+class DistinctSentinel { public: DistinctSentinel() = default; };
+
+class DistinctOnlyIterator {
+  int& value;
+public:
+  DistinctOnlyIterator(int& source) : value(source) {}
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(DistinctSentinel& other) { return false; }
+};
+
+bool accepts_forward<Iterator>(Iterator iterator)
+  requires std::forward_iterator<Iterator> {
+  return true;
+}
+
+int use() {
+  mut int value = 1;
+  DistinctOnlyIterator distinct = DistinctOnlyIterator(value);
+  bool result = accepts_forward(distinct);  //~ ERROR GTI-S2029
+  return 0;
+}

@@ -1,0 +1,16 @@
+// Call sibling argument borrow conflicts: a nested mutable-reference call completed in an earlier operand should not block a later sibling read.
+//@ check-pass
+import std.vector;
+
+int32_t bump(mut std::vector<int32_t>& sink) {
+  sink.push_back(9);
+  return 0;
+}
+
+void consume<A, B>(A first, B count) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(bump(values), values.size());
+  return 0;
+}

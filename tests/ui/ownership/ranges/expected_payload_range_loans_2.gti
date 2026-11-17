@@ -1,0 +1,23 @@
+// Expected payload range loans: field-receiver and mutable payload ranges use the general range rules.
+//@ check-pass
+import std.string;
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+class box {
+public:
+  box(expected<std::string, int32_t> initial)
+      : value(std::move(initial)) {}
+  mut expected<std::string, int32_t> value;
+};
+
+void field_receiver(mut box& owner) {
+  for (auto& byte : owner.value.value()) {}
+}
+void mutable_payload() {
+  mut auto text = make_text();
+  for (mut auto& byte : text.value()) { byte = 'z'; }
+}
+int main() { return 0; }

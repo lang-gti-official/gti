@@ -1,0 +1,48 @@
+main.gti:15:17: error[GTI-S2029]: Argument 1 has type 'Plank', which does not satisfy concept 'gauge<Plank>'.
+ 15 |   return sample(plank) + turn(plank) + measure(plank);  //~ ERROR GTI-S2029 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029
+    |                 ^~~~~
+main.gti:4:49: note: Required here as 'read() -> int' on 'T&'.
+ 4 | concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+   |                                                 ^~~~
+main.gti:9:33: note: Required application 'gauge<Plank>'.
+ 9 | int sample<T>(T& item) requires gauge<T> { return 0; }
+   |                                 ^~~~~
+main.gti:4:49: note: Type 'Plank' has no member 'read()'.
+ 4 | concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+   |                                                 ^~~~
+help: A gauge has 'int read()'.
+help: Provide a public, safe, read-only 'read()' member with the exact required owned result type.
+main.gti:15:31: error[GTI-S2029]: Argument 1 has type 'Plank', which does not satisfy concept 'dial<Plank>'.
+ 15 |   return sample(plank) + turn(plank) + measure(plank);  //~ ERROR GTI-S2029 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029
+    |                               ^~~~~
+main.gti:4:49: note: Required here as 'read() -> int' on 'T&'.
+ 4 | concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+   |                                                 ^~~~
+main.gti:10:31: note: Required application 'dial<Plank>'.
+ 10 | int turn<T>(T& item) requires dial<T> { return 0; }
+    |                               ^~~~
+main.gti:6:19: note: Required application 'gauge<Plank>'.
+ 6 | concept dial<T> = gauge<T>;
+   |                   ^~~~~
+main.gti:4:49: note: Type 'Plank' has no member 'read()'.
+ 4 | concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+   |                                                 ^~~~
+help: A dial is a gauge.
+help: Provide a public, safe, read-only 'read()' member with the exact required owned result type.
+main.gti:15:48: error[GTI-S2029]: Argument 1 has type 'Plank', which does not satisfy concept 'meter<Plank>'.
+ 15 |   return sample(plank) + turn(plank) + measure(plank);  //~ ERROR GTI-S2029 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029
+    |                                                ^~~~~
+main.gti:4:49: note: Required here as 'read() -> int' on 'T&'.
+ 4 | concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+   |                                                 ^~~~
+main.gti:11:34: note: Required application 'meter<Plank>'.
+ 11 | int measure<T>(T& item) requires meter<T> { return 0; }
+    |                                  ^~~~~
+main.gti:8:20: note: Required application 'gauge<Plank>'.
+ 8 | concept meter<T> = gauge<T>;
+   |                    ^~~~~
+main.gti:4:49: note: Type 'Plank' has no member 'read()'.
+ 4 | concept gauge<T> = requires(T& value) { { value.read() } -> int; };
+   |                                                 ^~~~
+help: A gauge has 'int read()'.
+help: Provide a public, safe, read-only 'read()' member with the exact required owned result type.

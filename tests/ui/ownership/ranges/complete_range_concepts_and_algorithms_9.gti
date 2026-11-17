@@ -1,0 +1,17 @@
+// Complete range concepts and algorithms: range_predicate should derive and enforce the exact range element.
+import std.functional;
+import std.iterator;
+class wrong_predicate {
+public:
+  bool operator()(int16_t& value) { return value > 0; }
+public:
+  wrong_predicate() = default;
+};
+bool accepts<Range, Predicate>(Range& values, Predicate predicate)
+  requires std::range_predicate<Predicate, Range> {
+  return true;
+}
+int main() {
+  int32_t[2] values = {1, 2};
+  return accepts(values, wrong_predicate()) ? 0 : 1;  //~ ERROR GTI-S2029
+}
