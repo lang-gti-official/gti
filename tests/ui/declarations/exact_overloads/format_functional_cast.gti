@@ -1,0 +1,5 @@
+// Exact function overloads and conversions: explicit conversion syntax formats like a C++ functional cast.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+uint64_t pow(uint64_t base,uint64_t exponent){return base*exponent;}int main(){uint64_t value=uint64_t(2);return int(value);}

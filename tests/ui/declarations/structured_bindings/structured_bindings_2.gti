@@ -1,0 +1,45 @@
+// Structured bindings: structured-binding diagnostics should reject ambiguous ownership, shape, access, mutation, and untyped initialization.
+class Hidden {
+  int secret = 1;  //~ ERROR GTI-S2048
+public:
+  Hidden() = default;
+};
+
+struct Base {
+  int base = 1;
+public:
+  Base() = default;
+};
+
+struct Derived : public Base {
+  int own = 2;
+public:
+  Derived() = default;
+};
+
+struct MoveOnly {
+  int value = 1;
+
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+public:
+  MoveOnly() = default;
+};
+
+int main() {
+  int values[2] = {1, 2};
+  auto [too, many, names] = values;  //~ ERROR GTI-S2048
+  auto [scalar] = 1;  //~ ERROR GTI-S2048
+  Hidden hidden{};
+  auto [secret] = hidden;
+  Derived derived{};
+  auto [base, own] = derived;  //~ ERROR GTI-S2048
+  auto [same, same] = values;  //~ ERROR GTI-S2006
+  auto [first, second] = values;
+  first = 3;  //~ ERROR GTI-S2002
+  auto moved = std::move(second);  //~ ERROR GTI-S2018
+  MoveOnly owner{};
+  auto [copied] = owner;  //~ ERROR GTI-S2003
+  auto [untyped_left, untyped_right] = {1, 2};  //~ ERROR GTI-S2015
+  return 0;
+}

@@ -1,0 +1,14 @@
+// Program initialization plans: native calls may hide no GTI body edge, but their raw-address arguments must remain program-storage accesses.
+extern "C" { void observe(const int32_t* value); }
+class Globals {
+public:
+  static int32_t call_native() {
+    unsafe { observe(&Globals::later); }
+    return 1;
+  }
+  static mut int32_t first = Globals::call_native();  //~ ERROR GTI-S2068
+  static constexpr int32_t later = 5;
+public:
+  Globals() = default;
+};
+int main() { return Globals::first; }

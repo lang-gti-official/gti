@@ -1,0 +1,4 @@
+// Stored reference loop invalidation2: a loan created before nested loops should remain active until the outermost repeating use can no longer execute.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); mut int outer = 0; while (outer < 2) { mut int inner = 0; while (inner < 1) { char current = *iterator; inner++; } outer++; } value.push_back('!'); return 0; }

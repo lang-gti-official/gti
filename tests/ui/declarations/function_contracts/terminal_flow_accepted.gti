@@ -1,0 +1,39 @@
+// Function contracts: general terminal flow is accepted through direct calls, discarded results, groups, return expressions, initializers, arguments, every loop and branch condition, exhaustive arms, generics and tracked methods (one declaration per row).
+//@ check-pass
+[[noreturn]] void stop() { while (true) {} }
+[[noreturn]] int stop_number() { while (true) {} }
+[[noreturn]] bool stop_test() { while (true) {} }
+int identity(int value) { return value; }
+// direct
+[[noreturn]] void run_direct() { stop(); }
+// unused-terminal-result
+[[noreturn]] void run_unused_terminal_result() { stop_number(); }
+// grouped
+[[noreturn]] void run_grouped() { (stop()); }
+// return-expression
+[[noreturn]] int run_return_expression() { return stop_number() + 1; }
+// initializer
+[[noreturn]] void run_initializer() { int value = stop_number(); }
+// argument
+[[noreturn]] int run_argument() { return identity(stop_number()); }
+// if-condition
+[[noreturn]] void run_if_condition() { if (stop_test()) {} }
+// while-condition
+[[noreturn]] void run_while_condition() { while (stop_test()) {} }
+// do-condition
+[[noreturn]] void run_do_condition() { do {} while (stop_test()); }
+// for-condition
+[[noreturn]] void run_for_condition() { for (; stop_test();) {} }
+// switch-condition
+[[noreturn]] void run_switch_condition() { switch (stop_number()) { default: break; } }
+// conditional
+[[noreturn]] int run_conditional(bool select) { return select ? stop_number() : stop_number(); }
+// exhaustive-arms
+[[noreturn]] void run_exhaustive_arms(int value) { switch (value) { case 1: stop(); default: stop(); } }
+// generic
+[[noreturn]] void run_generic<T>(T value) { stop(); } void instantiate_generic() { run_generic(1); }
+// tracked-method
+struct Guard { [[track_caller]] void check() { stop(); }  public: Guard() = default; };
+// tracked-direct-item
+[[track_caller]] int compute(int value) { return value; } int run_tracked_direct_item() { auto target = compute; return target(1); }
+int main() { return 0; }

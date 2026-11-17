@@ -1,0 +1,7 @@
+// Container scaffold surfaces: a span must not escape the local owner that supplies its retained loan.
+import std.vector;
+import std.span;
+std::span<int> escape() {
+  mut std::vector<int> values = std::vector<int>({1, 2});  //~ WARN GTI-S2096
+  return values.as_span();  //~ ERROR GTI-S2127 does not live for 'static'
+}

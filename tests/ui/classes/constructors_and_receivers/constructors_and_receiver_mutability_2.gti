@@ -1,0 +1,29 @@
+// Constructors and receiver mutability: copy and move policy calls should pass the complete frontend.
+//@ check-pass
+class Value {
+  int value = 0;
+public:
+  Value(Value& other) = default;
+  Value(Value&& other) = default;
+public:
+  Value() = default;
+};
+class GenericValue<T> {
+  T value;
+public:
+  GenericValue(T initial) : value(initial) {}
+  GenericValue(GenericValue<T>& other) = default;
+  GenericValue(GenericValue<T>&& other) = default;
+};
+int main() {
+  Value source{};
+  Value copied = Value(source);
+  mut Value movable{};  //~ WARN GTI-S2096
+  Value moved = Value(std::move(movable));
+  GenericValue<int> generic_source = GenericValue<int>(1);
+  GenericValue<int> generic_copy = GenericValue<int>(generic_source);
+  mut GenericValue<int> generic_movable = GenericValue<int>(2);  //~ WARN GTI-S2096
+  GenericValue<int> generic_move =
+      GenericValue<int>(std::move(generic_movable));
+  return 0;
+}

@@ -1,0 +1,5 @@
+// Stored reference branch invalidation3: a borrow used directly by a returning arm should rely on return cleanup while the fallthrough edge ends before mutation.
+//@ check-pass
+import std.string;
+char choose(bool stop) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (stop) { return *iterator; } value.push_back('!'); return value[0]; }
+int main() { if (choose(true) == 'g' and choose(false) == 'g') { return 0; } return 1; }

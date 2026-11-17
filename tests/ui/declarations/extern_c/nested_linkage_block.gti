@@ -1,0 +1,7 @@
+// Extern C interop: an invalid nested linkage block recovers at the next prototype.
+//@ parse-fail
+extern "C" {
+  extern "C" { int32_t nested(); }  //~ ERROR GTI-P0001
+  int32_t recovered();
+}
+int main() { return 0; }

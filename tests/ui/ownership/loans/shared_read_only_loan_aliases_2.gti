@@ -1,0 +1,3 @@
+// Shared read only loan aliases: a later use through any shared alias must keep the owner loan live.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); std::string::const_iterator& alias = iterator; char first = *iterator; value.push_back('!'); char second = *alias; return 0; }  //~ ERROR GTI-S2017

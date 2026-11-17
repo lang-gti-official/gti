@@ -1,0 +1,13 @@
+// Stored carrier return provenance: read-only carriers should reject copy assignment at the source value because assignment could reseat their dependency.
+class ReadCarrier {
+public:
+  int& referent;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int use() {
+  mut int owner = 1;
+  mut ReadCarrier left = ReadCarrier(owner);
+  ReadCarrier right = ReadCarrier(owner);
+  left = right;  //~ ERROR GTI-S2003
+  return 0;
+}

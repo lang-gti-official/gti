@@ -1,0 +1,3 @@
+module api;
+import "types.gti";
+namespace demo { int Factory::make(Parcel<int>* input) { return 7; } }

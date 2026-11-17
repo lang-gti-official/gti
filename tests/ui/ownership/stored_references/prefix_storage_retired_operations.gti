@@ -1,0 +1,14 @@
+// Prefix storage capability: retired prefix declarations are no longer provided by the prelude (trusted source).
+//@ stdlib-overlay: std/retired_prefix.gti std/detail/memory_capabilities.gti
+// --- main.gti
+import std.retired_prefix;
+int main() { return retired_prefix_main(); }
+// --- std/retired_prefix.gti
+export module retired_prefix;
+import std.memory;
+import std.detail.memory_capabilities;
+export int retired_prefix_main() {
+  mut gti_internal::prefix_storage<int> values =  //~ ERROR GTI-S2000
+      gti_internal::allocate_prefix_storage<int>(uint64_t(1));  //~ ERROR GTI-S2000
+  return int(gti_internal::prefix_storage_read(values, uint64_t(0)));  //~ ERROR GTI-S2000
+}

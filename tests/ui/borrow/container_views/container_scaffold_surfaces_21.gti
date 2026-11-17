@@ -1,0 +1,8 @@
+// Container scaffold surfaces: mutating a string while one of its C-string pointers remains live should be rejected.
+import std.string;
+int main() {
+  mut std::string text = std::string("abc");
+  c_string pointer = text.c_string();
+  text.push_back('d');  //~ ERROR GTI-S2017
+  return pointer == nullptr ? 1 : 0;
+}

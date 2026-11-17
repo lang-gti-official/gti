@@ -1,0 +1,18 @@
+// Moved loop local redeclarations: every generic instance must rearm a moved trivially dropped loop-local for the next iteration.
+//@ check-pass
+T accumulate<std::numeric T>(T seed, T limit) {
+  mut T total = seed;
+  mut T step = seed;
+  while (step < limit) {
+    T element = step + T(1);
+    total = total + std::move(element);
+    step = step + T(1);
+  }
+  return total;
+}
+
+int main() {
+  int32_t narrow = accumulate<int32_t>(0, 2);
+  int64_t wide = accumulate<int64_t>(int64_t(0), int64_t(2));
+  return narrow + int32_t(wide);
+}

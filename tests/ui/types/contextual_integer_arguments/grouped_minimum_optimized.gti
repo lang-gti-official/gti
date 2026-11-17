@@ -1,0 +1,6 @@
+// Contextual integer literal arguments: a grouped signed minimum is admitted and keeps valid optimized MIR.
+//@ run-pass
+//@ opt: O3
+//@ reason: the O3 pipeline must verify the grouped minimum's optimized MIR
+int8_t take(int8_t value) { return value; }
+int main() { if (take((-(128))) != -128) { return 1; } return 0; }

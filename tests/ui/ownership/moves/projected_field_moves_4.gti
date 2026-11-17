@@ -1,0 +1,23 @@
+// Projected field moves: projection-base analysis should not suppress unavailable nested field reads.
+import std.memory;
+
+struct Item {
+  int read() { return 1; }
+public:
+  Item() = default;
+};
+
+struct Holder {
+  mut std::unique_ptr<Item> value = std::make_unique<Item>();
+public:
+  Holder() = default;
+};
+
+int observe(int value) { return value; }
+
+int main() {
+  mut Holder holder = Holder();
+  auto removed = std::move(holder.value);
+  [[discard]] std::move(observe(holder.value->read()));  //~ ERROR GTI-S2018 //~ ERROR GTI-S2018
+  return 0;
+}

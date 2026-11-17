@@ -1,0 +1,6 @@
+// Borrowed callable conditionals: analysis result.
+import std.memory;
+
+class Counter { public: int operator()(int n) mut { return n; }  public: Counter() = default; };
+int apply<F>(F& f) { return f(1); }  //~ ERROR GTI-S2046
+int main() { Counter counter{}; return apply(counter); }

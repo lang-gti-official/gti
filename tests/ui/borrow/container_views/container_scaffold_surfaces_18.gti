@@ -1,0 +1,6 @@
+// Container scaffold surfaces: a dynamic string_view must not escape the local string that owns its bytes.
+import std.string;
+std::string_view escape() {
+  mut std::string text = std::string("abc");
+  return text.view();  //~ ERROR GTI-S2045 dynamic std::string_view cannot escape without one exact owner dependency
+}

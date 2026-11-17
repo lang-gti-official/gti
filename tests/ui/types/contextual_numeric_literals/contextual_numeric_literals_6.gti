@@ -1,0 +1,2 @@
+// Contextual numeric literals: literal context must independently preserve each semantic boundary.
+T narrow<std::numeric T>(T value) { return value / 2; } int main() { uint8_t result = narrow(uint8_t(4)); return 0; }  //~ ERROR GTI-S2003

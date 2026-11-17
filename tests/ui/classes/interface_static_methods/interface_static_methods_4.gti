@@ -1,0 +1,2 @@
+// Interface static methods: ordinary static access, receiver and unsafe restrictions must apply.
+interface I { static int read() && { return 1; } };  //~ ERROR GTI-P0001

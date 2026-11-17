@@ -1,0 +1,5 @@
+// Requires disjunction: an inline concept with no common facts should still enforce its exact Boolean predicate at concrete instantiation.
+concept floating_or_closed<T> =
+    std::integral<double> || std::floating_point<T>;
+T require_floating<floating_or_closed T>(T value) { return value; }
+int main() { return require_floating(1); }  //~ ERROR GTI-S2029 any alternative in concept 'floating_or_closed'

@@ -1,0 +1,97 @@
+// Constrained generics: unsupported operations and concrete constraint violations should fail before backend entry.
+T unsupported_add<T>(T left, T right) { return left + right; }  //~ ERROR GTI-S2004 numeric operands
+T ordered_value<std::ordered T>(T value) { return value; }
+T needs_numeric<std::numeric T>(T value) { return value; }
+T integral_value<std::integral T>(T value) { return value; }
+T signed_number<std::signed_numeric T>(T value) { return value; }
+T forwards_ordered<std::ordered T>(T value) { return needs_numeric(value); }  //~ ERROR GTI-S2029 does not satisfy concept
+T bad_negate<std::numeric T>(T value) { return -value; }  //~ ERROR GTI-S2000 signed numeric value
+T bad_modulo<std::numeric T>(T left, T right) { return left % right; }  //~ ERROR GTI-S2004 requires integer operands
+T bad_conversion<T>(T value) { return T(1); }  //~ ERROR GTI-S2029 requires the numeric capability
+T unknown<std::mystery T>(T value) { return value; }  //~ ERROR GTI-S2029 Unknown generic concept 'std::mystery'
+T signed_integer<std::signed_integral T>(T value) { return value; }
+T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
+T floating_value<std::floating_point T>(T value) { return value; }
+
+class EqualOnly {
+public:
+  bool operator==(EqualOnly& other) { return true; }
+public:
+  EqualOnly() = default;
+};
+
+class AlmostOrdered {
+public:
+  bool operator==(AlmostOrdered& other) { return true; }
+  bool operator!=(AlmostOrdered& other) { return false; }
+  bool operator<(AlmostOrdered& other) { return false; }
+  bool operator<=(AlmostOrdered& other) { return true; }
+  bool operator>(AlmostOrdered& other) { return false; }
+public:
+  AlmostOrdered() = default;
+};
+
+class DeletedCopy {
+public:
+  DeletedCopy() {}
+  DeletedCopy(DeletedCopy& other) = delete;
+  DeletedCopy(DeletedCopy&& other) = default;
+};
+
+class DeletedMove {
+public:
+  DeletedMove() {}
+  DeletedMove(DeletedMove&& other) = delete;
+};
+
+class CopyConstructOnly {
+  int& value;
+public:
+  CopyConstructOnly(int& source) : value(source) {}
+};
+
+class NoDefault {
+  int stored;
+
+public:
+  NoDefault(int value) : stored(value) {}
+};
+
+bool needs_equality<std::equality_comparable T>(T left, T right) {
+  return left == right;
+}
+T needs_total_order<std::totally_ordered T>(T value) { return value; }
+T needs_copy_construction<std::copy_constructible T>(T value) {
+  return value;
+}
+T needs_copy<std::copyable T>(T value) { return value; }
+T needs_move<std::movable T>(T value) { return std::move(value); }
+T needs_default<std::default_initializable T>() { return T(); }
+T unconstrained_default<T>() { return T(); }  //~ ERROR GTI-S2029 requires the default-initialization capability
+
+class NumericBox<std::numeric T> {
+  T value;
+public:
+  NumericBox(T value) : value(value) {}
+};
+
+void use_box(NumericBox<bool> value) {}  //~ ERROR GTI-S2029
+
+int use() {
+  bool invalid_ordered = ordered_value(true);  //~ ERROR GTI-S2029 std::ordered
+  bool invalid_value = needs_numeric(true);  //~ ERROR GTI-S2029
+  float invalid_integral = integral_value(2.0);  //~ ERROR GTI-S2029 std::integral
+  uint64_t invalid_signed_numeric = signed_number(uint64_t(1));  //~ ERROR GTI-S2029 std::signed_numeric
+  uint64_t invalid_signed_integral = signed_integer(uint64_t(1));  //~ ERROR GTI-S2029 std::signed_integral
+  int invalid_unsigned_integral = unsigned_integer(1);  //~ ERROR GTI-S2029 std::unsigned_integral
+  int invalid_floating_point = floating_value(1);  //~ ERROR GTI-S2029 std::floating_point
+  bool invalid_equality = needs_equality(EqualOnly(), EqualOnly());  //~ ERROR GTI-S2029 std::equality_comparable
+  AlmostOrdered invalid_total = needs_total_order(AlmostOrdered());  //~ ERROR GTI-S2029 std::totally_ordered
+  DeletedCopy invalid_construction = needs_copy_construction(DeletedCopy());  //~ ERROR GTI-S2029 std::copy_constructible
+  mut int copy_source = 1;
+  CopyConstructOnly copy_only = CopyConstructOnly(copy_source);
+  CopyConstructOnly invalid_copy = needs_copy(std::move(copy_only));  //~ ERROR GTI-S2029 std::copyable
+  DeletedMove invalid_move = needs_move(DeletedMove());  //~ ERROR GTI-S2029 std::movable //~ ERROR GTI-D0002
+  NoDefault invalid_default = needs_default<NoDefault>();
+  return 0;
+}

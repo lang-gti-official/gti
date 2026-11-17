@@ -1,0 +1,22 @@
+// Compiler private member requirements: a named concept is a public predicate and never observes a compiler-private member, even when trusted source declares and applies it.
+//@ stdlib-overlay: std/private_probe.gti
+// --- main.gti
+import std.private_probe;
+int main() { return named_main(); }
+// --- std/private_probe.gti
+export module private_probe;
+namespace gti_internal {
+struct plain_probe<T> {
+  bool matches() { return true; }
+public:
+  plain_probe() = default;
+};
+}
+concept probe_matches<P> = requires(P& item) { { item.matches() } -> bool; };
+bool call_named<P>(P& probe) requires probe_matches<P> {
+  return probe.matches();
+}
+export int named_main() {
+  gti_internal::plain_probe<int> probe{};
+  return call_named(probe) ? 0 : 1;  //~ ERROR GTI-S2029
+}

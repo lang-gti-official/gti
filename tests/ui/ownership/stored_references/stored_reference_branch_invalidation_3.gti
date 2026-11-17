@@ -1,0 +1,4 @@
+// Stored reference branch invalidation: a nested conditional use should project to the outer join that dominates the following mutation.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { if (true) { char first = *iterator; } } value.push_back('!'); return 0; }

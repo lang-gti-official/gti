@@ -1,0 +1,9 @@
+// Unique ownership and allocation: target-typed nullptr construction must not become an implicit class conversion for ordinary call arguments.
+import std.memory;
+
+struct Widget { public: Widget() = default; };
+void consume(std::unique_ptr<Widget> value) {}
+int main() {
+  consume(nullptr);  //~ ERROR GTI-S2003 has type 'nullptr_t' but the parameter requires 'std::unique_ptr<Widget>'
+  return 0;
+}

@@ -1,0 +1,3 @@
+// Out-of-class methods: an invalid separate definition (return type) gets a source diagnostic.
+struct A { int read();  public: A() = default; }; bool A::read() { return true; }  //~ ERROR GTI-S2120 return type
+int main() { return 0; }

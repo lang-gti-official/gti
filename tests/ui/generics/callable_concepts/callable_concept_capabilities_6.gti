@@ -1,0 +1,14 @@
+// Callable concept capabilities: an owned-call alternative does not authorize an ambiguous borrowed call.
+import std.functional;
+class ambiguous {
+public:
+  bool operator()(int32_t value) { return value > 0; }
+  bool operator()(int32_t& value) { return value > 0; }
+public:
+  ambiguous() = default;
+};
+bool inspect<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);  //~ ERROR GTI-S2022
+}
+int main() { return inspect(1, ambiguous()) ? 0 : 1; }

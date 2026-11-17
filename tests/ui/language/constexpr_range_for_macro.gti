@@ -1,0 +1,36 @@
+// A procedural macro builds its expansion with range-based for loops over a
+// fixed array and a std::vector, executed during compilation.
+//@ run-pass
+// --- main.gti
+import "lib.gti";
+static_assert(repeat_sum!({2}) == 10);
+int main() { return repeat_sum!({1}) == 5 ? 0 : 1; }
+// --- lib.gti
+export module repeat_macro_library;
+import std.syntax;
+import std.vector;
+
+constexpr std::syntax::tokens contents(std::syntax::tokens input) {
+  return std::syntax::slice(input, uint64_t(1),
+                            std::syntax::size(input) - uint64_t(1));
+}
+
+// Adds the operand once per selected weight, chosen by range-for loops.
+export #macro(proc) std::syntax::expr repeat_sum(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+  auto operand = contents(input);
+  int weights[4] = {1, 0, 2, 1};
+  mut std::vector<int> picked{};
+  for (auto weight : weights) {
+    if (weight == 0) { continue; }
+    picked.push_back(weight);
+  }
+  mut auto output = operand;
+  for (auto& weight : picked) {
+    for (mut int i = 0; i < weight; i++) {
+      output = std::syntax::join(output, std::syntax::punctuation("+", origin));
+      output = std::syntax::join(output, operand);
+    }
+  }
+  return std::syntax::parse(output);
+}

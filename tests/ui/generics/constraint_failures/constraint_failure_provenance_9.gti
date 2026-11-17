@@ -1,0 +1,7 @@
+// Constraint failure provenance: closed or distinct disjunction inputs must not select an argument because their concrete types happen to match.
+concept snapshots<T> = requires(T& value) { { value.snapshot() } -> int; };
+concept serializes<T> = requires(T& value) { { value.serialize() } -> int; };
+concept readable<T, U> = snapshots<T> || serializes<U>;
+int read<T, U>(T& first, U& second) requires readable<T, U> { return 0; }
+struct Item { public: Item() = default; };
+int main() { Item first{}; Item second{}; return read(first, second); }  //~ ERROR GTI-S2029 readable<Item, Item>

@@ -1,0 +1,136 @@
+// Range-based for runs during constant evaluation over fixed arrays and over
+// an application range whose cursor keeps a checked reference to its range;
+// every compile-time result has a run-time twin that must agree.
+//@ run-pass
+
+constexpr int array_sum() {
+  int values[4] = {1, 2, 3, 4};
+  mut int sum = 0;
+  for (auto x : values) { sum += x; }
+  return sum;
+}
+
+constexpr int array_control() {
+  int values[6] = {1, 2, 3, 4, 5, 6};
+  mut int sum = 0;
+  for (auto& x : values) {
+    if (x == 2) { continue; }
+    if (x == 5) { break; }
+    sum += x;
+  }
+  return sum;
+}
+
+constexpr int array_early_return() {
+  int values[4] = {3, 7, 9, 11};
+  for (auto x : values) {
+    if (x > 8) { return x; }
+  }
+  return -1;
+}
+
+constexpr int array_nested() {
+  int values[3] = {1, 2, 3};
+  mut int sum = 0;
+  for (auto a : values) {
+    for (auto b : values) { sum += a * b; }
+  }
+  return sum;
+}
+
+constexpr int array_mutate() {
+  mut int values[3] = {1, 2, 3};
+  values[0] = 4;
+  for (mut auto& x : values) { x = x * 10; }
+  return values[0] + values[1] + values[2];
+}
+
+// An application range. The cursor binds a reference to the shelf rather
+// than copying it, so writes through the mutable cursor reach the shelf.
+class Shelf {
+  mut int slots[4];
+public:
+  constexpr Shelf(int first) : slots({first, first + 1, first + 2, first + 3}) {}
+  constexpr int& slot(std::size_t index) { return this.slots[index]; }
+  constexpr mut int& slot_mut(std::size_t index) mut { return this.slots[index]; }
+  constexpr ShelfCursor begin() { return ShelfCursor(this, std::size_t(0)); }
+  constexpr ShelfMutCursor begin_mut() mut { return ShelfMutCursor(this, std::size_t(0)); }
+  constexpr ShelfEnd end() { return ShelfEnd(std::size_t(4)); }
+};
+
+class ShelfEnd {
+  std::size_t at;
+public:
+  constexpr ShelfEnd(std::size_t at) : at(at) {}
+  constexpr std::size_t position() { return this.at; }
+};
+
+class ShelfCursor {
+  Shelf& shelf;
+  mut std::size_t index;
+public:
+  constexpr ShelfCursor(Shelf& shelf, std::size_t index) : shelf(shelf), index(index) {}
+  constexpr int& operator*() { return this.shelf.slot(this.index); }
+  constexpr void operator++() mut { this.index = this.index + std::size_t(1); }
+  constexpr bool operator!=(ShelfEnd end) { return this.index != end.position(); }
+};
+
+class ShelfMutCursor {
+  mut Shelf& shelf;
+  mut std::size_t index;
+public:
+  constexpr ShelfMutCursor(mut Shelf& shelf, std::size_t index) : shelf(shelf), index(index) {}
+  constexpr int& operator*() { return this.shelf.slot(this.index); }
+  constexpr mut int& operator*() mut { return this.shelf.slot_mut(this.index); }
+  constexpr void operator++() mut { this.index = this.index + std::size_t(1); }
+  constexpr bool operator!=(ShelfEnd end) { return this.index != end.position(); }
+};
+
+constexpr int shelf_sum(int first) {
+  Shelf shelf = Shelf(first);
+  mut int sum = 0;
+  for (auto x : shelf) { sum += x; }
+  return sum;
+}
+
+constexpr int shelf_pairs() {
+  Shelf shelf = Shelf(1);
+  for (auto a : shelf) {
+    for (auto& b : shelf) {
+      if (a + b == 7) { return a * 10 + b; }
+    }
+  }
+  return 0;
+}
+
+constexpr int shelf_mutate() {
+  mut Shelf shelf = Shelf(1);
+  for (mut auto& x : shelf) {
+    if (x == 3) { continue; }
+    x = x * 2;
+  }
+  mut int sum = 0;
+  for (auto& x : shelf) { sum += x; }
+  return sum;
+}
+
+static_assert(array_sum() == 10);
+static_assert(array_control() == 8);
+static_assert(array_early_return() == 9);
+static_assert(array_nested() == 36);
+static_assert(array_mutate() == 90);
+static_assert(shelf_sum(10) == 46);
+static_assert(shelf_pairs() == 34);
+static_assert(shelf_mutate() == 17);
+
+// A constant initializer runs the same loops, and its value sizes an array.
+constexpr int initialized = shelf_sum(1) + array_sum();
+
+int main() {
+  if (array_sum() != 10 || array_control() != 8 || array_early_return() != 9) { return 1; }
+  if (array_nested() != 36 || array_mutate() != 90) { return 2; }
+  if (shelf_sum(10) != 46 || shelf_pairs() != 34 || shelf_mutate() != 17) { return 3; }
+  int table[initialized] = {};
+  if (sizeof(int[initialized]) != sizeof(int) * std::size_t(20)) { return 4; }
+  return 0;
+}

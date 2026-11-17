@@ -1,0 +1,10 @@
+// Frontend backend and optimization pipeline: the shared frontend should produce a checked program.
+//@ run-pass
+int main() {
+  bool folded = (1 < 2) and !false;
+  int arithmetic = 1 + 2;
+  if (arithmetic == 3) {
+    return 0;
+  }
+  return arithmetic;
+}

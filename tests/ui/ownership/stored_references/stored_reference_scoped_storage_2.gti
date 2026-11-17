@@ -1,0 +1,7 @@
+// Stored reference scoped storage: ordinary source must receive focused private-access diagnostics without unknown-type cascades.
+class StorageBorrow<T> {
+  gti_internal::text_view& data;  //~ ERROR GTI-S2058
+public:
+  StorageBorrow(gti_internal::text_view& source) : data(source) {}  //~ ERROR GTI-S2058
+};
+int main() { return 0; }

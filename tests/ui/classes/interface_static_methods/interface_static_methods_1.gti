@@ -1,0 +1,31 @@
+// Interface static methods: interface statics should reuse ordinary access, default, generic, requires, constexpr and unsafe rules.
+//@ check-pass
+interface Reading {
+  static int initial(int value = 7) { return private_helper(value); }
+  static T identity<T>(T value) requires Number<T> { return value; }
+  static constexpr int twice(int value) { return value * 2; }
+  unsafe static int unchecked() { return 9; }
+  static int unselected();
+  int read();
+private:
+  static int private_helper(int value) { return value; }
+};
+class Meter : public Reading {
+public:
+  Meter() {}
+  int read() override { return Reading::initial(); }
+};
+static_assert(Reading::twice(3) == 6);
+int invoke() { return Reading::initial(); }
+int main() {
+  Meter meter{};
+  unsafe { if (Reading::unchecked() != 9) { return 1; } }
+  if (Reading::identity<int>(meter.read()) != 7 || Meter::initial() != 7) { return 2; }
+  return invoke() - 7;
+}
+interface Marker { static int code() { return 1; } };
+class Marked : public Marker { public: Marked() = default; };
+interface LeftFactory { static int create() { return 1; } };
+interface RightFactory { static int create() { return 2; } };
+class BothFactories : public LeftFactory, public RightFactory { public: BothFactories() = default; };
+concept Number<T> = std::numeric<T>;

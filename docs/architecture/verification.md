@@ -879,13 +879,14 @@ constructor, and mutating the owner while a copy is live (`GTI-S2045`,
 `testDerivedCarriers`.
 ## Text members through checked `operator->` (0.467.1)
 
-`testArrowNonClassReferents` in the `ownership` suite analyzes a class with
+`tests/ui/ownership/member_operators/arrow_text_referents.gti` analyzes a class with
 `std::string_view& operator->()` and a `std::optional<std::string_view>`.
 `label->size()`, `maybe->size()`, `label->end()` and `label->empty()` verify,
 lower to the `StringViewSize` and `StringViewEmpty` intrinsics, and leave no
-MIR value of unknown type, which was the backend's refusal before the fix.
-`->` through an `int&` or `c_string&` result, as a call or a field read, is
-`GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
+MIR value of unknown type, which was the backend's refusal before the fix
+(the case checks both intrinsics in its MIR).
+In `arrow_rejected_referents.gti`, `->` through an `int&` or `c_string&`
+result, as a call or a field read, is `GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
 none reports `GTI-B`.
 
 `operator_relay_runtime` runs `arrow_text_members.gti` in all eight native
@@ -1214,8 +1215,8 @@ verification. The emitted text constructs every copy from the destination
 after the store, stages the first argument before the second store, and calls
 the receiver through the temporary's slot before ending it.
 `testAssignmentResultFieldView` now expects the move-only read to be rejected
-by semantics. In `compiler_pipeline`, `testMoveOnlyAssignmentResultUse`
-reports exactly one `GTI-S2003` at the `=` of a used move-only result, with
+by semantics. `tests/ui/ownership/moves/move_only_assignment_result_*.gti`
+report exactly one `GTI-S2003` at the `=` of a used move-only result, with
 its hint and no fix-it, for initialization, return, by-value argument,
 receiver, field read, chained assignment, a comma's right operand, a
 conditional arm, field, element and reference destinations, `std::unique_ptr`
@@ -2954,7 +2955,7 @@ owning user-defined argument records across C++20/C++23 at O0/O1/O3, disabled
 copy elision, and ASan/UBSan. Observable traces cover read-only and mutable
 receivers, consuming value/error payload extraction, receiver evaluation,
 wrong-state extraction, later-argument failure and callee failure, with
-exactly-once payload cleanup. `testOrderedRawReceiverInputs` checks the exact
+exactly-once payload cleanup. The `ordered_raw_receiver_inputs` case of `gti_unit_tests` checks the exact
 HIR pointee identity/access mode and MIR receiver stages; mutated call-site
 identities and erased unsafe/memory effects on either the stage or call must
 fail verification. The runtime fixture also invokes a declared-unsafe method
@@ -3068,7 +3069,7 @@ are local observations, not portable thresholds or a claim of failure-path parit
 
 ## Optional out-of-class method definitions (0.416.0)
 
-`testOutOfClassMethods` covers canonical declaration/body association, private
+The `tests/ui/classes/out_of_class_methods/` cases cover canonical declaration/body association, private
 member access, static factories, renamed parameters, default arguments,
 constexpr calls, consuming receivers and borrowed-result contracts. Negative
 cases reject unmatched and duplicate definitions, altered signatures and
@@ -3937,7 +3938,7 @@ feedback and must not be presented as clean-head integration evidence.
   typed binding, are covered.
   The borrowed-callable/conditional-result slice subsequently supports direct
   checked-reference parameters and deferred inferred conditional arms. Its
-  owning test is `testBorrowedCallableConditionals`; its native gate is
+  owning cases are `tests/ui/ownership/callables/borrowed_callable_conditionals_*.gti`; its native gate is
   `borrowed_callable_conditionals_runtime` (C++20/C++23 O0/O1/O3, no-elide,
   ASan/UBSan), including move-only state, exact results and cleanup on failure.
   Example 028 adds eight MIR bodies, eight declarations and four generated
@@ -7313,7 +7314,7 @@ repairs in bindings, compile-time branches and static assertions.
 `diagnostic_explanations` checks terminal/LSP call-trace agreement across an
 included file, Unicode UTF-16 locations and repair in an unsaved overlay.
 
-`testConstraintFailureProvenance` also checks member-owned `requires` leaf
+The `tests/ui/generics/constraint_failures/` cases also check member-owned `requires` leaf
 causes, exact requirement source ranges, repaired valid MIR, representative
 disjunction evidence and nested member-step elision. Producer tests retain one
 shared immutable leaf across 64 nested member steps and bound concept context
@@ -7409,8 +7410,8 @@ or every platform matrix was rerun.
 
 The 0.367.1 fix gives an implicit instance-field text accessor the same
 predeclared receiver summary as an explicit `this` path. Body validation still
-owns the actual origin proof. `testContainerScaffoldSurfaces` verifies MIR for
-valid relays and rejects local/by-value shadowing, static instance access,
+owns the actual origin proof. The `tests/ui/borrow/container_views/` cases accept
+valid relays and reject local/by-value shadowing, static instance access,
 temporary/local escape and live-view invalidation or movement. A same-named
 read-only parameter retains its own dependency; literal-backed static fields
 do not gain a receiver loan.
@@ -9516,7 +9517,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `stored_callable_invocation_runtime` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `function_signature_lsp` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics, ownership/lifecycle/ranges/callables, and bounded end-to-end executables (the former frontend, diagnostics/formatting/queries and constexpr/configuration/numerics/static-initialization suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
+| `compiler_pipeline` | manifest-backed aggregate over the remaining ownership/lifecycle/ranges/callables suite (the former frontend, diagnostics/formatting/queries, constexpr/configuration/numerics/static-initialization, end-to-end and declarations/types/generics suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |
@@ -10067,7 +10068,7 @@ cache bypass. It is bounded branch evidence, not a substitute for full Linux CI.
 
 ## Cross-Phase Feature Coverage
 
-`testContextualNumericLiterals` checks broad and composed numeric constraints,
+The `tests/ui/types/contextual_numeric_literals/` cases check broad and composed numeric constraints,
 signed/grouped literals, concrete HIR literal domains, checked range diagnostics,
 and independent negatives for mixed variables, unconstrained types, call
 matching, narrow arithmetic results, and integral-only operations. The
@@ -10129,10 +10130,9 @@ target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
-For class-scoped type aliases, `gti_compiler_declarations_tests` owns parsing,
-declaration-order-independent resolution, access and collision diagnostics,
-generic-owner substitution, LoweredProgram/backend shape, construction,
-formatting, and shared language queries. `lsp_protocol` owns hover, definition,
+For class-scoped type aliases, the `tests/ui/declarations/type_aliases/` cases
+own parsing, declaration-order-independent resolution, access and collision
+diagnostics, generic-owner substitution, construction and formatting. `lsp_protocol` owns hover, definition,
 completion, semantic tokens, and nested document symbols. The Tree-sitter
 corpus, highlight, and shipped-source gates own editor parsing and captures;
 example 79 is the native compile/run composition. Aliases are static type

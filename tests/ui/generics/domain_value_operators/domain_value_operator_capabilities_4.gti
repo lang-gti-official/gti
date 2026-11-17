@@ -1,0 +1,3 @@
+// Domain value operator capabilities: analysis result.
+T opposite<T>(T& a) requires std::negatable<T> { return -a; }
+int main() { int32_t v = 3; int32_t r = opposite(v); return 0; }  //~ ERROR GTI-S2029

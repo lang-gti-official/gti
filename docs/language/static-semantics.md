@@ -2425,8 +2425,9 @@ the same initialization schedule; eligibility is never inferred from a generated
 native constructor.
 
 An ordinary constructor with a source body may be `constexpr`. The constructed
-class or struct must have no base, polymorphism, union state or stored reference,
-and every recursively reachable field must have a
+class or struct must have no base, polymorphism or union state. It may store
+checked references (see stored references below), and every other recursively
+reachable field must have a
 supported constexpr value type for compile-time construction. Generic
 constructors and methods can also be instantiated with runtime-only
 field types for ordinary runtime use, under the same declaration-versus-call
@@ -2540,11 +2541,34 @@ body to mark and is constant-eligible with its class.
   `constexpr` signatures, locals and fields, but never in a published constant.
   Every access must designate a live object: a null pointer, a pointer into a
   released region or a returned call's local, and arithmetic outside one
-  region or place all fail evaluation.
+  region or place all fail evaluation. The address of a fixed-array element is
+  an element pointer that arithmetic may move within that array and one past
+  its end.
 
-Shared ownership, virtual/recursive owning destruction, stored-reference
-carriers, unions and inherited objects require further constant-execution
-profiles. They are not enabled by their public library names. These lifetime
+#### Stored references and range-based `for`
+
+A class whose fields include checked references, such as an iterator that
+refers to its container, may have `constexpr` constructors and methods and may
+be returned from `constexpr` functions. A stored reference is execution-local,
+like a raw pointer: it designates the object it was bound to, never a copy, so
+reads and writes through it reach that object. Its constructor binds it through
+the same stored loan native code uses. Every access checks that the referent is
+still live. A value containing a stored reference is never a published
+constant; the ordinary borrow rules still decide which references may be
+stored and for how long. A class whose cleanup still uses a stored borrow
+stays outside this profile.
+
+Range-based `for` therefore runs during constant evaluation with the same
+plan as at run time ([Ranges](ranges.md#constant-evaluation)): fixed arrays by
+checked index, and nominal ranges through their ordinary `begin()`/`end()` (or
+`begin_mut()`) cursors, including `break`, `continue`, `return`, nested loops,
+reference and mutable bindings, and destruction of an owned range temporary.
+A failed cursor check, such as stepping or reading past the end, fails the
+request with its defined failure.
+
+Shared ownership, virtual/recursive owning destruction, carriers whose
+cleanup uses a stored borrow, unions and inherited objects require further
+constant-execution profiles. They are not enabled by their public library names. These lifetime
 operations never fall back to AST execution. Example 153 demonstrates transient
 scratch storage and example 195 owning containers, both with runtime parity.
 

@@ -1,0 +1,5 @@
+// Structured bindings: the parser diagnoses a structured for binding with no range.
+// A classic for init may declare a structured binding (C++17 init statement);
+// see tests/ui/language/init_statements/forms.gti.
+//@ parse-fail
+int main() { for (auto [left, right]) {} return 0; }  //~ ERROR GTI-P0001

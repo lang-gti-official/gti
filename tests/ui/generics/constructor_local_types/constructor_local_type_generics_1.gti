@@ -1,0 +1,23 @@
+// Constructor local type generics: constructor packs should construct an immovable field in place.
+//@ check-pass
+import std.memory;
+enum class InPlaceTag { value };
+class Immovable {
+public:
+  int value;
+  Immovable(int initial) : value(initial) {}
+  Immovable(Immovable& other) = delete;
+  Immovable(Immovable&& other) = delete;
+};
+struct Node<T> {
+  T value;
+  Node<Args...>(InPlaceTag tag, Args... args) : value(T(args...)) {}
+};
+int main() {
+  auto node = std::make_unique<Node<Immovable>>(InPlaceTag::value, 42);
+  auto number = std::make_unique<Node<int>>(InPlaceTag::value, 42);
+  auto flag = std::make_unique<Node<bool>>(InPlaceTag::value, true);
+  auto character = std::make_unique<Node<char>>(InPlaceTag::value, 'x');
+  auto zero = std::make_unique<Node<int>>(InPlaceTag::value);
+  return node->value.value - 42;
+}

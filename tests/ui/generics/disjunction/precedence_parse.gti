@@ -1,0 +1,3 @@
+// Requires disjunction: && binds tighter than || in a concept body without parentheses.
+//@ parse-pass
+concept precedence<T> = std::copyable<T> || std::movable<T> && std::default_initializable<T>;

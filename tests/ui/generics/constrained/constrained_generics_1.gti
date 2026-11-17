@@ -1,0 +1,68 @@
+// Constrained generics: standard numeric constraints should validate generic operations, propagation, packs, and classes.
+//@ check-pass
+T minimum<std::ordered T>(T left, T right) {
+  if (left < right) { return left; }
+  return right;
+}
+
+T multiply<std::numeric T>(T left, T right) {
+  return T(left * right);
+}
+
+T remainder<std::integral T>(T left, T right) {
+  return T(left % right);
+}
+
+bool is_zero<std::integral T>(T value) {
+  return value == (0) and (0) == value;
+}
+
+T increment<std::integral T>(T value) {
+  return T(value + 1);
+}
+
+T low_bits<std::integral T>(T value) {
+  return T(value & 3);
+}
+
+T negate<std::signed_numeric T>(T value) { return T(-value); }
+T signed_integer<std::signed_integral T>(T value) { return value; }
+T unsigned_integer<std::unsigned_integral T>(T value) { return value; }
+T floating_value<std::floating_point T>(T value) { return value; }
+
+T square_integral<std::integral T>(T value) {
+  return multiply(value, value);
+}
+
+void consume_integrals<std::integral Values...>(Values... values) {}
+
+class NumericBox<std::numeric T> {
+  T value;
+
+public:
+  NumericBox(T value) : value(value) {}
+  T doubled() { return T(this.value + this.value); }
+};
+
+int main() {
+  int low = minimum(2, 5);
+  int product = multiply(3, 4);
+  int rest = remainder(7, 4);
+  bool zero = is_zero(uint64_t(0));
+  uint64_t incremented = increment(uint64_t(41));
+  uint8_t bits = low_bits(uint8_t(7));
+  int negative = negate(2);
+  int signed_value = signed_integer(2);
+  uint64_t unsigned_value = unsigned_integer(uint64_t(2));
+  float decimal = floating_value(2.5);
+  int square = square_integral(5);
+  consume_integrals(1, uint64_t(2));
+  NumericBox<int> box = NumericBox<int>(6);
+  if (low == 2 and product == 12 and rest == 3 and zero and
+      incremented == 42 and bits == 3 and negative == -2 and
+      signed_value == 2 and unsigned_value == uint64_t(2) and
+      decimal == 2.5 and square == 25 and box.doubled() == 12) {
+    return 0;
+  }
+  return 1;
+}

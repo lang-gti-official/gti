@@ -1,0 +1,4 @@
+// Extern C interop: extern C blocks accept bodyless foreign variable declarations.
+//@ parse-pass
+extern "C" { int32_t not_a_function; }
+int main() { return 0; }

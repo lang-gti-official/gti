@@ -1,0 +1,26 @@
+// Source defined storage: a may-raise constructor staged into a by-value storage call must use the verified failure ABI and publish its prepared-parameter slot only on the Invoke success edge.
+//@ check-pass
+import std.memory;
+
+class checked_value {
+  mut int32_t stored;
+
+public:
+  checked_value(int32_t value) : stored(value) {
+    this.stored = value + int32_t(0);
+  }
+
+  checked_value(checked_value& other) = delete;
+  checked_value(checked_value&& other) = default;
+};
+
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated =
+      allocator.try_storage<checked_value>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<checked_value> values =
+      std::move(allocated).value();
+  values.construct(std::size_t(0), checked_value(int32_t(7)));
+  return 0;
+}

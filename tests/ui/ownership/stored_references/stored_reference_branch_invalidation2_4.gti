@@ -1,0 +1,4 @@
+// Stored reference branch invalidation2: a nested conditional loan should end at its reachable merge before a following branch-local invalidation.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { if (true) { char first = *iterator; } value.push_back('!'); } return 0; }

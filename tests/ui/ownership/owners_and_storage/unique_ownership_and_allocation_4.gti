@@ -1,0 +1,11 @@
+// Unique ownership and allocation: target-typed nullptr construction should require an exact nullptr_t constructor rather than a raw-pointer overload.
+class PointerOnly {
+public:
+  PointerOnly(int* value) {}
+public:
+  PointerOnly() = default;
+};
+int main() {
+  PointerOnly value = nullptr;  //~ ERROR GTI-S2012
+  return 0;
+}

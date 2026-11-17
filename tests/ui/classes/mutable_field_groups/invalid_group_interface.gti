@@ -1,0 +1,2 @@
+// Mutable field groups: invalid group contents (interface) get a focused parser diagnostic: Interfaces cannot contain mutable field groups.
+interface Bad { mut { int value = 0; } };  //~ ERROR GTI-P0001 Interfaces cannot contain mutable field groups
