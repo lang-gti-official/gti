@@ -1,0 +1,6 @@
+// Compatible native bindings retain their own source navigation and publish no duplicate diagnostics.
+//@ definition @a: @first
+//@ definition @b: @second
+namespace first { extern "C" { c_int /*@first*/shared(c_int value); } }
+namespace second { extern "C" { c_int /*@second*/shared(c_int renamed); } }
+int main() { return first::/*@a*/shared(1) + second::/*@b*/shared(2); }

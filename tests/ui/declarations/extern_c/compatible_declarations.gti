@@ -1,0 +1,9 @@
+// Compatible C bindings keep namespace lookup and accept resolved type aliases and renamed parameters.
+using Integer = c_int;
+namespace first { extern "C" { Integer common(Integer value); } }
+namespace second { extern "C" { c_int common(c_int renamed); } }
+extern "C" {
+  [[link_name("common")]] c_int alias(c_int input);
+  [[link_name("common")]] Integer alias(Integer other);
+}
+int main() { return first::common(1) + second::common(2) + alias(3); }

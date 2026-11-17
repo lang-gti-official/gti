@@ -221,9 +221,26 @@ the current contract does not admit arbitrary object-format spellings. GTI
 does not mangle the selected symbol or prefix it with the containing GTI
 namespace. `link_name` is valid on a bodyless `extern "C"` function or foreign variable, may
 occur at most once, and may be stacked with `[[c_array(count)]]`. C symbols are
-program-global: the same selected symbol cannot be redeclared, overloaded, or
-introduced by a second namespace. A C-linkage
-function also cannot share its GTI overload set with an ordinary GTI function.
+program-global. Compatible bodyless function declarations may bind the same
+selected symbol across packages, namespaces, or repeated declarations in one
+scope. Their resolved parameter and return types must match exactly, including
+nominal record/callback identity, target C scalar identity and pointer access.
+Aliases of the same type are accepted; equal byte sizes alone are insufficient.
+Resolved safety and return-borrow contracts and `c_array` metadata must also
+agree. Existing restrictions on native declarations still apply: `unsafe` and
+`noreturn` cannot be added to a foreign declaration to bypass those rules.
+Count parameters compare by position, so parameter names may differ.
+Each namespace retains its own source declaration for lookup and tooling, while
+LLVM emits calls to one native symbol. This adds no wrapper, allocation, or
+runtime compatibility check.
+
+Conflicting signatures or safety contracts produce `GTI-S2054` with the earlier
+binding as related information. This revises the former blanket prohibition on
+C function redeclarations (2026-11-17): independent native-binding packages must
+compose without depending on each other's source names. Foreign-variable
+redeclarations remain subject to the separate storage contract. A C-linkage
+function still cannot share its GTI overload set with an ordinary GTI function
+or overload one source name using different native symbols.
 The symbol `main` is reserved for the GTI entry point, and an external symbol
 cannot reuse the name of root-namespace GTI storage. Invalid ABI declarations
 use semantic diagnostic `GTI-S2054`.
