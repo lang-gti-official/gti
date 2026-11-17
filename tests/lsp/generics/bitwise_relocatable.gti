@@ -1,0 +1,23 @@
+// A class with declared cleanup is not bitwise_relocatable but is
+// relocatable; an incomplete argument list recovers.
+// (From structural_relocation_lsp_test.py.)
+//@ hover @concept: concept std::bitwise_relocatable
+class Item { public: Item() {} };
+void accept<std::/*@concept*/bitwise_relocatable T>() {}
+int main() { /*😀*/ accept<Item>(); return 0; }
+// --- step 2
+class Item { public: Item() {} ~Item() {} };
+void accept<std::bitwise_relocatable T>() {}
+int main() { /*😀*/ accept<Item>(); return 0; }  //~ ERROR GTI-S2029 bitwise_relocatable
+// --- step 3
+class Item { public: Item() {} ~Item() {} };
+void accept<std::relocatable T>() {}
+int main() { /*😀*/ accept<Item>(); return 0; }
+// --- step 4
+class Item { public: Item() {} };
+void accept<std::bitwise_relocatable T>() {}
+int main() { /*😀*/ accept<; return 0; }  //~ ERROR GTI-P0001
+// --- step 5
+class Item { public: Item() {} };
+void accept<std::bitwise_relocatable T>() {}
+int main() { /*😀*/ accept<Item>(); return 0; }

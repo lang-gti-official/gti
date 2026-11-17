@@ -1,0 +1,43 @@
+// Lambdas: implicit, duplicate, reference, mutable, and escaping lambdas should fail.
+T invoke<T>(T value) { return value; }
+auto global_value = 1;  //~ ERROR GTI-S2028
+
+class ThisCapture {
+  int value = 1;
+
+public:
+  int read() {
+    auto invalid = []() -> int { return this.value; };  //~ ERROR GTI-S2027
+    return invalid();
+  }
+public:
+  ThisCapture() = default;
+};
+
+class BorrowView {
+  int& value;
+
+public:
+  BorrowView(int& source) : value(source) {}
+};
+
+int main() {
+  mut int local = 1;
+  int& alias = local;
+  auto missing_initializer;  //~ ERROR GTI-S2028
+  auto inferred_reference = alias;
+  auto missing = [](int value) -> int { return local + value; };  //~ ERROR GTI-S2027
+  auto duplicate = [local, local]() -> int { return local; };  //~ ERROR GTI-S2027
+  auto referenced = [alias]() -> int { return alias; };  //~ ERROR GTI-S2027
+  mut auto mutable_lambda = [local](int value) -> int {  //~ ERROR GTI-S2027
+    local += value;  //~ ERROR GTI-S2002
+    return local;
+  };
+  auto exact = [](int value) -> int { return value; };
+  auto borrowed_return = [](int& source) -> BorrowView {  //~ ERROR GTI-S2027
+    return BorrowView(source);
+  };
+  int wrong_type = exact(true);  //~ ERROR GTI-S2003
+  int escaped = invoke(missing);  //~ ERROR GTI-S2003 //~ ERROR GTI-S2046
+  return escaped;
+}

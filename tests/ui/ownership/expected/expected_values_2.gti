@@ -1,0 +1,13 @@
+// Expected values: invalid expected types, states, and observers should fail.
+expected<int, int> bad_success() { return "wrong"; }  //~ ERROR GTI-S2003
+expected<int, int> bad_error() { return unexpected("wrong"); }  //~ ERROR GTI-S2003
+expected<int, int> valid_result() { return 1; }
+expected<void, int> complete() { return; }
+int main() {
+  valid_result();  //~ ERROR GTI-S2009
+  expected<int, int> result = bad_success();
+  result.has_value();  //~ ERROR GTI-S2009
+  expected<void, int> completion = complete();
+  completion.value_or(0);  //~ ERROR GTI-S2000
+  return 0;
+}

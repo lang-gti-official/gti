@@ -1,0 +1,19 @@
+// Restricted member operators: operator access and receiver mutability should be enforced before lowering.
+class PrivateTruth {
+  operator bool() { return true; }
+public:
+  PrivateTruth() = default;
+};
+class MutableOnly {
+  mut int value = 0;
+public:
+  mut int& operator*() mut { return this.value; }
+public:
+  MutableOnly() = default;
+};
+int main() {
+  PrivateTruth hidden = PrivateTruth();
+  MutableOnly fixed = MutableOnly();
+  if (hidden) { return *fixed; }  //~ ERROR GTI-S2007 //~ ERROR GTI-S2000
+  return 0;
+}

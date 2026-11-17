@@ -1,0 +1,12 @@
+// Resetting an arena is rejected while a borrowed element may be live.
+//@ check-fail
+import std.memory;
+int main() {
+  mut auto created = std::try_make_arena<int32_t>(std::size_t(1));
+  if (!created) { return 1; }
+  mut std::arena<int32_t> values = std::move(created).value();
+  [[discard]] values.try_insert(int32_t(1));
+  mut int32_t& borrowed = values.get_mut(std::size_t(0));
+  values.reset();  //~ ERROR GTI-S2017 may still be live
+  return borrowed;
+}

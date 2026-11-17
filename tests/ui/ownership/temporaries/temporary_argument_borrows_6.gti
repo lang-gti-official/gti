@@ -1,0 +1,9 @@
+// Temporary argument borrows: a conditional class producer should bind an exact call-scoped read-only argument.
+//@ check-pass
+class Report { public: Report() {} };
+void inspect(Report& report) {}
+int main() {
+  bool select = true;
+  inspect(select ? Report() : Report());
+  return 0;
+}

@@ -1,0 +1,25 @@
+// Mutable range loans: mutable fixed-array iteration should lower through verified exclusive range and element loans.
+//@ check-pass
+int mutate_arrays() {
+  mut int32_t values[4] = {1, 2, 3, 4};  //~ WARN GTI-S2096
+  int32_t observed[2] = {5, 6};
+  mut int32_t total = 0;
+  for (mut int32_t& value : values) {
+    for (int32_t& item : observed) { total += item; }
+    value += 10;
+    if (value == 12) { continue; }
+    if (value == 13) { break; }
+  }
+  return values[0] + values[1] + values[2] + values[3] + total - 73;
+}
+
+int return_from_mutable_loop() {
+  mut int32_t values[2] = {1, 2};  //~ WARN GTI-S2096
+  for (mut auto& value : values) {
+    value += 1;
+    if (value == 3) { return value - 3; }
+  }
+  return 1;
+}
+
+int main() { return mutate_arrays() + return_from_mutable_loop(); }

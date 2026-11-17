@@ -1,0 +1,102 @@
+// Ephemeral borrowed carrier receivers: an immediate borrowed receiver cannot export a pointer-like result.
+class Resource {
+  mut int value = 0;
+public:
+  int add(int amount) mut { this.value += amount; return this.value; }
+  int read() { return this.value; }
+public:
+  Resource() = default;
+};
+class AuthService {
+  mut Resource& resource;
+public:
+  AuthService(mut Resource& source) : resource(source) {}
+  int create_access_token(int amount) mut {
+    return this.resource.add(amount);
+  }
+  int read() { return this.resource.read(); }
+  Resource& borrow() { return this.resource; }
+  int* pointer() { return nullptr; }
+};
+class RepositoryService {
+  mut Resource& resource;
+public:
+  RepositoryService(mut Resource& source) : resource(source) {}
+  int create(int amount) mut { return this.resource.add(amount); }
+};
+class Inspector {
+  Resource& resource;
+  mut int visits = 0;
+public:
+  Inspector(Resource& source) : resource(source) {}
+  int read() { return this.resource.read(); }
+  int visit(int amount) mut { this.visits += amount; return this.resource.read(); }
+};
+class Client {
+  mut Resource resource{};
+public:
+  AuthService auth() mut { return AuthService(this.resource); }
+  RepositoryService repositories() mut { return RepositoryService(this.resource); }
+  int read() { return this.resource.read(); }
+public:
+  Client() = default;
+};
+AuthService make_service(mut Resource& resource) { return AuthService(resource); }
+int inspect_service(AuthService& service) { return service.read(); }
+int invalidate(Client owner) { return owner.read(); }
+class ReadPair {
+  Resource& first;
+  Resource& second;
+public:
+  ReadPair(Resource& left, Resource& right) : first(left), second(right) {}
+  int read() { return this.first.read() + this.second.read(); }
+  int touch() mut { return this.first.read() + this.second.read(); }
+};
+class CarrierGuard {
+public:
+  CarrierGuard() {}
+  ~CarrierGuard() {}
+};
+class CleanupReadPair {
+  CarrierGuard guard{};
+  Resource& first;
+  Resource& second;
+public:
+  CleanupReadPair(Resource& left, Resource& right) : first(left), second(right) {}
+  int read() { return this.first.read() + this.second.read(); }
+};
+class DestructorReadPair {
+  CarrierGuard guard{};
+  Resource& first;
+  Resource& second;
+public:
+  DestructorReadPair(Resource& left, Resource& right) : first(left), second(right) {}
+  ~DestructorReadPair() {
+    [[discard]] this.first.read();
+    [[discard]] this.second.read();
+  }
+  int read() { return this.first.read() + this.second.read(); }
+};
+class CleanupInspector {
+  CarrierGuard guard{};
+  Resource& resource;
+public:
+  CleanupInspector(Resource& source) : resource(source) {}
+  int read(int divisor) { return this.resource.read() / divisor; }
+};
+int conditional_cleanup(Resource& resource, bool take) {
+  return take ? CleanupInspector(resource).read(1)
+              : CleanupInspector(resource).read(2);
+}
+class VirtualClient {
+  mut Resource resource{};
+public:
+  virtual AuthService auth() mut { return AuthService(this.resource); }
+public:
+  VirtualClient() = default;
+};
+int combine(int first, int second) { return first + second; }
+Resource global_resource{};
+int main() {
+  mut Client api{}; unsafe { [[discard]] api.auth().pointer(); } return 0;  //~ ERROR GTI-S2081
+}

@@ -1,0 +1,29 @@
+// Temporary receiver text publication: #393 forwarding subscript is accepted with valid MIR.
+//@ check-pass
+import std.string;
+import std.vector;
+class Result {
+  std::string_view subject;
+  std::vector<std::size_t> spans;
+public:
+  Result(std::string_view subject, std::vector<std::size_t> spans)
+      : subject(subject), spans(std::move(spans)) {}
+  std::size_t length() { return this.spans.size(); }
+  std::size_t operator[](std::size_t n) { return this.spans[n]; }
+  std::size_t operator[](std::string_view name) { return this[std::size_t(0)]; }
+};
+class Finder {
+  std::vector<int> program;
+public:
+  Finder(int seed) : program(std::vector<int>()) {}
+  Result find(std::string_view subject) {
+    mut std::vector<std::size_t> spans{};
+    spans.push_back(1);
+    return Result(subject, std::move(spans));
+  }
+};
+int main() {
+  std::string text{"abc"};
+  Result r = Finder(1).find(text.view()); std::size_t n = r["x"];
+  return int32_t(n) - 1;
+}

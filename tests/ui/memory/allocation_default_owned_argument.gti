@@ -1,0 +1,59 @@
+// Allocation defaults use ordinary ordered argument ownership and cleanup.
+//@ run-pass
+//@ revisions: default argument constructor-failure
+//@[default] stdout: 2
+//@[default] stdout: 3
+//@[default] stdout: 5
+//@[default] stdout: 6
+//@[default] stdout: 9
+//@[argument] run-fail
+//@[argument] args: argument
+//@[argument] exit-code: 70
+//@[argument] stdout: 2
+//@[argument] stdout: 5
+//@[argument] stdout: 9
+//@[argument] stderr-contains: allocation_default_owned_argument.gti:17: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[constructor-failure] run-fail
+//@[constructor-failure] args: constructor failure
+//@[constructor-failure] exit-code: 70
+//@[constructor-failure] stdout: 2
+//@[constructor-failure] stdout: 3
+//@[constructor-failure] stdout: 5
+//@[constructor-failure] stdout: 9
+//@[constructor-failure] stderr-contains: allocation_default_owned_argument.gti:23: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- allocation_default_owned_argument.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+mut int argument_divisor = 1;
+mut int constructor_divisor = 1;
+
+struct Guard { ~Guard() { std::println(9); }  public: Guard() = default; };
+class Spec {
+public:
+  int count;
+  Spec(int value = 2) : count(value) { std::println(2); }
+  Spec(Spec& other) = delete;
+  Spec(Spec&& other) = default;
+  ~Spec() { std::println(5); }
+};
+int later() { return 7 / argument_divisor; }
+class Item {
+  mut int count;
+public:
+  Item(Spec spec = Spec(), int next = later()) : count(spec.count + next) {
+    std::println(3);
+    int checked = 7 / constructor_divisor;
+    this.count += checked - 7;
+  }
+  ~Item() { std::println(6); }
+  int get() { return this.count; }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  if (argc == 2) { argument_divisor = 0; }
+  if (argc == 3) { constructor_divisor = 0; }
+  auto value = std::make_unique<Item>();
+  return value->get() - 9;
+}

@@ -1,0 +1,8 @@
+// Source raw writes: called lambda writer retains unresolved source facts.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+
+int main() { auto writer = []() -> void { int gone = 1; pointer = &gone; }; writer();
+  unsafe { return std::assume_ref(pointer, witness); } }  //~ ERROR GTI-S2103

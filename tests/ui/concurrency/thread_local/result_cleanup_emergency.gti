@@ -1,0 +1,39 @@
+// Two failing thread-local destructors escalate to a cleanup failure report.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: cleanup failed
+//@ stdout: cleanup failed
+//@ stderr-contains: GTI-R0014
+import std.thread;
+import std.format;
+class Fail {
+public:
+  Fail() = default;
+  int32_t read() { return 1; }
+  ~Fail() {
+    std::println("cleanup failed");
+    int32_t zero = 0;
+    int32_t failed = 1 / zero;
+  }
+};
+thread_local mut Fail failing{};
+thread_local mut Fail second_failure{};
+[[unsafe_transfer]] class Result {
+public:
+  Result() = default;
+  Result(Result& other) = delete;
+  Result(Result&& other) = default;
+  ~Result() { std::println("result retired"); }
+};
+int main() {
+  mut std::thread_result<Result> worker{};
+  auto started = worker.start([]() -> Result {
+    int32_t used = failing.read();
+int32_t second = second_failure.read();
+    return Result();
+  });
+  if (!started) return 1;
+  auto joined = worker.join();
+  return 0;
+}

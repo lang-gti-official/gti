@@ -1,0 +1,22 @@
+// Confined callable parameters: confined callable use validation should follow resolved symbol identity rather than rejecting an unrelated shadowed binding.
+//@ check-pass
+void invoke<Operation>(Operation operation) {
+  operation();
+  {
+    mut int operation = 0;
+    operation = 1;
+  }
+}
+
+class Action {
+public:
+  void operator()() {}
+public:
+  Action() = default;
+};
+
+int main() {
+  Action action = Action();
+  invoke(action);
+  return 0;
+}

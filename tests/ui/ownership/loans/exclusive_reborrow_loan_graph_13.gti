@@ -1,0 +1,22 @@
+// Exclusive reborrow loan graph: ordinary calls should share the exact borrowed-carrier input contract with constructors.
+//@ check-pass
+class Box {
+  mut int value = 1;
+public:
+  int bump() mut { this.value += 1; return this.value; }
+  int& read() { return this.value; }
+public:
+  Box() = default;
+};
+class View {
+  int& value;
+public:
+  View(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+View lookup(Box& box) { return View(box.read()); }
+int inspect(int changed, View view) { return changed + view.get(); }
+int main() {
+  mut Box box{};
+  return inspect(box.bump(), lookup(box));
+}

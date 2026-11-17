@@ -1,0 +1,6 @@
+// Reflection registry snapshots: the program is accepted.
+//@ check-pass
+import std.meta;
+struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
+void inspect<T>() { constexpr for (auto field : std::meta::fields_of<T>()) {} }
+int main() { inspect<Reading>(); return 0; }

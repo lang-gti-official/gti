@@ -1,0 +1,8 @@
+// Two imported modules each declaring a class and a type alias of the same name link and keep their own meanings.
+//@ run-pass
+// --- main.gti
+import "left.gti"; import "right.gti"; int main(){return left()+right()-42;}
+// --- left.gti
+export module left;struct Number {int value;}; export int left(){Number value{.value=20};return value.value;}
+// --- right.gti
+export module right;using Number=int; export int right(){return Number(22);}

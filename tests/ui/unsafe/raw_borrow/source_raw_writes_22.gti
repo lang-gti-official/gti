@@ -1,0 +1,9 @@
+// Source raw writes: source destructor follows stored raw aliases.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+struct Writer { Holder* address = nullptr;
+  Writer(Holder* input) : address(input) {}
+  ~Writer() { int gone = 1; unsafe { this.address->pointer = &gone; } }  public: Writer() = default; };
+int main() { mut Holder out{}; { Writer writer{&out}; }
+  unsafe { return std::assume_ref(out.pointer, out); } }  //~ ERROR GTI-S2103

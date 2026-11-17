@@ -1,0 +1,16 @@
+// Formal text field relays: a dependent view relayed out of its owner's scope is rejected.
+import std.string;
+std::string_view relay(std::string_view value) { return value; }
+class Label {
+public:
+  std::string_view text;
+  Label() : text("label") {}
+  Label(std::string_view text) : text(text) {}
+};
+std::string_view field_relay(Label& label) { return relay(label.text); }
+
+std::string_view leak() {
+  std::string owner{"dynamic"};
+  return relay(owner.view());  //~ ERROR GTI-S2045
+}
+int main() { return int(leak().size()); }

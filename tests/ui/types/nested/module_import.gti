@@ -1,0 +1,25 @@
+// Exported nested types and public aliases of private nested types are usable from an importing module.
+//@ run-pass
+// --- main.gti
+import "nested_api.gti";
+int main() {
+  api::Config::Network network{};
+  api::Aliases::Public value{};
+  return network.port == 80 && value.value == 11 ? 0 : 1;
+}
+// --- nested_api.gti
+export module nested_api;
+namespace api {
+  export struct Config {
+    struct Network { int port = 80;  public: Network() = default; };
+  private:
+    struct Secret { static int code() { return 1; }  public: Secret() = default; };
+   public: Config() = default; };
+  export class Aliases {
+    struct Secret { int value = 11;  public: Secret() = default; };
+  public:
+    using Public = Secret;
+   public: Aliases() = default; };
+  export class Gate { using Hidden = Config;  public: Gate() = default; };
+  struct Hidden { struct Child { int value = 1;  public: Child() = default; };  public: Hidden() = default; };
+}

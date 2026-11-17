@@ -1,0 +1,8 @@
+// Two imported modules each declaring globals of the same name link and keep their own meanings.
+//@ run-pass
+// --- main.gti
+import "left.gti"; import "right.gti"; int main(){return left()+right()-42;}
+// --- left.gti
+export module left;int value=20; export int left(){return value;}
+// --- right.gti
+export module right;int value=22; export int right(){return value;}

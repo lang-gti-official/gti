@@ -1,0 +1,11 @@
+// A reference pack's elements cannot be explicitly named as reference types.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+void observe<Args...>(Args&... args) {}
+int main() { int value = 3; observe<int&>(value); return 0; }  //~ ERROR GTI-S2023

@@ -145,7 +145,7 @@ class Checks(unittest.TestCase):
     def test_implementation_change_gets_baseline_and_tiers(self):
         checks = self.names(["src/compiler/parser.cpp"])
         self.assertEqual(checks["baseline"].command,
-                         "ctest --test-dir build --output-on-failure -R '^(compiler_pipeline)$'")
+                         "ctest --test-dir build --output-on-failure -R '^(gti_test_ui)$'")
         self.assertEqual(checks["native-smoke"].command,
                          "python3 scripts/validation_checks.py smoke --build build")
         self.assertIn("format", checks)

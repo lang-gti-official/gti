@@ -1,0 +1,23 @@
+// Initializer local dependencies: an enclosing captured closure remains surrounding automatic storage when substituted into an independent TLS initializer.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value!(saved);
+}
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
+}
+
+int main() {
+  int caller = 4;
+  auto action = [caller]() -> int { return caller; };
+  thread_local int state = local_value!(action());  //~ ERROR GTI-S2124
+  return state;
+}

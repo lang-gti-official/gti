@@ -121,7 +121,7 @@ semantics.
   changed invariant needs: the exact reproducer or new regression (for a fix,
   failing on the parent revision for the intended reason), the owning
   subsystem's tests, and the affected cross-phase and tooling consumers, plus
-  `compiler_pipeline` and the native smoke. Record exactly what ran with
+  `gti_test_ui` and the native smoke. Record exactly what ran with
   `verify`. Never run the complete suite locally to finish a feature or fix:
   the merge queue proves build and fast checks on the exact candidate that
   becomes `main`, and post-integration full validation then runs the complete
@@ -143,8 +143,8 @@ semantics.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
   role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
-  a macOS arm64 and Linux x64 build with `feedback-fast`, plus
-  `compiler_pipeline` on Linux); the queue's `CI gate` runs the same bounded set on the
+  a macOS arm64 and Linux x64 build with `feedback-fast` and the `gti-test`
+  entries); the queue's `CI gate` runs the same bounded set on the
   exact candidate. Post-integration full validation then runs the per-commit
   inventory (every registered test except those labelled `slow`, runtime
   harnesses at `-O0`) on Linux in cost-balanced bundled-release shards, the `darwin`
@@ -375,12 +375,16 @@ one-off implementation-note or redesign files when an existing category fits.
   one-line reason in the PR body (`- expectations:` in its `Validation:`
   block).
 - In the PR's `Validation:` block, a new-style test is covered by
-  `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). Do not run sanitizers,
-  `-O3`, corpus walks or the complete suite to finish a task.
+  `gti_test_ui` (`gti_unit_tests` for `tests/unit/`). That entry is the
+  runner's self-test, tidy, `tests/project` and `tests/lsp`; `tests/ui` runs
+  in its shards `gti_test_ui_1` to `gti_test_ui_N`, which CI's gate runs with
+  it. Run them all with `ctest --test-dir build-release -R '^gti_test_ui'`.
+  Do not run sanitizers, `-O3`, corpus walks or the complete suite to finish
+  a task.
 
-Until the migration completes, the old suite still runs in full validation,
-`compiler_pipeline` still gates PRs and belongs in focused checks, and the
-families already converted are listed in the
+Until the migration completes, the old suite still runs in full validation;
+the `compiler_pipeline` aggregate is gone (its suites are `tests/ui` cases),
+and the families already converted are listed in the
 [campaign section](docs/plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16).
 
 ## Release Channels And VERSION

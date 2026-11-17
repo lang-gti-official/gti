@@ -1,0 +1,23 @@
+// Recovery errors are one diagnostic each from the current snapshot, and
+// each repair is clean: an unknown attribute, a malformed preprocessor
+// directive and a runtime template argument. (diagnostic_recovery_lsp_test.py,
+// first part; the stale quick-fix request is code_actions/stale_recovery_fix.jsonl)
+/* 😀 */ [[noretrun]] void stop() {}  //~ ERROR GTI-S2099
+int main() { return 0; }
+// --- step 2
+/* 😀 */ void stop() {}
+int main() { return 0; }
+// --- step 3
+#if FLAG  //~ ERROR GTI-P0003
+int first() { return 1; }
+#endif
+int main() { return 0; }
+// --- step 4
+/* 😀 */ void stop() {}
+int main() { return 0; }
+// --- step 5
+uint64_t extent<uint64_t N>() { return N; }
+int main() { uint64_t runtime = 4; return int32_t(extent<runtime>()); }  //~ ERROR GTI-S2026 compile-time value
+// --- step 6
+uint64_t extent<uint64_t N>() { return N; }
+int main() { uint64_t runtime = 4; return int32_t(extent<4>()); }

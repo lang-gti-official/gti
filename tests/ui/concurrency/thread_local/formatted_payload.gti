@@ -1,0 +1,46 @@
+// A thread-local payload enum is replaced per thread and each value drops once.
+//@ run-pass
+//@ execution-profile: concurrent
+//@ stdout: drop 1 1
+//@ stdout: worker 2
+//@ stdout: drop 2 2
+//@ stdout: joined
+//@ stdout: drop 1 1
+//@ stdout: main 3
+//@ stdout: drop 3 3
+import std.format;
+import std.string;
+import std.thread;
+class Formatted {
+public:
+  int32_t id;
+  Formatted(int32_t id) : id(id) {}
+  ~Formatted() { std::println("drop {} {}", this.id, this.id); }
+};
+enum FormattedSlot { full(Formatted value), text(std::string value), empty };
+thread_local mut FormattedSlot formatted = FormattedSlot::full(Formatted(1));
+int32_t read_formatted(FormattedSlot& value) {
+  switch (value) {
+  case FormattedSlot::full(auto& item): return item.id;
+  case FormattedSlot::text(auto& item): return int32_t(item.size());
+  case FormattedSlot::empty: return 0;
+  }
+}
+void replace_formatted(mut FormattedSlot& target, FormattedSlot value) {
+  target = std::move(value);
+}
+int main() {
+  if (read_formatted(formatted) != 1) return 1;
+  auto started = std::thread::start([]() -> void {
+    replace_formatted(formatted, FormattedSlot::full(Formatted(2)));
+    std::println("worker {}", read_formatted(formatted));
+  });
+  if (!started) return 2;
+  mut auto worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) return 3;
+  std::println("joined");
+  replace_formatted(formatted, FormattedSlot::full(Formatted(3)));
+  std::println("main {}", read_formatted(formatted));
+  return 0;
+}

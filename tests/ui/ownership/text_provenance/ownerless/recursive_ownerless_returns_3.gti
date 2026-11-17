@@ -1,0 +1,12 @@
+// Recursive ownerless returns: a recursive text result is ownerless when its other returns are, and may be stored or relayed as such.
+//@ check-pass
+std::string_view even(std::string_view s, int n) {
+  return n == 0 ? "even" : odd(s, n - 1);
+}
+std::string_view odd(std::string_view s, int n) {
+  if (n == 0) {
+    return "odd";
+  }
+  return even(s, n - 1);
+}
+int main() { return even("x", 3).size() == 3 ? 0 : 1; }

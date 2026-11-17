@@ -1,0 +1,21 @@
+// Views read from array fields and through lambdas keep ownerless text.
+//@ run-pass
+//@ stdout: yz
+//@ stdout: label
+import std.string_view;
+struct Shelf {
+  std::string_view titles[2];
+  int count;
+  Shelf() : titles({"x", "yz"}), count(2) {}
+};
+std::string_view fromShelf(Shelf shelf, uint64_t index) { return shelf.titles[index]; }
+std::string_view labelled() {
+  auto label = []() -> std::string_view { return "label"; };
+  std::string_view labels[2] = {label(), "other"};
+  return labels[0];
+}
+int main() {
+  std::println(fromShelf(Shelf(), uint64_t(1)));
+  std::println(labelled());
+  return fromShelf(Shelf(), uint64_t(0)) == "x" ? 0 : 1;
+}

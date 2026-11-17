@@ -1,0 +1,15 @@
+// A class declared over a signature pattern shows it in hover; an argument
+// that is not a signature is rejected at the use (not as an internal error).
+// (From function_signature_lsp_test.py.)
+//@ hover @callback: class Callback<R(Args...)>
+// 😀
+class /*@callback*/Callback<R(Args...)> { public: Callback() = default; };
+// --- step 2
+// 😀
+class Callback<R(Args...)> { public: Callback() = default; };
+Callback<int> invalid{};  //~ ERROR GTI-S2023 argument pattern
+// --- step 3
+//@ hover @valid: Callback<void()>
+// 😀
+class Callback<R(Args...)> { public: Callback() = default; };
+Callback<void()> /*@valid*/valid{};

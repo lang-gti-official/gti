@@ -1,0 +1,36 @@
+// Aggregate ownership traits: copying or reusing move-only aggregates should fail semantically.
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+class Buffer {
+  mut std::detail::prefix_owner<int> data;
+
+public:
+  Buffer() : data(std::detail::prefix_owner<int>(uint64_t(1))) {}
+};
+
+class NestedBuffer {
+  Buffer buffer;
+
+public:
+  NestedBuffer() : buffer(Buffer()) {}
+};
+
+void consume(Buffer value) {}
+
+Buffer return_copy(Buffer value) {
+  return value;
+}
+
+int main() {
+  Buffer owner = Buffer();
+  Buffer copied = owner;  //~ ERROR GTI-S2003
+  consume(owner);  //~ ERROR GTI-S2018
+  Buffer moved = std::move(owner);
+  Buffer moved_again = std::move(owner);  //~ ERROR GTI-S2018
+
+  NestedBuffer nested = NestedBuffer();
+  NestedBuffer nested_copy = nested;  //~ ERROR GTI-S2003
+  return 0;
+}

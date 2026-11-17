@@ -1,0 +1,14 @@
+// Exact whole object virtual effects: an exact virtual operator receiver uses the same physical object and slot proof as an ordinary member call.
+//@ check-pass
+//@ require-function-definitions
+mut int guarded = 1; mut int other = 2;
+class BaseCall { public: virtual int operator()() { return 1; }  public: BaseCall() = default; };
+class ReaderCall : public BaseCall {
+public:
+  int operator()() override { return 2; }
+public:
+  ReaderCall() = default;
+};
+
+ReaderCall callable{};
+int main() { int& held = guarded; return callable() + held; }

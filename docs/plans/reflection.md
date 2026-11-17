@@ -194,7 +194,7 @@ for; the body-order gate and the whole suite stay clean.
 specification is [static semantics §3.12.3–3.12.4](../language/static-semantics.md#3123-declared-attributes),
 the implementation notes are in
 [semantic analysis](../architecture/semantic-analysis.md#compile-time-iteration-and-reflection),
-and the evidence is `tests/reflection_tests.cpp`,
+and the evidence is `tests/ui/reflection/semantics/`,
 `tests/fixtures/reflection_attributes.gti` (the three clients) and
 `examples/137-declared-attributes.gti`. Item 6 was revised by the owner: the
 `std::json` library is left untouched; the three clients are fixture programs,

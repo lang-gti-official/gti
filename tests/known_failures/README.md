@@ -150,7 +150,7 @@ remains a defined failure rather than folding to a wrap.
 Those last three are specified runtime behaviour with no other guard across
 levels. `tests/evaluation_order_runtime_test.py` already covers strict
 left-to-right evaluation at O0 and O3, so that one is deliberately not
-duplicated here, and `tests/defined_integer_runtime_test.py` covers
+duplicated here, and `tests/ui/stdlib/numeric/defined_integer_boundaries.gti` covers
 `std::checked_add` — the library form — rather than the operator.
 
 Two reasons it earns its place next to `local_language_audit.py`, which
@@ -305,7 +305,7 @@ reproducers were removed from this directory.
 | #107 assignment in a logical operand | `v0.306.1` | `tests/compiler_tests.cpp` |
 | #108 nested capture of an enclosing capture | `v0.306.1` | `tests/compiler_tests.cpp` |
 | #109 payload-class diagnostic spelling | `v0.306.1` | `tests/sum_type_tests.cpp` |
-| #110 self-nested generic identity | `v0.306.1` | `tests/returned_class_field_runtime_test.py` |
+| #110 self-nested generic identity | `v0.306.1` | `tests/ui/classes/returned_class_field.gti` |
 | #111 grouped binding and comma operands | `v0.306.1` | `tests/fixtures/mir_backend_scalar_cfg.gti`, `tests/mir_backend_scalar_cfg_runtime_test.py` |
 | #113 virtual call through a base-class reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
 | #114 concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |

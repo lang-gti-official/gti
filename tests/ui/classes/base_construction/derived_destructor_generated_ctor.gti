@@ -1,0 +1,19 @@
+// A derived destructor runs before its base's under a generated constructor.
+//@ run-pass
+//@ stdout: 1
+//@ stdout: 2
+// A45: a derived class with only a destructor fails to link: Base::Base() is undefined.
+class Base {
+public:
+  Base() { std::println(1); }
+};
+class Middle : public Base {
+public:
+  ~Middle() { std::println(2); }
+public:
+  Middle() = default;
+};
+int main() {
+  Middle d = Middle();
+  return 0;
+}

@@ -1,0 +1,16 @@
+// Method invocation: reflected invocation rejects private-method with GTI-S2007.
+import std.meta;
+class Probe {
+public:
+  Probe() = default;
+  int32_t choose(int32_t value) { return value + 1; }
+  int32_t choose(bool value) { return value ? 100 : 0; }
+  static int32_t static_method() { return 7; }
+  void mutate() mut {}
+  int32_t consume() && { return 8; }
+  unsafe int32_t dangerous() { return 9; }
+private:
+  int32_t hidden() { return 10; }
+};
+struct Other { Other() = default; };
+int main() { Probe probe{}; std::meta::method<Probe, 6>().invoke(probe); return 0; }  //~ ERROR GTI-S2007 //~ ERROR GTI-S2009

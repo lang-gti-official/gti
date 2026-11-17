@@ -1,0 +1,65 @@
+// Cleanup-bound source guards retain resources through normal/failure cleanup.
+//@ run-pass
+//@ revisions: default rollback rollback-cleanup cleanup-only-normal
+//@[default] stdout: 77
+//@[default] stdout: 20
+//@[default] stdout: 10
+//@[default] stdout: 120
+//@[default] stdout: 110
+//@[rollback] run-fail
+//@[rollback] args: rollback
+//@[rollback] exit-code: 70
+//@[rollback] stdout: 20
+//@[rollback] stdout: 10
+//@[rollback] stdout: 120
+//@[rollback] stdout: 110
+//@[rollback] stderr-contains: cleanup_bound_constructed_field.gti:26: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[rollback-cleanup] run-fail
+//@[rollback-cleanup] args: rollback cleanup
+//@[rollback-cleanup] exit-code: 70
+//@[rollback-cleanup] stdout: 20
+//@[rollback-cleanup] stderr-contains: cleanup_bound_constructed_field.gti:17: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at cleanup_bound_constructed_field.gti:26; secondary [GTI-R0002]
+//@[cleanup-only-normal] run-fail
+//@[cleanup-only-normal] args: cleanup only normal
+//@[cleanup-only-normal] exit-code: 70
+//@[cleanup-only-normal] stdout: 77
+//@[cleanup-only-normal] stdout: 20
+//@[cleanup-only-normal] stdout: 120
+//@[cleanup-only-normal] stdout: 110
+//@[cleanup-only-normal] stderr-contains: cleanup_bound_constructed_field.gti:17: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- cleanup_bound_constructed_field.gti
+import std.string;
+import std.vector;
+
+struct Resource {
+  int id;
+  int cleanupDivisor;
+  Resource(int id, int cleanupDivisor = 1) : id(id), cleanupDivisor(cleanupDivisor) {}
+  ~Resource() { std::println(100 + this.id); }
+};
+class PairGuard {
+  Resource& left;
+  Resource& right;
+public:
+  PairGuard(Resource& left, Resource& right) : left(left), right(right) {}
+  ~PairGuard() {
+    std::println(this.left.id);
+    int cleanup = 1 / this.left.cleanupDivisor;
+    std::println(this.right.id);
+  }
+};
+class Reversed {
+  PairGuard pair;
+public:
+  Reversed(Resource& first, Resource& second, int divisor)
+      : pair(PairGuard(second, first)) {
+    int primary = 1 / divisor;
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource first{10};
+  Resource second{20, argc < 3 ? 1 : 0};
+  Reversed owner{first, second, argc == 1 || argc == 4 ? 1 : 0};
+  std::println(77);
+  return 0;
+}

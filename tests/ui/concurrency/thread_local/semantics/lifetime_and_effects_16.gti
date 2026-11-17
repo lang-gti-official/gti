@@ -1,0 +1,10 @@
+// Lifetime and effects: owned thread tasks cannot retain checked TLS borrows past the owner lifetime.
+//@ execution-profile: concurrent
+import std.thread;
+thread_local int source = 7;
+int main() {
+  int& input = source;
+  auto task = [&input]() -> void { int copied = input; };
+  auto started = std::thread::start(std::move(task));  //~ ERROR GTI-S2084
+  return 0;
+}

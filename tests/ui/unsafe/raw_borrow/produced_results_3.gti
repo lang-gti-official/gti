@@ -1,0 +1,10 @@
+// Produced results: constructor-produced local cannot become an owner assertion.
+//@ raw-pointer-audit: strict
+import std.memory;
+class Address {
+public:
+  mut const int* pointer = nullptr;
+  Address() { int local = 1; this.pointer = &local; }
+};
+int main() { int witness = 7; Address address{};
+  unsafe { int& value = std::assume_ref(address.pointer, witness); return value; } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

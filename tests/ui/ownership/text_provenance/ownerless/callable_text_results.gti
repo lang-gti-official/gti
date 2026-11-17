@@ -1,0 +1,33 @@
+// Callable text results: a callable's text result through an invocation pointer is ownerless.
+//@ check-pass
+import std.functional;
+class Greeter {
+public:
+  std::string_view greeting;
+  Greeter(std::string_view greeting) : greeting(greeting) {}
+  std::string_view operator()() { return this.greeting; }
+};
+std::string_view small(int n) { return n < 10 ? "small" : "large"; }
+std::string_view label(std::string_view unused) {
+  std::string_view copy = unused;
+  return "label";
+}
+std::string_view invoke(std::function_ptr<std::string_view(int)> pick, int n) {
+  return pick(n);
+}
+mut std::string_view kept = "";
+int main() {
+  Greeter hello = Greeter("hello");
+  std::function_ref<std::string_view()> greet{hello};
+  kept = greet();
+  if (kept != "hello") { return 1; }
+  auto lit = []() -> std::string_view { return "lit"; };
+  std::function_ref<std::string_view()> viewed{lit};
+  if (viewed() != "lit") { return 2; }
+  kept = invoke(std::function_ptr<std::string_view(int)>(small), 30);
+  auto zero = [](int n) -> std::string_view { return n == 0 ? "zero" : "other"; };
+  std::function_ptr<std::string_view(int)> viaLambda{zero};
+  std::function_ptr<std::string_view(std::string_view)> named{label};
+  return kept == "large" && viaLambda(0) == "zero" && named("x") == "label"
+             ? 0 : 3;
+}

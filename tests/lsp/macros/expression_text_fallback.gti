@@ -1,0 +1,30 @@
+// A synthesized expression_text! argument needs a literal-backed fallback:
+// a string literal is accepted, a runtime call is not. (From expression_text_lsp_test.py.)
+import std.source_location;
+#macro int choose(bool condition, int value) {
+  if (condition) { return value; } return 0;
+}
+#macro std::string_view quoted<T>(T expression) {
+  return std::expression_text!(expression + 1, "composed condition");
+}
+int main() {
+  mut int counter = 0; int answer = choose!(true, 7);  //~ WARN GTI-S2095 //~ WARN GTI-S2096
+  /*😀*/ std::string_view text = std::expression_text!(++counter);
+  std::string_view forwarded = quoted!(answer /* λ */ + 1);
+  return answer + counter;
+}
+// --- step 2
+import std.source_location;
+std::string_view runtime_fallback() { return "dynamic"; }
+#macro int choose(bool condition, int value) {
+  if (condition) { return value; } return 0;
+}
+#macro std::string_view quoted<T>(T expression) {
+  return std::expression_text!(expression + 1, runtime_fallback());
+}
+int main() {
+  mut int counter = 0; int answer = choose!(true, 7);  //~ WARN GTI-S2095
+  /*😀*/ std::string_view text = std::expression_text!(++counter);
+  std::string_view forwarded = quoted!(answer /* λ */ + 1);  //~ ERROR GTI-S2019 compile-time literal-backed
+  return answer + counter;
+}

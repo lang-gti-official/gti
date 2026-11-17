@@ -1,0 +1,14 @@
+// Audit output parity: the program is accepted.
+//@ check-pass
+struct Box {
+  mut int value = 7;
+  void bump() mut { this.value += 1; }
+public:
+  Box() = default;
+};
+int main() {
+  mut Box box{};
+  const int* pointer = &box.value;
+  box.bump();
+  unsafe { return *pointer - 8; }
+}

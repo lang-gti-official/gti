@@ -1,0 +1,25 @@
+// Explicit value moves: std::move should explicitly consume any named movable local value or by-value parameter.
+//@ check-pass
+struct Record {
+  int value = 4;
+public:
+  Record() = default;
+};
+
+int forward_int(int value) { return std::move(value); }
+T transfer<T>(T value) { return std::move(value); }
+
+int main() {
+  int source = 1;
+  int moved = std::move(source);
+  int forwarded = forward_int(std::move(moved));
+
+  mut int reusable = 2;
+  int first = std::move(reusable);
+  reusable = 3;
+  int generic = transfer(std::move(first));
+
+  Record record = Record();
+  Record moved_record = std::move(record);
+  return reusable + forwarded + generic + moved_record.value;
+}
