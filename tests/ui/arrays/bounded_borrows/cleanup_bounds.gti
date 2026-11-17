@@ -1,0 +1,35 @@
+// A bounded array borrow reads in range, and an out-of-range index through it
+// fails with GTI-R0007 after destroying both elements.
+//@ run-pass
+//@ revisions: ok negative over
+//@[ok] stdout: 20
+//@[ok] stdout: 10
+//@[negative] args: negative
+//@[negative] run-fail
+//@[negative] exit-code: 70
+//@[negative] stdout: 20
+//@[negative] stdout: 10
+//@[negative] stderr-contains: GTI-R0007
+//@[over] args: a b
+//@[over] run-fail
+//@[over] exit-code: 70
+//@[over] stdout: 20
+//@[over] stdout: 10
+//@[over] stderr-contains: GTI-R0007
+import std.io;
+import std.string;
+import std.vector;
+struct Resource {
+  int id;
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() { std::println(id); }
+};
+int read(Resource[2]& values, int index) { return values[index].id; }
+int main(int argc, std::vector<std::string> argv) {
+  Resource values[2] = {Resource(10), Resource(20)};
+  Resource[2]& borrowed = values;
+  [[discard]] read(borrowed, argc == 2 ? -1 : argc - 1);
+  return 0;
+}

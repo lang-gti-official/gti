@@ -2777,7 +2777,7 @@ while empty output and a genuine status 127 preserve their distinct outcomes.
 installed resources, covering the source-defined checks and JSON worker results
 without source-tree standard-library overrides.
 
-`annotated_test_suites` checks the runnable `examples/annotated-tests` project
+`tests/slow/project/annotated_test_suites` checks a copy of the runnable `examples/annotated-tests` project
 at O0/C++20 and O3/C++23, included test declarations, independent global state,
 automatic per-function reports, cache reuse and corrupted-catalog recovery.
 Panic/check failures preserve destructor cleanup and source attribution; signal
@@ -8597,7 +8597,7 @@ The library-completion gates cover the following public workflows:
   owning-string convenience overloads. `charconv_runtime_boundary` checks
   the counted C ABI directly, including target-width rounding and invalid
   descriptors.
-- `complete_containers` exercises linked and circular sequences, ordered and
+- `tests/ui/stdlib/containers/complete/` (with `tests/slow/stdlib/containers/complete/`) exercises linked and circular sequences, ordered and
   hashed sets, FIFO adaptation, move-only values, policy state, live loans,
   bounds, and deterministic cleanup. Native runtime matrices include both
   supported C++ standards, optimization endpoints, no-elide, and sanitizers.
@@ -10647,7 +10647,7 @@ requires `GTI-S2003` before backend entry, with the exact named-owner move hint;
 native direct/move success and installed LSP span/clearing checks cover its
 valid alternatives.
 
-`associative_map` and `unordered_map` cover ordering/bucket collisions, model
+The `std::map` and `std::unordered_map` cases (`tests/ui/stdlib/{map,unordered_map}/` and the `stdlib_surface` fixtures) cover ordering/bucket collisions, model
 comparison through repeated insertion and erasure, read/mutable iteration,
 owned keys and values, duplicate emplacement, replacement, custom policies,
 and concrete member aliases. Their negative cases retain immutable keys and
@@ -11769,7 +11769,7 @@ job retains the explicit selection documented above; it is not a full-suite
 coverage claim.
 
 The largest compound suites (`stdlib_surface`, `returned_field_address_runtime`,
-the `generic_algorithm_breadth_*` partitions, `complete_containers`) bound the
+the `generic_algorithm_breadth_*` partitions, the complete-container cases) bound the
 suite's critical path, so they reserve `GTI_TEST_HEAVY_CASE_JOBS` workers
 (default `4`) instead of the per-suite default; CTest charges them that many
 processors. Long single-process gates carry a measured `COST` ordering hint

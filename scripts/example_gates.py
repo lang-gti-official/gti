@@ -14,7 +14,7 @@ TESTS = {"owner_chain_runtime", "compiled_dependency_project", "compiled_primiti
          "project_cli_workflow", "gti_test_ui", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
          "process_resource_policy", "llvm_embedding_project",
-         "annotated_test_suites", "out_of_class_runtime", "module_system_runtime", "module_discovery_runtime", "typed_differential_smoke",
+         "out_of_class_runtime", "module_system_runtime", "module_discovery_runtime", "typed_differential_smoke",
          "llvm_scalar_execution", "llvm_place_execution", "llvm_class_execution",
          "llvm_payload_execution", "llvm_dispatch_execution",
          "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",

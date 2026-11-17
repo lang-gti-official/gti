@@ -4133,7 +4133,7 @@
         "unique_ptr<int>"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/algorithm_search_deque.gti"
@@ -4717,7 +4717,7 @@
       ],
       "evidence": [
         "tests/fixtures/forward_list_iterator_completion.gti",
-        "tests/forward_list_iterator_runtime_test.py",
+        "tests/ui/stdlib/forward_list",
         "examples/143-checked-container-iteration.gti"
       ]
     },
@@ -5418,7 +5418,7 @@
         "immovable Element"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/fixtures/algorithm_search_list.gti"
@@ -5538,7 +5538,7 @@
       ],
       "evidence": [
         "stdlib/std/map.gti",
-        "tests/associative_map_test.py",
+        "tests/ui/stdlib/map",
         "tests/slow/stdlib/containers/contract_failure",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
@@ -6557,7 +6557,7 @@
       ],
       "evidence": [
         "tests/fixtures/paired_span_iterator_completion.gti",
-        "tests/paired_span_iterator_completion_test.py",
+        "tests/ui/stdlib/paired_span/iterators",
         "tests/user_dual_range_lifetime_test.py",
         "examples/144-checked-view-iteration.gti"
       ]
@@ -6918,7 +6918,7 @@
         "immovable Element"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti"
       ]
     },
@@ -7305,7 +7305,7 @@
         "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/stdlib/contracts"
@@ -8025,7 +8025,7 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_testing.gti",
-        "tests/annotated_test_suite_test.py",
+        "tests/slow/project/annotated_test_suites",
         "examples/annotated-tests/tests/main.gti",
         "tests/fixtures/testing_assertions.gti",
         "tests/ui/stdlib/testing/assertions",
@@ -8298,7 +8298,7 @@
         "relocatable policy swap with state preserved; borrowed policy rejected at call"
       ],
       "evidence": [
-        "tests/complete_containers_test.py",
+        "tests/ui/stdlib/containers/complete",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
@@ -8487,7 +8487,7 @@
       ],
       "evidence": [
         "tests/fixtures/vector_contains.gti",
-        "tests/complete_containers_test.py"
+        "tests/ui/stdlib/containers/complete"
       ]
     },
     {

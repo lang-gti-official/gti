@@ -15,7 +15,7 @@ if(NOT GTI_TEST_HEAVY_CASE_JOBS MATCHES "^[1-9][0-9]*$")
 endif()
 set(gti_heavy_case_suites
   stdlib_surface returned_field_address_runtime
-  complete_containers)
+  )
 
 # Every gate has a bound, so a hung test fails at a known point instead of at
 # CTest's implicit 1500 seconds. A test without its own TIMEOUT gets the
@@ -75,11 +75,10 @@ endforeach()
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     consuming_range_runtime
-    associative_constructor_runtime associative_hash_contracts associative_map
+    associative_constructor_runtime associative_hash_contracts
     owner_chain_runtime
-    complete_containers
     constructor_null_native_runtime
-    paired_span_iterator_completion cursor_carrier_publication
+    cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
     expected_payload_pair_arguments_runtime
