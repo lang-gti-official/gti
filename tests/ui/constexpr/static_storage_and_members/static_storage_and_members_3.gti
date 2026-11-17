@@ -1,0 +1,9 @@
+// Static storage and members: static fields should require definitions and static methods should have no receiver.
+class Bad {
+public:
+  static int missing;  //~ ERROR GTI-S2039 require an in-class initializer
+  int value = 1;
+  static int read() { return this.value; }  //~ ERROR GTI-S2039 Static methods do not have a 'this' object
+public:
+  Bad() = default;
+};

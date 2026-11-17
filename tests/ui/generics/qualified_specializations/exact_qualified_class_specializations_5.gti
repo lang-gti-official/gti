@@ -1,0 +1,7 @@
+// Exact qualified class specializations: the coherence rule should reject a std::hash specialization for a builtin type owned by neither side.
+import std.functional;
+class std::hash<int> {  //~ ERROR GTI-S2078 owns neither the primary nor a top-level nominal //~ ERROR GTI-S2078
+public:
+  size_t operator()(int& value) { return size_t(value); }
+};
+int main() { return 0; }

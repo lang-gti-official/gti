@@ -1,0 +1,4 @@
+// Requires disjunction: a missing disjunction operand is diagnosed and parsing recovers at the following declaration.
+//@ parse-fail
+T broken<T>(T value) requires (std::integral<T> || ) { return value; }  //~ ERROR GTI-P0001
+int okay() { return 0; }

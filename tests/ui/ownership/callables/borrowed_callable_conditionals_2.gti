@@ -1,0 +1,8 @@
+// Borrowed callable conditionals: analysis result.
+import std.memory;
+
+int choose<F>(F& f) { auto result = true ? f(1) : 2; return result; }  //~ ERROR GTI-S2050
+int main() {
+  auto f = [](int n) -> bool { return true; };
+  return choose(f);
+}

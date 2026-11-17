@@ -1,0 +1,9 @@
+// Container scaffold surfaces: string C-string observers should lower as verified read-only owner-dependent values.
+//@ check-pass
+import std.string;
+int main() {
+  mut std::string text = std::string("abc");  //~ WARN GTI-S2096
+  c_string unchecked = text.c_string();
+  c_string checked = text.try_c_string();
+  return unchecked == nullptr || checked == nullptr ? 1 : 0;
+}

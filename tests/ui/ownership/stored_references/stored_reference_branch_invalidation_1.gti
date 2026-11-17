@@ -1,0 +1,4 @@
+// Stored reference branch invalidation: an unshared retained borrow should end after an if join when its final use is inside a branch.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { char first = *iterator; } value.push_back('!'); return 0; }

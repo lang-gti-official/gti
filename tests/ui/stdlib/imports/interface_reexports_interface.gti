@@ -1,0 +1,11 @@
+// An interface can re-export another application interface.
+//@ check-pass
+// --- main.gti
+import "facade.gti";
+int main() { return local_vector() - 1; }
+// --- facade.gti
+export module facade;
+export import "vector.gti";
+// --- vector.gti
+export module vector;
+export int local_vector() { return 1; }

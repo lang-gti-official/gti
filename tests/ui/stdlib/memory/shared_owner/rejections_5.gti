@@ -1,0 +1,7 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+int main() {
+           auto owner = std::make_shared<int>(7);
+           auto weak = owner.downgrade();
+           return *weak;  //~ ERROR GTI-S2022
+         }

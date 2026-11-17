@@ -1,0 +1,50 @@
+// Public erased callbacks publish owned results and clean failures exactly once.
+//@ run-pass
+//@ revisions: default producer later-failure
+//@[default] stdout: 90
+//@[default] stdout: owned result
+//@[default] stdout: 90
+//@[default] stdout: 9
+//@[producer] run-fail
+//@[producer] args: producer
+//@[producer] exit-code: 70
+//@[producer] stdout: 90
+//@[producer] stdout: 90
+//@[producer] stdout: 9
+//@[producer] stderr-contains: owning_function_string_result.gti:18: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-failure] run-fail
+//@[later-failure] args: later failure
+//@[later-failure] exit-code: 70
+//@[later-failure] stdout: 90
+//@[later-failure] stdout: owned result
+//@[later-failure] stdout: 90
+//@[later-failure] stdout: 9
+//@[later-failure] stderr-contains: owning_function_string_result.gti:25: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- owning_function_string_result.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+  int read() { return this.identity; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource caller{9};
+  Resource captured{90};
+  auto operation = [captured = std::move(captured)](int divisor) -> std::string {
+    std::println(captured.read());
+    int checked = 12 / divisor;
+    return std::string("owned result");
+  };
+  std::move_only_function<std::string(int)> callback{std::move(operation)};
+  int divisor = argc == 2 ? 0 : 2;
+  std::string result = callback(divisor);
+  std::println(result);
+  int later = 6 / (argc == 3 ? 0 : 1);
+  return later - 6;
+}

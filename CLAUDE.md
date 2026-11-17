@@ -20,6 +20,7 @@ does not restate it. Put durable rules in `AGENTS.md`, not here.
   verified MIR rather than adding an AST/HIR-only backend path.
 - `AGENTS.md` sections that older Claude guidance did not reflect:
   **Language Direction**, **Feature Proposals And Planning**, **Implementation Task Lifecycle**,
+  **Writing Tests** (the only place that says how to write a test),
   **Release Channels And VERSION**,
   **General Semantics Before Client Exceptions**, and **Constexpr Evolution**.
 

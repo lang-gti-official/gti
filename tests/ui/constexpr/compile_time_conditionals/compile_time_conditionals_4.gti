@@ -1,0 +1,3 @@
+// Compile time conditionals: configuration directives should require an ordinary identifier.
+#define  //~ ERROR GTI-L0012
+int main() { return 0; }

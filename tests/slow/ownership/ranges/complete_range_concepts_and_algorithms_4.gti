@@ -1,0 +1,51 @@
+// Complete range concepts and algorithms: complete-range concepts should instantiate read-only, mutable, and sized generic bodies for nominal ranges and fixed arrays.
+//@ slow
+//@ check-pass
+import std.algorithm;
+import std.iterator;
+import std.vector;
+
+class number_range {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2, 3});
+
+public:
+  number_range() = default;
+  std::vector<int32_t>::const_iterator begin() {
+    return this.values.begin();
+  }
+  std::vector<int32_t>::iterator begin_mut() mut {
+    return this.values.begin_mut();
+  }
+  std::vector<int32_t>::sentinel end() { return this.values.end(); }
+  std::size_t size() { return this.values.size(); }
+  int32_t at(std::size_t index) { return this.values[index]; }
+};
+
+class positive {
+public:
+  bool operator()(int32_t& value) { return value > 0; }
+public:
+  positive() = default;
+};
+
+std::size_t measured_size<Range>(Range& values)
+  requires std::sized_range<Range> {
+  return values.size();
+}
+
+int main() {
+  mut number_range values{};
+  mut int32_t[3] fixed = {1, 2, 3};
+  if (!std::all_of(values, positive()) ||
+      !std::all_of(fixed, positive())) {
+    return 1;
+  }
+  int32_t replacement = 4;
+  std::fill(values, replacement);
+  std::fill(fixed, replacement);
+  return (values.at(std::size_t(1)) == 4 && fixed[1] == 4 &&
+          measured_size(values) == std::size_t(3) &&
+          measured_size(fixed) == std::size_t(3))
+             ? 0
+             : 2;
+}

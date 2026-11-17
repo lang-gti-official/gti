@@ -48,6 +48,7 @@ public:
        ConfigurationFlags configurationFlags = {},
        ConfigurationFlags declaredConfigurationFlags = {});
 
+  void setErrorLimit(std::size_t limit) { errorLimit = limit; }
   [[nodiscard]] bool hadError() const;
 
   [[nodiscard]] const std::vector<SourceDiagnostic> &errors() const;
@@ -107,6 +108,7 @@ private:
   void report(const Token &token, std::string message,
               std::string code = "GTI-I0000");
 
+  std::size_t errorLimit = 0;
   std::vector<SourceDiagnostic> diagnostics;
   SourceGraph graph;
   SourceManager sourceManager;

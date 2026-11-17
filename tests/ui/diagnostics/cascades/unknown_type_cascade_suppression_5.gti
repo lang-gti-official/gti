@@ -1,0 +1,5 @@
+// Unknown type cascade suppression: an invalid known pointee is independent of the missing offset.
+int main() {
+  unsafe { void* pointer = nullptr; auto result = pointer + missing; }  //~ ERROR GTI-S2001 //~ ERROR GTI-S2056
+  return 0;
+}

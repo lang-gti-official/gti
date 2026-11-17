@@ -1,0 +1,12 @@
+// Source defined storage: compiler-private unique ownership retains its placement boundary (trusted source).
+//@ stdlib-overlay: std/owner_placement.gti std/detail/memory_capabilities.gti
+// --- main.gti
+import std.owner_placement;
+int main() { return owner_placement_main(); }
+// --- std/owner_placement.gti
+export module owner_placement;
+import std.memory;
+import std.detail.memory_capabilities;
+gti_internal::unique_owner<int> global =  //~ ERROR GTI-S2018
+    gti_internal::allocate_unique_owner<int>(1);
+export int owner_placement_main() { return 0; }

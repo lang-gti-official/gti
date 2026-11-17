@@ -1,0 +1,4 @@
+// Default parameters: implicit base construction should reject multiple constructors that accept zero explicit arguments.
+class Base { public: Base(int value = 1) {} Base(bool value = true) {} };
+class Derived : public Base { public: Derived() {} };  //~ ERROR GTI-S2013 Implicit construction of base
+int main() { return 0; }

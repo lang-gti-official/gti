@@ -1,0 +1,6 @@
+// Without its static assertion, the same function instance reports its own error.
+int first<uint64_t N>() {
+  int values[N] = {};
+  return values[0];  //~ ERROR GTI-S2016
+}
+int main() { return first<0>(); }

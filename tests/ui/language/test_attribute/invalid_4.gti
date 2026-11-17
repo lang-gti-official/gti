@@ -1,0 +1,2 @@
+// [[test]] rejects a declaration without a body, reported at the attribute.
+[[test]] void invalid();  //~ ERROR GTI-S2099

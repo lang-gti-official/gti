@@ -1,0 +1,10 @@
+// A qualified primitive is diagnosed at its keyword in every syntax context.
+//@ parse-fail
+constexpr std::uint64_t limit = 1024 * 1024 * 1024;  //~ ERROR GTI-P0001 cannot be qualified
+int main() { constexpr std::uint64_t limit = 1; return 0; }  //~ ERROR GTI-P0001 cannot be qualified
+class Holder { std::uint64_t value; };  //~ ERROR GTI-P0001 cannot be qualified
+using Wide = custom::nested::uint64_t;  //~ ERROR GTI-P0001 cannot be qualified
+int read(std::uint64_t value) { return 0; }  //~ ERROR GTI-P0001 cannot be qualified
+Box<std::uint64_t> values;  //~ ERROR GTI-P0001 cannot be qualified
+using Wide2 = Box<int>::uint64_t;  //~ ERROR GTI-P0001 cannot be qualified
+int main2() { auto value = std::uint64_t(4); return 0; }  //~ ERROR GTI-P0001 cannot be qualified

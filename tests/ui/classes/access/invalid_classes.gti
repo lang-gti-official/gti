@@ -1,0 +1,40 @@
+// Classes, structs and access: nominal, access, member, field and receiver errors are rejected.
+//@ error-limit: 0
+class A {
+  int private_value = 1;
+public:
+  int visible = 2;
+  int inspect(A other) { return other.private_value; }
+public:
+  A() = default;
+};
+
+struct B {
+  int public_value = 1;
+private:
+  int hidden = 2;
+public:
+  B() = default;
+};
+
+A wrong_type(B value) { return value; }  //~ ERROR GTI-S2003
+int read_class_private(A value) { return value.private_value; }  //~ ERROR GTI-S2007
+int read_struct_private(B value) { return value.hidden; }  //~ ERROR GTI-S2007
+int read_missing(B value) { return value.missing; }  //~ ERROR GTI-S2000
+
+class Duplicate {
+  int value = 1;
+public:
+  int value = 2;  //~ ERROR GTI-S2006
+public:
+  Duplicate() = default;
+};
+
+class InvalidFields {
+  mut int missing_initializer;  //~ ERROR GTI-S2000
+  int invalid_reference = missing_initializer;  //~ ERROR GTI-S2000
+  int invalid_receiver = this.private_value;  //~ ERROR GTI-S2000
+};
+
+int invalid_global_receiver = this.private_value;  //~ ERROR GTI-S2000
+MissingType unresolved();  //~ ERROR GTI-S2000

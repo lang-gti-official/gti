@@ -1,0 +1,16 @@
+// Exact member signature concepts: exact mutable receiver and parameter contracts must lower.
+//@ check-pass
+//@ format-stable
+concept accepts<C, V> = requires(mut C& receiver, V& input, mut V& output) {
+  { receiver.apply(input, output) } -> int;
+};
+int invoke<C>(mut C& receiver, int& input, mut int& output)
+    requires accepts<C, int> { return receiver.apply(input, output); }
+
+struct Processor {
+  int apply(int& input, mut int& output) mut { output = input; return 1; }
+public:
+  Processor() = default;
+};
+int main() { mut Processor p{}; int input = 7; mut int output = 0;
+  return invoke(p, input, output) - 1; }

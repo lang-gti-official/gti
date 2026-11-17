@@ -1,0 +1,2 @@
+// Default parameters: defaults should resolve in declaration scope without parameter bindings.
+int dependent(int first, int second = first) { return second; }  //~ ERROR GTI-S2077 cannot reference a parameter

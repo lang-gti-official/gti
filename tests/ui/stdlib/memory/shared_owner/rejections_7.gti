@@ -1,0 +1,7 @@
+// Rejections: negative cases must reach semantic checking.
+import std.memory;
+int main() {
+           mut auto owner = std::make_shared<int>(7);
+           *owner = 9;  //~ ERROR GTI-S2002
+           return *owner;
+         }

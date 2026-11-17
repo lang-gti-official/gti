@@ -1,0 +1,4 @@
+// Protected members: rejected with GTI-S2039.
+class Base<T> { protected: static int secret() { return 1; }  public: Base() = default; };  //~ ERROR GTI-S2039
+struct Derived : public Base<int> { int bad() { return Base<bool>::secret(); }  public: Derived() = default; };  //~ ERROR GTI-S2039 //~ ERROR GTI-S2007
+int main() { Derived d{}; return d.bad(); }

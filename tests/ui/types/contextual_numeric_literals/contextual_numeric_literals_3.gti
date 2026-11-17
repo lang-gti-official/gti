@@ -1,0 +1,2 @@
+// Contextual numeric literals: literal context must independently preserve each semantic boundary.
+bool mixed<std::numeric T>(T value, int other) { return value == other; }  //~ ERROR GTI-S2000

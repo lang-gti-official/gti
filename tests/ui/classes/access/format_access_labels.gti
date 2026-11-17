@@ -1,0 +1,5 @@
+// Classes, structs and access: the formatter outdents C++-style access labels, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+class Box{public:int value=1;private:int hidden=2;};struct Point{int x=0;};

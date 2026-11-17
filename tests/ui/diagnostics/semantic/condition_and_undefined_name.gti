@@ -1,0 +1,5 @@
+// A non-bool condition and an undefined name are both reported, on their source lines.
+int main() {
+  if (1) { missing = 3; }  //~ ERROR GTI-S2003 //~ ERROR GTI-S2001
+  return 0;
+}

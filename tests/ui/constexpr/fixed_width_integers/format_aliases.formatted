@@ -1,0 +1,8 @@
+// Fixed-width integers: the formatter canonicalises legacy fixed-width aliases, preserves import paths and prefixed integer literals.
+//@ parse-pass
+//@ snapshot: format
+import "uint64.gti";
+int8_t small = 1;
+int64_t large = small;
+uint8_t byte = 0xFF;
+uint64_t wide = 0b1010;

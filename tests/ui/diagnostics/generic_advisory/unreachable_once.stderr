@@ -1,0 +1,3 @@
+main.gti:4:33: warning[GTI-S2095]: Statement is unreachable.
+ 4 | void stop<T>(T value) { return; int after = 1; }  //~ WARN GTI-S2095
+   |                                 ^~~~~~~~~~~~~~

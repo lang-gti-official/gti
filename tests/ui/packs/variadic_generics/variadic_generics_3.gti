@@ -1,0 +1,17 @@
+// Variadic generics: a move-only parameter pack should be consumed as a whole and cannot be forwarded twice.
+import std.memory;
+
+class PackedValue { public: PackedValue() = default; };
+
+void consume_owner<Args...>(Args... values) {}
+
+void forward_owner_twice<Args...>(Args... values) {
+  consume_owner(values...);
+  consume_owner(values...);  //~ ERROR GTI-S2018 Value 'values' has already been moved
+}
+
+int main() {
+  auto owner = std::make_unique<PackedValue>();
+  forward_owner_twice(std::move(owner));
+  return 0;
+}

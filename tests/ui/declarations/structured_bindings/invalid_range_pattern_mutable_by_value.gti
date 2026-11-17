@@ -1,0 +1,3 @@
+// Structured bindings: mutable range patterns require a reference.
+struct Item { mut int first; int second; Item(int a, int b) : first(a), second(b) {} };
+int main() { mut Item items[1] = {Item(1, 2)}; for (mut auto [a, b] : items) {} return 0; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001

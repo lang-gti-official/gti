@@ -1,0 +1,8 @@
+// Concurrent global policy: generic static fields should remain unconditionally rejected under the concurrent profile while the deliberate GTI-S2060 suppression avoids a redundant second diagnostic.
+//@ execution-profile: concurrent
+class Registry<T> {
+public:
+  static mut int current = 0;  //~ ERROR GTI-S2039
+public:
+  Registry() = default;
+};

@@ -1,0 +1,56 @@
+// Source defined storage: source-defined storage supports growth, element lifetimes and receiver borrows.
+//@ check-pass
+import std.memory;
+std::storage<T> fixture_storage<T>(uint64_t count) requires std::storage_element<T> {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<T>(count);
+  return std::move(allocated).expect("test storage allocation");
+}
+
+concept buffer_element<T> =
+    std::storage_element<T> && std::movable<T> && std::relocatable<T>;
+class Buffer<buffer_element T> {
+  mut std::storage<T> data;
+  mut uint64_t count = 0;
+  mut uint64_t reserved = 0;
+
+public:
+  Buffer(uint64_t capacity)
+      : data(fixture_storage<T>(capacity)), reserved(capacity) {}
+
+  uint64_t capacity() { return this.reserved; }
+
+  void push(T value) mut {
+    this.data.construct(this.count, std::move(value));
+    this.count++;
+  }
+
+  T& at(uint64_t index) { return this.data.get(index); }
+
+  void grow(uint64_t capacity) mut {
+    mut std::storage<T> replacement = fixture_storage<T>(capacity);
+    this.data.relocate_to(replacement, this.count);
+    this.data = std::move(replacement);
+    this.reserved = capacity;
+  }
+
+  void pop() mut {
+    this.count--;
+    this.data.destroy(this.count);
+  }
+};
+
+int main() {
+  mut Buffer<int> values = Buffer<int>(uint64_t(2));
+  mut Buffer<char> characters = Buffer<char>(uint64_t(1));
+  values.push(7);
+  values.push(9);
+  characters.push('G');
+  values.grow(uint64_t(4));
+  if (values.capacity() == 4 and values.at(uint64_t(0)) == 7 and
+      values.at(uint64_t(1)) == 9 and characters.at(uint64_t(0)) == 'G') {
+    values.pop();
+    return 0;
+  }
+  return 1;
+}

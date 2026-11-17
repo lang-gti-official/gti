@@ -1,0 +1,3 @@
+// Out-of-class methods: an invalid separate definition (default arguments) gets a source diagnostic.
+struct A { int read(int x = 1);  public: A() = default; }; int A::read(int x = 2) { return x; }  //~ ERROR GTI-S2120 Default arguments
+int main() { return 0; }

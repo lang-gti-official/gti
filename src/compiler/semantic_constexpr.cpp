@@ -89,6 +89,14 @@ struct StagedHash {
 // snapshot only if ordinary HIR discovery actually requests an instance.
 class StagedInstanceProvider final : public SemanticInstanceProvider {
 public:
+  // Staging never completes a primary body mid-lowering: it records the
+  // need, and the enclosing attempt completes the body and repeats.
+  std::function<void(const FunctionDecl &)> needPrimaryBody;
+  bool analyzeDemandedPrimaryBody(const FunctionDecl &body) override {
+    if (needPrimaryBody)
+      needPrimaryBody(body);
+    return false;
+  }
   using ValidateResult = std::function<void(const StagedInstanceKeyView &,
                                             SemanticInstanceAnalysis &)>;
   StagedInstanceProvider(const SemanticInstanceProvider &facts,
@@ -745,6 +753,9 @@ auto SemanticVisitor::Impl::stagedConstantKey(
   for (const FunctionDecl *definition : constexprDefinitionsAnalyzed)
     if (declaredBeforeCurrent(definition))
       values.push_back(reinterpret_cast<std::uintptr_t>(definition));
+  for (const FunctionDecl *definition : pendingConstexprDefinitions())
+    if (declaredBeforeCurrent(definition))
+      values.push_back(reinterpret_cast<std::uintptr_t>(definition));
   append(std::move(values));
   values = {};
   for (const auto *definition : constexprConstructorsAnalyzed)
@@ -802,11 +813,16 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
   for (const auto *definition : constexprConstructorsAnalyzed)
     constructors += declaredBeforeCurrent(definition) ? 1 : 0;
   const bool reanalysis = concreteReanalysis();
+  const std::uint64_t bodyRevision =
+      requestSession.bodyContext
+          ? requestSession.bodyContext->compileTimeRevision()
+          : 0;
   StagedWorker &worker = stagedWorker;
   if (worker.impl == nullptr || worker.reanalysis != reanalysis ||
       worker.declarationOrder != currentDeclarationOrder ||
       worker.definitions != definitions ||
-      worker.constructors != constructors) {
+      worker.constructors != constructors ||
+      worker.bodyRevision != bodyRevision) {
     const PhaseTimeScope workerScope("constexpr-staged-worker");
     worker.impl = std::make_unique<Impl>(target, sourceGraph, false,
                                          workMetrics, sources, rawPointerAudit,
@@ -839,8 +855,10 @@ auto SemanticVisitor::Impl::stagedWorkerFor(
     worker.declarationOrder = currentDeclarationOrder;
     worker.definitions = definitions;
     worker.constructors = constructors;
+    worker.bodyRevision = bodyRevision;
   }
   worker.impl->requestSession.constexprWork = work;
+  worker.impl->requestSession.bodyContext = requestSession.bodyContext;
   worker.impl->requestSession.stagedConstants = requestSession.stagedConstants;
   // Concrete constant bodies also demand source access summaries. Share
   // their request-local cycle/depth accounting, not mutable body state.
@@ -969,7 +987,39 @@ bool stagedClosureRequiresMir(const MirProgram &program) {
 
 } // namespace
 
+// A staged evaluation that needed a pending body (looked up, needed by its
+// closure, or reached as a runtime-only constexpr callee) is an attempt: the
+// body is completed and the evaluation repeated where that is possible.
 auto SemanticVisitor::Impl::executeStagedConstexpr(
+    const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
+        &selected,
+    const std::vector<ConstantValue> &arguments,
+    const GenericSubstitution &substitution,
+    const std::optional<ConstantValue> &receiver, const Token &callSite,
+    ConstexprInterpreter &context) -> std::optional<ConstexprEvaluation> {
+  // The evaluation charges its interpreter's budget, which is not always the
+  // request's (see AttemptCheckpoint): a repeat starts from what the first
+  // attempt found.
+  std::optional<
+      std::pair<std::size_t, std::optional<ConstexprWorkBudget::Exhaustion>>>
+      budgetAtStart;
+  return withBodyDemands([&] {
+    // The request's own budget is restored by the attempt's checkpoint.
+    if (context.work != nullptr &&
+        context.work != requestSession.constexprWork) {
+      if (budgetAtStart) {
+        context.work->steps = budgetAtStart->first;
+        context.work->exhaustion = budgetAtStart->second;
+      } else {
+        budgetAtStart.emplace(context.work->steps, context.work->exhaustion);
+      }
+    }
+    return executeStagedConstexprOnce(selected, arguments, substitution,
+                                      receiver, callSite, context);
+  });
+}
+
+auto SemanticVisitor::Impl::executeStagedConstexprOnce(
     const std::variant<const FunctionDecl *, ResolvedConstructionInfo>
         &selected,
     const std::vector<ConstantValue> &arguments,
@@ -986,6 +1036,8 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const SemanticModel &stagingModel = constexprStagingModel();
   const auto *function = std::get_if<const FunctionDecl *>(&selected);
   const auto *construction = std::get_if<ResolvedConstructionInfo>(&selected);
+  if (function && *function)
+    (void)requireBody(*function);
   const auto *info =
       function && *function ? stagingModel.findFunction(**function) : nullptr;
   noteConstexprAvailabilityObserved();
@@ -1048,10 +1100,20 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     if (const auto *candidate = stagingModel.findConstructor(*declaration))
       constructors.push_back(candidate->id);
   }
-  for (const auto *declaration : constexprDefinitionsAnalyzed) {
-    if (const auto *candidate = stagingModel.findFunction(*declaration)) {
-      completed.push_back(candidate->id);
+  // Building keys reads every definition's record; that is not a demand.
+  std::vector<FunctionId> keyCompleted;
+  {
+    const FunctionDemandScope pauseStaging(stagingModel, nullptr);
+    const FunctionDemandScope pauseCanonical(semanticModel, nullptr);
+    for (const auto *declaration : constexprDefinitionsAnalyzed) {
+      if (const auto *candidate = stagingModel.findFunction(*declaration)) {
+        completed.push_back(candidate->id);
+      }
     }
+    keyCompleted = completed;
+    for (const FunctionDecl *declaration : pendingConstexprDefinitions())
+      if (const auto *candidate = stagingModel.findFunction(*declaration))
+        keyCompleted.push_back(candidate->id);
   }
   // A success this request already proved is replayed (see
   // StagedConstantResults), unless the outer authority has since closed a
@@ -1065,7 +1127,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   const auto reuseKey =
       !concreteEffects || concreteEffects->invalidInstances.empty()
           ? stagedConstantKey(selected, info, arguments, substitution, receiver,
-                              completed, constructors)
+                              keyCompleted, constructors)
           : std::nullopt;
   const std::size_t depth = enclosingDepth + context.callDepth;
   if (reuseKey && !context.procedural) {
@@ -1147,6 +1209,9 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                                        request.values.end())},
               analysis);
         });
+    provider.needPrimaryBody = [this](const FunctionDecl &body) {
+      noteBodyNeed(&body);
+    };
     HirLowerer lowerer(target);
     auto hir = [&] {
       const PhaseTimeScope lowerScope("constexpr-staged-hir");
@@ -1158,7 +1223,25 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                                  info->id, completed,
                                                  substitution, constructors);
     }();
+    // The closure lowers a callee whose constexpr body is still pending as a
+    // declaration only (it is outside `completed`). When the closure cannot
+    // be lowered or verified, such a callee may be the cause, and evaluation
+    // would have executed it: each one is a need of the enclosing attempt,
+    // which repeats once the body is complete. A closure that lowers is
+    // executed instead, and an executed pending callee is a need there
+    // (RuntimeOnlyCall below).
+    const auto needPendingCallees = [&] {
+      for (const HirFunctionInstance &instance :
+           hir.program.functionInstances())
+        if (const FunctionInfo *callee =
+                stagingModel.findFunction(instance.declaration))
+          if (const FunctionDecl *body = callee->bodyDeclaration();
+              body != nullptr &&
+              (body->isConstexpr() || body->isProceduralMacro()))
+            noteBodyNeed(body);
+    };
     if (!hir.valid()) {
+      needPendingCallees();
       if (hasErrorDiagnostics(hir.diagnostics)) {
         diagnostics.insert(diagnostics.end(), hir.diagnostics.begin(),
                            hir.diagnostics.end());
@@ -1181,6 +1264,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                                             entry->path);
     }();
     if (!metadata.valid()) {
+      needPendingCallees();
       return std::nullopt;
     }
     auto mir = [&] {
@@ -1188,6 +1272,7 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
       return MirLowerer().lower(hir.program, metadata.metadata);
     }();
     if (!mir.valid()) {
+      needPendingCallees();
       return std::nullopt;
     }
     MirBodyAddress root;
@@ -1234,7 +1319,11 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     if (closureKey && (!requestSession.layoutAssertionWork ||
                        !requestSession.layoutAssertionWork->failure)) {
       lowered->key = *closureKey;
-      stagedConstants->recordClosure(lowered);
+      // Recorded only if this evaluation's attempt ends clean.
+      writeBodyDependentCache(
+          [stagedConstants,
+           recorded = std::shared_ptr<const StagedConstantResults::Closure>(
+               lowered)] { stagedConstants->recordClosure(recorded); });
     }
     closure = std::move(lowered);
   }
@@ -1325,13 +1414,17 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
                               "A void constexpr call does not produce a "
                               "constant value.");
     if (recordable)
-      stagedConstants->record(
-          {.key = *reuseKey,
-           .voidCompletion = true,
-           .steps = context.work->steps - stepsBefore,
-           .depth = depth,
-           .warnings = closure->warnings,
-           .nativeObjectLayout = closure->nativeObjectLayout});
+      writeBodyDependentCache(
+          [stagedConstants,
+           recorded = StagedConstantResults::Result{
+               .key = *reuseKey,
+               .voidCompletion = true,
+               .steps = context.work->steps - stepsBefore,
+               .depth = depth,
+               .warnings = closure->warnings,
+               .nativeObjectLayout = closure->nativeObjectLayout}]() mutable {
+            stagedConstants->record(std::move(recorded));
+          });
     return ConstexprEvaluation{.voidCompletion = true, .location = callSite};
   }
   const auto sourceLocation =
@@ -1368,13 +1461,17 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
   };
   if (result) {
     if (recordable && StagedConstantResults::reusable(*result.value))
-      stagedConstants->record(
-          {.key = *reuseKey,
-           .value = *result.value,
-           .steps = context.work->steps - stepsBefore,
-           .depth = depth,
-           .warnings = closure->warnings,
-           .nativeObjectLayout = closure->nativeObjectLayout});
+      writeBodyDependentCache(
+          [stagedConstants,
+           recorded = StagedConstantResults::Result{
+               .key = *reuseKey,
+               .value = *result.value,
+               .steps = context.work->steps - stepsBefore,
+               .depth = depth,
+               .warnings = closure->warnings,
+               .nativeObjectLayout = closure->nativeObjectLayout}]() mutable {
+            stagedConstants->record(std::move(recorded));
+          });
     return ConstexprEvaluation{.value = std::move(result.value),
                                .location = callSite};
   }
@@ -1383,6 +1480,10 @@ auto SemanticVisitor::Impl::executeStagedConstexpr(
     const FunctionInfo *target =
         callee != nullptr ? stagingModel.findFunction(callee->declaration)
                           : nullptr;
+    // A constexpr callee whose body is still pending is a need, not a
+    // runtime-only call.
+    if (target != nullptr && target->constexprFunction)
+      noteBodyNeed(target->bodyDeclaration());
     const std::string name =
         target != nullptr ? "'" + target->qualifiedName + "'" : "The callee";
     result.detail =

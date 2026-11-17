@@ -1,0 +1,4 @@
+// Stored reference branch invalidation2: unbraced if arms should receive the same path-specific loan endpoints as braced arms.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); mut char observed = 'x'; if (true) observed = *iterator; else value.push_back('!'); value.push_back('?'); if (observed == 'g') { return 0; } return 1; }

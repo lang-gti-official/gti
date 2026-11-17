@@ -1,0 +1,6 @@
+// Source defined concepts: concept hover shows the explanation as written.
+//@ check-pass
+[[unsatisfied("A dial \"turns\".")]]
+concept dial<T> = std::integral<T>;
+int turn<dial T>(T value) { return 0; }
+int main() { return turn(1); }

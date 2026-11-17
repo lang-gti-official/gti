@@ -1,0 +1,6 @@
+// A formatted program formats to itself and still checks.
+//@ check-pass
+//@ format-stable
+int main() {
+  return 0;
+}

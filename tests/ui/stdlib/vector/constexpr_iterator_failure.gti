@@ -1,0 +1,25 @@
+// A vector cursor's checked movement and element reads fail during constant
+// evaluation exactly as they do at run time.
+import std.vector;
+
+constexpr int step_past_end() {
+  mut std::vector<int> values{};
+  values.push_back(1);
+  mut auto cursor = values.begin();
+  ++cursor;
+  ++cursor;
+  return *cursor;
+}
+
+constexpr int read_end() {
+  mut std::vector<int> values{};
+  values.push_back(1);
+  mut auto cursor = values.begin();
+  ++cursor;
+  return *cursor;
+}
+
+static_assert(step_past_end() == 1);  //~ ERROR GTI-S2057 invalid_container_argument
+static_assert(read_end() == 1);  //~ ERROR GTI-S2057 index_out_of_bounds
+
+int main() { return 0; }

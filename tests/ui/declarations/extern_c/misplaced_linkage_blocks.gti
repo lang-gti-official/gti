@@ -1,0 +1,9 @@
+// Extern C interop: class and block linkage declarations fail clearly without breaking declaration recovery.
+//@ parse-fail
+class Holder {
+  extern "C" { int32_t member_native(); }  //~ ERROR GTI-P0001
+};
+int main() {
+  extern "C" { int32_t local_native(); }  //~ ERROR GTI-P0001
+  return 0;
+}

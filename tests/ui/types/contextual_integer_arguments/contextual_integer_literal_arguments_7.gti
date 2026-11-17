@@ -1,0 +1,4 @@
+// Contextual integer literal arguments: the shared fallback tier ranks neither literal width, the number of adapted arguments, nor literal adaptation against a temporary read borrow.
+int choose(uint8_t a, uint16_t b) { return 1; }
+int choose(uint16_t a, uint8_t b) { return 2; }
+int main() { return choose(1, 2); }  //~ ERROR GTI-S2013

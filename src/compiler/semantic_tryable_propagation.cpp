@@ -36,6 +36,10 @@ auto SemanticVisitor::Impl::protocolOperationCall(
   }
   const CallableCandidate &candidate =
       conformance.operations[operation].overloads.front();
+  // The record built below is checked against the operation's body-derived
+  // facts; the caller requests the body first (demand before record).
+  checkBodyFactRead(candidate.bodyDeclaration(), candidate.id,
+                    "a protocol operation call");
   const std::vector<GenericParameterInfo> &parameters =
       candidate.record().genericParameters;
   if (parameters.size() != binding.size()) {
@@ -291,6 +295,15 @@ auto SemanticVisitor::Impl::analyzeTryablePropagation(
   }
   const RegisteredConformance &conformance =
       conformances[match->conformance - 1];
+  // Demand before record: the operations are selected from the conformance
+  // block, not through call resolution, so their bodies are requested here
+  // as ordinary call resolution requests a callee's.
+  for (const std::optional<std::size_t> &index :
+       {hasValue, takeValue, takeResidual})
+    if (*index < conformance.operations.size() &&
+        conformance.operations[*index].overloads.size() == 1)
+      (void)requireBody(
+          conformance.operations[*index].overloads.front().bodyDeclaration());
   std::optional<ResolvedCallInfo> test =
       protocolOperationCall(conformance, match->binding, *hasValue);
   std::optional<ResolvedCallInfo> output =

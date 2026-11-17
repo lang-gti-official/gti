@@ -1,0 +1,8 @@
+// A stdlib-overlay section is a module of a private standard library copy.
+//@ stdlib-overlay: std/runner_overlay_probe.gti
+// --- main.gti
+import std.runner_overlay_probe;
+int main() { return runner_overlay_value() - 5; }
+// --- std/runner_overlay_probe.gti
+export module runner_overlay_probe;
+export int runner_overlay_value() { return 5; }

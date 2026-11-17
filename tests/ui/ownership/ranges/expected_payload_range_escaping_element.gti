@@ -1,0 +1,19 @@
+// Expected payload range loans: a payload element cannot be returned from a by-value parameter's range.
+import std.string;
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+class box {
+public:
+  box(expected<std::string, int32_t> initial)
+      : value(std::move(initial)) {}
+  mut expected<std::string, int32_t> value;
+};
+
+char& escape_element(expected<std::string, int32_t> text) {  //~ ERROR GTI-S2017
+  for (auto& byte : text.value()) { return byte; }
+  return text.value()[0];
+}
+int main() { return 0; }

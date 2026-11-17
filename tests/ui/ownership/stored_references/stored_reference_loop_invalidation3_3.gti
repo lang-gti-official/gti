@@ -1,0 +1,4 @@
+// Stored reference loop invalidation3: a retained use in a for increment should remain live through the condition and end at for-loop exit.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); for (mut int count = 0; count < 2; ++iterator) { count++; } value.push_back('!'); return 0; }

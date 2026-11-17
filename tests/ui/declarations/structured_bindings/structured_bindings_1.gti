@@ -1,0 +1,20 @@
+// Structured bindings: fixed arrays and public direct aggregate fields should support structured bindings.
+//@ check-pass
+struct Pair<T, U> {
+  T first;
+  U second;
+
+  Pair(T first, U second) : first(first), second(second) {}
+  ~Pair() {}
+};
+
+int main() {
+  int values[2] = {2, 3};
+  auto [left, right] = values;
+  auto [number, enabled] = Pair<int, bool>(4, true);
+  mut int result = 1;
+  if (left == 2 && right == 3 && number == 4 && enabled) {
+    result = 0;
+  }
+  return result;
+}

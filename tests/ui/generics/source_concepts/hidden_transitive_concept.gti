@@ -1,0 +1,13 @@
+// Source-defined concepts: concept declarations obey direct-include visibility without transitive re-export.
+// --- main.gti
+import "wrapper.gti";
+T use<capabilities::signed_value T>(T value) { return value; }  //~ ERROR GTI-S2024
+int main() { return use(1) - 1; }
+// --- wrapper.gti
+export module wrapper;
+import "concepts.gti";
+// --- concepts.gti
+export module concepts;
+export namespace capabilities {
+concept signed_value<T> = std::signed_numeric<T>;
+}

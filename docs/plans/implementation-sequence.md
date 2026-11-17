@@ -74,14 +74,14 @@ Owner decisions (2026-11-16):
 
 | Phase | Outcome | Prerequisites | Status |
 | --- | --- | --- | --- |
-| 0. Stop the bleeding | Per-commit runtime harnesses at `-O0` only (`GTI_TEST_LLVM_LEVELS` selects more); slow families carry the CTest label `slow` and run in the daily slow tier, whose `Slow tier verdict (<sha>)` the release train requires; C++-backend tests and CI removed; a diff-based PR lint freezes the old suite (no new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`; `tests/ui/`, `tests/unit/`, `tests/runner/` and `tests/gti_test.cmake` are exempt) | none | in progress |
-| 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts | none | not started |
-| 2. Runner MVP | `gti-test` under `tests/runner/`, cases under `tests/ui/`, one CTest entry registered in `tests/gti_test.cmake`; preamble-cache spike settles plan scenario A or B | none | in progress |
-| 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | not started |
+| 0. Stop the bleeding | Per-commit runtime harnesses at `-O0` only (`GTI_TEST_LLVM_LEVELS` selects more); slow families carry the CTest label `slow` and run in the daily slow tier, whose `Slow tier verdict (<sha>)` the release train requires; C++-backend tests and CI removed; a diff-based PR lint freezes the old suite (no new `tests/*_test.py`, `tests/*_tests.cpp` or `add_test(`; `tests/ui/`, `tests/unit/`, `tests/runner/` and `tests/gti_test.cmake` are exempt) | none | done: per-commit `tip` channel (#426), plan record (#428), freeze lint (#429), tiers and `slow.yml` (#432) |
+| 1. Baseline | Coverage and seeded-bug kill rate of the old suite recorded as artifacts: `.github/workflows/suite-measures.yml` (dispatch/weekly, never a gate), `GTI_ENABLE_SOURCE_COVERAGE`, `scripts/coverage_report.py`, `scripts/coverage_compare.py`, `scripts/seeded_bugs.py`; see [verification](../architecture/verification.md#suite-yardsticks-source-coverage-and-seeded-bugs) | none | tooling landed through umbrella #455 (#436); baseline run not yet recorded |
+| 2. Runner MVP | `gti-test` under `tests/runner/`, cases under `tests/ui/`, one CTest entry registered in `tests/gti_test.cmake`; preamble-cache spike settles plan scenario A or B | none | done: `gti-test` and `gti_test_ui` with a shared stdlib preamble (#431) |
+| 3–7 | Mechanical conversion, C++ frontend conversion, LSP/project/mir/codegen kinds, corpus tool and registries, old-suite removal | phase 2 | in progress: phase 4 uses `scripts/extract_cpp_tests.py` (temporary; per-file helper specifications, compiler-checked code sets, review resolutions); converted so far: `protected_member_tests.cpp`, `shared_ownership_tests.cpp`, six constraint tests of `compiler_declarations` (#440, #441); umbrella #455 (merged 2026-11-16) added snapshot (`mir`, `llvm-ir`, `diagnostics`, `format`), parse-only, revisions and execution-profile directives, the LSP and project kinds, `gti_test_examples`, `gti_corpus` (slow tier), `gti_unit_tests` and the converted stored-reference and shared-harness runtime families (#439, #442–#444, #447–#450); arriving through a second umbrella: runner rounds 2 and 3 (#465, #467, #469, #477, #478) and CI wiring of the new entries (#476); agent guidance replaced by [Writing Tests](../../AGENTS.md#writing-tests); the stack adds six more `compiler_pipeline` tests (ownership, frontend, constexpr, declarations) and the twelve heaviest `compiler_constexpr` tests (hand-written rejection tables, diagnostics snapshots and a MIR pattern test beside the extracted cases); the whole `compiler_pipeline_frontend` suite (23 tests) is deleted: its sources are `tests/ui/{modules,format,syntax,stdlib/imports,language}` cases and two `tests/project` transcripts, and its API-only checks moved to `tests/unit`; the whole `compiler_pipeline_diagnostics` suite (26 tests) is deleted: its sources are `tests/ui/diagnostics/` and `tests/slow/diagnostics/` cases, a `tests/lsp` case and a `tests/project` transcript (raw-pointer audit), and its formatter, language-query and diagnostic-infrastructure API checks moved to `tests/unit`; the whole `compiler_pipeline_constexpr` suite is deleted (its last 23 tests here): its sources are `tests/ui/constexpr/` cases (limits through `//@ constexpr-steps`/`constexpr-depth`, target selection through `//@ target`, configuration through `//@ define`), and its evaluator, staging, reuse and stack-segment API checks moved to `tests/unit`; the whole `compiler_pipeline_e2e` suite (11 tests) is deleted: its sources are `tests/ui/mir/` cases (run-pass where `main` checks its results, narrowed MIR `CHECK` patterns for ordered call inputs), and its forged-HIR/MIR verifier checks moved unchanged to `tests/unit`; the whole `compiler_pipeline_declarations` suite (52 tests) is deleted: its sources are `tests/ui/{arrays,borrow,classes,concurrency,declarations,generics,ownership,packs,types}` cases (rejection tables in one file where rows are independent, `format` and `diagnostics` snapshots), two `tests/slow` cases and a `tests/project` transcript (split signatures in module implementation units), and its forged MIR/HIR verifier checks moved unchanged to `tests/unit`; `compiler_pipeline` now aggregates only the ownership suite, whose 26 costliest tests (stored-reference branch and loop invalidation, switch/break loan flow, ranges, storage and unique owners) are `tests/ui/ownership/` cases next, with three `tests/slow/ownership` cases and narrowed MIR `CHECK` patterns for loan endpoints, an unreachable merge and builtin observers |
 
-Until phase 2 lands, a new test is a case added to an existing harness; after
-it lands, new tests go under `tests/ui/`. Acceptance for each conversion phase
-is the plan's §11.4 coverage and seeded-bug comparison against phase 1.
+New tests follow [Writing Tests](../../AGENTS.md#writing-tests), never an old
+harness.
+Acceptance for each conversion phase is the plan's §11.4 coverage and seeded-bug comparison against phase 1.
 
 ## Module-only source campaign (2026-10-29)
 
@@ -607,7 +607,7 @@ every composition, target, installed package or performance gate.
 | Borrowing callbacks and result origins | `semantic_ownership_analysis.cpp`, `borrowing_capture_tests.cpp`, checked erasure/transport tests; L-CALL-03/04 and [ownership](../language/ownership-and-lifetimes.md). | General borrowed escape/storage graphs, owning results through `function_ptr`, inferred API results and cleanup-bearing inline relocation. |
 | Reference payload enums | `reference_payload_semantic_tests.cpp`, `fixtures/reference_payload_tryable.gti`, complete-borrow-summary tests and [payload semantics](../language/static-semantics.md). | Borrowed-value consuming handoffs, additional carrier containment, direct captures/polymorphic/native transport and richer patterns. Do not classify all stored reference alternatives as absent. |
 | Owner-dependent text fields | `view_field_tests.cpp`, nested-value and dependent-reference fixtures; L-OWN-02 phases 1/2 and **3a** are delivered. | Phase 3b's nested reference-carrier payload/results, additional nested copies/field contracts and phase 4 unification; arbitrary borrowed collections remain incomplete. |
-| Constexpr mutation and allocation | `mir_constant_evaluator.cpp`, `compiler_constexpr_tests.cpp`, `constexpr_results.gti`, `constexpr_allocation.gti`; [constant semantics](../language/static-semantics.md#transient-allocation-and-destruction). | Persistent allocation, stored-reference/raw/provider/shared/payload-enum/polymorphic profiles outside the stated evaluator contract, and retirement of remaining AST execution schedules. |
+| Constexpr mutation and allocation | `mir_constant_evaluator.cpp`, `tests/ui/constexpr/`, the `constant_evaluation_api` unit case, `constexpr_results.gti`, `constexpr_allocation.gti`; [constant semantics](../language/static-semantics.md#transient-allocation-and-destruction). | Persistent allocation, stored-reference/raw/provider/shared/payload-enum/polymorphic profiles outside the stated evaluator contract, and retirement of remaining AST execution schedules. |
 | Protocol associated types and static queries | `semantic_protocol_concepts.cpp`, `semantic_requirement_expressions.cpp`, `protocol_concept_tests.cpp`, `general_requires_tests.cpp`; [concepts](../language/concepts.md). | Additional expression/relationship families and generic associated families beyond implemented projections; operation borrow contracts and conditional member operators are delivered. |
 | Typed macros and per-thread storage | `semantic_macro.cpp`, `macro_value_tests.cpp`, macro fixtures and `thread_local_{syntax,semantic}_tests.cpp` / `mir_thread_local_tests.cpp`; [static semantics](../language/static-semantics.md) and [concurrency](../language/concurrency.md). | General preprocessing is not the typed-macro contract; ordinary block static and C thread-specific-storage keys remain separate. |
 | Foreign C variables | `foreign_variable_tests.cpp`, `foreign_variable_borrow_tests.cpp`, native-variable bindgen tests; [native interop](../language/native-c-interop.md). | TLS/volatile/top-level-array objects, ownership annotations, retained/captured callbacks and foreign-thread entry; C-08B ordinary objects are implemented. |
@@ -662,7 +662,7 @@ workflow determine task scope and integration.
 | `L-UP-17` | ready for a bounded recoverable-owner slice | Typed allocation results and lifetime rollback exist. Preserve selected construction, unpublished ownership and once-only arguments; co-deliver recoverable unique allocation without pretending all packs/immovable cases are covered. |
 | `E-EMBED-01B/C`, `B-LIB-02`, `T-EMBED-01`, `Q-EMBED-01` | infallible LLVM context/wrapper/project-library workflow implemented; full campaign partial | Complete fallible closure containment, editor integration and installed load/call/fail/unload/reload/platform acceptance. Preserve the existing generated header, immutable generations, cache/report/clean and C/C++ host fixtures; see [embedding delivery](#engine-embedding-delivery-campaign). |
 | Native import `C-08B` | ordinary foreign objects implemented | Exact external-storage identity, unsafe loads/stores, inert addresses, explicit owner-witness borrowing, headers and bindgen cover scalar, recursive pointer, callback and passive-record objects. TLS/volatile and top-level arrays require their general access/address contracts. |
-| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; one lazy rule and compile-time panics implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Call closures stage lazily for every constant context, and an executed panic reports its message. Select remaining stored-reference, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
+| `L-CONST-01` extension | mutable-builder, ordinary-enum and passive-result profiles implemented; one lazy rule and compile-time panics implemented; further profiles ready to select | Checked references, constructor defaults/reference inputs, void helpers, non-consuming mutable methods/operators, ordinary enums and passive Expected composition use staged verified MIR. Call closures stage lazily for every constant context, and an executed panic reports its message. Stored-reference cursors and range-based `for` execute (2026-11-16). Select remaining cleanup-bound carrier, pack, owning/sum or operator profiles with runtime parity and shared budgets; do not grow a permanent duplicate AST rule. |
 | `T-LSP` latency client | trusted-body/preamble/instance reuse delivered; edit cancellation/debounce, library concept/storage-effect reuse, staged constant-call memoization and unchanged-source replay delivered through 0.486.1 | Re-measure current workloads before selecting reuse/adoption costs. The 0.423.0 timing is historical, not today's bottleneck ranking. [LSP evolution](lsp-evolution.md#per-keystroke-analysis-cost) records remaining identity/invalidation and completion work. |
 | `RT-2` through `RT-12` | independent goals with technical prerequisites | Use the [current optimization disposition](optimization.md#pr-166-audit-disposition-2026-10-09), not retired minimum-speedup admission rules. RT-12 recovers the optimizer proofs and exit sharing that the source-defined `expected` (0.449.0) gave up by owner decision; its tests mark the lost controls as recovery-pending. Its closed-call proofs and failure closure are delivered in 0.468.0 ([RT-12](optimization.md)); exit sharing for exits that construct the result remains. Select one proof/transform/representation family with correctness replay and performance acceptance. RT-9's sort slice (introsort) is delivered in 0.410.1. RT-1's cold failure-edge slice is delivered (2026-10-12); `hashmap` lookups are the remaining inlining headroom. RT-5's body-local slice is delivered (2026-10-13) and changes no program on its own; crossing an accessor is the remaining work, with a measured ceiling of about 20% on one loop shape ([RT-5](optimization.md#rt-5-no-relational-facts-between-indices-and-lengths)). RT-4's refresh currently reaches four probe helpers, so it should follow discharge improvements (RT-2, RT-3, RT-5); see [its measured reach](optimization.md#rt-4-infallibility-is-not-refreshed-after-discharge). |
 | Shared failure-cleanup tails (`M-FAIL-01`) | function and lambda bodies delivered in 0.402.2; their scalar normal exits in 0.421.1 | Continuation records entered by `ContinueFailure` share identical failure-cleanup suffixes, and normal exits returning nothing, a scalar or a scalar error share exit ladders; see the M-FAIL-01 entry below. Remaining: constructor, field-initializer, destructor, module and hosted-startup bodies; exits returning owning, class or borrowed results; path-dependent steps stay private. |
@@ -9950,6 +9950,16 @@ follow-ups:
 
 ### L-CONST-01: Remaining Bounded Compile-Time Programming
 
+- **Deferred constexpr library bodies (#398, draft):** unused trusted
+  constexpr definitions are deferred like other trusted bodies and demanded
+  by the compile-time path that reaches them through one body-readiness
+  table and attempt scope (semantic-analysis.md, "Compile-Time Body Demand").
+  The staged evaluator remains the execution authority; no execution rule
+  moved or was added. Follow-ups: narrow demand from function lookup to body
+  fact use; make program-effect closure demand-driven (the largest remaining
+  cost in programs that use what they import); defer trusted constructor and
+  destructor bodies through the same table (`BodyKey` already names them).
+
 - **Immediate declarations:** General `consteval` functions and ordinary
   constructors use the staged MIR evaluator and publish passive values before
   runtime lowering. This supplies a general required-call facility for source
@@ -10191,8 +10201,29 @@ follow-ups:
   O0/O1/O2/O3 differential execution and sanitizer/no-elide checks. Complete
   production-cutover compatibility and release gates remain pending. No AST
   payload interpreter is introduced.
-- **Remaining scope:** Stored references, shared/virtual/recursive owning
-  cleanup, other allocation providers (arenas and pools over raw storage),
+- **Stored-reference cursors and range-for (2026-11-16):** the MIR evaluator
+  executes classes with checked reference fields. A stored reference is a
+  request-local designator of its referent, bound by the constructor's Stored
+  loan (the same field-publication contract native lowering uses), resolved
+  and re-validated on every access, and never published. Verified stored and
+  alternative loan dependencies execute as provenance; a range element loan
+  that re-parents a dereference result designates that place; fixed-array
+  element pointers support in-array arithmetic. Range-based `for` therefore
+  runs through its ordinary verified MIR plan: fixed arrays (`ArrayRangeBegin`
+  and `ArraySize` endpoints) and nominal cursors, including `break`,
+  `continue`, early `return`, nested and mutable traversal, and owned range
+  temporaries. Semantics admits stored-reference classes in transient
+  `constexpr` signatures only. `std::vector`, `std::span`/`mutable_span`,
+  `std::array` and the checked cursor helpers declare their cursor protocol
+  `constexpr`; an unrelated application range and cursor cover the same rule
+  (`tests/ui/language/constexpr_range_for*.gti`,
+  `tests/ui/stdlib/vector/constexpr_*.gti`, example 198). Remaining: the
+  consuming `into_range()` cursor (declaration-default fields and a draining
+  destructor), carriers whose cleanup uses a stored borrow, and `constexpr`
+  coverage of the generic algorithms (`std::sort` uses restoring swaps,
+  comparator callables and radix scratch storage).
+- **Remaining scope:** Carriers whose cleanup uses a stored borrow,
+  shared/virtual/recursive owning cleanup, other allocation providers (arenas and pools over raw storage),
   in-place constructor targets without an explicit canonical field-write schedule,
   unions, inherited aggregates,
   and polymorphism remain

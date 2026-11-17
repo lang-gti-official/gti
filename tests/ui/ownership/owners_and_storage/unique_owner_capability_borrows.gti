@@ -1,0 +1,26 @@
+// Unique ownership and allocation: compiler-private owner capabilities preserve their checked borrow boundary: mutable and stable storage, and no dereference operator (trusted source).
+//@ stdlib-overlay: std/owner_capabilities.gti std/detail/memory_capabilities.gti
+// --- main.gti
+import std.owner_capabilities;
+int main() { return owner_capabilities_main(); }
+// --- std/owner_capabilities.gti
+export module owner_capabilities;
+import std.memory;
+import std.detail.memory_capabilities;
+struct Widget {
+public:
+  int read() { return 0; }
+public:
+  Widget() = default;
+};
+
+int misuse_internal_owner() {
+  gti_internal::unique_owner<Widget> owner =
+      gti_internal::allocate_unique_owner<Widget>();
+  mut Widget& writable =
+      gti_internal::unique_owner_borrow_mut(owner);  //~ ERROR GTI-S2018
+  Widget& dangling = gti_internal::unique_owner_borrow(
+      gti_internal::allocate_unique_owner<Widget>());  //~ ERROR GTI-S2018 //~ ERROR GTI-S2017
+  return (*owner).read();  //~ ERROR GTI-S2022
+}
+export int owner_capabilities_main() { return misuse_internal_owner(); }

@@ -1,0 +1,17 @@
+// Exact member signature concepts: symbolic member calls must select the exact required overload, not only a member name or result.
+//@ check-pass
+struct Overloaded {
+  int get(int& value) { return value; }
+  bool get(bool& value) { return value; }
+public:
+  Overloaded() = default;
+};
+concept reads_both<R> =
+  requires(R& receiver, int& value) { { receiver.get(value) } -> int; } &&
+  requires(R& receiver, bool& value) { { receiver.get(value) } -> bool; };
+int read<R>(R& reader, int& value, bool& condition) requires reads_both<R> {
+  if (reader.get(condition)) { return reader.get(value); }
+  return 0;
+}
+int main() { Overloaded r{}; int value = 7; bool condition = true;
+  return read(r, value, condition) - 7; }

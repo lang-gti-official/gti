@@ -1,0 +1,2 @@
+// Consteval statement completion: invalid immediate statement or bare return rejects in semantics.
+struct Owner{int value;implicit consteval Owner():value(1){} ~Owner(){}}; Owner make(){return;} int main(){return 0;}  //~ ERROR GTI-S2057

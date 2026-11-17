@@ -58,7 +58,7 @@ def main():
                  root / "runtime/src/cthread_state.cpp",
                  root / "runtime/src/thread.cpp",
                  root / "runtime/src/failure.cpp",
-                 root / "tests/runtime_cthread_once_tests.cpp", "-o", native])
+                 root / "tests/unit/runtime_cthread_once_tests.cpp", "-o", native])
             run([native])
             for terminal in ("throws", "incomplete", "null"):
                 run([native, terminal], 86)

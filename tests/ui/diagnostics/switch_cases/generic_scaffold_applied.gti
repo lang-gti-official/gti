@@ -1,0 +1,11 @@
+// A single-line generic switch scaffold keeps the concrete qualified owner spelling and reanalyzes.
+//@ check-pass
+namespace nested { enum Packet<T> { empty, filled(T value) }; }
+int main() { nested::Packet<bool> value = nested::Packet<bool>::filled(true); switch (value) {
+    case nested::Packet<bool>::empty:
+      // TODO: Handle this case.
+      break;
+    case nested::Packet<bool>::filled:
+      // TODO: Handle this case.
+      break;
+} return 0; }

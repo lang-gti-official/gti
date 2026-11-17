@@ -1,0 +1,3 @@
+// Constexpr string view inspection: constexpr out-of-bounds text access diagnoses its index expression.
+constexpr std::string_view text = "abc";
+constexpr char value = text[-1];  //~ ERROR GTI-S2057 outside the valid range [0, 3)

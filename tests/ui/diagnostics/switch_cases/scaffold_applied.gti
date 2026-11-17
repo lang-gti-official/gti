@@ -1,0 +1,15 @@
+// Applying the missing-case scaffold resolves coverage without payload binding or ownership choices.
+//@ check-pass
+enum Message { idle, item(int value), done };
+void handle(Message& value) {
+  switch (value) {
+    case Message::idle: break;
+    case Message::item:
+      // TODO: Handle this case.
+      break;
+    case Message::done:
+      // TODO: Handle this case.
+      break;
+  }
+}
+int main() { return 0; }

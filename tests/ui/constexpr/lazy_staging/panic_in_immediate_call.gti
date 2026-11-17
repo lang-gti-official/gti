@@ -1,0 +1,9 @@
+// An immediate call reports an executed panic with its message and the request note.
+//@ snapshot: diagnostics
+import std.panic;
+constexpr int checked_third(int v) {
+  if (v % 3 != 0) { std::panic("not a multiple of three"); }
+  return v / 3;
+}
+consteval int third(int v) { return checked_third(v); }
+int main() { return third(10); }  //~ ERROR GTI-S2057

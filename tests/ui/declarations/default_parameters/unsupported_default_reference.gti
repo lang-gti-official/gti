@@ -1,0 +1,2 @@
+// Default parameters: a default in an unsupported context (owned or plain value) is rejected.
+int inspect(int& value = 1) { return value; }  //~ ERROR GTI-S2077 owned or plain value //~ ERROR GTI-S2077

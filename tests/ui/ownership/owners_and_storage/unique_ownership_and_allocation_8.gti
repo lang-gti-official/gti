@@ -1,0 +1,14 @@
+// Unique ownership and allocation: concrete forwarding through an ordinary stdlib factory should retain frontend constructor checking.
+import std.memory;
+
+struct Widget {
+public:
+  Widget(int value) {}
+public:
+  Widget() = default;
+};
+
+int main() {
+  auto owner = std::make_unique<Widget>(true);  //~ ERROR GTI-S2012
+  return 0;
+}

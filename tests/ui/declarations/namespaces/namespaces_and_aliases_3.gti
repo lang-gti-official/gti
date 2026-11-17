@@ -1,0 +1,2 @@
+// Namespaces and aliases: namespace shorthand must not bypass existing declaration conflicts.
+class outer {}; namespace outer::inner {} int main() { return 0; }  //~ ERROR GTI-S2006

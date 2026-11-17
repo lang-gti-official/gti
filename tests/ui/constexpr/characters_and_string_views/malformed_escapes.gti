@@ -1,0 +1,4 @@
+// Characters and string views: short hexadecimal escapes, surrogates and out-of-range scalars are lexical errors, and a multi-byte \u character literal keeps the one-code-unit rule.
+//@ parse-fail
+auto a = "\x4"; auto b = "\xZZ"; auto c = "\u12"; auto d = "\uD800";  //~ ERROR GTI-L0005 //~ ERROR GTI-L0005 //~ ERROR GTI-L0005 //~ ERROR GTI-L0005
+auto e = "\U00110000"; char f = 'é';  //~ ERROR GTI-L0005 //~ ERROR GTI-L0010

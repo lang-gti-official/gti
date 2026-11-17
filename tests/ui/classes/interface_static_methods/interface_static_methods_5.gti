@@ -1,0 +1,2 @@
+// Interface static methods: ordinary static access, receiver and unsafe restrictions must apply.
+interface I { private: static int hidden() { return 1; } }; int main(){ return I::hidden(); }  //~ ERROR GTI-S2007

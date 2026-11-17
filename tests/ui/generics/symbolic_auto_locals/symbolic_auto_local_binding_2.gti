@@ -1,0 +1,19 @@
+// Symbolic auto local binding: an uninstantiated valid generic primary should not need a concrete specialization to make its dependent local symbol valid.
+//@ check-pass
+import std.iterator;
+
+bool first_less_than_next<Iterator, Sentinel>(mut Iterator first, Sentinel last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::copy_constructible<Iterator> {
+  if (first != last) {
+    auto value = *first;
+    ++first;
+    if (first != last) {
+      return value < *first;
+    }
+  }
+  return false;
+}
+
+int main() { return 0; }

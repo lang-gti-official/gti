@@ -1,0 +1,14 @@
+main.gti:7:22: error[GTI-S2000]: Cannot mutate through a read-only receiver.
+ 7 | void examine() { cmd.name = 1; count = 1; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2002
+   |                      ^~~~
+main.gti:5:9: note: 'cmd' is declared without mutable access here.
+ 5 | Command cmd{};
+   |         ^~~
+help: Concurrent globals and static fields must stay immutable. Use local mutable storage or an immutable value with an approved atomic or mutex contract for synchronized mutation.
+main.gti:7:32: error[GTI-S2002]: Cannot assign to immutable binding 'count'.
+ 7 | void examine() { cmd.name = 1; count = 1; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2002
+   |                                ^~~~~
+main.gti:6:5: note: Binding declared here.
+ 6 | int count = 0;
+   |     ^~~~~
+help: Concurrent globals and static fields must stay immutable. Use local mutable storage or an immutable value with an approved atomic or mutex contract for synchronized mutation.

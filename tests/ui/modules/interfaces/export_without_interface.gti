@@ -1,0 +1,2 @@
+// export outside an explicit module interface is rejected.
+export int value() { return 1; }  //~ ERROR GTI-S2098

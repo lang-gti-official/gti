@@ -1,0 +1,9 @@
+// export import is valid only in a module interface.
+// --- main.gti
+import "legacy.gti";  //~ ERROR GTI-I0012
+int main() { return hidden(); }
+// --- legacy.gti
+export import "nested.gti";  //~ ERROR GTI-I0012 Re-exporting an import requires
+// --- nested.gti
+export module nested;
+export int hidden() { return 40; }

@@ -1,0 +1,25 @@
+// Forward iterator contracts and binary search: forward_iterator should reject a cursor without copy construction at the constrained call.
+import std.iterator;
+
+class CopyBlockedIterator {
+  int& value;
+public:
+  CopyBlockedIterator(int& source) : value(source) {}
+  CopyBlockedIterator(CopyBlockedIterator& other) = delete;
+  CopyBlockedIterator(CopyBlockedIterator&& other) = default;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(CopyBlockedIterator& other) { return false; }
+};
+
+bool accepts_forward<Iterator>(Iterator iterator)
+  requires std::forward_iterator<Iterator> {
+  return true;
+}
+
+int use() {
+  mut int value = 1;
+  mut CopyBlockedIterator blocked = CopyBlockedIterator(value);
+  bool result = accepts_forward(std::move(blocked));  //~ ERROR GTI-S2029
+  return 0;
+}

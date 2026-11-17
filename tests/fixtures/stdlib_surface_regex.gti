@@ -272,7 +272,7 @@ void splitting_and_finding() {
 void results() {
   std::regex re = std::regex("b+");
   std::string text{"aabbbcc"};
-  std::match_results m = std::regex_search(text.view(), re);
+  auto m = std::regex_search(text.view(), re);
   check(m && !m.empty(), 170);
   check(m.prefix() == "aa" && m.suffix() == "cc", 171);
   check(m.position() == std::size_t(2) && m.length() == std::size_t(3), 172);
@@ -283,7 +283,8 @@ void results() {
   check(none.str() == "" && none.prefix() == "", 175);
   check(!std::regex_match(text.view(), re), 176);
   std::regex runs = std::regex("a+b+c+");
-  check(!std::regex_match(text.view(), runs).empty(), 177);
+  auto whole_match = std::regex_match(text.view(), runs);
+  check(!whole_match.empty(), 177);
   // Search from an offset still sees the text before it for anchors.
   check(!std::regex_search("ab", std::regex("^b"), 1), 178);
   check(std::regex_search("ab cd", std::regex("\\b\\w"), 1).position() == std::size_t(3), 179);

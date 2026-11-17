@@ -1,0 +1,2 @@
+// Interface static methods: ordinary static access, receiver and unsafe restrictions must apply.
+interface I { unsafe static int raw() { return 1; } }; int main(){ return I::raw(); }  //~ ERROR GTI-S2055

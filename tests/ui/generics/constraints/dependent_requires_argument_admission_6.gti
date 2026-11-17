@@ -1,0 +1,11 @@
+// Dependent requires argument admission: concrete arguments recheck the exact structural member result contract.
+class Box<std::copyable T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+concept boxed_int<B> = requires(B& box) { { box.get() } -> int; };
+
+int read<T>(Box<T>& box) requires std::copyable<T> && boxed_int<Box<T>> { return box.get(); }
+int main() { Box<bool> box{true}; return read(box); }  //~ ERROR GTI-S2029

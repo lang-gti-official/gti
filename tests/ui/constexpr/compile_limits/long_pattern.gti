@@ -1,0 +1,32 @@
+// Compile limits: a user-written literal-pattern validator run by an immediate call (a 300-character, 24-field pattern) fits the default request budget.
+//@ check-pass
+struct PatternScan {
+  uint64_t fields;
+  bool valid;
+  constexpr PatternScan(uint64_t f, bool v) : fields(f), valid(v) {}
+};
+constexpr PatternScan scan_pattern(std::string_view pattern) {
+  mut uint64_t at = 0;
+  mut uint64_t fields = 0;
+  while (at < pattern.size()) {
+    if (pattern[at] == '{') {
+      if (at + 1 < pattern.size() && pattern[at + 1] == '}') {
+        fields = fields + 1;
+        at = at + 2;
+        continue;
+      }
+      return PatternScan(fields, false);
+    }
+    if (pattern[at] == '}') { return PatternScan(fields, false); }
+    at = at + 1;
+  }
+  return PatternScan(fields, true);
+}
+consteval void require_pattern(std::string_view pattern, uint64_t expected) {
+  PatternScan scan = scan_pattern(pattern);
+  uint64_t checked = uint64_t(1) / (scan.valid && scan.fields == expected ? uint64_t(1) : uint64_t(0));
+}
+void validate() {
+  require_pattern("field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} field {} xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", uint64_t(24));
+}
+int main() { return 0; }

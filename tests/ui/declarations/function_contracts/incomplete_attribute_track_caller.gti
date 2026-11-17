@@ -1,0 +1,4 @@
+// Function contracts: a missing attribute bracket gets a precise delimiter insertion fix.
+//@ snapshot: diagnostics
+[[track_caller] void broken() {}  //~ ERROR GTI-P0001
+int recovered() { return 0; }

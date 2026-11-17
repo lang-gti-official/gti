@@ -1,0 +1,3 @@
+// Constexpr library: chrono adoption preserves runtime-only clocks and shared constant evaluation resource/depth limits.
+import std.chrono;
+constexpr expected<std::chrono::system_time_point, std::chrono::clock_errc> value = std::chrono::system_clock::now();  //~ ERROR GTI-S2057

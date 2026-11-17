@@ -1,0 +1,5 @@
+// A declaration that is not exported is not visible to importers.
+// --- main.gti
+import "leaf.gti"; int main() { return api::answer(); }  //~ ERROR GTI-S2024
+// --- leaf.gti
+export module leaf; namespace api { int answer() { return 42; } }

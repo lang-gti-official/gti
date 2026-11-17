@@ -1,0 +1,2 @@
+// Mutable field groups: invalid group contents (static field) get a focused parser diagnostic: only direct instance fields.
+struct Bad { mut { static int value = 0; } int recovered = 1; };  //~ ERROR GTI-P0001 only direct instance fields //~ ERROR GTI-P0001

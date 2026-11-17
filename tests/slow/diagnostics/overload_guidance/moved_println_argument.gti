@@ -1,0 +1,10 @@
+// An explicitly moved println argument is accepted.
+//@ slow
+//@ check-pass
+import std.string;
+import std.format;
+int main() {
+  mut std::string s = "hello";  //~ WARN GTI-S2096
+  std::println("{}", std::move(s));
+  return 0;
+}

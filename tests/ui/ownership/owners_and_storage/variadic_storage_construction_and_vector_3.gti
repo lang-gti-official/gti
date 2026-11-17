@@ -1,0 +1,23 @@
+// Variadic storage construction and vector: vector emplace should preserve safe T* to const T* and nullptr compatibility through a concrete forwarded pack.
+//@ check-pass
+import std.vector;
+
+class PointerBox {
+  const int32_t* pointer = nullptr;
+
+public:
+  PointerBox(const int32_t* value) : pointer(value) {}
+public:
+  PointerBox() = default;
+};
+
+int main() {
+  mut int32_t value = 5;
+  mut int32_t* pointer = nullptr;
+  unsafe { pointer = &value; }  //~ WARN GTI-S2100
+
+  mut std::vector<PointerBox> boxes = std::vector<PointerBox>();
+  [[discard]] boxes.emplace_back(pointer);
+  [[discard]] boxes.emplace_back(nullptr);
+  return boxes.size() == 2 ? 0 : 1;
+}

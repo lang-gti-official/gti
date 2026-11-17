@@ -1,0 +1,13 @@
+// Edit steps: each `// --- step N` is document version N with its own
+// annotations and requests.
+//@ hover @name: int32_t value
+int main() {
+  int /*@name*/value = missing;  //~ ERROR GTI-S2001
+  return value;
+}
+// --- step 2
+//@ hover @total: int32_t total
+int main() {
+  int /*@total*/total = 4;
+  return total - 4;
+}

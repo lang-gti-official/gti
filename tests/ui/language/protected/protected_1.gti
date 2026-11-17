@@ -1,0 +1,29 @@
+// Protected members: the program is accepted.
+//@ check-pass
+//@ format-stable
+class Base {
+protected:
+  mut int value = 1;
+  int method() { return value; }
+  static int secret() { return 3; }
+  static mut int shared = 2;
+  using Number = int;
+  struct Detail { int code = 4;  public: Detail() = default; };
+public:
+  Base() {}
+  int inspect(Base& peer) { return peer.value; }
+  virtual int api() { return value; }
+};
+struct Sibling : public Base { public: Sibling() = default; };
+
+struct Derived : public Base {
+  int read(Derived& peer) { return peer.value + peer.method(); }
+  void update() mut { value = 9; }
+  int types() { Base::Number x = 2; Base::Detail d{}; return x + d.code; }
+  static int helper() { return Base::secret() + Base::shared; }
+  int api() override { return method(); }
+public:
+  Derived() = default;
+};
+struct Leaf : public Derived { int read_leaf(Leaf& peer) { return peer.value; }  public: Leaf() = default; };
+int main() { mut Derived d{}; d.update(); return d.api() - 9; }

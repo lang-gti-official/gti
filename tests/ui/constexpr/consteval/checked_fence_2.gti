@@ -1,0 +1,2 @@
+// Consteval: the checked-argument fence rejects this program in semantics.
+struct P{int value; implicit P(int v):value(v){}}; void f(P p){} int main(){f(1);return 0;}  //~ ERROR GTI-S2003

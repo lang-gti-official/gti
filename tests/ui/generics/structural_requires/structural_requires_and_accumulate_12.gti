@@ -1,0 +1,11 @@
+// Structural requires and accumulate: trailing requirements should validate candidates without distinguishing or ranking otherwise identical overloads.
+import std.iterator;
+import std.numeric;
+T select<I, S, T>(I iterator, S sentinel, T value)
+  requires std::input_iterator<I> && std::sentinel_for<S, I> {
+  return value;
+}
+T select<I, S, T>(I iterator, S sentinel, T value)  //~ ERROR GTI-S2011 Duplicate overload signature for 'select'
+  requires std::input_iterator<I> && std::accumulates_into<I, T> {
+  return value;
+}

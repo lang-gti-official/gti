@@ -1,0 +1,17 @@
+// Static assertions: dependent class and function assertions should both see a constexpr helper declared after them.
+//@ check-pass
+class Narrow<uint64_t N> {
+  static_assert(admits<N>(), "class instance is too wide");
+public:
+  Narrow() {}
+};
+void check<uint64_t N>() {
+  static_assert(admits<N>(), "function instance is too wide");
+}
+constexpr bool admits<uint64_t N>() { return N <= uint64_t(4); }
+
+int main() {
+  Narrow<4> narrow = Narrow<4>();
+  check<4>();
+  return 0;
+}

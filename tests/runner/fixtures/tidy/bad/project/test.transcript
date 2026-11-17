@@ -1,0 +1,4 @@
+// A malformed transcript.
+stdout: before any command
+$ gti check
+? x

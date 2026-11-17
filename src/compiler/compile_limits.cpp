@@ -11,7 +11,7 @@ namespace {
 // counters are 64-bit, the evaluator's storage is bounded independently of
 // its step count, and nested work runs on fresh native stack segments
 // (support.h), so the maxima bound time and memory rather than stack use.
-constexpr std::array<CompileLimitInfo, 10> limits{{
+constexpr std::array<CompileLimitInfo, 11> limits{{
     {.key = "constexpr-steps",
      .field = &CompileLimits::constexprSteps,
      .guaranteedMinimum = 1048576,
@@ -62,6 +62,11 @@ constexpr std::array<CompileLimitInfo, 10> limits{{
      .guaranteedMinimum = 4096,
      .maximum = 16384,
      .summary = "'constexpr for' body copies per declaration"},
+    {.key = "error-limit",
+     .field = &CompileLimits::errorLimit,
+     .guaranteedMinimum = 0,
+     .maximum = 4294967295ULL,
+     .summary = "Errors per analysis (0 means unlimited)"},
 }};
 
 } // namespace
@@ -85,10 +90,12 @@ const CompileLimitInfo &compileLimitInfo(std::size_t CompileLimits::*field) {
 std::optional<std::size_t>
 validateCompileLimitValue(const CompileLimitInfo &limit, long long value,
                           std::string &error) {
-  if (value < 1 || static_cast<unsigned long long>(value) > limit.maximum) {
-    error = "'" + std::string(limit.key) + "' must be an integer from 1 to " +
-            std::to_string(limit.maximum) + "; got " + std::to_string(value) +
-            ".";
+  const auto minimum = limit.field == &CompileLimits::errorLimit ? 0 : 1;
+  if (value < minimum ||
+      static_cast<unsigned long long>(value) > limit.maximum) {
+    error = "'" + std::string(limit.key) + "' must be an integer from " +
+            std::to_string(minimum) + " to " + std::to_string(limit.maximum) +
+            "; got " + std::to_string(value) + ".";
     return std::nullopt;
   }
   return static_cast<std::size_t>(value);
@@ -107,10 +114,12 @@ std::optional<std::size_t> parseCompileLimitValue(const CompileLimitInfo &limit,
             "'.";
     return std::nullopt;
   }
-  if (status == std::errc::result_out_of_range || value < 1 ||
+  const auto minimum = limit.field == &CompileLimits::errorLimit ? 0U : 1U;
+  if (status == std::errc::result_out_of_range || value < minimum ||
       value > limit.maximum) {
-    error = "'" + std::string(limit.key) + "' must be an integer from 1 to " +
-            std::to_string(limit.maximum) + "; got " + std::string(text) + ".";
+    error = "'" + std::string(limit.key) + "' must be an integer from " +
+            std::to_string(minimum) + " to " + std::to_string(limit.maximum) +
+            "; got " + std::string(text) + ".";
     return std::nullopt;
   }
   return static_cast<std::size_t>(value);

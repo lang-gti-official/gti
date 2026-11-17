@@ -1,0 +1,2 @@
+// An unresolved std::unordered_map offers the canonical import std.unordered_map; fix.
+using dictionary = std::unordered_map<int, int>;  //~ ERROR GTI-S2089

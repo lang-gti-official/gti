@@ -1,0 +1,6 @@
+// Container scaffold surfaces: a C-string pointer must not escape the local string that owns its bytes.
+import std.string;
+c_string escape() {
+  mut std::string text = std::string("abc");
+  return text.c_string();  //~ ERROR GTI-S2045
+}

@@ -1,0 +1,3 @@
+// A malformed or misplaced module import or header fails during source loading: a re-export outside an interface.
+export import lib;  //~ ERROR GTI-I0012 requires an 'export module name;' interface
+//~| ERROR GTI-I0012 registered source owner

@@ -1,0 +1,14 @@
+// Mutable field groups: the formatter keeps and indents mutable field groups without adding a semicolon, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+struct Sample {
+private:
+  mut {
+    int first = 0;
+    int second = 1;
+  }
+  int id = 2;
+public:
+  Sample() = default;
+};

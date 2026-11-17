@@ -1,0 +1,30 @@
+// Concrete application special members: construction rejects the default constructor box<Tracked>'s lifecycle excludes.
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+};
+
+enum class state<T> { empty, engaged(T value) };
+
+class maybe<T> {
+  mut state<T> slot;
+public:
+  maybe() : slot(state<T>::empty) {}
+  maybe(T value) : slot(state<T>::engaged(std::move(value))) {}
+  int get() { return 1; }
+};
+
+class box<T> {
+  mut T item;
+public:
+  box() requires std::default_initializable<T> : item(T()) {}
+  box(T value) : item(std::move(value)) {}
+  int get() { return 1; }
+};
+
+int main() {
+  box<Tracked> empty = box<Tracked>();  //~ ERROR GTI-S2029
+  return empty.get() - 1;
+}

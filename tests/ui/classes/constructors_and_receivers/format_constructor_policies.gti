@@ -1,0 +1,5 @@
+// Constructors and receiver mutability: the formatter distinguishes constructor policies from logical operators and switch labels, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+class Counter{mut int value;public:Counter(int initial):value(initial){}Counter(Counter& other)=default;Counter(Counter&& other)=delete;int read(){return this.value;}void reset()mut{this.value=0;}};

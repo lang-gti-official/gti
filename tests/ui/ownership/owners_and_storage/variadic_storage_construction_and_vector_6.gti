@@ -1,0 +1,21 @@
+// Variadic storage construction and vector: source storage constraints reject elements that retain borrowed state.
+import std.memory;
+std::storage<T> fixture_storage<T>(uint64_t count) requires std::storage_element<T> {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<T>(count);
+  return std::move(allocated).expect("test storage allocation");
+}
+
+class BorrowCarrier {
+  int32_t& value;
+
+public:
+  BorrowCarrier(int32_t& source) : value(source) {}
+};
+
+int main() {
+  int32_t source = 1;
+  mut std::storage<BorrowCarrier> forbidden =  //~ ERROR GTI-S2029
+      fixture_storage<BorrowCarrier>(uint64_t(1));  //~ ERROR GTI-S2029
+  return source;
+}

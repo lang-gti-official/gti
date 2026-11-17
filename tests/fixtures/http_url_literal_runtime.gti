@@ -1,0 +1,10 @@
+// url::checked accepts only a compile-time constant; runtime text goes
+// through url::parse, which reports a url_errc.
+import std.http;
+import std.string;
+import std.vector;
+
+int main(int argc, std::vector<std::string> argv) {
+  auto target = std::http::url::checked(argv[0].view());
+  return 0;
+}

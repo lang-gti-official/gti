@@ -1154,6 +1154,7 @@ struct HirLoweringResult {
 // parameter bindings, so MIR lowers it as a signature-only declaration. The
 // LSP sets it because it never reads HIR bodies.
 struct HirLoweringScope {
+  std::size_t errorLimit = 0;
   bool reachablePrefix = false;
   std::optional<std::pair<std::size_t, std::size_t>> entryDeclarations;
   std::optional<std::vector<std::pair<std::size_t, std::size_t>>>
