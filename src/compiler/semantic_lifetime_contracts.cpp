@@ -1256,13 +1256,15 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
   const auto checkCarrierRegion =
       [&](const Parameter &parameter, const ClassDecl &declaration,
           std::optional<std::string> written, const Token &at,
-          const std::string &what) -> bool {
+          const std::string &what, bool implicitRegion = false) -> bool {
     const auto binders = declaration.lifetimeParameters();
     std::optional<std::size_t> index;
     if (written)
       for (std::size_t position = 0; position < binders.size(); ++position)
         if (binders[position].name.lexeme == *written)
           index = position;
+    if (implicitRegion)
+      index = 0; // the class's one implicit region
     std::optional<std::string> supplier;
     std::string description;
     if (index) {
@@ -1305,16 +1307,20 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
         if (field == nullptr || field->name().lexeme != get->name().lexeme)
           continue;
         std::optional<std::string> written;
+        bool implicitRegion = false;
         if (field->type().reference) {
           if (field->type().referenceLifetime)
             written = field->type().referenceLifetime->name.lexeme;
           else if (binders.size() == 1)
             written = binders.front().name.lexeme;
+          else if (binders.empty())
+            implicitRegion = true; // the class's one implicit region
           else
             return true; // an anonymous slot: constructor binding decides
         }
         return checkCarrierRegion(parameter, *declaration, written, get->name(),
-                                  "Field '" + get->name().lexeme + "'");
+                                  "Field '" + get->name().lexeme + "'",
+                                  implicitRegion);
       }
       return true;
     }
