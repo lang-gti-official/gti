@@ -507,7 +507,12 @@ arbitrary PR pass or merge exception still does not.
    an older compiler with a new commit when the selected source has no artifacts.
 3. **Download and verify.** Nightly downloads the artifacts from the selected
    successful CI run and attempt. Their manifest binds source commit, platform,
-   bundled-release configuration, run/attempt and archive checksums. Missing,
+   bundled-release configuration, run/attempt and archive checksums. The run's
+   latest attempt must show every required job green; the attempt nightly
+   downloads from is the one that built both packages, which is older than the
+   latest when only failed jobs were re-run (`validation-retry.yml` re-runs
+   jobs that never got a runner), and then the latest attempt must list those
+   same package executions (`release_artifacts.py package_attempt`). Missing,
    expired, mixed or mismatched artifacts stop publication. Nightly neither
    rebuilds the compiler nor reruns the full suite. A new full CI dispatch on
    main can recover unavailable artifacts while preserving the same validation
