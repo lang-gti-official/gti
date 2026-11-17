@@ -96,6 +96,20 @@ int read_in_environment<T, lifetime data>(T&<data> owner, int&<data> value) {
   return read(value);
 }
 
+// A method result written in its class's region is what the carrier stores
+// there, never the carrier itself. It can therefore be returned through a
+// carrier parameter or reference, from a local carrier, or taken from a
+// temporary carrier, and it keeps only that region's owner borrowed.
+struct Span2<lifetime first, lifetime second> {
+  int&<first> head;
+  int&<second> tail;
+  Span2(int&<first> h, int&<second> t) : head(h), tail(t) {}
+  int&<second> last() { return this.tail; }
+};
+
+int&<b> last_of<lifetime a, lifetime b>(Span2<a, b> span) { return span.last(); }
+int&<b> last_through<lifetime a, lifetime b>(Span2<a, b>& span) { return span.last(); }
+
 int main() {
   mut int left = 3;
   int right = 9;
@@ -127,5 +141,15 @@ int main() {
   if (copy_global_before_cleanup() != 11 || cleaned_reading != 20) { return 11; }
   std::function_ptr<Selection> pointer{choose};
   if (pointer(left, right, false) != 9) { return 14; }
+  {
+    mut int front = 1;
+    int back = 2;
+    Span2 pair{front, back};
+    if (last_of(pair) != 2 || last_through(pair) != 2) { return 15; }
+    // The temporary ends here; its relayed result borrows only `back`.
+    int& tail = Span2(front, back).last();
+    front = 5;
+    if (tail != 2 || front != 5) { return 16; }
+  }
   return identity(left) - 4;
 }
