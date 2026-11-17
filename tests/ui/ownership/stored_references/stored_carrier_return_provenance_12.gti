@@ -7,7 +7,7 @@ public:
 };
 int main() {
   mut int first_owner = 1;
-  mut int second_owner = 2;
+  int second_owner = 2;
   mut ReadCarrier left = ReadCarrier(first_owner);
   ReadCarrier right = ReadCarrier(second_owner);
   left = right;

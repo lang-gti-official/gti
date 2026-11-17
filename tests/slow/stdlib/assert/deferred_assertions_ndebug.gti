@@ -1,6 +1,7 @@
 // With NDEBUG defined, deferred assertions and their message arguments are
 // not evaluated and the program completes. (Converted from
 // deferred_assertion_runtime_test's `-D NDEBUG` builds.)
+//@ slow
 //@ run-pass
 //@ define: NDEBUG
 import std.assert;

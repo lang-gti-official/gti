@@ -13,6 +13,6 @@ int main() {
   mut int32_t source = 1;
   BorrowCarrier values[1] = {BorrowCarrier(source)};
   int32_t consumed = consume(values);
-  source = 2;
-  return values[0].read() - 1 + consumed; //~ ERROR GTI-S2017
+  source = 2; //~ ERROR GTI-S2017 overlapping borrow
+  return values[0].read() - 1 + consumed;
 }

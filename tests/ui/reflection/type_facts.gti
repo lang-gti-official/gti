@@ -19,11 +19,20 @@ class NoDefault {
 public:
   NoDefault(int32_t initial) : value(initial) {}
 };
+class SharedBorrowCarrier {
+  int32_t& value;
+public:
+  SharedBorrowCarrier(int32_t& source) : value(source) {}
+};
+// Cleanup-observing carriers retain construction but cannot be replaced.
 class CopyConstructionOnly {
   int32_t& value;
 public:
   CopyConstructionOnly(int32_t& source) : value(source) {}
+  ~CopyConstructionOnly() { [[discard]] this.value; }
 };
+static_assert(std::meta::is_copy_constructible<CopyConstructionOnly>());
+static_assert(!std::meta::is_copyable<CopyConstructionOnly>());
 struct RawAddress { int32_t* value = nullptr;  public: RawAddress() = default; };
 [[no_transfer, no_share]] struct ThreadAffine { int32_t value = 0;  public: ThreadAffine() = default; };
 enum class Code : uint16_t { none = 0, failed = 1 };
@@ -68,17 +77,17 @@ static_assert(std::meta::is_relocatable<Coordinates>());
 static_assert(std::meta::is_bitwise_relocatable<Coordinates>());
 static_assert(std::meta::is_bitwise_relocatable<int32_t[4]>());
 static_assert(std::meta::has_object_layout<Coordinates>());
-static_assert(std::meta::has_object_layout<CopyConstructionOnly>());
+static_assert(std::meta::has_object_layout<SharedBorrowCarrier>());
 static_assert(std::meta::has_object_layout<int32_t[4]>());
 static_assert(!std::meta::has_object_layout<void>());
 static_assert(!std::meta::has_object_layout<int32_t&>());
 static_assert(std::meta::is_borrow_free<Coordinates>());
 static_assert(std::meta::is_borrow_free<RawAddress>());
-static_assert(!std::meta::is_borrow_free<CopyConstructionOnly>());
+static_assert(!std::meta::is_borrow_free<SharedBorrowCarrier>());
 static_assert(!std::meta::is_borrow_free<int32_t&>());
-static_assert(std::meta::is_copy_constructible<CopyConstructionOnly>());
-static_assert(!std::meta::is_copyable<CopyConstructionOnly>());
-static_assert(!std::meta::is_relocatable<CopyConstructionOnly>());
+static_assert(std::meta::is_copy_constructible<SharedBorrowCarrier>());
+static_assert(std::meta::is_copyable<SharedBorrowCarrier>());
+static_assert(!std::meta::is_relocatable<SharedBorrowCarrier>());
 static_assert(std::meta::is_default_initializable<Coordinates>());
 static_assert(!std::meta::is_default_initializable<NoDefault>());
 static_assert(std::meta::is_transferable<Coordinates>());
@@ -159,7 +168,7 @@ int main() {
          independent_fact<Coordinates>() &&
          std::meta::type<Coordinates>().has_object_layout() &&
          std::meta::is_borrow_free<Coordinates>() &&
-         !std::meta::is_borrow_free<CopyConstructionOnly>() &&
+         !std::meta::is_borrow_free<SharedBorrowCarrier>() &&
          !std::meta::is_copy_constructible<MoveOnly>() &&
          std::meta::is_enum_underlying<Code, uint16_t>() &&
          classify<Opaque<int32_t>>() == 1 && classify<int32_t>() == 2 &&

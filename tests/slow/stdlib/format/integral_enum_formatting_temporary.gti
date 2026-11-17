@@ -1,4 +1,5 @@
 // stdlib surface case "integral-enum-formatting-temporary" (from tests/fixtures/integral_enum_formatting_temporary.gti).
+//@ slow
 //@ run-pass
 import std.format;
 import std.string;

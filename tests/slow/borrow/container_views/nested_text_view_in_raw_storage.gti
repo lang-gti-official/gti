@@ -6,7 +6,7 @@ import std.string;
 import std.memory;
 
 int main() {
-  mut std::string text = std::string("abc");
+  std::string text = std::string("abc");
   mut std::detail::prefix_owner<std::string_view> stored =
       std::detail::prefix_owner<std::string_view>(uint64_t(1));
   stored.append_value(text.view());

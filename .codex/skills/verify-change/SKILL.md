@@ -48,9 +48,10 @@ tooling that consume them. For the changed paths the planner prints:
   and the native O0/O3 smoke
   (`python3 scripts/validation_checks.py smoke --build build`);
 - **T0**, the registered tests whose CMake registration names a changed test,
-  fixture or harness file (a changed `tests/ui/`, `tests/lsp/` or
-  `tests/project/` file selects `gti_test_ui`; for a quick loop run
-  `build-release/gti-test <path>` on just those files);
+  fixture or harness file; source files under `tests/ui/`, `tests/lsp/` and
+  `tests/project/` select the `gti_test_ui` self-check and all four source
+  shards through the ownership map (T1). For a quick loop run
+  `build-release/gti-test <path>` on just those files;
 - **T1**, the owning tests, and **T2**, the consumer tests, each as one
   runnable `ctest ... -R '<anchored regex>'` command, followed by a
   per-test list of the areas that selected it;

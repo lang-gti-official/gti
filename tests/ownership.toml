@@ -2018,3 +2018,29 @@ paths = ["tests/runner/", "tests/gti_test.cmake", "scripts/convert_runtime_wrapp
 owners = ["^gti_test_ui(_shard_[1-4])?$"]
 consumers = ["cmake_test_ownership", "test_throughput_registration"]
 risk = "system"
+
+# Source files are discovered at runtime, so CMake cannot infer their owners.
+[[area]]
+area = "source-test-inventory"
+paths = [
+  "tests/ui/", "tests/project/", "tests/lsp/",
+  "tests/slow/borrow/retained-storage/",
+  "tests/slow/constexpr/lazy_staging/lazy_staging_and_compile_time_panic_2.gti",
+  "tests/slow/ownership/stored_references/writable_and_movement_iterator_capabilities_1.gti",
+
+  "tests/slow/borrow/container_views/nested_text_view_in_raw_storage.gti",
+  "tests/slow/stdlib/regex/regex_subject_mutation.gti",
+  "tests/slow/stdlib/assert/deferred_assertions.gti",
+  "tests/slow/stdlib/assert/deferred_assertions_ndebug.gti",
+  "tests/slow/stdlib/charconv/format.gti",
+  "tests/slow/stdlib/format/integral_enum_formatting_temporary.gti",
+  "tests/slow/stdlib/io/composable_io.gti",
+  "tests/slow/stdlib/encoding/encoding.gti",
+  "tests/slow/language/construction/object_construction.gti",
+  "tests/slow/language/construction/object_construction_owned.gti",
+  "tests/slow/language/construction/object_construction_reference.gti",
+  "tests/slow/language/construction/borrowed_array_cleanup.gti",
+  "tests/slow/language/construction/borrowed_vector_cleanup.gti",
+]
+owners = ["^gti_test_ui(_shard_[1-4])?$"]
+consumers = []

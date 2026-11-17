@@ -8,7 +8,7 @@ int main() {
   mut View view{outer};
   {
     int inner = 2;
-    view = View(inner);  //~ ERROR GTI-S2017 owner or retained dependency has become unavailable
+    view = View(inner);
   }
-  return view.value;
+  return view.value;  //~ ERROR GTI-S2017 owner or retained dependency has become unavailable
 }

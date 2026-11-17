@@ -621,11 +621,15 @@ def suite_roots(runner):
         print("gti-test: no gti_lsp beside the runner; tests/lsp skipped")
     roots.extend([
         "tests/slow/borrow/retained-storage",
+        "tests/slow/constexpr/lazy_staging/lazy_staging_and_compile_time_panic_2.gti",
+        "tests/slow/ownership/stored_references/writable_and_movement_iterator_capabilities_1.gti",
+
         "tests/slow/borrow/container_views/nested_text_view_in_raw_storage.gti",
         "tests/slow/stdlib/regex/regex_subject_mutation.gti",
         "tests/slow/stdlib/assert/deferred_assertions.gti",
         "tests/slow/stdlib/assert/deferred_assertions_ndebug.gti",
         "tests/slow/stdlib/charconv/format.gti",
+        "tests/slow/stdlib/format/integral_enum_formatting_temporary.gti",
         "tests/slow/stdlib/io/composable_io.gti",
         "tests/slow/stdlib/encoding/encoding.gti",
         "tests/slow/language/construction/object_construction.gti",

@@ -10,7 +10,7 @@ public:
 };
 int32_t consume<Args...>(Args... args) { return 0; }
 int main() {
-  mut int32_t source = 1;
+  int32_t source = 1;
   BorrowCarrier values[1] = {BorrowCarrier(source)};
   int32_t consumed = consume(values);
   return values[0].read() - 1 + consumed;
