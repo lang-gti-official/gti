@@ -1,0 +1,9 @@
+// S: a forced move capture respects a live checked borrow.
+import std.memory;
+#macro invoke<F>(F callback) { callback(); }
+int main() {
+  auto owner = std::make_unique<int>(7);
+  auto& held = owner;
+  invoke!([owned = std::move(owner)]() -> void { int value = *owned; });  //~ ERROR GTI-S2017
+  return *held;
+}

@@ -1,0 +1,173 @@
+// Shared exhaustion aborts; an ordinary final-release failure follows MIR cleanup.
+//@ run-pass
+//@ revisions: empty_access exhausted exhausted_cleanup release_failure success
+//@[empty_access] run-fail
+//@[empty_access] exit-code: 70
+//@[empty_access] stdout: 99
+//@[empty_access] stderr-contains: runtime error[GTI-R0008]
+//@[empty_access] stderr-contains: empty_owner_access in member_access
+//@[exhausted] run-fail
+//@[exhausted] exit-signal: SIGABRT
+//@[exhausted] args: phase
+//@[exhausted] stderr-contains: runtime error[GTI-R0011]
+//@[exhausted] stderr-contains: allocation_failure in private_storage
+//@[exhausted_cleanup] run-fail
+//@[exhausted_cleanup] exit-signal: SIGABRT
+//@[exhausted_cleanup] args: phase phase
+//@[exhausted_cleanup] stderr-contains: runtime error[GTI-R0011]
+//@[exhausted_cleanup] stderr-contains: allocation_failure in private_storage
+//@[release_failure] run-fail
+//@[release_failure] exit-code: 70
+//@[release_failure] args: phase phase phase
+//@[release_failure] stdout: 1
+//@[release_failure] stdout: 2
+//@[release_failure] stdout: 7
+//@[release_failure] stdout: 99
+//@[release_failure] stderr-contains: runtime error[GTI-R0002]
+//@[release_failure] stderr-contains: division_by_zero
+//@[success] args: phase phase phase phase
+//@[success] stdout: 1
+//@[success] stdout: 2
+//@[success] stdout: 7
+//@[success] stdout: 12
+//@[success] stdout: 99
+// --- shared_ownership_failure.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+extern "C" { void gti_test_fail_scalar_allocation(int32_t enabled); }
+
+class Caller {
+public:
+  ~Caller() { std::println(99); }
+public:
+  Caller() = default;
+};
+
+class Item {
+  int divisor;
+public:
+  Item(int divisor) : divisor(divisor) {
+    std::println(1);
+  }
+  ~Item() {
+    std::println(7);
+    std::println(12 / this.divisor);
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  if (argc == 1) {
+    std::shared_ptr<int> empty{};
+    return *empty;
+  }
+  int fail_allocation = argc == 2 || argc == 3 ? 1 : 0;
+  int divisor = argc == 3 || argc == 4 ? 0 : 1;
+  // A combined region is acquired before construction; exhaustion cannot
+  // begin the payload lifetime or run its destructor.
+  unsafe { gti_test_fail_scalar_allocation(fail_allocation); }  //~ WARN GTI-S2100
+  mut auto first = std::make_shared<Item>(divisor);
+  mut auto second = first.clone();
+  first.reset();
+  std::println(2);
+  second.reset();
+  return 0;
+}
+// --- allocation_fault.cpp
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <new>
+#ifndef _WIN32
+#include <cerrno>
+#include <sys/resource.h>
+#endif
+
+namespace {
+bool failScalarAllocation = false;
+// Abort deliberately does not flush streams. Make cleanup markers observable
+// before any program I/O, so an empty capture proves cleanup did not execute.
+struct ConfigureFaultProcess {
+  ConfigureFaultProcess() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+#ifndef _WIN32
+    const rlimit limit{0, 0};
+    setrlimit(RLIMIT_CORE, &limit);
+#endif
+  }
+} configureFaultProcess;
+} // namespace
+
+extern "C" void gti_test_fail_scalar_allocation(std::int32_t enabled) {
+  failScalarAllocation = enabled != 0;
+}
+
+// The fault tests require a real allocation, not an optimizable owner. This
+// external observation makes its address escape without modifying the value.
+extern "C" std::int32_t
+gti_test_observe_scalar_allocation(const std::int32_t *value) {
+  return *value;
+}
+
+using Callback = std::int32_t (*)(std::int32_t);
+extern "C" std::int32_t gti_test_call_scalar_callback(Callback function,
+                                                      std::int32_t value) {
+  return function == nullptr ? -1 : function(value);
+}
+
+// Replace the standard no-throw allocation seam, not generated GTI code or
+// the failure helper. No real resource exhaustion is needed for this oracle.
+void *operator new(std::size_t size, const std::nothrow_t &) noexcept {
+  if (failScalarAllocation) {
+    return nullptr;
+  }
+  try {
+    return ::operator new(size);
+  } catch (const std::bad_alloc &) {
+    return nullptr;
+  }
+}
+
+#ifndef _WIN32
+// Source owners allocate through the production process provider, which
+// selects malloc for fundamentally aligned requests and posix_memalign
+// otherwise. Fail both provider entries. This replaces the whole runtime
+// memory object, so its archive member is never linked beside these
+// definitions; successful calls still use the real allocator.
+extern "C" std::uint64_t gti_rt_native_size_max_v1() {
+  return (std::numeric_limits<std::size_t>::max)();
+}
+extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *address,
+                                                     std::uint64_t alignment) {
+  if (!address || alignment == 0 || (alignment & (alignment - 1)) != 0)
+    return 0;
+  return reinterpret_cast<std::uintptr_t>(address) % alignment == 0;
+}
+extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() {
+  return sizeof(void *);
+}
+extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
+extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
+extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
+  if (failScalarAllocation)
+    return nullptr;
+  return std::malloc(static_cast<std::size_t>(bytes));
+}
+extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
+                                          std::uint64_t alignment,
+                                          std::int32_t *status) {
+  if (failScalarAllocation) {
+    *status = ENOMEM;
+    return nullptr;
+  }
+  void *address = nullptr;
+  *status = posix_memalign(&address, static_cast<std::size_t>(alignment),
+                           static_cast<std::size_t>(bytes));
+  return address;
+}
+extern "C" void gti_rt_posix_free_v1(void *address) { std::free(address); }
+#endif

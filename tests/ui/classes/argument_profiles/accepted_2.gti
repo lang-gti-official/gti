@@ -1,0 +1,8 @@
+// Accepted: argument profile is a valid source class.
+//@ check-pass
+import std.meta;
+static_assert(std::meta::type<void>().is_void());
+static_assert(!std::meta::type<int>().is_void());
+static_assert(std::meta::type<int&>().is_reference());
+static_assert(!std::meta::type<int>().is_reference());
+int main() { return 0; }

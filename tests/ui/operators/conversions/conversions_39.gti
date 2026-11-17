@@ -1,0 +1,12 @@
+// Conversion operators: rejected with GTI-S2068.
+class Globals {
+public:
+  struct Source {
+    operator int() { return Globals::later; }
+   public: Source() = default; };
+  static int32_t early = int(Source());  //~ ERROR GTI-S2068
+  static mut int32_t later = 5;
+public:
+  Globals() = default;
+};
+int main() { return Globals::early; }

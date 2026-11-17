@@ -1,0 +1,9 @@
+// Rejected: invalid query/use is rejected before emission.
+import std.meta;
+std::meta::callable_return_type<F, a> borrow<F, lifetime a>(F& fn, int&<a> value) { return fn(value); }
+int& bad() {  //~ ERROR GTI-S2017
+  int owner = 42;
+  auto same = [](int& value) -> int& { return value; };
+  return borrow(same, owner);
+}
+int main() { return bad(); }

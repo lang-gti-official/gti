@@ -1,0 +1,4 @@
+// General requires: isolated expression queries cannot assume their own comparison capability diagnostic.
+bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
+bool missing_proof<T>(T& a, T& b) { return before(a, b); }  //~ ERROR GTI-S2029
+int main() { return 0; }

@@ -1,0 +1,26 @@
+// Explicit fallback: explicit constant fallback should admit synthesized source without effects.
+//@ check-pass
+import std.source_location;
+import std.memory;
+import std.assert;
+constexpr std::string_view fallback = "synthetic condition";
+#macro std::string_view composed(int expression) {
+  return std::expression_text!(expression + 1, fallback);
+}
+#macro std::string_view forwarded(int expression) { return composed!(expression); }
+#macro std::string_view owner_text<T>(T expression) {
+  return std::expression_text!((expression), "owner fallback");
+}
+#macro checked(int expression) { std::assert!(expression > 0); }
+int main() {
+  mut int counter = 0;  //~ WARN GTI-S2096
+  std::string_view exact = std::expression_text!(++counter, "unused fallback");
+  std::string_view synthetic = forwarded!(++counter);
+  mut std::unique_ptr<int> owner = std::make_unique<int>(7);
+  std::string_view named = owner_text!(owner);
+  std::string_view moved = owner_text!(std::move(owner));
+  std::string_view borrowed = owner_text!(*owner);
+  owner.reset();
+  checked!(3);
+  return counter;
+}

@@ -1,0 +1,2 @@
+// Cross nominal defaults and finite layouts: inventory completion does not admit later constexpr defaults or recursive omitted-default dependencies.
+struct Count<uint64_t N = Later> { public: Count() = default; }; constexpr uint64_t Later = 3; int main() { return 0; }  //~ ERROR GTI-S2026

@@ -1,0 +1,12 @@
+main.gti:57:65: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 57 | int main() { Token token = {.value=1}; auto value = std::format("{:x}", token); return 0; }  //~ ERROR GTI-S2057
+    |                                                                 ^~~~~~
+main.gti:57:65: note: Compile-time evaluation panicked: "Format presentation does not accept this argument type"
+ 57 | int main() { Token token = {.value=1}; auto value = std::format("{:x}", token); return 0; }  //~ ERROR GTI-S2057
+    |                                                                 ^~~~~~
+$STD/std/format.gti:1034:22: note: Immediate declaration is here.
+ 1034 |   implicit consteval format_pattern(string_view value) : text(value) {
+      |                      ^~~~~~~~~~~~~~
+main.gti:57:65: note: Constant evaluation requested here.
+ 57 | int main() { Token token = {.value=1}; auto value = std::format("{:x}", token); return 0; }  //~ ERROR GTI-S2057
+    |                                                                 ^~~~~~

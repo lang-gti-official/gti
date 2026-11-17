@@ -1,0 +1,11 @@
+// Confined callable parameters: nested generic forwarding should accept a lambda only through proven confined callable parameters.
+//@ check-pass
+void outer<Operation>(Operation operation) { middle(operation); }
+void middle<Operation>(Operation operation) { inner(operation); }
+void inner<Operation>(Operation operation) { operation(1); }
+
+int main() {
+  auto operation = [](int value) -> void {};
+  outer(operation);
+  return 0;
+}

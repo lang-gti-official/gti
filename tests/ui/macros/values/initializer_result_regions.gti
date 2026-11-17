@@ -1,0 +1,51 @@
+// Initializer result regions: namespace, field and static initializers share ordinary typed/inferred, mutable, reference, structured and owning macro-local rules.
+//@ check-pass
+mut int initializer_drops = 0;
+class InitOwner {
+public:
+  InitOwner() {}
+  InitOwner(InitOwner& other) = delete;
+  InitOwner(InitOwner&& other) = default;
+  ~InitOwner() { initializer_drops += 1; }
+};
+struct InitPair {
+  int first;
+  int second;
+  InitPair(int first, int second) : first(first), second(second) {}
+};
+#macro int relay(int expression) { return expression; }
+#macro T typed_relay<T>(T expression) { return expression; }
+#macro T initial_value<T>(T expression) {
+  InitOwner owner{};
+  mut auto saved = expression;
+  saved += T(1);
+  auto& alias = saved;
+  InitPair pair{2, 3};
+  auto [left, right] = pair;
+  return typed_relay!(alias + T(left + right));
+}
+#macro int make_value(int expression) {
+  int saved = expression;
+  if (saved > 0) { return relay!(saved); }
+  return 0;
+}
+#macro InitOwner initial_owner() {
+  InitOwner owner{};
+  return InitOwner();
+}
+struct OwnedRecord { InitOwner field = initial_owner!();  public: OwnedRecord() = default; };
+struct Record {
+  int field = make_value!(7);
+  static int shared = make_value!(9);
+  uint64_t wide = initial_value!(uint64_t(5));
+  static int generic_shared = initial_value!(9);
+public:
+  Record() = default;
+};
+int global = make_value!(3);
+namespace setup { int namespaced = initial_value!(4); }
+int main() {
+  Record record{};
+  OwnedRecord owned{};
+  return record.field + Record::shared + global - 19;
+}

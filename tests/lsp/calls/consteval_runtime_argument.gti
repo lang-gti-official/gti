@@ -1,0 +1,10 @@
+// A runtime argument to a consteval function names the argument and the
+// callee, not a constexpr requirement; constexpr callee clears it.
+// (From semantic_call_regressions_lsp_test.py.)
+int runtime_value() { return 1; }
+consteval int check(int value) { return value; }
+int main() { return check(runtime_value()); }  //~ ERROR GTI-S2057 Argument 1
+// --- step 2
+constexpr int runtime_value() { return 1; }
+consteval int check(int value) { return value; }
+int main() { return check(runtime_value()); }

@@ -1,0 +1,5 @@
+// std::c_string_bytes on a C string needs an unsafe block.
+//@ check-fail
+import std.string;
+import std.memory;
+int main() { c_string p = nullptr; auto text = std::c_string_bytes(p); return 0; }  //~ ERROR GTI-S2055

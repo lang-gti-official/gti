@@ -1,0 +1,2 @@
+// Reject: invalid member types have valid type-path syntax.
+struct Box<T> { using scalar = int;  public: Box() = default; }; using Bad = Box<int>::scalar::missing;  //~ ERROR GTI-S2030

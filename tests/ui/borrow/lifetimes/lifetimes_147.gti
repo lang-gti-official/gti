@@ -1,0 +1,8 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct StaticView<R&<static>()> {
+  R&<static> value;
+  StaticView(R&<static> input) : value(input) {}
+};
+int stored = 7;
+int main() { StaticView<int&<static>()> value{stored}; return value.value - 7; }

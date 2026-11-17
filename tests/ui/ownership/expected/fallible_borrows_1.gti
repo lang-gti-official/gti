@@ -1,0 +1,10 @@
+// Fallible borrows: fallible returns cannot substitute a same-typed local carrier field for its external referent.
+enum class Error { missing };
+struct View { int& item; View(int& item) : item(item) {} };
+struct Envelope {
+  View view;
+  int shell = 5;
+  Envelope(View view) : view(view) {}
+};
+expected<int&, Error> bad(Envelope owner) { return owner.shell; }  //~ ERROR GTI-S2045
+int main() { return 0; }

@@ -1,0 +1,9 @@
+// Negative boundaries: temporary callables cannot escape, borrow mutably or alias captures.
+int invoke<F>(F& callback, int value) { int result = callback(value); return result; }
+int mutable_invoke<F>(mut F& callback) { return callback(1); }
+F& escape<F>(F& callback) { return callback; }
+int change(mut int& value) { value += 1; return value; }
+int increment(int value) { return value + 1; }
+int unproven<F>(F& callback) { return 0; }
+int invoke_owned<F>(F callback, int value) { return callback(value); }
+int main() { return mutable_invoke([](int value) -> int { return value; }); }  //~ ERROR GTI-S2017

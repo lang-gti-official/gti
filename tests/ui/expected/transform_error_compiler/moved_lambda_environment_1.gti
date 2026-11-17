@@ -1,0 +1,12 @@
+// Moved lambda environment: an explicitly moved owning mapper retains a verified environment.
+//@ check-pass
+struct Resource { ~Resource() {}  public: Resource() = default; };
+expected<int, int> read() { return unexpected(7); }
+int main() {
+  Resource resource{};
+  auto mapper = [owned = std::move(resource)](int error) -> int {
+    return error;
+  };
+  auto result = read().transform_error(std::move(mapper));
+  return result.error() - 7;
+}

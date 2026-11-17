@@ -1,0 +1,24 @@
+// Raw invocation boundaries: temporary aggregate field projection preserves source expiry.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder {
+  mut const int* chosen = nullptr;
+  mut const int* other = nullptr;
+public:
+  Holder() = default;
+};
+struct Relay {
+  mut Holder inner = Holder();
+  Relay(const int* chosen, const int* other) {
+    this.inner.chosen = chosen;
+    this.inner.other = other;
+  }
+  Holder& operator->() { return this.inner; }
+public:
+  Relay() = default;
+};
+Relay make(const int* live) { int dead = 7; return Relay(live, &dead); }
+
+Holder project(const int* live) { return make(live).inner; }
+int main() { int live = 9; Holder result = project(&live);
+  unsafe { return *result.other; } }  //~ ERROR GTI-S2102

@@ -1,0 +1,15 @@
+// Positive: nominal generic receiver proves a concrete ordinary member contract.
+//@ check-pass
+import std.resource;
+import std.memory;
+
+concept number_source<T> = requires(T& value) { { value.number() } -> int; };
+class Adapter<T> {
+public:
+  int number() { return 42; }
+public:
+  Adapter() = default;
+};
+int read<T>(T& value) requires number_source<T> { return value.number(); }
+int relay<T>(Adapter<T>& value) { return read(value); }
+int main() { Adapter<int> value{}; return relay(value) - 42; }

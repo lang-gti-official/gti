@@ -1,0 +1,7 @@
+// Borrowing captures: function-ref-cannot-outlive-local-callable is rejected with a user diagnostic, not an ICE.
+import std.functional;
+std::function_ref<int()> bad() {
+  auto callback = []() -> int { return 1; };
+  return std::function_ref<int()>(callback);  //~ ERROR GTI-S2127
+}
+int main() { return 0; }

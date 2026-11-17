@@ -1,0 +1,11 @@
+// Payload concurrency capabilities: local mutex/shared ownership must accept thread-affine payloads.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+import std.memory;
+[[no_transfer]]
+struct Payload { mut int value = 0;  public: Payload() = default; };
+int main() {
+  auto owned = std::make_shared<std::mutex<Payload>>(Payload());
+  return 0;
+}

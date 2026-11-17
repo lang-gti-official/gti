@@ -1,0 +1,26 @@
+// Non null references: non-null read-only and mutable references should validate.
+//@ check-pass
+struct Counter {
+public:
+  Counter() = default;
+  mut int value = 0;
+  void bump() mut { this.value += 1; }
+};
+
+int read(Counter& counter) { return counter.value; }
+void increment(mut Counter& counter) { counter.bump(); }
+
+int main() {
+  mut Counter counter = Counter();
+  mut Counter& writable = counter;
+  increment(writable);
+  Counter& read_only = counter;
+
+  mut int value = 1;
+  mut int& alias = value;
+  alias += 2;
+  if (read(read_only) == 1 and value == 3) {
+    return 0;
+  }
+  return 1;
+}

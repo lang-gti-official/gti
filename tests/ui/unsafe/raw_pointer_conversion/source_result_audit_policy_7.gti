@@ -1,0 +1,5 @@
+// Source result audit policy: source helper cannot reinterpret unrelated typed pointers.
+//@ raw-pointer-audit: warn
+using Pointer = uint64_t*;
+Pointer restore(int* address) { return Pointer(address); }  //~ ERROR GTI-S2014
+int main() { return 0; }

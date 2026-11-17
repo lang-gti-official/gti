@@ -1,0 +1,10 @@
+manifest-version = 1
+[package]
+name = "tool"
+version = "1.2.3"
+[targets.tool]
+kind = "executable"
+root = "main.gti"
+[targets.tool_tests]
+kind = "test"
+root = "check.gti"

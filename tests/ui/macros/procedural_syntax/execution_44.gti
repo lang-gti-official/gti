@@ -1,0 +1,36 @@
+// Execution: procedural program reaches verified ordinary MIR.
+//@ check-pass
+// --- main.gti
+import "library.gti"; int main(){return fresh_pair!({})-3;}
+// --- library.gti
+
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr fresh_pair(std::syntax::tokens input){
+  auto origin=std::syntax::location(input,uint64_t(0),uint64_t(1));
+  auto first=std::syntax::reference(std::syntax::fresh("value",origin));
+  auto second=std::syntax::reference(std::syntax::fresh("value",origin));
+  mut auto result=std::syntax::punctuation("[",origin);
+result=std::syntax::join(result,std::syntax::punctuation("]",origin));
+result=std::syntax::join(result,std::syntax::punctuation("(",origin));
+result=std::syntax::join(result,std::syntax::keyword("int",origin));
+result=std::syntax::join(result,first);
+result=std::syntax::join(result,std::syntax::punctuation(",",origin));
+result=std::syntax::join(result,std::syntax::keyword("int",origin));
+result=std::syntax::join(result,second);
+result=std::syntax::join(result,std::syntax::punctuation(")",origin));
+result=std::syntax::join(result,std::syntax::punctuation("->",origin));
+result=std::syntax::join(result,std::syntax::keyword("int",origin));
+result=std::syntax::join(result,std::syntax::punctuation("{",origin));
+result=std::syntax::join(result,std::syntax::keyword("return",origin));
+result=std::syntax::join(result,first);
+result=std::syntax::join(result,std::syntax::punctuation("+",origin));
+result=std::syntax::join(result,second);
+result=std::syntax::join(result,std::syntax::punctuation(";",origin));
+result=std::syntax::join(result,std::syntax::punctuation("}",origin));
+result=std::syntax::join(result,std::syntax::punctuation("(",origin));
+result=std::syntax::join(result,std::syntax::literal("1",origin));
+result=std::syntax::join(result,std::syntax::punctuation(",",origin));
+result=std::syntax::join(result,std::syntax::literal("2",origin));
+result=std::syntax::join(result,std::syntax::punctuation(")",origin));
+return std::syntax::parse(result);}

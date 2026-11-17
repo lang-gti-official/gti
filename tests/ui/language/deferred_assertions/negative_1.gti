@@ -1,0 +1,2 @@
+// Negative: #macro.
+[[deferred]] void old(bool condition) {}  //~ ERROR GTI-S2099

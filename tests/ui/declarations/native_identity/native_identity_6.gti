@@ -1,0 +1,10 @@
+// Native identity: the program is accepted.
+//@ check-pass
+class Celsius {
+  int degrees;
+public:
+  implicit Celsius(int value) : degrees(value) {}
+  int read() { return this.degrees; }
+};
+Celsius make() { return 21; }
+int main() { return make().read(); }

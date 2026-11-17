@@ -19,12 +19,20 @@ applies normally; an ordinary callable never gains procedural behavior from its
 spelling. The signature is exactly `std::syntax::expr name(std::syntax::tokens
 input)`, without generics, defaults, packs, member/operator forms or constraints.
 
+Procedural definitions, like constexpr definitions, are checked eagerly even
+inside trusted library units: reachable-body deferral must not postpone the
+semantic facts required by expansion.
+
 Completed procedural bodies and their constexpr helpers are type-checked and
 lazily staged through the existing constant HIR/MIR closure service. An explicit
 procedural request enables syntax intrinsics in the same MIR interpreter; there
 is no AST fallback or host plugin. The ordinary constant profile still rejects
 syntax capabilities, including capabilities nested inside persistent aggregates.
 Procedural bodies and syntax-dependent helpers are omitted from runtime HIR/MIR.
+HIR excludes procedural declarations by their declaration mode as well as syntax
+capability types, including discovery through concrete generic analyses. Syntax
+capability classes likewise have no runtime layout inventory, even under full
+declaration discovery.
 
 `std.syntax` declares `tokens`, `expr`, `span`, and `binding` through trusted
 `@compiler_type` identities. Its intrinsic declarations are recognized only in
@@ -102,7 +110,11 @@ signature probe leaves an unknown result type, preventing secondary unused-resul
 errors from an unrelated preceding expression.
 Signature selection and argument diagnostics use an isolated
 semantic probe; its speculative flow, loans and syntax never enter caller
-execution. The probe forks request context separately from semantic facts,
+execution. Signature probing runs inside the owning request's body-demand
+attempt: when a constraint needs a deferred constexpr definition, the owner
+completes it and recreates the speculative snapshot before accepting either
+its selection or its diagnostics. A probe never completes shared bodies itself.
+The probe forks request context separately from semantic facts,
 reads existing facts through a model delta and owns a copy of active loan
 identities; it does not deep-copy the growing whole-program expression model.
 The expression-order cache and active full-expression cleanup frames are local
@@ -947,7 +959,7 @@ analyses compiler-trusted bodies after the application bodies, in reverse
 lexical order. The `order` invariant of the slow-tier `gti-corpus` walk
 (`tests/corpus/gti_corpus.cpp`) proves that it produces the same diagnostics
 as the complete pass over the examples and the standard-library tests;
-`body_analysis_order_fixtures` checks fixtures for both orders of the moved-return generic, global
+`tests/ui/declarations/body_analysis_order/` checks fixtures for both orders of the moved-return generic, global
 and `constexpr` visibility across a demand, and mutually recursive demands.
 `TrustedBodyAnalysis::Reachable` extends that infrastructure for artifact
 builds and editor snapshots/completion. Function lookups during body analysis
@@ -3407,7 +3419,7 @@ and body analysis validates the returned reference against that contract.
 The selected referent and protecting root remain distinct in MIR. Owner
 reset, movement and unlinking conflict with the retained root loan; arbitrary
 raw-pointer reachability does not establish an owner dependency. The
-`borrow_origin` owner-chain regressions and `owner_chain_runtime` example cover
+`tests/ui/borrow/origins/` owner-chain regressions and `owner_chain_runtime` example cover
 both shared and mutable recursion, invalidation and escaping-reference
 rejections, return-loan verifier mutations and native cleanup.
 Synthesized range dereference retains the selected physical range-storage loan

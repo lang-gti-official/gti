@@ -1,0 +1,2 @@
+// Class parameter packs: owner-pack errors must be frontend diagnostics: class Relay<Args...> { void send(mut Args... args) {}  public: Relay() = default; };.
+class Relay<Args...> { void send(mut Args... args) {}  public: Relay() = default; };  //~ ERROR GTI-S2023

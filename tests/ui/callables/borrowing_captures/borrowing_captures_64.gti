@@ -1,0 +1,9 @@
+// Borrowing captures: capture-of-enclosing-capture is rejected with a user diagnostic, not an ICE.
+int main() {
+  int base = 10;
+  auto outer = [&base]() -> int {
+    auto inner = [&base]() -> int { return base + 1; };  //~ ERROR GTI-S2045
+    return inner();
+  };
+  return outer() == 11 ? 0 : 1;
+}

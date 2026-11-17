@@ -1,0 +1,15 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Forwarded { empty, value(int& owner) };
+Forwarded<a> make<lifetime a>(int&<a> owner, bool empty) {
+  if (empty) return Forwarded::empty;
+  return Forwarded::value(owner);
+}
+Forwarded<a> relay<lifetime a>(int&<a> owner) {
+  return make(owner, false);
+}
+int inspect_forwarded(int& owner) {
+  auto held = make(owner, false);
+  return 0;
+}
+int main() { return 0; }

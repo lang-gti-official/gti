@@ -1,0 +1,42 @@
+// Borrowed receivers survive a conditional fallible argument after an owning one.
+//@ run-pass
+//@ revisions: default failure
+//@[default] stdout: 7
+//@[default] stdout: 12
+//@[default] stdout: 9
+//@[failure] run-fail
+//@[failure] args: failure
+//@[failure] exit-code: 70
+//@[failure] stdout: 7
+//@[failure] stdout: 9
+//@[failure] stderr-contains: passive_result_payload.gti:8: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- passive_result_payload.gti
+import std.string;
+import std.vector;
+struct Report {
+  int code;
+  Report(int code) : code(code) {}
+};
+Report plain() { return Report(7); }
+Report checked(int divisor) { return Report(12 / divisor); }
+enum Content { value(Report report) };
+struct Envelope {
+  Content content;
+  Envelope(int divisor) : content(Content::value(checked(divisor))) {}
+  int code() {
+    switch (this.content) {
+    case Content::value(auto& report): return report.code;
+    }
+  }
+};
+struct Guard { ~Guard() { std::println(9); }  public: Guard() = default; };
+int main(int argc, std::vector<std::string> args) {
+  Guard guard{};
+  Content first = Content::value(plain());
+  switch (first) {
+  case Content::value(auto& report): std::println(report.code); break;
+  }
+  Envelope second{argc == 1 ? 1 : 0};
+  std::println(second.code());
+  return 0;
+}

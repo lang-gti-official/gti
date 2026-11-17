@@ -1,0 +1,41 @@
+// Operators with a requires clause navigate the clause's concept; an
+// instance that fails it is reported at the operator use; broken clause
+// syntax recovers. (From conditional_member_operators_lsp_test.py.)
+//@ definition @use: @decl
+//@ hover @use: available<T>
+//@ formatting: requires available<T>
+concept /*@decl*/available<T> = std::numeric<T>;
+class Box<T> {
+public:
+  Box() = default;
+  int operator[](int index) requires /*@use*/available<T> { return index; }
+  int operator()(int value) requires available<T> { return value; }
+};
+int main() { /* 🧮 */ Box<int> box{}; return box[0] + box(0); }
+// --- step 2
+concept available<T> = std::numeric<T>;
+class Box<T> {
+public:
+  Box() = default;
+  int operator[](int index) requires available<T> { return index; }
+  int operator()(int value) requires available<T> { return value; }
+};
+int main() { /* 🧮 */ Box<bool> box{}; return box[0] + box(0); }  //~ ERROR GTI-S2029 //~ ERROR GTI-S2029
+// --- step 3
+concept available<T> = std::numeric<T>;
+class Box<T> {
+public:
+  Box() = default;
+  int operator[](int index) requires available< { return index; }  //~ ERROR GTI-P0001
+  int operator()(int value) requires available<T> { return value; }
+};
+int main() { /* 🧮 */ Box<int> box{}; return box[0] + box(0); }  //~ ERROR GTI-S2022
+// --- step 4
+concept available<T> = std::numeric<T>;
+class Box<T> {
+public:
+  Box() = default;
+  int operator[](int index) requires available<T> { return index; }
+  int operator()(int value) requires available<T> { return value; }
+};
+int main() { /* 🧮 */ Box<int> box{}; return box[0] + box(0); }

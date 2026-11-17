@@ -1,0 +1,19 @@
+// Raw access: rejected with GTI-S2101, GTI-S2102.
+//@ raw-pointer-audit: strict
+interface Channel<T> { T inspect(T value); };
+class Model<T> : public Channel<T> {
+public:
+  T inspect(T value) override { return value; }
+public:
+  Model() = default;
+};
+
+const int* dispatch(Channel<const int*>& observer, const int* pointer) {
+  return observer.inspect(pointer);
+}
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  Model<const int*> model{};
+  return dispatch(model, pointer) != nullptr ? 0 : 1;  //~ ERROR GTI-S2102 //~ ERROR GTI-S2101
+}

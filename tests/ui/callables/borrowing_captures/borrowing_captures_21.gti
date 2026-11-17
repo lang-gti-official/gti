@@ -1,0 +1,15 @@
+// Borrowing captures: restoration-alias-cannot-return-local-owner is rejected with a user diagnostic, not an ICE.
+import std.memory;
+struct Reader {
+  int& value;
+  Reader(int& source) : value(source) {}
+};
+Reader& bad(int& source) {
+  Reader local{source};
+  std::erased_object& object = std::erase_ref(local);
+  unsafe {
+    Reader& restored = std::restore_ref<Reader>(object);
+    return restored;  //~ ERROR GTI-S2017
+  }
+}
+int main() { return 0; }

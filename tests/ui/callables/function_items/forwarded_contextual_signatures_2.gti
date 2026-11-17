@@ -1,0 +1,6 @@
+// Forwarded contextual signatures: forwarded contextual constraints do not rank ambiguous overloads.
+void selected(int value) {}
+void selected(int& value) {}
+void invoke<F>(F& callback, int value) { callback(value); }
+void relay<F>(F& callback, int value) { invoke(callback, value); }
+int main() { relay(selected, 1); return 0; }  //~ ERROR GTI-S2090

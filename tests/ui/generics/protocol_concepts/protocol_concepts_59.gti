@@ -1,0 +1,26 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept sized<T> {
+  typename count_type;
+  count_type count(T& value);
+};
+enum class Slot<T> {
+  empty,
+  full(T value),
+};
+for <T> concept sized<Slot<T>> {
+  using count_type = int;
+  int count(Slot<T>& value) {
+    switch (value) {
+    case Slot<T>::full:
+      return 1;
+    case Slot<T>::empty:
+      return 0;
+    }
+  }
+};
+
+for concept sized<Slot<int>> {  //~ ERROR GTI-S2123
+  using count_type = int;
+  int count(Slot<int>& value) { return 2; }
+};
+int main() { return 0; }

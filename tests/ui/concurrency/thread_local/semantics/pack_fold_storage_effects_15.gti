@@ -1,0 +1,9 @@
+// Pack fold storage effects: a nonempty fold with a declaration-only GTI target remains conservatively unknown rather than effect-free.
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2;
+void leaf<T>(int32_t& input, T& element);
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;  //~ WARN GTI-S2096
+  (leaf(input, args), ...);
+}
+int main() { int32_t& held = guarded; folded(1); return held; }  //~ ERROR GTI-S2045

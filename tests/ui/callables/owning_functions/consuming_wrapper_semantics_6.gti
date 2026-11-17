@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: copyable wrapper rejects move-only target.
+import std.functional;
+import std.memory;
+int main() { auto resource = std::make_unique<int>(3); auto target = [value = std::move(resource)]() -> int { return *value; }; std::function<int() &&> callback{std::move(target)}; return 0; }  //~ ERROR GTI-S2029

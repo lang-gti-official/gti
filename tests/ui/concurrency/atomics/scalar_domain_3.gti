@@ -1,0 +1,7 @@
+// Scalar domain: double should be rejected at the public atomic constraint.
+//@ execution-profile: concurrent
+import std.atomic;
+int main() {
+  std::atomic<double> value{double(1)};  //~ ERROR GTI-S2029
+  return 0;
+}

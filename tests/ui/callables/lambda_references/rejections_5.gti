@@ -1,0 +1,5 @@
+// Rejections: lambda-live-readonly-result.gti.
+int main() {
+  auto observe = [](mut int& value) -> int& { value += 1; return value; };
+  mut int number = 1;
+int& result = observe(number); number += 1; return result; }  //~ ERROR GTI-S2017

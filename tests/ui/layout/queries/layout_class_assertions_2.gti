@@ -1,0 +1,2 @@
+// Layout class assertions: layout queries validate by-value class assertions: alignof(Bad<int>).
+struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); T value; }; struct Container<T> { Bad<T> value; }; int main() { uint64_t bytes = alignof(Bad<int>); return 0; }  //~ ERROR GTI-S2079

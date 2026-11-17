@@ -1,0 +1,12 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+struct Resource {
+  int value;
+  Resource(int initial) : value(initial) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+enum Message { Value(Resource value) };
+void discard<Args...>(Args... args) {}
+int main() { discard(Message::Value(Resource(1))); return 0; }

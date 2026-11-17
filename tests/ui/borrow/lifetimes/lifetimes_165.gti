@@ -1,0 +1,9 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Take<T> { typename Item; Item take(T value); };
+for concept Take<View> {
+  using Item = int&;
+  int& take(View value) { return value.value; }
+};
+int main() { int value = 7; View view{value}; return Take<View>::take(view) - 7; }

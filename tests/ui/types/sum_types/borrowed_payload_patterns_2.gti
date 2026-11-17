@@ -1,0 +1,20 @@
+// Borrowed payload patterns: an exclusive pattern can mutate its payload.
+//@ check-pass
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class data { empty, some(resource item) };
+
+int main() {
+  mut data value = data::some(resource());
+  switch (value) {
+    case data::some(mut auto& item): item.add(); return item.read();
+    case data::empty: return 0;
+  }
+}

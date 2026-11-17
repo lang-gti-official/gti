@@ -1,0 +1,10 @@
+// An out-of-range macro argument is reported at the literal, and the valid
+// invocation clears it. (From semantic_call_regressions_lsp_test.py.)
+#macro BORDER(uint8_t width) {}
+int main() { BORDER!(33); return 0; }
+// --- step 2
+#macro BORDER(uint8_t width) {}
+int main() { BORDER!(256); return 0; }  //~ ERROR GTI-S2003 Integer literal '256' does not fit
+// --- step 3
+#macro BORDER(uint8_t width) {}
+int main() { BORDER!(33); return 0; }

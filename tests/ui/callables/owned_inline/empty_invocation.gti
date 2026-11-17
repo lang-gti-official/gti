@@ -1,0 +1,9 @@
+// Invoking an empty move_only_function reports an empty owner access.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: empty_owner
+import std.functional;
+int main() {
+  std::move_only_function<int() &&> callback{};
+  return std::move(callback)();
+}

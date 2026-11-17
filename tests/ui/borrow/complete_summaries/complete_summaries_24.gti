@@ -1,0 +1,13 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+
+Token choose(bool first) {
+  if (first) { return Token::empty; }
+  return Token::item(7);
+}
+Token narrowed() {
+  if (true) { return Token::empty; }
+  return Token::item(8);  //~ WARN GTI-S2095
+}
+int main() { auto value = choose(true); return 0; }

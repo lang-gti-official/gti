@@ -1,0 +1,8 @@
+// Calling a conditional call operator whose requires clause fails is rejected.
+//@ check-fail
+class Box<T> {
+public:
+  Box() = default;
+  bool operator()(T value) requires std::numeric<T> { return true; }
+};
+int main() { Box<bool> value{}; return value(true) ? 0 : 1; }  //~ ERROR GTI-S2029 std::numeric<bool>

@@ -1,0 +1,2 @@
+// Analyze: specialized owners retain exact generic arity.
+struct Box<T> { using value_type = T;  public: Box() = default; }; using Bad = Box<int, bool>::value_type;  //~ ERROR GTI-S2000

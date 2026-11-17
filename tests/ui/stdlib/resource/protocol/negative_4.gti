@@ -1,0 +1,8 @@
+// Negative: bare type parameters still require explicit member evidence.
+import std.resource;
+import std.memory;
+
+concept number_source<T> = requires(T& value) { { value.number() } -> int; };
+int read<T>(T& value) requires number_source<T> { return value.number(); }
+int relay<T>(T& value) { return read(value); }  //~ ERROR GTI-S2029
+int main() { return 0; }

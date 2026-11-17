@@ -1,0 +1,8 @@
+// Generated default schedules retain effects: effectful explicit/implicit field and inherited-base schedules preserve disjoint persistent access.
+//@ check-pass
+ mut int32_t first = 1;
+ mut int32_t second = 2;
+void mutate() { second = 9; } int32_t initialize() { mutate(); return 0; } struct Outer { int32_t field = initialize();  public: Outer() = default; };
+void inspect(Outer& input) {}
+void execute() { inspect(Outer()); }
+int main() { int32_t& borrowed = first; execute(); return borrowed; }

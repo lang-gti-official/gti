@@ -1,0 +1,29 @@
+// Source-absent nominal APIs keep their type and access rules: the consumer
+// checks and runs against the bundle alone, while a private field, a private
+// type and a wrong nominal argument are rejected; the bundle is unchanged and
+// no interface source appears. (From compiled_value_types_test.py.)
+$ cd producer
+$ gti build geometry --release
+stdout: Built geometry [release,
+$ mkdir ../consumer/dependencies
+$ sh -c "cp build/gti/release/*/geometry.gtilib ../consumer/dependencies/"
+$ cp ../consumer/dependencies/geometry.gtilib ../original.gtilib
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti check app --release
+$ gti run app --release
+$ cp ../variants/private_field.gti main.gti
+$ gti check app --release
+? 65
+stderr: private
+$ cp ../variants/private_type.gti main.gti
+$ gti check app --release
+? 65
+stderr: $DIR/consumer/main.gti:1:32: error[GTI-S2024]: Declaration 'Hidden' is private to module
+$ cp ../variants/wrong_nominal.gti main.gti
+$ gti check app --release
+? 65
+stderr: $DIR/consumer/main.gti:1:51: error[GTI-S2003]: Argument 1 has type 'Status' but the parameter requires 'Point'.
+$ cmp dependencies/geometry.gtilib ../original.gtilib
+$ test ! -e api.gti

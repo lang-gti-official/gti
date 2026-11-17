@@ -1,0 +1,2 @@
+// Class parameter packs: invalid pack elements explain the supported value/reference boundary.
+class Relay<Args...> { public: void send(Args... args) {} int operator()(Args... args) { return 0; }  public: Relay() = default; }; int main() { Relay<void> value{}; return 0; }  //~ ERROR GTI-S2023 //~ ERROR GTI-S2023

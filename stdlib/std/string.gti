@@ -1,4 +1,5 @@
 export module string;
+import std.syntax;
 import "detail/sequence_removal.gti";
 import "detail/memory_storage.gti";
 import "detail/memory_capabilities.gti";
@@ -1504,5 +1505,44 @@ export [[discardable]] size_t erase_if<Predicate>(mut string& values, mut Predic
 export [[discardable]] size_t erase(mut string& values, char& value) {
   size_t retained = std::detail::compact_remove(values, value);
   return std::detail::erase_tail(values, retained);
+}
+}
+
+namespace std {
+/// Joins comma-separated string literals into one static string literal.
+/// Empty input yields ""; one trailing comma is permitted. Expressions and
+/// adjacent literals without a comma are rejected at their source location.
+export #macro(proc) std::syntax::expr concat(std::syntax::tokens input) {
+  uint64_t count = std::syntax::size(input);
+  auto origin = std::syntax::location(input, uint64_t(0), count);
+  if (count < uint64_t(2) ||
+      std::syntax::kind(input, uint64_t(0)) != "LEFT_BRACE" ||
+      std::syntax::kind(input, count - uint64_t(1)) != "RIGHT_BRACE") {
+    return std::syntax::fail(origin, "std::concat! expects a braced list of string literals");
+  }
+  mut std::string spelling = std::string("\"");
+  mut uint64_t index = uint64_t(1);
+  while (index < count - uint64_t(1)) {
+    auto here = std::syntax::location(input, index, index + uint64_t(1));
+    if (std::syntax::kind(input, index) != "STRING_LITERAL") {
+      return std::syntax::fail(here, "std::concat! expects a string literal");
+    }
+    auto token = std::syntax::text(std::syntax::slice(input, index, index + uint64_t(1)));
+    // Preserve the already-validated spelling. GTI's escapes have fixed
+    // widths, so joining literal bodies cannot absorb a neighbour's digits.
+    for (mut size_t byte = size_t(1); byte + size_t(1) < token.size(); byte++) {
+      spelling.push_back(token[byte]);
+    }
+    index++;
+    if (index < count - uint64_t(1)) {
+      if (std::syntax::kind(input, index) != "COMMA") {
+        return std::syntax::fail(std::syntax::location(input, index, index + uint64_t(1)),
+                                 "std::concat! expects ',' between string literals");
+      }
+      index++;
+    }
+  }
+  spelling.push_back('"');
+  return std::syntax::parse(std::syntax::literal(spelling.view(), origin));
 }
 }

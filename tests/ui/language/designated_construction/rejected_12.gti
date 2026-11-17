@@ -1,0 +1,2 @@
+// Rejected: invalid construction must stop compilation.
+int main() { int value = {.x = 1}; return value; }  //~ ERROR GTI-S2091

@@ -1,0 +1,27 @@
+// Field reborrow: nested carrier suspension matches the existing named-carrier readonly rule.
+//@ check-pass
+class Read {
+  int& value;
+public:
+  Read(int& value) : value(value) {}
+  int get() { return this.value; }
+};
+class Write {
+  mut int& value;
+public:
+  Write(mut int& value) : value(value) {}
+  Read read() { return Read(this.value); }
+  int bookkeeping() { return 0; } void bump() mut { this.value++; }
+};
+class Holder {
+  mut Write value;
+public:
+  Holder(Write value) : value(std::move(value)) {}
+  int get() { auto view = this.value.read(); return view.get(); }
+};
+int named(mut int& owner) { Write writer{owner}; auto view = writer.read(); int count = writer.bookkeeping(); return view.get() + count; } int main() {
+  mut int value = 4;
+  Write writer{value};
+  Holder holder{std::move(writer)};
+  return holder.get() - 4;
+}

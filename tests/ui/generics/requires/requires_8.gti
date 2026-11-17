@@ -1,0 +1,19 @@
+// General requires: symbolic type identities preserve equality and outer distinctions.
+//@ check-pass
+import std.meta;
+struct Cell<T> { public: Cell() = default; };
+struct End { public: End() = default; };
+constexpr bool identities<T>() {
+  return std::meta::is_same<Cell<T>&, Cell<T>&>() &&
+         !std::meta::is_same<Cell<T>&, End&>() &&
+         !std::meta::is_same<Cell<T>&, Cell<T>>();
+}
+concept stable<T> = identities<T>();
+int accepts<stable T>(T value) { return 1; }
+int forward<T>(T value) { return accepts(value); }
+constexpr bool equal<T, U>() { return std::meta::is_same<T, U>(); }
+int main() {
+  static_assert(equal<int, int>());
+  static_assert(!equal<int, bool>());
+  return forward(1) - 1;
+}

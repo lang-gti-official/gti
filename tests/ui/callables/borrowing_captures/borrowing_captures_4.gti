@@ -1,0 +1,8 @@
+// Borrowing captures: confined-generic-capture.
+//@ check-pass
+int invoke<F>(mut F& callback) { return callback(); }
+int main() {
+  mut int value = 3;
+  mut auto update = [mut &value]() -> int { value += 2; return value; };
+  return invoke(update) - 5;
+}

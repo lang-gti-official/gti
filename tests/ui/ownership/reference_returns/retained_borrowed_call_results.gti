@@ -1,0 +1,79 @@
+// Retained borrowed call results: retained borrowed call results should lower to verified MIR.
+//@ check-pass
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  mut int32_t& write() mut { return this.value; }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+public:
+  Boxes() = default;
+};
+
+class Outer {
+public:
+  mut Boxes inner = Boxes();
+public:
+  Outer() = default;
+};
+
+int32_t retain_through_alias() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  mut int32_t& child = alias.left.write();
+  child = 5;
+  return parent.left.read();
+}
+
+int32_t retain_across_statements() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  mut int32_t& child = alias.right.write();
+  int32_t observed = alias.left.read();
+  child = observed + 40;
+  return parent.right.read();
+}
+
+int32_t retain_nested_field() {
+  mut Outer outer = Outer();
+  mut Outer& alias = outer;
+  mut int32_t& child = alias.inner.right.write();
+  child = 7;
+  return outer.inner.right.read();
+}
+
+int32_t retain_read_only() {
+  mut Boxes parent = Boxes();
+  mut Boxes& alias = parent;
+  int32_t& observed = alias.left.observe();
+  return observed;
+}
+
+int32_t retain_from_local_receiver() {
+  mut Boxes parent = Boxes();
+  mut int32_t& child = parent.left.write();
+  child = 9;
+  return parent.left.read();
+}
+
+int32_t retain_through_reference_parameter(mut Box& box) {
+  mut int32_t& child = box.write();
+  child = 3;
+  return box.read();
+}
+
+int main() {
+  mut Box box = Box(0);
+  return retain_through_alias() + retain_across_statements() +
+         retain_nested_field() + retain_read_only() +
+         retain_from_local_receiver() +
+         retain_through_reference_parameter(box) - 66;
+}

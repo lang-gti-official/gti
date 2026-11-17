@@ -1,0 +1,7 @@
+// Semantic boundaries: application code should not be able to name compiler-owned atomic storage.
+//@ execution-profile: concurrent
+import std.atomic;
+int main() {
+  gti_internal::atomic_storage<int32_t> storage{1};  //~ ERROR GTI-S2058
+  return 0;
+}

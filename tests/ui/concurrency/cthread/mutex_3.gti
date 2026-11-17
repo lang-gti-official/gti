@@ -1,0 +1,4 @@
+// Mutex: scalar handles do not erase manual lock/lifetime caller obligations.
+//@ execution-profile: concurrent
+import std.cthread;
+int main() { return std::mtx_lock(uint64_t(0)); }  //~ ERROR GTI-S2055

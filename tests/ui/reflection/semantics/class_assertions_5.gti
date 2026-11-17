@@ -1,0 +1,17 @@
+// Class assertions: complete: class assertions hold for instances reached by constant evaluation and by a global initializer.
+//@ check-pass
+import std.meta;
+class Cell<T> {
+  static_assert(!std::meta::type<T>().is_void(), "no void cell");
+  T value;
+public:
+  constexpr Cell(T value) : value(value) {}
+  constexpr T get() { return value; }
+};
+constexpr int32_t read_cell() {
+  Cell<int32_t> cell = Cell<int32_t>(7);
+  return cell.get();
+}
+static_assert(read_cell() == 7);
+Cell<int32_t> global_cell = Cell<int32_t>(3);
+int main() { return global_cell.get() - 3; }

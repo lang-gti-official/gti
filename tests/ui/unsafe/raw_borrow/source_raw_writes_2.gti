@@ -1,0 +1,10 @@
+// Source raw writes: global raw write effects are declaration-order independent.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+void set() { int gone = 1; pointer = &gone; }
+const int* get() { return pointer; }
+
+int main() { set(); auto address = get();
+  unsafe { int& value = std::assume_ref(address, witness); return value; } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

@@ -1,0 +1,4 @@
+// Conversion operators: rejected with GTI-S2014, GTI-S2029.
+struct Meters { int value = 1; operator int() { return this.value; }  public: Meters() = default; };
+T convert<T>(Meters meters) { return T(meters); }  //~ ERROR GTI-S2029 //~ ERROR GTI-S2014
+int main() { return convert<int>(Meters()); }

@@ -1,0 +1,2 @@
+// Bounded arrays: constant bounds uses valid existing syntax.
+int read(int[2]& a) { return a[2]; }  //~ ERROR GTI-S2016

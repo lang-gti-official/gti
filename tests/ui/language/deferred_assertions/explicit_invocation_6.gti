@@ -1,0 +1,2 @@
+// Explicit invocation: typed macros report malformed expression arguments.
+#macro take(int x) {} int main() { take!(1 +); return 0; }  //~ ERROR GTI-P0001

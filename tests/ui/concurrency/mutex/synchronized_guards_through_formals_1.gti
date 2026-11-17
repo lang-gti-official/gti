@@ -1,0 +1,12 @@
+// Synchronized guards through formals: guard-through-reference-capture lowers to verified MIR.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+int main() {
+  std::mutex<int32_t> passive{4};
+  auto reader = [&passive]() -> int32_t {
+    auto guard = passive.lock();
+    return guard.get();
+  };
+  return reader() == 4 ? 0 : 1;
+}

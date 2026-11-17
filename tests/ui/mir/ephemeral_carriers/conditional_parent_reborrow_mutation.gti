@@ -1,0 +1,17 @@
+// Conditional parent reborrow mutation: conditional-parent mutation seed has independently verified MIR.
+//@ check-pass
+struct Owner { mut int first = 4; mut int second = 7;  public: Owner() = default; };
+class View {
+  mut int& value;
+public:
+  View(mut int& source) : value(source) {}
+  int read() { return this.value; }
+};
+int choose(mut Owner& owner, bool take) {
+  int result = take ? View(owner.first).read() : 0;
+  return result + owner.second;
+}
+int main() {
+  mut Owner owner{};
+  return choose(owner, true) - 11;
+}

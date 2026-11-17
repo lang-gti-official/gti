@@ -1,0 +1,2 @@
+// Native identity: rejected with GTI-S2054.
+extern "C" { [[link_name("bad\"label")]] int32_t call(); } int main() { return 0; }  //~ ERROR GTI-S2054

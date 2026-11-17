@@ -1,0 +1,17 @@
+// Raw pointer pipeline: a carrier reference through a raw dereference verifies.
+//@ check-pass
+class View {
+  int& value;
+public:
+  View(int& s) : value(s) {}
+  int get() { return this.value; }
+};
+int main() {
+  int x = 1;
+  View v = View(x);
+  const View* p = &v;
+  unsafe {
+    View& r = *p;
+    return r.get() - 1;
+  }
+}

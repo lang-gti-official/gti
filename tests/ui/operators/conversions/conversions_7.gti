@@ -1,0 +1,8 @@
+// Conversion operators: rejected with GTI-S2003.
+struct Meters {
+  int value;
+  constexpr Meters(int amount) : value(amount) {}
+  implicit constexpr operator int64_t() { return int64_t(this.value); }
+};
+constexpr int64_t widened = Meters(5);  //~ ERROR GTI-S2003
+int main() { return 0; }

@@ -1,0 +1,5 @@
+// General requires: typed macro definitions retain their documented query-body boundary diagnostic.
+#macro inspect(bool value) {  //~ ERROR GTI-S2099
+  if (requires(int& value) { { value + value } -> int; }) {}
+}
+int main() { inspect!(true); return 0; }  //~ ERROR GTI-S2124 //~ ERROR GTI-S2009

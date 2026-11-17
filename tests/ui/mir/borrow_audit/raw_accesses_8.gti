@@ -1,0 +1,11 @@
+// Raw accesses: a callee's returned global address keeps its provenance.
+//@ check-pass
+//@ raw-pointer-audit: warn
+mut int global = 7;
+int* source() { return &global; }
+int main() {
+  auto pointer = source();
+  int& checked = global;
+  unsafe { *pointer = 9; }  //~ WARN GTI-S2102
+  return checked;
+}

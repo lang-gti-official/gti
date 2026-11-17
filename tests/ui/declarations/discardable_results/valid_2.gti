@@ -1,0 +1,4 @@
+// Valid: [[discardable]] int value() { return 7; } int main() { auto fn = value; fn(); return 0; }.
+//@ check-pass
+[[discardable]] int value() { return 7; }
+int main() { auto fn = value; fn(); return 0; }

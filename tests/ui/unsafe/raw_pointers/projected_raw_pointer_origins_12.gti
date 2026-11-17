@@ -1,0 +1,13 @@
+// Projected raw pointer origins: raw projection transport must preserve an expired origin: raw-alias-index-field-write.
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { mut Address first{}; mut Address second{};  public: Pair() = default; };
+
+int main() {
+  mut Address addresses[2] = {Address(), Address()};
+  Address* alias = &addresses[0];
+  unsafe {
+    { int gone = 5; alias[1].pointer = &gone; }
+    return *addresses[1].pointer;  //~ ERROR GTI-S2102
+  }
+}

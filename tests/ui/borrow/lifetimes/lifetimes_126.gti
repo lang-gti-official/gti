@@ -1,0 +1,4 @@
+// Lifetimes: rejected with GTI-S2017.
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return second(values...); }
+int main() { mut int first = 3; int selected = 8; int& result = relay(first, selected); first = 4; return result - 8; }  //~ ERROR GTI-S2017

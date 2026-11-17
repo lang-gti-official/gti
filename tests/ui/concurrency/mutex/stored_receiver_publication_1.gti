@@ -1,0 +1,16 @@
+// Stored receiver publication: a stored shared receiver preserves lifetime and callee exclusion.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+  void use() { auto guard = this.owner.lock(); }
+};
+int main() {
+  std::mutex<int32_t> owner{7};
+  User user{owner};
+  user.use();
+  return 0;
+}

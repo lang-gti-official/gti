@@ -1,0 +1,13 @@
+// Native c string producer: GTI owner-dependent C strings still fail at source, including inside unsafe code.
+import std.string;
+class NativeText {
+  c_string text;
+public:
+  unsafe NativeText(c_string input) : text(input) {}
+  ~NativeText() {}
+};
+int main() {
+  std::string owner{"dynamic"};
+  unsafe { auto text = NativeText(owner.c_string()); }  //~ ERROR GTI-S2045
+  return 0;
+}

@@ -1,0 +1,38 @@
+// General requires: a mutable carrier from a read-only input diagnostic.
+mut int32_t global_value = 5;
+class Slice {
+  int32_t& first;
+public:
+  Slice(int32_t& first) : first(first) {}
+  int32_t get() { return this.first; }
+};
+class Pair {
+  int32_t& left;
+  int32_t& right;
+public:
+  Pair(int32_t& left, int32_t& right) : left(left), right(right) {}
+};
+class MutSlice {
+  mut int32_t& first;
+public:
+  MutSlice(mut int32_t& first) : first(first) {}
+};
+class Holder {
+  mut int32_t value = 3;
+public:
+  Holder() = default;
+  Slice view() { return Slice(this.value); }
+  MutSlice edit_view() mut { return MutSlice(this.value); }
+  int32_t count() { return this.value; }
+  void bump() mut { this.value = this.value + 1; }
+};
+concept viewable<H> = requires(H&<h> h) {
+  { h.view() } -> Slice<h>;
+};
+concept bumpable<H> = requires(mut H& h) { { h.bump() } -> void; };
+concept probe<H> = requires(H&<h> h) { { h.edit_view() } -> MutSlice<h>; };
+int32_t use<H>(H& h) requires probe<H> { return 0; }
+int main() {
+  mut Holder holder{};
+  return use(holder);  //~ ERROR GTI-S2029
+}

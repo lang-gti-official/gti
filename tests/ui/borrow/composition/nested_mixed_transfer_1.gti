@@ -1,0 +1,20 @@
+// Nested mixed transfer: nested publication uses the nested field's permission, not the outer carrier's first dependency.
+//@ check-pass
+import std.utility;
+struct Exclusive {
+  mut int& value;
+  Exclusive(mut int& source) : value(source) {}
+};
+struct Combined {
+  int& input;
+  mut Exclusive output;
+  Combined(int& source, Exclusive target)
+      : input(source), output(std::move(target)) {}
+  int run() mut { output.value = input; return output.value; }
+};
+int main() {
+  int a = 42; mut int b = 0;
+  Exclusive item{b};
+  mut Combined group{a, std::move(item)};
+  return group.run() - 42;
+}

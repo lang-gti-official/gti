@@ -1,0 +1,113 @@
+// Inferred local references take their type, access and loans from the
+// compiler: `auto&` is a shared and `mut auto&` an exclusive reference, a
+// by-value `auto` copy of a non-copyable record suggests `auto&` or clone, a
+// write through the owner or a read-only owner conflicts with the loans, and
+// an array reference keeps its bound. (local_reference_inference_lsp_test.py;
+// the dependency overlay and formatting are local_reference_inference.jsonl.)
+//@ disk-only: owner.gti
+//@ hover @shared: Record&
+//@ hover @shared: !mut Record&
+//@ hover @exclusive: mut Record&
+//@ definition @use: @decl
+// --- main.gti
+import "owner.gti";
+int main() {
+  mut Record owner{};
+  /* 😀 */ /*@shared*/auto& /*@decl*/observed = owner;
+  int snapshot = /*@use*/observed.count;
+  mut /*@exclusive*/auto& writable = owner;
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+// --- owner.gti
+export module owner;
+export struct Record {
+  mut int count = 1;
+  Record() = default;
+  Record(Record& other) = delete;
+  Record(Record&& other) = default;
+};
+// --- step 2
+import "owner.gti";
+int main() {
+  mut Record owner{};
+  /* 😀 */ auto observed = owner;  //~ ERROR GTI-S2003 clone
+  int snapshot = observed.count;
+  mut auto& writable = owner;
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+// --- step 3
+import "owner.gti";
+int main() {
+  mut Record owner{};
+  /* 😀 */ auto& observed = owner;
+  int snapshot = observed.count;
+  mut auto& writable = owner;
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+// --- step 4
+import "owner.gti";
+int main() {
+  mut Record owner{};
+  /* 😀 */ auto& observed = owner;
+  owner.count = 5; int snapshot = observed.count;  //~ ERROR GTI-S2017
+  mut auto& writable = owner;
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+// --- step 5
+import "owner.gti";
+int main() {
+  Record owner{};
+  /* 😀 */ auto& observed = owner;
+  int snapshot = observed.count;
+  mut auto& writable = owner;  //~ ERROR GTI-S2017
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+// --- step 6
+import "owner.gti";
+int main() {
+  mut Record owner{};
+  /* 😀 */ auto& observed = ;  //~ ERROR GTI-P0001
+  int snapshot = observed.count;  //~ ERROR GTI-S2001
+  mut auto& writable = owner;
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+// --- step 7
+//@ hover @again: Record&
+import "owner.gti";
+int main() {
+  mut Record owner{};
+  /* 😀 */ /*@again*/auto& observed = owner;
+  int snapshot = observed.count;
+  mut auto& writable = owner;
+  writable.count = snapshot + 1;
+  return writable.count - 2;
+}
+// --- step 8
+//@ hover @array: mut int32_t[3]&
+int main() {
+  mut int values[3] = {1, 2, 3};
+  mut /*@array*/auto& borrowed = values;
+  borrowed[1] = 7;
+  return borrowed[1] - 7;
+}
+// --- step 9
+int main() {
+  mut int values[3] = {1, 2, 3};
+  mut auto& borrowed = values;
+  borrowed[1] = 7;
+  values[0] = 4;  //~ ERROR GTI-S2017
+  return borrowed[1] - 7;
+}
+// --- step 10
+int main() {
+  mut int values[3] = {1, 2, 3};
+  mut auto& borrowed = values;
+  borrowed[1] = 7;
+  return borrowed[1] - 7;
+}

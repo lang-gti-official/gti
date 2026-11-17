@@ -1,0 +1,20 @@
+// Expansion: concrete expansion is accepted.
+//@ check-pass
+import std.meta;
+struct Player {
+  uint32_t health = 100;
+  float speed = 1.5;
+public:
+  Player() = default;
+};
+int main() {
+  Player player = {.health = uint32_t(7), .speed = 2.0};
+  mut uint64_t sum = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    if constexpr (field.index() == uint64_t(0)) {
+      sum = sum + uint64_t(field.get(player));
+    }
+    static_assert(field.index() < uint64_t(2), "two fields");
+  }
+  return int(sum);
+}

@@ -1,0 +1,43 @@
+// Range based for and iterator protocol: range-based for should use the ordinary structural iterator protocol through generic virtual operator contracts.
+//@ check-pass
+interface IteratorContract<T> {
+  T& operator*();
+  void operator++() mut;
+};
+
+struct CounterSentinel {
+  int limit;
+  CounterSentinel(int value) : limit(value) {}
+};
+
+class CounterIterator : public IteratorContract<int> {
+  mut int current;
+
+public:
+  CounterIterator(int value) : current(value) {}
+  int& operator*() override { return this.current; }
+  void operator++() mut override { this.current++; }
+  bool operator!=(CounterSentinel& sentinel) {
+    return this.current != sentinel.limit;
+  }
+};
+
+class CounterRange {
+  int first;
+  int last;
+
+public:
+  CounterRange(int first, int last) : first(first), last(last) {}
+  CounterIterator begin() { return CounterIterator(this.first); }
+  CounterSentinel end() { return CounterSentinel(this.last); }
+};
+
+int main() {
+  CounterRange values{1, 5};
+  mut int total = 0;
+  for (auto& value : values) {
+    if (value == 2) { continue; }
+    total += value;
+  }
+  return total - 8;
+}

@@ -1,0 +1,7 @@
+// Pack fold caller facts: a concrete fold preserves ordinary selected caller and terminal contracts through verified HIR and MIR.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+[[track_caller]] void leaf<T>(T& element) {  }
+void folded<Args...>(Args... args) { (leaf(args), ...); }
+int main() { folded(1); return 0; }

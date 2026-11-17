@@ -1,0 +1,108 @@
+// Retained callable carriers delay signature completeness until instantiation.
+//@ run-pass
+//@ revisions: default read mutable-failure once-callback-failure
+//@[default] stdout: 6
+//@[default] stdout: 5
+//@[default] stdout: 3
+//@[default] stdout: 9
+//@[read] run-fail
+//@[read] args: read
+//@[read] exit-code: 70
+//@[read] stdout: 9
+//@[read] stderr-contains: generic_callable_adapter_declaration_order.gti:14: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[mutable-failure] run-fail
+//@[mutable-failure] args: mutable failure
+//@[mutable-failure] exit-code: 70
+//@[mutable-failure] stdout: 6
+//@[mutable-failure] stdout: 9
+//@[mutable-failure] stderr-contains: generic_callable_adapter_declaration_order.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[once-callback-failure] run-fail
+//@[once-callback-failure] args: once callback failure
+//@[once-callback-failure] exit-code: 70
+//@[once-callback-failure] stdout: 6
+//@[once-callback-failure] stdout: 5
+//@[once-callback-failure] stdout: 9
+//@[once-callback-failure] stderr-contains: generic_callable_adapter_declaration_order.gti:34: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- generic_callable_adapter_declaration_order.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+namespace api {
+  // F is closure-bearing, so these owners retain native primary templates.
+  // Packet is intentionally declared later and is not a layout dependency.
+  class Target<F> {
+    F value;
+  public:
+    Target(F value) : value(std::move(value)) {}
+    Packet operator()(Packet input, int divisor) {
+      int result = value(input.value);
+      return Packet(result / divisor);
+    }
+  };
+
+  class MutableTarget<F> {
+    F value;
+  public:
+    MutableTarget(F value) : value(std::move(value)) {}
+    Packet operator()(Packet input, int divisor) mut {
+      int result = value(input.value);
+      return Packet(result / divisor);
+    }
+  };
+
+  class OnceTarget<F> {
+    F value;
+  public:
+    OnceTarget(F value) : value(std::move(value)) {}
+    Packet operator()(Packet input, int divisor) && {
+      int result = value(input.value);
+      return Packet(result / divisor);
+    }
+  };
+
+  struct Packet {
+    int value;
+    Packet(int value) : value(value) {}
+  };
+}
+
+api::Target<F> target<F>(F value) {
+  return api::Target<F>(std::move(value));
+}
+api::MutableTarget<F> mutable_target<F>(F value) {
+  return api::MutableTarget<F>(std::move(value));
+}
+api::OnceTarget<F> once_target<F>(F value) {
+  return api::OnceTarget<F>(std::move(value));
+}
+api::Packet invoke_once<F>(F value, int divisor) {
+  return std::move(value)(api::Packet(12), divisor);
+}
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+public:
+  Caller() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Caller caller{};
+  auto read_operation = [](int number) -> int { return number; };
+  auto read = target(std::move(read_operation));
+  std::function<api::Packet(api::Packet, int)> callback{std::move(read)};
+  api::Packet first = callback(api::Packet(12), argc == 2 ? 0 : 2);
+  std::println(first.value);
+  auto write_operation = [](int number) -> int { return number; };
+  auto write = mutable_target(std::move(write_operation));
+  mut std::function<api::Packet(api::Packet, int) mut> mutable_callback{std::move(write)};
+  api::Packet second = mutable_callback(api::Packet(15), argc == 3 ? 0 : 3);
+  std::println(second.value);
+  auto once_operation = [](int number) -> int { return number; };
+  auto once = once_target(std::move(once_operation));
+  int once_divisor = argc == 4 ? 0 : 4;
+  api::Packet third = invoke_once(std::move(once), once_divisor);
+  std::println(third.value);
+  return 0;
+}

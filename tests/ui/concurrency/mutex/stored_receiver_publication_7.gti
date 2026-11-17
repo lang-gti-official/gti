@@ -1,0 +1,21 @@
+// Stored receiver publication: unrelated mutable stored-reference construction remains valid.
+//@ check-pass
+//@ execution-profile: concurrent
+class Lease {
+  mut int& value;
+public:
+  Lease(mut int& value) : value(value) {}
+  void apply() mut { this.value += 1; }
+  ~Lease() { this.value += 1; }
+};
+class Holder {
+  mut int& value;
+public:
+  Holder(mut int& value) : value(value) {}
+  void apply() mut { mut Lease lease{this.value}; lease.apply(); }
+};
+int main() {
+  mut int value = 7;
+  { mut Holder holder{value}; holder.apply(); }
+  return value - 9;
+}

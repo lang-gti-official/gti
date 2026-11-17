@@ -1,0 +1,11 @@
+// A macro-body error also publishes an informational companion at the body
+// line; INFO annotations match information diagnostics.
+import std.source_location;
+import std.string;
+#macro check_value(int value, std::source_location loc) {
+  std::string hidden = loc.file;  //~ INFO GTI-S2007 A macro expansion fails here //~ INFO GTI-S2003
+}
+int main() {
+  check_value!(1, std::source_location::current());  //~ ERROR GTI-S2007 //~ ERROR GTI-S2003
+  return 0;
+}

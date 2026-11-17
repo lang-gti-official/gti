@@ -1,0 +1,15 @@
+// Static field raw writes: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+int witness = 7;
+struct Holder {
+  static mut const int* slot = &witness;
+  static void keep(const int* address) { slot = address; }
+  static const int* current() { return slot; }
+public:
+  Holder() = default;
+};
+
+int main() { int value = 7; Holder::slot = &value; auto address = Holder::slot;
+  unsafe { return std::assume_ref(address, value); } }

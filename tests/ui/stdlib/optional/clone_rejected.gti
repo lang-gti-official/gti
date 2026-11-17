@@ -1,0 +1,14 @@
+// Cloning an optional of a non-cloneable payload fails the cloneable concept.
+//@ check-fail
+import std.optional;
+class NoClone {
+public:
+  NoClone() {}
+  NoClone(NoClone& other) = delete;
+  NoClone(NoClone&& other) = default;
+};
+int main() {
+  std::optional<NoClone> value{};
+  auto copy = value.clone();  //~ ERROR GTI-S2029 concept 'std::cloneable'
+  return 0;
+}

@@ -1,0 +1,52 @@
+// Owning enum replacement preserves construction and checked cleanup order.
+//@ run-pass
+//@ execution-profile: concurrent
+//@ stdout: 1
+//@ stdout: 2
+//@ stdout: 3
+//@ stdout: 4
+//@ stdout: 9
+// --- enum_replacement_success.gti
+import "enum_replacement_support.gti";
+
+int main() {
+  ReplacementGuard guard{};
+  mut ReplacementEvent current = ReplacementEvent::held(ReplacementResource(1, 1));
+  current = ReplacementEvent::held(ReplacementResource(2, 1));
+  current = ReplacementEvent::other(ReplacementResource(3, 1));
+  current = ReplacementEvent::idle;
+  current = ReplacementEvent::held(ReplacementResource(4, 1));
+  return 0;
+}
+// --- enum_replacement_support.gti
+export module enum_replacement_support;
+import std.mutex;
+import std.string;
+
+export class ReplacementResource {
+  std::mutex<std::string> storage;
+  int32_t identity;
+  int32_t divisor;
+public:
+  ReplacementResource(int32_t identity, int32_t divisor)
+      : storage(std::mutex<std::string>(std::string("resource"))),
+        identity(identity), divisor(divisor) {}
+  ReplacementResource(ReplacementResource& other) = delete;
+  ReplacementResource(ReplacementResource&& other) = default;
+  ~ReplacementResource() {
+    std::println(this.identity);
+    int32_t checked = int32_t(1) / this.divisor;
+  }
+};
+
+export enum ReplacementEvent {
+  idle,
+  held(ReplacementResource value),
+  other(ReplacementResource value),
+};
+
+export class ReplacementGuard {
+public:
+  ReplacementGuard() {}
+  ~ReplacementGuard() { std::println(9); }
+};

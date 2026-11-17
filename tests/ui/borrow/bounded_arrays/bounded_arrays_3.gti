@@ -1,0 +1,2 @@
+// Bounded arrays: extent uses valid existing syntax.
+void take(int[2]& x) {} int main() { int a[3] = {1,2,3}; take(a); return 0; }  //~ ERROR GTI-S2003

@@ -1,0 +1,10 @@
+// Borrowing captures: read-function-ref.
+//@ check-pass
+import std.functional;
+int apply(std::function_ref<int(int)>& operation) { return operation(4); }
+int main() {
+  int offset = 3;
+  auto callback = [&offset](int value) -> int { return offset + value; };
+  std::function_ref<int(int)> view{callback};
+  return apply(view) - 7;
+}

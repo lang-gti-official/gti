@@ -1,0 +1,9 @@
+// Unsafe and pointer diagnostics: immutable compound targets should fail mutability checks without an unsafe suggestion.
+struct Holder { mut int32_t* pointer = nullptr;  public: Holder() = default; };
+int main() {
+  Holder holder{};
+  int32_t* pointers[1] = {};
+  holder.pointer += 1;  //~ ERROR GTI-S2000
+  pointers[0] -= 1;  //~ ERROR GTI-S2002
+  return 0;
+}

@@ -1,0 +1,14 @@
+// Unbound method queries: an unbound reflected signature query is diagnosed before MIR: std::meta::parameter<OpenMethod, 0, 0>().type().name().
+import std.meta;
+import std.format;
+class OpenMethod {
+public:
+  OpenMethod() = default;
+  T pick<T>(T value) { return value; }
+};
+class PointerMethod {
+public:
+  PointerMethod() = default;
+  T* pick<T>(T* value) { return value; }
+};
+int main() { std::println("{}", std::meta::parameter<OpenMethod, 0, 0>().type().name()); return 0; }  //~ ERROR GTI-S2126

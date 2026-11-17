@@ -1,0 +1,50 @@
+// Range based for and iterator protocol: range and iterator diagnostics should reject malformed operator contracts and missing begin members.
+class BadIncrement {
+  mut int value = 0;
+public:
+  int& operator*() { return this.value; }
+  int operator++() mut { return this.value; }  //~ ERROR GTI-S2022
+public:
+  BadIncrement() = default;
+};
+
+class ReadOnlyIncrement {
+public:
+  void operator++() {}  //~ ERROR GTI-S2022
+public:
+  ReadOnlyIncrement() = default;
+};
+
+class ValueSentinelIterator {
+  mut int value = 0;
+public:
+  int& operator*() { return this.value; }
+  void operator++() mut { this.value++; }
+  bool operator!=(ValueSentinelIterator other) {
+    return this.value != other.value;
+  }
+public:
+  ValueSentinelIterator() = default;
+};
+
+class ValueSentinelRange {
+public:
+  ValueSentinelIterator begin() { return ValueSentinelIterator(); }
+  ValueSentinelIterator end() { return ValueSentinelIterator(); }
+public:
+  ValueSentinelRange() = default;
+};
+
+class MissingBegin { public: MissingBegin() = default; };
+
+int main() {
+  mut int value = 1;
+  MissingBegin range{};
+  for (int item : range) { return item; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2000 //~ ERROR GTI-S2022
+  for (int item : MissingBegin()) { return item; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2000 //~ ERROR GTI-S2022
+  ValueSentinelRange copied_sentinel{};
+  for (int item : copied_sentinel) { return item; }
+  BadIncrement iterator{};
+  ++iterator;  //~ ERROR GTI-S2000
+  return value;
+}

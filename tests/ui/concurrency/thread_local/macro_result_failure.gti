@@ -1,0 +1,65 @@
+// A failing thread-local guard panics after the thread-local report ran.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: macro cleaned 1 1 1
+//@ stderr-contains: GTI-R0017
+import std.format;
+import std.panic;
+import std.thread;
+thread_local mut int32_t macro_seed = 7;
+thread_local mut int32_t macro_created = 0;
+thread_local mut int32_t macro_guards = 0;
+thread_local mut int32_t macro_dropped = 0;
+thread_local mut bool macro_guard_fails = false;
+class MacroReport {
+public:
+  MacroReport() = default;
+  void activate() {}
+  ~MacroReport() {
+    if (macro_created != 1 || macro_guards != 1 || macro_dropped != 1) {
+      std::panic("macro TLS cleanup counts");
+    }
+    std::println("macro cleaned {} {} {}", macro_created, macro_guards, macro_dropped);
+  }
+};
+thread_local MacroReport macro_report{};
+class MacroGuard {
+public:
+  MacroGuard() {}
+  ~MacroGuard() {
+    macro_guards += 1;
+    if (macro_guard_fails) std::panic("macro guard failure");
+  }
+};
+class MacroOwner {
+  int32_t number;
+public:
+  MacroOwner(int32_t value) : number(value) { macro_created += 1; }
+  MacroOwner(MacroOwner& other) = delete;
+  MacroOwner(MacroOwner&& other) = default;
+  int32_t read() { return this.number; }
+  ~MacroOwner() { macro_dropped += 1; }
+};
+#macro int32_t select_macro(bool enabled, int32_t expression) {
+  int32_t saved = expression;
+  if (enabled) { return saved; }
+  return 0;
+}
+#macro MacroOwner own_macro(int32_t expression) {
+  MacroGuard armed{};
+  MacroOwner saved{expression};
+  return saved;
+}
+thread_local int32_t macro_configured = select_macro!(macro_seed > 0, macro_seed);
+thread_local MacroOwner macro_owner = own_macro!(macro_configured);
+int32_t verify_macro_state() {
+  macro_report.activate();
+  if (macro_owner.read() != 7 || macro_owner.read() != 7 ||
+      macro_created != 1 || macro_guards != 1 || macro_dropped != 0) return 1;
+  return 0;
+}
+int main() {
+  macro_guard_fails = true;
+  return verify_macro_state();
+}

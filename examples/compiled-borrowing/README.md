@@ -18,8 +18,8 @@ find producer/build -name borrowing.gtilib -exec cp {} consumer/dependencies/bor
 ```
 
 Success exits zero. `api.gti` must remain absent: the compiler supplies its
-validated declarations from the bundle. `compiled_borrow_library` owns this
-example's O0/O3 source-free execution and rejected escaping, overlapping,
+validated declarations from the bundle. `tests/project/compiled_borrowing` owns
+this example's release source-free execution and rejected escaping, overlapping,
 temporary and mutable-from-immutable loans.
 
 This callable profile transports one whole-reference result tied to one

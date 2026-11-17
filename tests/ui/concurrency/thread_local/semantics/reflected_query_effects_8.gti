@@ -1,0 +1,6 @@
+// Reflected query effects: an actually ineligible concrete sequence retains its ordinary source diagnostic rather than an empty effect proof.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1;
+void inspect<T>(T& sequence) { constexpr for (auto item : sequence) {} }  //~ ERROR GTI-S2107
+int main() { int sequence = 0; int& held = guarded; inspect(sequence); return held; }

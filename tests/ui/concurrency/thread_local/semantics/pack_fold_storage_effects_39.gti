@@ -1,0 +1,11 @@
+// Pack fold storage effects: ordered fold input protection preserves a later TLS initializer whose hidden write is disjoint from the earlier input.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t first = 1;
+thread_local mut int32_t other = 2;
+int32_t initialize() { other += 1; return 3; }
+thread_local mut int32_t later = initialize();
+void leaf<T>(mut int32_t& input, int32_t& second, T& element) { input += 1; }
+void folded<Args...>(Args... args) { (leaf(first, later, args), ...); }
+int main() { folded(1); return 0; }

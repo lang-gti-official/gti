@@ -1,0 +1,7 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+import std.utility;
+enum Slot { ready(int& value), empty };
+enum MaybeRef<T> { some(T value), none };
+class Shelf { Slot slot; public: Shelf(Slot slot) : slot(slot) {} };
+int main() { return 0; }

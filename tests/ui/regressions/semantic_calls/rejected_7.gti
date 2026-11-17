@@ -1,0 +1,18 @@
+// Rejected: one causal error without follow-on diagnostics.
+concept maps<F, A, R> = requires(F& f, A& a) { { f(a) } -> R; } || requires(F& f, A a) { { f(std::move(a)) } -> bool; };
+class table<K, H> {
+  H hasher;
+public:
+  table(H h) requires maps<H, K, uint64_t> : hasher(std::move(h)) {}
+  uint64_t slot(K key, uint64_t n) requires maps<H, K, uint64_t> {
+    return this.hasher(key) % n;  //~ ERROR GTI-S2004
+  }
+};
+struct id_hash {
+  id_hash() = default;
+  uint64_t operator()(int& v) { return uint64_t(v); }
+};
+int main() {
+  table<int, id_hash> t{id_hash()};
+  return t.slot(9, uint64_t(4)) == uint64_t(1) ? 0 : 1;
+}

@@ -1,0 +1,16 @@
+// Raw field witnesses: raw fields bind exact read/mutable call and constructor parameters.
+//@ build-pass
+//@ slow
+struct Cell { mut int value = 7; Cell() = default; };
+int read(int& value) { return value; }
+void change(mut int& value) { value = 9; }
+struct Snapshot { int value; Snapshot(int& source) : value(source) {} };
+int main() {
+  mut Cell object{};
+  unsafe {
+    Cell* pointer = &object;
+    Snapshot snapshot{pointer->value};
+    change(pointer->value);
+    return read(pointer->value) + snapshot.value - 16;
+  }
+}

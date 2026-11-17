@@ -1,0 +1,6 @@
+// Negatives: aggregate copy retains type-only records.
+//@ raw-pointer-audit: strict
+using E = void*; using P = uint64_t*;
+struct Carrier { void* address = nullptr;  public: Carrier() = default; };
+int main() { mut int value = 0; Carrier a{.address = E(&value)};
+Carrier b = a; P p = P(b.address); return 0; }  //~ ERROR GTI-S2101 //~ ERROR GTI-S2101

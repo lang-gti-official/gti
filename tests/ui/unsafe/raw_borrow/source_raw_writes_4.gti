@@ -1,0 +1,7 @@
+// Source raw writes: source-produced raw writes preserve callee expiry.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+mut Holder out{};
+int main() { set(out); unsafe { return std::assume_ref(out.pointer, out); } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+void set(mut Holder& out) { int gone = 1; out.pointer = &gone; }

@@ -1,0 +1,16 @@
+// Borrowing captures: function-ref-preserves-independent-capture-origins.
+//@ check-pass
+import std.functional;
+int main() {
+  mut int left = 2;
+  mut int right = 3;
+  int limit = 8;
+  mut auto callback = [mut &left, mut &right, &limit]() -> int {
+    left += 1;
+    right += 2;
+    return left + right + limit;
+  };
+  mut std::function_ref<int() mut> view{callback};
+  int result = view();
+  return result + left + right - 24;
+}

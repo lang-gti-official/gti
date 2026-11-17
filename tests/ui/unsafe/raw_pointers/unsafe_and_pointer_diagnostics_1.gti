@@ -1,0 +1,7 @@
+// Unsafe and pointer diagnostics: raw dereference should require unsafe even when address formation does not.
+int main() {
+  mut int32_t value = 1;
+  int32_t* pointer = nullptr;
+  pointer = &value;  //~ ERROR GTI-S2002
+  return *pointer;  //~ ERROR GTI-S2055
+}

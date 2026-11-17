@@ -1,0 +1,87 @@
+// Void expression returns keep evaluation, cleanup and failure order.
+//@ run-pass
+//@ revisions: c0 c1 c2 c3 c4 c5
+//@[c0] stdout: 4
+//@[c0] stdout: 3
+//@[c0] stdout: 2
+//@[c0] stdout: 9
+//@[c1] args: fail
+//@[c1] stdout: 4
+//@[c1] stdout: 3
+//@[c1] stdout: 2
+//@[c1] stdout: 9
+//@[c1] run-fail
+//@[c1] exit-code: 70
+//@[c1] stderr-contains: main.gti:17: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c2] args: fail fail
+//@[c2] stdout: 4
+//@[c2] stdout: 3
+//@[c2] stdout: 2
+//@[c2] stdout: 9
+//@[c2] run-fail
+//@[c2] exit-code: 70
+//@[c2] stderr-contains: main.gti:11: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c3] args: fail fail fail
+//@[c3] stdout: 4
+//@[c3] stdout: 3
+//@[c3] stdout: 2
+//@[c3] stdout: 9
+//@[c3] run-fail
+//@[c3] exit-code: 70
+//@[c3] stderr-contains: main.gti:11: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c4] args: fail fail fail fail
+//@[c4] stdout: 4
+//@[c4] stdout: 3
+//@[c4] stdout: 2
+//@[c4] run-fail
+//@[c4] exit-code: 70
+//@[c4] stderr-contains: main.gti:11: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:17; secondary [GTI-R0002]
+//@[c5] args: fail fail fail fail fail
+//@[c5] stdout: 4
+//@[c5] stdout: 3
+//@[c5] stdout: 2
+//@[c5] run-fail
+//@[c5] exit-code: 70
+//@[c5] stderr-contains: main.gti:11: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:11; secondary [GTI-R0002]
+// --- main.gti
+import std.string;
+import std.vector;
+
+class Trace {
+  int identity;
+  int divisor;
+public:
+  Trace(int identity, int divisor) : identity(identity), divisor(divisor) {}
+  ~Trace() {
+    std::println(this.identity);
+    int cleanup_failure = 1 / this.divisor;
+  }
+};
+
+void sink(Trace parameter, int divisor) {
+  std::println(4);
+  int call_failure = 1 / divisor;
+}
+
+void forward(int divisor, int temporary_divisor, int local_divisor) {
+  Trace local{2, local_divisor};
+  return sink(Trace(3, temporary_divisor), divisor);
+}
+
+class Result<R> { public: Result() = default; };
+
+R invoke<R, T, Args...>(T callback, Result<R>& result, Args... args) {
+  return callback(args...);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace caller{9, 1};
+  auto callback = [](int divisor, int temporary_divisor, int local_divisor) -> void {
+    return forward(divisor, temporary_divisor, local_divisor);
+  };
+  Result<void> result{};
+  invoke(callback, result, argc == 2 || argc == 5 ? 0 : 1,
+         argc == 3 || argc == 6 ? 0 : 1,
+         argc == 4 || argc == 5 || argc == 6 ? 0 : 1);
+  return 0;
+}

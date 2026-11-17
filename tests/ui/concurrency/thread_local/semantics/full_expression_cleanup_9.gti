@@ -1,0 +1,8 @@
+// Full expression cleanup: an escaping borrow through a temporary input is still rejected.
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+int& get() { return current(Cleanup()); } int main() { return get(); }  //~ ERROR GTI-S2017

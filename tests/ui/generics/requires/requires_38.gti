@@ -1,0 +1,15 @@
+// General requires: comparison source policy preserves private access without excluding primitive equality.
+//@ check-pass
+class Hidden {
+  bool operator==(Hidden& other) { return true; }
+  bool operator!=(Hidden& other) { return false; }
+public:
+  Hidden() = default;
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+int main() {
+  static_assert(!(requires(Hidden& a, Hidden& b) { { same(a, b) } -> bool; }));
+  static_assert(requires(bool& a, bool& b) { { same(a, b) } -> bool; });
+  static_assert(requires(int*& a, int*& b) { { same(a, b) } -> bool; });
+  return 0;
+}
