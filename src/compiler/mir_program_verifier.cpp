@@ -10567,6 +10567,12 @@ verifyMirProgramInitialization(const MirProgram &program) {
     const PlaceKey expectedKey{.domain = module.placeDomain,
                                .root = step.symbol};
     const bool realSource = !plan.units.empty();
+    const auto requiredCleanup =
+        storage ? mirUniqueCleanupType(program, storage->type) : std::nullopt;
+    if (requiredCleanup && requiredCleanup->requiresActiveCleanup &&
+        !step.requiresActiveCleanup)
+      add("program-initialization step omits required cleanup", step.entryBlock,
+          step.storageInitialization);
     if (step.id != index + 1 ||
         (realSource ? !sourceUnits.contains(step.sourceUnit)
                     : step.sourceUnit != 0) ||
