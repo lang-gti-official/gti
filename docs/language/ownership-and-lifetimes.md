@@ -473,8 +473,10 @@ returning the parameter there remains rejected. The body may return any
 borrow it reaches through a stored reference of that region: the field itself,
 a field of a method result on it (`this.nodes.at(i).value`), or the result of
 a call whose suppliers it binds to reference parameters (`pass(this.box)`).
-A borrow reached through a field written only in other regions supplies
-those regions, not the result's, and is rejected (GTI-S2127). Such a result
+A borrow supplies the region of the first stored reference it crosses, as
+the receiver binds it: a `Pair<a, b>` field's `second` holds `b`, and a field
+of a base `Base<b>` holds `b`. A borrow through a reference in another
+region, or in an elided one, is rejected (GTI-S2127). Such a result
 never borrows storage the receiver owns (GTI-S2127): the receiver's own
 fields stay owned when reached through a method call, an argument, or a
 mutable or consuming receiver. A consuming method may therefore return it,
