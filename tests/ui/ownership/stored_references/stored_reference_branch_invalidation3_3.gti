@@ -1,0 +1,5 @@
+// Stored reference branch invalidation3: an all-terminating if should still end a retained loan separately on both arms before branch-local mutation.
+//@ check-pass
+import std.string;
+char choose(bool left) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (left) { char first = *iterator; value.push_back('!'); return first; } else { value.push_back('?'); return value[0]; } }
+int main() { if (choose(true) == 'g' and choose(false) == 'g') { return 0; } return 1; }

@@ -1,0 +1,18 @@
+// Consuming callable operators: once-callable lvalue and repeated invocation should fail through receiver and path-sensitive move diagnostics.
+class Once {
+public:
+  int operator()() && { return 1; }
+public:
+  Once() = default;
+};
+
+int invoke_twice<Operation>(Operation operation) {
+  int first = std::move(operation)();
+  return std::move(operation)();  //~ ERROR GTI-S2018 //~ ERROR GTI-S2046
+}
+
+int main() {
+  Once operation = Once();
+  int direct = operation();  //~ ERROR GTI-S2022
+  return invoke_twice(operation) + direct;
+}

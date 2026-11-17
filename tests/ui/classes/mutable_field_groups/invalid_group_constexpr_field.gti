@@ -1,0 +1,2 @@
+// Mutable field groups: invalid group contents (constexpr field) get a focused parser diagnostic: cannot contain constexpr fields.
+struct Bad { mut { constexpr int value = 0; } int recovered = 1; };  //~ ERROR GTI-P0001 cannot contain constexpr fields //~ ERROR GTI-P0001

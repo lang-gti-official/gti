@@ -751,39 +751,6 @@ SPECS: dict[str, FileSpec] = {
         }),
     "shared_ownership_tests.cpp": FileSpec(
         area="stdlib/memory/shared_owner", topic="Shared ownership"),
-    "compiler_declarations_tests.cpp": FileSpec(
-        area="generics/constraints", topic="Constraints",
-        # testInterfaceStaticMethods stays C++: it asserts GTI-S2106 under
-        # requireFunctionDefinitions, which check mode does not apply.
-        only=("testInferredVoidGenericArguments",
-              "testDependentTypeDefaultConstraints",
-              "testStructuralClassConstraints",
-              "testDependentRequiresArgumentAdmission",
-              "testMemberRequirementConcepts",
-              "testExactMemberSignatureConcepts",
-              "testInterfaceStaticAmbiguity"),
-        review_policy={
-            name: "the C++ test asserts rejection (or one code of it); the "
-                  "compiler's complete code set was read and matches the "
-                  "case's stated reason"
-            for name in ("testInterfaceStaticAmbiguity",
-                         "testMemberRequirementConcepts",
-                         "testExactMemberSignatureConcepts",
-                         "testStructuralClassConstraints")}),
-    "compiler_ownership_tests.cpp": FileSpec(
-        area="ownership/stored_references", topic="Ownership",
-        # Most named ownership tests assert MIR loan/cleanup structure and
-        # wait for MIR snapshots; these three are accept/reject shaped.
-        only=("testStoredReferenceLoopInvalidation3",
-              "testStoredReferenceLoopInvalidation4",
-              "testWritableAndMovementIteratorCapabilities"),
-        review_policy={
-            name: "the C++ test asserts rejection; the reported code "
-                  "(GTI-S2017 invalidated loan, GTI-S2029 unsatisfied "
-                  "iterator concept) is the case's stated reason"
-            for name in ("testStoredReferenceLoopInvalidation3",
-                         "testStoredReferenceLoopInvalidation4",
-                         "testWritableAndMovementIteratorCapabilities")}),
 }
 
 
@@ -1448,6 +1415,16 @@ def plan(cases: list[Case], spec: FileSpec, existing: dict[str, str]):
             continue
         if body in by_source:
             kept = by_source[body]
+            # A source edited in place (`text.insert(...)`) is read as its
+            # unedited base; a second, different expectation is a lost case.
+            if "unknown" not in (kept.case.expect, case.expect) and \
+                    (kept.case.expect, sorted(kept.case.codes)) != \
+                    (case.expect, sorted(case.codes)):
+                case.flags.append(
+                    f"same source as {kept.relative} with a different "
+                    "expectation (edited in place?)")
+                flagged.append(case)
+                continue
             kept.duplicates.append(case)
             if case.format_stable:
                 kept.case.format_stable = True
@@ -1788,7 +1765,7 @@ def _calls_frontend(function: Function, known: set[str]) -> bool:
 
 def remove(args) -> int:
     """Deletes converted named tests: their functions, their kTests entries
-    and their compiler_test_manifest.json entries."""
+    and, while it existed, their compiler_test_manifest.json entries."""
     path = Path(args.file)
     text = path.read_text()
     unit = parse_unit(path, text)
@@ -1813,7 +1790,11 @@ def remove(args) -> int:
         if count != 1:
             sys.exit(f"{path.name}: kTests entry for {name} not found")
     path.write_text(result)
+    # The compiler_pipeline manifest left with its last suite; files other
+    # than its suites have no manifest entries.
     manifest = ROOT / "tests/compiler_test_manifest.json"
+    if not manifest.exists():
+        return 0
     data = json.loads(manifest.read_text())
     before = len(data["tests"])
     data["tests"] = [test for test in data["tests"]

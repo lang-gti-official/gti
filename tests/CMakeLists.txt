@@ -808,10 +808,6 @@ if(Python3_Interpreter_FOUND)
   endforeach()
 endif()
 
-set(GTI_COMPILER_TEST_SUITES
-    declarations
-    ownership
-    e2e)
 add_executable(gti_constructor_formatting_tests constructor_formatting_tests.cpp)
 target_link_libraries(gti_constructor_formatting_tests PRIVATE gti_compiler)
 add_test(NAME constructor_formatting COMMAND gti_constructor_formatting_tests)
@@ -827,66 +823,6 @@ target_precompile_headers(
   gti_compiler_test_pch
   PRIVATE "${PROJECT_SOURCE_DIR}/tests/compiler_test_fixture.h"
 )
-set(GTI_COMPILER_TEST_TARGETS)
-set(GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS)
-foreach(suite IN LISTS GTI_COMPILER_TEST_SUITES)
-  set(target "gti_compiler_${suite}_tests")
-  add_executable("${target}" "${PROJECT_SOURCE_DIR}/tests/compiler_${suite}_tests.cpp")
-  target_link_libraries("${target}" PRIVATE gti_llvm_backend)
-  target_precompile_headers("${target}" REUSE_FROM gti_compiler_test_pch)
-  list(APPEND GTI_COMPILER_TEST_TARGETS "${target}")
-  list(APPEND GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS
-       "${suite}=$<TARGET_FILE:${target}>")
-endforeach()
-# Preserve the familiar build target without retaining the monolithic test
-# executable. Each owned suite remains independently buildable and runnable.
-add_custom_target(gti_tests DEPENDS ${GTI_COMPILER_TEST_TARGETS})
-if(Python3_Interpreter_FOUND)
-  option(GTI_COMPILER_TEST_ISOLATE_CASES
-         "Run each named compiler test in a fresh process" OFF)
-  set(GTI_COMPILER_TEST_PROCESS_OPTIONS)
-  if(GTI_COMPILER_TEST_ISOLATE_CASES)
-    list(APPEND GTI_COMPILER_TEST_PROCESS_OPTIONS --isolate-tests)
-  endif()
-  add_test(
-    NAME compiler_pipeline
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/compiler_test_aggregate.py"
-            ${GTI_COMPILER_TEST_PROCESS_OPTIONS}
-            "${PROJECT_SOURCE_DIR}/tests/compiler_test_manifest.json"
-            ${GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS}
-  )
-  # The aggregate is one 16-24 minute test that cannot be scheduled around.
-  # Each suite also registers on its own so a sharded suite run spreads them
-  # across workers; every entry verifies the complete manifest census first,
-  # exactly as the aggregate does. The aggregate stays for the fast gate and
-  # for `ctest -R '^compiler_pipeline$'` callers; the shard runner excludes it
-  # when the per-suite entries are present (see validation_checks.py).
-  foreach(gti_compiler_suite_binding IN LISTS GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS)
-    string(REGEX REPLACE "=.*$" "" gti_compiler_suite "${gti_compiler_suite_binding}")
-    add_test(
-      NAME compiler_pipeline_${gti_compiler_suite}
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/compiler_test_aggregate.py"
-              ${GTI_COMPILER_TEST_PROCESS_OPTIONS}
-              --suite "${gti_compiler_suite}"
-              "${PROJECT_SOURCE_DIR}/tests/compiler_test_manifest.json"
-              ${GTI_COMPILER_TEST_AGGREGATE_ARGUMENTS}
-    )
-    set_property(TEST compiler_pipeline_${gti_compiler_suite} APPEND PROPERTY LABELS "compiler-suite")
-  endforeach()
-  add_test(
-    NAME partitioned_test_protocol
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/partitioned_test_protocol_test.py"
-            "${PROJECT_SOURCE_DIR}/tests/compiler_test_aggregate.py"
-            "${PROJECT_SOURCE_DIR}/tests/named_test_census.py"
-  )
-else()
-  message(FATAL_ERROR
-          "Python 3 is required to enforce the compiler-test census")
-endif()
-
 add_executable("gti_block_comment_tests" "${PROJECT_SOURCE_DIR}/tests/block_comment_tests.cpp")
 target_link_libraries("gti_block_comment_tests" PRIVATE gti_compiler)
 add_test(NAME block_comment_pipeline COMMAND gti_block_comment_tests)

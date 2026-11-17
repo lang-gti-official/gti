@@ -1,0 +1,3 @@
+// Value generics: generic defaults should not see a namespace constexpr binding declared later in source order.
+class LateDefault<uint64_t N = later> { public: LateDefault() = default; };  //~ ERROR GTI-S2026
+constexpr uint64_t later = 3;

@@ -1,0 +1,41 @@
+// Unique ownership and allocation: copies, invalid global storage, and unsafe unique-owner use should fail.
+import std.memory;
+
+struct Widget {
+public:
+  int value = 0;
+  Widget() {}
+  int read() { return this.value; }
+};
+
+void consume(std::unique_ptr<Widget> widget) {}
+
+std::unique_ptr<Widget> return_copy(std::unique_ptr<Widget> widget) {
+  return widget;
+}
+
+std::unique_ptr<Widget> global_owner = std::unique_ptr<Widget>();  //~ ERROR GTI-S2018
+std::unique_ptr<Widget> global_owners[1] = {  //~ ERROR GTI-S2018
+    std::unique_ptr<Widget>()};
+
+T identity<T>(T value) { return value; }
+
+int main() {
+  mut std::unique_ptr<Widget> owner = std::make_unique<Widget>();
+  std::unique_ptr<Widget> copied = owner;  //~ ERROR GTI-S2003
+  consume(owner);  //~ ERROR GTI-S2018
+  std::unique_ptr<Widget> moved = std::move(owner);
+  int after_move = owner->read();  //~ ERROR GTI-S2018
+
+  mut std::unique_ptr<Widget> conditional = std::make_unique<Widget>();
+  if (true) {
+    consume(std::move(conditional));
+  }
+  int maybe_moved = conditional->read();  //~ ERROR GTI-S2018
+
+  [[discard]] std::move(std::make_unique<Widget>());  //~ ERROR GTI-S2018
+  int wrong_member = moved.value;  //~ ERROR GTI-S2000
+  mut std::unique_ptr<Widget> missing;  //~ ERROR GTI-S2000
+  std::unique_ptr<Widget> generic = identity(std::move(moved));
+  return after_move + maybe_moved + wrong_member;
+}

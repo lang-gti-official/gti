@@ -1,0 +1,16 @@
+// Contextual integer literal arguments: a literal that fits several candidate parameter types with no exact candidate should stay ambiguous rather than ranked.
+uint8_t amb(uint8_t value) { return value; }
+uint64_t amb(uint64_t value) { return value; }
+
+class Amb {
+  uint64_t value;
+public:
+  Amb(uint8_t value) : value(value) {}
+  Amb(uint64_t value) : value(value) {}
+};
+
+int main() {
+  uint64_t selected = amb(5);  //~ ERROR GTI-S2013
+  Amb constructed{5};  //~ ERROR GTI-S2013 multiple constructors accept the written integer literal
+  return 0;
+}

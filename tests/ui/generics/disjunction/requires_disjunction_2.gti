@@ -1,0 +1,8 @@
+// Requires disjunction: a concrete type satisfying neither branch should receive one structured diagnostic with both alternative failures.
+concept scalar<T> = std::integral<T> || std::floating_point<T>;
+class marker { public: marker() {} };
+T require_scalar<scalar T>(T value) { return value; }
+int main() {
+  marker value = require_scalar(marker());  //~ ERROR GTI-S2029
+  return 0;
+}

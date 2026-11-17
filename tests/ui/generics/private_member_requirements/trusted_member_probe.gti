@@ -1,0 +1,53 @@
+// Compiler private member requirements: trusted (standard-library) source may name a compiler-private probe type, and its direct member queries see that type's members, including a member constrained by a private source concept; the probes' satisfaction is pinned by static assertions.
+//@ check-pass
+//@ stdlib-overlay: std/private_probe.gti
+// --- main.gti
+import std.private_probe;
+int main() { return probe_main(); }
+// --- std/private_probe.gti
+export module private_probe;
+namespace gti_internal {
+concept probe_equality<E> = std::equality_comparable<E>;
+struct plain_probe<T> {
+  bool matches() { return true; }
+public:
+  plain_probe() = default;
+};
+struct underlying_probe<E, U> {
+  bool matches() requires gti_internal::probe_equality<E> && std::enum_underlying<E, U> {
+    return true;
+  }
+public:
+  underlying_probe() = default;
+};
+}
+enum class small : uint8_t { low, high };
+int inline_width<E>() { return 8; }
+int boxed_width<E>() { return 0; }
+int underlying_width<E>() {
+  if constexpr (requires(gti_internal::underlying_probe<E, uint8_t>& probe) {
+                  { probe.matches() } -> bool;
+                }) {
+    return inline_width<E>();
+  } else {
+    return boxed_width<E>();
+  }
+}
+bool call_matches<P>(P& probe)
+    requires requires(P& item) { { item.matches() } -> bool; } {
+  return probe.matches();
+}
+export int probe_main() {
+  static_assert(requires(gti_internal::plain_probe<int>& probe) {
+    { probe.matches() } -> bool;
+  });
+  static_assert(requires(gti_internal::underlying_probe<small, uint8_t>& probe) {
+    { probe.matches() } -> bool;
+  });
+  static_assert(
+      !(requires(gti_internal::underlying_probe<small, int32_t>& probe) {
+        { probe.matches() } -> bool;
+      }));
+  gti_internal::plain_probe<int> probe{};
+  return call_matches(probe) ? underlying_width<small>() - 8 : 1;
+}

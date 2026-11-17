@@ -1,0 +1,26 @@
+// Composed carrier function transfer: a discarded moved carrier result ends its temporary dependencies without redirecting the consumed input's endpoint.
+//@ check-pass
+struct Cell { mut int value = 0;  public: Cell() = default; };
+struct Context {
+  int& step;
+  mut Cell& left;
+  mut Cell& right;
+  Context(int& step, mut Cell& left, mut Cell& right)
+      : step(step), left(left), right(right) {}
+  void update() mut {
+    this.left.value += this.step;
+    this.right.value += this.step;
+  }
+};
+T forward_context<T>(T context) { return std::move(context); }
+
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  mut Context initial{step, left, right};  //~ WARN GTI-S2096
+  [[discard]] forward_context<Context>(forward_context<Context>(std::move(initial)));
+  left.value = 3;
+  right.value = 4;
+  return left.value + right.value - 7;
+}

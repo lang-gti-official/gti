@@ -1,0 +1,11 @@
+// Finite wrapper traits: a closed declaration breaks generic growth dependence, not exact cycle detection.
+//@ check-pass
+struct Wrapper<T> { T value; };
+struct Closed { Wrapper<int> nested; };
+struct RawField { int* pointer = nullptr;  public: RawField() = default; };
+struct ClosedRaw { Wrapper<RawField> nested; };
+int main() {
+  Wrapper<Closed> finite = {.value = {.nested = {.value = 7}}};
+  Wrapper<ClosedRaw> raw = {.value = {.nested = {.value = {.pointer = nullptr}}}};
+  return 0;
+}

@@ -541,11 +541,10 @@ def sanitizer_contract(root):
         assert "actions/cache/restore@" in body and "actions/cache/save@" not in body, \
             "cache.yml owns the sanitizer cache; a sanitizer run only restores it"
     compiler, llvm, tsan = sections["sanitizers"], sections["llvm-sanitizers"], sections["tsan"]
-    for kind, index, count in (("compiler", 1, 3), ("compiler", 2, 3), ("compiler", 3, 3), ("libraries", 1, 1)):
-        assert f"{{kind: {kind}, index: {index}, count: {count}}}" in compiler
+    assert "{kind: libraries, index: 1, count: 1}" in compiler
+    assert "kind: compiler" not in compiler and "compiler_pipeline" not in compiler, \
+        "the compiler aggregate's partitions left with the aggregate"
     assert "bash scripts/free_ci_disk.sh" in compiler and "bash scripts/free_ci_disk.sh" in llvm
-    assert "if: matrix.kind == 'compiler'\n        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10" in compiler, \
-        "the compiler partitions re-configure only their timeout, keeping the cached configure"
     assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in compiler and \
         '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, \
         "sanitizer trees keep line tables only; full debug information exhausted runner disk"
@@ -653,14 +652,11 @@ def gti_test_tiers_contract(root):
     rows = re.findall(r"\{os: [a-z0-9.-]+, platform: (linux|darwin), gate: '([a-z0-9_|()?\[\]+-]+)'\}", fast)
     assert sorted(platform for platform, _ in rows) == ["darwin", "linux"], rows
     for platform, gate in rows:
-        assert gate.startswith(tiers), (platform, gate)
-        # The compiler pipeline drains into tests/ui; it stays on Linux until
-        # then, and dropping it from the Linux row removes it from the gate.
-        assert gate in (tiers, tiers + "|compiler_pipeline"), (platform, gate)
-        assert platform == "linux" or "compiler_pipeline" not in gate
+        # The compiler pipeline has drained into tests/ui: both rows run the
+        # same gti-test tiers.
+        assert gate == tiers, (platform, gate)
     code = "\n".join(line for line in fast.splitlines() if not line.lstrip().startswith("#"))
-    assert "compiler_pipeline" not in code.replace(dict(rows)["linux"], ""), \
-        "the gate runs the compiler pipeline only through the Linux matrix row"
+    assert "compiler_pipeline" not in code, "the gate no longer runs the compiler pipeline"
     assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
     assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
     ordered(fast, ["name: Run fast feedback", "name: Run the gti-test tiers",

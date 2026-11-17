@@ -1,0 +1,5 @@
+// Function contracts: native callback conversion must not erase hidden caller-location transport.
+using Callback = () -> void;
+extern "C" { void accept(Callback callback); }
+[[track_caller]] void callback() {}
+int main() { unsafe { accept(callback); } return 0; }  //~ ERROR GTI-S2099 native callback

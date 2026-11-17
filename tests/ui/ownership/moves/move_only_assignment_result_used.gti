@@ -1,0 +1,29 @@
+// Move-only assignment results: using the result of a move-only assignment (initializer, return, argument, receiver, chain, comma, conditional, field, element, reference, unique owner) is one GTI-S2003 at its operator.
+//@ snapshot: diagnostics
+import std.memory;
+import std.utility;
+class Tracked {
+public:
+  int32_t x;
+  Tracked(int32_t x) : x(x) {}
+  ~Tracked() {}
+  int32_t get() { return this.x; }
+};
+struct Holder {
+  mut Tracked t;
+  Holder(Tracked t) : t(std::move(t)) {}
+};
+int32_t take(Tracked t) { return t.x; }
+int32_t f1(mut Tracked p, Tracked q) { Tracked r = (p = std::move(q)); return r.x; }  //~ ERROR GTI-S2003
+Tracked f2(mut Tracked p, Tracked q) { return (p = std::move(q)); }  //~ ERROR GTI-S2003
+int32_t f3(mut Tracked p, Tracked q) { return take(p = std::move(q)); }  //~ ERROR GTI-S2003
+int32_t f4(mut Tracked p, Tracked q) { return (p = std::move(q)).get(); }  //~ ERROR GTI-S2003
+int32_t f5(mut Tracked p, Tracked q) { return (p = std::move(q)).x; }  //~ ERROR GTI-S2003
+int32_t f6(mut Tracked a, mut Tracked b, Tracked q) { a = b = std::move(q); return a.x; }  //~ ERROR GTI-S2003
+int32_t f7(mut Tracked p, Tracked q) { Tracked r = (1, p = std::move(q)); return r.x; }  //~ ERROR GTI-S2003
+int32_t f8(bool c, mut Tracked p, Tracked q, Tracked r) { Tracked s = c ? (p = std::move(q)) : std::move(r); return s.x; }  //~ ERROR GTI-S2003
+int32_t f9(mut Holder h, Tracked q) { return (h.t = std::move(q)).x; }  //~ ERROR GTI-S2003
+int32_t f10(Tracked q) { mut Tracked[1] ts = {Tracked(1)}; Tracked r = (ts[0] = std::move(q)); return r.x; }  //~ ERROR GTI-S2003
+Tracked f11(mut Tracked& p, Tracked q) { return (p = std::move(q)); }  //~ ERROR GTI-S2003
+int32_t f12(mut std::unique_ptr<int32_t> u, std::unique_ptr<int32_t> v) { std::unique_ptr<int32_t> w = (u = std::move(v)); return *w; }  //~ ERROR GTI-S2003
+int main() { return 0; }

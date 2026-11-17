@@ -29,8 +29,7 @@ python3 scripts/agent_workflow.py protection
   workflow regression tests, and a macOS arm64 and Linux x64 build running
   `feedback-fast` and the `gti-test` entries `gti_test_ui` with its `tests/ui`
   shards `gti_test_ui_<i>`, `gti_test_examples` and `gti_unit_tests` (each
-  matrix row's `gate` list;
-  Linux adds `compiler_pipeline` until it drains into `tests/ui`), with
+  matrix row's `gate` list, the same on both platforms), with
   per-case JUnit reports uploaded as `gti-test-<platform>-<attempt>`. On Linux,
   `gti-test --changed HEAD^1` then fails a case the pull request adds or
   changes when it uses more than half its CPU limit. The daily slow tier runs
@@ -74,10 +73,8 @@ Sanitizer jobs run the compiler aggregate separately from the other library
 tests, allowing the long compiler and driver suites to overlap. Both jobs are
 required, and each builds only its selected test targets.
 
-Sanitizer jobs stream verbose CTest output, including the compiler aggregate's
-current suite and per-suite elapsed time, and retain JUnit and CTest logs even
-when a test fails. `compiler_pipeline` contains several suites, so an unchanged
-CTest completion count alone does not show which suite is active.
+Sanitizer jobs stream verbose CTest output and retain JUnit and CTest logs even
+when a test fails.
 
 Every native job builds with the reviewed runtime compiler that
 `scripts/configure_ci_toolchain.sh` installs and exports: GCC 14 with LLVM 20 on
@@ -296,12 +293,10 @@ using a privileged container.
 The previous GitHub-era workflows are archived under
 `docs/plans/archive/github-actions-20261024/` and do not run.
 
-Compiler sanitizer coverage uses two compiler-suite partitions and two library
-partitions. Each compiler partition validates the complete manifest census before
-running its assigned suites; their union runs every compiler case once. Native
-CI continues to run the unpartitioned compiler aggregate. Suite start and elapsed
-time are emitted in verbose sanitizer logs. No sanitizer test is removed and
-the existing timeout and per-runner memory limits remain in force.
+Compiler sanitizer coverage is one library partition: its curated CTest subset
+and the instrumented `gti-test` run over `tests/ui`, which analyses every
+former compiler-aggregate case with the sanitized compiler. The existing
+timeout and per-runner memory limits remain in force.
 
 The serial single-body compile-scaling check warms all three workloads, then
 uses the median growth from three interleaved baseline/small/large measurements.

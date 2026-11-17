@@ -1,0 +1,5 @@
+// Function contracts: source-defined callable wrappers retain exact tracked function identity.
+//@ check-pass
+import std.functional;
+[[track_caller]] int callback(int value) { return value; }
+int main() { std::function<int(int)> erased{callback}; return erased(1); }

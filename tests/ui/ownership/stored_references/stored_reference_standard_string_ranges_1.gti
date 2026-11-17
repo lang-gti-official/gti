@@ -1,0 +1,5 @@
+// Stored reference standard string ranges: the source-defined standard string should expose read-only owner-tied iteration.
+//@ check-pass
+import std.string;
+class PathRange { std::string internal_path; public: PathRange(std::string value) : internal_path(std::move(value)) {} std::string::const_iterator begin() { return internal_path.begin(); } };
+int main() { std::string value = std::string("gti"); mut uint64_t count = 0; for (char character : value) { count++; } PathRange path = PathRange(std::string("gti")); mut auto iterator = path.begin(); char first = *iterator; return int(count) - 3; }

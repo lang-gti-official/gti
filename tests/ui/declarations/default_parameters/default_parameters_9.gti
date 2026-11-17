@@ -1,0 +1,3 @@
+// Default parameters: an omitted default should not infer a generic argument.
+T make<T>(T value = 1) { return value; }
+int main() { return make(); }  //~ ERROR GTI-S2023 provide explicit type arguments

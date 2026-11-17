@@ -1,0 +1,9 @@
+// Extern c interop: link_name should separate GTI source lookup from a portable C symbol.
+//@ check-pass
+namespace cli11 {
+extern "C" {
+  [[link_name("gti_cli11_app_create")]]
+  int32_t app_create(int32_t value);
+}
+}
+int main() { return cli11::app_create(42) - 42; }

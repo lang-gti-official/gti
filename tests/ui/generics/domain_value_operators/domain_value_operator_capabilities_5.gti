@@ -1,0 +1,10 @@
+// Domain value operator capabilities: analysis result.
+class vec2 {
+public:
+  vec2(float x, float y) : x(x), y(y) {}
+  float x;
+  float y;
+  vec2 operator*(float s) { return vec2(this.x * s, this.y * s); }
+};
+T scale<T, S>(T& v, S s) requires std::scalable_by<T, S> { return v * s; }
+int main() { vec2 v = vec2(1.0, 2.0); vec2 r = scale(v, 2); return 0; }  //~ ERROR GTI-S2029

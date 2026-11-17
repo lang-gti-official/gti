@@ -1,0 +1,6 @@
+// Type aliases: a public final member must not bypass a private alias qualifier.
+struct Inner<T> { using value_type = T;  public: Inner() = default; };
+class Outer<T> { using hidden = Inner<T>;  public: Outer() = default; };
+using Concrete = Outer<int>;
+using Leaked = Concrete::hidden::value_type;  //~ ERROR GTI-S2007
+int main() { return 0; }

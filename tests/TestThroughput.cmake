@@ -37,7 +37,6 @@ endif()
 set(gti_long_gate_timeouts
   failure_metadata 2400
   operator_relay_pipeline 2400
-  compiler_pipeline 1800
   reflection_semantics 1800
   view_fields 900)
 list(LENGTH gti_long_gate_timeouts gti_long_timeout_count)

@@ -1,0 +1,18 @@
+// Use based accessor selection: a mutable owner read only through accessor pairs is never used mutably (one warning naming the owner).
+struct Slot {
+  mut int32_t value = 2;
+  int32_t& get() { return this.value; }
+  mut int32_t& get() mut { return this.value; }
+  int32_t& operator[](std::size_t index) { return this.value; }
+  mut int32_t& operator[](std::size_t index) mut { return this.value; }
+  bool empty() { return this.value == 0; }
+public:
+  Slot() = default;
+};
+int32_t read(int32_t& value) { return value; }
+void write(mut int32_t& value) { value += 1; }
+int main() {
+  mut Slot slot{};  //~ WARN GTI-S2096
+  int32_t& held = slot.get();
+  return held + slot[std::size_t(0)] - 4;
+}

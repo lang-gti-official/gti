@@ -1,0 +1,41 @@
+// Variadic storage construction and vector: concrete emplace reanalysis should diagnose bad arity, exact-type mismatch, and constructor access with each instantiation site.
+import std.memory;
+std::storage<T> fixture_storage<T>(uint64_t count) requires std::storage_element<T> {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<T>(count);
+  return std::move(allocated).expect("test storage allocation");
+}
+
+class Pair {
+public:
+  Pair(int32_t first, bool second) {}
+public:
+  Pair() = default;
+};
+
+class Secret {
+  Secret(int32_t value) {}
+public:
+  Secret() = default;
+};
+
+class Slot<std::storage_element T> {
+  mut std::storage<T> data;
+
+public:
+  Slot() : data(fixture_storage<T>(uint64_t(1))) {}
+
+  void emplace<Args...>(Args... args) mut {
+    this.data.emplace(uint64_t(0), args...);
+  }
+};
+
+int main() {
+  mut Slot<Pair> missing = Slot<Pair>();
+  missing.emplace(1);  //~ ERROR GTI-S2012
+  mut Slot<Pair> wrong = Slot<Pair>();
+  wrong.emplace(1, 2);  //~ ERROR GTI-S2012
+  mut Slot<Secret> hidden = Slot<Secret>();
+  hidden.emplace(3);  //~ ERROR GTI-S2007
+  return 0;
+}

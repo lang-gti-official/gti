@@ -1,0 +1,5 @@
+// Source-defined concepts: concept declarations format with C++-familiar generic and conjunction spacing, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+concept sortable<T> = std::totally_ordered<T> && std::movable<T>;

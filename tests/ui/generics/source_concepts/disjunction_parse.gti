@@ -1,0 +1,3 @@
+// Source-defined concepts: a concept disjunction parses without losing the following declaration.
+//@ parse-pass
+concept either<T> = std::integral<T> || std::floating_point<T>; int okay = 1;

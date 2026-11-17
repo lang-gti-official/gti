@@ -1,0 +1,20 @@
+// Stored carrier return provenance: an accessor relay through a stored reference must retain the external field, not freeze the independently movable carrier shell.
+//@ check-pass
+struct Counter { mut int value = 4;  public: Counter() = default; };
+// RFC 0004: results in the stored region borrow the external owner, not the
+// carrier shell; an elided result would borrow the receiver.
+class ProjectedCarrier<lifetime a> {
+  Counter&<a> owner;
+public:
+  ProjectedCarrier(Counter&<a> source) : owner(source) {}
+  int&<a> relay() { return this.read(); }
+  int&<a> read() { return this.owner.value; }
+};
+int main() {
+  mut Counter owner{};  //~ WARN GTI-S2096
+  ProjectedCarrier original = ProjectedCarrier(owner);
+  ProjectedCarrier& alias = original;
+  int& value = alias.relay();
+  ProjectedCarrier moved = std::move(original);
+  return value + moved.read() - 8;
+}

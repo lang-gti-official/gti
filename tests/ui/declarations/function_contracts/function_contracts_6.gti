@@ -1,0 +1,10 @@
+// Function contracts: unrelated source-defined owning wrappers retain exact function identity too.
+//@ check-pass
+[[track_caller]] int callback(int value) { return value; }
+struct Holder<F> {
+  F callback;
+  Holder(F value) : callback(value) {}
+  int invoke(int value) { return callback(value); }
+};
+Holder<F> retain<F>(F value) { return Holder<F>(value); }
+int main() { auto holder = retain(callback); return holder.invoke(1); }

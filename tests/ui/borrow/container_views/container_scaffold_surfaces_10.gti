@@ -1,0 +1,11 @@
+// Container scaffold surfaces: nested text-owner relays must reject invalidation, local escape, by-value ownership escape, and temporary owners.
+import std.string;
+class Label {
+  mut std::string text = std::string("abc");
+public:
+  std::string_view view() { return text.view(); }
+  void edit() mut { this.text.clear(); }
+public:
+  Label() = default;
+};
+std::string_view bad(Label value) { return value.view(); }  //~ ERROR GTI-S2045

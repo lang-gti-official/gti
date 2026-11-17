@@ -1,0 +1,26 @@
+// General owner dependent returns: moving an operator wrapper must not release the returned view's external owner loan.
+import std.memory;
+
+class ReadingView<T> {
+  T& value;
+public:
+  ReadingView(T& value) : value(value) {}
+  T& get() { return this.value; }
+};
+class ViewCallable<T> {
+  T& source;
+public:
+  ViewCallable(T& value) : source(value) {}
+  ReadingView<T> operator()() { return ReadingView<T>(this.source); }
+  ReadingView<T> operator[](uint64_t index) {
+    return ReadingView<T>(this.source);
+  }
+};
+int main() {
+  mut int owner = 7;
+  ViewCallable<int> callable{owner};
+  auto view = callable[uint64_t(0)];
+  ViewCallable<int> relocated = std::move(callable);  //~ ERROR GTI-S2017 Cannot move storage while an overlapping borrow
+  owner = 8;
+  return view.get();
+}

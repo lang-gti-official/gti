@@ -1,0 +1,24 @@
+// Named generics: generic substitution and exact inference should validate.
+//@ check-pass
+class Box<T> {
+  mut T value;
+
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+  U echo<U>(U replacement) { return replacement; }
+  void set(T replacement) mut { this.value = replacement; }
+};
+
+T identity<T>(T value) { return value; }
+T unbox<T>(Box<T> box) { return box.get(); }
+U relay<T, U>(Box<T> box, U value) { return box.echo<U>(value); }
+
+int main() {
+  mut Box<int> box = Box<int>(identity(7));
+  box.set(identity<int>(9));
+  int value = unbox(box);
+  int relayed = relay(box, box.echo<int>(value));
+  std::string_view text = identity<std::string_view>("generic");
+  return relayed;
+}

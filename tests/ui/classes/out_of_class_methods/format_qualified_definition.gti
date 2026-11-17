@@ -1,0 +1,5 @@
+// Out-of-class methods: qualified definitions format without changing tokens or qualification, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+struct Test{int value(); public: Test() = default; };int Test::value(){return 1;}

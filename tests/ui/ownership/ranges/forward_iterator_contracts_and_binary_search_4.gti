@@ -1,0 +1,15 @@
+// Forward iterator contracts and binary search: forward_iterator should reject a mutable owner-loan cursor at the constrained call.
+import std.iterator;
+import std.vector;
+
+bool accepts_forward<Iterator>(Iterator iterator)
+  requires std::forward_iterator<Iterator> {
+  return true;
+}
+
+int use() {
+  mut std::vector<int> values = std::vector<int>({1});
+  mut auto cursor = values.begin_mut();
+  bool result = accepts_forward(std::move(cursor));  //~ ERROR GTI-S2029
+  return 0;
+}

@@ -1,0 +1,3 @@
+// Function contracts: an invalid terminal body must retain its original error without a speculative flow cascade.
+[[noreturn]] void run() { missing(); }  //~ ERROR GTI-S2001
+int main() { return 0; }

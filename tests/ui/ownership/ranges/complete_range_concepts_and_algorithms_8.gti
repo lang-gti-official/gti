@@ -1,0 +1,21 @@
+// Complete range concepts and algorithms: sized_range should reject a range with a non-size_t observer.
+import std.iterator;
+import std.vector;
+class wrong_size_range {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+public:
+  std::vector<int32_t>::const_iterator begin() {
+    return this.values.begin();
+  }
+  std::vector<int32_t>::sentinel end() { return this.values.end(); }
+  int32_t size() { return 1; }
+public:
+  wrong_size_range() = default;
+};
+bool accepts<Range>(Range& values) requires std::sized_range<Range> {
+  return values.size() == std::size_t(1);
+}
+int main() {
+  wrong_size_range values{};
+  return accepts(values) ? 0 : 1;  //~ ERROR GTI-S2029
+}

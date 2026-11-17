@@ -879,13 +879,14 @@ constructor, and mutating the owner while a copy is live (`GTI-S2045`,
 `testDerivedCarriers`.
 ## Text members through checked `operator->` (0.467.1)
 
-`testArrowNonClassReferents` in the `ownership` suite analyzes a class with
+`tests/ui/ownership/member_operators/arrow_text_referents.gti` analyzes a class with
 `std::string_view& operator->()` and a `std::optional<std::string_view>`.
 `label->size()`, `maybe->size()`, `label->end()` and `label->empty()` verify,
 lower to the `StringViewSize` and `StringViewEmpty` intrinsics, and leave no
-MIR value of unknown type, which was the backend's refusal before the fix.
-`->` through an `int&` or `c_string&` result, as a call or a field read, is
-`GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
+MIR value of unknown type, which was the backend's refusal before the fix
+(the case checks both intrinsics in its MIR).
+In `arrow_rejected_referents.gti`, `->` through an `int&` or `c_string&`
+result, as a call or a field read, is `GTI-S2000`; an unknown `string_view` member or a `size(1)` is `GTI-S2035`;
 none reports `GTI-B`.
 
 `tests/ui/language/operators/` runs `arrow_text_members.gti` in all eight native
@@ -1214,8 +1215,8 @@ verification. The emitted text constructs every copy from the destination
 after the store, stages the first argument before the second store, and calls
 the receiver through the temporary's slot before ending it.
 `testAssignmentResultFieldView` now expects the move-only read to be rejected
-by semantics. In `compiler_pipeline`, `testMoveOnlyAssignmentResultUse`
-reports exactly one `GTI-S2003` at the `=` of a used move-only result, with
+by semantics. `tests/ui/ownership/moves/move_only_assignment_result_*.gti`
+report exactly one `GTI-S2003` at the `=` of a used move-only result, with
 its hint and no fix-it, for initialization, return, by-value argument,
 receiver, field read, chained assignment, a comma's right operand, a
 conditional arm, field, element and reference destinations, `std::unique_ptr`
@@ -2954,7 +2955,7 @@ owning user-defined argument records across C++20/C++23 at O0/O1/O3, disabled
 copy elision, and ASan/UBSan. Observable traces cover read-only and mutable
 receivers, consuming value/error payload extraction, receiver evaluation,
 wrong-state extraction, later-argument failure and callee failure, with
-exactly-once payload cleanup. `testOrderedRawReceiverInputs` checks the exact
+exactly-once payload cleanup. The `ordered_raw_receiver_inputs` case of `gti_unit_tests` checks the exact
 HIR pointee identity/access mode and MIR receiver stages; mutated call-site
 identities and erased unsafe/memory effects on either the stage or call must
 fail verification. The runtime fixture also invokes a declared-unsafe method
@@ -3068,7 +3069,7 @@ are local observations, not portable thresholds or a claim of failure-path parit
 
 ## Optional out-of-class method definitions (0.416.0)
 
-`testOutOfClassMethods` covers canonical declaration/body association, private
+The `tests/ui/classes/out_of_class_methods/` cases cover canonical declaration/body association, private
 member access, static factories, renamed parameters, default arguments,
 constexpr calls, consuming receivers and borrowed-result contracts. Negative
 cases reject unmatched and duplicate definitions, altered signatures and
@@ -3937,7 +3938,7 @@ feedback and must not be presented as clean-head integration evidence.
   typed binding, are covered.
   The borrowed-callable/conditional-result slice subsequently supports direct
   checked-reference parameters and deferred inferred conditional arms. Its
-  owning test is `testBorrowedCallableConditionals`; its native gate is
+  owning cases are `tests/ui/ownership/callables/borrowed_callable_conditionals_*.gti`; its native gate is
   `tests/ui/ownership/borrow/borrowed_callable_conditionals.gti` (C++20/C++23 O0/O1/O3, no-elide,
   ASan/UBSan), including move-only state, exact results and cleanup on failure.
   Example 028 adds eight MIR bodies, eight declarations and four generated
@@ -7313,7 +7314,7 @@ repairs in bindings, compile-time branches and static assertions.
 `diagnostic_explanations` checks terminal/LSP call-trace agreement across an
 included file, Unicode UTF-16 locations and repair in an unsaved overlay.
 
-`testConstraintFailureProvenance` also checks member-owned `requires` leaf
+The `tests/ui/generics/constraint_failures/` cases also check member-owned `requires` leaf
 causes, exact requirement source ranges, repaired valid MIR, representative
 disjunction evidence and nested member-step elision. Producer tests retain one
 shared immutable leaf across 64 nested member steps and bound concept context
@@ -7409,8 +7410,8 @@ or every platform matrix was rerun.
 
 The 0.367.1 fix gives an implicit instance-field text accessor the same
 predeclared receiver summary as an explicit `this` path. Body validation still
-owns the actual origin proof. `testContainerScaffoldSurfaces` verifies MIR for
-valid relays and rejects local/by-value shadowing, static instance access,
+owns the actual origin proof. The `tests/ui/borrow/container_views/` cases accept
+valid relays and reject local/by-value shadowing, static instance access,
 temporary/local escape and live-view invalidation or movement. A same-named
 read-only parameter retains its own dependency; literal-backed static fields
 do not gain a receiver loan.
@@ -9516,7 +9517,6 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/generics/signatures/class_signature_pattern.gti` | headerless signature-pattern primaries, result/pack extraction, aliases, repeated/fixed components, empty and reference metadata, ordinary/pack methods and generic forwarding under C++20/C++23 at O0/O1/O3; compiler tests reject mismatches and forged lowered binding projections |
 | `stored_callable_types` / `tests/ui/callables/stored/` | retained-field callable invocation, concrete heap-owned models and owned value-pack forwarding: exact symbolic result and concrete capability checks, body-scoped representation overlays, forged allocation-type/MIR receiver/capture-recipe/pack-index/cleanup/copyability rejection, repeated calls and owned capture cleanup; 272 executions across C++20/C++23 O0/O1/O3, no-elide and sanitizer modes. Failure cases assert reverse capture and pack-element order, remaining caller cleanup, and exact primary/secondary records, including heap-owned captures. This is prerequisite evidence for L-CALL-02, not public-wrapper completion |
 | `tests/lsp/signatures` | unsaved signatures and class packs; concrete deduced function/method hover; exact component/call/pack-conflict spans and related declaration publication/clearing; incomplete-source recovery and formatting round-trip |
-| `compiler_pipeline` | manifest-backed aggregate across independently buildable declarations/types/generics, ownership/lifecycle/ranges/callables, and bounded end-to-end executables (the former frontend, diagnostics/formatting/queries and constexpr/configuration/numerics/static-initialization suites are `tests/ui` cases, `tests/project` transcripts and `gti_unit_tests` cases); the aggregate rejects missing or duplicate registrations before running every suite once |
 | `semantic_header_boundary` | fail-closed include direction for semantic core, model/query, and analyzer/provider headers; exact direct analyzer-consumer allowlist; and frontend/HIR contracts that cannot regain the analyzer umbrella |
 | `semantic_header_self_containment` | independent translation units include and instantiate the semantic core, model, and analyzer contracts without relying on transitive include order |
 | `parser_conditional_recovery` | timeout-bounded stray and active conditional-continuation recovery in switch and extern contexts; exact parser diagnostics; nearest-owner propagation; later branch/declaration retention; and valid nested conditional-switch parsing |
@@ -9922,7 +9922,7 @@ into the tiers of the redesign's §7:
 
 | Tier | Entries | How |
 | --- | --- | --- |
-| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_4` (`gti-test --shard i/4`), `gti_test_examples`, `gti_unit_tests`; Linux also `compiler_pipeline` until it drains | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
+| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_4` (`gti-test --shard i/4`), `gti_test_examples`, `gti_unit_tests` | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
 | Pull request budget (Linux, advisory) | cases the PR adds or changes | `scripts/gti_test_budget.py` runs `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`; a case whose warm CPU time exceeds half its scaled limit becomes a warning annotation and a job-summary row, not a failure, until the rule is calibrated (below); other failures of changed cases still fail |
 | Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
@@ -9948,8 +9948,8 @@ hand; on the same head all 1,094 changed cases stayed under half locally, so
 none moved. The gate entries' hosted times on that run (Linux, 4 vCPU, ctest
 `-j` with `PROCESSORS 4`): `gti_test_ui` 93 s, `gti_test_ui_1`..`_4` 152, 146,
 144 and 143 s, `gti_test_examples` 113 s, `gti_unit_tests` 27 s,
-`compiler_pipeline` 281 s, each against its 600 s bound (1800 s for
-`compiler_pipeline`); macOS arm64: `gti_test_ui` 97 s, the shards 147, 150,
+`compiler_pipeline` 281 s (since deleted, with its last suite), each against
+its 600 s bound (1800 s for `compiler_pipeline`); macOS arm64: `gti_test_ui` 97 s, the shards 147, 150,
 127 and 134 s, `gti_test_examples` 115 s, `gti_unit_tests` 34 s. Measured on that machine (Apple M4 Pro) on
 2026-11-17, the most expensive warm case of `tests/ui` used 47% of its limit
 and five used 40% or more; a pull request that edits one of those can be
@@ -10026,10 +10026,10 @@ compile job and 4096 MiB per test worker, since an instrumented compiler
 suite grows several times larger than its plain run (six workers on a 12 GiB
 runner had the ownership suite OOM-killed). The sanitizer job also scales
 every test timeout six times (`-DGTI_TEST_TIMEOUT_SCALE=6`, so the 600-second
-default becomes an hour). Its three compiler partitions run only
-`compiler_pipeline`, split round-robin by suite, and scale its 1800-second
-bound ten times: the instrumented ownership suite alone took more than three
-hours on 2026-11-04 (run 41837802931). The job runs
+default becomes an hour). Its three compiler partitions, which ran only
+`compiler_pipeline` (the instrumented ownership suite alone took more than
+three hours on 2026-11-04, run 41837802931), left with that aggregate: the
+instrumented `gti-test` run analyses its cases. The job runs
 the emitter's preflight, text, lifecycle, census and corpus-protocol checks
 rather than the whole generated-C++ corpus, and omits `failure_metadata`:
 both exceeded an hour under ASan on the 6-core runner and remain the plain
@@ -10111,7 +10111,7 @@ cache bypass. It is bounded branch evidence, not a substitute for full Linux CI.
 
 ## Cross-Phase Feature Coverage
 
-`testContextualNumericLiterals` checks broad and composed numeric constraints,
+The `tests/ui/types/contextual_numeric_literals/` cases check broad and composed numeric constraints,
 signed/grouped literals, concrete HIR literal domains, checked range diagnostics,
 and independent negatives for mixed variables, unconstrained types, call
 matching, narrow arithmetic results, and integral-only operations. The
@@ -10173,10 +10173,9 @@ target/source-unit visibility, IR identity/effects, and emitted/runtime behavior
 where applicable. A stage that intentionally does not participate should be
 documented rather than given a placeholder test.
 
-For class-scoped type aliases, `gti_compiler_declarations_tests` owns parsing,
-declaration-order-independent resolution, access and collision diagnostics,
-generic-owner substitution, LoweredProgram/backend shape, construction,
-formatting, and shared language queries. `lsp_protocol` owns hover, definition,
+For class-scoped type aliases, the `tests/ui/declarations/type_aliases/` cases
+own parsing, declaration-order-independent resolution, access and collision
+diagnostics, generic-owner substitution, construction and formatting. `lsp_protocol` owns hover, definition,
 completion, semantic tokens, and nested document symbols. The Tree-sitter
 corpus, highlight, and shipped-source gates own editor parsing and captures;
 example 79 is the native compile/run composition. Aliases are static type
@@ -10403,11 +10402,10 @@ mutable-only, paired-overload, and reusable `operator()` cases. It asserts the
 semantic receiver mode, HIR temporary-borrow role, exact MIR producer/place,
 `BorrowRead`/`BorrowWrite` stage, target qualifier, and single full-expression
 drop, then forges read-only storage, a mismatched qualifier, and a missing drop
-marker. `testVirtualTemporaryReceivers` covers virtual, override,
-interface-override, inherited and virtual `operator()` members with the same
-semantic/HIR/MIR assertions, then forges a statically dispatched virtual
-member, a table-dispatched non-virtual member, and a member whose owner lies
-outside the temporary's class hierarchy.
+marker. `tests/ui/ownership/temporaries/virtual_temporary_receivers.gti`
+checks virtual, override, interface-override, inherited and virtual
+`operator()` members (the former C++ test's semantic/HIR/MIR assertions and
+its three receiver-dispatch forgeries were dropped with the suite).
 `mutable_temporary_receiver_runtime` runs C++20/C++23 at O0/O3 and
 proves overload selection plus exactly-once destruction for constructor and
 class-return producers. It also proves that method/argument failure begins
@@ -10506,11 +10504,10 @@ explicit moves, compound and borrowed-state producers, escaping results, and
 fallback-tier ambiguity. `temporary_argument_borrow_runtime` runs successful
 and defined-failure cases at O0/O3 under C++20/C++23, including failure before
 production, in a later argument, and in the selected body.
-`testConditionalTemporaryArgumentBorrows` covers calls in `&&`/`||` operands
-and `?:` arms. Each branch-only argument must borrow its exact CFG-promoted
-hidden slot, end its loan in the arm, and drop conditionally after the merge.
-Mutations aim a borrow at a sibling's slot, detach the slot from its producer,
-unnumber it, and make the post-merge drop unconditional.
+`tests/ui/ownership/temporaries/conditional_temporary_argument_borrows.gti`
+checks calls in `&&`/`||` operands and `?:` arms (the per-arm slot, loan-end
+and conditional-drop assertions and their mutations were dropped with the C++
+suite).
 `tests/ui/language/conditionals/short_circuit_temporary_argument.gti` traces taken and skipped operands
 with and without destructors, nested operators and a loop condition, and
 defined failure in the borrowing callee, a later argument, the producer, and
@@ -10784,12 +10781,12 @@ and empty arguments through C++20/C++23 executables and `gti run --`, while
 `lsp_protocol` checks publication of the shared invalid-signature diagnostic.
 The optional audit retains a compact execution snapshot.
 
-`testExclusiveReborrowLoanGraph` also checks returns through local receiver,
+`tests/ui/ownership/loans/exclusive_reborrow_loan_graph_*.gti` also check returns through local receiver,
 reference-parameter, generic, projected and accessor-result aliases, including
 read-only children and borrowed carrier results. Local storage, wrong-owner
-returns, and caller-side invalidation remain negative cases. MIR mutations
-remove an accessor parent or the returned child's retirement and must fail
-verification. Example 042 executes receiver and generic return chains through
+returns, and caller-side invalidation remain negative cases (the C++ MIR
+mutations that removed an accessor parent or the returned child's retirement
+were dropped with the suite). Example 042 executes receiver and generic return chains through
 the existing corpus gates; its reviewed census adds two accessors and one
 concrete generic body. Owning callable coverage separately rejects borrowed
 heap environments before MIR while retaining tracked locals and owned targets.
@@ -11530,7 +11527,7 @@ reason, and the seeded-bug kill rate falls by at most 5 points.
   file. The kill rate is killed / (killed + survived). The workflow runs 180
   mutants as eight slices of about 23 (one hosted job each, under a
   250-minute budget) against the per-commit gate tier: `feedback-fast` plus
-  the `compiler-suite` parts of `compiler_pipeline`. The complete suite would
+  the `tests/ui` shards (`gti-test-ui`). The complete suite would
   cost hours per surviving mutant. Mutant ids are stable for unchanged
   sources, so `run --replay` scores another test command on exactly the same
   mutants.
@@ -11728,15 +11725,10 @@ reuse is confined to a single-source worker; `GTI_CPP_MIR_CORPUS_NO_REUSE=1`
 retains the independent-analysis path for differential timing and evidence.
 
 
-`compiler_pipeline` validates the complete named-test manifest before execution.
-Configure `-DGTI_COMPILER_TEST_ISOLATE_CASES=ON` to run every listed compiler case
-in a fresh process through its existing `--test NAME` entry point. This limits
-allocator retention across cases in compiler-sanitizer runs on memory-limited
-hosts and prints the active case before execution. The default remains one
-process per owned suite. Both modes retain the exact manifest/runtime census,
-all assertions and failure propagation; isolation does not filter cases or
-disable sanitizer checks. The standalone aggregate accepts `--isolate-tests`
-before its manifest argument.
+The `compiler_pipeline` aggregate, its named-test manifest and census, and
+the `GTI_COMPILER_TEST_ISOLATE_CASES` option are gone: its seven suites are
+`tests/ui` (and some `tests/slow`, `tests/project` and `tests/unit`) cases, and
+`gti-test --isolate` is the fresh-process run.
 
 CI suite sharding also supports per-case isolation. Every shard first validates
 the complete manifest/runtime census, then runs only its assigned suites; the
@@ -12001,13 +11993,11 @@ cmake --build build --target gti_function_signature_tests --parallel "$GTI_BUILD
 ctest --test-dir build --output-on-failure -R '^function_signature_types$'
 ```
 
-The partitioned compiler suites also support `--list` and `--test NAME`, so a
-callable ownership edit can be checked without running unrelated compiler
-cases:
+A callable ownership edit can be checked without running unrelated compiler
+cases, since the callable ownership cases are `gti-test` files:
 
 ```sh
-cmake --build build --target gti_compiler_ownership_tests --parallel "$GTI_BUILD_JOBS"
-build/gti_compiler_ownership_tests --test testOwnedCallableTransport
+build/gti-test tests/ui/ownership/callables
 ```
 
 Runtime scripts using the shared callable matrix accept repeatable `--mode`

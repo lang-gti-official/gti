@@ -1,0 +1,46 @@
+// Implicit return moves: whole move-only locals and by-value parameters should move implicitly at an exact return boundary.
+//@ check-pass
+//@ snapshot: mir
+//@ mir-function: return_generic
+// The move-only instance returns by an implicit move; the copyable one loads.
+// CHECK: function return_generic
+// CHECK: i1 move hir-value={{.*}}intrinsic=move
+// CHECK: function return_generic
+// CHECK-NOT: intrinsic=move
+// CHECK: i1 load hir-value=
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+};
+
+struct Copyable {
+  int value = 7;
+public:
+  Copyable() = default;
+};
+
+Owner return_parameter(Owner value) {
+  return value;
+}
+
+Owner return_local() {
+  Owner value{};
+  return (value);
+}
+
+Copyable return_copy(Copyable value) {
+  return value;
+}
+
+T return_generic<T>(T value) {
+  return value;
+}
+
+int main() {
+  Owner owner = return_generic(Owner());
+  Copyable copy = return_generic(Copyable());
+  return copy.value;
+}

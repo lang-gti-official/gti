@@ -1,0 +1,5 @@
+// Namespaces and aliases: formatting keeps shorthand with canonical scope spacing and idempotent namespace indentation.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+namespace outer :: inner{namespace detail::api{int value(){return 3;}}}

@@ -1,0 +1,9 @@
+// Container scaffold surfaces: relaying an owner-dependent C string through an exact c_string parameter and return should preserve its source loan.
+import std.string;
+c_string relay(c_string value) { return value; }
+int main() {
+  mut std::string text = std::string("abc");
+  c_string pointer = relay(text.c_string());
+  text.push_back('d');  //~ ERROR GTI-S2017
+  return pointer == nullptr ? 1 : 0;
+}

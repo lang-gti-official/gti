@@ -221,9 +221,9 @@ class DeclaredTests(unittest.TestCase):
             "Validation:\n- T1: " + ", ".join(f"t{i:03}" for i in range(validation.DECLARED_LIMIT + 5)))
         self.assertEqual(len(names), validation.DECLARED_LIMIT)
         self.assertTrue(any("at most" in problem for problem in problems))
-        document = {"tests": [{"name": "registered"}, {"name": "compiler_pipeline"},
+        document = {"tests": [{"name": "registered"}, {"name": "gti_test_ui"},
                               {"name": "off", "properties": [{"name": "DISABLED", "value": True}]}]}
-        selected, problems = validation.runnable_declared(document, ["registered", "compiler_pipeline",
+        selected, problems = validation.runnable_declared(document, ["registered", "gti_test_ui",
                                                                      "off", "missing"])
         self.assertEqual(selected, ["registered"])
         self.assertEqual(len(problems), 2)
@@ -269,7 +269,7 @@ class DeclaredTests(unittest.TestCase):
                       ["python3", "scripts/validation_checks.py", "focused", "--build", "build", "--plan", "plan.json"],
                       ["python3", "-c", "print('-R not_a_ctest_pattern')"]]
             names = ["llvm_scalar_execution", "llvm_class_execution", "lsp_protocol", "planned_owner",
-                     "compiler_pipeline", "llvm_place_execution", "not_a_ctest_pattern"]
+                     "gti_test_ui", "llvm_place_execution", "not_a_ctest_pattern"]
             self.assertEqual(validation.uncovered_declarations(names, checks, directory),
                              ["llvm_place_execution", "not_a_ctest_pattern"])
 
@@ -1459,11 +1459,12 @@ class ValidationChecks(unittest.TestCase):
     def test_shard_inventory_runs_split_parts_instead_of_aggregates_and_gate_set_is_a_subset(self):
         slow = {"failure_metadata", "llvm_dispatch_execution", "instance_reuse", "instance_reuse_0"}
         sensitive = {"other_runtime", "llvm_backend_scalar", "llvm_dispatch_execution"}
-        registered = {"smoke", "compiler_pipeline", "compiler_pipeline_frontend", "compiler_pipeline_backend",
+        registered = {"smoke", "allocator_raw_audit_independence", "allocator_raw_audit_independence_a",
+                      "allocator_raw_audit_independence_b",
                       "instance_reuse", "instance_reuse_0", "instance_reuse_1", "other", "other_runtime",
                       "llvm_backend_scalar", "failure_metadata", "llvm_dispatch_execution",
                       *validation.GATE_EXCLUDED}
-        aggregates = {"compiler_pipeline", "instance_reuse"}
+        aggregates = {"allocator_raw_audit_independence", "instance_reuse"}
 
         def inventory(test_set, names=registered, darwin=None):
             return validation.shard_inventory(names, test_set, darwin, slow, sensitive)
@@ -1471,7 +1472,7 @@ class ValidationChecks(unittest.TestCase):
         full = inventory("full")
         # The aggregates are replaced by their registered parts; slow-labelled
         # tests leave for the daily slow tier.
-        self.assertNotIn("compiler_pipeline", full)
+        self.assertNotIn("allocator_raw_audit_independence", full)
         self.assertNotIn("instance_reuse", full)
         self.assertEqual(full, registered - aggregates - slow)
         # The slow tier runs exactly the slow-labelled tests (O0 and O3) and
@@ -1483,8 +1484,8 @@ class ValidationChecks(unittest.TestCase):
         self.assertEqual(validation.TEST_SET_LEVELS["slow"], "O0,O3")
         self.assertEqual(validation.TEST_SET_LEVELS["o3"], "O3")
         # Without the parts, an aggregate stays (no coverage loss on an older tree).
-        alone = {"smoke", "compiler_pipeline", "other", *validation.GATE_EXCLUDED}
-        self.assertIn("compiler_pipeline", validation.shard_inventory(alone, "full"))
+        alone = {"smoke", "allocator_raw_audit_independence", "other", *validation.GATE_EXCLUDED}
+        self.assertIn("allocator_raw_audit_independence", validation.shard_inventory(alone, "full"))
         gate = inventory("gate")
         self.assertEqual(gate, full - validation.GATE_EXCLUDED)
         self.assertTrue(gate < full)

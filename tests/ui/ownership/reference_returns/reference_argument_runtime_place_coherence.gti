@@ -1,0 +1,18 @@
+// Reference argument runtime place coherence: same-owner iterator arguments should lower to verified exact runtime places.
+//@ check-pass
+import std.vector;
+import std.iterator;
+
+bool has_any<Iterator, Sentinel>(Iterator& first, Sentinel& last)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> {
+  return first != last;
+}
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1, 2});  //~ WARN GTI-S2096
+  auto first = values.begin();
+  auto other = values.begin();
+  auto last = values.end();
+  return has_any(first, last) ? 0 : 1;
+}

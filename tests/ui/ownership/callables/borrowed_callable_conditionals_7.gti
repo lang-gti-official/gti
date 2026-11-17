@@ -1,0 +1,6 @@
+// Borrowed callable conditionals: analysis result.
+import std.memory;
+
+class Source { int value = 1; public: int& operator()(int n) { return this.value; }  public: Source() = default; };
+int apply<F>(F& f) { auto result = true ? f(1) : 2; return result; }  //~ ERROR GTI-S2046
+int main() { Source source{}; return apply(source); }

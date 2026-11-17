@@ -1,0 +1,57 @@
+// Mutable stored dependencies: one direct mutable stored dependency should construct, return, move, reborrow, and reactivate its exact owner.
+//@ check-pass
+class MutView {
+  using value_type = int;
+  mut value_type& referent;
+public:
+  MutView(mut value_type& source) : referent(source) {}
+  mut value_type& get() mut { return this.referent; }
+};
+
+MutView make_view(mut int& source) {
+  return MutView(source);
+}
+
+MutView relay_view(MutView view) {
+  return std::move(view);
+}
+
+MutView choose_view(mut int& source, bool first) {
+  if (first) {
+    return MutView(source);
+  }
+  return MutView(source);
+}
+
+mut int& relay_reference(mut int& source) {
+  return source;
+}
+
+int write_then_exit(mut int& source, bool early) {
+  mut MutView view = MutView(source);
+  mut int& slot = view.get();
+  slot = 10;
+  if (early) {
+    return 4;
+  }
+  slot = 11;
+  return 5;
+}
+
+int main() {
+  mut int owner = 1;
+  bool update = true;
+  {
+    mut MutView first = choose_view(owner, true);  //~ WARN GTI-S2096
+    mut MutView moved = relay_view(std::move(first));
+    if (update) {
+      mut int& slot = moved.get();
+      slot = 7;
+    }
+  }
+  owner += 1;
+  int branch = write_then_exit(owner, true);
+  mut int& relayed = relay_reference(owner);
+  relayed += 1;
+  return owner + branch - 15;
+}

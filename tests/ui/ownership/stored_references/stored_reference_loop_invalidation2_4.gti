@@ -1,0 +1,4 @@
+// Stored reference loop invalidation2: a loan created per outer iteration may end at an inner-loop exit before the owner changes and the next iteration recreates it.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut int outer = 0; while (outer < 2) { mut auto iterator = value.begin(); mut int inner = 0; while (inner < 1) { char current = *iterator; inner++; } value.push_back('!'); outer++; } return 0; }

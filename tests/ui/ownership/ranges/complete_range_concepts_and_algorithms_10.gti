@@ -1,0 +1,10 @@
+// Complete range concepts and algorithms: complete-range proof carriers should remain private to generated range iteration until public endpoint extraction has a complete owner-dependent iterator contract.
+import std.iterator;
+bool accepts<Range>(Range& values) requires std::input_range<Range> {
+  auto iterator = values.begin();  //~ ERROR GTI-S2029 Direct structural range endpoint
+  return true;
+}
+int main() {
+  int32_t[2] values = {1, 2};
+  return accepts(values) ? 0 : 1;
+}

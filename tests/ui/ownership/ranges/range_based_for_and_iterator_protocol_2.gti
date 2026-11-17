@@ -1,0 +1,13 @@
+// Range based for and iterator protocol: a concrete generic range body should verify against its exact HIR binding and per-instance loan facts.
+//@ check-pass
+import std.vector;
+int32_t count_all<T>(std::vector<T>& values) requires std::vector_element<T> {
+  mut int32_t total = 0;
+  for (auto& value : values) { total = total + 1; }
+  return total;
+}
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  return count_all(values) - 1;
+}

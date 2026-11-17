@@ -1,0 +1,9 @@
+// Program initialization plans: a later data-only zero-initialization step must not create an early-value loophole.
+class Globals {
+public:
+  static mut int32_t first = Globals::zeroed;  //~ ERROR GTI-S2068
+  static mut int32_t zeroed;  //~ ERROR GTI-S2039
+public:
+  Globals() = default;
+};
+int main() { return Globals::first; }

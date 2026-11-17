@@ -1,0 +1,14 @@
+// Stored carrier return provenance: a same-typed projection beyond the designated stored referent should not masquerade as the exact external dependency.
+class Node {
+public:
+  Node& next;
+  Node(Node& source, int tag) : next(source) {}
+};
+class NodeCarrier {
+public:
+  Node& referent;
+  NodeCarrier(Node& source) : referent(source) {}
+};
+Node& escape_referent_projection(NodeCarrier carrier) {
+  return carrier.referent.next;  //~ ERROR GTI-S2085
+}

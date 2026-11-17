@@ -1,0 +1,9 @@
+// Generated default temporary argument borrows: exact first-field union construction remains distinct from an empty generated default.
+//@ check-pass
+union Overlay { mut uint64_t first; mut uint32_t second; };
+Overlay zero() { return Overlay(); }
+int main() {
+  mut Overlay overlay{uint64_t(7)};
+  unsafe { overlay.second = uint32_t(2); }
+  return 0;
+}

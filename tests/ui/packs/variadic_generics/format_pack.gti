@@ -1,0 +1,6 @@
+// Variadic generics: the formatter keeps compact, idempotent pack syntax.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+void consume<Args...>(Args... values) {}
+void relay<Args...>(Args... values){consume(values...);}

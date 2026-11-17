@@ -6775,7 +6775,7 @@
         "deleted-move rejection"
       ],
       "evidence": [
-        "tests/compiler_declarations_tests.cpp",
+        "tests/ui/generics/move_construction",
         "tests/fixtures/optional_nested.gti",
         "stdlib/prelude.gti"
       ]
@@ -7784,7 +7784,7 @@
       ],
       "evidence": [
         "tests/ui/stdlib/string/operations_errors",
-        "tests/compiler_declarations_tests.cpp",
+        "tests/ui/borrow/container_views",
         "tests/fixtures/string_view_assignment.gti",
         "tests/declaration_construction_runtime_test.py"
       ]

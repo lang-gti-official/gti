@@ -1,0 +1,4 @@
+// Structural requires: recovery-oriented formatting does not misindent a non-clause 'requires' even though the compiler reserves it as a keyword.
+//@ parse-fail
+//@ snapshot: format
+int32_t main(){int32_t requires=1;return requires-1;}  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001

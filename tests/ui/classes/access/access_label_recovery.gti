@@ -1,0 +1,8 @@
+// Classes, structs and access: parser recovery resumes at access labels and later declarations.
+//@ parse-fail
+struct Recovered {
+  public int value = 1;  //~ ERROR GTI-P0001
+private:
+  int hidden = 2;
+};
+int main() { return 0; }

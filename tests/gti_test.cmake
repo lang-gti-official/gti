@@ -67,6 +67,8 @@ foreach(gti_test_ui_shard RANGE 1 ${gti_test_ui_shards})
       ${gti_test_ui_shard_report})
   set_tests_properties(${gti_test_ui_name} PROPERTIES PROCESSORS 4 TIMEOUT 600
     ENVIRONMENT "GTI_TEST_TIME_SCALE=${gti_test_time_scale};GTI_TEST_LAST_RUN=${CMAKE_CURRENT_BINARY_DIR}/${gti_test_ui_name}.last-run")
+  # The seeded-bug measure's gate tier (suite-measures.yml) selects by label.
+  set_property(TEST ${gti_test_ui_name} APPEND PROPERTY LABELS "gti-test-ui")
 endforeach()
 
 # Every single-file example (`examples/*.gti`) must analyse to verified MIR

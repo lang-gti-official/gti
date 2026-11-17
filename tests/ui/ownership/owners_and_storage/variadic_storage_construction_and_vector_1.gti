@@ -1,0 +1,95 @@
+// Variadic storage construction and vector: source storage emplace should support default construction, exact primitive values, and concrete variadic constructor arguments.
+//@ check-pass
+import std.memory;
+std::storage<T> fixture_storage<T>(uint64_t count) requires std::storage_element<T> {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<T>(count);
+  return std::move(allocated).expect("test storage allocation");
+}
+
+import std.memory;
+
+class DefaultValue {
+  int32_t stored = 17;
+
+public:
+  int32_t value() {
+    return this.stored;
+  }
+public:
+  DefaultValue() = default;
+};
+
+class Pair {
+  int32_t first;
+  bool active;
+
+public:
+  Pair(int32_t left, bool enabled) : first(left), active(enabled) {}
+
+  int32_t value() {
+    if (this.active) {
+      return this.first;
+    }
+    return 0;
+  }
+};
+
+class MoveOnlyValue {
+  std::unique_ptr<Pair> value;
+
+public:
+  MoveOnlyValue(int32_t left, bool active)
+      : value(std::make_unique<Pair>(left, active)) {}
+
+  int32_t read() {
+    return this.value->value();
+  }
+};
+
+class EmplacingBuffer<std::storage_element T> {
+  mut std::storage<T> data;
+  mut uint64_t count = 0;
+
+public:
+  EmplacingBuffer(uint64_t capacity)
+      : data(fixture_storage<T>(capacity)) {}
+
+  mut T& emplace<Args...>(Args... args) mut {
+    uint64_t index = this.count;
+    this.data.emplace(index, args...);
+    this.count++;
+    return this.data.get_mut(index);
+  }
+};
+
+int main() {
+  mut EmplacingBuffer<Pair> pairs =
+      EmplacingBuffer<Pair>(uint64_t(2));
+  Pair& first = pairs.emplace(7, true);
+  int32_t observed = first.value();
+  [[discard]] pairs.emplace(9, false);
+
+  mut EmplacingBuffer<MoveOnlyValue> owned =
+      EmplacingBuffer<MoveOnlyValue>(uint64_t(1));
+  MoveOnlyValue pending = MoveOnlyValue(23, true);
+  MoveOnlyValue& placed = owned.emplace(std::move(pending));
+  int32_t moved_value = placed.read();
+
+  mut std::storage<DefaultValue> defaults =
+      fixture_storage<DefaultValue>(uint64_t(1));
+  defaults.emplace(uint64_t(0));
+  int32_t default_value =
+      defaults.get(uint64_t(0)).value();
+
+  mut std::storage<int32_t> numbers =
+      fixture_storage<int32_t>(uint64_t(2));
+  numbers.emplace(uint64_t(0));
+  numbers.emplace(uint64_t(1), 5);
+  if (observed == 7 and moved_value == 23 and default_value == 17 and
+      numbers.get(uint64_t(0)) == 0 and
+      numbers.get(uint64_t(1)) == 5) {
+    return 0;
+  }
+  return 1;
+}

@@ -1,0 +1,10 @@
+// Call sibling argument borrow conflicts: two exclusive sibling argument borrows of one owner should stay rejected by the call overlap check.
+import std.vector;
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.begin_mut());  //~ ERROR GTI-S2017 overlapping reference accesses
+  return 0;
+}

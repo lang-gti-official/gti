@@ -1,0 +1,3 @@
+// Stored reference standard string ranges: a retained string iterator should prevent storage-invalidating mutation.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); value.push_back('!'); char first = *iterator; return 0; }  //~ ERROR GTI-S2017

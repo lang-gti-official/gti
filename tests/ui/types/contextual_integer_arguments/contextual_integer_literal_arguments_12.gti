@@ -1,0 +1,3 @@
+// Contextual integer literal arguments: below int64 minimum has no signed default domain and must be rejected during argument analysis, before overload selection.
+int64_t take(int64_t value) { return value; }
+int main() { int64_t value = take(-9223372036854775809); return 0; }  //~ ERROR GTI-S2000 Unary '-' cannot be applied to an unsigned integer
