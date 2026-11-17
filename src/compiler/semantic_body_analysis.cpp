@@ -1,7 +1,5 @@
 #include "semantic_analyzer_impl.h"
 
-#include "gti/lowered_program.h"
-
 #include <cstdio>
 #include <cstdlib>
 
