@@ -1,0 +1,10 @@
+// Editor diagnostics: appending to a string while a view of it is live is a
+// borrow conflict.
+import std.string;
+int main() {
+  mut std::string text = "hello";
+  auto view = text.view();
+  text += "!"; //~ ERROR GTI-S2017
+  std::println(view);
+  return 0;
+}
