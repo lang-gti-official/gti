@@ -160,6 +160,7 @@ void boundedDiscovery() {
 void trialsDoNotBuildPreambles() {
   Fixture f;
   f.write("stdlib/prelude.gti", "namespace std {}\n");
+  f.write("stdlib/module-map.json", R"({"modules":{"cmath":"std/cmath.gti"}})");
   f.write("stdlib/std/cmath.gti", "export module cmath; namespace std { export "
                                   "int discovered() { return 7; } }\n");
   f.options.suggestIncludes = false;
@@ -170,6 +171,13 @@ void trialsDoNotBuildPreambles() {
       f.root / "main.gti", "int main() { return std::discovered(); }\n",
       {f.root / "stdlib/prelude.gti"}, {}, {f.root / "stdlib"});
   f.options.preambleCache = std::make_shared<lang::SemanticPreambleCache>();
+  const auto control = lang::Frontend(f.options).analyze(
+      f.root / "main.gti",
+      "import std.cmath; int main() { return std::discovered(); }\n",
+      {f.root / "stdlib/prelude.gti"}, {}, {f.root / "stdlib"});
+  expect(control.semanticValid && f.options.preambleCache->stats().entries != 0,
+         "the registered fixture builds a preamble in an ordinary analysis");
+  f.options.preambleCache->clear();
   const auto advice = lang::discoverIncludeSuggestions(
       base, f.options, f.root / "main.gti", {f.root / "stdlib/prelude.gti"}, {},
       {f.root / "stdlib"}, {});
@@ -691,8 +699,11 @@ void moduleMapChangesInvalidateScans() {
 }
 // Opt-in performance probe; no wall-clock threshold makes ordinary tests flaky.
 // Supply the repository root and optionally "preamble" to compare reuse costs.
-int profile(const std::filesystem::path &root, bool preamble, bool bounded) {
+int profile(const std::filesystem::path &root, bool preamble, bool bounded,
+            std::string_view only) {
   for (const auto &name : {"set", "queue", "unordered_set", "value"}) {
+    if (!only.empty() && only != name)
+      continue;
     Fixture f;
     f.options.includeSearchRoots.clear();
     f.options.includeDiscoveryLimits.maximumTrials = 1000;
@@ -738,7 +749,8 @@ int main(int argc, char **argv) {
   if (argc >= 3 && std::string(argv[1]) == "--profile")
     return profile(std::filesystem::canonical(argv[2]),
                    argc > 3 && std::string(argv[3]) == "preamble",
-                   argc > 4 && std::string(argv[4]) == "bounded");
+                   argc > 4 && std::string(argv[4]) == "bounded",
+                   argc > 5 ? argv[5] : "");
   boundedDiscovery();
   namedModulePriority();
   trialsDoNotBuildPreambles();

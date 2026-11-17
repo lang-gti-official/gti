@@ -1332,10 +1332,13 @@ this is a search heuristic, never semantic evidence.
 
 Trials reuse matching cached preambles but defer construction on a miss, since
 an inserted import changes the graph used in the preamble key. Discovery never
-schedules these throwaway deferred builds. Candidate-cache statistics expose
-trial wall time, semantic/HIR time, and preamble build/adoption time. The owning
-test executable accepts `--profile <repository-root> [preamble]` to compare cold
-and repeated discovery without the optional-work time limit.
+schedules these throwaway deferred builds. Candidate-cache statistics expose trial wall time. With
+`includeDiscoveryLimits.collectTimings`, they also expose semantic/HIR and
+preamble build/adoption time. The owning test executable accepts
+`--profile <repository-root> [plain|preamble] [unlimited|bounded] [name]`
+to compare cold and repeated discovery, optionally for one requested name.
+`bounded` exercises the production defaults; the default probe removes the
+time limit and raises the trial allowance to measure the underlying work.
 
 `include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
 existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`
@@ -1373,8 +1376,9 @@ the same discovery implementation and proof requirements.
 
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the
-requesting file has one. Multiple valid files produce separate, deterministic,
-non-preferred alternatives rather than silently choosing a declaration.
+requesting file has one. Within the search budget, multiple proved files produce separate,
+deterministic, non-preferred alternatives rather than silently choosing a
+declaration.
 
 The editor also shares an `IncludeDiscoveryCache` across snapshots. It keeps
 only syntax-level facts derived from source text: each candidate text's token
