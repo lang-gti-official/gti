@@ -91,6 +91,11 @@ namespace std {
         this.text.append(source);
       }
 
+      /// Copies a string's bytes without consuming or retaining the source.
+      path(std::string& source) {
+        this.text.append(source.view());
+      }
+
       path clone() {
         mut path result = path();
         path::copy_text(result.text, this.text);

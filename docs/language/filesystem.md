@@ -9,6 +9,8 @@ meaning.
 ## Paths and errors
 
 `std::filesystem::path` keeps its supplied spelling and remains move-only.
+`path(text)` accepts either a `std::string_view` or a `std::string` reference
+and copies its bytes without consuming or retaining the source.
 `clone()` and `string()` produce independent owners. `view()` borrows its bytes;
 the ordinary last-use lifetime rules prevent mutation or destruction of the
 owner while that view remains live. Decomposition, joining, comparisons,
