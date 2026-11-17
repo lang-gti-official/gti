@@ -1,4 +1,14 @@
 import "procedural-macros/library.gti";
+import std.string;
+
+// Literal-only concatenation happens during expansion, with no runtime owner.
+constexpr std::string_view greeting = std::concat!({"Hello, ", "GTI!",});
+constexpr std::string_view empty_message = std::concat!({});
+constexpr std::string_view escaped_message = std::concat!({"\x41", "B", "\0", "7"});
+static_assert(greeting == "Hello, GTI!");
+static_assert(empty_message.size() == 0);
+static_assert(escaped_message.size() == 4);
+std::string_view static_message() { return std::concat!({"process", " lifetime"}); }
 
 mut int evaluations = 0;
 int next() { evaluations += 1; return 21; }
@@ -55,5 +65,8 @@ int main() {
   // The expansion's borrow ends normally; it does not freeze the owner forever.
   counter += 1;
   if (counter != 43) { return 11; }
+  if (greeting != "Hello, GTI!" || static_message() != "process lifetime") { return 12; }
+  if (escaped_message[0] != 'A' || escaped_message[1] != 'B' ||
+      escaped_message[2] != '\0' || escaped_message[3] != '7') { return 13; }
   return 0;
 }

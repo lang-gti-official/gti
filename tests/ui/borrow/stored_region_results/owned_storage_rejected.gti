@@ -1,0 +1,68 @@
+// A stored-region result cannot borrow receiver-owned storage or another region.
+// The receiver's own fields, reached directly, through a call result and a
+// field projection, or through an argument, are storage the receiver owns;
+// a mutable or consuming receiver launders none of them. A stored reference
+// written in another region supplies that region, not the result's.
+struct Node {
+  mut int value;
+  Node(int v) : value(v) {}
+};
+struct Nodes {
+  mut Node items[2];
+  Nodes() : items({Node(5), Node(6)}) {}
+  Node& at(uint64_t i) { return this.items[i]; }
+  mut Node& at_mut(uint64_t i) mut { return this.items[i]; }
+};
+int&<a> pass<lifetime a>(Node&<a> node) { return node.value; }
+mut int&<a> pass_mut<lifetime a>(mut Node&<a> node) { return node.value; }
+int&<a> pick<lifetime a>(Node&<a> left, Node&<a> right) { return right.value; }
+
+class Cursor<lifetime owner, lifetime other> {
+  Node&<owner> node;
+  Node&<other> second;
+  Nodes&<other> other_nodes;
+  int owned;
+  mut Node owned_node;
+  mut Nodes owned_nodes;
+public:
+  Cursor(Node&<owner> node, Node&<other> second, Nodes&<other> nodes)
+      : node(node), second(second), other_nodes(nodes), owned(1),
+        owned_node(Node(2)), owned_nodes(Nodes()) {}
+  Node& own() { return this.owned_node; }
+  int&<owner> owned_field() { return this.owned; }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> owned_arg() { return pass(this.owned_node); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> owned_projection() { return this.owned_nodes.at(uint64_t(0)).value; }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> owned_nested_arg() { return pass(this.owned_nodes.at(uint64_t(1))); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> owned_consumed() && { return pass(this.owned_node); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  mut int&<owner> owned_mut_arg() mut { return pass_mut(this.owned_node); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  mut int&<owner> owned_mut_projection() mut { return this.owned_nodes.at_mut(uint64_t(0)).value; }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> receiver_method() { return this.own().value; }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> implicit_receiver_arg() { return pass(own()); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> mixed_suppliers() { return pick(this.node, this.owned_node); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> other_region_arg() { return pass(this.second); }  //~ ERROR GTI-S2127 borrows through field 'second', which holds region 'other'
+  int&<owner> other_region_projection() { return this.other_nodes.at(uint64_t(0)).value; }  //~ ERROR GTI-S2127 borrows through field 'other_nodes', which holds region 'other'
+  int&<owner> other_region_field() && { return this.second.value; }  //~ ERROR GTI-S2127 borrows through field 'second', which holds region 'other'
+};
+
+struct Cell<T> {
+  T value;
+  Cell(T v) : value(v) {}
+};
+class Slots<T> {
+  mut Cell<T> items[2];
+public:
+  Slots(T first, T second) : items({Cell<T>(first), Cell<T>(second)}) {}
+  Cell<T>& at(uint64_t i) { return this.items[i]; }
+};
+T&<a> unwrap<T, lifetime a>(Cell<T>&<a> cell) { return cell.value; }
+class OwningSlots<T, lifetime owner> {
+  Slots<T>&<owner> slots;
+  Slots<T> local;
+public:
+  OwningSlots(Slots<T>&<owner> slots, T seed)
+      : slots(slots), local(Slots<T>(seed, seed)) {}
+  T&<owner> projected() { return this.local.at(uint64_t(0)).value; }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  T&<owner> via_arg() { return unwrap(this.local.at(uint64_t(1))); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+};
+
+int main() { return 0; }

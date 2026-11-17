@@ -1,0 +1,8 @@
+// A missing range name reports its lookup failure, not synthetic iterator errors.
+int main() {
+  int toolchain_entries[2] = {1, 2};
+  for (auto& value : toolchain_entires) { //~ ERROR GTI-S2001
+    missing_body; //~ ERROR GTI-S2001
+  }
+  return 0;
+}

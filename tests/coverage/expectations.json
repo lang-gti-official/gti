@@ -1260,7 +1260,7 @@
       "outcome": "rejected"
     },
     "diag-l06-exponent-float": {
-      "code": "GTI-P0001",
+      "code": "GTI-L0006",
       "outcome": "rejected"
     },
     "diag-l07-float-overflow": {
@@ -1309,6 +1309,18 @@
     },
     "diag-l18-backtick": {
       "code": "GTI-L0002",
+      "outcome": "rejected"
+    },
+    "diag-l19-misplaced-digit-separator": {
+      "code": "GTI-L0007",
+      "outcome": "rejected"
+    },
+    "diag-l20-raw-string-delimiter": {
+      "code": "GTI-L0016",
+      "outcome": "rejected"
+    },
+    "diag-l21-suffix-out-of-range": {
+      "code": "GTI-S2004",
       "outcome": "rejected"
     },
     "diag-p01-missing-semicolon-recovery": {

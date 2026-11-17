@@ -40,11 +40,13 @@ client.
 
 Claude Code's managed session worktree may be inside the primary checkout's
 `.claude/worktrees/`, which the helper cannot adopt. Let the helper create a
-task worktree at an unused absolute path outside the primary checkout:
+task worktree outside the primary checkout. Omit `--worktree` to apply the
+[Mac mini SSD preference and internal fallback](../../../AGENTS.md#mac-mini-storage-preference).
+An explicit path overrides selection; build within the chosen task checkout:
 
 ```sh
 python3 scripts/agent_workflow.py start <task> --title '<outcome>' \
-  --worktree <absolute-path> --branch codex/<task>
+  --branch codex/<task>
 ```
 
 Make task edits/builds/checks there with absolute paths and preserve the

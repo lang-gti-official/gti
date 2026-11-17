@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import agent_storage
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import importlib.util
@@ -277,6 +278,7 @@ class Workflow:
 
     def tree(self, state):
         root = Path(state["worktree"])
+        agent_storage.require_available(root)
         if not root.is_dir() or Path(git(root, "rev-parse", "--show-toplevel")).resolve() != root:
             raise WorkflowError("Task worktree is missing or has changed identity")
         if git(root, "branch", "--show-current") != state["branch"]:
@@ -330,6 +332,10 @@ class Workflow:
 
     def start(self, task, title, worktree, branch=None, adopt=False):
         path = self.file(task)
+        if worktree is None:
+            worktree = (self.load(task, legacy=True)["worktree"] if path.exists() else
+                        agent_storage.worktree_path(task, self.primary))
+        agent_storage.require_available(Path(worktree).expanduser().resolve())
         if path.exists() and self.is_legacy(self.load(task, legacy=True)):
             # Never bind a historical tracker number to the replacement repo.
             if not adopt:
@@ -1044,7 +1050,7 @@ def main():
     start = sub.add_parser("start")
     start.add_argument("task")
     start.add_argument("--title", required=True)
-    start.add_argument("--worktree", required=True)
+    start.add_argument("--worktree", help="explicit location; otherwise prefer mounted Mac mini SSD, then sibling gti-worktrees/<task>")
     start.add_argument("--branch")
     start.add_argument("--adopt", action="store_true")
     rehost = sub.add_parser("rehost", help="bind a historical published task to its migrated GitHub PR by tree identity")
@@ -1107,7 +1113,7 @@ def main():
                 result = getattr(workflow, args.command)(args.task)
         print(json.dumps(result, indent=2))
         return 0
-    except (WorkflowError, OSError, ValueError) as error:
+    except (agent_storage.StorageError, WorkflowError, OSError, ValueError) as error:
         print("agent-workflow: " + str(error), file=sys.stderr)
         return 1
 

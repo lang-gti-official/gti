@@ -252,6 +252,30 @@ semantics.
   first. Explicitly mark and publish abandoned/superseded work; never silently
   discard it. See [the lifecycle contract](docs/architecture/agent-workflow.md).
 
+## Mac mini storage preference
+
+For new worktrees, builds and runner scratch on the Mac mini, prefer
+`~/Documents/External-projects/gti/` when the symlink resolves to a writable,
+mounted external volume. Otherwise use internal-storage defaults. Never create
+an ordinary internal directory to replace a missing external mount or symlink.
+
+Use `agent_workflow.py start <task> --title '<outcome>'` without `--worktree`
+for automatic selection: external `gti/worktrees/<task>`, otherwise
+`<primary-parent>/gti-worktrees/<task>`. An explicit `--worktree` or adoption
+keeps the caller's path. Build inside the selected worktree (`build-release/`)
+so build products follow it. Prefer this helper when a client's worktree tool
+cannot choose the external destination; do not move existing active worktrees.
+
+Selection is made once. Resumed tasks and remote runs keep their recorded
+absolute paths. If their volume disconnects, stop/report the failure and
+reconnect it; do not silently restart elsewhere. The Mac mini runner selects
+external `gti/gti-remote-runner` for new runs, falling back to its configured
+root; explicit `--root`/`GTI_REMOTE_ROOT` overrides automatic selection. Both
+roots retain the original shared build window and the same cleanup/retention
+rules. Preserve source changes, verification evidence and installed toolchains
+on either disk. macOS removable-volume access must be granted to the agent app.
+See [storage selection](docs/architecture/agent-workflow.md#storage-selection).
+
 ## Execution Discipline
 
 - Preserve analysis quality and every required validation gate. There is no

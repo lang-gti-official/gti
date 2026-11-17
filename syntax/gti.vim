@@ -2,8 +2,9 @@ if exists("b:current_syntax")
   finish
 endif
 
-syntax match gtiNumber "\<\%(0[xX][0-9A-Fa-f]\+\|0[bB][01]\+\|\d\+\)\>"
-syntax match gtiFloat "\<\d\+\.\d\+\>"
+syntax match gtiNumber "\<\%(0[xX][0-9A-Fa-f_]\+\|0[bB][01_]\+\|\d[0-9_]*\)\%([iu]\%(8\|16\|32\|64\)\)\=\>"
+syntax match gtiFloat "\<\d[0-9_]*\.[0-9_]\+\%([dD]\|f32\|f64\)\=\>"
+syntax match gtiFloat "\<\d[0-9_]*f\%(32\|64\)\>"
 syntax match gtiOperator "\(\.\.\.\|::\|->\|<<=\|>>=\|<<\|>>\|==\|!=\|<=\|>=\|++\|--\|+=\|-=\|\*=\|/=\|%=\|&=\||=\|\^=\|[?+*/%&|^~<>=!-]\)"
 syntax match gtiFunction "\<\h\w*\ze\s*("
 syntax match gtiMember "\%(\.\|->\)\s*\zs\h\w*"
@@ -55,6 +56,9 @@ syntax match gtiCompileTarget "\<target\.\(os\|vendor\|arch\)\>"
 syntax match gtiAttribute "\[\[\s*\h\w*\%([[:space:]]*,[[:space:]]*\h\w*\)*\s*\]\]"
 syntax match gtiEscape "\\." contained
 syntax region gtiString start=+"+ skip=+\\"+ end=+"+ contains=gtiEscape
+" `R"delim( ... )delim"` raw strings: no escapes, and the closing sequence
+" repeats the opening delimiter.
+syntax region gtiRawString matchgroup=gtiString start=+\<R"\z([^()\\ \t"]\{,16}\)(+ end=+)\z1"+
 syntax region gtiCharacter start=+'+ skip=+\\'+ end=+'+ contains=gtiEscape
 
 highlight default link gtiAttribute PreProc
@@ -98,6 +102,7 @@ highlight default link gtiThis Special
 highlight default link gtiStatement Statement
 highlight default link gtiStorageClass StorageClass
 highlight default link gtiString String
+highlight default link gtiRawString String
 highlight default link gtiTodo Todo
 highlight default link gtiType Type
 highlight default link gtiTypeAliasKeyword Structure

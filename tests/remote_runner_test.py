@@ -68,6 +68,7 @@ class RemoteRunner(unittest.TestCase):
             for name in ("head.bundle", "source.tar", "request.json"):
                 archive.add(directory / name, arcname=name, recursive=False)
             runner.add_bytes(archive, "remote_runner.py", SCRIPT.read_bytes())
+            runner.add_bytes(archive, "agent_storage.py", (SCRIPT.parent / "agent_storage.py").read_bytes())
             runner.add_bytes(archive, "build_window.py", (SCRIPT.parent / "build_window.py").read_bytes())
         return run_id, packet
 
@@ -392,7 +393,7 @@ class RemoteRunner(unittest.TestCase):
     def test_provision_hook_follows_snapshot_and_precedes_submission(self):
         args = runner.parser().parse_args(["--repo", str(self.repo), "run", "--detach", "--timeout", "10", "--target", "gti"])
         hook = mock.Mock()
-        config = dict(runner.HOSTS["mini"])
+        config = dict(runner.HOSTS["mini"], prefer_external_storage=False)
         def submit(*unused, **kwargs):
             hook.assert_called_once_with()
             self.assertTrue(Path(kwargs["input_path"]).is_file())

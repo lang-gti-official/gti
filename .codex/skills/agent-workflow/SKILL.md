@@ -84,7 +84,12 @@ for completion and intermediate statuses.
 1. Inspect status; preserve other tasks' work. Fetch current `origin/main`.
    Give each task its own `codex/` branch and worktree. Never implement on
    primary `main`, reuse another task's branch, or reset a checkout.
-2. Prefer the app's managed worktree creation tool, based on `origin/main`.
+2. Follow [storage selection](../../../docs/architecture/agent-workflow.md#storage-selection).
+   On the Mac mini, prefer `start <task> --title <text> --branch codex/<task>`
+   without `--worktree`: it selects the mounted SSD, otherwise the internal
+   sibling worktree directory. Build inside that worktree. If a managed app
+   cannot select that destination, use the helper; do not move active work.
+   Otherwise prefer the app's managed worktree creation tool, based on `origin/main`.
    Switch its clean checkout to the new task branch, then register it:
 
    ```sh
