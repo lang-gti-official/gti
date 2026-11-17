@@ -27,10 +27,25 @@ C++ test asserted acceptance and the compiler accepts). Everything else stays
 in the staging directory with a reason. `survey` classifies test files by
 what their helpers do.
 
+`trace` reads no C++ at all: it builds an instrumented copy of the test
+binary in which `lang::Frontend` records every analysis it runs (source,
+options, diagnostics, the test functions on the call stack, and the messages
+of the assertions that follow), and runs it as its CTest entries do.
+`extract --trace` then makes one case per recorded analysis, expecting what
+the passing test's own compiler run reported (the exact error-code set, or
+acceptance), with directives for the recorded options (execution profile,
+definition closure, audit mode, limits, defines, target, stop phase);
+anything gti-test cannot express (other preludes, extra source files,
+package roots, repository fixtures) is flagged. Loops over computed sources
+and helper indirection need no specification.
+
 usage:
   extract_cpp_tests.py survey [FILES...]
   extract_cpp_tests.py cases FILE                 # print parsed cases
   extract_cpp_tests.py extract FILE --gti-test BIN [--staging DIR] [--apply]
+  extract_cpp_tests.py trace FILE --out DIR [--build build-release]
+  extract_cpp_tests.py extract FILE --trace DIR/trace.jsonl --area AREA \
+      --topic TOPIC --gti-test BIN [--staging DIR] [--apply]
 """
 
 from __future__ import annotations
@@ -755,14 +770,6 @@ SPECS: dict[str, FileSpec] = {
         }),
     "shared_ownership_tests.cpp": FileSpec(
         area="stdlib/memory/shared_owner", topic="Shared ownership"),
-    "reflection_tests.cpp": FileSpec(
-        area="reflection/semantics", topic="Reflection",
-        helpers={
-            "analyzeSource": Helper(
-                "analyze", source_arg=3, name_arg=2,
-                differences=("C++ stops after HIR with recovered-program "
-                             "analysis",)),
-        }),
 }
 
 

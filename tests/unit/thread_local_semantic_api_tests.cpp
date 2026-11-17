@@ -30,9 +30,11 @@ lang::FrontendResult analyze(std::string source) {
   options.target = lang::TargetInfo::host();
   options.target.executionProfile = lang::ExecutionProfile::Concurrent;
   options.target.runtimeCapabilities.threads = true;
-  const auto library =
-      std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
-      "stdlib";
+  const auto library = std::filesystem::path(__FILE__)
+                           .parent_path()
+                           .parent_path()
+                           .parent_path() /
+                       "stdlib";
   return lang::Frontend(options).analyze(
       "thread-local-semantics.gti", std::move(source),
       {library / "prelude.gti"}, {}, {library});
