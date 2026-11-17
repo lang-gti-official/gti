@@ -1,0 +1,3 @@
+// Parameters participate in spelling suggestions.
+//@ code-action @typo: "Replace with 'counter'" => return counter;
+int count(int counter) { return /*@typo*/coutner; } //~ ERROR GTI-S2001

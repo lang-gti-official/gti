@@ -1,0 +1,1 @@
+Suggest unambiguous visible local and parameter spellings for unknown names, with advisory editor quick fixes. Avoid dependent dereference errors for already-diagnosed missing names, including range-based loops.
