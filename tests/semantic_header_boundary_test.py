@@ -56,10 +56,12 @@ def main() -> None:
         # suites: staged evaluation, raw diagnostics, verifier construction,
         # query records and repeated-request state cannot all be observed
         # through independent Frontend snapshots.
+        "tests/unit/borrow_forgery_tests.cpp",
         "tests/unit/constant_evaluation_api_tests.cpp",
         "tests/unit/diagnostics_api_tests.cpp",
         "tests/unit/ir_verifier_forgery_tests.cpp",
         "tests/unit/language_queries_tests.cpp",
+        "tests/unit/mir_contract_forgery_tests.cpp",
         "tests/unit/semantic_request_reuse_tests.cpp",
         # Rechecks parsed syntax without a SourceManager to verify source-text
         # queries reject missing owning buffers; Frontend always supplies one.
