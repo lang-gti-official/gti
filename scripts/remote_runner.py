@@ -10,6 +10,7 @@ it must not contain secrets. Heavy files are removed before a run is finished.
 from __future__ import annotations
 
 import argparse
+import agent_storage
 import importlib.util
 import base64
 import hashlib
@@ -33,7 +34,7 @@ SCHEMA = 1
 SETTINGS_SCHEMA = 2
 DEFAULT_ROOT = "/private/tmp/gti-remote-runner"
 HOSTS = {
-    "mini": {"host": "lukeh@100.103.38.120", "root": DEFAULT_ROOT,
+    "mini": {"prefer_external_storage": True, "host": "lukeh@100.103.38.120", "root": DEFAULT_ROOT,
              "python": "/opt/homebrew/bin/python3", "transport": "ssh", "platform": "Darwin"},
     "ubuntu-6": {"host": "root@100.77.66.96", "root": "/tmp/gti-remote-runner",
                  "python": "/usr/bin/python3", "transport": "tailscale", "platform": "Linux",
@@ -68,7 +69,7 @@ def write_json(path, value):
 
 
 def validate_connection(config):
-    fields = {"host", "root", "python", "transport", "platform", "cpus", "memory_gib", "jobs", "test_jobs", "cc", "cxx",
+    fields = {"prefer_external_storage", "window_root", "host", "root", "python", "transport", "platform", "cpus", "memory_gib", "jobs", "test_jobs", "cc", "cxx",
               "gcp_project", "gcp_zone", "gcp_account", "known_hosts"}
     if not isinstance(config, dict) or set(config) - fields:
         raise RunnerError("runner connection has unknown fields")
@@ -76,6 +77,10 @@ def validate_connection(config):
     if (not isinstance(host, str) or not host or host.startswith("-")
             or any(c.isspace() or c == "\0" for c in host)):
         raise RunnerError("provide an SSH alias or user@host; SSH/Tailscale authentication must already work")
+    if "prefer_external_storage" in config and type(config["prefer_external_storage"]) is not bool:
+        raise RunnerError("prefer_external_storage must be boolean")
+    if "window_root" in config:
+        validate_connection({k: v for k, v in config.items() if k not in {"window_root"}} | {"root": config["window_root"]})
     root = config.get("root", "")
     if (not isinstance(root, str) or not root.startswith("/")
             or ".." in PurePosixPath(root).parts
@@ -120,6 +125,8 @@ def load_settings(path):
         if "host" in saved and "schema" not in saved:
             # Preserve the old single-host connection, including custom paths.
             settings["hosts"]["mini"].update(saved)
+            if saved.get("root", DEFAULT_ROOT) != DEFAULT_ROOT:
+                settings["hosts"]["mini"]["prefer_external_storage"] = False
             if saved["host"] != HOSTS["mini"]["host"] and "platform" not in saved:
                 settings["hosts"]["mini"].pop("platform", None)
             validate_connection(settings["hosts"]["mini"])
@@ -129,7 +136,11 @@ def load_settings(path):
             for name, config in saved["hosts"].items():
                 if not HOST_NAME.fullmatch(name) or not isinstance(config, dict):
                     raise RunnerError("invalid named runner settings")
-                settings["hosts"][name] = validate_connection(dict(config))
+                config = dict(config)
+                if (name == "mini" and config.get("root") == DEFAULT_ROOT
+                        and config.get("host") == HOSTS["mini"]["host"]):
+                    config.setdefault("prefer_external_storage", True)
+                settings["hosts"][name] = validate_connection(config)
             settings["default"] = saved.get("default")
             if not isinstance(settings["default"], str) or settings["default"] not in settings["hosts"]:
                 raise RunnerError("default runner is not configured")
@@ -185,6 +196,8 @@ def select_connection(args, settings, local, run_id=None):
         "host": args.host if args.host is not None else os.environ.get("GTI_REMOTE_HOST") or None,
         "root": args.root if args.root is not None else os.environ.get("GTI_REMOTE_ROOT") or None, "python": args.python,
         "transport": args.transport, "cc": args.cc, "cxx": args.cxx}.items() if value is not None})
+    if args.root is not None or os.environ.get("GTI_REMOTE_ROOT"):
+        config["prefer_external_storage"] = False
     return name, validate_connection(config)
 
 
@@ -281,6 +294,7 @@ def root_directory(value, create=False):
     path = Path(value)
     if not path.is_absolute() or ".." in path.parts or path.name != "gti-remote-runner":
         raise RunnerError("remote root must be absolute, without '..', and end in gti-remote-runner")
+    agent_storage.require_available(path)
     no_symlink(path)
     if create and not path.exists():
         path.mkdir(parents=True, mode=0o700)
@@ -607,12 +621,14 @@ def worker(root_value, run_id):
         extract(run / "input" / "source.tar", source, MAX_INPUT // 2)
         steps = validate_steps(request["steps"] or default_steps(request, source))
         slots = window_slots()
-        window = Window(root / "window", slots=slots, poll=1)
+        window_root = root_directory(request.get("window_root", str(root)), create=True)
+        window = Window(window_root / "window", slots=slots, poll=1)
         prefix = "/opt/homebrew/bin:/usr/local/bin:" if platform.system() == "Darwin" else ""
         environment = dict(os.environ, PATH=prefix + os.environ.get("PATH", "/usr/bin:/bin"),
-                           GTI_BUILD_WINDOW_DIR=str(root / "window"),
+                           GTI_BUILD_WINDOW_DIR=str(window_root / "window"),
                            GTI_BUILD_WINDOW_BUILD_SLOTS=str(slots["build"]), GTI_BUILD_WINDOW_SUITE_SLOTS=str(slots["suite"]))
         for step in steps:
+            agent_storage.require_available(root)
             argv = [a.replace("{source}", str(source)).replace("{build}", str(build)) for a in step["argv"]]
             state["phase"] = step["name"]
             state["child_pid"] = None
@@ -661,15 +677,17 @@ def worker(root_value, run_id):
                     "head": git(run / "source", "rev-parse", "HEAD").decode().strip(),
                     "status": git(run / "source", "status", "--porcelain=v1", "-z")
                         .decode(errors="replace").replace("\0", "\n")}
-            except (RunnerError, OSError) as error:
+            except (agent_storage.StorageError, RunnerError, OSError) as error:
                 state["source_identity_error"] = str(error)
                 if state["state"] == "passed":
                     state.update(state="failed", exit_code=1)
         try:
+            agent_storage.require_available(root)
             collect_results(run, request, state)
         except Exception as error:
             state.update(state="failed", exit_code=1, result_error=str(error))
         try:
+            agent_storage.require_available(root)
             cleanup_heavy(run)
         except Exception as error:
             state.update(state="failed", exit_code=1, cleanup_error=str(error))
@@ -726,7 +744,10 @@ def prune_locked(root):
     return removed
 
 
-def remote_action(action, root_value, run_id=None):
+def remote_action(action, root_value, run_id=None, window_value=None):
+    run_id = run_id or None
+    if action == "select-root":
+        return {"root": agent_storage.runner_root(root_value)}
     root = root_directory(root_value, create=True)
     removed = prune(root)
     if action == "status":
@@ -737,7 +758,7 @@ def remote_action(action, root_value, run_id=None):
             states.append(read_json(run_directory(root, path.name) / "state.json"))
         return {"root": str(root), "platform": platform.system(), "machine": platform.machine(),
                 "cpus": os.cpu_count(), "slots": window_slots(), "runs": states,
-                "window": Window(root / "window").status(), "pruned": removed}
+                "window": Window(root_directory(window_value or root_value, create=True) / "window").status(), "pruned": removed}
     if action == "clean" and not run_id:
         return {"pruned": removed}  # bounded garbage collection, not purge-all
     if action == "submit":
@@ -761,7 +782,7 @@ def remote_action(action, root_value, run_id=None):
             incoming = run / "input"
             incoming.mkdir()
             extract(run / "upload.tar", incoming, MAX_INPUT)
-            required = {"head.bundle", "source.tar", "request.json", "remote_runner.py", "build_window.py"}
+            required = {"head.bundle", "source.tar", "request.json", "remote_runner.py", "build_window.py", "agent_storage.py"}
             if {p.name for p in incoming.iterdir()} != required:
                 raise RunnerError("upload has unexpected/missing entries")
             request = read_json(incoming / "request.json")
@@ -771,7 +792,7 @@ def remote_action(action, root_value, run_id=None):
                 raise RunnerError("timeout must be between 1 second and 24 hours")
             # Retain worker + window code outside heavy input for status/fetch
             # after execution. Detached worker survives a client disconnect.
-            for name in ("remote_runner.py", "build_window.py"):
+            for name in ("remote_runner.py", "build_window.py", "agent_storage.py"):
                 shutil.copyfile(incoming / name, run / name)
             with (run / "worker.log").open("ab") as log:
                 process = subprocess.Popen([sys.executable, str(run / "remote_runner.py"), "_worker",
@@ -808,13 +829,16 @@ def source_code():
 def connection(config, action, run_id=None, input_path=None, output_path=None):
     script = base64.b64encode(source_code().encode()).decode()
     window = base64.b64encode((Path(__file__).parent / "build_window.py").read_bytes()).decode()
+    storage = base64.b64encode((Path(__file__).parent / "agent_storage.py").read_bytes()).decode()
     # The status bootstrap reuses the authoritative Window implementation too.
     bootstrap = ("import base64,sys,types; "
+                 f"a=types.ModuleType('agent_storage');exec(base64.b64decode('{storage}'),a.__dict__);"
+                 "sys.modules['agent_storage']=a;"
                  f"w=types.ModuleType('build_window');exec(base64.b64decode('{window}'),w.__dict__);"
                  "sys.modules['build_window']=w;"
                  f"s=base64.b64decode('{script}').decode();"
                  "exec(compile(s,'<remote_runner>','exec'),{'__name__':'__main__','RUNNER_SOURCE':s})")
-    remote = shlex.join([config["python"], "-u", "-c", bootstrap, "_remote", action, config["root"], *([run_id] if run_id else [])])
+    remote = shlex.join([config["python"], "-u", "-c", bootstrap, "_remote", action, config["root"], run_id or "", config.get("window_root", config["root"])])
     options = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
                "-o", "ServerAliveCountMax=3"]
     if config.get("transport") == "gcloud-iap":
@@ -904,6 +928,28 @@ def parser():
     return result
 
 
+def new_run_connection(config):
+    """Resolve storage on the execution host once, before recording the run."""
+    selected = dict(config)
+    if config.get("prefer_external_storage"):
+        selected["root"] = connection(config, "select-root")["root"]
+        selected["window_root"] = config.get("window_root", config["root"])
+    return validate_connection(selected)
+
+
+def runner_status(config):
+    """Show both fallback and preferred roots; recorded run IDs stay pinned."""
+    original = connection(config, "status")
+    selected = new_run_connection(config)
+    original["roots"] = [config["root"]]
+    if selected["root"] != config["root"]:
+        preferred = connection(selected, "status")
+        original["roots"].append(selected["root"])
+        original["runs"].extend(preferred["runs"])
+        original["pruned"].extend(preferred["pruned"])
+    return original
+
+
 def execute_run(args, local, name, config, run_id=None, before_submit=None):
     """One executor for fixed hosts and owner-provisioned ephemeral hosts."""
     if args.full_suite and args.ctest_regex:
@@ -916,12 +962,13 @@ def execute_run(args, local, name, config, run_id=None, before_submit=None):
         raise RunnerError(f"run requires {args.platform}, selected runner {name} is {config['platform']}")
     run_id = valid_id(run_id) if run_id else "run-" + uuid.uuid4().hex
     steps = validate_steps(read_json(args.steps_file)) if args.steps_file else None
-    with tempfile.TemporaryDirectory(prefix="gti-runner-snapshot-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="gti-runner-snapshot-", dir=agent_storage.scratch_directory()) as temporary:
         temporary = Path(temporary)
         identity = snapshot(args.repo, temporary)
         request = {"schema": SCHEMA, "id": run_id, "source": identity, "steps": steps,
                    "targets": args.target, "ctest_regex": args.ctest_regex, "full_suite": args.full_suite,
                    "runner": {"name": name, "host": config["host"]},
+                   "window_root": config.get("window_root", config["root"]),
                    "required_platform": args.platform or config.get("platform"),
                    "cc": config.get("cc"), "cxx": config.get("cxx"),
                    "jobs": args.jobs or config.get("jobs"), "test_jobs": args.test_jobs or config.get("test_jobs"), "build_type": args.build_type,
@@ -932,9 +979,11 @@ def execute_run(args, local, name, config, run_id=None, before_submit=None):
             for filename in ("head.bundle", "source.tar", "request.json"):
                 archive.add(temporary / filename, arcname=filename, recursive=False)
             add_bytes(archive, "remote_runner.py", source_code().encode())
+            add_bytes(archive, "agent_storage.py", (Path(__file__).parent / "agent_storage.py").read_bytes())
             add_bytes(archive, "build_window.py", (Path(__file__).parent / "build_window.py").read_bytes())
         if before_submit is not None:
             before_submit()
+        config = new_run_connection(config)
         record_connection(local, run_id, name, config)
         print(f"Submitting {run_id} to {name} ({config['host']}): {identity['head']} / snapshot {identity['snapshot_sha256']}", flush=True)
         connection(config, "submit", run_id, input_path=packet)
@@ -990,15 +1039,15 @@ def main(argv=None):
         states = {}
         for name, config in settings["hosts"].items():
             try:
-                observed = connection(validate_connection(config), "status")
+                observed = runner_status(validate_connection(config))
                 states[name] = {key: observed.get(key) for key in
-                                ("root", "platform", "machine", "cpus", "slots", "window")}
+                                ("root", "platform", "machine", "cpus", "slots", "window", "roots")}
                 states[name]["active_runs"] = [
                     {key: run.get(key) for key in ("id", "state", "phase")}
                     for run in observed.get("runs", []) if run["state"] not in TERMINAL]
                 states[name]["retained_results"] = sum(
                     run["state"] in TERMINAL for run in observed.get("runs", []))
-            except (RunnerError, OSError, ValueError) as error:
+            except (agent_storage.StorageError, RunnerError, OSError, ValueError) as error:
                 states[name] = {"error": str(error)}
         print(json.dumps(states, indent=2))
         return int(any("error" in state for state in states.values()))
@@ -1022,6 +1071,9 @@ def main(argv=None):
         report = fetch(config, run_id, destination)
         print(f"Results: {destination}; remote run removed")
         return report["exit_code"]
+    if args.command == "status" and not run_id:
+        print(json.dumps(runner_status(config), indent=2))
+        return 0
     print(json.dumps(connection(config, "remove" if args.command == "clean" and run_id else args.command, run_id), indent=2))
     return 0
 
@@ -1029,6 +1081,6 @@ def main(argv=None):
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (RunnerError, OSError, ValueError) as error:
+    except (agent_storage.StorageError, RunnerError, OSError, ValueError) as error:
         print(f"remote-runner: {error}", file=sys.stderr)
         sys.exit(1)

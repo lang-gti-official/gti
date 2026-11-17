@@ -1,0 +1,4 @@
+int main() {
+  uint8_t byte = 256u8; //!ERR
+  return int32_t(byte);
+}

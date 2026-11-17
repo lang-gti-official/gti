@@ -190,7 +190,7 @@ local race with other tasks needs closing. Nothing locks ordinary editing.
 
 | Command | Result |
 | --- | --- |
-| `start <task> --title <text> --worktree <path> [--branch codex/<name>] [--adopt]` | Fetch main, create or register a clean worktree, publish its branch; rediscover a PR after the first meaningful commit. |
+| `start <task> --title <text> [--worktree <path>] [--branch codex/<name>] [--adopt]` | Fetch main, create or register a clean worktree, publish its branch; rediscover a PR after the first meaningful commit. |
 | `checkpoint <task> [--message <text> --paths <files...>]` | Commit explicitly scoped paths or publish an existing clean commit; create a draft PR on the first meaningful checkpoint. |
 | `reconcile <task>` | Merge current main into the task branch to resolve a conflict, preserve conflicts for resolution, invalidate old validation and publish. |
 | `verify <task> --checks-file <json>` | Record the attempt, release the lock, execute nonempty argv arrays without a shell inside a build-window `suite` slot, then record passing focused checks against the published clean head. An advancing main does not void them. |
@@ -238,6 +238,36 @@ head is the published head onto the identical rewritten commit, and records
 both identities. Focused evidence bound to old commit IDs is dropped and must be
 recorded again with `verify`. A running `verifying` record refuses rehosting,
 and `start --adopt` cannot silently replace either kind of migrated PR.
+
+## Storage selection
+
+`AGENTS.md` owns the [Mac mini policy](../../AGENTS.md#mac-mini-storage-preference).
+`scripts/agent_storage.py` implements it without creating directories during
+availability probes. On Darwin hosts whose normalized hostname contains
+`macmini` (including `Lukes-Mac-mini.local`), it resolves the existing
+`~/Documents/External-projects` path strictly. The target must be a writable
+folder under a mounted `/Volumes/<volume>` on a different device from home.
+Missing/dangling links, internal folders, unmounted volumes, and unwritable
+folders use the internal default. Other hosts are unchanged.
+
+`start` accepts an omitted `--worktree`; new tasks choose external
+`gti/worktrees/<task>` or `<primary-parent>/gti-worktrees/<task>`. Explicit
+locations and existing task records are preserved. Build directories remain
+relative to that checkout. A client unable to create a managed worktree at
+this location should use `start` rather than silently selecting internal disk.
+
+The mini runner profile enables `prefer_external_storage`. New runs resolve
+storage **on the remote execution host**, before recording the connection,
+and pin the resulting absolute root in their run record. `--root` or
+`GTI_REMOTE_ROOT` disables preference for that request; other profiles retain
+their configured roots. The selected `window_root` remains the configured
+fallback root, so old/internal and new/external runs share the same semaphore.
+Status without a run ID reports both roots; status/fetch/cancel/clean with an
+ID always use that run's recorded connection. External roots cannot be
+recreated beneath an absent mount. Local upload snapshots also prefer external
+`gti/scratch`, with normal temporary-directory cleanup. No existing worktree,
+installed toolchain, or active run is migrated. Result retention, ownership
+markers, symlink rejection inside managed roots, and cleanup rules are unchanged.
 
 ## Build window
 

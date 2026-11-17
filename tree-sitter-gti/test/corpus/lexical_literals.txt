@@ -1,0 +1,97 @@
+==================
+Numeric literal separators and suffixes and raw strings
+==================
+
+uint64_t big = 1_000_000u64;
+uint32_t mask = 0xFF_FFu32;
+int32_t hex = 0x1f32;
+int8_t low = -128i8;
+float ratio = 2.5f32;
+double whole = 1f64;
+std::string_view pattern = R"re(\d+ "x" // kept)re";
+std::string_view block = R"(first
+second)";
+int32_t R = 3;
+
+---
+
+(source_file
+  (variable_declaration
+    type: (type
+      (primitive_type))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (variable_declaration
+    type: (type
+      (primitive_type))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (variable_declaration
+    type: (type
+      (primitive_type))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal)))))
+  (variable_declaration
+    type: (type
+      (primitive_type))
+    name: (identifier)
+    value: (initializer_expression
+      (unary_expression
+        argument: (primary_expression
+          (literal
+            (integer_literal))))))
+  (variable_declaration
+    type: (type
+      (primitive_type))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (float_literal)))))
+  (variable_declaration
+    type: (type
+      (primitive_type))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (float_literal)))))
+  (variable_declaration
+    type: (type
+      (user_type
+        name: (scoped_identifier
+          scope: (identifier)
+          name: (identifier))))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (string_literal)))))
+  (variable_declaration
+    type: (type
+      (user_type
+        name: (scoped_identifier
+          scope: (identifier)
+          name: (identifier))))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (string_literal)))))
+  (variable_declaration
+    type: (type
+      (primitive_type))
+    name: (identifier)
+    value: (initializer_expression
+      (primary_expression
+        (literal
+          (integer_literal))))))
