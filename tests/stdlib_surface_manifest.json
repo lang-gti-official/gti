@@ -4279,7 +4279,7 @@
         "tests/llvm_memory_execution_test.py",
         "tests/stdlib_module_boundaries_test.py",
         "tests/fixtures/constexpr_owned_storage.gti",
-        "tests/resource_memory_runtime_tests.cpp"
+        "tests/unit/resource_memory_runtime_tests.cpp"
       ],
       "required_instantiations": [
         "compile-time construction, growth and destruction through constant evaluation, with runtime parity"
