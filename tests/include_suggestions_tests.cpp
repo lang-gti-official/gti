@@ -1,5 +1,6 @@
 #include "gti/driver/project_facts.h"
 #include "gti/frontend.h"
+#include "gti/semantic_preamble.h"
 
 #include <algorithm>
 #include <chrono>
@@ -30,6 +31,8 @@ struct Fixture {
     std::filesystem::create_directories(root);
     root = std::filesystem::canonical(root);
     options.stopAfter = lang::FrontendPhase::Hir;
+    options.includeDiscoveryLimits.timeBudget =
+        std::chrono::milliseconds::max();
     options.includeSearchRoots.push_back({root, std::nullopt, {}});
     options.cache = std::make_shared<lang::FrontendCache>();
   }
@@ -115,6 +118,43 @@ void immutableDiscoveryAndCancellation() {
          "cancelled discovery stops before scanning any candidate");
   expect(fixes(base).empty() && !base.cancelled,
          "cancelled advice cannot invalidate the original semantic snapshot");
+}
+
+void boundedDiscovery() {
+  Fixture f;
+  f.write("a.gti", "export module a;\nexport int first() { return 1; }\n");
+  f.write("b.gti", "export module b;\nexport int second() { return 2; }\n");
+  f.options.suggestIncludes = false;
+  f.options.includeDiscoveryCache =
+      std::make_shared<lang::IncludeDiscoveryCache>();
+  const auto base = f.analyze("int main() { return first() + second(); }\n");
+  const auto discover = [&] {
+    return lang::discoverIncludeSuggestions(
+        base, f.options, f.root / "main.gti", {}, f.overlays, {}, {});
+  };
+  f.options.includeDiscoveryLimits.maximumTrials = 0;
+  auto advice = discover();
+  expect(advice.budgetExhausted && !advice.cancelled && advice.inputs.empty(),
+         "zero trials preserves diagnostics without scanning");
+  expect(advice.diagnostics.size() == base.diagnostics.size(),
+         "exhaustion does not discard original diagnostics");
+  f.options.includeDiscoveryLimits.maximumTrials = 1;
+  advice = discover();
+  expect(advice.budgetExhausted && !advice.cancelled &&
+             f.options.includeDiscoveryCache->stats().trials == 1,
+         "a discovery performs no more than its trial allowance");
+  expect(std::any_of(advice.diagnostics.begin(), advice.diagnostics.end(),
+                     [](const auto &d) {
+                       return d.code == "GTI-S2089" && !d.fixes.empty() &&
+                              !d.hints.empty();
+                     }),
+         "a proved fix is finalized even when later work exceeds the budget");
+  f.options.includeDiscoveryLimits.maximumTrials = 8;
+  f.options.includeDiscoveryLimits.timeBudget = std::chrono::milliseconds{0};
+  advice = discover();
+  expect(advice.budgetExhausted && !advice.cancelled && advice.inputs.empty() &&
+             f.options.includeDiscoveryCache->stats().trials == 1,
+         "zero time budget starts no speculative work");
 }
 
 void projectDeclarations() {
@@ -603,9 +643,52 @@ void moduleMapChangesInvalidateScans() {
   expect(cache->stats().scanHits > hits,
          "an identical registration reuses the remembered scan");
 }
+// Opt-in performance probe; no wall-clock threshold makes ordinary tests flaky.
+// Supply the repository root and optionally "preamble" to compare reuse costs.
+int profile(const std::filesystem::path &root, bool preamble) {
+  for (const auto &name : {"set", "queue", "unordered_set", "value"}) {
+    Fixture f;
+    f.options.includeSearchRoots.clear();
+    f.options.includeDiscoveryLimits.maximumTrials = 1000;
+    f.options.includeDiscoveryCache =
+        std::make_shared<lang::IncludeDiscoveryCache>();
+    if (preamble)
+      f.options.preambleCache = std::make_shared<lang::SemanticPreambleCache>();
+    const std::string body =
+        std::string(name) == "value"
+            ? "return value;"
+            : "std::" + std::string(name) + "<int> values{}; return 0;";
+    for (int pass = 0; pass != 2; ++pass) {
+      const auto begin = std::chrono::steady_clock::now();
+      const auto result = lang::Frontend(f.options).analyze(
+          f.root / "main.gti", "import std.string; int main() { " + body + " }",
+          {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
+      const auto stats = f.options.includeDiscoveryCache->stats();
+      std::cout << name << " preamble=" << preamble << " pass=" << pass
+                << " total_us="
+                << std::chrono::duration_cast<std::chrono::microseconds>(
+                       std::chrono::steady_clock::now() - begin)
+                       .count()
+                << " cumulative_trials=" << stats.trials
+                << " trial_us=" << stats.trialMicroseconds
+                << " semantic_us=" << stats.trialSemanticMicroseconds
+                << " hir_us=" << stats.trialHirMicroseconds
+                << " preamble_build_us=" << stats.trialPreambleBuildMicroseconds
+                << " preamble_adopt_us="
+                << stats.trialPreambleAdoptMicroseconds;
+      for (const auto &fix : fixes(result))
+        std::cout << " fix=" << fix.message;
+      std::cout << std::endl;
+    }
+  }
+  return 0;
+}
 } // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc >= 3 && std::string(argv[1]) == "--profile")
+    return profile(std::filesystem::canonical(argv[2]), argc > 3);
+  boundedDiscovery();
   discoveryReusesCandidateScans();
   moduleMapChangesInvalidateScans();
   internalTrialsDoNotReportProgress();

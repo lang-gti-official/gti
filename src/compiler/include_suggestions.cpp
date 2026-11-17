@@ -1,6 +1,7 @@
 #include "gti/include_suggestions.h"
 
 #include "gti/frontend.h"
+#include "gti/frontend_work.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/source_owner.h"
@@ -93,6 +94,17 @@ public:
   void countTrial(bool skipped) {
     const std::lock_guard lock(mutex);
     ++(skipped ? counters.qualifierSkips : counters.trials);
+  }
+
+  void recordTrial(const FrontendWorkMetrics &work, std::size_t elapsed) {
+    const std::lock_guard lock(mutex);
+    counters.trialMicroseconds += elapsed;
+    counters.trialSemanticMicroseconds += work.semanticMicroseconds;
+    counters.trialHirMicroseconds += work.hirMicroseconds;
+    counters.trialPreambleBuildMicroseconds +=
+        work.semanticPreambleBuildMicroseconds;
+    counters.trialPreambleAdoptMicroseconds +=
+        work.semanticPreambleAdoptMicroseconds;
   }
 
   void invalidate(std::string_view path) {
@@ -674,13 +686,23 @@ IncludeSuggestionResult discoverIncludeSuggestions(
     const std::vector<std::filesystem::path> &standardLibraryRoots,
     const std::vector<PackageSourceRoot> &packageSourceRoots) {
   IncludeSuggestionResult advice{.diagnostics = result.diagnostics};
+  const auto started = std::chrono::steady_clock::now();
+  std::size_t trialsRun = 0;
+  const auto exhausted = [&] {
+    const auto &limits = options.includeDiscoveryLimits;
+    advice.budgetExhausted =
+        trialsRun >= limits.maximumTrials ||
+        (limits.timeBudget != std::chrono::milliseconds::max() &&
+         std::chrono::steady_clock::now() - started >= limits.timeBudget);
+    return advice.budgetExhausted;
+  };
   const auto stopped = [&] {
     advice.cancelled = result.cancelled ||
                        (options.cancellation &&
                         options.cancellation->load(std::memory_order_relaxed));
     return advice.cancelled;
   };
-  if (stopped() || !canSuggestIncludes(result))
+  if (stopped() || !canSuggestIncludes(result) || exhausted())
     return advice;
   std::set<std::string> requested;
   for (const auto &diagnostic : result.diagnostics) {
@@ -771,6 +793,8 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   for (const auto &candidate : searchCandidates) {
     if (stopped())
       return advice;
+    if (exhausted())
+      break;
     if (entryUnit != nullptr && candidate.path == entryUnit->path)
       continue;
     const bool accessible = std::any_of(
@@ -822,6 +846,8 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   for (const auto &[reexports, candidate] : prepared) {
     if (stopped())
       return advice;
+    if (exhausted())
+      break;
     if (reexports &&
         std::none_of(advice.diagnostics.begin(), advice.diagnostics.end(),
                      [](const auto &diagnostic) {
@@ -886,16 +912,28 @@ IncludeSuggestionResult discoverIncludeSuggestions(
           directive + newline;
       auto found = trials.find(sourceName);
       if (found == trials.end()) {
+        if (exhausted())
+          break;
+        ++trialsRun;
         auto modified = overrides;
         modified[sourceName] = *source;
         modified[sourceName].insert(insertion, replacement);
         trialOptions.stopAfter = options.stopAfter == FrontendPhase::Mir
                                      ? FrontendPhase::Hir
                                      : options.stopAfter;
+        FrontendWorkMetrics work;
+        trialOptions.workMetrics = &work;
+        const auto trialStarted = std::chrono::steady_clock::now();
         auto trial =
             Frontend(trialOptions)
                 .analyze(entryPath, std::nullopt, preludePaths, modified,
                          standardLibraryRoots, packageSourceRoots);
+        trialOptions.workMetrics = nullptr;
+        rows.recordTrial(
+            work, static_cast<std::size_t>(
+                      std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::steady_clock::now() - trialStarted)
+                          .count()));
         rows.countTrial(false);
         found = trials.emplace(sourceName, std::move(trial)).first;
       }
