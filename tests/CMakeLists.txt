@@ -2043,11 +2043,6 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>")
     set_tests_properties(${iterator_gate} PROPERTIES TIMEOUT 600)
   endforeach()
-  add_test(NAME reference_parameter_packs
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/reference_parameter_packs_test.py"
-            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
-  set_tests_properties(reference_parameter_packs PROPERTIES TIMEOUT 300)
   # RFC 0004 erasure gate: every example the reference compiler (built from
   # the main commit a lifetime change is based on) compiles must produce
   # byte-identical MIR here. Opt in by configuring the reference compiler.
@@ -2135,13 +2130,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(protocol_requirements_runtime PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME protocol_format_hash_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/protocol_format_hash_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(protocol_format_hash_runtime PROPERTIES TIMEOUT 900)
   add_test(
     NAME associated_type_families_runtime
     COMMAND "${Python3_EXECUTABLE}"

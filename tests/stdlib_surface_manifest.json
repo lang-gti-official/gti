@@ -4616,8 +4616,8 @@
         "tests/fixtures/stdlib_surface_format.gti",
         "tests/fixtures/extensible_formatting.gti",
         "stdlib/std/format.gti",
-        "tests/protocol_format_hash_runtime_test.py",
-        "tests/reference_parameter_packs_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
+        "tests/ui/packs/reference_packs/function_text_escape.gti",
         "tests/ui/constexpr/consteval",
         "tests/fixtures/checked_literal_arguments.gti",
         "tests/ui/stdlib/contracts"
@@ -4899,7 +4899,7 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/associative_hash_contracts.gti",
         "tests/associative_hash_contracts_test.py",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/protocol_format_hash.gti",
         "tests/fixtures/legacy_hash_policy_state.gti"
       ]
@@ -6609,7 +6609,7 @@
         "tests/ui/runtime/panic",
         "tests/ui/runtime/panic/contracts",
         "stdlib/std/panic.gti",
-        "tests/reference_parameter_packs_test.py",
+        "tests/ui/packs/reference_packs/function_text_escape.gti",
         "tests/fixtures/checked_format_panic.gti",
         "tests/ui/stdlib/contracts"
       ]
@@ -7747,7 +7747,7 @@
         "tests/fixtures/associative_hash_contracts.gti",
         "stdlib/std/string.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
@@ -8030,7 +8030,7 @@
         "tests/fixtures/testing_assertions.gti",
         "tests/ui/stdlib/testing/assertions",
         "tests/fixtures/protocol_testing_assertions.gti",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti"
       ]
     },
     {
@@ -8197,7 +8197,7 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/operators/conditional_members",
         "tests/fixtures/conditional_member_operators.gti",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/legacy_hash_policy_state.gti"
       ]
     },
@@ -8301,7 +8301,7 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/legacy_hash_policy_state.gti",
         "tests/ui/stdlib/contracts"
       ]
@@ -8377,7 +8377,7 @@
         "tests/fixtures/stdlib_surface_utility_pair.gti",
         "stdlib/std/utility.gti",
         "tests/ui/operators/conditional_members",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti"
       ],
       "required_instantiations": [
         "std::pair<int32_t,int64_t>",

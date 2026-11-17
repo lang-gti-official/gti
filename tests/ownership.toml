@@ -94,7 +94,6 @@ paths = [
 ]
 owners = [
   "gti_test_ui",
-  "reference_parameter_packs",
   "parser_conditional_recovery",
   "source_text_pipeline",
   "source_unit_services",
@@ -251,8 +250,6 @@ paths = [
 ]
 owners = [
   "protocol_requirements_runtime",
-  "protocol_format_hash_runtime",
-  "reference_parameter_packs",
   "reference_parameter_pack_mir",
   "semantic_header_boundary",
   "semantic_header_self_containment",
@@ -374,7 +371,6 @@ owners = [
 ]
 consumers = [
   "reference_parameter_pack_mir",
-  "reference_parameter_packs",
   "mir_program_initialization",
   "lowered_program_contract",
   "mir_cutover_corpus_oracle",
@@ -402,7 +398,6 @@ owners = [
 ]
 consumers = [
   "protocol_requirements_runtime",
-  "reference_parameter_packs",
   "lowered_program_contract",
   "lowered_program_corpus_census",
   "language_coverage_corpus",
@@ -1013,7 +1008,6 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
-  "protocol_format_hash_runtime",
   "complete_containers",
   "container_contract_failure",
   "container_iterator_movement",
@@ -1050,8 +1044,6 @@ paths = [
   "stdlib/std/cstdio.gti",
 ]
 owners = [
-  "protocol_format_hash_runtime",
-  "reference_parameter_packs",
   "string_c_string_runtime",
   "text_view_iterator_runtime",
   "encoding_runtime",
@@ -1097,7 +1089,6 @@ paths = [
   "stdlib/std/meta.gti",
 ]
 owners = [
-  "protocol_format_hash_runtime",
   "^gti_test_ui(_[0-9]+)?$",
   "shared_ownership_failure",
   "unique_owner_access_runtime",
