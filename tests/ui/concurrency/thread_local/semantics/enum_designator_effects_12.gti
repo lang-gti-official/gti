@@ -1,7 +1,7 @@
 // Enum designator effects: a unit alternative remains a value rather than an accepted payload-constructor call.
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2;
 class Cleanup {
 public:
   Cleanup() {}

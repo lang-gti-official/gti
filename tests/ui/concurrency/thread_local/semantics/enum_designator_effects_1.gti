@@ -1,7 +1,7 @@
 // Enum designator effects: case designators do not create phantom enum cleanup when a borrowed switch body can propagate a failure.
 //@ check-pass
 //@ require-function-definitions
-mut int32_t guarded = 1; mut int32_t other = 2; 
+mut int32_t guarded = 1; mut int32_t other = 2;
 class Cleanup {
 public:
   Cleanup() {}

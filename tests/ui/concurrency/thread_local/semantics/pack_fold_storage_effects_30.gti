@@ -1,7 +1,7 @@
 // Pack fold storage effects: a nonempty fold with a declaration-only GTI target remains conservatively unknown rather than effect-free.
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2;
 void leaf<T>(int32_t& input, T& element);
 void folded<Args...>(Args... args) {
   mut int32_t input = 0;  //~ WARN GTI-S2096

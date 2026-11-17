@@ -1,7 +1,7 @@
 // Exact whole object virtual effects: an exact readonly virtual target still closes hidden helper writes and rejects the actual overlapping persistent path.
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; thread_local mut int other = 2; 
+thread_local mut int guarded = 1; thread_local mut int other = 2;
 void change() { guarded = 9; }
 class Base {
 public:

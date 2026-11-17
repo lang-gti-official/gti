@@ -1,6 +1,6 @@
 // Exact whole object virtual effects: under-construction this does not establish a complete dynamic class or erase the unresolved virtual boundary.
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; 
+mut int guarded = 1; mut int other = 2;
 class Base { public: virtual int read() { return 1; }  public: Base() = default; };
 class Reader : public Base {
 public:

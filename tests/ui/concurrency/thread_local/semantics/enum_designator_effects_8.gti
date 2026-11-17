@@ -1,6 +1,6 @@
 // Enum designator effects: a genuinely constructed enum temporary retains its mutating destructor's conflict at the full-expression cleanup boundary.
 //@ require-function-definitions
-mut int32_t guarded = 1; mut int32_t other = 2; 
+mut int32_t guarded = 1; mut int32_t other = 2;
 class Cleanup {
 public:
   Cleanup() {}
@@ -10,7 +10,7 @@ enum Payload { owned(Cleanup value), empty };
 
 void inspect(Payload& value) {}
 int main() {
-  int32_t& held = guarded; 
+  int32_t& held = guarded;
   inspect(Payload::owned(Cleanup()));  //~ ERROR GTI-S2045
   return held;
 }

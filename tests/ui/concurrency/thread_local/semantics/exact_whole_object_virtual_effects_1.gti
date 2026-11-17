@@ -1,7 +1,7 @@
 // Exact whole object virtual effects: a persistent whole-object receiver may invoke its exact harmless virtual target without conflicting with its own readonly input.
 //@ check-pass
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; 
+mut int guarded = 1; mut int other = 2;
 class Base {
 public:
   virtual int read() { return 1; }

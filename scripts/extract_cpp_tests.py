@@ -1420,7 +1420,8 @@ def render(case: Case, header: str) -> str:
     source = case.source or ""
     if source.startswith("\n"):
         source = source[1:]
-    source = source.rstrip() + "\n"
+    source = "\n".join(line.rstrip() for line in
+                       source.rstrip().split("\n")) + "\n"
     lines = [header]
     if case.mode != "check":
         lines.append(f"//@ {case.mode}-" +

@@ -2,7 +2,7 @@
 //@ check-pass
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; thread_local mut int other = 2; 
+thread_local mut int guarded = 1; thread_local mut int other = 2;
 class Base {
 public:
   virtual int read() { return 1; }

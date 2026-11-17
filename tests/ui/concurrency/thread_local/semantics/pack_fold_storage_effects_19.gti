@@ -2,7 +2,7 @@
 //@ check-pass
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2;
 void leaf<T>(mut int32_t& input, T& element) { input += 1; other += 1; }
 void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }
 int main() { folded(1, true); return guarded; }

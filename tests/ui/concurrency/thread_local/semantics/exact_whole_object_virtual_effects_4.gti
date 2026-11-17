@@ -1,7 +1,7 @@
 // Exact whole object virtual effects: a by-value class formal owns an exact complete receiver rather than an arbitrary reference to a derived object.
 //@ check-pass
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; 
+mut int guarded = 1; mut int other = 2;
 class Base {
 public:
   virtual int read() { return 1; }

@@ -1,7 +1,7 @@
 // Pack fold storage effects: an empty expansion retains actual reference-local setup but does not invent a target invocation.
 //@ check-pass
 //@ require-function-definitions
-mut int32_t guarded = 1; mut int32_t other = 2; 
+mut int32_t guarded = 1; mut int32_t other = 2;
 void leaf<T>(int32_t& input, T& element) { guarded = 3; }
 void folded<Args...>(Args... args) {
   int32_t& input = guarded;

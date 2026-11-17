@@ -2,7 +2,7 @@
 //@ check-pass
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; thread_local mut int32_t third = 3; 
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; thread_local mut int32_t third = 3;
 void selected<uint64_t Mode>() {
   if constexpr (Mode < 2) {
     int32_t& held = guarded;

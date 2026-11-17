@@ -2,7 +2,7 @@
 //@ check-pass
 //@ require-function-definitions
 import std.source_location;
-mut int guarded = 1; mut int other = 2; mut int third = 3; 
+mut int guarded = 1; mut int other = 2; mut int third = 3;
 #macro ignore<F>(F action) {}
 int main() {
   int& held = guarded;

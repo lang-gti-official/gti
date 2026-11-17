@@ -1,7 +1,7 @@
 // Exact whole object virtual effects: a virtual readonly receiver's call-scoped protection rejects a hidden reentrant write to that same complete object.
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; thread_local mut int other = 2; 
+thread_local mut int guarded = 1; thread_local mut int other = 2;
 class Reader {
 public:
   mut int value = 1;
@@ -9,7 +9,7 @@ public:
 public:
   Reader() = default;
 };
-thread_local 
+thread_local
 mut Reader reader{};
 void change() { reader.value = 9; }
 int main() { return reader.read(); }  //~ ERROR GTI-S2045

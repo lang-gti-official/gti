@@ -1,7 +1,7 @@
 // Exact whole object virtual effects: an inherited final overrider keeps its exact selected declaration.
 //@ check-pass
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; 
+mut int guarded = 1; mut int other = 2;
 class Base {
 public:
   virtual int read() { return 1; }

@@ -2,7 +2,7 @@
 //@ check-pass
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; 
+thread_local mut int guarded = 1;
 class Selected<T, uint64_t Width> {
 public:
   int value;

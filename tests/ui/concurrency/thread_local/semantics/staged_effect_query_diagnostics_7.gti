@@ -1,7 +1,7 @@
 // Staged effect query diagnostics: an invalid runtime effect query cannot contaminate a different valid staged key or permit MIR in either demand order.
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; 
+thread_local mut int guarded = 1;
 class Selected<T, uint64_t Width> {
 public:
   int value;

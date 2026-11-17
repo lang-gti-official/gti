@@ -1,6 +1,6 @@
 // Enum designator effects: an owning local's scope cleanup conflicts with a reference that is used after that scope ends.
 //@ require-function-definitions
-mut int32_t guarded = 1; mut int32_t other = 2; 
+mut int32_t guarded = 1; mut int32_t other = 2;
 class Cleanup {
 public:
   Cleanup() {}

@@ -1,6 +1,6 @@
 // Exact whole object virtual effects: a base reference must never replace its mutating override with the harmless statically selected base body.
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; 
+mut int guarded = 1; mut int other = 2;
 void change() { guarded = 9; }
 class Base {
 public:

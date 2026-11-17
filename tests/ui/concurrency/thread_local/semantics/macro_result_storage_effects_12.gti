@@ -3,7 +3,7 @@
 //@ execution-profile: concurrent
 //@ require-function-definitions
 import std.source_location;
-thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3; 
+thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3;
 #macro ignore<F>(F action) {}
 int main() {
   int& held = guarded;

@@ -1,7 +1,7 @@
 // Macro result storage effects: actual owning macro cleanup remains legal for a disjoint persistent owner.
 //@ check-pass
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; mut int third = 3; 
+mut int guarded = 1; mut int other = 2; mut int third = 3;
 struct Cleanup {
   Cleanup() {}
   Cleanup(Cleanup& other) = delete;

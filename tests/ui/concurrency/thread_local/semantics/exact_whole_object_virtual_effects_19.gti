@@ -2,7 +2,7 @@
 //@ check-pass
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; thread_local mut int other = 2; 
+thread_local mut int guarded = 1; thread_local mut int other = 2;
 interface ReaderContract { int read(); };
 class InterfaceReader : public ReaderContract {
 public:
@@ -10,6 +10,6 @@ public:
 public:
   InterfaceReader() = default;
 };
-thread_local 
+thread_local
 InterfaceReader reader{};
 int main() { int& held = guarded; return reader.read() + held; }

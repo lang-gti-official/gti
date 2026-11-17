@@ -1,7 +1,7 @@
 // Macro result storage effects: discarding a real owning macro result executes its conflicting cleanup before the persistent loan ends.
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3; 
+thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3;
 struct Cleanup {
   Cleanup() {}
   Cleanup(Cleanup& other) = delete;

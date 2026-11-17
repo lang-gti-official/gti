@@ -1,6 +1,6 @@
 // Exact whole object virtual effects: an exact readonly virtual target still closes hidden helper writes and rejects the actual overlapping persistent path.
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; 
+mut int guarded = 1; mut int other = 2;
 void change() { guarded = 9; }
 class Base {
 public:

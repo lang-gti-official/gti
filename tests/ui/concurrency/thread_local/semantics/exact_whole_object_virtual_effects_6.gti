@@ -1,7 +1,7 @@
 // Exact whole object virtual effects: a direct concrete interface implementation retains its exact target even when the virtual root has no executable body.
 //@ check-pass
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; 
+mut int guarded = 1; mut int other = 2;
 interface ReaderContract { int read(); };
 class InterfaceReader : public ReaderContract {
 public:

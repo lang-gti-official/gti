@@ -1,7 +1,7 @@
 // Exact whole object virtual effects: a base reference must never replace its mutating override with the harmless statically selected base body.
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; thread_local mut int other = 2; 
+thread_local mut int guarded = 1; thread_local mut int other = 2;
 void change() { guarded = 9; }
 class Base {
 public:

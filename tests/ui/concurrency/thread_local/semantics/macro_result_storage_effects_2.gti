@@ -1,6 +1,6 @@
 // Macro result storage effects: discarding a real owning macro result executes its conflicting cleanup before the persistent loan ends.
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; mut int third = 3; 
+mut int guarded = 1; mut int other = 2; mut int third = 3;
 struct Cleanup {
   Cleanup() {}
   Cleanup(Cleanup& other) = delete;

@@ -1,7 +1,7 @@
 // Macro result storage effects: concrete fresh-callable macro effects remain disjoint and query-qualified in either specialization order.
 //@ check-pass
 //@ require-function-definitions
-mut int guarded = 1; mut int other = 2; mut int third = 3; 
+mut int guarded = 1; mut int other = 2; mut int third = 3;
 #macro int invoke<F>(F action) { return action(); }
 #macro int relay<F>(F action) { return invoke!(action); }
 int selected<uint64_t Mode>() {

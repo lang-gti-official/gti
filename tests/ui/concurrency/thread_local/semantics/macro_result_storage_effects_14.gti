@@ -2,7 +2,7 @@
 //@ check-pass
 //@ execution-profile: concurrent
 //@ require-function-definitions
-thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3; 
+thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3;
 #macro int invoke<F>(F action) { return action(); }
 #macro int relay<F>(F action) { return invoke!(action); }
 int selected<uint64_t Mode>() {
