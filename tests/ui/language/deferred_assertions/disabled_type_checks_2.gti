@@ -1,0 +1,5 @@
+// Disabled type checks: disabled assertions still check formatter support.
+//@ define: NDEBUG
+import std.assert;
+struct Unknown { int number = 7; };
+int main() { std::debug_assert!(true, "{}", Unknown{}); return 0; }  //~ ERROR GTI-P0001

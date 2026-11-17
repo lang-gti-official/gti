@@ -1,0 +1,32 @@
+// A panic through an exact callable carrier reports the selected call site.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: panic_exact_carrier.gti:26: runtime error[GTI-R0017]: panic: "selected 6"
+// --- panic_exact_carrier.gti
+import std.panic;
+
+namespace sample {
+class Reader<T> {
+public:
+  int read() { return 1; }
+public:
+  Reader() = default;
+};
+}
+
+class sample::Reader<int> {
+public:
+  int read() { return 2; }
+public:
+  Reader() = default;
+};
+
+struct Unrelated { public: Unrelated() = default; };
+int invoke<F>(F callback) { return callback(); }
+
+int main() {
+  sample::Reader<int> exact{};
+  sample::Reader<Unrelated> primary{};
+  int selected = exact.read() + primary.read() + invoke([]() -> int { return 3; });
+  std::runtime_panic("selected {}", selected); // exact-carrier-site
+}

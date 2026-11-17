@@ -1,0 +1,17 @@
+// Macro fresh argument boundaries: invalid result macro must stop before emission.
+import std.utility;
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  int read() { return 1; }
+};
+#macro Owner take(Owner value) { return value; }
+int inspect(Owner& value) { return value.read(); }
+int main() {
+  Owner owner{};
+  Owner& loan = owner;
+  int result = inspect(take!(std::move(owner)));  //~ ERROR GTI-S2017
+  return result + loan.read();
+}

@@ -1,0 +1,37 @@
+// Target determinism: layout queries should compile for every accepted synthetic target.
+//@ check-pass
+//@ target: x86_64-pc-windows
+using Word = uint16_t;
+using Matrix = int16_t[3][4];
+enum class State : uint8_t { Ready };
+union WordBits { uint32_t integer; float real; };
+constexpr uint64_t stride = sizeof(uint32_t);
+
+int main() {
+  uint64_t bool_size = sizeof(bool);
+  uint64_t char_alignment = alignof(char);
+  uint64_t default_int_size = sizeof(int);
+  uint64_t default_uint_alignment = alignof(uint);
+  uint64_t i8_size = sizeof(int8_t);
+  uint64_t i16_alignment = alignof(int16_t);
+  uint64_t i32_size = sizeof(int32_t);
+  uint64_t i64_alignment = alignof(int64_t);
+  uint64_t u8_size = sizeof(uint8_t);
+  uint64_t u16_alignment = alignof(uint16_t);
+  uint64_t u32_size = sizeof(uint32_t);
+  uint64_t u64_alignment = alignof(uint64_t);
+  uint64_t float_size = sizeof(float);
+  uint64_t double_size = sizeof(double);
+  uint64_t double_alignment = alignof(double);
+  uint64_t pointer_alignment = alignof(const int32_t*);
+  uint64_t void_pointer_size = sizeof(void*);
+  uint64_t alias_size = sizeof(Word);
+  uint64_t enum_size = sizeof(State);
+  uint64_t union_size = sizeof(WordBits);
+  uint64_t union_alignment = alignof(WordBits);
+  uint64_t matrix_size = sizeof(Matrix);
+  uint64_t matrix_alignment = alignof(Matrix);
+  uint64_t indirect_array_size = sizeof(int16_t[stride]);
+  int32_t values[stride] = {};
+  return values[0];
+}

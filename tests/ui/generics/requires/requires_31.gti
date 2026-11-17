@@ -1,0 +1,6 @@
+// General requires: copyability alone does not establish independent storage diagnostic.
+import std.memory;
+std::uninitialized<T> slot<T>() requires std::copyable<T> {  //~ ERROR GTI-S2029
+  return std::uninitialized<T>();  //~ ERROR GTI-S2029
+}
+int main() { return 0; }

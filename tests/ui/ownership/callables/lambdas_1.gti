@@ -1,0 +1,13 @@
+// Lambdas: explicit value-capture lambdas should pass the frontend.
+//@ check-pass
+int main() {
+  int offset = 3;
+  auto add = [offset](int value) -> int { return offset + value; };
+  auto copied = add;
+  auto compose = [copied](int value) -> int {
+    return copied(value) + 1;
+  };
+  int direct = [](int value) -> int { return value * 2; }(4);
+  auto inferred = direct;
+  return compose(inferred) - 12;
+}

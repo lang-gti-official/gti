@@ -1,0 +1,7 @@
+// General requires: alias predicates cannot consume a later constexpr definition diagnostic.
+constexpr bool accepts<T>();
+concept accepted_type<T> = accepts<T>();
+class Box<accepted_type T> { public: Box() = default; };
+using TooSoon = Box<int>;  //~ ERROR GTI-S2029
+constexpr bool accepts<T>() { return true; }
+int main() { return 0; }

@@ -1,0 +1,56 @@
+// A panic while constructing a worker unwinds its partial state; a cleanup failure escalates.
+//@ run-fail
+//@ revisions: panic cleanup
+//@ execution-profile: concurrent
+//@[panic] exit-code: 70
+//@[panic] stdout: 82
+//@[panic] stdout: 83
+//@[panic] stdout: 95
+//@[panic] stdout: 84
+//@[panic] stdout: 90
+//@[panic] stderr-contains: panic_worker_construction.gti:24: runtime error[GTI-R0017]: panic: "allocation primary failure"
+//@[cleanup] exit-code: 70
+//@[cleanup] args: case
+//@[cleanup] stdout: 82
+//@[cleanup] stderr-contains: panic_worker_construction.gti:14: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at panic_worker_construction.gti:24 message="allocation primary failure"; secondary [GTI-R0017] message="cleanup failed"
+// --- panic_worker_construction.gti
+import std.panic;
+import std.memory;
+import std.thread;
+import std.string;
+import std.vector;
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+struct IncompleteOwner {
+  Guard initialized;
+  IncompleteOwner(bool emergency) : initialized(Guard(95)) {
+    Guard skipped{83};
+    Guard failing{82, emergency};
+    std::panic("allocation primary failure"); // construction-primary-site
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard parent{90};
+  bool emergency = argc > 1;
+  auto started = std::thread::start([emergency]() -> void {
+    Guard caller{84};
+    auto unpublished = std::make_unique<IncompleteOwner>(emergency);
+  });
+  if (!started) { return 99; }
+  mut std::thread worker = std::move(started).value();
+  auto joined = worker.join();
+  if (!joined) { return 98; }
+  return 0;
+}

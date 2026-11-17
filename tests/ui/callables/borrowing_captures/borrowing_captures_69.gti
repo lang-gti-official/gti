@@ -1,0 +1,36 @@
+// Borrowing captures: captured-reference-ranges.
+//@ check-pass
+import std.vector;
+class Count {
+  mut int current;
+public:
+  Count(int start) : current(start) {}
+  int operator*() { return this.current; }
+  void operator++() mut { this.current += 1; }
+  bool operator!=(int end) { return this.current != end; }
+};
+class Span {
+  int first;
+  int last;
+public:
+  Span(int first, int last) : first(first), last(last) {}
+  Count begin() { return Count(this.first); }
+  int end() { return this.last; }
+};
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(4);
+  values.push_back(9);
+  mut auto scale = [mut &values](int factor) -> void {
+    for (mut auto& value : values) value *= factor;
+  };
+  scale(2);
+  Span span = Span(1, 4);
+  auto weigh = [&values, &span]() -> int {
+    mut int sum = 0;
+    for (auto& value : values) sum += value;
+    for (int index : span) sum += index;
+    return sum + int(values.size());
+  };
+  return weigh() - 34;
+}

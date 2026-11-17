@@ -1,0 +1,6 @@
+// Analyze: lambda references retain a checked environment.
+//@ check-pass
+int main() {
+    auto function = [](int value) -> int { return value + 1; };
+    auto& alias = function; auto& child = alias; return child(4) - 5;
+  }

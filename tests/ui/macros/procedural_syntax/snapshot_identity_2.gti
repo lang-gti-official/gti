@@ -1,0 +1,16 @@
+// Snapshot identity: expected procedural diagnostic before code generation.
+//@ syntax-tokens: 1
+// --- main.gti
+import "library.gti"; int main(){return selected!({});}  //~ ERROR GTI-S2124
+// --- library.gti
+
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr selected(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+#ifdef SELECT  //~ WARN GTI-S2075
+  return std::syntax::parse(std::syntax::literal("17", origin));
+#else
+  return std::syntax::parse(std::syntax::literal("23", origin));
+#endif
+}

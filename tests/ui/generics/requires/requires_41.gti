@@ -1,0 +1,4 @@
+// General requires: source once_action does not invent a missing argument diagnostic.
+import std.functional;
+struct NeedsArgument { void operator()(int value) {}  public: NeedsArgument() = default; };
+int main() { std::invoke_once(NeedsArgument()); return 0; }  //~ ERROR GTI-S2029

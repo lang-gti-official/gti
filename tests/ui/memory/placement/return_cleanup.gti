@@ -1,0 +1,32 @@
+// Return-path cleanup destroys pinned locals at their final addresses.
+//@ run-pass
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+class Local { public: ~Local() { destroyed = destroyed * 10 + 4; }  public: Local() = default; };
+Pinned prepared() { Local guard{}; return relay(1); }
+int main() {
+  { Pinned result = prepared();
+    if (!result.stable() || destroyed != 4) { return 1; } }
+  return destroyed == 41 ? 0 : 2;
+}

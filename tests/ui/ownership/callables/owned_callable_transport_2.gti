@@ -1,0 +1,8 @@
+// Owned callable transport: owned callable transport should require an explicit call-site ownership move.
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  int captured = 1;
+  auto operation = [captured]() -> int { return captured; };
+  auto escaped = relay(operation);  //~ ERROR GTI-S2046 requires an explicit std::move ownership transfer
+  return 0;
+}

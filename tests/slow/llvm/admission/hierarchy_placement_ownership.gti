@@ -1,0 +1,15 @@
+// Hierarchy placement ownership: program-aware placement binds only the exact proved hierarchy publication.
+//@ build-pass
+//@ slow
+    class P {
+      int value;
+    public:
+      P(int input) : value(input) {}
+      virtual int read() { return this.value; }
+    };
+    int main() {
+      P original{7};
+      P explicit_copy{original};
+      P implicit_copy = original;
+      return explicit_copy.read() + implicit_copy.read() - 14;
+    }

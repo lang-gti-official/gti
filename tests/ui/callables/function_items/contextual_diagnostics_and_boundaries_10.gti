@@ -1,0 +1,11 @@
+// Contextual diagnostics and boundaries: a stateless function item can enter exact owned generic transport.
+//@ check-pass
+Function relay<Function>(Function function) {
+  return std::move(function);
+}
+void task() {}
+int main() {
+  auto escaped = relay(task);
+  escaped();
+  return 0;
+}

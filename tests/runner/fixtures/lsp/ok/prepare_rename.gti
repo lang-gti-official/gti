@@ -1,0 +1,10 @@
+// prepare-rename answers the identifier's range and placeholder; adjacent
+// cursor markers are both found.
+//@ prepare-rename @inside: @start total
+//@ prepare-rename @second: @first total
+//@ prepare-rename @literal: none
+int main() {
+  int total = /*@literal*/1;
+  int copy = /*@start*/to/*^inside*/tal;
+  return /*^first*//*^second*/total + copy - 2;
+}

@@ -1,0 +1,14 @@
+// Generic field receiver retention: generic field forwarding preserves conditional contracts without constraining integers.
+//@ check-pass
+struct Cell<T> {
+  mut T value;
+  Cell(T initial):value(initial){}
+  void put(T input) mut { this.value = input; }
+  bool forward(T input) mut { this.put(input); return true; }
+};
+int main() {
+  mut Cell<std::string_view> text{"initial"};
+  if (!text.forward("stored")) { return 1; }
+  mut Cell<int> number{1};
+  return number.forward(2) && number.value == 2 ? 0 : 2;
+}

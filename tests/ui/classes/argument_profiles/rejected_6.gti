@@ -1,0 +1,2 @@
+// Rejected: invalid profile or borrow has no code generation.
+class Packet<T&, E> { public: Packet() = default; }; class Packet<T, E&> {};  //~ ERROR GTI-S2006

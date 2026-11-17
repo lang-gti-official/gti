@@ -1,0 +1,81 @@
+// Restoring exchange transports every eligible owning result shape.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 2
+//@[run1] stdout: 1
+//@[run1] stdout: 4
+//@[run1] stdout: 3
+//@[run2] run-fail
+//@[run2] args: construction
+//@[run2] exit-code: 70
+//@[run2] stdout: 3
+//@[run2] stdout: 2
+//@[run2] stdout: 1
+//@[run2] stderr-contains: restoring_array_failure.gti:11: runtime error[GTI-R0017]: panic: "array replacement construction"
+//@[run3] run-fail
+//@[run3] args: after exchange
+//@[run3] exit-code: 70
+//@[run3] stdout: 2
+//@[run3] stdout: 1
+//@[run3] stdout: 4
+//@[run3] stdout: 3
+//@[run3] stderr-contains: restoring_array_failure.gti:42: runtime error[GTI-R0017]: panic: "after array exchange"
+//@[run4] run-fail
+//@[run4] args: return cleanup failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 2
+//@[run4] stdout: 1
+//@[run4] stdout: 4
+//@[run4] stdout: 3
+//@[run4] stderr-contains: restoring_array_failure.gti:26: runtime error[GTI-R0017]: panic: "array return cleanup"
+//@[run5] run-fail
+//@[run5] args: return cleanup double failure
+//@[run5] exit-code: 70
+//@[run5] stdout: 2
+//@[run5] stdout: 5
+//@[run5] stderr-contains: restoring_array_failure.gti:16: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at restoring_array_failure.gti:26 message="array return cleanup"; secondary [GTI-R0017] message="array resource cleanup"
+// --- restoring_array_failure.gti
+import std.utility;
+import std.string;
+import std.vector;
+import std.panic;
+
+class Resource {
+  int identity;
+  std::string storage;
+public:
+  Resource(int id) : identity(id), storage(std::string("resource")) {
+    if (id == 99) { std::panic("array replacement construction"); }
+  }
+  Resource(Resource& other) = delete;
+  ~Resource() {
+    std::println(this.identity);
+    if (this.identity == 5) { std::panic("array resource cleanup"); }
+  }
+  int id() { return this.identity; }
+};
+
+class Guard {
+  bool fail;
+public:
+  Guard(bool should_fail) : fail(should_fail) {}
+  ~Guard() {
+    if (this.fail) { std::panic("array return cleanup"); }
+  }
+};
+
+T replace<T>(mut T& destination, T replacement, bool fail) requires std::relocatable<T> {
+  Guard guard{fail};
+  T previous = std::exchange(destination, std::move(replacement));
+  return std::move(previous);
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Resource destination[2] = {Resource(argc == 5 ? 5 : 1), Resource(2)};
+  Resource replacement[2] = {Resource(3), Resource(argc == 2 ? 99 : 4)};
+  auto previous = replace(destination, std::move(replacement), argc >= 4);
+  if (previous[0].id() != 1 || previous[1].id() != 2 ||
+      destination[0].id() != 3 || destination[1].id() != 4) { return 1; }
+  if (argc == 3) { std::panic("after array exchange"); }
+  return 0;
+}

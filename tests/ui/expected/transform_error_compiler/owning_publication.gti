@@ -1,0 +1,32 @@
+// Owning publication: owning transform returns, propagation, and chained cleanup verify.
+//@ check-pass
+struct Payload { ~Payload() { std::println(30); }  public: Payload() = default; };
+struct Error { ~Error() { std::println(10); }  public: Error() = default; };
+struct Mapped { int code = 4; ~Mapped() { std::println(20); }  public: Mapped() = default; };
+Mapped map(Error error) { return Mapped(); }
+int again(Mapped error) { return 1; }
+expected<Payload, Error> read(bool fail) {
+  if (fail) { return unexpected(Error()); }
+  return Payload();
+}
+expected<Payload, Mapped> returned(bool fail) {
+  return read(fail).transform_error(map);
+}
+expected<Payload, Mapped> propagated(bool fail) {
+  return ?read(fail).transform_error(map);
+}
+expected<void, Error> perform() { return unexpected(Error()); }
+int observe_void() {
+  auto direct = perform().transform_error(map);
+  auto source = perform();
+  auto named = std::move(source).transform_error(map);
+  return direct.error().code + named.error().code;
+}
+int consume(expected<Payload, Mapped> result) {
+  return result.has_value() ? 0 : result.error().code;
+}
+int pass_onward(bool fail) { return consume(read(fail).transform_error(map)); }
+int main() {
+  auto result = read(true).transform_error(map).transform_error(again);
+  return result.has_value() ? 0 : 1;
+}

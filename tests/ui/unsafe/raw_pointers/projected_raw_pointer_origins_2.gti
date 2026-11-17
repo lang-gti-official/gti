@@ -1,0 +1,14 @@
+// Projected raw pointer origins: recursive checked-reference carriers must retain their ordinary escape diagnostic.
+//@ raw-pointer-audit: strict
+class Node {
+public:
+  Node& next;
+  const int* pointer = nullptr;
+  Node(Node& source, int tag) : next(source) {}
+};
+class NodeCarrier {
+public:
+  Node& referent;
+  NodeCarrier(Node& source) : referent(source) {}
+};
+Node& escape(NodeCarrier carrier) { return carrier.referent.next; }  //~ ERROR GTI-S2085

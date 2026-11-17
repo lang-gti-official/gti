@@ -1,0 +1,9 @@
+// Carrier flow on lowered program: a scalar copy releases its input borrow before a write.
+//@ check-pass
+int main() {
+  mut int owner = 4;
+  int& view = owner;
+  int independent = view;
+  owner = 5;
+  return independent - 4;
+}

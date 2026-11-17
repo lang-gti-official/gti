@@ -1,0 +1,4 @@
+// Importing std.thread without using it builds natively under the single-threaded profile.
+//@ build-pass
+import std.thread;
+int main() { return 0; }

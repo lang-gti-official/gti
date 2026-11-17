@@ -1,0 +1,12 @@
+// Callable member operators: reference-returning call operators should preserve borrow lifetime checks.
+class Slot {
+  int value = 1;
+public:
+  int& operator()() { return this.value; }
+public:
+  Slot() = default;
+};
+int main() {
+  int& dangling = Slot()();  //~ ERROR GTI-S2017
+  return dangling;
+}

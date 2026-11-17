@@ -1,0 +1,8 @@
+// Native identity: rejected with GTI-S2003.
+class Celsius {
+  int degrees;
+public:
+  implicit constexpr Celsius(int value) : degrees(value) {}
+};
+constexpr Celsius boiling = 100;  //~ ERROR GTI-S2003
+int main() { return 0; }

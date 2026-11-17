@@ -1,0 +1,20 @@
+// Confined callable parameters: a confined nominal callable must not pass through an unproven generic forwarding edge.
+void discard<Operation>(Operation operation) {}
+
+void invoke_and_forward<Operation>(Operation operation) {
+  operation();
+  discard(operation);  //~ ERROR GTI-S2046 selected target parameter is not proven confined
+}
+
+class Action {
+public:
+  void operator()() {}
+public:
+  Action() = default;
+};
+
+int main() {
+  Action action = Action();
+  invoke_and_forward(action);
+  return 0;
+}

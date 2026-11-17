@@ -1,0 +1,23 @@
+// Owned parameter stage arms rollback: the unique-owner field fixture should pass the frontend.
+//@ check-pass
+import std.memory;
+
+class Entity {
+public:
+  int32_t id = 7;
+public:
+  Entity() = default;
+};
+
+class Slot {
+  std::unique_ptr<Entity> value;
+
+public:
+  Slot(std::unique_ptr<Entity> value) : value(std::move(value)) {}
+};
+
+int main() {
+  mut std::unique_ptr<Entity> entity = std::make_unique<Entity>();  //~ WARN GTI-S2096
+  Slot slot = Slot(std::move(entity));
+  return 0;
+}

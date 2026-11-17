@@ -1,0 +1,17 @@
+// Lambdas: nested generic closure producers should retain and verify the capture signature of each concrete lambda instance.
+//@ check-pass
+struct CopyableCapture {
+  int value = 7;
+  CopyableCapture() {}
+  CopyableCapture(CopyableCapture& other) = default;
+};
+
+int nest<T>(T value) {
+  auto outer = [value]() -> int { return 1; };
+  auto inner = [outer]() -> int { return outer(); };
+  return inner();
+}
+
+int main() {
+  return nest(1) + nest(CopyableCapture()) - 2;
+}

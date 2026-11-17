@@ -1,0 +1,33 @@
+// Raw pointer constructor ranking: constructor overloads should prefer an exact raw pointer over adding pointee const.
+//@ check-pass
+class PointerChoice {
+public:
+  PointerChoice(int32_t* value) {}
+  PointerChoice(const int32_t* value) {}
+public:
+  PointerChoice() = default;
+};
+
+class PointerBase {
+public:
+  PointerBase(int32_t* value) {}
+  PointerBase(const int32_t* value) {}
+public:
+  PointerBase() = default;
+};
+
+class PointerDerived : public PointerBase {
+public:
+  PointerDerived(int32_t* value) : PointerBase(value) {}
+public:
+  PointerDerived() = default;
+};
+
+int main() {
+  mut int32_t value = 1;
+  mut int32_t* pointer = nullptr;
+  unsafe { pointer = &value; }  //~ WARN GTI-S2100
+  PointerChoice direct{pointer};
+  PointerDerived derived{pointer};
+  return 0;
+}

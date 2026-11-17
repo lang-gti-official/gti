@@ -1,0 +1,22 @@
+// Field initializer rollback and failure edges: the field-initializer rollback fixture should pass the frontend.
+//@ check-pass
+static mut int32_t seed = 4;
+
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t s) : value(s) {}
+  ~Resource() {}
+};
+
+class Bundle {
+public:
+  Resource held = Resource(5);
+  int32_t doubled = seed + seed;
+  Bundle() {}
+};
+
+int main() {
+  Bundle bundle = Bundle();
+  return bundle.held.value + bundle.doubled - 13;
+}

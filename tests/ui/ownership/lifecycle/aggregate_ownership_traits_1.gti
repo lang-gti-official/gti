@@ -1,0 +1,61 @@
+// Aggregate ownership traits: classes should inherit move-only traits from direct and nested fields.
+//@ check-pass
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+class Buffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
+  uint64_t reserved;
+
+public:
+  Buffer(uint64_t capacity)
+      : data(std::detail::prefix_owner<T>(capacity)), reserved(capacity) {}
+
+  uint64_t capacity() {
+    return this.reserved;
+  }
+};
+
+class NestedBuffer {
+  Buffer<int> buffer;
+
+public:
+  NestedBuffer(uint64_t capacity) : buffer(Buffer<int>(capacity)) {}
+
+  uint64_t capacity() {
+    return this.buffer.capacity();
+  }
+};
+
+struct CopyableValue {
+  int value = 1;
+public:
+  CopyableValue() = default;
+};
+
+Buffer<int> transfer(Buffer<int> value) {
+  return std::move(value);
+}
+
+NestedBuffer transfer_nested(NestedBuffer value) {
+  return std::move(value);
+}
+
+uint64_t inspect(Buffer<int>& value) {
+  return value.capacity();
+}
+
+CopyableValue copy_value(CopyableValue value) {
+  return value;
+}
+
+int main() {
+  Buffer<int> buffer = Buffer<int>(uint64_t(2));
+  Buffer<int> moved = transfer(std::move(buffer));
+  NestedBuffer nested = NestedBuffer(uint64_t(3));
+  NestedBuffer moved_nested = transfer_nested(std::move(nested));
+  CopyableValue value = CopyableValue();
+  CopyableValue copied = copy_value(value);
+  return int(inspect(moved) + moved_nested.capacity()) - 5 + copied.value - 1;
+}

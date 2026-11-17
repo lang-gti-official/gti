@@ -1,0 +1,10 @@
+// Produced results: callee-produced aggregate field cannot hide an expired origin.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
+int main() {
+  int witness = 9;
+  auto address = source();
+  unsafe { int& value = std::assume_ref(address.pointer, witness); return value; }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+}
+Address source() { int local = 1; return {.pointer = &local}; }

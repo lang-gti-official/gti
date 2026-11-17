@@ -1,0 +1,8 @@
+// Borrowing captures: lambda-reference-result.
+//@ check-pass
+int main() {
+  int cell = 4;
+  auto same = [](int& value) -> int& { return value; };
+  int& view = same(cell);
+  return view - 4;
+}

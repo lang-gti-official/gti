@@ -1,0 +1,6 @@
+// Invalid programs: application spelling must not grant a private SIMD capability.
+import std.simd;
+int main() {
+  float a[4] = {}; mut float output[4] = {};
+  gti_internal::simd_add(a, a, output); return 0;  //~ ERROR GTI-S2058
+}

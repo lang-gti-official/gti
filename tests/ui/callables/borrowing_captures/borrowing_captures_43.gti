@@ -1,0 +1,10 @@
+// Borrowing captures: signature-erased-reference-result.
+//@ check-pass
+import std.functional;
+int main() {
+  int cell = 4;
+  auto same = [](int& value) -> int& { return value; };
+  std::function_ref<int&(int&)> view{same};
+  int& chosen = view(cell);
+  return chosen - 4;
+}

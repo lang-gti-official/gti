@@ -1,0 +1,41 @@
+// A failing in-place forward_list element constructor releases the earlier nodes.
+//@ run-pass
+//@ revisions: success fail
+//@[success] stdout: 2
+//@[success] stdout: 1
+//@[fail] run-fail
+//@[fail] exit-code: 70
+//@[fail] args: fail
+//@[fail] stdout: 1
+//@[fail] stderr-contains: forward_list_emplacement_cleanup.gti:
+//@[fail] stderr-contains: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- forward_list_emplacement_cleanup.gti
+import std.forward_list;
+import std.string;
+import std.vector;
+
+class Element {
+public:
+  int value;
+  mut const int* original_address = nullptr;
+  Element(int initial, int divisor) : value(initial / divisor) {
+    unsafe { this.original_address = &this.value; }  //~ WARN GTI-S2100
+  }
+  Element(Element& other) = delete;
+  Element(Element&& other) = delete;
+  ~Element() { std::println(this.value); }
+  bool stable_address() {
+    unsafe { return this.original_address == &this.value; }  //~ WARN GTI-S2100
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::forward_list<Element> values = std::forward_list<Element>();
+  [[discard]] values.emplace_front(1, 1);
+  if (!values.front().stable_address()) { return 1; }
+  [[discard]] values.emplace_front(2, argc == 1 ? 1 : 0);
+  if (!values.front().stable_address()) { return 2; }
+  values.pop_front();
+  if (!values.front().stable_address()) { return 3; }
+  return 0;
+}

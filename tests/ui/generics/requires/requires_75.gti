@@ -1,0 +1,11 @@
+// General requires: public concepts cannot borrow a caller class's private privilege diagnostic.
+concept public_read<T> = requires(T& value) { { value.secret() } -> int; };
+int select<T>() requires public_read<T> { return 1; }
+class Vault {
+  int secret() { return 7; }
+public:
+  int probe() { return select<Vault>(); }  //~ ERROR GTI-S2029
+public:
+  Vault() = default;
+};
+int main() { Vault value{}; return value.probe(); }

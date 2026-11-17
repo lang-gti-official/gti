@@ -1,0 +1,10 @@
+// S: nested lambda execution bodies have independent macro result regions.
+//@ check-pass
+mut int total = 0;
+#macro invoke<F>(F callback) { callback(); }
+int main() {
+  invoke!([]() -> void {
+    invoke!([]() -> void { total += 1; });
+  });
+  return total == 1 ? 0 : 1;
+}

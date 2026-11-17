@@ -1,0 +1,44 @@
+// Accepted: argument profile is a valid source class.
+//@ check-pass
+class Packet<T, E> {
+  T payload;
+public:
+  Packet(T value) : payload(std::move(value)) {}
+  T& value() { return this.payload; }
+  int kind() { return 1; }
+};
+
+class Packet<void, E> {
+public:
+  Packet() {}
+  void value() {}
+  int kind() { return 2; }
+};
+
+class Packet<T&, E> {
+  T& payload;
+public:
+  Packet(T& value) : payload(value) {}
+  T& value() { return this.payload; }
+  int kind() { return 3; }
+};
+
+concept Profile<P> {
+  typename payload_type;
+  int inspect(P& packet);
+};
+for <T, E> concept Profile<Packet<T, E>> {
+  using payload_type = T;
+  int inspect(Packet<T, E>& packet) { return packet.kind(); }
+};
+int inspect_profile<P>(P& packet) requires Profile<P> {
+  return Profile<P>::inspect(packet);
+}
+int main() {
+  Packet<int, int> owned{1};
+  Packet<void, int> empty{};
+  int owner = 7;
+  Packet<int&, int> borrowed{owner};
+  return inspect_profile(owned) + inspect_profile(empty) +
+      inspect_profile(borrowed) - 6;
+}

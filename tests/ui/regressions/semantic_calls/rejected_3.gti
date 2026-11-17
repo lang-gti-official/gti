@@ -1,0 +1,4 @@
+// Rejected: one causal error without follow-on diagnostics.
+consteval int check(int value) { return value; }
+int run(int value) { return check(value); }  //~ ERROR GTI-S2057
+int main() { return run(1); }

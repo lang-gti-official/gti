@@ -1,0 +1,9 @@
+// Conversion operators: rejected with GTI-S2022.
+import std.string;
+class Builder {
+  mut std::string text;
+public:
+  Builder(std::string_view start) : text(start) {}
+  implicit operator std::string() && { return std::move(this.text); }
+};
+int main() { Builder named{"named"}; std::string text = named; return 0; }  //~ ERROR GTI-S2022

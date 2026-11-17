@@ -1,0 +1,7 @@
+// Rejected: invalid profile or borrow has no code generation.
+struct Ambiguous {
+  implicit Ambiguous(int value = 1) {}
+  implicit Ambiguous(bool value = true) {}
+};
+Ambiguous finish() { return; }  //~ ERROR GTI-S2013
+int main() { return 0; }

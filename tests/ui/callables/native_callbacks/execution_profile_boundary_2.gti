@@ -1,0 +1,5 @@
+// Execution profile boundary: the concurrent profile should reject GTI callback entry until its thread attachment and synchronization contract exists.
+//@ execution-profile: concurrent
+using Callback = (int32_t) -> int32_t;
+int32_t add_one(int32_t value) { return value + 1; }
+int main() { Callback callback = add_one; return 0; }  //~ ERROR GTI-S2076

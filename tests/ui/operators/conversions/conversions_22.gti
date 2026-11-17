@@ -1,0 +1,13 @@
+// Conversion operators: rejected with GTI-S2122.
+struct Target {
+  int value;
+  Target(int raw) : value(raw) {}
+  implicit Target(Source& source) : value(1) {}
+};
+struct Source {
+  int raw = 2;
+  implicit operator Target() { return Target(this.raw); }
+public:
+  Source() = default;
+};
+int main() { Source source{}; Target target = Target(source); return target.value; }  //~ ERROR GTI-S2122

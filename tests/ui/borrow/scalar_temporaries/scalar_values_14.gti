@@ -1,0 +1,3 @@
+// Scalar values: text view temporary retains stable owner.
+//@ check-pass
+import std.string; int measure(std::string_view& value) { return int(value.size()); } int main() { std::string owner{"abcd"}; return measure(owner.view()) - 4; }

@@ -1,0 +1,71 @@
+// forward_list releases its nodes in order and cleans up on a failing element.
+//@ run-pass
+//@ revisions: success fail1 fail2
+//@[success] stdout: 3
+//@[success] stdout: 2
+//@[success] stdout: 1
+//@[success] stdout: 0
+//@[success] stdout: 0
+//@[success] stdout: 5
+//@[success] stdout: 4
+//@[fail1] run-fail
+//@[fail1] exit-code: 70
+//@[fail1] args: fail
+//@[fail1] stdout: 1
+//@[fail1] stdout: 2
+//@[fail1] stdout: 3
+//@[fail1] stderr-contains: forward_list_cleanup.gti:
+//@[fail1] stderr-contains: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[fail2] run-fail
+//@[fail2] exit-code: 70
+//@[fail2] args: fail fail
+//@[fail2] stdout: 1
+//@[fail2] stdout: 2
+//@[fail2] stdout: 3
+//@[fail2] stderr-contains: forward_list_cleanup.gti:
+//@[fail2] stderr-contains: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- forward_list_cleanup.gti
+import std.forward_list;
+import std.string;
+import std.vector;
+
+class item {
+public:
+  int32_t key;
+  int32_t divisor;
+  item() : key(0), divisor(1) {}
+  item(int32_t value, int32_t denominator) : key(value), divisor(denominator) {}
+  item(item& other) = delete;
+  item(item&& other) = default;
+  ~item() { std::println(this.key); }
+  bool operator==(item& other) {
+    return this.key / this.divisor == other.key / other.divisor;
+  }
+  bool operator!=(item& other) { return this.key != other.key; }
+  bool operator<(item& other) {
+    return this.key / this.divisor < other.key / other.divisor;
+  }
+  bool operator<=(item& other) { return this.key <= other.key; }
+  bool operator>(item& other) { return this.key > other.key; }
+  bool operator>=(item& other) { return this.key >= other.key; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  int32_t divisor = argc == 1 ? 1 : 0;
+  mut std::forward_list<item> values = std::forward_list<item>();
+  values.push_front(item(3, divisor));
+  values.push_front(item(1, divisor));
+  values.push_front(item(2, divisor));
+  if (argc == 3) {
+    [[discard]] values.unique();
+  } else {
+    values.sort();
+  }
+  values.reverse();
+  values.clear();
+  values.resize(std::size_t(2));
+  values.clear();
+  values.push_front(item(4, 1));
+  values.push_front(item(5, 1));
+  return 0;
+}

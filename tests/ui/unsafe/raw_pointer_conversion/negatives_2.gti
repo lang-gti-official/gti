@@ -1,0 +1,3 @@
+// Negatives: cannot reinterpret unrelated typed pointers.
+using P = uint64_t*;
+int main() { mut int value = 0; P q = P(&value); return 0; }  //~ ERROR GTI-S2014

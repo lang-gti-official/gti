@@ -1,0 +1,30 @@
+// Composed carrier function transfer: only normally reaching branches contribute call-transfer endpoints at a join.
+//@ check-pass
+struct Cell { mut int value = 0;  public: Cell() = default; };
+struct Context {
+  int& step;
+  mut Cell& left;
+  mut Cell& right;
+  Context(int& step, mut Cell& left, mut Cell& right)
+      : step(step), left(left), right(right) {}
+  void update() mut {
+    this.left.value += this.step;
+    this.right.value += this.step;
+  }
+};
+T forward_context<T>(T context) { return std::move(context); }
+
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  mut Context initial{step, left, right};  //~ WARN GTI-S2096
+
+  if (step != 2) {
+    return 0;
+  } else {
+    mut Context active = forward_context<Context>(std::move(initial));
+    active.update();
+  }
+  return left.value + right.value - 4;
+}

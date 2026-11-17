@@ -1,0 +1,15 @@
+// Class payload enums: an exact typed lambda should transport an owning payload enum by value through verified MIR.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  auto transfer = [](holder value) -> holder {
+    return holder::none;
+  };
+  holder destination = transfer(holder::one(resource()));
+  return 0;
+}

@@ -1,0 +1,9 @@
+// Conservative class witnesses: source cleanup and its callable helper dependency stay required after class storage is proved.
+//@ check-pass
+int unsupported(int input) { auto call=[](int value)->int{return value;}; return call(input); }
+class Value {
+public:
+  Value() {}
+  ~Value() { int observed = unsupported(1); }
+};
+void inspect() { Value value{}; }

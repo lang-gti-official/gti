@@ -1,0 +1,12 @@
+// Mutex: rejected with GTI-S2084.
+import std.cthread;
+int main() {
+  mut std::mtx_t mutex = 0;
+  unsafe {
+    if (std::mtx_init(mutex, std::mtx_timed) != std::thrd_success) { return 1; }  //~ ERROR GTI-S2084
+    if (std::mtx_lock(mutex) != std::thrd_success) { return 2; }  //~ ERROR GTI-S2084
+    if (std::mtx_unlock(mutex) != std::thrd_success) { return 3; }  //~ ERROR GTI-S2084
+    std::mtx_destroy(mutex);  //~ ERROR GTI-S2084
+  }
+  return 0;
+}

@@ -1,0 +1,9 @@
+// Stored callables: concrete field callable rejects inexact result, non-callable, and mutable-only target.
+class Owner<T> {
+  T value;
+public:
+  Owner(T value) : value(std::move(value)) {}
+  int call(int argument) { return this.value(argument); }  //~ ERROR GTI-S2000
+};
+Owner<T> own<T>(T value) { return Owner<T>(std::move(value)); }
+class Mut { public: int operator()(int value) mut { return value; }  public: Mut() = default; }; int main() { Owner<Mut> owner = Owner<Mut>(Mut()); return owner.call(1); }

@@ -1,0 +1,26 @@
+// Composed carrier function transfer: std::move cannot consume a carrier through a reference.
+struct Cell { mut int value = 0;  public: Cell() = default; };
+struct Context {
+  int& step;
+  mut Cell& left;
+  mut Cell& right;
+  Context(int& step, mut Cell& left, mut Cell& right)
+      : step(step), left(left), right(right) {}
+  void update() mut {
+    this.left.value += this.step;
+    this.right.value += this.step;
+  }
+};
+T forward_context<T>(T context) { return std::move(context); }
+
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  mut Context initial{step, left, right};
+
+  mut Context& alias = initial;
+  mut Context active = forward_context<Context>(std::move(alias));  //~ ERROR GTI-S2018 //~ ERROR GTI-S2045
+  active.update();
+  return 0;
+}

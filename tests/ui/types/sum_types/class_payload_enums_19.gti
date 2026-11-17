@@ -1,0 +1,16 @@
+// Class payload enums: polymorphic owners reject direct and array enum fields; concrete generic ownership is structural.
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class generic_wrapper<T> { holder value; };  //~ ERROR GTI-S2000
+class polymorphic_wrapper {
+private:
+  holder value;  //~ ERROR GTI-S2000 //~ ERROR GTI-S2067
+  holder values[2] = {holder::none, holder::none};  //~ ERROR GTI-S2067
+public:
+  virtual int32_t marker() { return 0; }
+};
+int main() { return 0; }

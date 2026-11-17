@@ -1,0 +1,17 @@
+// Retaining named callable escape: direct calls preserve a named function's retaining-input relation.
+//@ check-pass
+import std.string;
+import std.functional;
+struct Holder {
+  mut std::string_view value;
+  Holder():value(""){}
+  void put(std::string_view input) mut { this.value = input; }
+};
+void retain(mut Holder& target, std::string_view input) { target.put(input); }
+void literal(mut Holder& target, std::string_view input) { target.put("literal"); }
+
+int main() {
+  std::string owner{"direct"};
+  mut Holder holder{}; retain(holder, owner.view());
+  return holder.value == "direct" ? 0 : 1;
+}

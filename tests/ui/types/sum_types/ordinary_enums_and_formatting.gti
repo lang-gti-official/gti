@@ -1,0 +1,12 @@
+// Ordinary enums and formatting: payload support must not change integral scoped enums.
+//@ check-pass
+enum class Stage : uint8_t { ready, running = 4 };
+int main() {
+  Stage stage = Stage::ready;
+  switch (stage) {
+  case Stage::ready:
+    return 0;
+  case Stage::running:
+    return 1;
+  }
+}

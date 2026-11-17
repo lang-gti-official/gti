@@ -1,0 +1,17 @@
+// Stored receiver publication: ending the first carrier scope permits the same ancestor access.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+void see(std::mutex<int32_t>& value) {}
+class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+  void use() { { auto guard = this.owner.lock(); } auto second = this.owner.lock(); }
+};
+int main() {
+  std::mutex<int32_t> owner{7};
+  User user{owner};
+  user.use();
+  return 0;
+}

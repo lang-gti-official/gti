@@ -1,0 +1,20 @@
+// Retaining store effects on lowered program: the existing ownerless setter control compiles.
+//@ check-pass
+import std.string;
+struct TextSlot {
+  mut std::string_view text;
+  TextSlot():text(""){}
+  void set(std::string_view value) mut { this.text = value; }
+  void forward(std::string_view value) mut { this.set(value); }
+  void repeat(std::string_view first, std::string_view second, int depth) mut {
+    if (depth > 0) { this.repeat(second, first, depth - 1); }
+    this.set(first);
+  }
+};
+int main() {
+  mut TextSlot slot{};
+  slot.repeat("first", "second", 2);
+  slot.forward("earlier");
+  slot.set("literal");
+  return slot.text == "literal" ? 0 : 1;
+}

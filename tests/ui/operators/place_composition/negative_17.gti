@@ -1,0 +1,2 @@
+// Negative: invalid access and retained overlap are diagnosed by semantics.
+class Scalar{ public: Scalar(float value){}  public: Scalar() = default; };int main(){Scalar result = Scalar(16777217); return 0;}  //~ ERROR GTI-S2012

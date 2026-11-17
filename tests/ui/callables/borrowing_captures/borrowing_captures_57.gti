@@ -1,0 +1,7 @@
+// Borrowing captures: capture-owner-conflict is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int value = 0;
+  auto callback = [&value]() -> int { return value; };
+  value = 4;  //~ ERROR GTI-S2017
+  return callback();
+}

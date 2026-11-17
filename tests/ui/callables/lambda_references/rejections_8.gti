@@ -1,0 +1,5 @@
+// Rejections: lambda-local-owner-escape.gti.
+int main() {
+  auto bad = [](mut int& source) -> int& { int local = 1; return local; };  //~ ERROR GTI-S2017
+  return 0;
+}

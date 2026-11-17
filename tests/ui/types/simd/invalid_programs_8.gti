@@ -1,0 +1,3 @@
+// Invalid programs: a lane mask must require explicit all/any reduction.
+import std.simd;
+int main() { std::simd_mask<4> mask{}; if (mask) { return 1; } return 0; }  //~ ERROR GTI-S2022

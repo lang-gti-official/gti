@@ -1,0 +1,3 @@
+// Designated construction: an explicitly typed binding supplies the required struct context.
+//@ check-pass
+struct Point { int x; }; int read(Point value) { return value.x; } int main() { Point value = {.x = 1}; return read(value); }

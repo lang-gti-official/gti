@@ -1,0 +1,8 @@
+// Lifetimes: rejected with GTI-S2127.
+int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool pick_first) {
+  if (pick_first) { return first; }
+  return second;
+}
+int&<a> wrong<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  return choose(first, second, true);  //~ ERROR GTI-S2127
+}

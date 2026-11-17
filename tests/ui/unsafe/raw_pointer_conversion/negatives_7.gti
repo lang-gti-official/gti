@@ -1,0 +1,4 @@
+// Negatives: known type survives erasure remains unchecked with audit Off.
+//@ check-pass
+using E = void*; using P = uint64_t*;
+int main() { mut int value = 0; E e = E(&value); P p = P(e); return 0; }

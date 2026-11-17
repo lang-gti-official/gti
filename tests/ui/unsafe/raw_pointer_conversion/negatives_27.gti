@@ -1,0 +1,3 @@
+// Negatives: round trip grants no access.
+using E = const void*; using P = const int*;
+int main() { int value = 42; E e = E(&value); P p = P(e); return *p; }  //~ ERROR GTI-S2055

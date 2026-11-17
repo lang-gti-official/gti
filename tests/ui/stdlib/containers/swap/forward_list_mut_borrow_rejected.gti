@@ -1,0 +1,10 @@
+// A forward_list cannot swap while an element is mutably borrowed.
+//@ check-fail
+import std.forward_list;
+int main() {
+mut std::forward_list<int32_t> a = std::forward_list<int32_t>();
+mut std::forward_list<int32_t> b = std::forward_list<int32_t>();
+mut int32_t& held = a.front();
+b.swap(a); std::println(held);  //~ ERROR GTI-S2017
+return 0;
+}

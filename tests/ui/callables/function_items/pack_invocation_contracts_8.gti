@@ -1,0 +1,6 @@
+// Pack invocation contracts: unique symbolic forwarding is still checked against each concrete invocation.
+int invoke_with<Function, Args...>(Function function, Args... args) { return function(args...); }
+
+int work(int a, int b) { return a + b; }
+int forward<Args...>(Args... args) { return invoke_with(work, args...); }  //~ ERROR GTI-S2090
+int main() { return forward(1, true); }

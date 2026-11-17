@@ -1,0 +1,9 @@
+// Lambdas: a nested lambda should be able to copy an immutable value capture from its enclosing lambda environment.
+//@ check-pass
+int main() {
+  mut int32_t source = 7;  //~ WARN GTI-S2096
+  auto outer = [source]() -> int32_t {
+    return [source]() -> int32_t { return source; }();
+  };
+  return int(outer()) - 7;
+}

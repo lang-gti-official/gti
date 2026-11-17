@@ -1,0 +1,3 @@
+// Shared parent call arguments: shared parent call beside a live read-only child (#286).
+//@ check-pass
+int read(int& value) { return value; } void keep(int& value) {} void write(mut int& value) { value += 1; } int main() { mut int owner = 1; mut int& parent = owner; int& child = parent; keep(parent); keep(child); return 0; }

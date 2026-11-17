@@ -1,0 +1,2 @@
+// Layout diagnostics: ordinary unknown-type diagnostics should suppress the dependent layout-contract diagnostic.
+uint64_t query() { return sizeof(MissingType); }  //~ ERROR GTI-S2000

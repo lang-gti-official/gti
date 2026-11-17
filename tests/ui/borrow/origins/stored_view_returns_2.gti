@@ -1,0 +1,20 @@
+// Stored view returns: a field name or stored alternative does not launder a dependent view.
+import std.string;
+struct Inner { std::string_view name = "inner";  public: Inner() = default; };
+class Holder {
+  std::string_view name = "stored";
+  std::string text{"owned"};
+public:
+  Holder() = default;
+  std::string_view Shadowed() {
+    std::string name{"local owner"};
+    return name.view();  //~ ERROR GTI-S2045
+  }
+};
+std::string_view Expired(bool stored) {
+  Inner inner{};
+  if (stored) { return inner.name; }
+  std::string local{"expired"};
+  return local.view();  //~ ERROR GTI-S2045
+}
+int main() { return 0; }

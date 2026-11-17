@@ -1,0 +1,82 @@
+// Excluded reference-result domains preserve failure and cleanup in expressions.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 99
+//@[run2] run-fail
+//@[run2] args: binding
+//@[run2] exit-code: 70
+//@[run2] stdout: 99
+//@[run2] stderr-contains: borrowed_enum_terminal_contexts.gti:15: runtime error[GTI-R0017]: panic: "missing observation"
+//@[run3] run-fail
+//@[run3] args: nested argument
+//@[run3] exit-code: 70
+//@[run3] stdout: 99
+//@[run3] stderr-contains: borrowed_enum_terminal_contexts.gti:15: runtime error[GTI-R0017]: panic: "missing observation"
+//@[run4] run-fail
+//@[run4] args: consumed receiver result
+//@[run4] exit-code: 70
+//@[run4] stdout: 99
+//@[run4] stderr-contains: borrowed_enum_terminal_contexts.gti:21: runtime error[GTI-R0017]: panic: "missing consumed observation"
+//@[run5] run-fail
+//@[run5] args: reference return path result
+//@[run5] exit-code: 70
+//@[run5] stdout: 99
+//@[run5] stderr-contains: borrowed_enum_terminal_contexts.gti:15: runtime error[GTI-R0017]: panic: "missing observation"
+// --- borrowed_enum_terminal_contexts.gti
+import std.panic;
+import std.string;
+import std.vector;
+
+enum Observed<lifetime data> { ready(int&<data> owner), missing };
+// The accessors name the stored region: a view outlives its observation.
+class Observation<lifetime data> {
+  mut Observed<data> state;
+public:
+  Observation(int&<data> owner) : state(Observed::ready(owner)) {}
+  Observation() : state(Observed::missing) {}
+  int&<data> view() {
+    switch (this.state) {
+    case Observed::ready(auto& owner): return owner;
+    case Observed::missing: std::panic("missing observation");
+    }
+  }
+  int&<data> take() && {
+    switch (this.state) {
+    case Observed::ready(auto& owner): return owner;
+    case Observed::missing: std::panic("missing consumed observation");
+    }
+  }
+};
+class Guard {
+public:
+  ~Guard() { std::println(99); }
+public:
+  Guard() = default;
+};
+int accept(int& value) { return value; }
+int&<a> reference_path<lifetime a>(int&<a> value) {
+  auto absent = Observation();
+  return absent.view();
+}
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  int owner = 42;
+  if (argc == 1) {
+    auto present = Observation(owner);
+    return present.view() - 42;
+  }
+  if (argc == 2) {
+    auto absent = Observation();
+    int& ref = absent.view();
+    return ref;  //~ WARN GTI-S2095
+  }
+  if (argc == 3) {
+    auto absent = Observation();
+    return accept(absent.view());
+  }
+  if (argc == 4) {
+    mut auto absent = Observation();
+    return std::move(absent).take();
+  }
+  return reference_path(owner);
+}

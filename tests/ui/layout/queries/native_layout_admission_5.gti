@@ -1,0 +1,5 @@
+// Native layout admission: a scalar generic query does not require native aggregate layout.
+//@ check-pass
+constexpr uint64_t bytes<T>() { return sizeof(T); }
+static_assert(bytes<uint32_t>() == uint64_t(4));
+int main() { return 0; }

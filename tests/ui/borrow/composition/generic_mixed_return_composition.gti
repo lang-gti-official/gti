@@ -1,0 +1,28 @@
+// Generic mixed return composition: concrete generic relay retains each borrowed field's origin and permission.
+//@ check-pass
+struct Services {
+  int& first;
+  mut int& second;
+  mut int& third;
+  Services(int& a, mut int& b, mut int& c) : first(a), second(b), third(c) {}
+};
+T relay<T>(T value) { return std::move(value); }
+struct Wrapper<T> {
+  T& first;
+  mut T& second;
+  mut T& third;
+  Wrapper(T& a, mut T& b, mut T& c) : first(a), second(b), third(c) {}
+  T& read() { return this.first; }
+  mut T& write() mut { return this.second; }
+};
+int main() {
+  int a = 40; mut int b = 0; mut int c = 2;
+  Services original{a, b, c};
+  mut Services moved = relay<Services>(std::move(original));
+  moved.second = moved.first;
+  mut Wrapper<int> wrapped{a, b, c};
+  int source = wrapped.read();
+  mut int& destination = wrapped.write();
+  destination = source;
+  return b + c - 42;
+}

@@ -1,0 +1,14 @@
+// Expansion: general sequences, per-copy locals and empty sequences are accepted.
+//@ check-pass
+import std.meta;
+int main() {
+  mut uint64_t total = 0;
+  constexpr for (auto element : std::meta::list<int32_t, bool>()) {
+    auto local = uint64_t(1);
+    total = total + local;
+  }
+  constexpr for (auto nothing : std::meta::list<>()) {
+    total = total + uint64_t(100);
+  }
+  return int(total);
+}

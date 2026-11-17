@@ -1,0 +1,2 @@
+// Invalid class type packs: invalid class pack must be rejected by semantics: class Fixed<T> { public: Fixed() = default; }; class Bad<Args...> { using type = Fixed<Args...>;  public: Bad() = default; };.
+class Fixed<T> { public: Fixed() = default; }; class Bad<Args...> { using type = Fixed<Args...>;  public: Bad() = default; };  //~ ERROR GTI-S2023

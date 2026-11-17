@@ -1,0 +1,5 @@
+// Importing std.atomic without using it builds natively under the concurrent profile.
+//@ build-pass
+//@ execution-profile: concurrent
+import std.atomic;
+int main() { return 0; }

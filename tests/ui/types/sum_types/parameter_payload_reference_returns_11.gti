@@ -1,0 +1,20 @@
+// Parameter payload reference returns: a payload of a by-value parameter is local storage.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+int32_t& inner(wrap& keep, wrap value) {
+  switch (value) {
+  case wrap::one(auto& item): return item;  //~ ERROR GTI-S2017
+  case wrap::two(auto& item): return item;  //~ ERROR GTI-S2017
+  }
+}
+int main() { wrap w = wrap::one(3); return inner(w, w) - 3; }

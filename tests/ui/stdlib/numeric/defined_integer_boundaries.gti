@@ -1,0 +1,120 @@
+// Wrapping, saturating and checked arithmetic agree at every integer width boundary, at run time and in constants.
+//@ run-pass
+import std.numeric;
+
+constexpr expected<int8_t, std::arithmetic_errc> compile_success = std::checked_add(int8_t(40), int8_t(2));
+constexpr expected<int8_t, std::arithmetic_errc> compile_failure = std::checked_add(int8_t(127), int8_t(1));
+
+int main() {
+  if (!compile_success.has_value() || compile_success.value() != int8_t(42)) { return 12; }
+  if (compile_failure.has_value() || compile_failure.error() != std::arithmetic_errc::result_out_of_range) { return 13; }
+  mut int8_t maximum_int8_t = int8_t(127);  //~ WARN GTI-S2096
+  mut int8_t minimum_int8_t = int8_t(-128);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_int8_t, int8_t(1)) != minimum_int8_t) { return 1; }
+  if (std::wrapping_sub(minimum_int8_t, int8_t(1)) != maximum_int8_t) { return 2; }
+  if (std::wrapping_mul(maximum_int8_t, int8_t(2)) != int8_t(-2)) { return 3; }
+  if (std::saturating_add(maximum_int8_t, int8_t(1)) != maximum_int8_t) { return 4; }
+  if (std::saturating_sub(minimum_int8_t, int8_t(1)) != minimum_int8_t) { return 5; }
+  if (std::checked_add(int8_t(1), int8_t(2)).value_or(int8_t(0)) != int8_t(3)) { return 8; }
+  if (std::checked_add(maximum_int8_t, int8_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_int8_t, int8_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_int8_t, int8_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(int8_t(3), int8_t(4)).value_or(int8_t(0)) != int8_t(12)) { return 14; }
+  if (std::saturating_mul(minimum_int8_t, int8_t(-1)) != maximum_int8_t) { return 6; }
+  if (std::saturating_mul(minimum_int8_t, int8_t(2)) != minimum_int8_t) { return 7; }
+  mut int16_t maximum_int16_t = int16_t(32767);  //~ WARN GTI-S2096
+  mut int16_t minimum_int16_t = int16_t(-32768);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_int16_t, int16_t(1)) != minimum_int16_t) { return 1; }
+  if (std::wrapping_sub(minimum_int16_t, int16_t(1)) != maximum_int16_t) { return 2; }
+  if (std::wrapping_mul(maximum_int16_t, int16_t(2)) != int16_t(-2)) { return 3; }
+  if (std::saturating_add(maximum_int16_t, int16_t(1)) != maximum_int16_t) { return 4; }
+  if (std::saturating_sub(minimum_int16_t, int16_t(1)) != minimum_int16_t) { return 5; }
+  if (std::checked_add(int16_t(1), int16_t(2)).value_or(int16_t(0)) != int16_t(3)) { return 8; }
+  if (std::checked_add(maximum_int16_t, int16_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_int16_t, int16_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_int16_t, int16_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(int16_t(3), int16_t(4)).value_or(int16_t(0)) != int16_t(12)) { return 14; }
+  if (std::saturating_mul(minimum_int16_t, int16_t(-1)) != maximum_int16_t) { return 6; }
+  if (std::saturating_mul(minimum_int16_t, int16_t(2)) != minimum_int16_t) { return 7; }
+  mut int32_t maximum_int32_t = int32_t(2147483647);  //~ WARN GTI-S2096
+  mut int32_t minimum_int32_t = int32_t(-2147483648);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_int32_t, int32_t(1)) != minimum_int32_t) { return 1; }
+  if (std::wrapping_sub(minimum_int32_t, int32_t(1)) != maximum_int32_t) { return 2; }
+  if (std::wrapping_mul(maximum_int32_t, int32_t(2)) != int32_t(-2)) { return 3; }
+  if (std::saturating_add(maximum_int32_t, int32_t(1)) != maximum_int32_t) { return 4; }
+  if (std::saturating_sub(minimum_int32_t, int32_t(1)) != minimum_int32_t) { return 5; }
+  if (std::checked_add(int32_t(1), int32_t(2)).value_or(int32_t(0)) != int32_t(3)) { return 8; }
+  if (std::checked_add(maximum_int32_t, int32_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_int32_t, int32_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_int32_t, int32_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(int32_t(3), int32_t(4)).value_or(int32_t(0)) != int32_t(12)) { return 14; }
+  if (std::saturating_mul(minimum_int32_t, int32_t(-1)) != maximum_int32_t) { return 6; }
+  if (std::saturating_mul(minimum_int32_t, int32_t(2)) != minimum_int32_t) { return 7; }
+  mut int64_t maximum_int64_t = int64_t(9223372036854775807);  //~ WARN GTI-S2096
+  mut int64_t minimum_int64_t = int64_t(-9223372036854775808);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_int64_t, int64_t(1)) != minimum_int64_t) { return 1; }
+  if (std::wrapping_sub(minimum_int64_t, int64_t(1)) != maximum_int64_t) { return 2; }
+  if (std::wrapping_mul(maximum_int64_t, int64_t(2)) != int64_t(-2)) { return 3; }
+  if (std::saturating_add(maximum_int64_t, int64_t(1)) != maximum_int64_t) { return 4; }
+  if (std::saturating_sub(minimum_int64_t, int64_t(1)) != minimum_int64_t) { return 5; }
+  if (std::checked_add(int64_t(1), int64_t(2)).value_or(int64_t(0)) != int64_t(3)) { return 8; }
+  if (std::checked_add(maximum_int64_t, int64_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_int64_t, int64_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_int64_t, int64_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(int64_t(3), int64_t(4)).value_or(int64_t(0)) != int64_t(12)) { return 14; }
+  if (std::saturating_mul(minimum_int64_t, int64_t(-1)) != maximum_int64_t) { return 6; }
+  if (std::saturating_mul(minimum_int64_t, int64_t(2)) != minimum_int64_t) { return 7; }
+  mut uint8_t maximum_uint8_t = uint8_t(255);  //~ WARN GTI-S2096
+  mut uint8_t minimum_uint8_t = uint8_t(0);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_uint8_t, uint8_t(1)) != minimum_uint8_t) { return 1; }
+  if (std::wrapping_sub(minimum_uint8_t, uint8_t(1)) != maximum_uint8_t) { return 2; }
+  if (std::wrapping_mul(maximum_uint8_t, uint8_t(2)) != uint8_t(254)) { return 3; }
+  if (std::saturating_add(maximum_uint8_t, uint8_t(1)) != maximum_uint8_t) { return 4; }
+  if (std::saturating_sub(minimum_uint8_t, uint8_t(1)) != minimum_uint8_t) { return 5; }
+  if (std::checked_add(uint8_t(1), uint8_t(2)).value_or(uint8_t(0)) != uint8_t(3)) { return 8; }
+  if (std::checked_add(maximum_uint8_t, uint8_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_uint8_t, uint8_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_uint8_t, uint8_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(uint8_t(3), uint8_t(4)).value_or(uint8_t(0)) != uint8_t(12)) { return 14; }
+  if (std::saturating_mul(maximum_uint8_t, uint8_t(2)) != maximum_uint8_t) { return 6; }
+  mut uint16_t maximum_uint16_t = uint16_t(65535);  //~ WARN GTI-S2096
+  mut uint16_t minimum_uint16_t = uint16_t(0);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_uint16_t, uint16_t(1)) != minimum_uint16_t) { return 1; }
+  if (std::wrapping_sub(minimum_uint16_t, uint16_t(1)) != maximum_uint16_t) { return 2; }
+  if (std::wrapping_mul(maximum_uint16_t, uint16_t(2)) != uint16_t(65534)) { return 3; }
+  if (std::saturating_add(maximum_uint16_t, uint16_t(1)) != maximum_uint16_t) { return 4; }
+  if (std::saturating_sub(minimum_uint16_t, uint16_t(1)) != minimum_uint16_t) { return 5; }
+  if (std::checked_add(uint16_t(1), uint16_t(2)).value_or(uint16_t(0)) != uint16_t(3)) { return 8; }
+  if (std::checked_add(maximum_uint16_t, uint16_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_uint16_t, uint16_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_uint16_t, uint16_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(uint16_t(3), uint16_t(4)).value_or(uint16_t(0)) != uint16_t(12)) { return 14; }
+  if (std::saturating_mul(maximum_uint16_t, uint16_t(2)) != maximum_uint16_t) { return 6; }
+  mut uint32_t maximum_uint32_t = uint32_t(4294967295);  //~ WARN GTI-S2096
+  mut uint32_t minimum_uint32_t = uint32_t(0);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_uint32_t, uint32_t(1)) != minimum_uint32_t) { return 1; }
+  if (std::wrapping_sub(minimum_uint32_t, uint32_t(1)) != maximum_uint32_t) { return 2; }
+  if (std::wrapping_mul(maximum_uint32_t, uint32_t(2)) != uint32_t(4294967294)) { return 3; }
+  if (std::saturating_add(maximum_uint32_t, uint32_t(1)) != maximum_uint32_t) { return 4; }
+  if (std::saturating_sub(minimum_uint32_t, uint32_t(1)) != minimum_uint32_t) { return 5; }
+  if (std::checked_add(uint32_t(1), uint32_t(2)).value_or(uint32_t(0)) != uint32_t(3)) { return 8; }
+  if (std::checked_add(maximum_uint32_t, uint32_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_uint32_t, uint32_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_uint32_t, uint32_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(uint32_t(3), uint32_t(4)).value_or(uint32_t(0)) != uint32_t(12)) { return 14; }
+  if (std::saturating_mul(maximum_uint32_t, uint32_t(2)) != maximum_uint32_t) { return 6; }
+  mut uint64_t maximum_uint64_t = uint64_t(18446744073709551615);  //~ WARN GTI-S2096
+  mut uint64_t minimum_uint64_t = uint64_t(0);  //~ WARN GTI-S2096
+  if (std::wrapping_add(maximum_uint64_t, uint64_t(1)) != minimum_uint64_t) { return 1; }
+  if (std::wrapping_sub(minimum_uint64_t, uint64_t(1)) != maximum_uint64_t) { return 2; }
+  if (std::wrapping_mul(maximum_uint64_t, uint64_t(2)) != uint64_t(18446744073709551614)) { return 3; }
+  if (std::saturating_add(maximum_uint64_t, uint64_t(1)) != maximum_uint64_t) { return 4; }
+  if (std::saturating_sub(minimum_uint64_t, uint64_t(1)) != minimum_uint64_t) { return 5; }
+  if (std::checked_add(uint64_t(1), uint64_t(2)).value_or(uint64_t(0)) != uint64_t(3)) { return 8; }
+  if (std::checked_add(maximum_uint64_t, uint64_t(1)).has_value()) { return 9; }
+  if (std::checked_sub(minimum_uint64_t, uint64_t(1)).has_value()) { return 10; }
+  if (std::checked_mul(maximum_uint64_t, uint64_t(2)).has_value()) { return 11; }
+  if (std::checked_mul(uint64_t(3), uint64_t(4)).value_or(uint64_t(0)) != uint64_t(12)) { return 14; }
+  if (std::saturating_mul(maximum_uint64_t, uint64_t(2)) != maximum_uint64_t) { return 6; }
+  return 0;
+}

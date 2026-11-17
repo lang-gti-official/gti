@@ -1,0 +1,12 @@
+// Conversion operators: rejected with GTI-S2012.
+struct UserId {
+  int64_t value;
+  UserId(int64_t raw) : value(raw) {}
+};
+struct RawId {
+  int64_t raw;
+  RawId(int64_t value) : raw(value) {}
+  operator UserId() { return UserId(this.raw); }
+  implicit operator int64_t() { return this.raw; }
+};
+int main() { RawId raw{int64_t(1)}; UserId id{raw}; return 0; }  //~ ERROR GTI-S2012

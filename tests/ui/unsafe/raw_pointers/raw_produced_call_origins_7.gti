@@ -1,0 +1,8 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: constructor-local.
+//@ raw-pointer-audit: strict
+class Address {
+public:
+  mut const int* pointer = nullptr;
+  Address() { int local = 1; this.pointer = &local; }
+};
+int main() { Address address{}; unsafe { return *address.pointer; } }  //~ ERROR GTI-S2102

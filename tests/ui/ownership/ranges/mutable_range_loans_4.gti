@@ -1,0 +1,37 @@
+// Mutable range loans: vector reserve, push, clear, and owner moves should be rejected while a mutable range or element loan is active.
+import std.vector;
+
+int reserve_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) {
+    values.reserve(std::size_t(8));  //~ ERROR GTI-S2017
+  }
+  return 0;
+}
+
+int push_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) { values.push_back(2); }  //~ ERROR GTI-S2017
+  return 0;
+}
+
+int clear_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) { values.clear(); }  //~ ERROR GTI-S2017
+  return 0;
+}
+
+int move_owner_during_iteration() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(1);
+  for (mut int32_t& value : values) {
+    // Leaving the loop keeps the moved owner from a loop backedge, whose
+    // availability error would otherwise reject the program first.
+    std::vector<int32_t> moved = std::move(values);  //~ ERROR GTI-S2017
+    break;
+  }
+  return 0;
+}

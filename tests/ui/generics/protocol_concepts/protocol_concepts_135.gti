@@ -1,0 +1,2 @@
+// Protocol concepts: rejected with GTI-S2000.
+concept C<P> { typename result<T, T>; };  //~ ERROR GTI-S2000

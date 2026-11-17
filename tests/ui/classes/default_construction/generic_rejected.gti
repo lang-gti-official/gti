@@ -1,0 +1,3 @@
+// std::default_initializable rejects a type without a declared default constructor.
+//@ check-fail
+struct Value {}; T make<std::default_initializable T>() { return T(); } int main() { auto value = make<Value>(); return 0; }  //~ ERROR GTI-S2029

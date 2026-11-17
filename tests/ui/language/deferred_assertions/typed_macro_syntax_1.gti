@@ -1,0 +1,26 @@
+// Typed macro syntax: typed macro overloads, defaults, generics, attributes and qualified calls.
+//@ check-pass
+import std.assert;
+namespace application {
+  void accept(int number) { std::assert!(number == 7); }
+  void accept(bool condition) { std::assert!(condition); }
+  #macro emit(int number = 7) { accept(number); }
+  #macro emit(bool condition) { accept(condition); }
+  #macro when<T>(bool enabled, T value) {
+    if (enabled) { emit!(value); }
+  }
+  #macro numeric<T>(T value) requires std::numeric<T> {
+    std::assert!(value == T(7));
+  }
+  [[track_caller]] #macro ensure(bool condition) { std::assert!(condition); }
+}
+int main() {
+  int accept = 99;
+  application::emit!();
+  application::emit!(true);
+  application::when<int>!(true, 7);
+  application::when!(false, false);
+  application::numeric!(7);
+  application::ensure!(accept == 99);
+  return 0;
+}

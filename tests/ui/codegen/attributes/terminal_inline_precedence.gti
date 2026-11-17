@@ -1,0 +1,5 @@
+// Terminal inline precedence: terminal inline hint has valid source semantics.
+//@ check-pass
+import std.panic;
+[[noreturn, inline]] void terminal_hint() { std::panic("terminal hint"); }
+int main() { terminal_hint(); }

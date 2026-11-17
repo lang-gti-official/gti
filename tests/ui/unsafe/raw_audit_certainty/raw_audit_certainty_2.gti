@@ -1,0 +1,13 @@
+// Raw audit certainty: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: warn
+//@ no-prelude
+struct Address {
+  const int* pointer = nullptr;
+  implicit Address() : pointer(nullptr) {}
+};
+Address make_address() { return; }
+int main() {
+  auto address = make_address();
+  unsafe { return *address.pointer; }  //~ WARN GTI-S2103
+}

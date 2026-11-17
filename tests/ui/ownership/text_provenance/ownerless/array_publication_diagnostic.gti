@@ -1,0 +1,10 @@
+// Array publication diagnostic: dependent array contents cannot reach static storage.
+import std.string;
+mut std::string_view published = "";
+void publish(std::string_view values[2]) { published = values[0]; }
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view values[2] = {owner.view(), "literal"};  //~ ERROR GTI-S2017
+  publish(values);  //~ ERROR GTI-S2017
+  return 0;
+}

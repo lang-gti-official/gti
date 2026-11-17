@@ -1,0 +1,6 @@
+// Lifetime and effects: reverse cleanup retires an earlier dependency before an unrelated destructor mutation.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; struct Hold { int& input; Hold(int& source) : input(source) {} ~Hold() { int copied = this.input; } }; int main() { Cleanup first{}; Hold second{value}; return 0; }

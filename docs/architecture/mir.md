@@ -1699,7 +1699,7 @@ source-destructor classes with represented active fields; v65 adds recursive
 ownership-type graphs using finite back-edges.
 The HIR producer and independent MIR derivation must agree on the entire
 element recipe; missing, duplicate, mistyped, projected, or inactive child
-descriptors are rejected. `collection_cleanup_failure_runtime` covers ordinary
+descriptors are rejected. `tests/slow/memory/collection_cleanup_failure.gti` covers ordinary
 and failure-path drops, sparse slots, nested/moved/empty collections, aggregate
 elements, and inherited-base rollback. The v62 extension also tests explicit
 pop, slot destruction, clear, and unchanged local invalid-slot reporting.
@@ -5021,7 +5021,7 @@ leaf destructor also fails. The selected chain now retains both records for
 complete aggregate schedule rather than deferred native cleanup. Generated
 pointees may themselves contain several supported active fields. Collection
 destruction now composes through the v61 element recipe, including the
-vector-owning base in `inherited_collection_cleanup_failure.gti`. This still
+vector-owning base in `tests/ui/memory/inherited_collection_cleanup_failure.gti`. This still
 does not establish every cyclic ownership-type graph, owning or borrowed base
 argument, or static-field initializer shape. Checked/effectful scalar
 base-argument prefixes have their separate verified preparation partition above;

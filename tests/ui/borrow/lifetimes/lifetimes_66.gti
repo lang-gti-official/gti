@@ -1,0 +1,4 @@
+// Lifetimes: rejected with GTI-S2123.
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Inspect<T> { int inspect(T& value); };
+for concept Inspect<View> { int inspect(View<static>& value) { return value.value; } };  //~ ERROR GTI-S2123

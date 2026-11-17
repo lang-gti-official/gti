@@ -1,0 +1,9 @@
+// Errors: error wrapping preserves use-after-move rejection.
+struct Error {
+  int id;
+  Error(int value) : id(value) {}
+  Error(Error& other) = delete;
+};
+expected<int, Error> failure() { return unexpected(Error(1)); }
+
+int main() { Error error{2}; expected<int, Error> result = unexpected(std::move(error)); return error.id; }  //~ ERROR GTI-S2018

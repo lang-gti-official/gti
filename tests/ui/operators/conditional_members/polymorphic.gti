@@ -1,0 +1,3 @@
+// A virtual operator cannot carry a requires clause.
+//@ check-fail
+class V<T> { public: virtual bool operator()(T value) requires std::numeric<T> { return true; } };  //~ ERROR GTI-S2049 polymorphic

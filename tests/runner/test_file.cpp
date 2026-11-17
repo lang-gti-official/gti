@@ -1,4 +1,5 @@
 #include "test_file.h"
+#include "project.h"
 
 #include "gti/compile_limits.h"
 #include "gti/configuration_flags.h"
@@ -148,7 +149,7 @@ bool lspRequest(const std::string &name) {
          name == "completion" || name == "completion-detail" ||
          name == "signature" || name == "token" || name == "rename" ||
          name == "formatting" || name == "symbols" || name == "code-action" ||
-         name == "no-code-action";
+         name == "no-code-action" || name == "prepare-rename";
 }
 
 // `//@ execution-profile:` and `//@ raw-pointer-audit:` of an LSP test or
@@ -346,6 +347,8 @@ const char *snapshotName(Snapshot snapshot) {
     return "diagnostics";
   case Snapshot::Format:
     return "format";
+  case Snapshot::OptimizationReport:
+    return "optimization-report";
   }
   return "?";
 }
@@ -359,6 +362,7 @@ std::string snapshotExtension(Snapshot snapshot) {
   case Snapshot::Format:
     return ".formatted";
   case Snapshot::LlvmIr:
+  case Snapshot::OptimizationReport:
     break;
   }
   return "";
@@ -382,7 +386,17 @@ bool modeRuns(Mode mode) {
 bool modeBuilds(Mode mode) { return mode == Mode::BuildPass || modeRuns(mode); }
 
 const char *severityName(Severity severity) {
-  return severity == Severity::Error ? "ERROR" : "WARN";
+  switch (severity) {
+  case Severity::Error:
+    return "ERROR";
+  case Severity::Warning:
+    return "WARN";
+  case Severity::Info:
+    return "INFO";
+  case Severity::Hint:
+    return "HINT";
+  }
+  return "?";
 }
 
 std::optional<std::string> readFile(const std::filesystem::path &path) {
@@ -415,8 +429,18 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
     test.mode = Mode::Project;
     test.modeExplicit = true;
     test.groupKey = "project";
-    if (!readFile(path))
+    const std::optional<std::string> text = readFile(path);
+    if (!text) {
       test.errors.push_back("cannot read the transcript");
+      return test;
+    }
+    std::vector<std::string> errors;
+    const ProjectTranscript transcript = parseProjectTranscript(*text, errors);
+    test.slow = transcript.slow;
+    for (std::string &error : errors)
+      test.errors.push_back(std::move(error));
+    if (test.slow && !underSlowDirectory(path))
+      test.errors.push_back("`slow` is only legal under a slow/ directory");
     return test;
   }
   const bool lsp = underLspDirectory(path);
@@ -612,6 +636,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         error(lineNumber, "duplicate exit-signal");
       else
         target.exitSignal = signal;
+    } else if (name == "stdout-closed") {
+      if (!value.empty())
+        error(lineNumber, "'stdout-closed' takes no value");
+      target.stdoutClosed = true;
     } else if (name == "env") {
       const std::size_t equals = trimmed.find('=');
       const std::string variable =
@@ -688,7 +716,7 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
          (name != "allow-warnings" && name != "execution-profile" &&
           name != "define" && name != "raw-pointer-audit" &&
           name != "raw-pointer-audit-library-findings" &&
-          name != "require-function-definitions" &&
+          name != "require-function-definitions" && name != "no-prelude" &&
           lang::findCompileLimit(name) == nullptr))) {
       error(lineNumber, "a defaults file sets only analysis options and "
                         "allow-warnings, not '" +
@@ -718,9 +746,9 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       } else if (runDirective(entry.spec, name, value, trimmed, lineNumber)) {
         entry.given.insert(name);
       } else {
-        error(lineNumber, "only run-pass, run-fail, stdout, stderr-contains, "
-                          "exit-code, exit-signal, args, stdin and env vary "
-                          "by revision");
+        error(lineNumber, "only run-pass, run-fail, stdout, stdout-closed, "
+                          "stderr-contains, exit-code, exit-signal, args, "
+                          "stdin and env vary by revision");
       }
       continue;
     }
@@ -735,6 +763,21 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
               name, trimmed, test.serverArguments,
               [&](const std::string &message) { error(lineNumber, message); }))
         continue;
+      if (name == "format-options") {
+        for (const std::string &word : splitWords(trimmed)) {
+          const std::size_t equals = word.find('=');
+          if (equals == std::string::npos || equals == 0 ||
+              equals + 1 == word.size())
+            error(lineNumber, "format-options are `name=value` words, such as "
+                              "`tabSize=4 insertSpaces=true`");
+          else
+            test.formatOptions.emplace_back(word.substr(0, equals),
+                                            word.substr(equals + 1));
+        }
+        if (trimmed.empty())
+          error(lineNumber, "format-options needs `name=value` words");
+        continue;
+      }
       if (name == "disk-only") {
         const std::vector<std::string> names = splitWords(trimmed);
         if (names.empty())
@@ -802,6 +845,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       if (hasValue)
         error(lineNumber, "'slow' takes no value");
       test.slow = true;
+    } else if (name == "no-prelude") {
+      if (hasValue)
+        error(lineNumber, "'no-prelude' takes no value");
+      test.noPrelude = true;
     } else if (name == "format-stable") {
       if (hasValue)
         error(lineNumber, "'format-stable' takes no value");
@@ -854,10 +901,12 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
           : trimmed == "llvm-ir"     ? std::optional(Snapshot::LlvmIr)
           : trimmed == "diagnostics" ? std::optional(Snapshot::Diagnostics)
           : trimmed == "format"      ? std::optional(Snapshot::Format)
-                                     : std::nullopt;
+          : trimmed == "optimization-report"
+              ? std::optional(Snapshot::OptimizationReport)
+              : std::nullopt;
       if (!kind)
-        error(lineNumber,
-              "snapshot must be mir, llvm-ir, diagnostics or format");
+        error(lineNumber, "snapshot must be mir, llvm-ir, diagnostics, format "
+                          "or optimization-report");
       else if (hasSnapshot(test, *kind))
         error(lineNumber, "duplicate snapshot: " + trimmed);
       else
@@ -901,6 +950,7 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   test.args = shared.args;
   test.stdinText = shared.stdinText;
   test.env = shared.env;
+  test.stdoutClosed = shared.stdoutClosed;
 
   // FileCheck-style patterns.
   for (std::size_t index = 0; index < lines.size(); ++index) {
@@ -974,15 +1024,23 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
       }
       const std::vector<std::string> words = splitWords(spec.substr(cursor));
       if (words.size() < 2 ||
-          (words[0] != "ERROR" && words[0] != "WARN" &&
-           words[0] != "WARNING") ||
+          (words[0] != "ERROR" && words[0] != "WARN" && words[0] != "WARNING" &&
+           words[0] != "INFO" && words[0] != "HINT") ||
           !validCode(words[1])) {
         error(lineNumber,
               "annotations are written `//~ ERROR GTI-X0000 [message text]`");
         continue;
       }
-      annotation.severity =
-          words[0] == "ERROR" ? Severity::Error : Severity::Warning;
+      annotation.severity = words[0] == "ERROR"  ? Severity::Error
+                            : words[0] == "INFO" ? Severity::Info
+                            : words[0] == "HINT" ? Severity::Hint
+                                                 : Severity::Warning;
+      if (!lsp && (annotation.severity == Severity::Info ||
+                   annotation.severity == Severity::Hint)) {
+        error(lineNumber, "INFO and HINT annotations are for LSP tests (the "
+                          "compiler reports errors and warnings)");
+        continue;
+      }
       annotation.code = words[1];
       const std::size_t codeAt = spec.find(words[1], cursor);
       annotation.substring = trim(spec.substr(codeAt + words[1].size()));
@@ -1060,7 +1118,7 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
         !test.defines.empty() || test.rawPointerAudit != "off" ||
         test.rawPointerAuditLibraryFindings || !test.nativeArgs.empty() ||
         !test.stdlibOverlay.empty() || !test.compileLimits.empty() ||
-        !test.target.empty())
+        !test.target.empty() || test.noPrelude || test.stdoutClosed)
       error(0, "LSP tests take only LSP expectations, annotations, "
                "disk-only and the server's options (execution-profile, "
                "raw-pointer-audit)");
@@ -1095,50 +1153,80 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   } else {
     test.mode = hasErrors ? Mode::CheckFail : Mode::CheckPass;
   }
-  if (modeFails(test.mode) && !hasErrors)
+  if (modeFails(test.mode) && !hasErrors) {
     error(0, std::string(modeName(test.mode)) +
-                 " test has no `//~ ERROR` expectation");
+                 " test has no `//~ ERROR` expectation (--bless writes them)");
+    test.unannotatedFailMode = true;
+  }
   if (!modeFails(test.mode) && hasErrors)
     error(0, std::string(modeName(test.mode)) +
                  " test cannot expect errors; use " +
                  (modeParses(test.mode)     ? "parse-fail"
                   : modeAnalyzes(test.mode) ? "analyze-fail"
                                             : "check-fail"));
+  // Parse modes apply the error limit to the lexer and parser.
   if (modeParses(test.mode) &&
       (test.concurrent || test.requireFunctionDefinitions || test.optimize ||
        !test.defines.empty() || test.rawPointerAudit != "off" ||
-       !test.compileLimits.empty() || !test.target.empty() ||
-       test.rawPointerAuditLibraryFindings || !test.stdlibOverlay.empty() ||
+       std::any_of(
+           test.compileLimits.begin(), test.compileLimits.end(),
+           [](const auto &limit) { return limit.first != "error-limit"; }) ||
+       !test.target.empty() || test.rawPointerAuditLibraryFindings ||
+       !test.stdlibOverlay.empty() || test.noPrelude ||
        std::any_of(test.snapshots.begin(), test.snapshots.end(),
-                   [](Snapshot s) { return s != Snapshot::Format; })))
-    error(0, "parse tests take no analysis directives or mir, llvm-ir or "
-             "diagnostics snapshots");
+                   [](Snapshot s) {
+                     return s != Snapshot::Format && s != Snapshot::Diagnostics;
+                   })))
+    error(0, "parse tests take no analysis directives (error-limit aside) "
+             "or mir, llvm-ir or optimization-report snapshots");
+  // gti renders a whole file; it stops at syntax errors only in parse-fail.
+  if (test.mode == Mode::ParsePass && hasSnapshot(test, Snapshot::Diagnostics))
+    error(0, "a diagnostics snapshot of a parse test needs parse-fail");
   if (modeAnalyzes(test.mode) &&
       (test.requireFunctionDefinitions || test.optimize ||
        std::any_of(test.snapshots.begin(), test.snapshots.end(),
                    [](Snapshot s) {
-                     return s == Snapshot::Mir || s == Snapshot::LlvmIr;
+                     return s == Snapshot::Mir || s == Snapshot::LlvmIr ||
+                            s == Snapshot::OptimizationReport;
                    })))
     error(0, "analyze tests stop before HIR: no require-function-definitions, "
-             "opt or mir/llvm-ir snapshots");
+             "opt or mir/llvm-ir/optimization-report snapshots");
+  if (test.noPrelude && !modeAnalyzes(test.mode))
+    error(0, "no-prelude is for analyze-pass/analyze-fail tests (the driver "
+             "always loads the prelude)");
+  if (test.noPrelude && hasSnapshot(test, Snapshot::Diagnostics))
+    error(0, "no-prelude takes no diagnostics snapshot (`gti` always loads "
+             "the prelude)");
   if (!test.target.empty() && test.mode != Mode::CheckPass &&
       test.mode != Mode::CheckFail && !modeAnalyzes(test.mode))
     error(0, "target is for check and analyze tests (nothing is linked)");
+  // A mir snapshot analyses in-process for any target; llvm-ir and
+  // rendered diagnostics go through `gti`, which has no --target.
   if (!test.target.empty() &&
-      std::any_of(test.snapshots.begin(), test.snapshots.end(),
-                  [](Snapshot s) { return s != Snapshot::Format; }))
-    error(0, "target takes no mir, llvm-ir or diagnostics snapshot");
-  for (const Snapshot kind : {Snapshot::Mir, Snapshot::LlvmIr})
+      std::any_of(test.snapshots.begin(), test.snapshots.end(), [](Snapshot s) {
+        return s == Snapshot::LlvmIr || s == Snapshot::Diagnostics;
+      }))
+    error(0, "target takes no llvm-ir or diagnostics snapshot");
+  for (const Snapshot kind :
+       {Snapshot::Mir, Snapshot::LlvmIr, Snapshot::OptimizationReport})
     if (hasSnapshot(test, kind) && modeFails(test.mode))
       error(0, std::string("snapshot: ") + snapshotName(kind) +
                    " needs a program that compiles");
   if (!test.mirFunctions.empty() && !hasSnapshot(test, Snapshot::Mir))
     error(0, "mir-function needs `//@ snapshot: mir`");
   if (!test.checks.empty() && !hasSnapshot(test, Snapshot::Mir) &&
-      !hasSnapshot(test, Snapshot::LlvmIr))
-    error(0, "CHECK patterns need `//@ snapshot: llvm-ir` or `mir`");
-  if (hasSnapshot(test, Snapshot::LlvmIr) && test.checks.empty())
-    error(0, "snapshot: llvm-ir is checked by `// CHECK:` patterns; add some");
+      !hasSnapshot(test, Snapshot::LlvmIr) &&
+      !hasSnapshot(test, Snapshot::OptimizationReport))
+    error(0, "CHECK patterns need `//@ snapshot: llvm-ir`, "
+             "`optimization-report` or `mir`");
+  for (const Snapshot kind : {Snapshot::LlvmIr, Snapshot::OptimizationReport})
+    if (hasSnapshot(test, kind) && test.checks.empty())
+      error(0, std::string("snapshot: ") + snapshotName(kind) +
+                   " is checked by `// CHECK:` patterns; add some");
+  if (hasSnapshot(test, Snapshot::LlvmIr) &&
+      hasSnapshot(test, Snapshot::OptimizationReport))
+    error(0, "CHECK patterns apply to one output; snapshot llvm-ir or "
+             "optimization-report, not both");
   if (hasSnapshot(test, Snapshot::LlvmIr) && hasSnapshot(test, Snapshot::Mir) &&
       !test.checks.empty())
     error(0, "CHECK patterns apply to one output; snapshot mir or llvm-ir, "
@@ -1146,9 +1234,10 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
   if (!modeRuns(test.mode) &&
       (test.hasInlineStdout || !test.stderrContains.empty() ||
        test.stderrEmpty || test.exitCode || test.exitSignal ||
-       !test.args.empty() || test.stdinText || !test.env.empty()))
-    error(0, "stdout/stderr-contains/exit-code/exit-signal/args/stdin/env "
-             "need run-pass or run-fail");
+       !test.args.empty() || test.stdinText || !test.env.empty() ||
+       test.stdoutClosed))
+    error(0, "stdout/stdout-closed/stderr-contains/stderr-empty/exit-code/"
+             "exit-signal/args/stdin/env need run-pass or run-fail");
   // Native companions and stdlib overlays.
   std::set<std::string> overlay(test.stdlibOverlay.begin(),
                                 test.stdlibOverlay.end());
@@ -1236,6 +1325,8 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
           run.exitSignal = entry.spec.exitSignal;
         if (entry.given.contains("env"))
           run.env = entry.spec.env;
+        if (entry.given.contains("stdout-closed"))
+          run.stdoutClosed = true;
       }
       if (run.stderrEmpty && !run.stderrContains.empty())
         error(0, "stderr-empty conflicts with stderr-contains");
@@ -1267,6 +1358,9 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
           break;
         }
       }
+      if (run.stdoutClosed && (run.hasInlineStdout || run.stdoutFile))
+        error(0, where + "stdout-closed takes no expected stdout (the "
+                         "program's output has no reader)");
       if (run.exitSignal && run.mode != Mode::RunFail)
         error(0, where + "exit-signal needs run-fail");
       if (run.exitSignal && run.exitCode)
@@ -1282,15 +1376,15 @@ TestFile parseTestFile(const std::filesystem::path &path, std::string display) {
 
   // Everything that changes the analysis is part of the key, so tests that
   // can share a standard-library preamble run back to back.
-  test.groupKey = std::string(modeParses(test.mode)     ? "parse"
-                              : modeAnalyzes(test.mode) ? "analyze"
-                              : modeBuilds(test.mode)   ? "build"
-                                                        : "check") +
-                  (test.optimize ? ":O3" : ":O0") +
-                  (test.concurrent ? ":concurrent" : "") +
-                  (test.requireFunctionDefinitions ? ":definitions" : "") +
-                  ":audit=" + test.rawPointerAudit +
-                  (test.rawPointerAuditLibraryFindings ? "+library" : "");
+  test.groupKey =
+      std::string(modeParses(test.mode)     ? "parse"
+                  : modeAnalyzes(test.mode) ? "analyze"
+                  : modeBuilds(test.mode)   ? "build"
+                                            : "check") +
+      (test.optimize ? ":O3" : ":O0") + (test.concurrent ? ":concurrent" : "") +
+      (test.requireFunctionDefinitions ? ":definitions" : "") +
+      (test.noPrelude ? ":no-prelude" : "") + ":audit=" + test.rawPointerAudit +
+      (test.rawPointerAuditLibraryFindings ? "+library" : "");
   std::vector<std::string> defines = test.defines;
   std::sort(defines.begin(), defines.end());
   for (const std::string &flag : defines)

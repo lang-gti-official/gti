@@ -1,0 +1,5 @@
+// Storage payload admission: an optional over a local owner's text cannot be returned.
+import std.optional;
+import std.string;
+std::optional<std::string_view> escape() { std::string owner{"owned"}; return std::optional<std::string_view>(owner.view()); }  //~ ERROR GTI-S2045
+int main() { auto result = escape(); return 0; }

@@ -1,0 +1,2 @@
+import "api/geometry.gti"; import "api/telemetry.gti";
+int main() { domain::detail::Point value{}; return 0; }

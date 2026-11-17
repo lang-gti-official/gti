@@ -1,0 +1,6 @@
+// Analyze: a qualified generic static call reports its source-path rule at the member, before instantiating unrelated library bodies.
+import std.vector;
+int main() {
+  auto values = std::vector<int32_t>::collection_init(uint64_t(2));  //~ ERROR GTI-S2039
+  return int(values.size());
+}

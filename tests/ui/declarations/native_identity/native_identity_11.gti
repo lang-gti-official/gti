@@ -1,0 +1,4 @@
+// Native identity: rejected with GTI-S2003.
+struct Explicit { Explicit(int value) {}  public: Explicit() = default; };
+T construct<T>(int value) { return value; }  //~ ERROR GTI-S2003
+int main() { Explicit value = construct<Explicit>(1); return 0; }

@@ -1,0 +1,2 @@
+// Explicit invocation: ordinary functions cannot be called with a macro marker.
+int ordinary(int x) { return x; } int main() { return ordinary!(7); }  //~ ERROR GTI-S2124

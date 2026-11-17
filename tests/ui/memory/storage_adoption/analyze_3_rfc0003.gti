@@ -1,0 +1,15 @@
+// Analyze: retired private storage spellings are ordinary trusted declarations.
+//@ check-pass
+namespace gti_internal {
+  class storage<T> {
+  public:
+    storage() {}
+  };
+  int allocate_storage() { return 1; }
+  int storage_try_adopt(storage<int>& value) { return 2; }
+}
+int main() {
+  gti_internal::storage<int> value{};
+  return gti_internal::allocate_storage() +
+         gti_internal::storage_try_adopt(value) - 3;
+}

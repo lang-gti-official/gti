@@ -1,0 +1,33 @@
+// Exclusive reborrow loan graph: retained receiver- and argument-origin results should preserve their exact caller-visible projected places.
+//@ check-pass
+class Cell {
+public:
+  mut int value = 1;
+  mut int& write() mut { return this.value; }
+public:
+  Cell() = default;
+};
+class Pair {
+public:
+  mut Cell left = Cell();
+  mut int right = 2;
+public:
+  Pair() = default;
+};
+int& relay(int& source) { return source; }
+int receiver_projection(mut Pair& parent) {
+  mut int& child = parent.left.write();
+  parent.right += 1;
+  child += 1;
+  return child + parent.right;
+}
+int helper_projection(mut Pair& parent) {
+  int& child = relay(parent.right);
+  int observed = child;
+  parent.left.value += 1;
+  return observed + parent.left.value;
+}
+int main() {
+  mut Pair pair = Pair();
+  return receiver_projection(pair) + helper_projection(pair) - 10;
+}

@@ -1,0 +1,21 @@
+// Text owner publication: new text retains a reference carrier without pretending to copy it.
+//@ check-pass
+import std.memory;
+class ByteOwner {
+  uint8_t& byte;
+public:
+  ByteOwner(uint8_t& byte) : byte(byte) {}
+  uint8_t& get() { return this.byte; }
+};
+std::size_t view_size(ByteOwner& input) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&input.get()));
+    std::string_view text = std::assume_string_view(first, std::size_t(1), input);
+    return text.size();
+  }
+}
+int main() {
+  uint8_t byte = uint8_t(104);
+  ByteOwner owner{byte};
+  return int(view_size(owner)) - 1;
+}

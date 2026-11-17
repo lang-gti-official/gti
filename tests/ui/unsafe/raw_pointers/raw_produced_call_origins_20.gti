@@ -1,0 +1,8 @@
+// Raw produced call origins: valid callee-produced raw transport: global-ended-loan.
+//@ check-pass
+//@ raw-pointer-audit: strict
+mut int global = 1;
+int* source() { return &global; }
+int main() { auto pointer = source();
+  { int& checked = global; if (checked != 1) { return 2; } }
+  unsafe { *pointer = 3; } return global; }

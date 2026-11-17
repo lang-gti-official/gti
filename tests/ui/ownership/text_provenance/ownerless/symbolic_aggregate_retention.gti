@@ -1,0 +1,14 @@
+// Symbolic aggregate retention: ordinary aggregate assignment compiles.
+//@ check-pass
+class Payload {
+  int value;
+public:
+  Payload(int input) : value(input) {}
+};
+class Box {
+  mut Payload value{0};
+public:
+  Box() = default;
+  void set(Payload input) mut { this.value = input; }
+};
+int main() { mut Box box{}; box.set(Payload(7)); return 0; }

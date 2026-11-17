@@ -1,0 +1,140 @@
+// Owned inline callbacks allocate as the counter expects and clean up once on failure.
+//@ run-pass
+//@ revisions: success fail later_fail
+//@[success] stdout: drop 84
+//@[fail] run-fail
+//@[fail] exit-code: 70
+//@[fail] args: fail
+//@[fail] stdout: drop 84
+//@[fail] stderr-contains: GTI-R0002
+//@[fail] stderr-contains: division_by_zero
+//@[later_fail] run-fail
+//@[later_fail] exit-code: 70
+//@[later_fail] args: later fail
+//@[later_fail] stdout: drop 84
+//@[later_fail] stderr-contains: GTI-R0002
+//@[later_fail] stderr-contains: division_by_zero
+// --- owned_inline_callbacks.gti
+import std.functional;
+import std.string;
+import std.vector;
+
+extern "C" {
+uint64_t inline_probe_allocations();
+uint64_t inline_probe_live();
+void inline_probe_drop(int value);
+}
+
+class small_operation {
+  int value;
+public:
+  small_operation(int value) : value(value) {}
+  int operator()(int amount) && { return this.value + amount; }
+};
+
+class large_operation {
+  int64_t a;
+  int64_t b;
+  int64_t c;
+  int64_t d;
+public:
+  large_operation() : a(1), b(2), c(3), d(4) {}
+  int operator()(int amount) && { return int(this.a + this.b + this.c + this.d) + amount; }
+};
+
+class cleanup_operation {
+  int value;
+public:
+  cleanup_operation(int value) : value(value) {}
+  ~cleanup_operation() { inline_probe_drop(this.value); }
+  int operator()(int divisor) && { return this.value / divisor; }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  uint64_t live = inline_probe_live();
+  uint64_t before = inline_probe_allocations();
+  {
+    std::function<int(int) &&> first{small_operation(40)};
+    auto second = first.clone();
+    std::move_only_function<int(int) &&> third{small_operation(40)};
+    int base = 40;
+    std::transfer_function<int(int) &&> fourth{[base](int amount) -> int { return base + amount; }};
+    if (inline_probe_allocations() != before) return 1;
+    if (std::move(first)(2) != 42 || std::move(second)(2) != 42) return 2;
+    if (std::move(third)(2) != 42 || std::move(fourth)(2) != 42) return 3;
+  }
+  if (inline_probe_live() != live) return 4;
+  {
+    std::move_only_function<int(int) &&> large{large_operation()};
+    if (inline_probe_allocations() != before + uint64_t(1)) return 5;
+    if (std::move(large)(32) != 42) return 6;
+  }
+  if (inline_probe_live() != live) return 7;
+  {
+    std::move_only_function<int(int) &&> cleanup{cleanup_operation(84)};
+    if (inline_probe_allocations() != before + uint64_t(2)) return 8;
+    if (argc == 3) return std::move(cleanup)(2) + 8 / (argc - 3);
+    int result = std::move(cleanup)(argc == 1 ? 2 : 0);
+    if (result != 42) return 9;
+  }
+  return inline_probe_live() == live ? 0 : 10;
+}
+// --- owned_inline_allocations.cpp
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <new>
+
+namespace {
+std::uint64_t allocations = 0;
+std::uint64_t live = 0;
+} // namespace
+
+extern "C" std::uint64_t inline_probe_allocations() { return allocations; }
+extern "C" std::uint64_t inline_probe_live() { return live; }
+extern "C" void inline_probe_drop(std::int32_t value) {
+  std::printf("drop %d\n", value);
+  std::fflush(stdout);
+}
+
+extern "C" std::uint64_t gti_rt_native_size_max_v1() {
+  return (std::numeric_limits<std::size_t>::max)();
+}
+extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *address,
+                                                     std::uint64_t alignment) {
+  return address && alignment && (alignment & (alignment - 1)) == 0 &&
+         reinterpret_cast<std::uintptr_t>(address) % alignment == 0;
+}
+extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() {
+  return sizeof(void *);
+}
+extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
+extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
+extern "C" void *gti_rt_malloc_v1(std::uint64_t bytes) {
+  void *address = std::malloc(static_cast<std::size_t>(bytes));
+  if (address) {
+    ++allocations;
+    ++live;
+  }
+  return address;
+}
+extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t bytes,
+                                          std::uint64_t alignment,
+                                          std::int32_t *status) {
+  void *address = nullptr;
+  *status = posix_memalign(&address, static_cast<std::size_t>(alignment),
+                           static_cast<std::size_t>(bytes));
+  if (address) {
+    ++allocations;
+    ++live;
+  }
+  return address;
+}
+extern "C" void gti_rt_posix_free_v1(void *address) {
+  if (address)
+    --live;
+  std::free(address);
+}

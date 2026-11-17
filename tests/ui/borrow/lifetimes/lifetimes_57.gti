@@ -1,0 +1,6 @@
+// Lifetimes: rejected with GTI-S2127.
+struct Callback<R(Args...), lifetime environment> {
+  int&<environment> value;
+  Callback(int&<environment> input) : value(input) {}
+};
+int main() { int value = 7; Callback<int(int), static> invalid{value}; return 0; }  //~ ERROR GTI-S2127

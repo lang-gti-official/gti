@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: move-only wrapper has no clone.
+import std.functional;
+import std.memory;
+int main() { std::move_only_function<int() &&> callback{[]() -> int { return 3; }}; auto copy = callback.clone(); return 0; }  //~ ERROR GTI-S2000

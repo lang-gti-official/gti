@@ -1,0 +1,15 @@
+// Static field raw writes: an unqualified static member write reaches its class's reads.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+struct Holder {
+  static mut const int* slot = &witness;
+  static void keep(const int* address) { slot = address; }
+  static const int* current() { return slot; }
+public:
+  Holder() = default;
+};
+
+int main() { { int gone = 1; Holder::keep(&gone); }
+  auto address = Holder::current();
+  unsafe { int& value = std::assume_ref(address, witness); return value; } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

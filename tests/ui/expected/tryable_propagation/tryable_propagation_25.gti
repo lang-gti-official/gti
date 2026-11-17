@@ -1,0 +1,10 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+Token unknown(Token& input) { return input; } int main() { return 0; }

@@ -1,0 +1,2 @@
+// Lifetimes: rejected with GTI-S2128.
+int bad<lifetime a>() { return a; }  //~ ERROR GTI-S2128

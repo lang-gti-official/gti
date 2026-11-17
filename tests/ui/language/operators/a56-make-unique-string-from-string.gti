@@ -1,0 +1,8 @@
+// A56: the same for std::string.
+//@ run-pass
+import std.memory;
+import std.string;
+int main() {
+  auto p = std::make_unique<std::string>(std::string("x"));
+  return p->size() == 1 ? 0 : 1;
+}

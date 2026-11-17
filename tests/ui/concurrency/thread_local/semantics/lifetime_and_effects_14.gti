@@ -1,0 +1,14 @@
+// Lifetime and effects: a joined scoped worker may borrow TLS while the owner thread and loan remain alive.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.thread;
+thread_local int source = 7;
+struct Read {
+  int& target;
+  Read(int& value) : target(value) {}
+  void operator()() { int copied = this.target; }
+};
+void joined(int& input) {
+  auto result = std::parallel_invoke(Read(input));
+}
+int main() { joined(source); return 0; }

@@ -1,0 +1,12 @@
+// Raw field witnesses: native pointer arithmetic arguments transport their exact producer, including mutable-to-readonly pointer coercion.
+//@ build-pass
+//@ slow
+struct Slot { mut int value = 7; Slot() = default; };
+unsafe int consume(const Slot* pointer) { unsafe { return pointer->value; } }
+int main() {
+  mut Slot object{};
+  unsafe {
+mut Slot* pointer = &object;  //~ WARN GTI-S2096
+    return consume(pointer + 0) - 7;
+  }
+}

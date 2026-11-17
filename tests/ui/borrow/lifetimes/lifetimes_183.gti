@@ -1,0 +1,10 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+enum State<T> { left(T item), right(T item) };
+T&<a> get<T, lifetime a>(State<T>&<a> state) {
+  switch (state) {
+  case State<T>::left(auto& payload): { T& alias = payload; return alias; }
+  case State<T>::right(auto& payload): return payload;
+  }
+}
+int main() { State<int> state = State<int>::right(7); return get(state) - 7; }

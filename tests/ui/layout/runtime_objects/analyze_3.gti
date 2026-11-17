@@ -1,0 +1,18 @@
+// Analyze: pointer, integral enum, union and borrowed-state class query.
+//@ check-pass
+import std.memory;
+
+enum class Code : uint16_t { ready, done };
+union Bits { uint64_t word; double real; };
+class View {
+  int& value;
+public:
+  View(int& value) : value(value) {}
+};
+int main() {
+  auto address = std::layout_of<void*>();
+  auto code = std::layout_of<Code>();
+  auto bits = std::layout_of<Bits>();
+  auto view = std::layout_of<View>();
+  return 0;
+}

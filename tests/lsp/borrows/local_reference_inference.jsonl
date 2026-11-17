@@ -1,0 +1,19 @@
+// An unsaved dependency overlay changes the referent's field access in the
+// open root (the write through a now read-only field is an error) and closing
+// it restores the file on disk; formatting restores the canonical spacing of
+// inferred reference declarations. (local_reference_inference_lsp_test.py.)
+{"file": {"name": "main.gti", "text": "import \"owner.gti\";\nint main() {\n  mut Record owner{};\n  /* 😀 */ auto& observed = owner;\n  int snapshot = observed.count;\n  mut auto& writable = owner;\n  writable.count = snapshot + 1;\n  return writable.count - 2;\n}\n"}}
+{"file": {"name": "owner.gti", "text": "export module owner;\nexport struct Record {\n  mut int count = 1;\n  Record() = default;\n  Record(Record& other) = delete;\n  Record(Record&& other) = default;\n};\n"}}
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 7, "text": "import \"owner.gti\";\nint main() {\n  mut Record owner{};\n  /* 😀 */ auto& observed = owner;\n  int snapshot = observed.count;\n  mut auto& writable = owner;\n  writable.count = snapshot + 1;\n  return writable.count - 2;\n}\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 7, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$DIR_URI/owner.gti", "languageId": "gti", "version": 1, "text": "export module owner;\nexport struct Record {\n  int count = 1;\n  Record() = default;\n  Record(Record& other) = delete;\n  Record(Record&& other) = default;\n};\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 7, "diagnostics": [{"code": "GTI-S2000", "severity": 1, "range": {"start": {"line": 6}}}]}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didClose", "params": {"textDocument": {"uri": "$DIR_URI/owner.gti"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 7, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {"textDocument": {"uri": "$URI", "version": 8}, "contentChanges": [{"text": "import \"owner.gti\";\nint main() {\n  mut Record owner{};\n  /* 😀 */ auto&observed=owner;\nint snapshot=observed.count;\n  mut auto &writable = owner;\n  writable.count = snapshot + 1;\n  return writable.count - 2;\n}\n"}]}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 8, "diagnostics": []}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting", "params": {"textDocument": {"uri": "$URI"}, "options": {"tabSize": 2, "insertSpaces": true}}}}
+{"expect": {"id": 2, "result": [{"range": "$ANY", "newText": "import \"owner.gti\";\nint main() {\n  mut Record owner{};\n  /* 😀 */ auto& observed = owner;\n  int snapshot = observed.count;\n  mut auto& writable = owner;\n  writable.count = snapshot + 1;\n  return writable.count - 2;\n}\n"}]}}

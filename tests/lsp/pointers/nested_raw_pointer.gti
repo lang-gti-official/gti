@@ -1,0 +1,78 @@
+// Nested pointer qualifiers and native callbacks hover with their exact
+// types and navigate; writing through a const level is S2002, a malformed
+// qualifier recovers, and formatting keeps `c_int* const*`.
+// (nested_raw_pointer_lsp_test.py)
+//@ hover @readonly: int32_t* const*
+//@ hover @call: int32_t**
+//@ hover @call: void
+//@ definition @call: @callback
+using Slot = c_int* const*;
+using Writer = (c_int**, c_int*) -> void;
+extern "C" { Writer obtain_writer(); }
+int main() {
+  mut c_int value = 42;
+  mut c_int* pointer = nullptr;
+  Slot re/*^readonly*/adonly = &pointer;
+  unsafe {
+    Writer /*@callback*/callback = obtain_writer();
+    /*😀*/ ca/*^call*/llback(&pointer, &value);
+    return **readonly - 42;
+  }
+}
+// --- step 2
+using Slot = c_int* const*;
+using Writer = (c_int**, c_int*) -> void;
+extern "C" { Writer obtain_writer(); }
+int main() {
+  mut c_int value = 42;
+  mut c_int* pointer = nullptr;
+  Slot readonly = &pointer;
+  unsafe {
+    Writer callback = obtain_writer();
+    /*😀*/ callback(&pointer, &value);
+    *readonly = nullptr; return 0;  //~ ERROR GTI-S2002 const raw pointer memory
+  }
+}
+// --- step 3
+using Slot = c_int* const*;
+using Writer = (c_int**, c_int*) -> void;
+extern "C" { Writer obtain_writer(); }
+int main() {
+  mut c_int value = 42;
+  mut c_int* pointer = nullptr;
+  Slot readonly = &pointer;
+  unsafe {
+    Writer callback = obtain_writer();
+    /*😀*/ callback(&pointer, &value);
+    return **readonly - 42;
+  }
+}
+// --- step 4
+using Slot = c_int* const;  //~ ERROR GTI-P0001
+using Writer = (c_int**, c_int*) -> void;
+extern "C" { Writer obtain_writer(); }
+int main() {
+  mut c_int value = 42;
+  mut c_int* pointer = nullptr;
+  Slot readonly = &pointer;  //~ ERROR GTI-S2000
+  unsafe {
+    Writer callback = obtain_writer();
+    /*😀*/ callback(&pointer, &value);
+    return **readonly - 42;  //~ ERROR GTI-S2022 //~ ERROR GTI-S2022
+  }
+}
+// --- step 5
+//@ formatting: using Slot = c_int* const*;
+using Slot = c_int* const*;
+using Writer = (c_int**, c_int*) -> void;
+extern "C" { Writer obtain_writer(); }
+int main() {
+  mut c_int value = 42;
+  mut c_int* pointer = nullptr;
+  Slot readonly = &pointer;
+  unsafe {
+    Writer callback = obtain_writer();
+    /*😀*/ callback(&pointer, &value);
+    return **readonly - 42;
+  }
+}

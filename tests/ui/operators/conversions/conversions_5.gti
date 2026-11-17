@@ -1,0 +1,36 @@
+// Conversion operators: the program is accepted.
+//@ check-pass
+class Shape {
+public:
+  virtual int sides() { return 0; }
+  operator int() { return this.sides(); }
+public:
+  Shape() = default;
+};
+class Square : public Shape {
+public:
+  int sides() override { return 4; }
+public:
+  Square() = default;
+};
+struct Box<T> {
+  T value;
+  Box(T initial) : value(initial) {}
+  implicit operator T() { return this.value; }
+};
+struct Wrapper<T> {
+  T inner;
+  Wrapper(T value) : inner(value) {}
+  operator Box<T>() { return Box<T>(this.inner); }
+};
+T unwrap<T>(Box<T> box) {
+  T value = box;
+  return value;
+}
+int main() {
+  Square square{};
+  Wrapper<int> wrapper{6};
+  Box<int> box = Box<int>(wrapper);
+  int direct = box;
+  return int(square) + direct + unwrap(Box<int>(2));
+}

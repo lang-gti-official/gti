@@ -1,0 +1,10 @@
+// Diagnostics: public std spelling does not confer compiler runtime identity.
+//@ check-pass
+namespace std {
+  unsafe int32_t thrd_join(uint64_t handle, mut int32_t& result) { return 0; }
+}
+int main() {
+  uint64_t handle = 0;
+  mut int32_t result = 0;
+  unsafe { return std::thrd_join(handle, result); }
+}

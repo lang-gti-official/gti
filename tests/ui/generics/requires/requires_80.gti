@@ -1,0 +1,13 @@
+// General requires: safe callable proofs cannot hide an unsafe invocation diagnostic (the C++ analysis continued past the syntax error with recovered-program analysis and also reported its semantic follow-on codes; the check stops at the parse error).
+concept invokes<F, A, R> = requires(F& function, A& argument) {
+  { function(argument) } -> R;
+};
+int invoke_int<F>(F& function, int& argument) requires invokes<F, int, int> {
+  return function(argument);
+}
+struct UnsafeCall { unsafe int operator()(int& value) { return value; } };  //~ ERROR GTI-P0001
+int main() {
+  int value = 4;
+  UnsafeCall function{};
+  return invoke_int(function, value);
+}

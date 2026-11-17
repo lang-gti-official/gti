@@ -1,0 +1,4 @@
+// Diagnostics: invalid expected operation stops in semantics.
+expected<int, int> read() { return 7; }
+int map(int value) { return value; }
+int main() { auto result = read(); /* 😀 */ [[discard]] result.transform(map); return 0; }  //~ ERROR GTI-S2022

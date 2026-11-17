@@ -1,0 +1,5 @@
+// Initializer: GTI initializer may explicitly read foreign storage.
+//@ check-pass
+extern "C" { c_int limit; c_string* string_slots; }
+c_int initial = unsafe { limit };
+int main() { return int(initial); }

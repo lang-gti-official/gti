@@ -1,0 +1,2 @@
+// Rejections: must reject: extern "C" { mut c_int counter; } int main() { return int(counter); }.
+extern "C" { mut c_int counter; } int main() { return int(counter); }  //~ ERROR GTI-S2055

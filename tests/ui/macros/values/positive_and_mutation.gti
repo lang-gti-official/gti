@@ -1,0 +1,15 @@
+// Positive and mutation: scoped scalar and void result regions must lower.
+//@ check-pass
+#macro int choose(bool enabled, int first, int second) {
+  if (enabled) { return first; }
+  return second;
+}
+#macro int once(int expression) { int saved = expression; return saved + saved; }
+#macro int nested(int expression) { return choose!(true, once!(expression), 0); }
+#macro stop() { return; }
+int main() {
+  mut int effects = 0;
+  int answer = choose!(false, ++effects, nested!(5));  //~ WARN GTI-S2095
+  stop!();
+  return answer - 10 + effects;
+}

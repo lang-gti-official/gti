@@ -1,0 +1,23 @@
+// Accessor subject relays: a payload through `this.pick(0)` cannot escape its local owner.
+import std.string;
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  Word spare;
+  Line(std::string_view value) : word(Word::text(value)), spare(Word::none) {}
+  Word& pick(int index) { return this.word; }
+  std::string_view first() {
+    switch (this.pick(0)) {
+    case Word::text(v): return v;
+    case Word::none: return "";
+    }
+  }
+};
+
+std::string_view leak() {
+  std::string input{"freed"};
+  Line line = Line(input.view());
+  return line.first();  //~ ERROR GTI-S2045
+}
+int main() { return leak().size() == 5 ? 0 : 1; }

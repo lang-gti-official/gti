@@ -1,0 +1,85 @@
+// Cleanup-bound source guards retain resources through normal/failure cleanup.
+//@ run-pass
+//@ revisions: default later-field later-field-cleanup cleanup-only-normal
+//@[default] stdout: 77
+//@[default] stdout: 30
+//@[default] stdout: 20
+//@[default] stdout: 10
+//@[default] stdout: 120
+//@[default] stdout: 110
+//@[later-field] run-fail
+//@[later-field] args: later-field
+//@[later-field] exit-code: 70
+//@[later-field] stdout: 20
+//@[later-field] stdout: 10
+//@[later-field] stdout: 120
+//@[later-field] stdout: 110
+//@[later-field] stderr-contains: cleanup_bound_constructed_sequence.gti:34: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-field-cleanup] run-fail
+//@[later-field-cleanup] args: later-field cleanup
+//@[later-field-cleanup] exit-code: 70
+//@[later-field-cleanup] stdout: 20
+//@[later-field-cleanup] stderr-contains: cleanup_bound_constructed_sequence.gti:26: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at cleanup_bound_constructed_sequence.gti:34; secondary [GTI-R0002]
+//@[cleanup-only-normal] run-fail
+//@[cleanup-only-normal] args: cleanup only normal
+//@[cleanup-only-normal] exit-code: 70
+//@[cleanup-only-normal] stdout: 77
+//@[cleanup-only-normal] stdout: 30
+//@[cleanup-only-normal] stdout: 20
+//@[cleanup-only-normal] stdout: 10
+//@[cleanup-only-normal] stdout: 120
+//@[cleanup-only-normal] stdout: 110
+//@[cleanup-only-normal] stderr-contains: cleanup_bound_constructed_sequence.gti:26: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- cleanup_bound_constructed_sequence.gti
+import std.string;
+import std.vector;
+
+struct Resource {
+  int id;
+  int cleanupDivisor;
+  Resource(int id, int cleanupDivisor = 1)
+      : id(id), cleanupDivisor(cleanupDivisor) {}
+  ~Resource() { std::println(100 + this.id); }
+};
+
+// This passive shared handle and its cleanup-bearing owner are unrelated to
+// allocation/storage. Each child constructor is independently non-failing.
+class Handle {
+  Resource& resource;
+public:
+  Handle(Resource& resource) : resource(resource) {}
+  Resource& read() { return this.resource; }
+};
+class Guard {
+  Handle handle;
+public:
+  Guard(Handle handle) : handle(handle) {}
+  ~Guard() {
+    std::println(this.handle.read().id);
+    int cleanup = 1 / this.handle.read().cleanupDivisor;
+  }
+};
+
+class Later {
+  int value = 0;
+public:
+  Later() {}
+  Later(int divisor) : value(1 / divisor) {}
+  ~Later() { std::println(30); }
+};
+class Owner {
+  Guard first;
+  Guard second;
+  Later later;
+public:
+  Owner(Handle first, Handle second, int divisor)
+      : first(Guard(first)), second(Guard(second)), later(Later(divisor)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource first{10};
+  Resource second{20, argc < 3 ? 1 : 0};
+  Owner owner{Handle(first), Handle(second), argc == 1 || argc == 4 ? 1 : 0};
+  std::println(77);
+  return 0;
+}

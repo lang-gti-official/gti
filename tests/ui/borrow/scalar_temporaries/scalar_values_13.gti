@@ -1,0 +1,3 @@
+// Scalar values: literal text temporary.
+//@ check-pass
+int measure(std::string_view& value) { return int(value.size()); } int main() { return measure("abcd") - 4; }

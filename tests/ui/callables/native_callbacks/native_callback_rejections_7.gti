@@ -1,0 +1,6 @@
+// Native callback rejections: capturing or non-capturing lambdas should not silently acquire a C callback lifetime or calling convention.
+using Callback = (int32_t) -> int32_t;
+int main() {
+  Callback callback = [](int32_t value) -> int32_t { return value; };  //~ ERROR GTI-S2003
+  return 0;
+}

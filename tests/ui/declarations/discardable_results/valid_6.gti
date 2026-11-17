@@ -1,0 +1,7 @@
+// Valid: extern "C" {   [[discardable]] [[link_name("native_first")]] int first();   [[link_name("native_second")]] [[discardable]] int second(); } int main() { first(); second(); return 0; }.
+//@ check-pass
+extern "C" {
+  [[discardable]] [[link_name("native_first")]] int first();
+  [[link_name("native_second")]] [[discardable]] int second();
+}
+int main() { first(); second(); return 0; }

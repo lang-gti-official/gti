@@ -1,0 +1,29 @@
+// Attributes: a class with private fields does not satisfy std::meta::reflectable.
+import std.meta;
+class Closed {
+public:
+  int shown = 1;
+private:
+  int hidden = 2;
+public:
+  Closed() = default;
+};
+[[reflect_private]] class Open {
+public:
+  int shown = 1;
+private:
+  int hidden = 2;
+public:
+  Open() = default;
+};
+int total<std::meta::reflectable T>(T& value) {
+  mut int sum = 0;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    sum = sum + field.get(value);
+  }
+  return sum;
+}
+int main() {
+  Closed closed{};
+  return total(closed) - 3;  //~ ERROR GTI-S2029
+}

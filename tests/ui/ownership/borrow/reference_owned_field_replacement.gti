@@ -1,0 +1,92 @@
+// Checked mutable references retain field-replacement cleanup sequencing.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 10
+//@[run1] stdout: 20
+//@[run1] stdout: 11
+//@[run1] stdout: 21
+//@[run1] stdout: 90
+//@[run2] run-fail
+//@[run2] args: construct-fails
+//@[run2] exit-code: 70
+//@[run2] stdout: 10
+//@[run2] stdout: 20
+//@[run2] stdout: 11
+//@[run2] stdout: 90
+//@[run2] stderr-contains: reference_owned_field_replacement.gti:12: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: old cleanup-fails
+//@[run3] exit-code: 70
+//@[run3] stdout: 10
+//@[run3] stdout: 20
+//@[run3] stdout: 11
+//@[run3] stdout: 21
+//@[run3] stdout: 90
+//@[run3] stderr-contains: reference_owned_field_replacement.gti:20: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: old and pending-fail
+//@[run4] exit-code: 70
+//@[run4] stdout: 10
+//@[run4] stdout: 20
+//@[run4] stdout: 11
+//@[run4] stdout: 21
+//@[run4] stderr-contains: reference_owned_field_replacement.gti:20: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at reference_owned_field_replacement.gti:20; secondary [GTI-R0002]
+//@[run5] args: nested checked reference field
+//@[run5] stdout: 10
+//@[run5] stdout: 20
+//@[run5] stdout: 11
+//@[run5] stdout: 21
+//@[run5] stdout: 90
+// --- reference_owned_field_replacement.gti
+import std.string;
+import std.vector;
+
+mut int stage = 0;
+class Payload {
+  int id;
+  std::string text;
+public:
+  Payload(int id, std::string_view text) : id(id), text(std::string(text)) {
+    std::println(id * 10);
+    int divisor = id == 2 && stage == 1 ? 0 : 1;
+    int checked = 1 / divisor;
+  }
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() {
+    std::println(this.id * 10 + 1);
+    int divisor = (this.id == 1 && (stage == 2 || stage == 3)) ||
+                  (this.id == 2 && stage == 3) ? 0 : 1;
+    int checked = 2 / divisor;
+  }
+  bool Valid() { return this.id == 2 && this.text.view() == "new"; }
+};
+struct Result { mut bool changed = false; mut Payload message{1, "old"};  public: Result() = default; };
+struct Nested { mut Result inner{};  public: Nested() = default; };
+void Set(mut Result& result, std::string_view text) {
+  result.changed = true;
+  result.message = Payload(2, text);
+  if (!result.message.Valid()) { std::println(999); }
+}
+void SetNested(mut Nested& result, std::string_view text) {
+  result.inner.changed = true;
+  result.inner.message = Payload(2, text);
+  if (!result.inner.message.Valid()) { std::println(999); }
+}
+class Outer {
+public:
+  Outer() = default;
+  ~Outer() { std::println(90); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  stage = argc - 1;
+  Outer outer{};
+  if (stage == 4) {
+    mut Nested result{};
+    SetNested(result, "new");
+    return result.inner.message.Valid() ? 0 : 1;
+  }
+  mut Result result{};
+  Set(result, "new");
+  return result.message.Valid() ? 0 : 1;
+}

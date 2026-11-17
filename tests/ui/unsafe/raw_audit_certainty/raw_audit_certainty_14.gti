@@ -1,0 +1,12 @@
+// Raw audit certainty: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: warn
+//@ no-prelude
+extern "C" { const int* foreign(); }
+
+int inspect(bool choice) {
+  int live = 1;
+  mut const int* pointer = nullptr;
+  { int dead = 2; pointer = &dead; }
+if (choice) { unsafe { pointer = foreign(); } } unsafe { return *pointer; }}  //~ WARN GTI-S2102
+int main() { return 0; }

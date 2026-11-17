@@ -1,0 +1,2 @@
+// Raw field witnesses: raw argument borrows preserve unsafe and mutable access requirements.
+struct Cell { mut int value = 7; Cell() = default; }; int read(int& value) { return value; } int main() { Cell object{}; const Cell* p = &object; return read(p->value); }  //~ ERROR GTI-S2055

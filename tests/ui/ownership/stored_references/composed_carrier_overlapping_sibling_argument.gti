@@ -1,0 +1,30 @@
+// Composed carrier function transfer: a sibling argument overlapping a forwarded exclusive owner is a borrow conflict.
+struct Cell { mut int value = 0;  public: Cell() = default; };
+struct Context {
+  int& step;
+  mut Cell& left;
+  mut Cell& right;
+  Context(int& step, mut Cell& left, mut Cell& right)
+      : step(step), left(left), right(right) {}
+  void update() mut {
+    this.left.value += this.step;
+    this.right.value += this.step;
+  }
+};
+T forward_context<T>(T context) { return std::move(context); }
+
+Context forward_with_owner(Context context, mut Cell& other) {  //~ ERROR GTI-S2017
+  other.value += 1;
+  return std::move(context);
+}
+
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  mut Context initial{step, left, right};
+
+  mut Context active = forward_with_owner(std::move(initial), left);  //~ ERROR GTI-S2017
+  active.update();
+  return 0;
+}

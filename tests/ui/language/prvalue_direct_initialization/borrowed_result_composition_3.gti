@@ -1,0 +1,15 @@
+// Borrowed result composition: fresh-result borrowing rejects the intended access/escape at its exact source span.
+class Update {
+  int& step;
+  mut int& value;
+public:
+  Update(int& step, mut int& value) : step(step), value(value) {}
+  void apply() mut { this.value += this.step; }
+};
+Update<a> relay<lifetime a>(int&<a> step, mut int&<a> value) {
+  return Update(Update((view(step, value))));
+}
+Update<a> view<lifetime a>(int&<a> step, mut int&<a> value) { return Update(step, value); }
+Update bad(int& step) { mut int local = 3;
+                return Update(relay(step, local)); }  //~ ERROR GTI-S2045
+                int main() { return 0; }

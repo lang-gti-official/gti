@@ -1,0 +1,6 @@
+// Accepted: void result queries compose with ordinary void return expressions.
+//@ check-pass
+import std.meta;
+std::meta::callable_return_type<F> invoke<F>(F& fn) { return fn(); }
+void nothing() {}
+int main() { auto function = nothing; invoke(function); return 0; }

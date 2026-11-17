@@ -1,0 +1,13 @@
+// Storage payload admission: class-owned diagnostics publish once without suppressing distinct concrete constructor-body errors.
+class Broken<uint64_t N> {
+  static_assert(N > 2, "class constraint");  //~ ERROR GTI-S2079
+public:
+  Broken() {
+    static_assert(N > 0, "first constructor constraint");  //~ ERROR GTI-S2079
+    static_assert(N > 1, "second constructor constraint");  //~ ERROR GTI-S2079
+  }
+};
+int main() {
+  Broken<0> first = Broken<0>();
+  return 0;
+}

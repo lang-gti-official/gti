@@ -1,0 +1,17 @@
+// Exclusive reborrow loan graph: a returned reborrow must retain the caller's mutable exclusion.
+class Cell {
+public:
+  mut int value = 1;
+  Cell() = default;
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return child;
+  }
+};
+int main() {
+  mut Cell cell = Cell();
+  mut int& result = cell.expose();
+  cell.value += 1;  //~ ERROR GTI-S2017
+  return result;
+}

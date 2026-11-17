@@ -1,0 +1,2 @@
+// Rejected: invalid collection must stop compilation.
+class C { public: C(){} }; int main(){ C c = {}; return 0; }  //~ ERROR GTI-S2092
