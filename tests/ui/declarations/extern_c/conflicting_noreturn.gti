@@ -1,0 +1,4 @@
+// Native bindings with conflicting noreturn contracts are rejected across namespaces.
+namespace first { extern "C" { [[noreturn]] void target(); } }  //~ ERROR GTI-S2099 This attribute requires a defined
+namespace second { extern "C" { void target(); } }  //~ ERROR GTI-S2054 conflicting safety contracts
+int main() { return 0; }
