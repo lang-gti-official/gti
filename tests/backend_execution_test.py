@@ -46,11 +46,6 @@ def main() -> None:
                 "associative_owning_node_constructor", "associative_iterator_compound",
                 "associative_owned_argument",
             },
-            "complete_containers_test.py": {
-                "complete_list", "complete_list_differential", "complete_deque",
-                "complete_sets", "complete_containers_ownership",
-                "owned_constructor_policy_forwarding", "vector_contains",
-            },
             "constructor_null_native_runtime_test.py": {
                 "nullable_member", "unique_member", "native_strlen", "native_qsort",
                 "nullable_example", "native_identity",
@@ -58,7 +53,7 @@ def main() -> None:
         }
         # Actual wrappers used to invoke the compiler before/after listing.
         # A nonexistent compiler proves this protocol is metadata-only, while
-        # the exact rows ensure the second container group is not lost.
+        # the exact rows ensure no listed fixture is lost.
         for harness, names in fixtures.items():
             listed = subprocess.run(
                 [sys.executable, str(Path(__file__).parent / harness),
