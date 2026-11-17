@@ -3697,7 +3697,7 @@
       ],
       "evidence": [
         "tests/ui/language/deferred_assertions",
-        "tests/deferred_assertion_runtime_test.py",
+        "tests/ui/stdlib/assert/deferred_assertion_failures.gti",
         "examples/172-deferred-assertions.gti",
         "examples/174-typed-macros.gti",
         "stdlib/std/assert.gti"
@@ -5539,7 +5539,7 @@
       "evidence": [
         "stdlib/std/map.gti",
         "tests/associative_map_test.py",
-        "tests/container_contract_failure_test.py",
+        "tests/slow/stdlib/containers/contract_failure",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/operators/conditional_members",
@@ -8192,7 +8192,7 @@
       "evidence": [
         "stdlib/std/unordered_map.gti",
         "tests/unordered_map_test.py",
-        "tests/container_contract_failure_test.py",
+        "tests/slow/stdlib/containers/contract_failure",
         "docs/language/standard-library.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/operators/conditional_members",

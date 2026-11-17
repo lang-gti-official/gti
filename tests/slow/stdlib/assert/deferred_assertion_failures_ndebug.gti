@@ -1,0 +1,253 @@
+// With NDEBUG, debug assertions are disabled while assertions and panics still report their site and clean up.
+//@ slow
+//@ run-pass
+//@ execution-profile: concurrent
+//@ define: NDEBUG
+//@ revisions: m0 m1 m2 m3 m4 m5 m6 m7 m8 m9 m10 m11 m12 m13 m14 m15 m16
+//@[m0] stderr-contains: outer
+//@[m1] args: x
+//@[m1] run-fail
+//@[m1] exit-code: 70
+//@[m1] stderr-contains: inner
+//@[m1] stderr-contains: outer
+//@[m1] stderr-contains: main.gti:196: runtime error[GTI-R0017]: panic: "Assertion failed: false"
+//@[m2] args: x x
+//@[m2] run-fail
+//@[m2] exit-code: 70
+//@[m2] stderr-contains: inner
+//@[m2] stderr-contains: outer
+//@[m2] stderr-contains: main.gti:200: runtime error[GTI-R0017]: panic: "failure: owned payload"
+//@[m3] args: x x x
+//@[m3] stderr-contains: inner
+//@[m3] stderr-contains: outer
+//@[m4] args: x x x x
+//@[m4] run-fail
+//@[m4] exit-code: 70
+//@[m4] stderr-contains: inner
+//@[m4] stderr-contains: outer
+//@[m4] stderr-contains: main.gti:207: runtime error[GTI-R0017]: panic: "through tracked wrapper"
+//@[m5] args: x x x x x
+//@[m5] run-fail
+//@[m5] exit-code: 70
+//@[m5] stderr-contains: inner
+//@[m5] stderr-contains: outer
+//@[m5] stderr-contains: main.gti:210: runtime error[GTI-R0017]: panic: "application failure"
+//@[m6] args: x x x x x x
+//@[m6] run-fail
+//@[m6] exit-code: 70
+//@[m6] stderr-contains: inner
+//@[m6] stderr-contains: outer
+//@[m6] stderr-contains: main.gti:171: runtime error[GTI-R0017]: panic: "message computation failed"
+//@[m7] args: x x x x x x x
+//@[m7] run-fail
+//@[m7] exit-code: 70
+//@[m7] stderr-contains: runtime error[GTI-R0014]
+//@[m7] stderr-contains: main.gti:217
+//@[m7] stderr-contains: main.gti:123
+//@[m7] stderr-contains: primary [GTI-R0017]
+//@[m7] stderr-contains: message="primary assertion"
+//@[m7] stderr-contains: secondary [GTI-R0017] message="cleanup assertion"
+//@[m8] args: x x x x x x x x
+//@[m8] run-fail
+//@[m8] exit-code: 70
+//@[m8] stderr-contains: inner
+//@[m8] stderr-contains: outer
+//@[m8] stderr-contains: main.gti:222: runtime error[GTI-R0017]: panic: "worker assertion"
+//@[m9] args: x x x x x x x x x
+//@[m9] run-fail
+//@[m9] exit-code: 70
+//@[m9] stderr-contains: inner
+//@[m9] stderr-contains: outer
+//@[m9] stderr-contains: main.gti:222: runtime error[GTI-R0017]: panic: "worker assertion"
+//@[m10] args: x x x x x x x x x x
+//@[m10] run-fail
+//@[m10] exit-code: 70
+//@[m10] stderr-contains: condition
+//@[m10] stderr-contains: pattern
+//@[m10] stderr-contains: first
+//@[m10] stderr-contains: second
+//@[m10] stderr-contains: inner
+//@[m10] stderr-contains: outer
+//@[m10] stderr-contains: main.gti:232: runtime error[GTI-R0017]: panic: "ordered 1 then 2"
+//@[m11] args: x x x x x x x x x x x
+//@[m11] run-fail
+//@[m11] exit-code: 70
+//@[m11] stderr-contains: macro
+//@[m11] stderr-contains: inner
+//@[m11] stderr-contains: outer
+//@[m11] stderr-contains: main.gti:235: runtime error[GTI-R0017]: panic: "macro local failure"
+//@[m12] args: x x x x x x x x x x x x
+//@[m12] stderr-contains: macro
+//@[m12] stderr-contains: inner
+//@[m12] stderr-contains: outer
+//@[m13] args: x x x x x x x x x x x x x
+//@[m13] run-fail
+//@[m13] exit-code: 70
+//@[m13] stderr-contains: iteration
+//@[m13] stderr-contains: inner
+//@[m13] stderr-contains: outer
+//@[m13] stderr-contains: main.gti:241: runtime error[GTI-R0017]: panic: "macro loop failure"
+//@[m14] args: x x x x x x x x x x x x x x
+//@[m14] stderr-contains: iteration
+//@[m14] stderr-contains: inner
+//@[m14] stderr-contains: outer
+//@[m15] args: x x x x x x x x x x x x x x x
+//@[m15] run-fail
+//@[m15] exit-code: 70
+//@[m15] stderr-contains: inner
+//@[m15] stderr-contains: outer
+//@[m15] stderr-contains: main.gti:247: runtime error[GTI-R0017]: panic: "Assertion failed: assertion condition"
+//@[m16] args: x x x x x x x x x x x x x x x x
+//@[m16] stderr-contains: inner
+//@[m16] stderr-contains: outer
+import std.assert;
+import std.panic;
+import std.cstdio;
+import std.string;
+import std.thread;
+import std.vector;
+
+struct Guard {
+  int number;
+  Guard(int value) : number(value) {}
+  ~Guard() {
+    if (number == 1) {
+      [[discard]] std::try_write_stderr("outer\n");
+    } else {
+      [[discard]] std::try_write_stderr("inner\n");
+    }
+  }
+};
+
+struct CleanupPanic {
+  ~CleanupPanic() { std::assert!(false, "cleanup assertion"); } // secondary
+public:
+  CleanupPanic() = default;
+};
+
+struct MacroOwner {
+  std::string label;
+  MacroOwner(std::string value) : label(std::move(value)) {}
+  ~MacroOwner() { [[discard]] std::try_write_stderr(label.view()); }
+};
+
+[[track_caller]] void tracked_wrapper() {
+  std::assert!(false, "through tracked wrapper");
+}
+
+namespace application {
+  [[track_caller]] #macro default_condition(int value) {
+    std::assert!(value > 0);
+  }
+
+  [[track_caller]] #macro default_debug_condition(int value) {
+    std::debug_assert!(value > 0);
+  }
+
+  #macro require(bool condition, std::string_view reason) {
+    if (!condition) { std::panic(reason); }
+  }
+
+  [[track_caller]] #macro local_failure(bool fail, std::string label) {
+    MacroOwner owned{label};
+    if (fail) { std::panic("macro local failure"); }
+  }
+
+  [[track_caller]] #macro local_loop(bool fail, int count) {
+    bool should_fail = fail;
+    int limit = count;
+    for (mut int index = 0; index < limit; ++index) {
+      MacroOwner owned{std::string("iteration\n")};
+      if (index == 0) { continue; }
+      if (index == 2) {
+        if (should_fail) { std::panic("macro loop failure"); }
+        break;
+      }
+    }
+  }
+}
+
+std::string fail_message() {
+  std::panic("message computation failed"); // message-computation
+}
+
+bool ordered_condition() {
+  [[discard]] std::try_write_stderr("condition\n");
+  return false;
+}
+std::string_view ordered_pattern() {
+  [[discard]] std::try_write_stderr("pattern\n");
+  return "ordered {} then {}";
+}
+int ordered_argument(int number) {
+  if (number == 1) { [[discard]] std::try_write_stderr("first\n"); }
+  else { [[discard]] std::try_write_stderr("second\n"); }
+  return number;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{1};
+  if (argc == 1) {
+    std::assert!(true, "never evaluated {}", fail_message());
+    return 0;
+  }
+  Guard inner{2};
+  if (argc == 2) {
+    std::assert!(false); // plain
+  }
+  if (argc == 3) {
+    std::string message{"owned payload"};
+    std::assert!(false, "failure: {}", message.view()); // formatted
+  }
+  if (argc == 4) {
+    std::debug_assert!(false, "debug failure"); // debug
+    return 0;
+  }
+  if (argc == 5) {
+    tracked_wrapper(); // tracked-caller
+  }
+  if (argc == 6) {
+    application::require!(false, "application failure"); // application
+  }
+  if (argc == 7) {
+    std::assert!(false, "{}", fail_message());
+  }
+  if (argc == 8) {
+    CleanupPanic cleanup{};
+    std::assert!(false, "primary assertion"); // primary
+  }
+  if (argc == 9 || argc == 10) {
+    auto started = std::thread::start([]() -> void {
+      Guard worker{2};
+      std::assert!(false, "worker assertion"); // worker
+    });
+    if (!started) { return 99; }
+    mut std::thread worker = std::move(started).value();
+    if (argc == 9) {
+      auto joined = worker.join();
+      if (!joined) { return 98; }
+    }
+  }
+  if (argc == 11) {
+    std::assert!(ordered_condition(), ordered_pattern(), ordered_argument(1), ordered_argument(2)); // ordered
+  }
+  if (argc == 12) {
+    application::local_failure!(true, std::string("macro\n")); // macro-local-panic
+  }
+  if (argc == 13) {
+    application::local_failure!(false, std::string("macro\n"));
+  }
+  if (argc == 14) {
+    application::local_loop!(true, 6); // macro-loop-panic
+  }
+  if (argc == 15) {
+    application::local_loop!(false, 6);
+  }
+  if (argc == 16) {
+    application::default_condition!(0); // synthesized-default
+  }
+  if (argc == 17) {
+    application::default_debug_condition!(0); // synthesized-debug-default
+  }
+  return 0;
+}

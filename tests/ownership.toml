@@ -909,7 +909,6 @@ owners = [
   "stdlib_modules",
   "stdlib_module_boundaries",
   "stdlib_include_sweep",
-  "stdlib_adoption_runtime",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -1009,7 +1008,6 @@ paths = [
 ]
 owners = [
   "complete_containers",
-  "container_contract_failure",
   "container_iterator_movement",
   "contiguous_iterator_completion",
   "paired_span_iterator_completion",
@@ -1018,9 +1016,7 @@ owners = [
   "associative_hash_contracts",
   "associative_constructor_runtime",
   "unordered_map",
-  "map_mutable_entry_projection",
   "mir_associative_determinism",
-  "storage_lane_iterator_runtime",
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
@@ -1114,7 +1110,6 @@ paths = [
 ]
 owners = [
   "panic_adoption_runtime",
-  "deferred_assertions_runtime",
   "source_location_runtime",
   "annotated_test_suites",
 ]

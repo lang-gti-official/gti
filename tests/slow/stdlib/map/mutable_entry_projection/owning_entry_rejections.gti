@@ -1,0 +1,66 @@
+// Mutable map cursors reject replacing, moving, swapping or exchanging the owning entry.
+//@ slow
+//@ stdlib-overlay: std/detail/map_entry.gti
+import std.detail.map_entry;
+import std.map;
+import std.unordered_map;
+import std.string;
+import std.utility;
+
+int map_case_replace_entry() {
+  mut std::map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  *cursor = std::detail::map_entry<int,int>(2,20);  //~ ERROR GTI-S2003
+  return 0;
+}
+
+int map_case_move_entry() {
+  mut std::map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  std::detail::map_entry<int,int> moved = std::move(*cursor);  //~ ERROR GTI-S2018
+  return 0;
+}
+
+int map_case_swap_entry() {
+  mut std::map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut std::detail::map_entry<int,int> other{2,20}; std::swap(*cursor, other);  //~ ERROR GTI-S2000
+//~| ERROR GTI-S2029
+//~| ERROR GTI-S2003
+  return 0;
+}
+
+int map_case_exchange_entry() {
+  mut std::map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  [[discard]] std::exchange(*cursor, std::detail::map_entry<int,int>(2,20));  //~ ERROR GTI-S2000
+//~| ERROR GTI-S2029
+//~| ERROR GTI-S2003
+  return 0;
+}
+
+int unordered_map_case_replace_entry() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  *cursor = std::detail::map_entry<int,int>(2,20);  //~ ERROR GTI-S2003
+  return 0;
+}
+
+int unordered_map_case_move_entry() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  std::detail::map_entry<int,int> moved = std::move(*cursor);  //~ ERROR GTI-S2018
+  return 0;
+}
+
+int unordered_map_case_swap_entry() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  mut std::detail::map_entry<int,int> other{2,20}; std::swap(*cursor, other);  //~ ERROR GTI-S2000
+//~| ERROR GTI-S2029
+//~| ERROR GTI-S2003
+  return 0;
+}
+
+int unordered_map_case_exchange_entry() {
+  mut std::unordered_map<int,int> values{}; [[discard]] values.insert(1,10); mut auto cursor = values.begin_mut();
+  [[discard]] std::exchange(*cursor, std::detail::map_entry<int,int>(2,20));  //~ ERROR GTI-S2000
+//~| ERROR GTI-S2029
+//~| ERROR GTI-S2003
+  return 0;
+}
+
+int main() { return 0; }
