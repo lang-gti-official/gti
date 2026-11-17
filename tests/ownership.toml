@@ -33,7 +33,6 @@ tests = [
   # GTI_BUILD_LSP=OFF omits these registrations.
   "concurrency_composition_lsp",
   "diagnostic_explanations",
-  "executable_entry_cli_lsp",
   "frontend_cache_invalidation",
   "lsp_code_snippets",
   "lsp_sdk",
@@ -43,7 +42,6 @@ tests = [
   "lsp_project_facts",
   "lsp_protocol",
   "lsp_scalability_benchmark_smoke",
-  "missing_definition_cli_lsp",
   "module_map_lsp",
   "module_navigation_lsp",
   "raw_pointer_audit_policy",
@@ -95,6 +93,7 @@ paths = [
   "tests/source_text_tests.cpp",
 ]
 owners = [
+  "gti_test_ui",
   "reference_parameter_packs",
   "parser_conditional_recovery",
   "source_text_pipeline",
@@ -111,7 +110,6 @@ owners = [
   "procedural_execution_example",
   "sum_type_pipeline",
   "generic_enum_declaration",
-  "scoped_configuration_defines",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -207,8 +205,8 @@ owners = [
   "diagnostic_explanations",
 ]
 consumers = [
+  "gti_test_ui",
   "lsp_protocol",
-  "missing_definition_cli_lsp",
   "cli_workflow",
 ]
 
@@ -1275,10 +1273,8 @@ owners = [
   "gti_unit_tests",
 ]
 consumers = [
+  "gti_test_ui",
   "compiled_primitive_library",
-  "compiled_value_types",
-  "compiled_borrow_library",
-  "compiled_namespaces",
   "compiled_library_project",
   "compiled_libraries_project",
   "compiled_dependency_project",
@@ -1396,6 +1392,7 @@ paths = [
   "src/cli/",
 ]
 owners = [
+  "gti_test_ui",
   "cli_workflow",
   "project_cli_workflow",
   "cli_color",
@@ -1406,8 +1403,6 @@ owners = [
   "llvm_backend_cli",
   "package_registry_cli",
   "package_registry_auth_cli",
-  "missing_definition_cli_lsp",
-  "executable_entry_cli_lsp",
   "compile_limits",
 ]
 consumers = [

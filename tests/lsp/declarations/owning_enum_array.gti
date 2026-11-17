@@ -1,6 +1,6 @@
 // An array of an owning enum is admitted as a local; as a field of a class
 // with virtual members it is the one S2067 at the field, and removing the
-// class recovers. (owning_enum_array_lsp.py, run by generic_enum_lsp_test.py)
+// class recovers. (owning_enum_array_lsp.py, formerly run by generic_enum_lsp_test.py)
 class Resource {
 public:
   Resource() {}

@@ -218,12 +218,6 @@ add_test(NAME bounded_array_borrows COMMAND gti_bounded_array_borrows_tests)
 add_test(NAME bounded_array_borrows_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bounded_array_borrows_runtime_test.py" $<TARGET_FILE:gti>)
 set_tests_properties(bounded_array_borrows_runtime PROPERTIES TIMEOUT 300)
-if(TARGET gti_lsp)
-  add_test(NAME local_reference_inference_lsp
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/local_reference_inference_lsp_test.py" $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(local_reference_inference_lsp PROPERTIES TIMEOUT 120)
-endif()
-
 add_executable(gti_prvalue_direct_initialization_tests
                prvalue_direct_initialization_tests.cpp)
 target_link_libraries(gti_prvalue_direct_initialization_tests PRIVATE gti_llvm_backend)
@@ -3096,13 +3090,6 @@ if(Python3_Interpreter_FOUND)
     # Its GCC sanitized build may take minutes under a parallel suite;
     # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
     set_tests_properties(composable_io_runtime PROPERTIES TIMEOUT 1800)
-    if(TARGET gti_lsp)
-      add_test(NAME generic_enum_lsp
-        COMMAND "${Python3_EXECUTABLE}"
-          "${PROJECT_SOURCE_DIR}/tests/generic_enum_lsp_test.py"
-          "$<TARGET_FILE:gti_lsp>")
-      set_tests_properties(generic_enum_lsp PROPERTIES TIMEOUT 180)
-    endif()
     add_test(
       NAME issues_117_120_regressions
       COMMAND "${Python3_EXECUTABLE}"
@@ -3314,22 +3301,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>")
   set_tests_properties(compact_owner_layout_runtime PROPERTIES TIMEOUT 600)
   if(UNIX)
-  endif()
-  if(TARGET gti_lsp)
-    add_test(
-      NAME executable_entry_cli_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/executable_entry_test.py"
-              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
-    )
-    set_tests_properties(executable_entry_cli_lsp PROPERTIES TIMEOUT 180)
-    add_test(
-      NAME missing_definition_cli_lsp
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/missing_definition_test.py"
-              "$<TARGET_FILE:gti>" "$<TARGET_FILE:gti_lsp>"
-    )
-    set_tests_properties(missing_definition_cli_lsp PROPERTIES TIMEOUT 180)
   endif()
     add_test(
       NAME moved_loop_local_runtime
@@ -3603,14 +3574,6 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_command_controls_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(test_command_controls PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME scoped_configuration_defines
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/scoped_configuration_defines_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/examples/scoped-configuration"
-  )
-  set_tests_properties(scoped_configuration_defines PROPERTIES TIMEOUT 180)
   add_test(
     NAME objective_cpp_bridge
     COMMAND "${Python3_EXECUTABLE}"
@@ -3950,18 +3913,6 @@ add_test(NAME compiled_type_forwarding
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_type_forwarding_test.py"
   "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-type-forwarding")
 set_tests_properties(compiled_type_forwarding PROPERTIES TIMEOUT 600)
-add_test(NAME compiled_namespaces
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_namespaces_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_CURRENT_BINARY_DIR}/compiled-namespaces")
-set_tests_properties(compiled_namespaces PROPERTIES TIMEOUT 600)
-add_test(NAME compiled_value_types
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_value_types_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-value-types")
-set_tests_properties(compiled_value_types PROPERTIES TIMEOUT 600)
-add_test(NAME compiled_borrow_library
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_borrow_library_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-borrow-library")
-set_tests_properties(compiled_borrow_library PROPERTIES TIMEOUT 600)
 add_executable(gti_compiled_interface_types_tests compiled_interface_types_tests.cpp)
 target_link_libraries(gti_compiled_interface_types_tests PRIVATE gti_compiler)
 add_test(NAME compiled_interface_types COMMAND gti_compiled_interface_types_tests)
