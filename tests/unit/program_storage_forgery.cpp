@@ -18,9 +18,8 @@ int main() { return 0; }
 )");
   if (!frontend.canGenerateCode() || !frontend.mirValid ||
       !lang::verifyMirProgram(frontend.mir).valid()) {
-    std::cerr << "valid owning-global fixture failed
-                 ";
-        return 1;
+    std::cerr << "valid owning-global fixture failed" << std::endl;
+    return 1;
   }
   auto forged = frontend.mir;
   auto &plan = const_cast<lang::MirProgramInitializationPlan &>(
@@ -33,7 +32,7 @@ int main() { return 0; }
   for (const auto &error : result.errors)
     if (error.message == "program-initialization step omits required cleanup")
       return 0;
-  std::cerr << "erased cleanup obligation was not rejected by its storage proof
-               ";
-      return 3;
+  std::cerr << "erased cleanup obligation was not rejected by its storage proof"
+            << std::endl;
+  return 3;
 }
