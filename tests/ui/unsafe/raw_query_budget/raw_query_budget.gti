@@ -1,0 +1,126 @@
+// Raw query budget: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: strict
+//@ no-prelude
+const int* helper0(const int* pointer) { return helper1(pointer); }
+const int* helper1(const int* pointer) { return helper2(pointer); }
+const int* helper2(const int* pointer) { return helper3(pointer); }
+const int* helper3(const int* pointer) { return helper4(pointer); }
+const int* helper4(const int* pointer) { return helper5(pointer); }
+const int* helper5(const int* pointer) { return helper6(pointer); }
+const int* helper6(const int* pointer) { return helper7(pointer); }
+const int* helper7(const int* pointer) { return helper8(pointer); }
+const int* helper8(const int* pointer) { return helper9(pointer); }
+const int* helper9(const int* pointer) { return helper10(pointer); }
+const int* helper10(const int* pointer) { return helper11(pointer); }
+const int* helper11(const int* pointer) { return helper12(pointer); }
+const int* helper12(const int* pointer) { return helper13(pointer); }
+const int* helper13(const int* pointer) { return helper14(pointer); }
+const int* helper14(const int* pointer) { return helper15(pointer); }
+const int* helper15(const int* pointer) { return helper16(pointer); }
+const int* helper16(const int* pointer) { return helper17(pointer); }
+const int* helper17(const int* pointer) { return helper18(pointer); }
+const int* helper18(const int* pointer) { return helper19(pointer); }
+const int* helper19(const int* pointer) { return helper20(pointer); }
+const int* helper20(const int* pointer) { return helper21(pointer); }
+const int* helper21(const int* pointer) { return helper22(pointer); }
+const int* helper22(const int* pointer) { return helper23(pointer); }
+const int* helper23(const int* pointer) { return pointer; }
+const int* root0(const int* pointer) { return helper0(pointer); }
+const int* root1(const int* pointer) { return helper0(pointer); }
+const int* root2(const int* pointer) { return helper0(pointer); }
+const int* root3(const int* pointer) { return helper0(pointer); }
+const int* root4(const int* pointer) { return helper0(pointer); }
+const int* root5(const int* pointer) { return helper0(pointer); }
+const int* root6(const int* pointer) { return helper0(pointer); }
+const int* root7(const int* pointer) { return helper0(pointer); }
+const int* root8(const int* pointer) { return helper0(pointer); }
+const int* root9(const int* pointer) { return helper0(pointer); }
+const int* root10(const int* pointer) { return helper0(pointer); }
+const int* root11(const int* pointer) { return helper0(pointer); }
+const int* root12(const int* pointer) { return helper0(pointer); }
+const int* root13(const int* pointer) { return helper0(pointer); }
+const int* root14(const int* pointer) { return helper0(pointer); }
+const int* root15(const int* pointer) { return helper0(pointer); }
+const int* root16(const int* pointer) { return helper0(pointer); }
+const int* root17(const int* pointer) { return helper0(pointer); }
+const int* root18(const int* pointer) { return helper0(pointer); }
+const int* root19(const int* pointer) { return helper0(pointer); }
+const int* root20(const int* pointer) { return helper0(pointer); }
+const int* root21(const int* pointer) { return helper0(pointer); }
+const int* root22(const int* pointer) { return helper0(pointer); }
+const int* root23(const int* pointer) { return helper0(pointer); }
+const int* root24(const int* pointer) { return helper0(pointer); }
+const int* root25(const int* pointer) { return helper0(pointer); }
+const int* root26(const int* pointer) { return helper0(pointer); }
+const int* root27(const int* pointer) { return helper0(pointer); }
+const int* root28(const int* pointer) { return helper0(pointer); }
+const int* root29(const int* pointer) { return helper0(pointer); }
+const int* root30(const int* pointer) { return helper0(pointer); }
+const int* root31(const int* pointer) { return helper0(pointer); }
+const int* root32(const int* pointer) { return helper0(pointer); }
+const int* root33(const int* pointer) { return helper0(pointer); }
+const int* root34(const int* pointer) { return helper0(pointer); }
+const int* root35(const int* pointer) { return helper0(pointer); }
+const int* root36(const int* pointer) { return helper0(pointer); }
+const int* root37(const int* pointer) { return helper0(pointer); }
+const int* root38(const int* pointer) { return helper0(pointer); }
+const int* root39(const int* pointer) { return helper0(pointer); }
+const int* root40(const int* pointer) { return helper0(pointer); }
+const int* root41(const int* pointer) { return helper0(pointer); }
+const int* root42(const int* pointer) { return helper0(pointer); }
+const int* root43(const int* pointer) { return helper0(pointer); }
+const int* root44(const int* pointer) { return helper0(pointer); }
+const int* root45(const int* pointer) { return helper0(pointer); }
+const int* root46(const int* pointer) { return helper0(pointer); }
+const int* root47(const int* pointer) { return helper0(pointer); }
+int main() { int value = 7; mut int total = 0;
+const int* p0 = root0(&value); unsafe { total = total + *p0 - 7; }
+const int* p1 = root1(&value); unsafe { total = total + *p1 - 7; }
+const int* p2 = root2(&value); unsafe { total = total + *p2 - 7; }
+const int* p3 = root3(&value); unsafe { total = total + *p3 - 7; }
+const int* p4 = root4(&value); unsafe { total = total + *p4 - 7; }
+const int* p5 = root5(&value); unsafe { total = total + *p5 - 7; }
+const int* p6 = root6(&value); unsafe { total = total + *p6 - 7; }
+const int* p7 = root7(&value); unsafe { total = total + *p7 - 7; }
+const int* p8 = root8(&value); unsafe { total = total + *p8 - 7; }
+const int* p9 = root9(&value); unsafe { total = total + *p9 - 7; }
+const int* p10 = root10(&value); unsafe { total = total + *p10 - 7; }
+const int* p11 = root11(&value); unsafe { total = total + *p11 - 7; }
+const int* p12 = root12(&value); unsafe { total = total + *p12 - 7; }
+const int* p13 = root13(&value); unsafe { total = total + *p13 - 7; }
+const int* p14 = root14(&value); unsafe { total = total + *p14 - 7; }
+const int* p15 = root15(&value); unsafe { total = total + *p15 - 7; }
+const int* p16 = root16(&value); unsafe { total = total + *p16 - 7; }
+const int* p17 = root17(&value); unsafe { total = total + *p17 - 7; }
+const int* p18 = root18(&value); unsafe { total = total + *p18 - 7; }
+const int* p19 = root19(&value); unsafe { total = total + *p19 - 7; }
+const int* p20 = root20(&value); unsafe { total = total + *p20 - 7; }
+const int* p21 = root21(&value); unsafe { total = total + *p21 - 7; }
+const int* p22 = root22(&value); unsafe { total = total + *p22 - 7; }
+const int* p23 = root23(&value); unsafe { total = total + *p23 - 7; }
+const int* p24 = root24(&value); unsafe { total = total + *p24 - 7; }
+const int* p25 = root25(&value); unsafe { total = total + *p25 - 7; }
+const int* p26 = root26(&value); unsafe { total = total + *p26 - 7; }
+const int* p27 = root27(&value); unsafe { total = total + *p27 - 7; }
+const int* p28 = root28(&value); unsafe { total = total + *p28 - 7; }
+const int* p29 = root29(&value); unsafe { total = total + *p29 - 7; }
+const int* p30 = root30(&value); unsafe { total = total + *p30 - 7; }
+const int* p31 = root31(&value); unsafe { total = total + *p31 - 7; }
+const int* p32 = root32(&value); unsafe { total = total + *p32 - 7; }
+const int* p33 = root33(&value); unsafe { total = total + *p33 - 7; }
+const int* p34 = root34(&value); unsafe { total = total + *p34 - 7; }
+const int* p35 = root35(&value); unsafe { total = total + *p35 - 7; }
+const int* p36 = root36(&value); unsafe { total = total + *p36 - 7; }
+const int* p37 = root37(&value); unsafe { total = total + *p37 - 7; }
+const int* p38 = root38(&value); unsafe { total = total + *p38 - 7; }
+const int* p39 = root39(&value); unsafe { total = total + *p39 - 7; }
+const int* p40 = root40(&value); unsafe { total = total + *p40 - 7; }
+const int* p41 = root41(&value); unsafe { total = total + *p41 - 7; }
+const int* p42 = root42(&value); unsafe { total = total + *p42 - 7; }
+const int* p43 = root43(&value); unsafe { total = total + *p43 - 7; }
+const int* p44 = root44(&value); unsafe { total = total + *p44 - 7; }
+const int* p45 = root45(&value); unsafe { total = total + *p45 - 7; }
+const int* p46 = root46(&value); unsafe { total = total + *p46 - 7; }
+const int* p47 = root47(&value); unsafe { total = total + *p47 - 7; }
+return total; }

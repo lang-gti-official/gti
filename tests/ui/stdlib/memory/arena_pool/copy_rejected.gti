@@ -1,0 +1,10 @@
+// A move-only arena cannot be copied.
+//@ check-fail
+import std.memory;
+int main() {
+  mut auto created = std::try_make_arena<int32_t>(std::size_t(1));
+  if (!created) { return 1; }
+  mut std::arena<int32_t> source = std::move(created).value();
+  std::arena<int32_t> copied = source;  //~ ERROR GTI-S2003
+  return 0;
+}

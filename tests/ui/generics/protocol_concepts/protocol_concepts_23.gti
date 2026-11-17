@@ -1,0 +1,22 @@
+// Protocol concepts: rejected with GTI-S2017.
+concept observed<T> {
+  typename element;
+  element<a> get<lifetime a>(T<a> source);
+};
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+for concept observed<Reading> {
+  using element = int&;
+  int&<a> get<lifetime a>(Reading<a> value) {
+    return value.external;
+  }
+};
+
+int& invalid() {  //~ ERROR GTI-S2017
+  int local = 7;
+  return observed<Reading>::get(Reading(local));
+}
+int main() { return 0; }

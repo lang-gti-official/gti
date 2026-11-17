@@ -1,0 +1,4 @@
+// Shape witnesses: arrays retain both type and checked operation requirements.
+//@ build-pass
+//@ slow
+int main() { mut int values[2] = {1, 2}; return values[0] - 1; }  //~ WARN GTI-S2096

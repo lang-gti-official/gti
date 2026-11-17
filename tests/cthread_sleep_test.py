@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Relative sleep, exact interruption publication, aliasing, and host boundary."""
+"""Native sleep runtime unit checks; the GTI clients are tests/ui/concurrency/cthread."""
 
 import os
 import pathlib
@@ -47,24 +47,6 @@ def main():
                  root / "runtime/src/cthread_sleep.cpp",
                  root / "tests/unit/runtime_cthread_sleep_tests.cpp", "-o", native])
             run([native])
-            for fixture in ("cthread_sleep", "cthread_sleep_oracle", "cthread_sleep_concurrent"):
-                binary = output / f"{fixture}-{mode}"
-                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", *flags, *keep_cpp(flags), "-o", binary]
-                if fixture.endswith("concurrent"):
-                    command += ["--execution-profile", "concurrent"]
-                extra = [*sanitizers]
-                if fixture.endswith("oracle"):
-                    extra += [fixtures / "cthread_sleep_oracle.cpp"]
-                if extra:
-                    command += ["--", *extra]
-                run(command)
-                run([binary])
-                if is_cpp_mode(flags):
-                    generated = binary.with_suffix(".gti.cpp").read_text()
-                    if ("// GTI verified-MIR body:" not in generated or
-                            generated.count(
-                                f"{native_spelling(generated, 'gti_rt_cthread_sleep_v1')}(") < 2):
-                        raise AssertionError(f"{fixture} lost its MIR/native-call witness")
             print(f"C-thread sleep: {mode} passed", flush=True)
 
 

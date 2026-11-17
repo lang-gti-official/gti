@@ -1,0 +1,13 @@
+// Class payload enums: finite nested owning payload enums use structural cleanup recipes.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class inner { one(resource value), none };
+enum class outer { nested(inner value), none };
+int main() {
+  outer value = outer::nested(inner::one(resource()));
+  return 0;
+}

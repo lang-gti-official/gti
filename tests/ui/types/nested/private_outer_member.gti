@@ -1,0 +1,3 @@
+// A nested type grants no access to its enclosing class's private static member from outside.
+//@ check-fail
+class C { static int code = 1; public: struct N { public: N() = default; };  public: C() = default; }; int main() { return C::code; }  //~ ERROR GTI-S2007 is private

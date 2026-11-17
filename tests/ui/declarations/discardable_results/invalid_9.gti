@@ -1,0 +1,2 @@
+// Invalid: invalid discard contract must reject.
+[[discardable]] int& bad() { int local = 1; return local; }  //~ ERROR GTI-S2017

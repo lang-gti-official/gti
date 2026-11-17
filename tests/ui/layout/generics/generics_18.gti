@@ -1,0 +1,8 @@
+// Generics: rejected with GTI-S2012.
+class State { public: int identity = 4; State() {} };
+class Token {
+  State state;
+public:
+  Token(State value) : state(value) {}
+};
+int main() { Token value{}; return 0; }  //~ ERROR GTI-S2012

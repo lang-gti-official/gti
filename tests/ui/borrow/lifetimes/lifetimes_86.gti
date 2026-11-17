@@ -1,0 +1,15 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+enum State<T> { value(T payload) };
+class Holder<T> {
+  State<T> state;
+public:
+  Holder(T input) : state(State<T>::value(input)) {}
+  T& get() {
+    switch (this.state) {
+    case State<T>::value(auto& payload): return payload;
+    }
+  }
+};
+int main() { Holder<int> holder{7}; return holder.get() - 7; }

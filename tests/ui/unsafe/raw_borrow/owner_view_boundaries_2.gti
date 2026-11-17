@@ -1,0 +1,5 @@
+// Owner view boundaries: exclusive bridge cannot escape local witness.
+import std.memory;
+mut int& escape() { mut int owner = 7;  //~ ERROR GTI-S2017
+  unsafe { return std::assume_mut(&owner, owner); } }
+int main() { return 0; }

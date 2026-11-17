@@ -1,0 +1,11 @@
+// Borrowing captures: erased-reference-cannot-invent-mutable-access is rejected with a user diagnostic, not an ICE.
+import std.memory;
+int main() {
+  int owner = 3;
+  std::erased_object& erased = std::erase_ref(owner);
+  unsafe {
+    mut int& restored = std::restore_mut<int>(erased);  //~ ERROR GTI-S2017 //~ ERROR GTI-S2017
+    restored = 5;
+  }
+  return owner;
+}

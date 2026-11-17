@@ -1,0 +1,3 @@
+// Invalid declarations: a constant initializer does not turn per-thread storage into a constant-context binding.
+//@ execution-profile: concurrent
+thread_local int state = 4; constexpr int read() { return state; } static_assert(read() == 4); int main() { return 0; }  //~ ERROR GTI-S2057

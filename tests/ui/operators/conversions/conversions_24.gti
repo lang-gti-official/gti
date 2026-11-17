@@ -1,0 +1,8 @@
+// Conversion operators: rejected with GTI-S2007.
+class Secret {
+  int hidden = 5;
+  operator int() { return this.hidden; }
+public:
+  Secret() {}
+};
+int main() { Secret secret{}; return int(secret); }  //~ ERROR GTI-S2007

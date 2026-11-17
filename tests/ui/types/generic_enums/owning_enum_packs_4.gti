@@ -1,0 +1,17 @@
+// Owning enum packs: owning enum pack transfer preserves use-after-move rejection.
+class Token {
+public:
+  Token() {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() {}
+};
+enum Event { Empty, Owned(Token token) };
+
+void sink<Args...>(Args... args) {}
+int main() {
+  auto value = Event::Owned(Token());
+  sink(std::move(value));
+  sink(std::move(value));  //~ ERROR GTI-S2018
+  return 0;
+}

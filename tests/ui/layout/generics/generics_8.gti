@@ -1,0 +1,7 @@
+// Generics: rejected with GTI-S2001, GTI-S2105.
+namespace shapes {
+struct Layer<uint64_t N> { Layer<N - 1> inner; int32_t value = 1;  public: Layer() = default; };  //~ ERROR GTI-S2105
+}
+struct shapes::Layer<0> { int32_t value = 100;  public: Layer() = default; };
+
+int main() { shapes::Layer<64> layered_probe{}; return layered_probe.value - 1; }  //~ ERROR GTI-S2001

@@ -1,0 +1,3 @@
+// Nested types inside generic enclosing types are rejected.
+//@ check-fail
+struct C<T> { struct N { T value; };  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2030 generic enclosing types

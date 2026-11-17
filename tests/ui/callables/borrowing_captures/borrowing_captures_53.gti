@@ -1,0 +1,12 @@
+// Borrowing captures: exclusive-function-ref-conflicting-call is rejected with a user diagnostic, not an ICE.
+import std.functional;
+int invoke(mut std::function_ref<int() mut>& callback, mut int& owner) {
+  owner += 1;
+  return callback();
+}
+int main() {
+  mut int owner = 3;
+  mut auto callback = [mut &owner]() -> int { owner += 1; return owner; };
+  mut std::function_ref<int() mut> view{callback};
+  return invoke(view, owner);  //~ ERROR GTI-S2017
+}

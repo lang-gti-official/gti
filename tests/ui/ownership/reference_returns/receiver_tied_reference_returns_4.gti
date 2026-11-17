@@ -1,0 +1,34 @@
+// Receiver tied reference returns: move-only receivers must remain stable while borrowed.
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+class Buffer<std::storage_element T> {
+  mut std::detail::prefix_owner<T> data;
+
+public:
+  Buffer(uint64_t capacity)
+      : data(std::detail::prefix_owner<T>(capacity)) {}
+
+  T& at(uint64_t index) {
+    return this.data.read(index);
+  }
+
+  void clear(uint64_t index) mut {
+    this.data.pop();
+  }
+
+  T invalidate_receiver(uint64_t index) mut {
+    T& value = this.data.read(index);
+    this.data.pop();
+    return value;
+  }
+};
+
+int main() {
+  mut Buffer<int> buffer = Buffer<int>(uint64_t(1));
+  int& value = buffer.at(uint64_t(0));
+  buffer.clear(uint64_t(0));  //~ ERROR GTI-S2017
+  Buffer<int> moved = std::move(buffer);
+  return value;
+}

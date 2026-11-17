@@ -1,0 +1,21 @@
+// A private nested type of an imported class cannot be named.
+//@ check-fail
+// --- main.gti
+import "nested_api.gti";
+int main() { api::Config::Secret item{}; }  //~ ERROR GTI-S2007 Nested type 'Secret'
+// --- nested_api.gti
+export module nested_api;
+namespace api {
+  export struct Config {
+    struct Network { int port = 80;  public: Network() = default; };
+  private:
+    struct Secret { static int code() { return 1; }  public: Secret() = default; };
+   public: Config() = default; };
+  export class Aliases {
+    struct Secret { int value = 11;  public: Secret() = default; };
+  public:
+    using Public = Secret;
+   public: Aliases() = default; };
+  export class Gate { using Hidden = Config;  public: Gate() = default; };
+  struct Hidden { struct Child { int value = 1;  public: Child() = default; };  public: Hidden() = default; };
+}

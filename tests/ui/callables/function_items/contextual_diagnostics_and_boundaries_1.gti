@@ -1,0 +1,10 @@
+// Contextual diagnostics and boundaries: an unambiguous namespace function can be stored and captured with its exact callable identity.
+//@ check-pass
+void work() {}
+int main() {
+  auto stored = work;
+  auto captured = [stored]() -> void { stored(); };
+  stored();
+  captured();
+  return 0;
+}

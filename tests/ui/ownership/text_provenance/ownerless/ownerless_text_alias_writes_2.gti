@@ -1,0 +1,11 @@
+// Ownerless text alias writes: dynamic text cannot enter a field through mutable aliases.
+import std.string;
+import std.utility;
+struct Label {
+  mut std::string_view text;
+  Label() : text("literal") {}
+  mut std::string_view& slot() mut { return this.text; }
+  std::string_view take() && { return this.text; }
+};
+void write(mut std::string_view& output, std::string_view input) { output = input; }
+int main() { mut Label label{}; std::string owner{"dynamic"}; mut std::string_view& alias = label.slot(); alias = owner.view(); return 0; }  //~ ERROR GTI-S2045

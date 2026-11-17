@@ -1,0 +1,2 @@
+// Rejections: arguments and unsupported annotation placements are rejected.
+[[inline(always)]] int f() { return 0; }  //~ ERROR GTI-P0002

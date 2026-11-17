@@ -1,0 +1,10 @@
+// Unsafe and pointer diagnostics: checked references may read and reseat a raw-pointer slot.
+//@ check-pass
+void point(mut const int32_t*& slot, int32_t& target) { slot = &target; }
+int main() {
+  int32_t value = 7;
+  mut const int32_t* pointer = nullptr;
+  point(pointer, value);
+  const int32_t*& alias = pointer;
+  unsafe { return *alias - 7; }
+}

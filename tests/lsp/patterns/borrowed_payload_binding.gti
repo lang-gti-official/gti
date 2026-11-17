@@ -1,0 +1,33 @@
+// A mutable payload reference binding hovers, navigates and finds its
+// references; binding it from an immutable enum is S2067, and the repaired
+// document is clean. (borrowed_payload_pattern_lsp_test.py)
+//@ hover @use: int32_t
+//@ definition @use: @decl
+//@ references @use: @decl @assign @use
+//@ token @decl: variable
+enum class Data { some(int32_t item), none };
+int main() {
+  mut Data input = Data::some(3);
+  switch (input) {
+    case Data::some(mut auto& /*@decl*/item): /*@assign*/item = 7; return /*@use*/item;
+    case Data::none: return 0;
+  }
+}
+// --- step 2
+enum class Data { some(int32_t item), none };
+int main() {
+  Data input = Data::some(3);
+  switch (input) {
+    case Data::some(mut auto& item): item = 7; return item;  //~ ERROR GTI-S2067 mutable enum
+    case Data::none: return 0;
+  }
+}
+// --- step 3
+enum class Data { some(int32_t item), none };
+int main() {
+  mut Data input = Data::some(3);
+  switch (input) {
+    case Data::some(mut auto& item): item = 7; return item;
+    case Data::none: return 0;
+  }
+}

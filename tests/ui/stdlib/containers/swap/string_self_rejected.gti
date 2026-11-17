@@ -1,0 +1,10 @@
+// A string cannot swap with itself.
+//@ check-fail
+import std.string;
+int main() {
+mut std::string a = std::string();
+mut std::string b = std::string();
+
+a.swap(a);  //~ ERROR GTI-S2017
+return 0;
+}

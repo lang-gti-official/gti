@@ -1,0 +1,15 @@
+// Phase3: an unrelated owner is rejected and a derived owner accepted.
+import std.meta;
+struct First { int32_t payload = int32_t(1);  public: First() = default; };
+struct Second { double payload = 2.0d;  public: Second() = default; };
+class Base { public: int32_t payload = int32_t(3);  public: Base() = default; };
+class Derived : public Base { public: int32_t other = int32_t(4);  public: Derived() = default; };
+int main() {
+  std::meta::field<First, 0> field{};
+  Second other{};
+  auto wrong = field.get(other);  //~ ERROR GTI-S2003
+  std::meta::field<Base, 0> base{};
+  Derived derived{};
+  auto fine = base.get(derived);
+  return 0;
+}

@@ -1,0 +1,7 @@
+// Analyze: disjunction uses the same typed capability graph.
+//@ check-pass
+[[unsafe_transfer(std::transferable<T> || std::shareable<T>)]]
+class Either<T> { public: Either() {} ~Either() {} };
+[[no_transfer]] struct ReadOnly {};
+void send<std::transferable T>(T value) {}
+int main() { send(Either<ReadOnly>()); return 0; }

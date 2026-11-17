@@ -1,0 +1,4 @@
+// Ordered input protection: stabilized shared inputs permit later shared reads.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1; int modify() { value = 2; return 3; } int read(int& input, int copied) { return input + copied; } int main() { return read(value, value); }

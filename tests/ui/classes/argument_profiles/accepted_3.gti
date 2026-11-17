@@ -1,0 +1,21 @@
+// Accepted: argument profile is a valid source class.
+//@ check-pass
+import std.meta;
+class Reply<T, E> {
+public:
+  Reply() {}
+  int kind() { return 1; }
+};
+class Reply<void, E> {
+public:
+  Reply() {}
+  int kind() { return 2; }
+};
+Reply<std::meta::callable_return_type<F>, int> invoke<F>(F& callback) {
+  callback();
+  return Reply<std::meta::callable_return_type<F>, int>();
+}
+int main() {
+  auto empty = []() -> void {};
+  return invoke(empty).kind() - 2;
+}

@@ -1,0 +1,32 @@
+// Typed result pipeline: typed result tasks should retain exact semantic, HIR, and MIR contracts.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.thread;
+
+class result_task {
+  int32_t value;
+public:
+  result_task(int32_t value) : value(value) {}
+  int32_t operator()() && { return this.value; }
+};
+
+int main() {
+  mut std::thread_result<int32_t> first =
+      std::thread_result<int32_t>();
+  auto first_started = first.start(result_task(42));
+  if (!first_started.has_value()) { return 1; }
+
+  auto first_joined = first.join();
+  if (!first_joined.has_value()) { return 2; }
+
+  auto restarted = first.start([]() -> int32_t { return 9; });
+  if (!restarted.has_value()) { return 3; }
+  auto rejoined = first.join();
+  if (!rejoined.has_value()) { return 4; }
+
+  mut std::thread_result<int32_t> abandoned =
+      std::thread_result<int32_t>();
+  auto abandoned_started = abandoned.start(result_task(7));
+  if (!abandoned_started.has_value()) { return 5; }
+  return 0;
+}

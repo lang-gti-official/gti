@@ -1,0 +1,44 @@
+// Conditional borrow/owner fields preserve successful and failed construction cleanup.
+//@ run-pass
+//@ revisions: default fail
+//@[default] stdout: 7
+//@[default] stdout: 9
+//@[fail] run-fail
+//@[fail] args: fail
+//@[fail] exit-code: 70
+//@[fail] stdout: 7
+//@[fail] stdout: 9
+//@[fail] stderr-contains: borrowed_enum_field_cleanup.gti:22: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- borrowed_enum_field_cleanup.gti
+import std.memory;
+import std.string;
+import std.vector;
+
+class Resource {
+  int identity;
+public:
+  Resource(int identity) : identity(identity) {}
+  ~Resource() { std::println(this.identity); }
+};
+
+enum State {
+  borrowed(int& value, int checked),
+  owned(std::unique_ptr<Resource> value, int checked)
+};
+class Envelope {
+  mut State state;
+public:
+  Envelope(int& value, int divisor)
+      : state(State::borrowed(value, 12 / divisor)) {}
+  Envelope(std::unique_ptr<Resource> value, int divisor)
+      : state(State::owned(std::move(value), 12 / divisor)) {}
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  Resource guard{9};
+  int owner = 42;
+  auto borrowed = Envelope(owner, 1);
+  int divisor = argc == 2 ? 0 : 1;
+  auto owned = Envelope(std::make_unique<Resource>(7), divisor);
+  return 0;
+}

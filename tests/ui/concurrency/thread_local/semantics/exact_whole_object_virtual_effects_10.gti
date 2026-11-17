@@ -1,0 +1,14 @@
+// Exact whole object virtual effects: an exact readonly virtual operator still closes its actual hidden persistent mutation rather than promising effect freedom.
+//@ require-function-definitions
+mut int guarded = 1; mut int other = 2;
+void change() { guarded = 9; }
+class BaseCall { public: virtual int operator()() { return 1; }  public: BaseCall() = default; };
+class ReaderCall : public BaseCall {
+public:
+  int operator()() override { change(); return 2; }
+public:
+  ReaderCall() = default;
+};
+
+ReaderCall callable{};
+int main() { int& held = guarded; return callable() + held; }  //~ ERROR GTI-S2045

@@ -1,0 +1,3 @@
+// Reference substitutions and empty alternatives: concrete reference substitutions and proven empty alternatives retain complete typed dependencies.
+//@ check-pass
+enum class Event<T> { item(T& value) };

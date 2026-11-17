@@ -1,0 +1,2 @@
+// Boundaries: unsafe does not allow a checked reference to a dead local.
+int& bad() { int x = 1; return unsafe { x }; } int main() { return 0; }  //~ ERROR GTI-S2017

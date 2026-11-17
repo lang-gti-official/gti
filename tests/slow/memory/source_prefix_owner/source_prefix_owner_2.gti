@@ -1,0 +1,6 @@
+// Source prefix owner: the program is accepted.
+//@ check-pass
+//@ slow
+import std.string;
+import std.vector;
+int main(int argc, std::vector<std::string> argv) { return argc; }

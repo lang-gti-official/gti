@@ -1,0 +1,16 @@
+// Class payload enums: a generic argument alone must not invent a stored ownership edge.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class shell<T> {
+public:
+  shell() {}
+};
+int main() {
+  shell<holder> wrapped = shell<holder>();
+  return 0;
+}

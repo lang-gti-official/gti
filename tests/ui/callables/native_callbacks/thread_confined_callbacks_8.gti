@@ -1,0 +1,2 @@
+// Thread confined callbacks: invalid confinement contract gets source diagnostic: class C { public: [[thread_confined_callback]] static void f() {}  public: C() = default; };.
+class C { public: [[thread_confined_callback]] static void f() {}  public: C() = default; };  //~ ERROR GTI-S2099

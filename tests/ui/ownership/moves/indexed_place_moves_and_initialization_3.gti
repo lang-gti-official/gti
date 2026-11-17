@@ -1,0 +1,8 @@
+// Indexed place moves and initialization: whole-array movement should be rejected while one constant element is moved.
+struct Record { int value; Record(int initial) : value(initial) {} };
+int main() {
+  mut Record values[2] = {Record(1), Record(2)};
+  Record consumed = std::move(values[0]);
+  Record moved[2] = std::move(values);  //~ ERROR GTI-S2018
+  return consumed.value + moved[1].value;
+}

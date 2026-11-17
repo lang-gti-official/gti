@@ -1,0 +1,10 @@
+// Produced results: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+int global = 7;
+int main() {
+  const int* pointer = source();
+  unsafe { int& value = std::assume_ref(pointer, global); return value; }
+}
+const int* source() { return &global; }

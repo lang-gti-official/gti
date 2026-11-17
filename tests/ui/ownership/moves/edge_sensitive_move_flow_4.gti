@@ -1,0 +1,28 @@
+// Edge sensitive move flow: a value reinitialized on every reachable backedge should remain available for the next iteration.
+//@ check-pass
+struct Record { int32_t value = 7;  public: Record() = default; };
+
+int main() {
+  mut Record while_value = Record();
+  mut int32_t while_index = 0;
+  while (while_index < 2) {
+    Record consumed = std::move(while_value);
+    while_value = Record();
+    while_index++;
+  }
+
+  mut Record do_value = Record();
+  mut int32_t do_index = 0;
+  do {
+    Record consumed = std::move(do_value);
+    do_value = Record();
+    do_index++;
+  } while (do_index < 2);
+
+  mut Record for_value = Record();
+  for (mut int32_t index = 0; index < 2; index++) {
+    Record consumed = std::move(for_value);
+    for_value = Record();
+  }
+  return 0;
+}

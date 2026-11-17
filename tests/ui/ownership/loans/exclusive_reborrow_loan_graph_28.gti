@@ -1,0 +1,9 @@
+// Exclusive reborrow loan graph: a mutable parent should remain suspended until its child endpoint.
+int main() {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  parent += 1;  //~ ERROR GTI-S2017
+  child += 1;
+  return value;
+}

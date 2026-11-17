@@ -1,0 +1,27 @@
+// A user formatter specialization makes a type formattable; a non-`mut`
+// output parameter breaks the contract. (From extensible_formatting_lsp_test.py.)
+import std.format;
+import std.string;
+struct AssetId { AssetId() = default; uint64_t value = uint64_t(42); };
+class std::formatter<AssetId> {
+public:
+  formatter() = default;
+  expected<void, std::format_errc> format(AssetId& value, mut std::string& output, std::format_spec& spec) {
+    std::formatter<uint64_t> numeric{};
+    return numeric.format(value.value, output, spec);
+  }
+};
+int main() { AssetId id{}; std::runtime_println("{}", /* 😀 */ id); return 0; }
+// --- step 2
+import std.format;
+import std.string;
+struct AssetId { AssetId() = default; uint64_t value = uint64_t(42); };
+class std::formatter<AssetId> {
+public:
+  formatter() = default;
+  expected<void, std::format_errc> format(AssetId& value, std::string& output, std::format_spec& spec) {
+    std::formatter<uint64_t> numeric{};
+    return numeric.format(value.value, output, spec);  //~ ERROR GTI-S2017
+  }
+};
+int main() { AssetId id{}; std::runtime_println("{}", /* 😀 */ id); return 0; }  //~ ERROR GTI-S2029

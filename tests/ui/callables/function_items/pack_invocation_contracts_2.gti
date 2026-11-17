@@ -1,0 +1,4 @@
+// Pack invocation contracts: an unconstrained pack does not guess an overload or erase unsafe.
+unsafe void work() {}
+void accept<Values...>(Values... values) {}
+int main() { accept(1, work); return 0; }  //~ ERROR GTI-S2090

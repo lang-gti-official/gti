@@ -1,0 +1,12 @@
+// A max_element cursor keeps the map borrowed across clear().
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+using Entry = std::map<int, int>::value_type; int main() { mut std::map<int, int> x{}; x.insert(1, 2); auto best = std::max_element(x.begin(), x.end(), [](Entry& a, Entry& b) -> bool { return a.second < b.second; }); x.clear(); return (*best).second; }  //~ ERROR GTI-S2017

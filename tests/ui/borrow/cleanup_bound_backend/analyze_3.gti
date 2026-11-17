@@ -1,0 +1,25 @@
+// Analyze: concrete nonassignable generic guard control compiles.
+//@ check-pass
+import std.utility;
+mut int observed = 0;
+struct Resource { int value = 7;  public: Resource() = default; };
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed = this.resource.value; }
+  Resource& read() { return this.resource; }
+};
+
+class ReadView {
+  int& item;
+public:
+  ReadView(int& item) : item(item) {}
+};
+class GenericGuard<T> {
+  T item;
+public:
+  GenericGuard(T item) : item(std::move(item)) {}
+  ~GenericGuard() { observed = 1; }
+};
+int main() { int value = 7; GenericGuard<ReadView> guard{ReadView(value)}; return 0; }

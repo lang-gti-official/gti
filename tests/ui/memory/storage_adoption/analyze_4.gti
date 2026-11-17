@@ -1,0 +1,14 @@
+// Analyze: one unsafe resource binding enables safe source-defined storage.
+//@ check-pass
+import std.resource;
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_storage<int, std::process_resource> slots{resource};
+  auto allocated = slots.try_allocate(std::size_t(1));
+  if (!allocated) { return 1; }
+  slots.emplace(std::size_t(0), 42);
+  return slots.get(std::size_t(0)) - 42;
+}
+int main() {
+  std::process_resource resource{};
+  unsafe { return use(std::bind_resource(resource)); }
+}

@@ -1,0 +1,4 @@
+// General requires: exact result mismatch diagnostic.
+concept adds_bool<T> = requires(T& left, T& right) { { left + right } -> bool; };
+int use<T>(T& value) requires adds_bool<T> { return 0; }
+int main() { int value = 1; return use(value); }  //~ ERROR GTI-S2029

@@ -1,0 +1,14 @@
+// Raw accesses: reseating a raw pointer replaces its provenance.
+//@ check-pass
+//@ raw-pointer-audit: warn
+int main() {
+  mut int value = 7;
+  mut int other = 1;
+  unsafe {
+    mut int* pointer = &value;
+    int& loan = value;
+    pointer = &other;
+    *pointer = 9;
+    return loan;
+  }
+}

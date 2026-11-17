@@ -1,0 +1,7 @@
+// Sleep: safe sleep and in-place retry need no concurrent profile or thread-creation capability.
+//@ check-pass
+import std.cthread;
+int main() {
+  mut std::timespec duration = std::timespec();
+  return std::thrd_sleep(duration, duration);
+}

@@ -1,0 +1,13 @@
+// Raw memory text reads: an owner-dependent C string still cannot escape beside a raw read.
+import std.string;
+c_string leak(c_string* items) {
+  std::string owner{"local"};
+  unsafe {
+    c_string* next = items + 1;
+    if (*next != nullptr) {
+      return *next;
+    }
+  }
+  return owner.c_string();  //~ ERROR GTI-S2045
+}
+int main() { mut c_string slots[2] = {nullptr, nullptr}; return leak(&slots[0]) == nullptr ? 1 : 0; }

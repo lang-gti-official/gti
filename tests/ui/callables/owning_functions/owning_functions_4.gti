@@ -1,0 +1,8 @@
+// Owning functions: a read-only signature cannot provide mutable callback arguments.
+import std.functional;
+struct MutableTarget { void operator()(mut int& value) { value++; }  public: MutableTarget() = default; };
+int main() {
+  MutableTarget callable{};
+  std::function<void(int&)> callback{std::move(callable)};  //~ ERROR GTI-S2022 //~ ERROR GTI-S2000
+  return 0;
+}

@@ -1,0 +1,10 @@
+// Execution cancellation: cancellation fixture lowers to verified MIR.
+//@ check-pass
+// --- main.gti
+
+struct Tokens {}; struct Expression { Expression(){} }; struct Span {}; struct Binding {};
+int anchor(Tokens t, Expression e, Span s, Binding b){return 0;}
+Expression spinning(Tokens input){mut bool running=true; while(running){} return Expression();}  //~ WARN GTI-S2096
+int main(){return 0;}
+// --- library.gti
+export module library;

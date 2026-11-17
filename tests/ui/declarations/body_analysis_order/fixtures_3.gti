@@ -1,0 +1,27 @@
+// Fixtures: a later callee sees a global declared before it.
+//@ check-pass
+import std.iterator;
+import std.list;
+
+int main() {
+  std::list<int> priorities = {2, 4, 4, 9};
+  int urgent = 9;
+  auto found = my_find(priorities.begin(), priorities.end(), urgent);
+  return found != priorities.end() ? 0 : 1;
+}
+constexpr int limit = 9;
+Iterator my_find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                        T& value)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::equality_comparable<T> {
+  while (first != last) {
+    if (*first == value) {
+      break;
+    }
+    ++first;
+  }
+  if (limit > 0) { return std::move(first); }
+  return std::move(first);
+}

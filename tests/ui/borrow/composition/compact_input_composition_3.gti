@@ -1,0 +1,21 @@
+// Compact input composition: composing compact inputs preserves each exact external identity.
+//@ check-pass
+struct Reading {
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+struct Readings {
+  Reading first;
+  Reading second;
+  Readings(Reading left, Reading right) : first(left), second(right) {}
+};
+Readings<a> combine<lifetime a>(Reading<a> left, Reading<a> right) { return Readings(left, right); }
+Readings<a> reverse<lifetime a>(Reading<a> left, Reading<a> right) { return Readings(right, left); }
+int main() {
+  int a = 17; int b = 25;
+  Reading left{a}; Reading right{b};
+  auto combined = combine(left, right);
+  auto reversed = reverse(left, right);
+  auto repeated = combine(left, left);
+  return combined.first.value + reversed.first.value + repeated.second.value - 59;
+}

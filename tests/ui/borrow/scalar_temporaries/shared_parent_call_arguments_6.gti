@@ -1,0 +1,2 @@
+// Shared parent call arguments: parent read remains forbidden beside an exclusive child.
+int read(int& value) { return value; } void keep(int& value) {} void write(mut int& value) { value += 1; } int main() { mut int owner = 1; mut int& parent = owner; mut int& child = parent; keep(parent); write(child); return 0; }  //~ ERROR GTI-S2017

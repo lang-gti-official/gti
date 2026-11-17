@@ -1,0 +1,20 @@
+manifest-version = 1
+[package]
+name = "namespace-consumer"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-namespaces"
+target = "geometry"
+path = "dependencies/geometry.gtilib"
+interface = "api/geometry.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-namespaces"
+target = "telemetry"
+path = "dependencies/telemetry.gtilib"
+interface = "api/telemetry.gti"
+
+[profiles.release]
+optimization = 0

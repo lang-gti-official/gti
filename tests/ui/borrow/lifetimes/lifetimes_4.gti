@@ -1,0 +1,9 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Number {
+  int value;
+  Number(int input) : value(input) {}
+  int operator+(uint8_t other) { return value + int(other); }
+};
+int main() { Number number{5}; return number + 2 - 7; }

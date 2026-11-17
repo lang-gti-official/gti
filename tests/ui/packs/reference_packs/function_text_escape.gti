@@ -1,0 +1,17 @@
+// A holder returned beside a reference pack cannot keep a parameter's text view.
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+
+import std.string;
+struct Holder {
+  std::string_view value;
+  Holder(std::string_view text) : value(text) {}
+};
+Holder observe<Args...>(std::string_view text, Args&... args) { return Holder(text); }
+Holder escape() { std::string text = "owner"; int n = 1; return observe(text.view(), n); }  //~ ERROR GTI-S2045
+int main() { auto holder = escape(); return 0; }

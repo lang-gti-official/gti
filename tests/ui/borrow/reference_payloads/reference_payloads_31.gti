@@ -1,0 +1,17 @@
+// Reference payloads: rejected with GTI-S2003.
+//@ analyze-fail
+class carrier {
+  int32_t& source;
+public:
+  carrier(int32_t& value) : source(value) {}
+};
+enum holder { one(carrier value), none };
+
+int main() {
+  int32_t backing = 3;
+  carrier value = carrier(backing);
+  mut holder first = holder::one(value);
+  holder second = holder::one(value);
+  first = second;  //~ ERROR GTI-S2003
+  return 0;
+}

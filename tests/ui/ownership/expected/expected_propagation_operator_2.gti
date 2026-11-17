@@ -1,0 +1,16 @@
+// Expected propagation operator: a propagation boundary repeated by a loop should remain exclusive within each dynamic full-expression evaluation.
+//@ check-pass
+enum class parse_errc { bad_digit };
+expected<int32_t, parse_errc> digit_value(int32_t value) {
+  if (value < 0) { return unexpected(parse_errc::bad_digit); }
+  return value;
+}
+expected<int32_t, parse_errc> sum_three() {
+  mut int32_t total = 0;
+  for (mut int32_t index = 0; index < 3; index++) {
+    int32_t digit = ?digit_value(index);
+    total = total + digit;
+  }
+  return total;
+}
+int main() { return sum_three().value() - 3; }

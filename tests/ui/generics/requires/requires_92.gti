@@ -1,0 +1,7 @@
+// General requires: alternative requirements cannot invent a shared operation diagnostic.
+concept first<T> = requires(T& value) { { value + value } -> int; };
+concept second<T> = requires(T& value) { { value - value } -> bool; };
+int broken<T>(T& value) requires first<T> || second<T> {
+  return value + value;  //~ ERROR GTI-S2004
+}
+int main() { int value = 1; return broken(value); }

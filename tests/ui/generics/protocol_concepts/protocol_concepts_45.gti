@@ -1,0 +1,29 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept keyed<T> {
+  typename key_type;
+  typename value_type;
+  key_type key(T& entry);
+  value_type value(T& entry);
+};
+class Entry<A, B> {
+public:
+  A first;
+  B second;
+  Entry(A one, B two) : first(one), second(two) {}
+};
+for <V, K> concept keyed<Entry<K, V>> {
+  using key_type = K;
+  using value_type = V;
+  K key(Entry<K, V>& entry) { return entry.first; }
+  V value(Entry<K, V>& entry) { return entry.second; }
+};
+keyed<T>::value_type lookup<T>(T& entry) requires keyed<T> {
+  return keyed<T>::value(entry);
+}
+int main() {
+  Entry<int, bool> entry{4, true};
+  keyed<Entry<int, bool>>::key_type key = keyed<Entry<int, bool>>::key(entry);
+  bool value = lookup(entry);
+  return value ? key - 4 : 1;
+}

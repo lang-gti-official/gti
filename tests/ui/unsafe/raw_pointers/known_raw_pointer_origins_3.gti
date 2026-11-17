@@ -1,0 +1,13 @@
+// Known raw pointer origins: raw addresses do not retain loans and reseating replaces old provenance.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() {
+  int alive = 7;
+  mut const int* pointer = nullptr;
+  unsafe {
+    { int gone = 42; pointer = &gone; }
+    const int* unused_old_address = pointer;
+    pointer = &alive;
+    return *pointer;
+  }
+}

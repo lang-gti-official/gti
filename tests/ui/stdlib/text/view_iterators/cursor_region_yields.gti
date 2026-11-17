@@ -1,0 +1,44 @@
+// Cursor region yields: cursor-region yields verify by value and by reference.
+//@ check-pass
+struct Readings {
+  mut int values[4];
+  Readings() : values({3, 1, 4, 1}) {}
+};
+class window<lifetime w> {
+  Readings&<w> source;
+  uint64_t first;
+public:
+  window(Readings&<w> source, uint64_t first) : source(source), first(first) {}
+  int value() { return this.source.values[this.first]; }
+};
+class window_end { public: window_end() = default; };
+class window_cursor<lifetime owner> {
+  Readings&<owner> source;
+  mut uint64_t first;
+public:
+  window_cursor(Readings&<owner> source) : source(source), first(0) {}
+  window<owner> operator*() { return window(this.source, this.first); }
+  void operator++() mut { this.first = this.first + uint64_t(1); }
+  bool operator!=(window_end end) { return this.first < uint64_t(4); }
+};
+class windows<lifetime owner> {
+  Readings&<owner> source;
+public:
+  windows(Readings&<owner> source) : source(source) {}
+  window_cursor<owner> begin() { return window_cursor(this.source); }
+  window_end end() { return window_end(); }
+};
+int by_value(Readings& readings) {
+  mut int sum = 0;
+  for (auto part : windows(readings)) sum += part.value();
+  return sum;
+}
+int by_reference(Readings& readings) {
+  mut int sum = 0;
+  for (auto& part : windows(readings)) sum += part.value();
+  return sum;
+}
+int main() {
+  Readings readings{};
+  return by_value(readings) == by_reference(readings) ? 0 : 1;
+}

@@ -1,0 +1,25 @@
+// Receiver capture tests: the program is accepted.
+//@ check-pass
+class Counter {
+  mut int value = 4;
+public:
+  Counter() = default;
+  int read() { return this.value; }
+  int shared() {
+    auto callback = [&this]() -> int { return this.read(); };
+    auto copy = callback;
+    return copy();
+  }
+  int exclusive() mut {
+    mut auto callback = [mut &this]() -> int { this.value += 1; return this.value; };
+    int result = callback();
+    this.value += 1;
+    return result;
+  }
+};
+int main() {
+  mut Counter counter{};
+  if (counter.shared() != 4) return 1;
+  if (counter.exclusive() != 5) return 2;
+  return counter.read() - 6;
+}

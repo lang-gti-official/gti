@@ -1,0 +1,3 @@
+// Stored callables: ownership assertions require one class/struct declaration.
+[[unsafe_owned]] interface Invalid {};  //~ ERROR GTI-S2059
+int main() { return 0; }

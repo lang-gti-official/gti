@@ -1,0 +1,7 @@
+// Optional compiler contract: optional copies should fail closed before lowering.
+import std.optional;
+int main() {
+  std::optional<int32_t> source{int32_t(1)};
+  std::optional<int32_t> copied = source;  //~ ERROR GTI-S2003
+  return copied.value();
+}

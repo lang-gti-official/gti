@@ -1,0 +1,7 @@
+// Explicit fallback: dynamic fallback must fail even when exact expression text is available.
+import std.source_location;
+std::string_view dynamic() { return "dynamic"; }
+int main() {
+  std::string_view text = std::expression_text!(1, dynamic());  //~ ERROR GTI-S2019
+  return 0;
+}

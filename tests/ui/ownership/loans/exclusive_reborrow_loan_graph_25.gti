@@ -1,0 +1,7 @@
+// Exclusive reborrow loan graph: one call should not create overlapping shared and mutable access to the same place.
+void collide(int& observed, mut int& changed) { changed += observed; }
+int main() {
+  mut int value = 1;
+  collide(value, value);  //~ ERROR GTI-S2017
+  return value;
+}

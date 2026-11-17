@@ -1,0 +1,4 @@
+// Explicit invocation: applying the migration fix compiles.
+//@ check-pass
+#macro T identity<T>(T value) { return value; }
+int main() { return identity<int> /* gap */ !(7); }

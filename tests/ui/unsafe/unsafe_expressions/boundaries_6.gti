@@ -1,0 +1,2 @@
+// Boundaries: trailing semicolon is not a value.
+int main() { return unsafe { 1; }; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001

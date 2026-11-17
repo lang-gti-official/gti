@@ -1,0 +1,4 @@
+// a < b > c is a comparison chain, not a concept application.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+int main() { int a=1; int b=2; int c=3; bool comparison = a < b > +c; return 0; }  //~ ERROR GTI-S2004 Operator '>'

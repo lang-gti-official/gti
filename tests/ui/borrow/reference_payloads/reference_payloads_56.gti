@@ -1,0 +1,10 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+enum Reading { empty, item(int& value) };
+int inspect(Reading input) {
+  switch (input) {
+  case Reading::item(value): { int& same = value; return same; }
+  case Reading::empty: return 0;
+  }
+}
+int main() { int owner = 1; return inspect(Reading::item(owner)); }

@@ -1,0 +1,61 @@
+// A lambda's view over captured text is used locally and keeps the owner borrowed.
+//@ run-pass
+//@ stdout: dynamic
+//@ stdout: dynamic
+//@ stdout: dynamic
+//@ stdout: dynamic!
+//@ stdout: dynamic!
+//@ stdout: kept
+//@ stdout: fixed
+//@ stdout: literal
+import std.string;
+// A lambda's view over its captured text keeps the captured view's owner
+// borrowed for each use, as the view itself does: callers use it in an
+// expression, a local binding or a copy of one, a call that only reads or
+// relays it, and another lambda over the closure, and may change the owner
+// once the last of those uses is done.
+class Printer {
+public:
+  mut int printed;
+  Printer() : printed(0) {}
+  void show<F>(F view) mut {
+    std::string_view shown = view();
+    std::println(shown);
+    this.printed += 1;
+  }
+};
+uint64_t measure(std::string_view text) { return text.size(); }
+std::string_view same(std::string_view text) { return text; }
+std::string_view keepLocal(std::string_view text) {
+  auto keep = [text]() -> std::string_view { return text; };
+  std::string_view held = keep();
+  std::println(held);
+  return "kept";
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  auto captured = [view]() -> std::string_view { return view; };
+  std::println(captured());
+  std::string_view bound = captured();
+  std::string_view copied = bound;
+  std::println(same(captured()));
+  auto again = captured;
+  auto nested = [again]() -> std::string_view { return again(); };
+  mut Printer printer{};
+  printer.show(nested);
+  uint64_t size = measure(copied);
+  owner.append("!");
+  std::println(owner.view());
+  std::println(keepLocal(owner.view()));
+  std::string_view fixedText = "fixed";
+  auto fixed = [fixedText]() -> std::string_view { return fixedText; };
+  mut std::string_view reassigned = "";
+  reassigned = fixed();
+  auto literal = []() -> std::string_view { return "literal"; };
+  kept = literal();
+  std::println(reassigned);
+  std::println(kept);
+  return size == uint64_t(7) && printer.printed == 1 ? 0 : 1;
+}

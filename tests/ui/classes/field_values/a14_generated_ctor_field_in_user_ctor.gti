@@ -1,0 +1,20 @@
+// A user constructor initialises a field with a generated constructor.
+//@ run-pass
+// A14: a constructor-less struct field initialized in a class with a user constructor ICEs.
+struct Value {
+  mut int number = 0;
+public:
+  Value() = default;
+};
+
+class Handle {
+  mut Value object = Value();
+
+public:
+  Handle() {}
+};
+
+int main() {
+  Handle h = Handle();
+  return 0;
+}

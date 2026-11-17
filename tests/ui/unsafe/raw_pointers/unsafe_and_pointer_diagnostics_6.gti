@@ -1,0 +1,7 @@
+// Unsafe and pointer diagnostics: a generic field declared with a pointer type keeps the rule.
+class Slot<T> {
+  mut T* stored;  //~ ERROR GTI-S2056
+public:
+  Slot(T* stored) : stored(stored) {}
+};
+int main() { return 0; }

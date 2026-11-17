@@ -1,0 +1,5 @@
+// Rejects: a retained element borrow prevents consuming the vector.
+import std.vector; int main() { mut std::vector<int> values{};
+    values.emplace_back(1); auto& reference = values.front();
+    for (auto value : std::move(values).into_range()) { std::println(reference); }  //~ ERROR GTI-S2017
+    return 0; }

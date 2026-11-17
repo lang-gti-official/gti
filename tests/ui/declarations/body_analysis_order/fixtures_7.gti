@@ -1,0 +1,8 @@
+// Fixtures: a constexpr definition declared earlier is available.
+//@ check-pass
+import std.iterator;
+import std.list;
+
+constexpr int answer() { return 42; }
+static_assert(answer() == 42, "earlier");
+int main() { return 0; }

@@ -1,0 +1,4 @@
+// Importing std.mutex without using it builds natively under the single-threaded profile.
+//@ build-pass
+import std.mutex;
+int main() { return 0; }

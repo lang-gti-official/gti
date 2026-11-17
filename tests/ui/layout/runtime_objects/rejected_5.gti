@@ -1,0 +1,3 @@
+// Rejected: application cannot forge the compiler-owned eligibility concept.
+@compiler_constraint("object_layout") concept fake<T>;  //~ ERROR GTI-S2049
+int main() { return 0; }

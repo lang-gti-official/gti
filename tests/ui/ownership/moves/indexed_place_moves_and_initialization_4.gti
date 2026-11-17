@@ -1,0 +1,8 @@
+// Indexed place moves and initialization: dynamic indexes should diagnose their exact bracket while preserving later declarations and disabling code generation.
+int main() {
+  mut int values[2] = {1, 2};
+  mut int index = 0;
+  int consumed = std::move(values[index]);  //~ ERROR GTI-S2018
+  return consumed;
+}
+int after() { return 0; }

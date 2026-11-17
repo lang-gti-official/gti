@@ -1,0 +1,8 @@
+// S: repeated closure construction cannot consume one owner twice.
+import std.memory;
+#macro twice<F>(F callback) { callback(); callback(); }
+int main() {
+  auto owner = std::make_unique<int>(7);
+  twice!([owned = std::move(owner)]() -> void { int value = *owned; });  //~ ERROR GTI-S2018
+  return 0;
+}

@@ -1,0 +1,34 @@
+// Generated declaration context: generated local type uses definition imports and namespace, not caller span.
+//@ check-pass
+// --- main.gti
+import "library.gti"; struct State {std::string_view answer="caller";}; int main(){int saved=7;return library_detail::state!({})-42;}
+// --- library.gti
+
+export module library;
+import std.syntax;
+namespace library_detail {
+struct State { int answer; State() : answer(42) {} };
+export #macro(proc) std::syntax::expr state(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+  auto binding = std::syntax::reference(std::syntax::fresh("saved", origin));
+  mut auto result = std::syntax::punctuation("[", origin);
+result=std::syntax::join(result,std::syntax::punctuation("]",origin));
+result=std::syntax::join(result,std::syntax::punctuation("(",origin));
+result=std::syntax::join(result,std::syntax::punctuation(")",origin));
+result=std::syntax::join(result,std::syntax::punctuation("->",origin));
+result=std::syntax::join(result,std::syntax::keyword("int",origin));
+result=std::syntax::join(result,std::syntax::punctuation("{",origin));
+result=std::syntax::join(result,std::syntax::identifier("State",origin));
+result=std::syntax::join(result,binding);
+result=std::syntax::join(result,std::syntax::punctuation("{",origin));
+result=std::syntax::join(result,std::syntax::punctuation("}",origin));
+result=std::syntax::join(result,std::syntax::punctuation(";",origin));
+result=std::syntax::join(result,std::syntax::keyword("return",origin));
+result=std::syntax::join(result,binding);
+result=std::syntax::join(result,std::syntax::punctuation(".",origin));
+result=std::syntax::join(result,std::syntax::identifier("answer",origin));
+result=std::syntax::join(result,std::syntax::punctuation(";",origin));
+result=std::syntax::join(result,std::syntax::punctuation("}",origin));
+result=std::syntax::join(result,std::syntax::punctuation("(",origin));
+result=std::syntax::join(result,std::syntax::punctuation(")",origin));
+return std::syntax::parse(result); } }

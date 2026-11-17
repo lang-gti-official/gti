@@ -1,0 +1,19 @@
+// Semantic rejections: nontransfer-thread-result.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+class local_result {
+  int32_t value;
+public:
+  local_result(int32_t value) : value(value) {}
+  local_result(local_result& other) = delete;
+  local_result(local_result&& other) = default;
+  ~local_result() {}
+};
+int main() {
+  mut std::thread_result<local_result> worker =
+      std::thread_result<local_result>();
+  auto started = worker.start([]() -> local_result {  //~ ERROR GTI-S2084
+    return local_result(1);
+  });
+  return 0;
+}

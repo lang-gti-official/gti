@@ -1,0 +1,19 @@
+// Requirement probe isolation: a requires probe inside a live caller expression preserves that expression's real temporary cleanup.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+bool with_flag(Cleanup& input, bool flag) { return flag; }
+
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    bool checked = requires { { inspect(Cleanup()) } -> bool; };
+    return checked ? first + second + third : 0;
+  } else {
+bool seen = with_flag(Cleanup(), requires { { inspect(Cleanup()) } -> bool; }); return seen ? 1 : 0; } }int main() { int& borrowed = value; int first = selected<0>(); int second = selected<1>(); return borrowed + first + second; }  //~ ERROR GTI-S2045

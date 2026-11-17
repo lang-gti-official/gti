@@ -1,0 +1,19 @@
+// Safe raw address formation: address formation and inert expired copies/comparisons must be safe and nonowning.
+//@ check-pass
+struct Value { mut int field = 2;  public: Value() = default; };
+int main() {
+  mut int scalar = 1;
+  mut Value object{};
+  mut int array[2] = {3, 4};
+  int* first = &scalar;
+  int* second = &object.field;
+  int* third = &array[1];
+  const int* qualified = first;
+  mut const int* expired = nullptr;
+  { int gone = 5; expired = &gone; }
+  auto inert = expired;
+  bool same = inert == expired;
+  { int& checked = scalar; if (checked != 1) { return 1; } }
+  unsafe { *first = 2; }
+  return same && qualified != nullptr && second != third ? 0 : 1;
+}

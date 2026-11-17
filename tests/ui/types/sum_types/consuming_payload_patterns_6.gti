@@ -1,0 +1,25 @@
+// Consuming payload patterns: a named subject is observed, so a move-only binding stays rejected with a hint to consume the enum.
+class resource {
+  int32_t id;
+public:
+  resource(int32_t value) : id(value) {}
+  ~resource() {}
+  int32_t read() { return this.id; }
+};
+enum class data {
+  empty,
+  some(resource item),
+  pair(resource left, resource right),
+  mixed(resource item, int32_t code),
+};
+data make(int32_t id) { return data::some(resource(id)); }
+
+int main() {
+  data value = make(1);
+  switch (value) {
+  case data::some(item):  //~ ERROR GTI-S2067
+    return item.read();  //~ ERROR GTI-S2001
+  default:
+    return 0;
+  }
+}

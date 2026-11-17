@@ -1,0 +1,7 @@
+// Negatives: backedge retains contradictory pointee remains advisory with audit Warn.
+//@ check-pass
+//@ raw-pointer-audit: warn
+using E = void*; using P = int*;
+int main() { mut int a = 0; mut uint64_t b = 0; mut E e = E(&a);
+for (mut int i = 0; i < 2; i++) { P p = P(e); e = E(&b); }  //~ WARN GTI-S2102
+return 0; }

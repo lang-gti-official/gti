@@ -1,0 +1,7 @@
+// Raw produced call origins: unresolved lambda and borrowed-storage source outputs must not become foreign pointers.
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+class Carrier { public: Address& value; Carrier(Address& source) : value(source) {} };
+const int* source(Carrier& input) { return input.value.pointer; }
+int main() { mut Address address{}; { int gone = 1; address.pointer = &gone; }
+  Carrier carrier{address}; auto pointer = source(carrier); unsafe { return *pointer; } }  //~ ERROR GTI-S2103

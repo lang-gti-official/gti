@@ -1,0 +1,8 @@
+// A bare return through a failing generic implicit consteval constructor is rejected.
+//@ check-fail
+struct Port<uint64_t N> {
+  int value;
+  implicit consteval Port() : value(100 / int(N)) {}
+};
+Port<N> make<uint64_t N>() { return; }  //~ ERROR GTI-S2057
+int main() { return make<0>().value; }

@@ -1,0 +1,15 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+import std.string;
+class Base {
+  std::string name;
+public:
+  Base(std::string_view text) : name(std::string(text)) {}
+  ~Base() {}
+};
+class Derived : public Base {
+public:
+  Derived(std::string_view text) : Base(text) {}
+  ~Derived() {}
+};
+int main() { Derived b = Derived("other"); return 0; }

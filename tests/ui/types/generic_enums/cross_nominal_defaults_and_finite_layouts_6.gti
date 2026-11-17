@@ -1,0 +1,3 @@
+// Cross nominal defaults and finite layouts: finite defaults, explicit self arguments and decreasing concrete nominal containment remain valid.
+//@ check-pass
+enum Self<T = Self<int>> { item(int value) }; int main() { auto value = Self<>::item(7); return 0; }

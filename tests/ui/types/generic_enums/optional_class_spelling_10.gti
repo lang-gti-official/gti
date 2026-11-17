@@ -1,0 +1,2 @@
+// Optional class spelling: optional class does not admit unqualified cases, integer conversions or nonexhaustive payload matching.
+enum class E { item(int value) }; int main() { E value = E::item(1); switch (value) { } return 0; }  //~ ERROR GTI-S2067

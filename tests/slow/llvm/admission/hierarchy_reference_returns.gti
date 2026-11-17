@@ -1,0 +1,19 @@
+// Hierarchy reference returns: ordinary source-defined reference returns admit hierarchy views.
+//@ build-pass
+//@ slow
+interface Reader { int read(); };
+class Root { public: virtual int other() { return 0; }  public: Root() = default; };
+class Leaf : public Root, public Reader {
+public:
+  int read() override { return 7; }
+public:
+  Leaf() = default;
+};
+struct Record {
+  mut Leaf leaf{};
+  Reader& view() { return this.leaf; }
+public:
+  Record() = default;
+};
+Reader& forward(Reader& value) { return value; }
+int main() { Record value{}; return forward(value.view()).read(); }

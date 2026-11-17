@@ -1,0 +1,22 @@
+// Initializer local dependencies: namespace TLS initialization permits its own lexical values and fresh-callable results through copied nested-probe contexts.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value!(saved);
+}
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
+}
+
+thread_local int first = local_value!(3);
+thread_local int second = nested_value!(4);
+thread_local int third = local_callback!([]() -> int { return 7; });
+int main() { return first + second + third; }

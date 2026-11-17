@@ -1,0 +1,20 @@
+// Receiver fields: a mutable receiver publishes each exact field permission.
+//@ check-pass
+struct Entry {
+  int& key;
+  mut int& value;
+  Entry(int& k, mut int& v) : key(k), value(v) {}
+};
+class Owner {
+public:
+  mut int key = 1;
+  mut int value = 2;
+  Owner() {}
+  Entry entry() mut { return Entry(this.key, this.value); }
+};
+
+int main() {
+  mut Owner owner{};
+  { mut auto entry = owner.entry(); entry.value = 7; }
+  return owner.value == 7 ? 0 : 1;
+}

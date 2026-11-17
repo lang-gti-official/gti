@@ -1,0 +1,2 @@
+// Unsafe and pointer diagnostics: a pointer-slot reference keeps reference access and unsafe pointee rules: int main() { mut int32_t value = 1; mut int32_t* pointer = &value; int32_t*& alias = pointer; return *alias; }.
+int main() { mut int32_t value = 1; mut int32_t* pointer = &value; int32_t*& alias = pointer; return *alias; }  //~ ERROR GTI-S2055

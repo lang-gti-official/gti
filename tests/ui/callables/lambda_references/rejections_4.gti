@@ -1,0 +1,2 @@
+// Rejections: mutable lambda result spelling requires a checked reference.
+int main() { auto invalid = []() -> mut int* { return 0; }; return 0; }  //~ ERROR GTI-S2030 //~ ERROR GTI-S2003

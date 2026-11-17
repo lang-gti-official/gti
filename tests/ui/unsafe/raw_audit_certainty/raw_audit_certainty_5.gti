@@ -1,0 +1,10 @@
+// Raw audit certainty: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: warn
+//@ no-prelude
+int inspect(bool choice) {
+  int live = 1;
+  mut const int* pointer = nullptr;
+  { int dead = 2; pointer = &dead; }
+const int* copy = pointer; unsafe { return *copy; }}  //~ WARN GTI-S2101
+int main() { return 0; }

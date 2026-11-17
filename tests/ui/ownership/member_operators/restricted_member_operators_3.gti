@@ -1,0 +1,16 @@
+// Restricted member operators: operator use should require mutable access, exact operands, and an explicit contextual conversion.
+class ReadOnlyHandle {
+  int value = 0;
+public:
+  int& operator*() { return this.value; }
+  bool operator==(int other) { return true; }
+public:
+  ReadOnlyHandle() = default;
+};
+int main() {
+  mut ReadOnlyHandle handle = ReadOnlyHandle();
+  *handle = 1;  //~ ERROR GTI-S2002
+  if (handle == nullptr) { return 1; }  //~ ERROR GTI-S2022
+  if (handle) { return 2; }  //~ ERROR GTI-S2022
+  return 0;
+}

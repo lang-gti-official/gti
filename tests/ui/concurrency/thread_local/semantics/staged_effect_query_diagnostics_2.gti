@@ -1,0 +1,14 @@
+// Staged effect query diagnostics: ordinary staged function and constructor providers preserve valid exact type/value requests in either query order.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1;
+constexpr int read<T, uint64_t Width>() {
+  static_assert(sizeof(T) == Width, "staged exact body");
+  return 42;
+}
+
+void check<T, uint64_t Width>() {
+  static_assert(read<T, Width>() == 42, "staged exact value");
+}
+int main() { int& held = guarded; check<int32_t, 4>(); return runtime() + held; } int runtime() { return read<int32_t, 4>(); }

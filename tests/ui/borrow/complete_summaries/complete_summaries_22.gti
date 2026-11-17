@@ -1,0 +1,27 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum lookup_state<T> { found(T payload), missing };
+class lookup<T> {
+  mut lookup_state<T> state;
+public:
+  implicit lookup(T value) : state(lookup_state<T>::found(std::move(value))) {}
+};
+class lookup<T&> {
+  mut lookup_state<T&> state;
+public:
+  implicit lookup(T& value) : state(lookup_state<T&>::found(value)) {}
+  T take_or(T fallback) && {
+    switch (this.state) {
+    case lookup_state<T&>::found(auto& value): return value;
+    case lookup_state<T&>::missing: return fallback;
+    }
+  }
+};
+lookup<int&> find(int& owner) { return owner; }
+int twice(int& owner) {
+  auto first = find(owner);
+  auto second = find(owner);
+  int moved = std::move(second).take_or(0);
+  return std::move(first).take_or(0) + moved;
+}
+int main() { int owner = 3; return twice(owner) == 6 ? 0 : 1; }

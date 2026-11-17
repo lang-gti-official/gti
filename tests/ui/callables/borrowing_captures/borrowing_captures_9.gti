@@ -1,0 +1,9 @@
+// Borrowing captures: ordinary-reference-block-last-use.
+//@ check-pass
+int main() {
+  mut int owner = 3;
+  mut int& reference = owner;
+  { reference += 2; }
+  owner += 1;
+  return owner - 6;
+}

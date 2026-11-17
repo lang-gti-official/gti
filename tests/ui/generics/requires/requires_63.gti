@@ -1,0 +1,9 @@
+// General requires: a mutable result proof does not grant mutable receiver access diagnostic.
+concept editable<C, T> = requires(mut C&<owner> owner) {
+  { owner.edit() } -> mut T&<owner>;
+};
+void broken<C, T>(C& owner, T value) requires editable<C, T> {
+  mut T& slot = owner.edit();  //~ ERROR GTI-S2029 //~ ERROR GTI-S2017
+  slot = value;
+}
+int main() { return 0; }

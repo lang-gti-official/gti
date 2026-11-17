@@ -1,0 +1,20 @@
+// Raw access: the program is accepted.
+//@ check-pass
+//@ raw-pointer-audit: strict
+interface Observer { bool inspect(const int* pointer); };
+class Inert : public Observer {
+public:
+  bool inspect(const int* pointer) override { return pointer != nullptr; }
+public:
+  Inert() = default;
+};
+bool dispatch(Observer& observer, const int* pointer) {
+  return observer.inspect(pointer);
+}
+
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  Inert observer{};
+  return dispatch(observer, pointer) ? 0 : 1;
+}

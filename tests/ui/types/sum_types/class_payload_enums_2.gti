@@ -1,0 +1,38 @@
+// Class payload enums: cleanup-free class payloads should construct from prvalues and named copies, match with copied bindings, and reach valid MIR.
+//@ check-pass
+class Point {
+public:
+  Point(int32_t x, int32_t y) : x_value(x), y_value(y) {}
+  int32_t x() { return this.x_value; }
+  int32_t y() { return this.y_value; }
+private:
+  int32_t x_value;
+  int32_t y_value;
+};
+
+enum class Shape {
+  empty,
+  dot(Point at),
+  segment(Point from, Point to),
+};
+
+int32_t weight(Shape shape) {
+  switch (shape) {
+  case Shape::empty:
+    return 0;
+  case Shape::dot(at):
+    return at.x() + at.y();
+  case Shape::segment(from, to):
+    return from.x() + from.y() + to.x() + to.y();
+  }
+}
+
+int main() {
+  Shape nothing = Shape::empty;
+  Shape one = Shape::dot(Point(1, 2));
+  Point start = Point(3, 4);
+  Shape line = Shape::segment(start, Point(5, 6));
+  bool weights = weight(nothing) == 0 && weight(one) == 3 &&
+                 weight(line) == 18;
+  return weights ? 0 : 1;
+}

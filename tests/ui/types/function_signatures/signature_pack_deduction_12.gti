@@ -1,0 +1,2 @@
+// Signature pack deduction: a return-only type pack must not invent a deduced empty argument list.
+class Types<Args...> { public: Types() = default; }; Types<Args...> unbound<Args...>() { return Types<Args...>(); }  //~ ERROR GTI-S2023

@@ -1,0 +1,106 @@
+// Exclusive reborrow loan graph: nested and sequential exclusive reborrows, shared aliases and disjoint field loans validate, and form a parent-linked loan graph.
+//@ check-pass
+//@ snapshot: mir
+//@ mir-function: main
+// Nested reborrows chain their parents; a sequential reborrow re-parents on the first loan;
+// a projected child suspends its parent; shared aliases share one read-only loan.
+// CHECK: loan1 parent=loan0 {{.*}}access=1 produced
+// CHECK-NEXT: loan2 parent=loan1 {{.*}}access=1 produced
+// CHECK-NEXT: loan3 parent=loan2 {{.*}}access=1 produced
+// CHECK-NEXT: loan4 parent=loan1 {{.*}}access=1 produced
+// CHECK: loan8 parent=loan7 {{.*}}access=1 produced
+// CHECK-NEXT: loan9 parent=loan0 {{.*}}carriers=[14,15]
+struct Pair {
+public:
+  mut int left = 1;
+  mut int right = 2;
+public:
+  Pair() = default;
+};
+
+void change(mut int& value) { value += 1; }
+int observe(int& value) { return value; }
+void combine(int& observed, mut int& changed) { changed += observed; }
+
+int endpoint_chain() {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  child += 1;
+  return value;
+}
+
+int switch_reactivation(int selected) {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  switch (child) {
+  case 0:
+    parent += 1;
+    break;
+  default:
+    parent += 2;
+    break;
+  }
+  return value;
+}
+
+int switch_unmatched_reactivation(int selected) {
+  mut int value = selected;
+  mut int& parent = value;
+  mut int& child = parent;
+  switch (child) {
+  case 0:
+    parent += 1;
+    break;
+  }
+  parent += 1;
+  return value;
+}
+
+class CheckedOwner {
+  mut int value;
+
+public:
+  CheckedOwner(int initial) : value(initial) {}
+  mut int& operator*() mut { return this.value; }
+};
+
+int checked_dereference_reactivation() {
+  mut CheckedOwner owner = CheckedOwner(1);
+  mut int& parent = *owner;
+  mut int& child = parent;
+  child += 1;
+  parent += 1;
+  return *owner - 3;
+}
+
+int main() {
+  mut int value = 0;
+  mut int& parent = value;
+  mut int& child = parent;
+  mut int& grandchild = child;
+  grandchild += 1;
+
+  mut int& sequential = parent;
+  sequential += 1;
+  parent += 1;
+
+  mut Pair pair = Pair();
+  mut int& left = pair.left;
+  mut int& right = pair.right;
+  left += 1;
+  right += 1;
+  combine(left, right);
+
+  mut Pair second_pair = Pair();
+  mut Pair& pair_parent = second_pair;
+  mut int& projected_child = pair_parent.left;
+  pair_parent.right += 1;
+  projected_child += 1;
+
+  int& shared = value;
+  int& shared_alias = shared;
+  return observe(shared_alias) + pair.left + pair.right - 10 +
+         checked_dereference_reactivation();
+}

@@ -1,0 +1,8 @@
+// Native callable groundwork: foreign-field-invoke.gti must retain a verified native indirect invocation.
+//@ check-pass
+using Transform = (int32_t) -> int32_t;
+[[c_abi]] struct DispatchTable { Transform transform; };
+int32_t invoke(DispatchTable table) {
+  unsafe { return table.transform(7); }
+}
+int main() { return 0; }

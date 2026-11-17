@@ -1,0 +1,6 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: nested-aggregate-field.
+//@ raw-pointer-audit: strict
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { Address first{}; Address second{};  public: Pair() = default; };
+int main() { auto pair = dangling(); unsafe { return *pair.second.pointer; } }  //~ ERROR GTI-S2102
+Pair dangling() { int local = 1; return {.first = Address(), .second = {.pointer = &local}}; }

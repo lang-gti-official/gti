@@ -1,0 +1,10 @@
+// Semantic rejections: the public thread handle should be move-only.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  auto started = std::thread::start([]() -> void {});
+  if (!started.has_value()) { return 1; }
+  mut std::thread first = std::move(started).value();
+  std::thread copied = first;  //~ ERROR GTI-S2003
+  return 0;
+}

@@ -1,0 +1,2 @@
+// Signature deduction: void remains invalid in object positions after substitution: class Tag<S> { public: Tag() = default; }; int consistent<T>(Tag<T(T)>& tag) { return 0; } int main() { Tag<int(bool)> tag{}; return consistent(tag); }.
+class Tag<S> { public: Tag() = default; }; int consistent<T>(Tag<T(T)>& tag) { return 0; } int main() { Tag<int(bool)> tag{}; return consistent(tag); }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003

@@ -1,0 +1,23 @@
+// Method invocation: reflected overloads bind their exact declaration.
+//@ check-pass
+import std.meta;
+class Probe {
+public:
+  Probe() = default;
+  int32_t choose(int32_t value) { return value + 1; }
+  int32_t choose(bool value) { return value ? 100 : 0; }
+  static int32_t static_method() { return 7; }
+  void mutate() mut {}
+  int32_t consume() && { return 8; }
+  unsafe int32_t dangerous() { return 9; }
+private:
+  int32_t hidden() { return 10; }
+};
+struct Other { Other() = default; };
+int main() {
+  Probe probe{};
+  auto integer = std::meta::method<Probe, 0>();
+  auto boolean = std::meta::method<Probe, 1>();
+  return integer.invoke(probe, int32_t(2)) == 3 &&
+                 boolean.invoke(probe, true) == 100 ? 0 : 1;
+}

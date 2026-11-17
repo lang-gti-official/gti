@@ -1,0 +1,27 @@
+// Stored callables: unsafe_owned checks the concrete hidden payload Borrowed.
+import std.meta;
+import std.string;
+[[no_transfer, no_share]] struct Local { public: Local() = default; };
+struct Immovable { public: Immovable() = default; Immovable(Immovable&) = delete; Immovable(Immovable&&) = delete; };
+struct Raw { int* pointer = nullptr; public: Raw() = default; };
+struct Borrowed { std::string_view view = ""; public: Borrowed() = default; };
+[[unsafe_owned]] class Reviewed<T> {
+  T* pointer = nullptr;
+public:
+  Reviewed() = default;
+};
+namespace spec { class Specialized<T> { public: Specialized() = default; }; }
+[[unsafe_owned]] class spec::Specialized<Raw> {
+  Raw* pointer = nullptr;
+public:
+  Specialized() = default;
+};
+void retain<F>(F callback) {}
+int main() {
+  Reviewed<Borrowed> owner{};
+  static_assert(!std::meta::is_transferable<Reviewed<Borrowed>>());
+  static_assert(!std::meta::is_shareable<Reviewed<Borrowed>>());
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));  //~ ERROR GTI-S2046
+  return 0;
+}

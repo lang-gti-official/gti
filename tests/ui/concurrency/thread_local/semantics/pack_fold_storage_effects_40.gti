@@ -1,0 +1,16 @@
+// Pack fold storage effects: exact-empty runtime-effect suppression preserves ordinary moved binding availability checks.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner&) = delete;
+  Owner(Owner&&) = default;
+};
+void leaf<T>(Owner& input, T& element) {}
+void folded<Args...>(Args... args) {
+  mut Owner input{};
+  Owner moved = std::move(input);
+  (leaf(input, args), ...);  //~ ERROR GTI-S2018
+}
+int main() { folded(); return 0; }

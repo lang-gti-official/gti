@@ -1,0 +1,4 @@
+// Lifetimes: rejected with GTI-S2127.
+void needs_static<T>(T* pointer) requires outlives<T, static> {}
+void relay<T>(T* pointer) requires outlives<T*, static> { needs_static(pointer); }  //~ ERROR GTI-S2127
+int main() { return 0; }

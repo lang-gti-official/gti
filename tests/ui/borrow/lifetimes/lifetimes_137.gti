@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool pick_first) {
+  if (pick_first) { return first; }
+  return second;
+}
+int main() { int first = 3; int second = 8; return choose(first, second, false) - 8; }

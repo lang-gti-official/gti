@@ -1,0 +1,10 @@
+// Constructor value arguments: an ambiguous constructor function argument fails in semantics, not as an unresolved MIR value.
+class Box {
+public:
+  Box<Callable>(Callable callable) {}
+public:
+  Box() = default;
+};
+void work(int value) {}
+void work(bool value) {}
+int main() { auto value = Box(work); return 0; }  //~ ERROR GTI-S2090

@@ -1,0 +1,30 @@
+// Tryable propagation: rejected with GTI-S2017.
+struct Rejected { int code; Rejected(int value) : code(value) {} };
+class Editing {
+public:
+  mut int& external;
+  int code;
+  Editing(mut int& owner, int failure) : external(owner), code(failure) {}
+};
+for concept std::tryable<Editing> {
+  using value_type = mut int&;
+  using residual_type = Rejected;
+  bool has_value(Editing& value) { return value.code == 0; }
+  mut int&<a> take_value<lifetime a>(mut Editing<a> value) {
+    return value.external;
+  }
+  Rejected take_residual(Editing value) { return Rejected(value.code); }
+};
+struct Status {
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected error) : code(error.code) {}
+};
+
+Status edit(mut int& owner) {
+  Editing source{owner, 0};
+  mut int& value = ?std::move(source);
+  owner = 9;  //~ ERROR GTI-S2017
+  return Status(value);
+}
+int main() { mut int owner = 7; return edit(owner).code; }

@@ -1,0 +1,3 @@
+// Wrapping operations: invalid wrapping calls reject in semantics.
+import std.atomic;
+int main() { std::atomic<bool> x{false}; x.fetch_add_wrapping(true); return 0; }  //~ ERROR GTI-S2029

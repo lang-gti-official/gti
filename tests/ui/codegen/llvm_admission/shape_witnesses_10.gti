@@ -1,0 +1,3 @@
+// Shape witnesses: pointer array storage does not invent element comparison semantics.
+//@ check-pass
+int main() { int* left[2] = {}; int* right[2] = {}; return left == right ? 0 : 1; }
