@@ -1,0 +1,20 @@
+// Payload enum diagnostics: an active-cleanup class payload should reach a variant-aware, verified MIR lifecycle table.
+//@ check-pass
+mut int32_t drops = 0;
+class leaf {
+public:
+  leaf() {}
+  ~leaf() { drops = drops + 1; }
+  mut int32_t value = 7;
+};
+enum class holder { one(leaf value), none };
+int main() {
+  holder held = holder::one(leaf());
+  switch (held) {
+  case holder::one:
+    break;
+  case holder::none:
+    break;
+  }
+  return 0;
+}

@@ -1,0 +1,8 @@
+// Shape witnesses: confined callable argument and invocation boundaries remain independent inventory occurrences.
+//@ build-pass
+//@ slow
+int apply<F>(F& callable, int value) { return callable(value); }
+int main() {
+  auto callback = [](int value) -> int { return value; };
+  return apply(callback, 0);
+}

@@ -1,0 +1,3 @@
+// Reference substitutions and empty alternatives: dependency-free reference enum fixture reaches verified MIR.
+//@ check-pass
+enum Event<T> { idle, item(T value), pair(T first, T second) }; int main() { auto value = Event<int&>::idle; return 0; }

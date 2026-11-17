@@ -1,0 +1,9 @@
+// Source raw write control flow: source raw writes follow later-iteration alias destinations.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder { mut const int* pointer = nullptr; };
+unsafe void bad(Holder* out) { int gone = 1; unsafe { out->pointer = &gone; } }
+int probe(mut int count) { mut Holder first{}; mut Holder second{};  //~ ERROR GTI-S2012 //~ ERROR GTI-S2012
+  mut auto address = &first; while (count > 0) { unsafe { bad(address); } address = &second; count -= 1; }
+  unsafe { return std::assume_ref(second.pointer, second); } }  //~ ERROR GTI-S2103 //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+int main() { return probe(2); }  //~ ERROR GTI-S2103

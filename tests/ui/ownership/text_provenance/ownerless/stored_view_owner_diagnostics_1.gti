@@ -1,0 +1,13 @@
+// Stored view owner diagnostics: #379 a view of a temporary owner names the temporary.
+import std.filesystem;
+struct Metadata {
+  Metadata() {}
+  mut std::string_view name = "";
+};
+
+int main() {
+  std::filesystem::path entry = std::filesystem::path("dir/file.txt");
+  mut Metadata data{};
+  data.name = entry.filename().view();  //~ ERROR GTI-S2045
+  return 0;
+}

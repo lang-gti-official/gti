@@ -1,0 +1,3 @@
+// Lifetimes: rejected with GTI-S2127.
+struct StaticInput { StaticInput(int&<static> input) {} };
+int main() { int value = 7; StaticInput invalid{value}; return 0; }  //~ ERROR GTI-S2127

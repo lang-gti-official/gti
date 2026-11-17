@@ -1,0 +1,5 @@
+// Conversion operators: rejected with GTI-S2003.
+struct C { int raw = 7;  public: C() = default; };
+struct B { implicit operator C() { return C(); }  public: B() = default; };
+struct A { implicit operator B() { return B(); }  public: A() = default; };
+int main() { A start{}; C chained = start; return chained.raw; }  //~ ERROR GTI-S2003

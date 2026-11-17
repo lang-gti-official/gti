@@ -1,0 +1,14 @@
+// Generated default has exact empty targets: the exact known-bodyless effect control is valid source.
+//@ check-pass
+struct Empty { public: Empty() = default; };
+struct Factory {
+  Empty produce(int32_t& input) { return Empty(); }
+public:
+  Factory() = default;
+};
+int main() {
+  int32_t value = 7;
+  Factory factory = Factory();
+  Empty result = factory.produce(value);
+  return 0;
+}

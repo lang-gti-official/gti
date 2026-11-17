@@ -1,0 +1,47 @@
+// General requires: sentinel policies are source-defined exact safe expression requirements.
+//@ check-pass
+import std.iterator;
+struct End { int position = 8;  public: End() = default; };
+struct Cursor {
+  int position = 3;
+  bool operator!=(End& end) { return this.position != end.position; }
+  std::ptrdiff_t operator-(End& end) { return std::ptrdiff_t(this.position - end.position); }
+public:
+  Cursor() = default;
+};
+struct CopiedEnd {
+  bool operator!=(End end) { return true; }
+  std::ptrdiff_t operator-(End end) { return std::ptrdiff_t(-1); }
+public:
+  CopiedEnd() = default;
+};
+struct Ambiguous {
+  bool operator!=(End& end) { return true; }
+  bool operator!=(End end) { return true; }
+public:
+  Ambiguous() = default;
+};
+struct WrongDistance {
+  bool operator!=(End& end) { return true; }
+  uint64_t operator-(End& end) { return uint64_t(1); }
+public:
+  WrongDistance() = default;
+};
+class Hidden { bool operator!=(End& end) { return true; }  public: Hidden() = default; };
+bool differs<I, S>(I& position, S& end) requires std::sentinel_for<S, I> {
+  return position != end;
+}
+std::ptrdiff_t offset<I, S>(I& position, S& end) requires std::sized_sentinel_for<S, I> {
+  return position - end;
+}
+int main() {
+  static_assert(requires(Cursor& p, End& e) { { differs(p, e) } -> bool; });
+  static_assert(requires(Cursor& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; });
+  static_assert(requires(CopiedEnd& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; });
+  static_assert(!(requires(Ambiguous& p, End& e) { { differs(p, e) } -> bool; }));
+  static_assert(!(requires(WrongDistance& p, End& e) { { offset(p, e) } -> std::ptrdiff_t; }));
+  static_assert(!(requires(Hidden& p, End& e) { { differs(p, e) } -> bool; }));
+  static_assert(!(requires(int& p, int& e) { { differs(p, e) } -> bool; }));
+  Cursor position{}; End end{};
+  return differs(position, end) && offset(position, end) == std::ptrdiff_t(-5) ? 0 : 1;
+}

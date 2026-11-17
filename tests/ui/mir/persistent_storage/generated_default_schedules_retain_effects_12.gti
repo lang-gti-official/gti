@@ -1,0 +1,7 @@
+// Generated default schedules retain effects: an effectful generated field/base schedule cannot mutate a live persistent loan and is rejected before MIR.
+ mut int32_t first = 1;
+ mut int32_t second = 2;
+void mutate() { first = 9; } int32_t initialize() { mutate(); return 0; } struct Base { int32_t field = initialize();  public: Base() = default; }; struct Outer : public Base { public: Outer() = default; };
+void inspect(Outer& input) {}
+void execute() { inspect(Outer()); }
+int main() { int32_t& borrowed = first; execute(); return borrowed; }  //~ ERROR GTI-S2045

@@ -1,0 +1,34 @@
+// Positive: cleanup-bound buffering retains an adapter shell and its owner.
+//@ check-pass
+//@ slow
+import std.utility;
+mut int observed = 0;
+struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed += this.resource.value; }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item) : item(std::move(item)) {}
+};
+
+import std.io;
+import std.string;
+int main() {
+  std::byte_buffer bytes = {uint8_t(97)};
+  auto view = bytes.as_span();
+  mut std::io::memory_reader source{view};
+  mut std::io::buffered_reader<std::io::memory_reader> input{source, std::size_t(2)};
+  mut std::string line{};
+  auto result = std::io::getline(input, line);
+  return result ? 0 : 1;
+}

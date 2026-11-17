@@ -1,0 +1,12 @@
+// Closure environment plan: field initializers retain duplicate exact lambda bodies.
+//@ build-pass
+//@ slow
+int invoke<F>(F callable) { return callable(); }
+class Field {
+  int value = invoke([]() -> int { return 17; });
+public:
+  int read() { return this.value; }
+public:
+  Field() = default;
+};
+int main() { Field value{}; return value.read() - 17; }

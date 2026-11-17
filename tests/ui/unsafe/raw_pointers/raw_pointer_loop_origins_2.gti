@@ -1,0 +1,19 @@
+// Raw pointer loop origins: reseating before each access and inert expired copies remain allowed.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int read(int count) {
+  int initial = 1;
+  unsafe {
+    mut const int* pointer = &initial;
+    mut int result = 0;
+    for (mut int index = 0; index < count; index++) {
+      pointer = &initial;
+      result += *pointer;
+      int per_iteration = index;
+      pointer = &per_iteration;
+    }
+    auto inert = pointer;
+    return result;
+  }
+}
+int main() { return read(2); }

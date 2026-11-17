@@ -1,0 +1,17 @@
+// Virtual call dependencies: sealed virtual dispatch retains a bounded dependency closure.
+//@ build-pass
+//@ slow
+int alternate_helper() { return 2; }
+int unrelated_helper() { return 3; }
+class Base { public: virtual int read() { return 1; }  public: Base() = default; };
+class Alternative : public Base {
+public:
+  int read() override { return alternate_helper(); }
+public:
+  Alternative() = default;
+};
+class Unrelated { public: virtual int read() { return unrelated_helper(); }  public: Unrelated() = default; };
+void retain_alternative_type(Alternative& value) {}
+void retain_unrelated_type(Unrelated& value) {}
+int invoke(Base& value) { return value.read(); }
+int main() { Base value{}; return invoke(value); }

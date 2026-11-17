@@ -1,0 +1,9 @@
+// Negative: initial resource binding requires explicit unsafe authority.
+import std.resource;
+import std.memory;
+
+int main() {
+  std::process_resource resource{};
+  auto bound = std::bind_resource(resource);  //~ ERROR GTI-S2055
+  return 0;
+}

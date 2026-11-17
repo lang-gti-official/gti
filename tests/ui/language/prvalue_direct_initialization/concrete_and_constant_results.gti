@@ -1,0 +1,26 @@
+// Concrete and constant results: concrete generic reanalysis and constexpr share the fresh-result rule.
+//@ check-pass
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  Box(Box<T>&) = delete;
+  Box(Box<T>&&) = delete;
+};
+Box<T> make<T>(T value) { return Box<T>(value); }
+Box<T> relay<T>(T value) { return Box<T>((make<T>(value))); }
+class Number {
+public:
+  int value;
+  constexpr Number(int value) : value(value) {}
+  Number(Number&) = delete;
+  Number(Number&&) = delete;
+};
+constexpr Number number() { return Number(Number(4)); }
+constexpr Number constant = Number(number());
+static_assert(constant.value == 4);
+int main() {
+  Box<int> result = Box<int>(relay<int>(7));
+  Number runtime = Number(number());
+  return result.value == 7 && runtime.value == constant.value ? 0 : 1;
+}

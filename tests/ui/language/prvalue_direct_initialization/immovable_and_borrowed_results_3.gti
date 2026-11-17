@@ -1,0 +1,5 @@
+// Immovable and borrowed results: fresh initialization does not bypass a deleted real move or escape loan.
+class Fixed { public: Fixed() {} Fixed(Fixed&) = delete;
+               Fixed(Fixed&&) = delete; };
+               int main() { Fixed source{};
+                 Fixed result = Fixed(std::move(source)); return 0; }  //~ ERROR GTI-S2018 //~ ERROR GTI-S2003

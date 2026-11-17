@@ -1,0 +1,10 @@
+// Global borrow returns: the accessor body should still require unsafe for its raw dereference while retaining a valid global borrow summary.
+class Application {
+public:
+  static mut Application& Get() { return *Application::app; }  //~ ERROR GTI-S2055
+private:
+  static mut Application* app = nullptr;
+public:
+  Application() = default;
+};
+int main() { return 0; }

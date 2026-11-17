@@ -1,0 +1,22 @@
+// Analyze: raw destruction forms verified MIR.
+//@ check-pass
+//@ slow
+import std.memory;
+import std.panic;
+class Sensor {
+public:
+  Sensor(Sensor& other) = delete;
+  Sensor(Sensor&& other) = delete;
+  ~Sensor() { std::panic("sensor cleanup failed"); }
+public:
+  Sensor() = default;
+};
+int main() {
+  int* scalar = nullptr;
+  Sensor* sensor = nullptr;
+  unsafe {
+    std::destroy_at(scalar);
+    std::destroy_at(sensor);
+  }
+  return 0;
+}

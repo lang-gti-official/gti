@@ -1,0 +1,15 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+class carrier {
+  int32_t& source;
+public:
+  carrier(int32_t& value) : source(value) {}
+};
+enum holder { one(carrier value), none };
+
+int main() {
+  mut int32_t backing = 3;  //~ WARN GTI-S2096
+  carrier value = carrier(backing);
+  holder held = holder::one(value);
+  return 0;
+}

@@ -1,0 +1,3 @@
+// A private alias cannot qualify a nested type name from outside.
+//@ check-fail
+struct Actual { struct Child { int value = 1;  public: Child() = default; };  public: Actual() = default; }; class Gate { using Hidden = Actual;  public: Gate() = default; }; int main() { Gate::Hidden::Child child{}; return child.value; }  //~ ERROR GTI-S2007 Type alias 'Hidden'

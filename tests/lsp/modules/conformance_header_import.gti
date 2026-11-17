@@ -1,0 +1,43 @@
+// A conformance to a concept reachable only through another module's
+// import is one S2024 asking to import its interface (with or without
+// members), an unknown concept is S2123, and importing the defining
+// interface clears it. (conformance_header_lsp_test.py; the related location
+// in measure.gti is not asserted)
+//@ disk-only: measure.gti middle.gti
+// --- main.gti
+import "middle.gti";
+struct Rope {};
+/* 😀 */ for concept measurable<Rope> {  //~ ERROR GTI-S2024 import its public module interface
+};
+// --- measure.gti
+export module measure;
+export concept measurable<T> { int measure(T& item); bool is_empty(T& item); };
+// --- middle.gti
+export module middle;
+import "measure.gti";
+// --- step 2
+import "middle.gti";
+struct Rope {};
+/* 😀 */ for concept missing<Rope> {  //~ ERROR GTI-S2123
+};
+// --- step 3
+import "middle.gti";
+struct Rope {};
+/* 😀 */ for concept measurable<Rope> {  //~ ERROR GTI-S2024 import its public module interface
+int measure(Rope& item) { return 1; }
+bool is_empty(Rope& item) { return false; }
+};
+// --- step 4
+import "middle.gti";
+struct Rope {};
+/* 😀 */ for concept missing<Rope> {  //~ ERROR GTI-S2123
+int measure(Rope& item) { return 1; }
+bool is_empty(Rope& item) { return false; }
+};
+// --- step 5
+import "measure.gti";
+struct Rope {};
+/* 😀 */ for concept measurable<Rope> {
+int measure(Rope& item) { return 1; }
+bool is_empty(Rope& item) { return false; }
+};

@@ -1,0 +1,55 @@
+// Swapped containers clean up their elements once, also when an element destructor fails.
+//@ run-pass
+//@ revisions: success fail
+//@[success] stdout: swapped
+//@[success] stdout: 5
+//@[success] stdout: 4
+//@[success] stdout: 6
+//@[success] stdout: 2
+//@[success] stdout: 1
+//@[success] stdout: 3
+//@[fail] run-fail
+//@[fail] exit-code: 70
+//@[fail] args: fail
+//@[fail] stdout: swapped
+//@[fail] stdout: 5
+//@[fail] stdout: 4
+//@[fail] stdout: 6
+//@[fail] stdout: 2
+//@[fail] stdout: 1
+//@[fail] stdout: 3
+//@[fail] stderr-contains: container_swap_cleanup.gti:
+//@[fail] stderr-contains: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- container_swap_cleanup.gti
+import std.vector;
+import std.string;
+import std.forward_list;
+
+class item {
+public:
+  int32_t key;
+  item(int32_t value) : key(value) {}
+  item(item& other) = delete;
+  item(item&& other) = default;
+  ~item() { std::println(this.key); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::vector<item> a = std::vector<item>();
+  mut std::vector<item> b = std::vector<item>();
+  a.push_back(item(1));
+  a.push_back(item(2));
+  b.push_back(item(3));
+  a.swap(b);
+  mut std::forward_list<item> left = std::forward_list<item>();
+  mut std::forward_list<item> right = std::forward_list<item>();
+  left.push_front(item(4));
+  left.push_front(item(5));
+  right.push_front(item(6));
+  left.swap(right);
+  std::println("swapped");
+  if (argc == 2) { std::println(1 / (argc - 2)); }
+  if (a.front().key != 3 || b.back().key != 2 ||
+      left.front().key != 6 || right.front().key != 5) { return 1; }
+  return 0;
+}

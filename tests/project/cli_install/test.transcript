@@ -1,0 +1,33 @@
+// gti install: the default root under HOME and its PATH note, reinstalling,
+// GTI_INSTALL_ROOT (absolute only) and the need for HOME without --root.
+// (From cli_install_test.py.)
+unset GTI_INSTALL_ROOT
+$ cd tool
+$ gti install --progress=never
+stdout: Installed tool [release,
+stdout: $HOME/.local/bin/tool
+stderr: note: $HOME/.local/bin is not on PATH
+$ $HOME/.local/bin/tool
+stdout: tool-output
+env PATH=$HOME/.local/bin:$PATH
+$ gti install --progress=never
+stdout: Replaced tool [release,
+!stderr: not on PATH
+$ tool
+stdout: tool-output
+$ gti install --list
+stdout: tool tool@1.2.3 [release] -> $HOME/.local/bin/tool
+env GTI_INSTALL_ROOT=$DIR/env-root
+$ gti install --progress=never
+stdout: $DIR/env-root/bin/tool
+$ $DIR/env-root/bin/tool
+stdout: tool-output
+env GTI_INSTALL_ROOT=relative
+$ gti install --progress=never
+? 64
+stderr: GTI_INSTALL_ROOT must name an absolute directory
+unset GTI_INSTALL_ROOT
+unset HOME
+$ gti install --list
+? 64
+stderr: --root

@@ -1,0 +1,1 @@
+Convert seven more stand-alone C++ test binaries (expression text, text view iterators, general requires, hosted startup, managed threads, optimizer raw context, function signatures) to gti-test cases.

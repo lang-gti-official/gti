@@ -1,0 +1,22 @@
+// Reference payloads: rejected with GTI-S2017.
+//@ analyze-fail
+import std.panic;
+enum BorrowedCell<T> { empty, value(T& owner) };
+class GenericView<T> {
+  mut BorrowedCell<T> cell;
+public:
+  GenericView(T& owner) : cell(BorrowedCell<T>::value(owner)) {}
+  T& read() {
+    switch (this.cell) {
+    case BorrowedCell<T>::value(auto& owner): return owner;
+    case BorrowedCell<T>::empty: std::panic("empty");
+    }
+  }
+};
+
+class Invalid<T> {
+  int& bad() { int local = 7; return local; }  //~ ERROR GTI-S2017
+public:
+  Invalid() = default;
+};
+int main() { return 0; }

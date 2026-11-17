@@ -1,0 +1,4 @@
+// Temporary argument borrows: a call result tied to the temporary parameter should remain ineligible.
+class Report { public: Report() {} };
+Report& retain(Report& report) { return report; }
+int main() { [[discard]] retain(Report()); return 0; }  //~ ERROR GTI-S2017

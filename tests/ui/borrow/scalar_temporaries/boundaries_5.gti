@@ -1,0 +1,7 @@
+// Boundaries: move consumes scalar local.
+enum Color { Red, Green };
+int read(int& value) { return value; }
+int make() { return 42; }
+Color pick() { return Color::Red; }
+bool red(Color& value) { return value == Color::Red; }
+int main() { int value = 42; int answer = read(std::move(value)); return value; }  //~ ERROR GTI-S2018

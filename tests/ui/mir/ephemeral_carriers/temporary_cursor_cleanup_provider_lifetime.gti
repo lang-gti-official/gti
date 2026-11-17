@@ -1,0 +1,33 @@
+// Temporary cursor cleanup provider lifetime: temporary cursor cleanup keeps an independent cleanup-bound owner's provider alive on a later argument failure.
+//@ check-pass
+struct Provider { int value = 0;  public: Provider() = default; };
+struct Finish { public: Finish() = default; };
+class Binding {
+  Provider& provider;
+public:
+  Binding(Provider& source) : provider(source) {}
+  int read() { return this.provider.value; }
+};
+class Owner {
+  Binding binding;
+public:
+  Owner(Binding source) : binding(source) {}
+  ~Owner() { int observed = this.binding.read(); }
+  int read() { return this.binding.read(); }
+  Cursor begin() { return Cursor(this); }
+  Finish end(int divisor) { int checked = 1 / divisor; return Finish(); }
+};
+class Cursor {
+  Owner& owner;
+public:
+  Cursor(Owner& source) : owner(source) {}
+  bool operator!=(Finish other) { return this.owner.read() != 0; }
+};
+int main() {
+  Provider provider{};
+  auto binding = Binding(provider);
+  Owner owner{binding};
+  int divisor = 0;
+  if (owner.begin() != owner.end(divisor)) { return 1; }
+  return 0;
+}

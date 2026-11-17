@@ -1,0 +1,5 @@
+// Raw produced call origins: valid callee-produced raw transport: inert-expired-copy.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() { auto first = dangling(); auto second = first; return first == second ? 0 : 1; }
+const int* dangling() { int local = 1; return &local; }

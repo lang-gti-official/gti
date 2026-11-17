@@ -1,0 +1,4 @@
+// Storage and metadata: inferred block-local TLS retains ordinary local type inference.
+//@ check-pass
+//@ execution-profile: concurrent
+int main() { thread_local mut auto count = 0; count += 1; return count; }

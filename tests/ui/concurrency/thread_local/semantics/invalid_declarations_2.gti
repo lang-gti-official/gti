@@ -1,0 +1,3 @@
+// Invalid declarations: invalid TLS placement and automatic initializer dependencies are source diagnostics (`value` renamed to `tls_slot`: an undefined common name pays import-suggestion trials, issue #500).
+//@ execution-profile: concurrent
+thread_local constexpr int tls_slot = 0; int main() { return tls_slot; }  //~ ERROR GTI-S2124 //~ ERROR GTI-S2001

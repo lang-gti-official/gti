@@ -1,0 +1,31 @@
+// Exits that stay private: the private-exit fixture lowers.
+//@ check-pass
+class Guard {
+  int32_t divisor;
+public:
+  Guard(int32_t divisor) : divisor(divisor) {}
+  ~Guard() { int32_t checked = 100 / this.divisor; }
+  int32_t get() { return this.divisor; }
+};
+Guard owning(int32_t p) {
+  Guard a = Guard(1);
+  Guard r = Guard(2);
+  if (p == 1) { return r; }
+  Guard b = Guard(3);
+  return r;
+}
+Guard& borrowed(Guard& value, int32_t p) {
+  Guard a = Guard(1);
+  if (p == 1) { return value; }
+  Guard b = Guard(2);
+  return value;
+}
+int32_t single(int32_t p) {
+  Guard a = Guard(1);
+  Guard b = Guard(2);
+  return p + a.get() + b.get();
+}
+int main() {
+  Guard g = Guard(5);
+  return owning(1).get() + borrowed(g, 1).get() + single(1) - 11;
+}

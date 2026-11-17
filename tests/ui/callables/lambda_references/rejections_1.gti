@@ -1,0 +1,3 @@
+// Rejections: named-inferred-reborrow-boundary.gti.
+int& observe(mut int& value) { return value; }  //~ ERROR GTI-S2017
+int main() { return 0; }

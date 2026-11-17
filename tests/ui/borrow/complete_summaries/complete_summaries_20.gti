@@ -1,0 +1,10 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Either { left(int& owner), right(int& owner) };
+int&<a> select_either<lifetime a>(mut Either<a> input) {
+  switch (std::move(input)) {
+  case Either::left(owner): return owner;
+  case Either::right(owner): return owner;
+  }
+}
+int main() { return 0; }

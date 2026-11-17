@@ -1,0 +1,14 @@
+// A59: the same through map::at.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: <std/map>:
+//@ stderr-contains: : runtime error[GTI-R0015]: key_not_found in key_lookup
+import std.map;
+import std.vector;
+int main() {
+  mut std::map<int, std::vector<int>> graph{};  //~ WARN GTI-S2096
+  int key = 1;
+  std::vector<int>& row = graph.at(key);
+  for (mut std::size_t i = 0; i < row.size(); i++) { int& x = row[i]; }
+  return 0;
+}

@@ -1,0 +1,7 @@
+// Unsafe and pointer diagnostics: array-to-pointer mismatches should explain the explicit element-address path instead of suggesting an unavailable cast.
+void inspect(const int32_t* values) {}
+int main() {
+  int32_t values[2] = {1, 2};
+  inspect(values);  //~ ERROR GTI-S2003
+  return 0;
+}

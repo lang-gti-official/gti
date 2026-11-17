@@ -1,0 +1,36 @@
+// Exclusive reborrow loan graph: generic, projected, and accessor-result reborrow chains should preserve an incoming reference's owner through verified MIR.
+//@ check-pass
+class Pair {
+public:
+  mut int left = 1;
+  mut int right = 2;
+  Pair() = default;
+};
+mut T& relay<T>(mut T& value) {
+  mut T& parent = value;
+  mut T& child = parent;
+  mut T& grandchild = child;
+  return grandchild;
+}
+int& read_relay(int& value) {
+  int& parent = value;
+  int& child = parent;
+  return child;
+}
+mut int& projected(mut Pair& pair) {
+  mut Pair& parent = pair;
+  mut int& child = parent.left;
+  return child;
+}
+mut int& call_relay(mut Pair& pair) {
+  mut int& parent = projected(pair);
+  mut int& child = parent;
+  return child;
+}
+int main() {
+  mut Pair pair = Pair();
+  mut int& slot = relay(call_relay(pair));
+  slot += 3;
+  int& observed = read_relay(pair.left);
+  return observed - 4;
+}

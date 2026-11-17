@@ -1,0 +1,2 @@
+import std.string;
+int main() { std::println("tool-output"); return 0; }

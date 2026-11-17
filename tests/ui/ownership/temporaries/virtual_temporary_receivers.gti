@@ -1,0 +1,55 @@
+// Virtual temporary receivers: virtual, override, interface and inherited members should borrow fresh temporaries through verified receiver stages.
+//@ check-pass
+class Tracked {
+  int id;
+public:
+  Tracked(int value) : id(value) {}
+  ~Tracked() {}
+  int read() { return this.id; }
+};
+
+class Maker {
+public:
+  virtual Tracked make() { return Tracked(1); }
+  Tracked plain() { return Tracked(2); }
+  virtual Tracked operator()(int value) { return Tracked(value); }
+public:
+  Maker() = default;
+};
+
+class Doubling : public Maker {
+public:
+  Tracked make() override { return Tracked(2); }
+public:
+  Doubling() = default;
+};
+
+class Inheriting : public Maker {
+public:
+  Inheriting() {}
+};
+
+interface Factory {
+  Tracked build() mut;
+};
+
+class Counting : public Factory {
+  mut int next;
+public:
+  Counting(int start) : next(start) {}
+  Tracked build() mut override {
+    this.next += 1;
+    return Tracked(this.next);
+  }
+};
+
+int main() {
+  Tracked base = Maker().make();
+  Tracked derived = Doubling().make();
+  Tracked inherited = Inheriting().make();
+  Tracked plain = Inheriting().plain();
+  Tracked built = Counting(4).build();
+  Tracked invoked = Maker()(6);
+  return base.read() + derived.read() + inherited.read() + plain.read() +
+         built.read() + invoked.read() - 18;
+}

@@ -1,0 +1,4 @@
+// Valid: extern "C" { [[discardable]] int native_value(); } int main() { native_value(); return 0; }.
+//@ check-pass
+extern "C" { [[discardable]] int native_value(); }
+int main() { native_value(); return 0; }

@@ -1,0 +1,18 @@
+// Generics: rejected with GTI-S2029.
+class NoDefault {
+  int value;
+public:
+  NoDefault(int value) : value(value) {}
+};
+class Choice<T> {
+public:
+  Choice() requires std::default_initializable<T> {}
+  Choice(int value) {}
+};
+class Holder<T> {
+  Choice<T> child;
+public:
+  Holder() : child(Choice<T>(1)) {}
+};
+
+int main() { Choice<NoDefault> object{}; return 0; }  //~ ERROR GTI-S2029

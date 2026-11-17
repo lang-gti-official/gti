@@ -1,0 +1,7 @@
+// Limits: exact recursive calls reuse a canonical instance.
+//@ check-pass
+int exact<T>(T value, int count) {
+  if (count == 0) { return 0; }
+  return 1 + exact(value, count - 1);
+}
+int main() { return exact(1, 200) - 200; }

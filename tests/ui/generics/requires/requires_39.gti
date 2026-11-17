@@ -1,0 +1,51 @@
+// General requires: general mutation requirements prove operations on ordinary source classes without an iterator capability.
+//@ check-pass
+import std.iterator;
+import std.meta;
+concept adjustable<T> = requires(mut T& value, int amount) {
+  { ++value } -> void;
+  { --value } -> void;
+  { value += amount } -> void;
+  { value -= amount } -> void;
+};
+struct Counter {
+  mut int value = 0;
+  void operator++() mut { this.value += 1; }
+  void operator--() mut { this.value -= 1; }
+  void operator+=(int amount) mut { this.value += amount; }
+  void operator-=(int amount) mut { this.value -= amount; }
+public:
+  Counter() = default;
+};
+struct Inherited : public Counter { public: Inherited() = default; };
+struct CursorBase<T> {
+  mut int position = 0;
+  int operator*() { return this.position; }
+  void operator++() mut { this.position += 1; }
+  void operator--() mut { this.position -= 1; }
+  void operator+=(std::ptrdiff_t amount) mut { this.position += int(amount); }
+  void operator-=(std::ptrdiff_t amount) mut { this.position -= int(amount); }
+public:
+  CursorBase() = default;
+};
+struct Cursor : public CursorBase<int> { public: Cursor() = default; };
+void jump<std::random_access_cursor I>(mut I& iterator, std::ptrdiff_t amount) {
+  iterator += amount;
+  --iterator;
+}
+void adjust<adjustable T>(mut T& value, int amount) {
+  ++value;
+  value += amount;
+  --value;
+  value -= amount;
+}
+int main() {
+  mut Counter value{};
+  adjust(value, 7);
+  mut Inherited inherited{};
+  adjust(inherited, 2);
+  mut Cursor cursor{};
+  jump(cursor, std::ptrdiff_t(4));
+  static_assert(std::meta::type<Cursor>().method_count() == uint64_t(0));
+  return value.value == 0 && inherited.value == 0 && cursor.position == 3 ? 0 : 1;
+}

@@ -1,0 +1,8 @@
+// Exclusive reborrow loan graph: direct owner reads should conflict with a later-live mutable loan.
+int main() {
+  mut int value = 0;
+  mut int& exclusive = value;
+  int snapshot = value;  //~ ERROR GTI-S2017
+  exclusive += 1;
+  return snapshot;
+}

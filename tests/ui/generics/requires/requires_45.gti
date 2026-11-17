@@ -1,0 +1,64 @@
+// General requires: checked borrowed queries preserve exact owner, access and referent.
+//@ check-pass
+struct Box {
+  mut int value = 7;
+  int& read() { return this.value; }
+  mut int& edit() mut { return this.value; }
+  int& operator*() { return this.value; }
+  mut int& operator[](int index) mut { return this.value; }
+public:
+  Box() = default;
+};
+int&<a> select<lifetime a>(int&<a> left, int& right) { return left; }
+concept readable<C, T> = requires(C&<owner> owner) {
+  { *owner } -> T&<owner>;
+};
+concept editable<C, T> = requires(mut C&<owner> owner, int offset) {
+  { owner.edit() } -> mut T&<owner>;
+  { owner[offset] } -> mut T&<owner>;
+};
+T&<a> peek<C, T, lifetime a>(C&<a> owner) requires readable<C, T> {
+  return *owner;
+}
+mut T&<a> edit<C, T, lifetime a>(mut C&<a> owner) requires editable<C, T> {
+  return owner.edit();
+}
+void store<C, T>(mut C& owner, T value) requires editable<C, T> {
+  mut T& slot = owner[0];
+  slot = value;
+}
+int main() {
+  mut Box box{};
+  store<Box, int>(box, 9);
+  if (peek<Box, int>(box) != 9) { return 1; }
+  {
+    mut int& value = edit<Box, int>(box);
+    value = 11;
+  }
+  if (peek<Box, int>(box) != 11) { return 2; }
+  static_assert(requires(Box&<box> box) {
+    { box.read() } -> int&<box>;
+    { *box } -> int&<box>;
+  });
+  static_assert(requires(mut Box&<box> box, int index) {
+    { box.edit() } -> mut int&<box>;
+    { box[index] } -> mut int&<box>;
+  });
+  static_assert(requires(int&<left> left, int& right) {
+    { select(left, right) } -> int&<left>;
+  });
+  static_assert(!(requires(int& left, int&<right> right) {
+    { select(left, right) } -> int&<right>;
+  }));
+  static_assert(!(requires(Box& box, Box&<other> other) {
+    { box.read() } -> int&<other>;
+  }));
+  static_assert(!(requires(Box&<box> box) {
+    { box.edit() } -> mut int&<box>;
+  }));
+  static_assert(!(requires(Box&<box> box) {
+    { box.read() } -> mut int&<box>;
+  }));
+  static_assert(!(requires(Box& box) { { box.read() } -> int&; }));
+  return 0;
+}

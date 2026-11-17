@@ -1,0 +1,6 @@
+// Dispatch per use witnesses: a thread-local hierarchy object constructed in its thread's slot carries its thread-storage witness.
+//@ build-pass
+//@ slow
+    class P { public: P() {} virtual int read() { return 1; } ~P() {} };
+ thread_local P value{};
+    int main() { return value.read(); }

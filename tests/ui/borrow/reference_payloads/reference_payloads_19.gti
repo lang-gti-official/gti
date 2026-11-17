@@ -1,0 +1,9 @@
+// Reference payloads: rejected with GTI-S2017.
+//@ analyze-fail
+enum Reading { empty, value(int& owner, int extra) };
+int mutate(mut int& owner) { owner = 7; return 1; }
+int main() {
+  mut int owner = 3;
+  auto result = Reading::value(owner, mutate(owner));  //~ ERROR GTI-S2017
+  return 0;
+}

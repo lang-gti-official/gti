@@ -1,0 +1,20 @@
+// Permuting recursive field contracts: a recursion permuting its formals returns ownerless field text.
+//@ check-pass
+import std.string;
+struct Token {
+  std::string_view text;
+  int line;
+};
+std::string_view pick(Token a, Token b, int n) {
+  if (n == 0) {
+    return a.text;
+  }
+  return pick(b, a, n - 1);
+}
+std::string_view outer(Token x, Token y) { return pick(x, y, 3); }
+
+int main() {
+  Token a{.text = "ab", .line = 1};
+  Token b{.text = "xyz", .line = 2};
+  return pick(a, b, 1).size() == 3 && outer(a, b).size() == 3 ? 0 : 1;
+}

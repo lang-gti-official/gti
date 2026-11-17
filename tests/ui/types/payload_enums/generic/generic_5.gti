@@ -1,0 +1,16 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+};
+enum Event<T> { idle, item(T value) };
+Event<Resource> make_event() { return Event<Resource>::item(Resource(7)); }
+void consume<T>(T value) {}
+int main() {
+  consume(make_event());
+  return 0;
+}

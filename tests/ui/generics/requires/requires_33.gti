@@ -1,0 +1,23 @@
+// General requires: inline source concepts preserve full signature and operator proofs.
+//@ check-pass
+concept reads<T> = requires(T& value) { { value.read() } -> int; };
+concept sums<T> = requires(T& left, T& right) { { left + right } -> int; };
+struct Counter {
+  int value = 4;
+  int read() { return this.value; }
+  int operator+(Counter& other) { return this.value + other.value; }
+public:
+  Counter() = default;
+};
+int read<reads T>(T& value) { return value.read(); }
+int sum<sums T = Counter>(T& left, T& right) { return left + right; }
+class Reader {
+public:
+  int read<reads T>(T& value) { return value.read(); }
+public:
+  Reader() = default;
+};
+int main() {
+  Counter a{}; Counter b{}; Reader reader{};
+  return read(a) + sum(a, b) + reader.read(a) == 16 ? 0 : 1;
+}

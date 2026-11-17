@@ -1,0 +1,20 @@
+// Constructor partial rollback representation: the constructor-rollback fixture should pass the frontend.
+//@ check-pass
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+
+class Pair {
+public:
+  Resource first;
+  Resource second;
+  Pair(int32_t a, int32_t b) : first(Resource(a)), second(Resource(a + b)) {}
+};
+
+int main() {
+  Pair pair = Pair(1, 2);
+  return pair.first.value + pair.second.value - 4;
+}

@@ -1,0 +1,10 @@
+// Formatter: a split attribute line is joined with its declaration.
+//@ parse-pass
+//@ snapshot: format
+[[tags::key("player")]]
+struct Player {
+  [[tags::key("display"), tags::skip]]
+  std::string_view name = "";
+public:
+  Player() = default;
+};

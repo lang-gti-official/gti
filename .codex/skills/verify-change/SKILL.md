@@ -44,12 +44,13 @@ tooling that consume them. For the changed paths the planner prints:
 
 - each matched **area** and the changed paths it selected; nested areas
   (for example `llvm-backend` and `llvm-abi-layout`) both apply;
-- the **baseline** every implementation change runs: `compiler_pipeline`
+- the **baseline** every implementation change runs: `gti_test_ui`
   and the native O0/O3 smoke
   (`python3 scripts/validation_checks.py smoke --build build`);
 - **T0**, the registered tests whose CMake registration names a changed test,
   fixture or harness file (a changed `tests/ui/`, `tests/lsp/` or
-  `tests/project/` file selects `gti_test_ui`; for a quick loop run
+  `tests/project/` file selects `gti_test_ui` and its `tests/ui` shards,
+  `-R '^gti_test_ui'`; for a quick loop run
   `build-release/gti-test <path>` on just those files);
 - **T1**, the owning tests, and **T2**, the consumer tests, each as one
   runnable `ctest ... -R '<anchored regex>'` command, followed by a
@@ -162,10 +163,10 @@ invalid setup cheaply; they do not replace required broad coverage.
    into a minimal deterministic regression in the owning suite.
    The complete suite is never a contributor gate: post-integration full
    validation runs it on each main head on every required platform. Until the
-   test-suite migration completes, that includes the old harnesses, and
-   `compiler_pipeline` remains a focused check. Platform, runtime and
-   performance obligations that the queue does not cover (for example a
-   benchmark comparison under ADR 012) remain yours to run and record.
+   test-suite migration completes, that includes the old harnesses.
+   Platform, runtime and performance obligations that the queue does not
+   cover (for example a benchmark comparison under ADR 012) remain yours to
+   run and record.
 4. Run `git diff --check` and inspect the complete scoped diff for unintended
    generated, vendored, user, or semantic changes.
 5. If a check fails, preserve its raw command and output, identify the owning

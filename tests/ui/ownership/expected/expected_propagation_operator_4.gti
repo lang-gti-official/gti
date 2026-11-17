@@ -1,0 +1,26 @@
+// Expected propagation operator: invalid propagation operands, return contexts, error types, and named move-only values should receive focused diagnostics.
+int non_expected_operand() { return ?1; }  //~ ERROR GTI-S2086
+
+int wrong_return_context() {
+  expected<int, int> result = 1;
+  return ?result;  //~ ERROR GTI-S2086
+}
+
+expected<int, bool> wrong_error_type() {
+  expected<int, int> result = 1;
+  return ?result;  //~ ERROR GTI-S2086
+}
+
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+
+expected<MoveOnly, int> named_move_only() {
+  expected<MoveOnly, int> result = MoveOnly();
+  return ?result;  //~ ERROR GTI-S2086
+}
+
+int main() { return 0; }

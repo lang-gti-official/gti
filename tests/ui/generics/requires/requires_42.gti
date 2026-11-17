@@ -1,0 +1,4 @@
+// General requires: source once_action requires exactly void diagnostic.
+import std.functional;
+struct Wrong { int operator()() && { return 1; }  public: Wrong() = default; };
+int main() { std::invoke_once(Wrong()); return 0; }  //~ ERROR GTI-S2029

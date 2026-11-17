@@ -1,0 +1,28 @@
+// Raw access: rejected with GTI-S2101, GTI-S2102.
+//@ raw-pointer-audit: strict
+interface Observer { bool inspect(const int* pointer); };
+class Inert : public Observer {
+public:
+  bool inspect(const int* pointer) override { return pointer != nullptr; }
+public:
+  Inert() = default;
+};
+bool dispatch(Observer& observer, const int* pointer) {
+  return observer.inspect(pointer);
+}
+
+class Reading : public Observer {
+public:
+  bool inspect(const int* pointer) override {
+    unsafe { return *pointer != 0; }
+  }
+public:
+  Reading() = default;
+};
+
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  Inert observer{};
+  return dispatch(observer, pointer) ? 0 : 1;  //~ ERROR GTI-S2102 //~ ERROR GTI-S2101
+}

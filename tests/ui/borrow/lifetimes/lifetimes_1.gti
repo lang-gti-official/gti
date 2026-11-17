@@ -1,0 +1,16 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Reader<lifetime a> {
+  int&<a> value;
+  Reader(int&<a> input) : value(input) {}
+  int operator()(int&<a> other) { return value + other; }
+  int&<a> operator*() { return value; }
+  operator bool() { return value != 0; }
+};
+int read<lifetime a>(int&<a> first, int&<a> second) {
+  Reader<a> reader{first};
+  if (reader) { return reader(second) + *reader; }
+  return 0;
+}
+int main() { int first = 3; int second = 4; return read(first, second) - 10; }

@@ -1,0 +1,20 @@
+// Class payload enums: concrete generic owners should preserve owning payload-enum constructor and method transport.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class relay<T> {
+public:
+  relay(holder value) {}
+  holder pass(holder value) { return std::move(value); }
+public:
+  relay() = default;
+};
+int main() {
+  relay<int32_t> receiver = relay<int32_t>(holder::one(resource()));
+  holder result = receiver.pass(holder::one(resource()));
+  return 0;
+}

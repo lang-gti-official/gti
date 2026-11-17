@@ -1,0 +1,13 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+import std.memory;
+struct Spec {
+  int count;
+  Spec(int value = 2) : count(value) {}
+};
+class Item {
+  int count;
+public:
+  Item(Spec spec = Spec()) : count(spec.count) {}
+};
+int main() { auto item = std::make_unique<Item>(); return 0; }

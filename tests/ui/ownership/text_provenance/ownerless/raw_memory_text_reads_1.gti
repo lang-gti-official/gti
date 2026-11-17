@@ -1,0 +1,87 @@
+// Raw memory text reads: text read through a raw pointer is an ownerless result.
+//@ check-pass
+import std.string;
+struct Entry {
+  std::string_view name;
+  int id;
+};
+struct Slots {
+  c_string* items = nullptr;
+  int32_t count = 0;
+public:
+  Slots() = default;
+};
+mut c_string keptText = nullptr;
+mut std::string_view keptView = "";
+void put(c_string* items, int32_t at, c_string value) {
+  unsafe { items[at] = value; }
+}
+c_string second(c_string* items) {
+  unsafe {
+    c_string* next = items + 1;
+    return *next;
+  }
+}
+c_string at(c_string* items, int32_t index) { unsafe { return items[index]; } }
+c_string viaLocal(c_string* items, int32_t index) {
+  unsafe {
+    c_string* base = items;
+    return base[index];
+  }
+}
+c_string first(Slots slots) { unsafe { return slots.items[0]; } }
+c_string viaReference(c_string*& items) { unsafe { return items[1]; } }
+std::string_view viewAt(std::string_view* item) { unsafe { return *item; } }
+std::string_view wordAt(std::string_view* items, int32_t index) {
+  unsafe { return items[index]; }
+}
+std::string_view nameAt(Entry* entry) { unsafe { return entry->name; } }
+c_string viaAuto(c_string* items) {
+  unsafe {
+    auto base = items;
+    return base[1];
+  }
+}
+c_string viaMutable(c_string* items) {
+  unsafe {
+    mut c_string* base = items;
+    base = base + 1;
+    return base[0];
+  }
+}
+c_string viaLocalRecord(Slots slots) {
+  unsafe {
+    Slots copy = slots;
+    return copy.items[0];
+  }
+}
+std::string_view viaLocalArrow(Entry* entry) {
+  unsafe {
+    Entry* local = entry;
+    return local->name;
+  }
+}
+int main() {
+  mut c_string slots[3] = {nullptr, nullptr, nullptr};
+  put(&slots[0], 1, "b");
+  keptText = second(&slots[0]);
+  if (keptText == nullptr || keptText != slots[1] ||
+      at(&slots[0], 1) != keptText || viaLocal(&slots[0], 2) != nullptr) {
+    return 1;
+  }
+  mut c_string* base = &slots[0];  //~ WARN GTI-S2096
+  Slots view{.items = base, .count = 3};
+  if (first(view) != nullptr || viaReference(base) != keptText) { return 2; }
+  mut std::string_view words[2] = {"word", "other"};
+  keptView = viewAt(&words[0]);
+  mut Entry entry{.name = "entry", .id = 1};
+  if (wordAt(&words[0], 1) != "other" || nameAt(&entry) != "entry") {
+    return 3;
+  }
+  keptText = viaAuto(&slots[0]);
+  if (keptText != viaMutable(&slots[0]) || first(view) != viaLocalRecord(view)) {
+    return 5;
+  }
+  keptView = viaLocalArrow(&entry);
+  return keptView == "entry" ? 0 : 4;
+}

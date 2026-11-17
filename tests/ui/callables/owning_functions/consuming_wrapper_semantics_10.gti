@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: call result is not implicitly converted.
+import std.functional;
+import std.memory;
+int main() { std::function<int() &&> callback{[]() -> int { return 3; }}; bool value = std::move(callback)(); return 0; }  //~ ERROR GTI-S2003

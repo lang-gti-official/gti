@@ -1,0 +1,3 @@
+// Rejected: void source query.
+import std.memory;
+int main() { auto x = std::layout_of<void>(); return 0; }  //~ ERROR GTI-S2029

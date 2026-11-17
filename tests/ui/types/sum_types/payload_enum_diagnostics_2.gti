@@ -1,0 +1,3 @@
+// Payload enum diagnostics: payload enums should own their tag representation.
+enum class Result : uint8_t { ok(int32_t value), error };  //~ ERROR GTI-S2067
+int main() { return 0; }

@@ -1,0 +1,28 @@
+// Exclusive reborrow loan graph: grouping and comma wrappers should preserve a returned child loan's caller-owned origin.
+//@ check-pass
+class GroupedCell {
+  mut int value = 0;
+
+public:
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return (child);
+  }
+public:
+  GroupedCell() = default;
+};
+
+class CommaCell {
+  mut int value = 0;
+
+public:
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return (0, child);
+  }
+public:
+  CommaCell() = default;
+};
+int main() { return 0; }

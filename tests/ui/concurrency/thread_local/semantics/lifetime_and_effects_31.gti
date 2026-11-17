@@ -1,0 +1,6 @@
+// Lifetime and effects: constructing an owned local does not prematurely run its deferred cleanup.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; int main() { int& borrowed = value; Cleanup held{}; int copied = borrowed; return copied; }

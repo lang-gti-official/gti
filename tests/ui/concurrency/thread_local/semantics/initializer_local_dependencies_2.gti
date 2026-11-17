@@ -1,0 +1,23 @@
+// Initializer local dependencies: typed and inferred local TLS initializers use their own exact declaration region rather than the surrounding function.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value!(saved);
+}
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
+}
+
+int main() {
+  thread_local int first = nested_value!(3);
+  thread_local auto second = local_callback!([]() -> int { return 7; });
+  return first + second;
+}

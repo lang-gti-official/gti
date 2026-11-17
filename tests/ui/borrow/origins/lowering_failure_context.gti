@@ -1,0 +1,8 @@
+// Lowering failure context: lowering context mutation starts valid.
+//@ check-pass
+struct Item { mut int value = 0;  public: Item() = default; };
+int main() {
+  Item item{};
+  Item& alias = item;
+  return alias.value;
+}

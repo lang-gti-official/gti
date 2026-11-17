@@ -1,0 +1,11 @@
+// Pack fold storage effects: an exact empty or nonempty user fold preserves an unrelated persistent loan and authorized formal writes.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2;
+void leaf<T>(mut int32_t& input, T& element) { input += 1; }
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;
+  (leaf(input, args), ...);
+}
+int main() { int32_t& held = guarded; folded(); return held; }

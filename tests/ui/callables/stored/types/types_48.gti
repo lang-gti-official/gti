@@ -1,0 +1,27 @@
+// Stored callables: owned callable pack forwarding reaches verified MIR.
+//@ check-pass
+class Token {
+  int value;
+public:
+  Token(int value) : value(value) {}
+  ~Token() { int checked = 1 / this.value; }
+  int read() { return this.value; }
+};
+void accept<Args...>(int prefix, Args... args) {}
+void relay<Args...>(Args... args) { accept(0, args...); }
+int main() {
+  relay();
+  int offset = 7;
+  auto single = [offset]() -> int { return offset; };
+  relay(std::move(single));
+  auto passive_left = [offset]() -> int { return offset; };
+  auto passive_right = [offset]() -> int { return offset; };
+  relay(std::move(passive_left), 7, std::move(passive_right));
+  Token first{1};
+  Token second{2};
+  auto left = [first = std::move(first)]() -> int { return first.read(); };
+  auto right = [second = std::move(second)]() -> int { return second.read(); };
+  relay(std::move(left), 7, std::move(right));
+  accept(0);
+  return 0;
+}

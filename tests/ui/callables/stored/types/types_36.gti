@@ -1,0 +1,2 @@
+// Stored callables: nonvoid expressions retain the exact semantic return diagnostic.
+void invalid() { return 7; } int main() { return 0; }  //~ ERROR GTI-S2000

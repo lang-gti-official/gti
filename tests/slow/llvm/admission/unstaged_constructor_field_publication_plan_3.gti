@@ -1,0 +1,8 @@
+// Unstaged constructor field publication plan: a source null literal has one exact typed unique-owner field publication transport.
+//@ build-pass
+//@ slow
+import std.memory;
+int main() {
+  std::unique_ptr<int> owner = nullptr;
+  return owner == nullptr ? 0 : 1;
+}

@@ -1,0 +1,50 @@
+// A compiled reference API keeps its callers' loans and access rules once its
+// sources are gone: the source-free consumer checks and runs, and each misuse
+// is GTI-S2017 against the bundle; the bundle is never rewritten and no
+// interface source appears. (From compiled_borrow_library_test.py.)
+$ cd producer
+$ gti check borrowing --release
+$ gti build borrowing --release
+stdout: Built borrowing [release,
+$ mkdir ../consumer/dependencies
+$ sh -c "cp build/gti/release/*/borrowing.gtilib ../consumer/dependencies/"
+$ cp ../consumer/dependencies/borrowing.gtilib ../original.gtilib
+$ cd ..
+$ rm -r producer
+$ cd consumer
+$ gti check app --release
+$ gti run app --release
+$ cp ../variants/mutation_while_read_loan.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cp ../variants/overlapping_mutable_loans.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cp ../variants/mutable_from_immutable.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cp ../variants/temporary_escape.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cp ../variants/local_escape.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cp ../variants/second_argument_remains_borrowed.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cp ../variants/nominal_mutation_while_read_loan.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cp ../variants/nominal_mutable_from_immutable.gti main.gti
+$ gti check app --release
+? 65
+stderr: GTI-S2017
+$ cmp dependencies/borrowing.gtilib ../original.gtilib
+$ test ! -e api.gti

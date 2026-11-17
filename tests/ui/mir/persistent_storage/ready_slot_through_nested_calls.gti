@@ -1,0 +1,13 @@
+// Ready slot through nested calls: an existing exact TLS loan proves initialization completed through nested helpers.
+//@ check-pass
+thread_local mut int32_t first = 1;
+int32_t initialize() { first = 7; return 2; }
+thread_local int32_t second = initialize();
+int32_t read_second() { return second; }
+int32_t relay() { return read_second(); }
+int main() {
+  int32_t& ready = second;
+  int32_t& protected_first = first;
+  int32_t copied = relay();
+  return ready + protected_first + copied;
+}

@@ -1,0 +1,14 @@
+// A constructor cannot store a reference beside a reference pack without a declared region.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+struct Holder<T> {
+  T& value;
+  Holder<Args...>(T& source, Args&... args) : value(source) {}  //~ ERROR GTI-S2023
+};
+int main() { Ticket value{}; Holder<Ticket> holder{value, value}; return 0; }  //~ ERROR GTI-S2023

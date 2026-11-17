@@ -1,0 +1,6 @@
+// Raw produced call origins: callee-produced global origins must enter normal caller loan checks.
+//@ raw-pointer-audit: strict
+mut int global = 7;
+int main() { auto pointer = source(); int& checked = global;
+  unsafe { *pointer = 9; } return checked; }  //~ ERROR GTI-S2102
+int* source() { return &global; }

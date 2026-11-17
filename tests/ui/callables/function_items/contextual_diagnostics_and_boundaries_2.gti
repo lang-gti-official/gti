@@ -1,0 +1,4 @@
+// Contextual diagnostics and boundaries: an overload set cannot become a stored value without exact context.
+void work(int value) {}
+void work(bool value) {}
+int main() { auto item = work; return 0; }  //~ ERROR GTI-S2090

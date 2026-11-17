@@ -1,0 +1,16 @@
+// Projected raw pointer origins: reseating a raw field must replace only its own facts.
+//@ check-pass
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { mut Address first{}; mut Address second{};  public: Pair() = default; };
+
+int main() {
+  int live = 9;
+  mut Pair pair{};
+  unsafe {
+    pair.second.pointer = &live;
+    { int gone = 7; pair.first.pointer = &gone; }
+    pair.first.pointer = &live;
+    return *pair.first.pointer + *pair.second.pointer;
+  }
+}

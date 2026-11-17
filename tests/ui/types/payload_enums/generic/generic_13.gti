@@ -1,0 +1,11 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+struct Phantom<T> { T value; };
+struct Actual<T> { T value; };
+enum Metadata<T> { absent, number(int32_t value) };
+enum Payload<T> { item(Actual<T> value) };
+using ClassOnly = Phantom<int32_t>;
+using EnumOnly = Metadata<Phantom<int32_t>>;
+using ActualPayload = Payload<int32_t>;
+using NestedEnum = Phantom<Metadata<bool>>;
+int main() { return 0; }

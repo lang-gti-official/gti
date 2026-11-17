@@ -1,0 +1,16 @@
+// Negative: borrowed result parameters are ordinary class values.
+//@ check-pass
+class Resource {
+  mut int value;
+public:
+  Resource(int value) : value(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  int read() { return value; }
+  void set(int replacement) mut { value = replacement; }
+};
+expected<Resource&, int> lookup(Resource& owner, bool fail) {
+  if (fail) { return unexpected(9); }
+  return owner;
+}
+void run(expected<Resource&, int> source) {}

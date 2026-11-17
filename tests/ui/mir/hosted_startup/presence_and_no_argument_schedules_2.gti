@@ -1,0 +1,3 @@
+// Presence and no argument schedules: an in-memory no-argument entry should have one exact generated call and return schedule.
+//@ check-pass
+int main() { return 0; }

@@ -1,0 +1,7 @@
+// Semantics: typed and generic macro input reject loader effects.
+// --- main.gti
+#macro typed<T>(T value) {} int main(){ typed<int>!(
+#define HIDDEN_FLAG  //~ ERROR GTI-I0015
+1); return 0; }
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) std::syntax::expr html(std::syntax::tokens input) { return std::syntax::parse(std::syntax::literal("42", std::syntax::location(input, uint64_t(0), uint64_t(1)))); }

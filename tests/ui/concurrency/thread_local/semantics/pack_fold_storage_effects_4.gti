@@ -1,0 +1,7 @@
+// Pack fold storage effects: direct persistent mutable fixed inputs authorize formal writes without hiding disjoint ambient writes.
+//@ check-pass
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2;
+void leaf<T>(mut int32_t& input, T& element) { input += 1; other += 1; }
+void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }
+int main() { folded(1, true); return guarded; }

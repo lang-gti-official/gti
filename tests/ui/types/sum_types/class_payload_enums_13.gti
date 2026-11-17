@@ -1,0 +1,30 @@
+// Class payload enums: ordinary class and struct fields should retain one exact active payload-enum cleanup row through verified MIR.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class wrapper {
+public:
+  holder value = holder::one(resource());
+public:
+  wrapper() = default;
+};
+struct default_wrapper {
+  holder value = holder::one(resource());
+public:
+  default_wrapper() = default;
+};
+class generic_wrapper<T> {
+  T value;
+public:
+  generic_wrapper(T value) : value(std::move(value)) {}
+};
+int main() {
+  wrapper first = wrapper();
+  default_wrapper second = default_wrapper();
+  generic_wrapper<holder> third = generic_wrapper<holder>(holder::none);
+  return 0;
+}

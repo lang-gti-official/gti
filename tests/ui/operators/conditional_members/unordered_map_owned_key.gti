@@ -1,0 +1,5 @@
+// A key moved into a std::unordered_map subscript cannot be used afterwards.
+//@ check-fail
+import std.unordered_map;
+import std.string;
+int main() { mut std::unordered_map<std::string, int> values{}; std::string key = "a"; values[std::move(key)] = 2; return int(key.size()); }  //~ ERROR GTI-S2018 already been moved

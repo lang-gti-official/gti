@@ -1,0 +1,4 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+int&<a> fixed<lifetime a, Args...>(int&<a> first, Args&... ignored) { return first; }
+int main() { int first = 3; mut int other = 4; int& kept = fixed(first, other); other = 5; return kept - 3; }

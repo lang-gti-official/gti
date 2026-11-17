@@ -1,0 +1,35 @@
+// Semantic and ir model: valid unions and payload enums should complete the frontend.
+//@ check-pass
+enum class BitKind : uint8_t { integer, real };
+
+union Bits {
+  mut uint32_t integer;
+  mut float real;
+  mut BitKind kind;
+};
+
+enum class Message {
+  quit,
+  move(int32_t x, int32_t y),
+  code(int32_t value),
+};
+
+int32_t inspect(Message message) {
+  switch (message) {
+  case Message::quit:
+    return 1;
+  case Message::move(x, y):
+    return x + y;
+  case Message::code(value):
+    return value;
+  }
+}
+
+int main() {
+  mut Bits bits{uint32_t(0)};
+  unsafe {
+    bits.real = 42.0;
+  }
+  Message message = Message::move(20, 22);
+  return inspect(message) - 42;
+}

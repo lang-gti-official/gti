@@ -30,7 +30,7 @@ L-CALL-03's checked shared/exclusive reference captures and source-defined
 `function_ref` views are delivered in 0.433.0; L-CALL-04's signature-level
 result-origin contracts are delivered in 0.437.0. Checked erased references and
 typed GTI invocation pointers support these ordinary source wrappers. Current
-fixtures include `borrowing_capture_tests.cpp` and
+fixtures include `tests/ui/callables/borrowing_captures/` and
 `checked_callable_{erasure,pointer,transport,result_origin}.gti`. Borrowed
 environments remain tied to their owners; this does not deliver arbitrary
 borrowed escape or owning class results through invocation pointers. Inline

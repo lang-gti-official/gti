@@ -1,0 +1,13 @@
+// Native identity: rejected with GTI-S2003.
+import std.meta;
+struct Middle { implicit Middle(int value) {}  public: Middle() = default; };
+struct End { implicit End(Middle value) {}  public: End() = default; };
+End exact(Middle value) { return End(value); }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;  //~ ERROR GTI-S2003
+}
+int main() {
+  auto shape = exact;
+  End result = reflected(shape, 1);
+  return 0;
+}

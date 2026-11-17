@@ -1,0 +1,14 @@
+// Analyze: receiver contract transports the known owner of a raw field.
+//@ check-pass
+struct Reading {
+  mut int value = 42;
+  mut const int* address = nullptr;
+  int&<this> read() { unsafe { return *this.address; } }
+public:
+  Reading() = default;
+};
+int main() {
+  mut Reading owner{};
+  owner.address = &owner.value;
+  return owner.read() - 42;
+}

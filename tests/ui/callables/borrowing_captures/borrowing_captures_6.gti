@@ -1,0 +1,8 @@
+// Borrowing captures: nested-shared-capture.
+//@ check-pass
+int main() {
+  int value = 3;
+  auto read = [&value]() -> int { return value; };
+  auto outer = [read]() -> int { return read(); };
+  return outer() - 3;
+}

@@ -1,0 +1,13 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+interface Marker { int mark(); };
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Derived<lifetime a> : public Marker, public Base<a> {
+  Derived(int&<a> input) : Base<a>(input) {}
+  int mark() override { return 0; }
+};
+int&<a> read<lifetime a>(Derived<a>& view) { return view.value; }
+int main() { int value = 7; Derived view{value}; return read(view) - 7; }

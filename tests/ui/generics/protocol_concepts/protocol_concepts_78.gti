@@ -1,0 +1,6 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept dup<T> {
+  typename item;
+  int item(T& value);  //~ ERROR GTI-S2123
+};
+int main() { return 0; }

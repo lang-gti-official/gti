@@ -1,0 +1,31 @@
+// Generic virtual root instances: an override relays only what its root's instance relays.
+import std.string;
+class Picker<T> {
+public:
+  int n;
+  Picker() : n(0) {}
+  virtual T pick(T a) { return a; }
+};
+class Literal : public Picker<std::string_view> {
+public:
+  Literal() : Picker<std::string_view>() {}
+  std::string_view pick(std::string_view a) override { return "literal"; }
+};
+class Same<T> : public Picker<T> {
+public:
+  Same() : Picker<T>() {}
+  T pick(T a) override { return a; }
+};
+
+class Owned : public Picker<std::string_view> {
+  std::string text;
+public:
+  Owned() : Picker<std::string_view>(), text("own") {}
+  std::string_view pick(std::string_view a) override {
+    return this.text.view();  //~ ERROR GTI-S2045
+  }
+};
+int main() {
+  Owned owned{};
+  return int(owned.pick("x").size());
+}

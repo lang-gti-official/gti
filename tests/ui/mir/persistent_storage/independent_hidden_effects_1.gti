@@ -1,0 +1,12 @@
+// Independent hidden effects: a live persistent borrow permits disjoint transitive mutation.
+//@ check-pass
+thread_local mut int32_t first = 1;
+thread_local mut int32_t second = 2;
+
+void change() { second = 9; }
+void relay() { change(); }
+int main() {
+  int32_t& borrowed = first;
+  relay();
+  return borrowed;
+}

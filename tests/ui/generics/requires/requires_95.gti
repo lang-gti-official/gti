@@ -1,0 +1,5 @@
+// General requires: a query cannot hide an unsafe obligation diagnostic.
+concept raw_read<T> = requires(T& value) {
+  { unsafe { value.raw() } } -> int;
+};
+int read<T>(T& value) requires raw_read<T> { return value.raw(); }  //~ ERROR GTI-S2055

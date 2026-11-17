@@ -1,0 +1,15 @@
+// By value mutable span range: writing through the span while an element is live is rejected.
+import std.span;
+import std.vector;
+
+void clash(mut std::mutable_span<int> elements) {
+  for (mut auto& value : elements) {
+    elements[std::size_t(0)] = 1;  //~ ERROR GTI-S2017
+    value = value + 1;
+  }
+}
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  clash(values.as_mutable_span());
+  return 0;
+}

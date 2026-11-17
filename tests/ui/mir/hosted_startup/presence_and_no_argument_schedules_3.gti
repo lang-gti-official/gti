@@ -1,0 +1,3 @@
+// Presence and no argument schedules: a DataOnly Module plan must not execute abstract data stages from HostedStartup.
+//@ check-pass
+constexpr int32_t seed = 1; int main() { return seed; }

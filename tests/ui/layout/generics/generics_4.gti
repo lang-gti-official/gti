@@ -1,0 +1,8 @@
+// Generics: rejected with GTI-S2000, GTI-S2023.
+class Owner<Args...> {
+public:
+  void bad<Args>(Args... args) {}  //~ ERROR GTI-S2000 //~ ERROR GTI-S2023 //~ ERROR GTI-S2023
+public:
+  Owner() = default;
+};
+int main() { Owner<int> value{}; return 0; }

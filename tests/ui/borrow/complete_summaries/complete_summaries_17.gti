@@ -1,0 +1,5 @@
+// Complete borrow summaries: rejected with GTI-S2045.
+//@ analyze-fail
+enum Reading { error, value(int& owner) };
+Reading<a> wrong<lifetime a>(int&<a> owner, int& other) { return Reading::value(other); }  //~ ERROR GTI-S2045
+int main() { return 0; }

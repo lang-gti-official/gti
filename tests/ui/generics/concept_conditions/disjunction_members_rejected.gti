@@ -1,0 +1,4 @@
+// A disjunction of concepts does not grant either side's members.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+int f<T>(T& v) { if constexpr(sized<T> || std::integral<T>) { return int(v.size()); } else { return 0; } } int main() { int x = 1; return f(x); }  //~ ERROR GTI-S2000 Member access requires

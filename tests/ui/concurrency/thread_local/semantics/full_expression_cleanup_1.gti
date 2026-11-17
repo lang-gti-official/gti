@@ -1,0 +1,8 @@
+// Full expression cleanup: one full-expression cleanup rule protects conditions, loop steps, initializers, returned borrows and constructor fields.
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+int main() { int& borrowed = value; if (inspect(Cleanup())) {} return borrowed; }  //~ ERROR GTI-S2045

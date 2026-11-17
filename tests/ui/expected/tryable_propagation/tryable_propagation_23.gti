@@ -1,0 +1,11 @@
+// Tryable propagation: rejected with GTI-S2017.
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+
+Token&<a> escape<lifetime a>(Token&<a> token) { return token; }
+int main() { Token& value = escape(Token::item(7)); return inspect(value); }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2017

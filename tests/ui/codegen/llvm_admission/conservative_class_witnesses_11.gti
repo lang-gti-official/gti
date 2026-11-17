@@ -1,0 +1,9 @@
+// Conservative class witnesses: ownership-field exclusion uses valid source-defined policy.
+//@ check-pass
+import std.memory;
+class Outer {
+  std::unique_ptr<int> owner = std::unique_ptr<int>(nullptr);
+public:
+  Outer() : owner(std::unique_ptr<int>(nullptr)) {}
+};
+void accept(Outer& value) {}

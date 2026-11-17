@@ -1,0 +1,29 @@
+// An owned range binding has hover, definition, references and rename like
+// any local; using the moved container is reported. (From consuming_range_lsp_test.py.)
+//@ hover @use: string
+//@ definition @use: @decl
+//@ references @use: @decl @use
+//@ rename @use owned_word: @decl @use
+import std.vector;
+import std.string;
+int main() {
+  mut std::vector<std::string> values{};
+  values.emplace_back("owned");
+  mut std::size_t size = 0;
+  for (auto /*@decl*/word : std::move(values).into_range()) {
+    size += /*@use*/word.size();
+  }
+  return size == 5 ? 0 : 1;
+}
+// --- step 2
+import std.vector;
+import std.string;
+int main() {
+  mut std::vector<std::string> values{};
+  values.emplace_back("owned");
+  mut std::size_t size = 0;
+  for (auto word : std::move(values).into_range()) {
+    size += word.size();
+  }
+  return values.empty() && size == 5 ? 0 : 1;  //~ ERROR GTI-S2018 moved
+}

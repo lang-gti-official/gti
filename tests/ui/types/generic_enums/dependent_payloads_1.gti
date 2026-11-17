@@ -1,0 +1,9 @@
+// Dependent payloads: unused generic declarations retain dependent fields without emitting a symbolic enum representation.
+//@ check-pass
+struct Box<T> { T value; };
+enum class Message<T, U = T> {
+  empty,
+  item(T value, U detail),
+  boxed(Box<T> value)
+};
+int main() { return 0; }

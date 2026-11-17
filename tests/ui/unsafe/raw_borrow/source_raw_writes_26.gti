@@ -1,0 +1,8 @@
+// Source raw writes: source callback wrapper preserves captured raw writer effects.
+//@ raw-pointer-audit: strict
+import std.memory;
+import std.functional;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+int main() { mut Holder out{}; auto address = &out;
+  auto writer = [address]() -> void { int gone = 1; unsafe { address->pointer = &gone; } };
+  std::invoke_once(writer); unsafe { return std::assume_ref(out.pointer, out); } }  //~ ERROR GTI-S2103

@@ -1,0 +1,2 @@
+// Consuming methods and value operators: invalid consuming-method use fails in the frontend (borrow).
+class C { public: int x = 1; C take() && { int& alias = this.x; auto c = std::move(this); int observed = alias; return std::move(c); }  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2017

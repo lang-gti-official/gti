@@ -1,0 +1,4 @@
+// Layout diagnostics: invalid layout query 'layout-query-overflow.gti' should produce one focused GTI-S2063 without a fix-it.
+uint64_t query() {
+  return sizeof(int16_t[18446744073709551615]);  //~ ERROR GTI-S2063
+}

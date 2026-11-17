@@ -1,0 +1,2 @@
+// Boundaries: value expressions do not hide statement scopes.
+int main() { return unsafe { int x = 1; x }; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001 //~ ERROR GTI-P0001

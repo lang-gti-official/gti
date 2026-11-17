@@ -1,0 +1,64 @@
+// Array element text rejections: dynamic text cannot reach an array: mut std::string_view names[2] = {"a", "x"}; names[0] = owner.view(); return names[1].size() == uint64_t(1) ? 0 : 1;.
+import std.string;
+struct Shelf {
+  std::string_view titles[2];
+  int count;
+  Shelf() : titles({"x", "yz"}), count(2) {}
+};
+std::string_view table[3] = {"zero", "one", "two"};
+mut std::string_view kept = "";
+std::string_view pick(std::string_view names[3], uint64_t index) {
+  return names[index];
+}
+std::string_view fromTable(uint64_t index) { return table[index]; }
+std::string_view fromLocal(uint64_t index) {
+  std::string_view local[2] = {"left", "right"};
+  return local[index];
+}
+std::string_view fromGrid(uint64_t row, uint64_t column) {
+  std::string_view grid[2][2] = {{"a", "b"}, {"c", "d"}};
+  return grid[row][column];
+}
+std::string_view fromShelf(Shelf shelf, uint64_t index) {
+  return shelf.titles[index];
+}
+std::string_view fromDefault(uint64_t index) {
+  std::string_view empty[2] = {};
+  return empty[index];
+}
+std::string_view place(std::string_view text, uint64_t at) {
+  mut std::string_view slots[2] = {"first", "second"};
+  slots[at] = text;
+  return slots[at];
+}
+uint64_t stamp(std::string_view text, uint64_t at) {
+  std::string_view copy = text;
+  mut std::string_view slots[2] = {"stored", "spare"};
+  slots[at] = "stamped";
+  return slots[at].size() + copy.size();
+}
+std::string_view labelled(std::string_view prefix) {
+  auto label = [](std::string_view unused) -> std::string_view {
+    std::string_view copy = unused;
+    return "label";
+  };
+  std::string_view labels[2] = {label(prefix), "other"};
+  return labels[0];
+}
+std::string_view throughReferences() {
+  mut std::string_view words[2] = {"a", "bc"};
+  for (mut std::string_view& word : words) {
+    word = "q";
+  }
+  std::string_view& last = words[1];
+  return last == "q" ? words[0] : "missed";
+}
+uint64_t guard() {
+  std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  std::string_view copy = view;
+  mut std::string_view slots[2] = {"first", "second"};
+  slots[0] = "guarded";
+  return slots[0].size() + copy.size();
+}
+int main() { std::string owner{"dynamic"}; mut std::string_view names[2] = {"a", "x"}; names[0] = owner.view(); return names[1].size() == uint64_t(1) ? 0 : 1; }  //~ ERROR GTI-S2045

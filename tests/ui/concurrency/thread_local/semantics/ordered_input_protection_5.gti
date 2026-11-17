@@ -1,0 +1,4 @@
+// Ordered input protection: a mutation completed before reference binding remains legal.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1; int modify() { value = 2; return 3; } int read(int copied, int& input) { return input + copied; } int main() { return read(modify(), value); }

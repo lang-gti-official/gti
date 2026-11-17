@@ -1,0 +1,16 @@
+// Known raw pointer origins: raw pointer copies must not erase known moved-owner state.
+//@ raw-pointer-audit: strict
+struct Owner {
+  int value = 1;
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+};
+int main() {
+  Owner original{};
+  unsafe {
+    auto pointer = &original;
+    Owner next = std::move(original);
+    return pointer->value;  //~ ERROR GTI-S2102
+  }
+}

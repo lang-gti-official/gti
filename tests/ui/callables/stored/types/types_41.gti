@@ -1,0 +1,17 @@
+// Stored callables: nominal callable carrier reaches verified MIR.
+//@ check-pass
+class Carrier<T> {
+  T callback;
+public:
+  Carrier(T callback) : callback(std::move(callback)) {}
+  int call(int value) { return this.callback(value); }
+};
+Carrier<T> forward<T>(Carrier<T> owner) { return std::move(owner); }
+Carrier<T> wrap<T>(T callback) { return Carrier<T>(std::move(callback)); }
+int main() {
+  int offset = 7;
+  auto callback = [offset](int value) -> int { return offset + value; };
+  auto first = wrap(std::move(callback));
+  auto second = forward(std::move(first));
+  return second.call(5) - 12;
+}

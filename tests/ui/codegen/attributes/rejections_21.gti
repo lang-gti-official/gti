@@ -1,0 +1,2 @@
+// Rejections: arguments and unsupported annotation placements are rejected.
+[[cold]] #macro ignored(int value) {} int main() { return 0; }  //~ ERROR GTI-S2099

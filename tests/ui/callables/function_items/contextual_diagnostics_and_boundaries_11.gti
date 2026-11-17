@@ -1,0 +1,12 @@
+// Contextual diagnostics and boundaries: a function item returned by a confined algorithm can be retained and invoked with its original exact signature.
+//@ check-pass
+import std.algorithm;
+import std.vector;
+void observe(int32_t& value) {}
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});  //~ WARN GTI-S2096
+  auto retained = std::for_each(values, observe);
+  int value = 7;
+  retained(value);
+  return 0;
+}

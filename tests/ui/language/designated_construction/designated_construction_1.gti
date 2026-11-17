@@ -1,0 +1,12 @@
+// Designated construction: named fields, defaults, required fields and nesting.
+//@ check-pass
+struct Point { int x = 3; int y = 4;  public: Point() = default; };
+struct Required { int value; };
+struct Nested { Point point{}; int z = 5;  public: Nested() = default; };
+int main() {
+  Point point = {.x = 7, .y = 8};
+  Point defaults{.y = 9};
+  Required required = {.value = 11};
+  Nested nested = {.point = {.x = 12}};
+  return point.x + defaults.x + required.value + nested.z;
+}

@@ -1,0 +1,15 @@
+// Positive: assignment through a mutable resource_vector subscript.
+//@ check-pass
+import std.resource;
+import std.memory;
+
+import std.resource_vector;
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_vector<int,std::process_resource> values{resource};
+  values.push_back(5);
+  values.push_back(6);
+  values[std::size_t(0)] = 60;
+  values[std::size_t(1)] = values[std::size_t(0)] + 1;
+  return values[std::size_t(0)] + values[std::size_t(1)];
+}
+int main() { return 0; }

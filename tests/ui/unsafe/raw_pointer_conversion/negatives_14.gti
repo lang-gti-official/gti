@@ -1,0 +1,6 @@
+// Negatives: foreign typed parameter retains known type remains advisory with audit Warn.
+//@ check-pass
+//@ raw-pointer-audit: warn
+using E = void*; using P = uint64_t*;
+void test(int* address) { E e = E(address); P p = P(e); }  //~ WARN GTI-S2101 //~ WARN GTI-S2101
+int main() { return 0; }

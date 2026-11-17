@@ -1,0 +1,3 @@
+// Temporary argument borrows: a local reference binding should not gain lifetime extension.
+class Report { public: Report() {} };
+int main() { Report& alias = Report(); return 0; }  //~ ERROR GTI-S2017

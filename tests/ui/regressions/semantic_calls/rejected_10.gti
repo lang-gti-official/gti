@@ -1,0 +1,12 @@
+// Rejected: one causal error without follow-on diagnostics.
+import std.string;
+consteval std::size_t validate(std::string_view pattern) { return pattern.size(); }
+#macro checked(std::string_view pattern, int value) {
+  std::size_t count = validate(pattern);
+}
+int main() {
+  std::string text{"dyn {}"};
+  int value = 3;
+  if (value == 4) { checked!(text.view(), value); }  //~ ERROR GTI-S2057
+  return 0;
+}

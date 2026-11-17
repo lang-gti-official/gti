@@ -1,0 +1,22 @@
+// Confined callable parameters: same-shaped lambdas from distinct enclosing value-generic instances should retain exact concrete identities and callable targets.
+//@ check-pass
+uint64_t invoke_value<Operation>(Operation operation) {
+  return operation();
+}
+
+class ValueThroughLambda<uint64_t N> {
+public:
+  uint64_t get() {
+    auto operation = []() -> uint64_t { return N; };
+    return invoke_value(operation);
+  }
+public:
+  ValueThroughLambda() = default;
+};
+
+int main() {
+  ValueThroughLambda<4> four{};
+  ValueThroughLambda<8> eight{};
+  uint64_t total = four.get() + eight.get();
+  return int(total) - 12;
+}

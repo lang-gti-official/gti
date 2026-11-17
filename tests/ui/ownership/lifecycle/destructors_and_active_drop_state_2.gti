@@ -1,0 +1,30 @@
+// Destructors and active drop state: invalid destructor declarations should fail in the frontend.
+class WrongName {
+public:
+  ~Other() {}  //~ ERROR GTI-S2021 Destructor name must match
+public:
+  WrongName() = default;
+};
+
+class DuplicateCleanup {
+public:
+  ~DuplicateCleanup() {}
+  ~DuplicateCleanup() {}  //~ ERROR GTI-S2021 cannot declare more than one destructor
+public:
+  DuplicateCleanup() = default;
+};
+
+class PrivateCleanup {
+  ~PrivateCleanup() {}  //~ ERROR GTI-S2021 Destructors must be public
+public:
+  PrivateCleanup() = default;
+};
+
+class ReturningCleanup {
+public:
+  ~ReturningCleanup() { return; }  //~ ERROR GTI-S2021 Destructors cannot contain return statements
+public:
+  ReturningCleanup() = default;
+};
+
+int main() { return 0; }

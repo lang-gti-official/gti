@@ -1,0 +1,7 @@
+// Diagnostics: an owning payload enum is an ordinary expected mapping result.
+//@ check-pass
+struct Resource { ~Resource() {}  public: Resource() = default; };
+enum class Packet { item(Resource value), idle };
+expected<int, int> read() { return 7; }
+Packet map(int input) { return Packet::item(Resource()); }
+int main() { [[discard]] read().transform(map); return 0; }

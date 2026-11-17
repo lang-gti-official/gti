@@ -1,0 +1,6 @@
+// S: unused fresh lambdas still type-check their bodies.
+#macro ignore<F>(F callback) {}
+int main() {
+  ignore!([]() -> int { return missing; });  //~ ERROR GTI-S2001
+  return 0;
+}

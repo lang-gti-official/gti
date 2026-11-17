@@ -1,0 +1,4 @@
+// Diagnostics: default-profile import/yield does not initialize the thread service.
+//@ check-pass
+import std.cthread;
+int main() { std::thrd_yield(); return 0; }

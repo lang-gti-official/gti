@@ -1,0 +1,7 @@
+// General requires: multi-parameter expression failures name the concept without falsely blaming an unused first argument.
+concept readable_second<L, R> = requires(L& unused, R& receiver) {
+  { receiver.read() } -> int;
+};
+int use<L, R>(L& left, R& right) requires readable_second<L, R> { return 0; }
+struct Missing { public: Missing() = default; };
+int main() { int left = 1; Missing right{}; return use(left, right); }  //~ ERROR GTI-S2029
