@@ -41,6 +41,9 @@ audits create no branch or PR, and explicit "PR only", "leave local", or
 "review first" instructions override integration. What is specific to Claude
 Code:
 
+- Follow [Mac mini storage preference](AGENTS.md#mac-mini-storage-preference).
+  Omit `--worktree` in `agent_workflow.py start` to select the SSD or internal
+  fallback automatically; build in that task checkout.
 - Claude Code's managed worktrees live under `.claude/worktrees/`, inside the
   primary checkout, and `scripts/agent_workflow.py` refuses them. Let its
   `start` command create the task worktree at an absolute path outside the

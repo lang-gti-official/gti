@@ -22,6 +22,10 @@ OUTPUTS = {
     "096-error-mapping.gti": "8\nconfiguration error handled\n",
     "097-constexpr-tables.gti": "64\n768\n",
     "098-shared-ownership.gti": "player.png\nasset released\n",
+    "196-lexical-literals.gti": (
+        "80\n-9223372036854775808\n4294967296\n12\n2500\nloud\n"
+        '09h14 and 17h05\nsay "hi" (twice)\nsensor "A"\n2\n'
+    ),
 }
 
 

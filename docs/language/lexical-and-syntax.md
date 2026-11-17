@@ -119,9 +119,9 @@ follow their distinct semantic restrictions.
 ## 2.4 Literals
 
 Integer literals use decimal, hexadecimal `0x`, or binary `0b` spelling. GTI
-does not infer C++ octal meaning from a leading zero. An integer literal is
-decoded as an unsigned magnitude no larger than `uint64_t` before its semantic
-type is selected.
+does not infer C++ octal meaning from a leading zero and has no octal
+spelling. An integer literal is decoded as an unsigned magnitude no larger
+than `uint64_t` before its semantic type is selected.
 
 A floating literal consists of one or more decimal digits, `.`, and one or
 more decimal digits, optionally followed immediately by `d` or `D`. An
@@ -135,10 +135,59 @@ floating type. A value above the selected finite range is a lexical error. A
 value below the normal range is accepted and correctly rounded to a subnormal
 value or positive zero.
 
+**Digit separators.** A `_` may separate digits in any digit run of a
+numeric literal: decimal, hexadecimal and binary integer digits, and the
+integer and fraction digits of a floating literal (`1_000_000`, `0xFF_FF`,
+`0b1010_0101`, `3.141_592`). A separator has no meaning; the value is
+identical without it. It must sit between two digits of the same run, so a
+leading `_` after a radix prefix (`0x_ff`), a trailing `_`, a doubled `__`,
+and a `_` next to the `.` (`1_.5`, `1._5`) are lexical errors (`GTI-L0007`
+for an integer literal, `GTI-L0006` for a floating one) that point at the
+misplaced separator. The one exception is a single `_` immediately before a
+suffix (`10_u8`).
+
+**Numeric suffixes.** A suffix written directly after the digits fixes the
+literal's type:
+
+| Suffix | Type | Suffix | Type |
+| --- | --- | --- | --- |
+| `u8` | `uint8_t` | `i8` | `int8_t` |
+| `u16` | `uint16_t` | `i16` | `int16_t` |
+| `u32` | `uint32_t` | `i32` | `int32_t` |
+| `u64` | `uint64_t` | `i64` | `int64_t` |
+| `f32` | `float` | `f64` | `double` |
+
+Integer suffixes apply to decimal, hexadecimal and binary integer literals
+(`255u8`, `0xFFu8`, `0b1u8`). `f32` and `f64` apply to decimal literals, with
+or without a fraction: `1f32` is the `float` value `1.0`, and `2.5f64` is the
+same value as `2.5d`. In a hexadecimal literal `f` is a digit, so `0x1f32` is
+the integer `0x1f32`. An integer suffix on a floating literal (`1.5u8`), a
+floating suffix on a binary literal, and any other identifier-like tail
+(`10usize`, `10ull`, `1.5f`, `1e5`) are lexical errors at the suffix. GTI has
+no `usize`/`isize` suffix and no C++ `u`, `l`, `ull` or `f` suffixes. The
+lexer records the suffix; its range check and typing are semantic (see
+[literal typing](static-semantics.md#35-initialization-and-conversion)).
+
 Character and string literal escapes are defined by the incorporated grammar.
 A character literal denotes exactly one `char` code unit. A string literal
 denotes a counted read-only `std::string_view` over static storage and may
 contain zero code units.
+
+**Raw string literals.** `R"delim(` *body* `)delim"` is a string literal whose
+body is taken verbatim, with no escape processing, up to the first `)delim"`.
+The body may span lines; its newlines are kept as written. The delimiter is
+0 to 16 printable ASCII characters other than space, `(`, `)`, `\` and `"`,
+and lets the body contain `)"` (`R"re(say "hi")re"`). A raw string has the
+same type, value category and meaning as an ordinary string literal of the
+same bytes, so it is accepted wherever one is: initializers, `constexpr` and
+`static_assert`, macro arguments, `std::string_view` and `std::string`
+construction. GTI has no adjacent-literal concatenation for either form and no
+encoding prefixes (`u8R`, `LR`). `R` followed by anything other than `"` is an
+ordinary identifier, and `R"` directly after an identifier character (`xR"a"`)
+is that identifier followed by an ordinary string. An unterminated raw string
+is `GTI-L0004` at its opening `R"`; a delimiter that is too long, contains an
+invalid character, or is not followed by `(` is `GTI-L0016`, spanning the
+opening through the offending character.
 
 ## 2.5 Comments And Documentation
 

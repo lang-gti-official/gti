@@ -1,0 +1,4 @@
+int main() {
+  std::string_view text = R"a b(x)a b"; //!ERR
+  return int32_t(text.size());
+}
