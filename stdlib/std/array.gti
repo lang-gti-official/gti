@@ -9,36 +9,36 @@ namespace detail {
 class array_sentinel {
   size_t length;
 public:
-  array_sentinel(size_t length) : length(length) {}
-  size_t position() { return this.length; }
+  constexpr array_sentinel(size_t length) : length(length) {}
+  constexpr size_t position() { return this.length; }
 };
 class array_iterator<T, uint64_t N, uint64_t Reverse = 0> {
   array<T, N>& owner;
   mut size_t position;
 public:
-  array_iterator(array<T, N>& owner, size_t position) : owner(owner), position(position) {}
-  T& operator*() {
+  constexpr array_iterator(array<T, N>& owner, size_t position) : owner(owner), position(position) {}
+  constexpr T& operator*() {
     size_t selected = checked_iterator_element(this.position, size_t(0), N, ptrdiff_t(0), Reverse != 0);
     unsafe { return this.owner.get_unchecked(selected); }
   }
-  T& operator->() { return *this; }
-  T& operator[](ptrdiff_t offset) {
+  constexpr T& operator->() { return *this; }
+  constexpr T& operator[](ptrdiff_t offset) {
     size_t index = checked_iterator_element(this.position, size_t(0), N, offset, Reverse != 0);
     return this.owner[index];
   }
-  void operator++() mut { this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N); }
-  void operator--() mut { this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N); }
-  void operator+=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0); }
-  void operator-=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0); }
-  bool operator!=(array_sentinel end) { return this.position != end.position(); }
-  bool operator!=(array_iterator<T, N, Reverse>& other) { return this.position != other.position; }
-  bool operator==(array_sentinel end) { return this.position == end.position(); }
-  bool operator==(array_iterator<T, N, Reverse>& other) { return this.position == other.position; }
-  ptrdiff_t operator-(array_sentinel end) {
+  constexpr void operator++() mut { this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N); }
+  constexpr void operator--() mut { this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N); }
+  constexpr void operator+=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0); }
+  constexpr void operator-=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0); }
+  constexpr bool operator!=(array_sentinel end) { return this.position != end.position(); }
+  constexpr bool operator!=(array_iterator<T, N, Reverse>& other) { return this.position != other.position; }
+  constexpr bool operator==(array_sentinel end) { return this.position == end.position(); }
+  constexpr bool operator==(array_iterator<T, N, Reverse>& other) { return this.position == other.position; }
+  constexpr ptrdiff_t operator-(array_sentinel end) {
     if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
     return checked_iterator_difference(this.position, end.position());
   }
-  ptrdiff_t operator-(array_iterator<T, N, Reverse>& other) {
+  constexpr ptrdiff_t operator-(array_iterator<T, N, Reverse>& other) {
     if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
     return checked_iterator_difference(this.position, other.position);
   }
@@ -47,36 +47,36 @@ class array_mut_iterator<T, uint64_t N, uint64_t Reverse = 0> {
   mut array<T, N>& owner;
   mut size_t position;
 public:
-  array_mut_iterator(mut array<T, N>& owner, size_t position = 0) : owner(owner), position(position) {}
-  T& operator*() {
+  constexpr array_mut_iterator(mut array<T, N>& owner, size_t position = 0) : owner(owner), position(position) {}
+  constexpr T& operator*() {
     size_t selected = checked_iterator_element(this.position, size_t(0), N, ptrdiff_t(0), Reverse != 0);
     unsafe { return this.owner.get_unchecked(selected); }
   }
-  mut T& operator*() mut {
+  constexpr mut T& operator*() mut {
     size_t selected = checked_iterator_element(this.position, size_t(0), N, ptrdiff_t(0), Reverse != 0);
     unsafe { return this.owner.get_unchecked_mut(selected); }
   }
-  T& operator->() { return *this; }
-  mut T& operator->() mut { return *this; }
-  T& operator[](ptrdiff_t offset) {
+  constexpr T& operator->() { return *this; }
+  constexpr mut T& operator->() mut { return *this; }
+  constexpr T& operator[](ptrdiff_t offset) {
     size_t index = checked_iterator_element(this.position, size_t(0), N, offset, Reverse != 0);
     return this.owner[index];
   }
-  mut T& operator[](ptrdiff_t offset) mut {
+  constexpr mut T& operator[](ptrdiff_t offset) mut {
     size_t index = checked_iterator_element(this.position, size_t(0), N, offset, Reverse != 0);
     return this.owner[index];
   }
-  void operator++() mut { this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N); }
-  void operator--() mut { this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N); }
-  void operator+=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0); }
-  void operator-=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0); }
-  bool operator!=(array_sentinel end) { return this.position != end.position(); }
-  bool operator==(array_sentinel end) { return this.position == end.position(); }
-  ptrdiff_t operator-(array_sentinel end) {
+  constexpr void operator++() mut { this.position = checked_iterator_step<Reverse>(this.position, size_t(0), N); }
+  constexpr void operator--() mut { this.position = checked_iterator_step<Reverse, 1>(this.position, size_t(0), N); }
+  constexpr void operator+=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse != 0); }
+  constexpr void operator-=(ptrdiff_t offset) mut { this.position = checked_iterator_position(this.position, size_t(0), N, offset, Reverse == 0); }
+  constexpr bool operator!=(array_sentinel end) { return this.position != end.position(); }
+  constexpr bool operator==(array_sentinel end) { return this.position == end.position(); }
+  constexpr ptrdiff_t operator-(array_sentinel end) {
     if constexpr (Reverse != 0) { return checked_iterator_difference(end.position(), this.position); }
     return checked_iterator_difference(this.position, end.position());
   }
-  ptrdiff_t operator-(array_mut_iterator<T, N, Reverse>& other) {
+  constexpr ptrdiff_t operator-(array_mut_iterator<T, N, Reverse>& other) {
     if constexpr (Reverse != 0) { return checked_iterator_difference(other.position, this.position); }
     return checked_iterator_difference(this.position, other.position);
   }
@@ -104,23 +104,23 @@ public:
     return N == 0;
   }
 
-  detail::array_iterator<T, N> begin() {
+  constexpr detail::array_iterator<T, N> begin() {
     return detail::array_iterator<T, N>(this, size_t(0));
   }
-  detail::array_mut_iterator<T, N> begin_mut() mut {
+  constexpr detail::array_mut_iterator<T, N> begin_mut() mut {
     return detail::array_mut_iterator<T, N>(this);
   }
-  detail::array_sentinel end() { return detail::array_sentinel(N); }
-  const_iterator end_iterator() { return const_iterator(this, N); }
-  iterator end_mut() mut { return iterator(this, N); }
-  const_iterator cbegin() { return this.begin(); }
-  sentinel cend() { return this.end(); }
-  const_reverse_iterator rbegin() { return const_reverse_iterator(this, N); }
-  const_reverse_iterator crbegin() { return this.rbegin(); }
-  sentinel rend() { return sentinel(size_t(0)); }
-  sentinel crend() { return this.rend(); }
-  reverse_iterator rbegin_mut() mut { return reverse_iterator(this, N); }
-  reverse_iterator rend_mut() mut { return reverse_iterator(this, size_t(0)); }
+  constexpr detail::array_sentinel end() { return detail::array_sentinel(N); }
+  constexpr const_iterator end_iterator() { return const_iterator(this, N); }
+  constexpr iterator end_mut() mut { return iterator(this, N); }
+  constexpr const_iterator cbegin() { return this.begin(); }
+  constexpr sentinel cend() { return this.end(); }
+  constexpr const_reverse_iterator rbegin() { return const_reverse_iterator(this, N); }
+  constexpr const_reverse_iterator crbegin() { return this.rbegin(); }
+  constexpr sentinel rend() { return sentinel(size_t(0)); }
+  constexpr sentinel crend() { return this.rend(); }
+  constexpr reverse_iterator rbegin_mut() mut { return reverse_iterator(this, N); }
+  constexpr reverse_iterator rend_mut() mut { return reverse_iterator(this, size_t(0)); }
 
   constexpr T& at(int index) {
     return this.values[index];
@@ -171,7 +171,7 @@ public:
   }
 
   /// The caller proves index < N; forming the reference retains this owner.
-  unsafe T& get_unchecked(size_t index) {
+  unsafe constexpr T& get_unchecked(size_t index) {
     unsafe {
       mut const T* address = nullptr;
       if constexpr (N > 0) { address = &this.values[0]; }
@@ -179,7 +179,7 @@ public:
     }
   }
 
-  unsafe mut T& get_unchecked_mut(size_t index) mut {
+  unsafe constexpr mut T& get_unchecked_mut(size_t index) mut {
     unsafe {
       mut T* address = nullptr;
       if constexpr (N > 0) { address = &this.values[0]; }
