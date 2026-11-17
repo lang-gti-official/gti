@@ -1,0 +1,8 @@
+main.gti:7:3: error[GTI-P0001]: Expect ';' after variable declaration.
+ 7 |   int b = 2  //~ ERROR GTI-P0001 //~ ERROR GTI-D0002
+   |   ^~~
+help: Insert ';'.
+main.gti:7:3: error[GTI-D0002]: Too many errors; stopping analysis (error limit 1).
+ 7 |   int b = 2  //~ ERROR GTI-P0001 //~ ERROR GTI-D0002
+   |   ^~~
+help: Use --error-limit <n> to change the limit, or --error-limit 0 for unlimited errors.

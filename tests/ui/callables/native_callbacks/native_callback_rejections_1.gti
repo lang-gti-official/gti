@@ -1,0 +1,3 @@
+// Native callback rejections: anonymous-callback-parameter.gti should be rejected by the native callback semantic boundary.
+void consume((int32_t) -> int32_t callback) {}  //~ ERROR GTI-S2076
+int main() { return 0; }

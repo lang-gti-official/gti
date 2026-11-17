@@ -1,0 +1,13 @@
+// Raw invocation boundaries: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+extern "C" { void close_native(void* handle); }
+struct Receiver {
+  mut void* handle = nullptr;
+  void scalar(int value, int& read, mut int& write) mut { write = value + read; }
+  void close() mut { unsafe { close_native(this.handle); } }
+public:
+  Receiver() = default;
+};
+int main() { mut Receiver value{}; int read = 1; mut int write = 0;
+  value.scalar(1, read, write); value.close(); return write - 2; }

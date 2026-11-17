@@ -1,0 +1,24 @@
+// A local borrow of a thread-local owner initialises and drops it once.
+//@ run-pass
+//@ stdout: init 3
+//@ stdout: drop 3
+import std.format;
+class State {
+  int32_t id;
+public:
+  State(int32_t id) : id(id) { std::println("init {}", this.id); }
+  int32_t read() { return this.id; }
+  ~State() { std::println("drop {}", this.id); }
+};
+thread_local mut State first = State(1);
+thread_local mut State second = State(2);
+thread_local mut State unused = State(99);
+State& local_state() {
+  thread_local State value = State(3);
+  return value;
+}
+int main() {
+  State& held = local_state();
+  if (held.read() != 3 || local_state().read() != 3) return 1;
+  return 0;
+}

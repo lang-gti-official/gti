@@ -1,0 +1,10 @@
+// Exclusive reborrow loan graph: a dynamic fixed-array index should remain may-alias with every constant element.
+int main() {
+  mut int values[2] = {};
+  mut int index = 1;  //~ WARN GTI-S2096
+  mut int& first = values[0];
+  mut int& dynamic = values[index];  //~ ERROR GTI-S2017
+  dynamic += 1;
+  first += 1;
+  return 0;
+}

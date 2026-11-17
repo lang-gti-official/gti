@@ -1,0 +1,3 @@
+// Rejected: invalid query/use is rejected before emission.
+@compiler_type("meta_callable_return_type") struct Forged<F> {};  //~ ERROR GTI-S2049
+int main() { return 0; }

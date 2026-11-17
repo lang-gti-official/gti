@@ -1,0 +1,8 @@
+// Invalid: invalid discard contract must reject.
+struct Counter {
+  mut int value = 0;
+  [[discardable]] mut int&<this> add() mut { return this.value; }
+public:
+  Counter() = default;
+};
+int main() { mut Counter c{}; mut int& loan = c.add(); c.add(); return loan; }  //~ ERROR GTI-S2017

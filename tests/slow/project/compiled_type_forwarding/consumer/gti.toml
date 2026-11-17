@@ -1,0 +1,27 @@
+manifest-version = 1
+[package]
+name = "forwarding-consumer"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-type-forwarding"
+target = "inspection"
+path = "dependencies/inspection.gtilib"
+interface = "api/inspection.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-type-forwarding"
+target = "processing"
+path = "dependencies/processing.gtilib"
+interface = "api/processing.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-type-forwarding"
+target = "geometry"
+path = "dependencies/geometry.gtilib"
+interface = "api/owning types/model \"quoted\".gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-type-forwarding"
+target = "drawing"
+path = "dependencies/drawing.gtilib"
+interface = "api/drawing.gti"

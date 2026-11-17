@@ -1,0 +1,7 @@
+// Semantic boundaries: scalar atomic use is available in the single-threaded profile.
+//@ check-pass
+import std.atomic;
+int main() {
+  std::atomic<int32_t> value{1};
+  return value.load();
+}

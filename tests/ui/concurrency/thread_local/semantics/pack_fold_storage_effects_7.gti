@@ -1,0 +1,10 @@
+// Pack fold storage effects: an exact empty fold executes no hidden target effects.
+//@ check-pass
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2;
+void leaf<T>(int32_t& input, T& element) { guarded = 3; }
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;  //~ WARN GTI-S2096
+  (leaf(input, args), ...);
+}
+int main() { int32_t& held = guarded; folded(); return held; }

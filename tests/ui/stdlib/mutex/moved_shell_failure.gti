@@ -1,0 +1,30 @@
+// A moved-from mutex shell owns no payload cleanup on the failure path.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: 7
+//@ stdout: 12
+//@ stdout: 3
+//@ stdout: 12
+//@ stderr-contains: primary.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- primary.gti
+import std.mutex;
+class Payload {
+  int32_t id;
+  int32_t divisor;
+public:
+  Payload(int32_t id, int32_t divisor) : id(id), divisor(divisor) {}
+  Payload(Payload& other) = delete;
+  Payload(Payload&& other) = default;
+  ~Payload() {
+    std::println(this.id);
+    std::println(12 / this.divisor);
+  }
+};
+int main() {
+  std::mutex<Payload> unrelated{Payload(3, 1)};
+  std::mutex<Payload> first{Payload(7, 1)};
+  std::mutex<Payload> second = std::move(first);
+  int32_t zero = 0;
+  return 12 / zero;
+}

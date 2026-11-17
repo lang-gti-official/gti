@@ -1,0 +1,8 @@
+// Indexed place moves and initialization: a dynamic index should may-alias an unavailable constant element.
+struct Record { int value; Record(int initial) : value(initial) {} };
+int read(mut int index) {
+  mut Record values[2] = {Record(1), Record(2)};
+  Record consumed = std::move(values[0]);
+  return values[index].value + consumed.value;  //~ ERROR GTI-S2018
+}
+int main() { return read(1) - 3; }

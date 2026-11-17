@@ -1,0 +1,9 @@
+// An error inside a nested macro expansion is reported at the user's
+// invocation; an unresolved macro argument at the argument.
+// (From deferred_assertion_lsp_test.py.)
+#macro broken(int value) { missing(value); }
+#macro wrapper(int value) { broken!(value); }
+int main() { /*😀*/ wrapper!(7); return 0; }  //~ ERROR GTI-S2001
+// --- step 2
+#macro ignored(int value) {}
+int main() { /*😀*/ ignored!(missing_argument); return 0; }  //~ ERROR GTI-S2001

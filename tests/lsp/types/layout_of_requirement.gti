@@ -1,0 +1,25 @@
+// layout_of on a pinned class is accepted; on void it fails the
+// layout_queryable requirement. (From runtime_object_layout_lsp_test.py.)
+import std.memory;
+class Pinned {
+public:
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+ public: Pinned() = default; };
+int main() { auto descriptor = std::layout_of<Pinned>(); return 0; }
+// --- step 2
+import std.memory;
+class Pinned {
+public:
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+ public: Pinned() = default; };
+int main() { auto descriptor = std::layout_of<void>(); return 0; }  //~ ERROR GTI-S2029 layout_queryable
+// --- step 3
+import std.memory;
+class Pinned {
+public:
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+ public: Pinned() = default; };
+int main() { auto descriptor = std::layout_of<Pinned>(); return 0; }

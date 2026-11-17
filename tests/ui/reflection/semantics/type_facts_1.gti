@@ -1,0 +1,6 @@
+// Type facts: application source cannot invoke private reflection relations.
+import std.meta;
+int main() {
+  auto invalid = gti_internal::meta_type_relation<int32_t, int32_t, 99>();  //~ ERROR GTI-S2058
+  return 0;
+}

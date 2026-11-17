@@ -1,0 +1,21 @@
+// Hierarchy capture plan: a moved hierarchy capture relocates into its closure slot.
+//@ build-pass
+//@ slow
+class Root {
+public:
+  int seed;
+  Root(int seed) : seed(seed) {}
+  Root(Root& other) = delete;
+  Root(Root&& other) = default;
+  virtual int value() { return this.seed; }
+};
+class Leaf : public Root {
+public:
+  Leaf(int seed) : Root(seed) {}
+  int value() override { return this.seed + 1; }
+};
+int main() {
+  mut Leaf leaf = Leaf(4);  //~ WARN GTI-S2096
+  auto reader = [held = std::move(leaf)]() -> int { return held.value(); };
+  return reader() - 5;
+}

@@ -15,8 +15,10 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 
@@ -115,7 +117,7 @@ std::map<std::string, Position> markers(const std::string &text,
   std::map<std::string, Position> result;
   for (std::size_t at = text.find("/*@"); at != std::string::npos;
        at = text.find("/*@", at + 3)) {
-    const std::size_t close = text.find("*/", at);
+    const std::size_t close = text.find("*/", at + 3);
     if (close == std::string::npos)
       break;
     // Directive lines may mention markers; they never define one.
@@ -617,20 +619,23 @@ std::string prepare(const std::string &text,
   std::string stripped;
   std::vector<std::pair<std::string, std::size_t>> cursors;
   std::size_t copied = 0;
-  for (std::size_t at = text.find("/*^"); at != std::string::npos;
-       at = text.find("/*^", at + 3)) {
-    const std::size_t close = text.find("*/", at);
+  // The next search starts after the previous marker's `*/`, so adjacent
+  // markers (`/*^a*//*^b*/`) are both found.
+  for (std::size_t at = text.find("/*^"); at != std::string::npos;) {
+    const std::size_t close = text.find("*/", at + 3);
     if (close == std::string::npos)
       break;
     const std::size_t lineStart = text.rfind('\n', at);
     const std::size_t first = text.find_first_not_of(
         " \t", lineStart == std::string::npos ? 0 : lineStart + 1);
-    if (text.compare(first, 3, "//@") == 0)
+    if (text.compare(first, 3, "//@") == 0) {
+      at = text.find("/*^", at + 3);
       continue;
+    }
     stripped += text.substr(copied, at - copied);
     cursors.emplace_back(text.substr(at + 3, close - at - 3), stripped.size());
     copied = close + 2;
-    at = close;
+    at = text.find("/*^", copied);
   }
   stripped += text.substr(copied);
   marks = markers(stripped, errors);
@@ -689,12 +694,40 @@ bool contains(const Position &start, const Position &end,
   return !(position < start) && !(end < position);
 }
 
+// An expectation's text: as written, or inside `"..."` literally, leading
+// and trailing blanks kept, with `\n`, `\t`, `\"` and `\\` escapes.
+// Nullopt when a quoted form is malformed.
+std::optional<std::string> quotedText(const std::string &value) {
+  if (value.empty() || value.front() != '"')
+    return value;
+  if (value.size() < 2 || value.back() != '"')
+    return std::nullopt;
+  std::string text;
+  for (std::size_t index = 1; index + 1 < value.size(); ++index) {
+    char c = value[index];
+    if (c == '\\') {
+      if (index + 2 >= value.size())
+        return std::nullopt;
+      const char next = value[++index];
+      c = next == 'n' ? '\n' : next == 't' ? '\t' : next;
+      if (next != 'n' && next != 't' && next != '"' && next != '\\')
+        return std::nullopt;
+    } else if (c == '"') {
+      return std::nullopt;
+    }
+    text += c;
+  }
+  return text;
+}
+
 } // namespace
 
 LspResult runLspTest(LspServer &server, const TestFile &test,
                      const fs::path &directory, const fs::path &standardLibrary,
-                     double deadline) {
+                     double hangGuard) {
   LspResult result;
+  // Wall time is only a hang guard, renewed for every awaited message.
+  const auto deadline = [&] { return lspClock() + hangGuard; };
   const auto fail = [&](const std::string &line) {
     result.failure += line + "\n";
   };
@@ -765,7 +798,8 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
   const auto timeout = [&](const std::string &what) {
     result.crashed = !server.running();
     result.timedOut = !result.crashed;
-    fail("no " + what + " before the time limit" +
+    fail("no " + what + " within the hang guard (" +
+         std::to_string(hangGuard).substr(0, 5) + " s of wall time)" +
          (server.running() ? "" : "; gti_lsp exited:\n" + server.logTail()));
   };
   const auto isPublication = [&](const json::Object &message,
@@ -786,7 +820,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           [&](const json::Object &message) {
             return isPublication(message, document);
           },
-          deadline);
+          deadline());
       if (!published)
         break;
     }
@@ -808,10 +842,13 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
       if (!diagnostic)
         continue;
       const auto severity = diagnostic->getInteger("severity").value_or(1);
-      if (severity != 1 && severity != 2)
+      if (severity < 1 || severity > 4)
         continue;
       LocatedDiagnostic located;
-      located.severity = severity == 1 ? Severity::Error : Severity::Warning;
+      located.severity = severity == 1   ? Severity::Error
+                         : severity == 2 ? Severity::Warning
+                         : severity == 3 ? Severity::Info
+                                         : Severity::Hint;
       located.code = diagnostic->getString("code").value_or("").str();
       located.message = diagnostic->getString("message").value_or("").str();
       const auto start = rangeStart(*diagnostic);
@@ -1090,15 +1127,15 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
 
       if (kind == "hover") {
         const auto response =
-            server.request("textDocument/hover", at(*marker), deadline);
+            server.request("textDocument/hover", at(*marker), deadline());
         if (!response) {
           timeout("hover response");
           return false;
         }
         expectText("hover", hoverText(response->get("result")));
       } else if (kind == "signature") {
-        const auto response =
-            server.request("textDocument/signatureHelp", at(*marker), deadline);
+        const auto response = server.request("textDocument/signatureHelp",
+                                             at(*marker), deadline());
         if (!response) {
           timeout("signature help");
           return false;
@@ -1122,7 +1159,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           params["context"] = json::Object{{"includeDeclaration", true}};
         const auto response = server.request(
             references ? "textDocument/references" : "textDocument/definition",
-            std::move(params), deadline);
+            std::move(params), deadline());
         if (!response) {
           timeout(kind + " response");
           return false;
@@ -1135,7 +1172,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           continue;
         }
         const auto response =
-            server.request("textDocument/completion", at(*marker), deadline);
+            server.request("textDocument/completion", at(*marker), deadline());
         if (!response) {
           timeout("completion response");
           return false;
@@ -1180,7 +1217,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           auto tokens = server.request(
               "textDocument/semanticTokens/full",
               json::Object{{"textDocument", documentId(marker->document)}},
-              deadline);
+              deadline());
           if (!tokens) {
             timeout("semantic tokens");
             return false;
@@ -1217,6 +1254,66 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
         const std::string actual = type.value_or("none");
         if (actual != directive.value)
           fail(where + "expected token " + directive.value + ", got " + actual);
+      } else if (kind == "prepare-rename") {
+        // `: @start [placeholder]`, `: none` or `: error [text]`.
+        const auto response = server.request("textDocument/prepareRename",
+                                             at(*marker), deadline());
+        if (!response) {
+          timeout("prepare-rename response");
+          return false;
+        }
+        const json::Object *error = response->getObject("error");
+        const json::Value *value = response->get("result");
+        if (directive.value.rfind("error", 0) == 0) {
+          const std::string expected =
+              directive.value.size() > 5 ? directive.value.substr(6) : "";
+          const std::string message =
+              error ? error->getString("message").value_or("").str() : "";
+          if (!error)
+            fail(where + "expected an error; got " +
+                 shorten(print(json::Value(json::Object(*response)))));
+          else if (message.find(expected) == std::string::npos)
+            fail(where + "error does not contain \"" + expected +
+                 "\": " + message);
+          continue;
+        }
+        if (error) {
+          fail(where + "prepare-rename failed: " +
+               error->getString("message").value_or("").str());
+          continue;
+        }
+        const json::Object *object = value ? value->getAsObject() : nullptr;
+        if (directive.value == "none") {
+          if (object)
+            fail(where + "expected no rename here; got " +
+                 shorten(print(*value)));
+          continue;
+        }
+        std::istringstream words(directive.value);
+        std::string start;
+        words >> start;
+        std::string placeholder;
+        std::getline(words, placeholder);
+        placeholder = placeholder.empty() ? "" : placeholder.substr(1);
+        const std::optional<Place> want = resolve(start);
+        if (!want)
+          continue;
+        // A Range, or `{range, placeholder}`.
+        const json::Object *range = object && object->getObject("range")
+                                        ? object->getObject("range")
+                                        : object;
+        const auto got = range ? positionOf(range->get("start")) : std::nullopt;
+        const std::string text =
+            object ? object->getString("placeholder").value_or("").str() : "";
+        if (!got)
+          fail(where + "expected a rename at " + start + "; got " +
+               (value ? shorten(print(*value)) : "nothing"));
+        else if (Place{marker->document, *got} != *want)
+          fail(where + "expected a rename at " + start + "; got " +
+               describePlace(Place{marker->document, *got}));
+        else if (!placeholder.empty() && text != placeholder)
+          fail(where + "expected placeholder \"" + placeholder + "\"; got \"" +
+               text + "\"");
       } else if (kind == "rename") {
         if (directive.words.size() != 3) {
           invalidTest("write `//@ rename @marker NewName: @a @b` or "
@@ -1225,8 +1322,8 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
         }
         json::Object params = at(*marker);
         params["newName"] = directive.words[2];
-        const auto response =
-            server.request("textDocument/rename", std::move(params), deadline);
+        const auto response = server.request("textDocument/rename",
+                                             std::move(params), deadline());
         if (!response) {
           timeout("rename response");
           return false;
@@ -1354,7 +1451,7 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
                                        {"end", positionJson(*rangeEndAt)}}},
                 {"context", json::Object{{"diagnostics", std::move(context)},
                                          {"only", json::Array{"quickfix"}}}}},
-            deadline);
+            deadline());
         if (!response) {
           timeout("code actions");
           return false;
@@ -1435,12 +1532,27 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
                "\":\n" + shorten(after, 600));
         }
       } else if (kind == "formatting") {
-        const auto response = server.request(
-            "textDocument/formatting",
-            json::Object{{"textDocument", documentId(home)},
-                         {"options", json::Object{{"tabSize", 2},
-                                                  {"insertSpaces", true}}}},
-            deadline);
+        json::Object options{{"tabSize", 2}, {"insertSpaces", true}};
+        for (const auto &[name, value] : test.formatOptions) {
+          char *end = nullptr;
+          const long number = std::strtol(value.c_str(), &end, 10);
+          if (value == "true" || value == "false")
+            options[name] = value == "true";
+          else if (*end == '\0')
+            options[name] = static_cast<std::int64_t>(number);
+          else
+            options[name] = value;
+        }
+        const std::optional<std::string> quoted = quotedText(directive.value);
+        if (!quoted) {
+          invalidTest("an unterminated or malformed \"quoted text\"");
+          continue;
+        }
+        const auto response =
+            server.request("textDocument/formatting",
+                           json::Object{{"textDocument", documentId(home)},
+                                        {"options", std::move(options)}},
+                           deadline());
         if (!response) {
           timeout("formatting response");
           return false;
@@ -1455,14 +1567,14 @@ LspResult runLspTest(LspServer &server, const TestFile &test,
           if (formatted != text)
             fail(where + "formatting changes the file (-before +after):\n" +
                  lineDiff(text, formatted, 20));
-        } else if (formatted.find(directive.value) == std::string::npos) {
-          fail(where + "formatted text does not contain \"" + directive.value +
+        } else if (formatted.find(*quoted) == std::string::npos) {
+          fail(where + "formatted text does not contain \"" + *quoted +
                "\":\n" + shorten(formatted, 600));
         }
       } else if (kind == "symbols") {
         const auto response = server.request(
             "textDocument/documentSymbol",
-            json::Object{{"textDocument", documentId(home)}}, deadline);
+            json::Object{{"textDocument", documentId(home)}}, deadline());
         if (!response) {
           timeout("document symbols");
           return false;
@@ -1545,7 +1657,43 @@ namespace {
 bool matchesExpected(const json::Value &expected, const json::Value &actual) {
   if (const auto text = expected.getAsString(); text && *text == "$ANY")
     return true;
-  if (const json::Object *object = expected.getAsObject()) {
+  const json::Object *object = expected.getAsObject();
+  if (object && object->size() == 1 && object->get("$contains")) {
+    const json::Value &wanted = *object->get("$contains");
+    // A substring of a string, or elements matched by distinct elements of
+    // an array in any order (`[]` matches any array).
+    if (const auto part = wanted.getAsString()) {
+      const auto whole = actual.getAsString();
+      return whole && whole->contains(*part);
+    }
+    const json::Array *items = wanted.getAsArray();
+    const json::Array *other = actual.getAsArray();
+    if (!items || !other)
+      return false;
+    std::vector<bool> used(other->size(), false);
+    for (const json::Value &item : *items) {
+      bool found = false;
+      for (std::size_t index = 0; index < other->size() && !found; ++index)
+        if (!used[index] && matchesExpected(item, (*other)[index]))
+          used[index] = found = true;
+      if (!found)
+        return false;
+    }
+    return true;
+  }
+  if (object && object->size() == 1 && object->get("$match")) {
+    // A regular expression found in a string (std::regex ECMAScript).
+    const auto pattern = object->getString("$match");
+    const auto whole = actual.getAsString();
+    if (!pattern || !whole)
+      return false;
+    try {
+      return std::regex_search(whole->str(), std::regex(pattern->str()));
+    } catch (const std::regex_error &) {
+      return false;
+    }
+  }
+  if (object) {
     const json::Object *other = actual.getAsObject();
     if (!other)
       return false;
@@ -1566,6 +1714,37 @@ bool matchesExpected(const json::Value &expected, const json::Value &actual) {
     return true;
   }
   return expected == actual;
+}
+
+// The first malformed `$contains`/`$match` form in an expectation, or "".
+std::string malformedMatcher(const json::Value &expected) {
+  if (const json::Object *object = expected.getAsObject()) {
+    if (object->get("$match")) {
+      const auto pattern = object->getString("$match");
+      if (object->size() != 1 || !pattern)
+        return "`{\"$match\": \"regex\"}` takes one string";
+      try {
+        (void)std::regex(pattern->str());
+      } catch (const std::regex_error &error) {
+        return "`$match` " + pattern->str() + ": " + error.what();
+      }
+      return "";
+    }
+    if (const json::Value *wanted = object->get("$contains")) {
+      if (object->size() != 1 ||
+          (!wanted->getAsString() && !wanted->getAsArray()))
+        return "`{\"$contains\": ...}` takes one string or array";
+      return wanted->getAsArray() ? malformedMatcher(*wanted) : "";
+    }
+    for (const auto &[key, value] : *object)
+      if (std::string problem = malformedMatcher(value); !problem.empty())
+        return problem;
+  }
+  if (const json::Array *array = expected.getAsArray())
+    for (const json::Value &item : *array)
+      if (std::string problem = malformedMatcher(item); !problem.empty())
+        return problem;
+  return "";
 }
 
 // `names` in order: a name that another starts with (`$DIR` of `$DIR_URI`)
@@ -1658,6 +1837,11 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
       server.send(substitute(*message, names));
     } else if (const json::Value *expected = step->get("expect")) {
       const json::Value want = substitute(*expected, names);
+      if (const std::string problem = malformedMatcher(*expected);
+          !problem.empty()) {
+        result.failure += "invalid test: " + where + problem + "\n";
+        break;
+      }
       bool matched = false;
       bool answered = false;
       // The message the expectation is about: the response to its id, or the
@@ -1759,6 +1943,8 @@ LspResult runLspTranscript(const fs::path &executable, const TestFile &test,
       break;
     }
   }
+  if (const double cpu = server.cpuSeconds(); cpu >= 0)
+    result.serverCpu = cpu;
   server.stop();
   return result;
 }

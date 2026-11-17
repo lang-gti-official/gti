@@ -1,0 +1,10 @@
+// Brace construction of std::set needs a default-constructible ordering policy.
+//@ check-fail
+import std.set;
+class Policy {
+  int value;
+public:
+  Policy(int value) : value(value) {}
+  bool operator()(int& left, int& right) { return left < right; }
+};
+int main() { std::set<int, Policy> values = {1, 2}; return int(values.size()); }  //~ ERROR GTI-S2029

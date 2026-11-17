@@ -1,0 +1,20 @@
+// Virtual text relay returns: a virtual call's returned view is admitted.
+//@ build-pass
+//@ slow
+import std.string;
+class Base {
+public:
+  std::string text;
+  Base() : text(std::string("ann")) {}
+  virtual std::string_view name() { return this.text.view(); }
+};
+class Derived : public Base {
+public:
+  Derived() : Base() {}
+};
+std::string_view call(Base& n) { return n.name(); }
+int main() {
+  Derived p{};
+  std::string_view v = call(p);
+  return int(v.size()) - 3;
+}

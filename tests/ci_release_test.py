@@ -541,11 +541,10 @@ def sanitizer_contract(root):
         assert "actions/cache/restore@" in body and "actions/cache/save@" not in body, \
             "cache.yml owns the sanitizer cache; a sanitizer run only restores it"
     compiler, llvm, tsan = sections["sanitizers"], sections["llvm-sanitizers"], sections["tsan"]
-    for kind, index, count in (("compiler", 1, 3), ("compiler", 2, 3), ("compiler", 3, 3), ("libraries", 1, 1)):
-        assert f"{{kind: {kind}, index: {index}, count: {count}}}" in compiler
+    assert "{kind: libraries, index: 1, count: 1}" in compiler
+    assert "kind: compiler" not in compiler and "compiler_pipeline" not in compiler, \
+        "the compiler aggregate's partitions left with the aggregate"
     assert "bash scripts/free_ci_disk.sh" in compiler and "bash scripts/free_ci_disk.sh" in llvm
-    assert "if: matrix.kind == 'compiler'\n        run: cmake -S . -B build-sanitized -DGTI_TEST_TIMEOUT_SCALE=10" in compiler, \
-        "the compiler partitions re-configure only their timeout, keeping the cached configure"
     assert '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in compiler and \
         '-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1"\n' in llvm, \
         "sanitizer trees keep line tables only; full debug information exhausted runner disk"
@@ -635,6 +634,94 @@ def slow_tier_contract(root):
     assert "needs.source.outputs.nightly == 'true'" in report
     # The release requirement reads both daily verdicts.
     assert set(train.DAILY_TIERS) == {"sanitizers", "slow"}
+
+
+def gti_test_tiers_contract(root):
+    """The gti-test tiers run where docs/plans/test-suite-redesign.md section 7
+    puts them: the PR gate and merge queue run gti_test_ui, gti_test_examples and
+    gti_unit_tests on both platforms with per-case JUnit and hold changed cases to
+    half their limit (gti_test_ui is the runner, tidy, tests/project and tests/lsp;
+    gti_test_ui_<i> shard tests/ui); full validation runs them on both platforms; the daily slow
+    tier runs tests/slow and the --isolate run; the sanitizer verdict includes an
+    instrumented gti_test_ui run."""
+    workflows = root / ".github/workflows"
+    ci = (workflows / "ci.yml").read_text()
+    fast = jobs(ci)["fast"]
+    # gti_test_ui and its tests/ui shards gti_test_ui_<i> (tests/gti_test.cmake).
+    tiers = "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"
+    rows = re.findall(r"\{os: [a-z0-9.-]+, platform: (linux|darwin), gate: '([a-z0-9_|()?\[\]+-]+)'\}", fast)
+    assert sorted(platform for platform, _ in rows) == ["darwin", "linux"], rows
+    for platform, gate in rows:
+        # The compiler pipeline has drained into tests/ui: both rows run the
+        # same gti-test tiers.
+        assert gate == tiers, (platform, gate)
+    code = "\n".join(line for line in fast.splitlines() if not line.lstrip().startswith("#"))
+    assert "compiler_pipeline" not in code, "the gate no longer runs the compiler pipeline"
+    assert "fetch-depth: 2" in fast, "the budget check needs the test merge's first parent"
+    assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"' in fast
+    ordered(fast, ["name: Run fast feedback", "name: Run the gti-test tiers",
+                   "name: Hold new and modified gti-test cases to half their limit",
+                   "name: Re-run the tests this pull request declares", "name: Upload gti-test reports"],
+            "the tiers run after fast feedback, then the budget, then declared tests")
+    step = fast.split("name: Run the gti-test tiers", 1)[1].split("- name:", 1)[0]
+    assert "GTI_GATE_TESTS: ${{ matrix.gate }}" in step and '-R "^(${GTI_GATE_TESTS})$"' in step
+    assert "--output-on-failure" in step and '--output-junit "${RUNNER_TEMP}/gti-test/ctest.xml"' in step
+    budget = fast.split("name: Hold new and modified gti-test cases to half their limit", 1)[1]
+    budget = budget.split("- name:", 1)[0]
+    assert "if: github.event_name == 'pull_request' && matrix.platform == 'linux'" in budget
+    assert 'GTI_TEST_TIME_SCALE: "2"' in budget, "hosted runners scale limits as the gti_test_ui entry does"
+    # Advisory until calibrated: over-budget cases are warnings, not failures.
+    assert 'run: python3 scripts/gti_test_budget.py build/gti-test HEAD^1 --jobs "${GTI_TEST_JOBS}"' in budget
+    assert "continue-on-error" not in budget, "the advisory script decides what fails, not the step"
+    script = (root / "scripts/gti_test_budget.py").read_text()
+    assert '"--changed", base' in script and "::warning file=" in script and "GITHUB_STEP_SUMMARY" in script
+    upload = fast.split("name: Upload gti-test reports", 1)[1].split("- name:", 1)[0]
+    assert "if: always()" in upload and "path: ${{ runner.temp }}/gti-test/*.xml" in upload
+    for line in fast.splitlines():
+        if line.lstrip().startswith(("run:", "python3", "git ", "gh ", "cmake", "ctest", "mkdir")):
+            assert "${{" not in line, line
+    # The entries' registration: per-case JUnit only when CI asks for it.
+    cmake = (root / "tests/gti_test.cmake").read_text()
+    assert 'set(GTI_TEST_REPORT_DIRECTORY "" CACHE PATH' in cmake
+    for name in ("gti_test_ui", "gti_test_examples", "gti_test_slow", "gti_test_isolate"):
+        assert f"gti_test_report({name} {name}_report)" in cmake, name
+    assert "gti_test_report(${gti_test_ui_name} gti_test_ui_shard_report)" in cmake
+    shards = int(re.search(r"set\(gti_test_ui_shards ([0-9]+)\)", cmake).group(1))
+    shard_names = {f"gti_test_ui_{index}" for index in range(1, shards + 1)}
+    assert "add_test(NAME gti_test_slow" in cmake and "add_test(NAME gti_test_isolate" in cmake
+    assert '"^gti_test_(slow|isolate)$"' in (root / "tests/TestThroughput.cmake").read_text(), \
+        "the slow-tier gti-test entries carry the slow label"
+    # Full validation: Linux runs every registered per-commit test; macOS runs
+    # the gti-test entries through the darwin list.
+    darwin = json.loads((root / "tests/ci_darwin_tests.json").read_text())["tests"]
+    assert {"gti_test_ui", "gti_test_examples", "gti_unit_tests"} | shard_names <= set(darwin)
+    assert not {"gti_test_slow", "gti_test_isolate"} & set(darwin)
+    # The committed seeds, not the working file: full validation overwrites the
+    # working table with the newest refreshed artifact, which predates any entry
+    # this change adds and never gains the slow-tier names.
+    seeded = subprocess.run(["git", "show", "HEAD:tests/ci_test_durations.json"], cwd=root,
+                            capture_output=True, text=True, timeout=30, check=False)
+    durations = json.loads(seeded.stdout if seeded.returncode == 0 else
+                           (root / "tests/ci_test_durations.json").read_text())["seconds"]
+    for name in ("gti_test_ui", "gti_test_examples", "gti_unit_tests", "gti_test_slow", "gti_test_isolate",
+                 *sorted(shard_names)):
+        assert name in durations, f"{name} has no shard-balancing duration"
+    # The slow tier reports its gti-test cases per case.
+    slow = jobs((workflows / "slow.yml").read_text())["shards"]
+    assert '-DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/shard/gti-test"' in slow
+    assert "${{ runner.temp }}/shard/gti-test/*.xml" in slow
+    # The sanitizer verdict covers an instrumented gti_test_ui run.
+    compiler = jobs((workflows / "sanitizers.yml").read_text())["sanitizers"]
+    step = compiler.split("name: Run the gti-test cases with instrumented programs", 1)[1].split("- name:", 1)[0]
+    assert "if: matrix.kind == 'libraries'" in step and "timeout-minutes: 120" in step
+    assert "GTI_TEST_INSTRUMENTATION: address,undefined" in step and 'GTI_TEST_TIME_SCALE: "10"' in step
+    assert 'GTI_CXX="/usr/bin/clang++-${llvm_major}"' in step
+    assert "python3 tests/runner/check.py build-sanitized/gti-test" in step
+    assert 'pattern="${GTI_SANITIZER_TESTS}|^gti_test_ui$"' in compiler
+    # The compiler-API checks that left the aggregate for tests/unit keep a
+    # sanitized run in the library subset.
+    assert "GTI_SANITIZER_TESTS: '^gti_unit_tests$|" in compiler
+    assert "${{ runner.temp }}/sanitizers-gti-test.xml" in compiler
 
 
 def ordered(body, items, message):
@@ -1433,6 +1520,7 @@ def main():
     llvm_pin_contract(root)
     sanitizer_contract(root)
     slow_tier_contract(root)
+    gti_test_tiers_contract(root)
     train_contract(root)
     source_contract(root)
     suite_contract(root)

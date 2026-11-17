@@ -1,0 +1,6 @@
+// Limits: the first excessive discovery level reports a located resource diagnostic.
+int bounded<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return 1 + bounded<N - 1>(); }  //~ ERROR GTI-S2105
+}
+int main() { return bounded<63>() - 63; }

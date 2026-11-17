@@ -1,0 +1,14 @@
+// Mixed operator origins: operator return preserves the selected field, not the first dependency.
+//@ check-pass
+struct Services {
+  int& first;
+  mut int& second;
+  mut int& third;
+  Services(int& a, mut int& b, mut int& c) : first(a), second(b), third(c) {}
+  mut int& operator*() mut { return this.second; }
+};
+int main() {
+  int a = 40; mut int b = 0; mut int c = 2;
+  mut Services value{a, b, c};
+mut int& selected = *value; selected = 40; return b + c - 42;
+}

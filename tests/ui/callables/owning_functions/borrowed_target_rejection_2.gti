@@ -1,0 +1,4 @@
+// Borrowed target rejection: copied borrowing target is rejected semantically before MIR allocation.
+import std.functional;
+import std.memory;
+int main() { int value = 7; auto callback = [&value]() -> int { return value; }; std::function<int()> f{callback}; return 0; }  //~ ERROR GTI-S2018

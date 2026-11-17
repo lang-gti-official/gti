@@ -1,0 +1,10 @@
+// Exclusive reborrow loan graph: a direct mutable loan should conflict with a later-live shared loan of the same ordinary local place.
+int inspect(int& value) { return value; }
+void change(mut int& value) { value += 1; }
+int main() {
+  mut int value = 0;
+  int& shared = value;
+  mut int& exclusive = value;  //~ ERROR GTI-S2017
+  change(exclusive);
+  return inspect(shared);
+}

@@ -1,0 +1,4 @@
+// Prefix pointer input rejection: invalid forwarded pointer conversions are rejected before backend.
+import std.vector;
+class Entry { public: Entry(int* value) {} };
+int main() { const int* value = nullptr; mut std::vector<Entry> values{}; [[discard]] values.emplace_back(value); return 0; }  //~ ERROR GTI-S2012

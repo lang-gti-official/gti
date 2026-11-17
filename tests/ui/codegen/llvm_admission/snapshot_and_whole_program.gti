@@ -1,0 +1,5 @@
+// Snapshot and whole program: admission retains the exact immutable verified snapshot.
+//@ check-pass
+int dormant(int value) { return value * 3; }
+class Owned { public: Owned() {} ~Owned() {} };
+int main() { Owned value{}; int data[1] = {1}; return data == data ? 0 : 1; }

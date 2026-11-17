@@ -1,0 +1,6 @@
+// Execution profile boundary: the concurrent profile may describe and transport foreign callback values when no GTI function is exposed as a callback.
+//@ check-pass
+//@ execution-profile: concurrent
+using Callback = (int32_t) -> int32_t;
+extern "C" { Callback set_callback(Callback callback); }
+int main() { return 0; }

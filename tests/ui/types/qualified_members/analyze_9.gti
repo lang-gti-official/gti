@@ -1,0 +1,2 @@
+// Analyze: incomplete qualified paths recover without entering the backend.
+struct Box<T> { using value_type = T; }; using Bad = Box<int>::; int following() { return 1; }  //~ ERROR GTI-P0001

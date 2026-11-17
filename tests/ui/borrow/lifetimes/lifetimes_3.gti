@@ -1,0 +1,10 @@
+// Lifetimes: rejected with GTI-S2127.
+struct Reader<lifetime a> {
+  int&<a> value;
+  Reader(int&<a> input) : value(input) {}
+  int operator()(int&<a> other) { return value + other; }
+};
+int invalid<lifetime a, lifetime b>(int&<a> first, int&<b> second) {
+  Reader<a> reader{first}; return reader(second);  //~ ERROR GTI-S2127
+}
+int main() { return 0; }

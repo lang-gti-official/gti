@@ -1,0 +1,6 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+concept stepped<T> = requires(T& value) { { value + value } -> T; };
+void sink<stepped Args...>(Args... args) {}
+void forward<stepped Args...>(Args... args) { sink(args...); }
+int main() { forward(1, 2); return 0; }

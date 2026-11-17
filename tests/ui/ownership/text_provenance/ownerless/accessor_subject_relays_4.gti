@@ -1,0 +1,31 @@
+// Accessor subject relays: an accessor subject's text is checked at source: std::string_view v = line.viaCall(); input.append("!"); uint64_t n = v.size();.
+import std.panic;
+import std.string;
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+  std::string_view& viaPlace() {
+    switch (this.word) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view& viaCall() {
+    switch (this.wordRef()) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view firstCall() {
+    switch (this.wordRef()) {
+    case Word::text(v): return v;
+    case Word::none: return "";
+    }
+  }
+};
+int run() { mut std::string input{"input"}; Line line = Line(input.view()); std::string_view v = line.viaCall(); input.append("!"); uint64_t n = v.size(); return 0; }  //~ ERROR GTI-S2017
+int main() { return run(); }

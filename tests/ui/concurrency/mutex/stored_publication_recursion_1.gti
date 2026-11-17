@@ -1,0 +1,24 @@
+// Stored publication recursion: finite recursive guard returns preserve their checked construction base.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+class Owner {
+  std::mutex<int32_t> value{7};
+public:
+  Owner() {}
+  std::mutex_guard<int32_t> grounded(bool ignored) { return this.value.lock(); }
+  std::mutex_guard<int32_t> left(bool again) {
+    if (again) { return this.right(false); }
+    return this.grounded(false);
+  }
+  std::mutex_guard<int32_t> right(bool again) {
+    if (again) { return this.left(false); }
+    return this.grounded(false);
+  }
+};
+int main() {
+  Owner owner{};
+  { auto guard = owner.left(true); }
+  { auto guard = owner.right(true); }
+  return 0;
+}

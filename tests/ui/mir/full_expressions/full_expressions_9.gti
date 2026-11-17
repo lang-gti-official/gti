@@ -1,0 +1,12 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+class Runner {
+public:
+  static int Create(int count = 3);
+  int Run(int count = 7);
+public:
+  Runner() = default;
+};
+int Runner::Create(int renamed) { return renamed; }
+int Runner::Run(int renamed) { return renamed; }
+int main() { Runner runner{}; return Runner::Create() + runner.Run(); }

@@ -1,0 +1,14 @@
+// Raw mutation call invalidation: loop substitution must apply mutation before use to backedge origins.
+//@ raw-pointer-audit: strict
+struct Owner { mut int value = 1;  public: Owner() = default; };
+void replace(mut Owner& owner) { owner = Owner(); }
+int main() {
+  mut Owner owner{};
+  mut const int* address = nullptr;
+  for (mut int index = 0; index < 2; index++) {
+    replace(owner);
+    if (index > 0) { unsafe { int observed = *address; } }  //~ ERROR GTI-S2102
+    address = &owner.value;
+  }
+  return 0;
+}

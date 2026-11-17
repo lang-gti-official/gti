@@ -1,0 +1,11 @@
+// Negative: cannot be assigned.
+import std.string;
+#macro escape(std::string_view destination) {
+  std::string local{"owned"};
+  destination = local.view();
+}
+int main() {
+  mut std::string_view output = "safe";
+  escape!(output);  //~ ERROR GTI-S2045
+  return int(output.size());
+}

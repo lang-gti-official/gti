@@ -1,0 +1,10 @@
+// Stored callables: false conditional transfer and asserted tracked views stay rejected.
+import std.string;
+[[unsafe_transfer]] struct Capture { std::string_view view = "";  public: Capture() = default; };
+void retain<T>(T callback) {}
+int main() {
+  Capture owner{};
+  auto callback = [owner = std::move(owner)]() -> int { return 1; };
+  retain(std::move(callback));  //~ ERROR GTI-S2046
+  return 0;
+}

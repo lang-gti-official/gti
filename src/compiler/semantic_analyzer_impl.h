@@ -6412,6 +6412,7 @@ private:
                                bool mutableReceiver);
 
   [[nodiscard]] const Symbol *resolve(const Token &name) const;
+  void suggestVisibleLocalName(const Token &name, Diagnostic &diagnostic) const;
   [[nodiscard]] const Symbol *
   resolveGeneratedTestReference(const NamePath &path) const;
 

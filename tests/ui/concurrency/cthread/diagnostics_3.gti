@@ -1,0 +1,4 @@
+// Diagnostics: manual lifetime contracts cannot be called from safe code.
+//@ execution-profile: concurrent
+import std.cthread;
+int main() { std::thrd_t handle = 0; mut int32_t result = 0; return std::thrd_join(handle, result); }  //~ ERROR GTI-S2055

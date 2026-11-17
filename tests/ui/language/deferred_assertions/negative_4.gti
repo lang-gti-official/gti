@@ -1,0 +1,2 @@
+// Negative: Block-scope static.
+#macro wrong() { static int value = 1; }  //~ ERROR GTI-P0001

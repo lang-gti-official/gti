@@ -1,0 +1,9 @@
+// Borrowing captures: exclusive-capture.
+//@ check-pass
+int main() {
+  mut int value = 7;
+  mut auto increment = [mut &value]() -> int { value += 1; return value; };
+  int first = increment();
+  int second = increment();
+  return first + second - 17;
+}

@@ -1,0 +1,36 @@
+// Borrowed receivers survive a conditional fallible argument after an owning one.
+//@ run-pass
+//@ revisions: default bounds producer-failure
+//@[default] stdout: 12
+//@[default] stdout: 9
+//@[bounds] run-fail
+//@[bounds] args: bounds
+//@[bounds] exit-code: 70
+//@[bounds] stdout: 9
+//@[bounds] stderr-contains: passive_result_array_assignment.gti:17: runtime error[GTI-R0007]: index_out_of_bounds in fixed_array
+//@[producer-failure] run-fail
+//@[producer-failure] args: producer failure
+//@[producer-failure] exit-code: 70
+//@[producer-failure] stdout: 9
+//@[producer-failure] stderr-contains: passive_result_array_assignment.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- passive_result_array_assignment.gti
+import std.string;
+import std.vector;
+
+struct Packet {
+  int value;
+  Packet(int value) : value(value) {}
+};
+struct Guard {
+  ~Guard() { std::println(9); }
+public:
+  Guard() = default;
+};
+Packet make(int divisor) { return Packet(12 / divisor); }
+int main(int argc, std::vector<std::string> args) {
+  Guard guard{};
+  mut Packet packets[2] = {Packet(3), Packet(4)};
+  packets[argc] = make(argc == 3 ? 0 : 1);
+  std::println(packets[1].value);
+  return 0;
+}

@@ -1,0 +1,28 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept wrapped<T> {
+  typename value_type;
+  value_type unwrap(T value);
+};
+class box<std::equality_comparable T> {
+public:
+  T item;
+  box(T value) : item(value) {}
+};
+class Coin {
+public:
+  int id;
+  Coin(int value) : id(value) {}
+
+  bool operator==(Coin& other) { return id == other.id; }
+  bool operator!=(Coin& other) { return id != other.id; }
+};
+for concept wrapped<box<Coin>> {
+  using value_type = box<Coin>;
+  box<Coin> unwrap(box<Coin> value) { return value; }
+};
+int main() {
+  box<Coin> boxed{Coin(42)};
+  wrapped<box<Coin>>::value_type same = wrapped<box<Coin>>::unwrap(boxed);
+  return same.item.id - 42;
+}

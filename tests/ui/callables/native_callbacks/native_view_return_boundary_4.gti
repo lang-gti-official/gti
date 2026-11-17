@@ -1,0 +1,6 @@
+// Native view return boundary: a callback factory may return a callback accepting counted input.
+//@ check-pass
+using Reader = (std::string_view) -> c_int;
+using Factory = () -> Reader;
+extern "C" { Factory obtain(); }
+int main() { unsafe { return obtain()()("hello"); } }

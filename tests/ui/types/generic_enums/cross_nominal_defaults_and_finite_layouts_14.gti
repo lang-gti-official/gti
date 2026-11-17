@@ -1,0 +1,2 @@
+// Cross nominal defaults and finite layouts: inventory completion does not admit later constexpr defaults or recursive omitted-default dependencies.
+struct First<T = Later<>> { public: First() = default; }; struct Later<T = First<>> { public: Later() = default; }; int main() { return 0; }  //~ ERROR GTI-S2023 //~ ERROR GTI-S2000 //~ ERROR GTI-S2000

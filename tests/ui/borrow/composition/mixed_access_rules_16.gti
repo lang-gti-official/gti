@@ -1,0 +1,20 @@
+// Mixed access rules: a dependency used inside a loop survives its backedge.
+struct Mixed {
+  int& read;
+  mut int& write;
+  mut int& other;
+  Mixed(int& a, mut int& b, mut int& c) : read(a), write(b), other(c) {}
+  int update() mut { write = read; other = write + 1; return other; }
+};
+struct MutableFirst {
+  mut int& write;
+  int& read;
+  mut int& other;
+  MutableFirst(mut int& a, int& b, mut int& c) : write(a), read(b), other(c) {}
+  int update() mut { write = read; other = write + 1; return other; }
+};
+struct State { mut int a = 1; mut int b = 2; mut int c = 3; State() = default; };
+int main() {
+  mut int a = 1; mut int b = 2; mut int c = 3;  //~ WARN GTI-S2096
+mut Mixed v{a, b, c}; for (mut int i = 0; i < 2; i++) { c = 7; [[discard]] v.update(); } return 0;  //~ ERROR GTI-S2017
+}

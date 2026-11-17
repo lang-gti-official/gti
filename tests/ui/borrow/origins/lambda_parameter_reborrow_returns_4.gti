@@ -1,0 +1,10 @@
+// Lambda parameter reborrow returns: parent-still-suspended is rejected before MIR lowering.
+int main() {
+  auto invalid = [](mut int& input) -> mut int& {
+    mut int& parent = input;
+    mut int& child = parent;
+    parent += 1;  //~ ERROR GTI-S2017
+    return child;
+  };
+  return 0;
+}

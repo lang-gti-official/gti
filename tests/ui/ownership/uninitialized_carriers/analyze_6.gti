@@ -1,0 +1,18 @@
+// Analyze: invalid carrier movement, access or construction rejected.
+import std.memory;
+import std.string;
+struct Plain { int value = 8;  public: Plain() = default; };
+class Stationary {
+public:
+  Stationary(int value) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
+};
+class Holder<std::layout_queryable T> {
+  mut std::uninitialized<T> bytes{};
+public:
+  Holder() {}
+};
+int main() { std::uninitialized<Stationary> a{}; auto b = a; return 0; }  //~ ERROR GTI-S2003

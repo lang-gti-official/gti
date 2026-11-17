@@ -1,0 +1,17 @@
+// Raw access: the program is accepted.
+//@ check-pass
+//@ raw-pointer-audit: strict
+struct Address {
+  mut const int* pointer = nullptr;
+  int operator+(int other) {
+    if (this.pointer != nullptr) { return other; }
+    return 0;
+  }
+public:
+  Address() = default;
+};
+int main() {
+  mut Address address{};
+  { int dead = 7; address.pointer = &dead; }
+  return address + 0;
+}

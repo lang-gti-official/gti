@@ -1,0 +1,12 @@
+// Native identity: rejected with GTI-S2003.
+import std.meta;
+struct Explicit { Explicit(int value) {}  public: Explicit() = default; };
+Explicit exact(int value) { return Explicit(value); }
+std::meta::callable_return_type<F> reflected<F>(F& shape, int value) {
+  return value;  //~ ERROR GTI-S2003
+}
+int main() {
+  auto shape = exact;
+  Explicit result = reflected(shape, 1);
+  return 0;
+}

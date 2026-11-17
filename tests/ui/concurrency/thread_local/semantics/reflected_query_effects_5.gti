@@ -1,0 +1,11 @@
+// Reflected query effects: ordinary/reflected constexpr-for effect queries preserve exact registered sequence types and disjoint storage.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+import std.meta;
+struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
+struct Empty { public: Empty() = default; };
+thread_local mut int guarded = 1;
+thread_local mut int other = 2;
+class Types<Elements...> { public: Types() = default; };
+void inspect<T>() { constexpr for (auto item : std::meta::fields_of<T>()) { other = 9; } } int main() { int& held = guarded; inspect<Reading>(); return held; }

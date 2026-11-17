@@ -1,0 +1,3 @@
+// Analyze: void macro-local return resumes its caller.
+//@ check-pass
+#macro stop() { return; } int main() { stop!(); return 0; }

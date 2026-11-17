@@ -1,0 +1,9 @@
+// Rejected: one causal error without follow-on diagnostics.
+import std.string;
+F relay<F>(F callback) { return std::move(callback); }
+int main() {
+  std::string_view text = "borrowed";
+  auto callback = [text]() -> int { return 1; };
+  auto result = relay(std::move(callback));  //~ ERROR GTI-S2046
+  return result();
+}

@@ -1,0 +1,11 @@
+// Invocation pointer text targets: a text-relaying invocation pointer target is rejected where it is formed: std::string_view(std::string_view).
+import std.functional;
+import std.string;
+std::string_view target(std::string_view s) {
+  if (s.empty()) { return "empty"; }
+  return s;
+}
+int main() {
+  std::function_ptr<std::string_view(std::string_view)> pointer{target};  //~ ERROR GTI-S2045
+  return 0;
+}

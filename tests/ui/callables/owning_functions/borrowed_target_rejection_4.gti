@@ -1,0 +1,4 @@
+// Borrowed target rejection: move-only borrowing target is rejected semantically before MIR allocation.
+import std.functional;
+import std.memory;
+int main() { int value = 7; auto callback = [&value]() -> int { return value; }; std::move_only_function<int()> f{std::move(callback)}; return 0; }  //~ ERROR GTI-S2018

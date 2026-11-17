@@ -1,0 +1,14 @@
+// Exclusive reborrow loan graph: a mutable producer should retain exclusive evaluation access even when its returned reference is read-only.
+class Box {
+  mut int value = 0;
+
+public:
+  int& write() mut { return this.value; }
+public:
+  Box() = default;
+};
+int sum(int& left, int& right) { return left + right; }
+int main() {
+  mut Box parent = Box();
+  return sum(parent.write(), parent.write());  //~ ERROR GTI-S2017 Call creates overlapping reference accesses
+}

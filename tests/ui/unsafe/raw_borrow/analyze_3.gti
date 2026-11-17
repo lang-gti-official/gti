@@ -1,0 +1,12 @@
+// Analyze: raw-backed view resolves its retained reference field to the external owner.
+//@ check-pass
+import std.memory;
+struct Reading { int value = 42;  public: Reading() = default; };
+class View {
+  const int* address = nullptr;
+  Reading& owner;
+public:
+  View(Reading& source) : address(&source.value), owner(source) {}
+  int& get() { unsafe { return std::assume_ref(this.address, this.owner); } }
+};
+int main() { Reading owner{}; View view{owner}; return view.get() - 42; }

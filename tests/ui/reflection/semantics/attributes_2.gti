@@ -1,0 +1,27 @@
+// Attributes: a non-attribute struct is rejected.
+import std.meta;
+namespace tags {
+[[attribute]] struct key { std::string_view name = "";  public: key() = default; };
+[[attribute]] struct skip { public: skip() = default; };
+[[attribute]] struct width { uint64_t bytes; };
+struct plain { int x = 0;  public: plain() = default; };
+}
+
+struct A {
+  [[tags::plain]] int a = 1;  //~ ERROR GTI-S2113
+  [[tags::key("x"), tags::key("y")]] int b = 2;  //~ ERROR GTI-S2115
+  [[tags::key("x", "y")]] int c = 3;  //~ ERROR GTI-S2114
+  [[tags::width]] int d = 4;  //~ ERROR GTI-S2114
+  [[tags::key(.nope = "k")]] int e = 5;  //~ ERROR GTI-S2114
+  [[tags::key(1)]] int f = 6;  //~ ERROR GTI-S2114
+public:
+  A() = default;
+};
+int main() {
+  constexpr for (auto field : std::meta::fields_of<A>()) {
+    if constexpr (field.index() == uint64_t(0)) {
+      std::string_view k = field.attribute<tags::key>().name;  //~ ERROR GTI-S2116
+    }
+  }
+  return 0;
+}

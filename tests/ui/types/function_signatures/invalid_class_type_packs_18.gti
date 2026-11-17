@@ -1,0 +1,2 @@
+// Invalid class type packs: invalid class pack must be rejected by semantics: void bad<T>() { mut T local; } int main() { bad<int&>(); return 0; }.
+void bad<T>() { mut T local; } int main() { bad<int&>(); return 0; }  //~ ERROR GTI-S2000

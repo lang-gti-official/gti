@@ -1,0 +1,133 @@
+// Lambdas taking and returning mutable references compose; the result
+// hovers as int32_t, formatting keeps `-> mut int&` (and analyses clean),
+// a write while a returned reference lives is S2017 (no backend error), and
+// an incomplete return type recovers. (borrowing_callbacks_lsp_test.py,
+// second part)
+//@ hover @changed: int32_t
+//@ formatting: -> mut int&
+int main() {
+  // supplementary character: 😀
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& alias = value;
+    return alias;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& changed = increment(relay(number));
+  /*@changed*/changed += 5;
+  int& observed = observe(number);
+  return observed - 17;
+}
+// --- step 2
+int main() {
+  // supplementary character: 😀
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& alias = value;
+    return alias;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& changed = increment(relay(number));
+  changed += 5;
+  int& observed = observe(number);
+  return observed - 17;
+}
+// --- step 3
+int main() {
+  // supplementary character: 😀
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& alias = value;
+    return alias;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& changed = increment(relay(number));
+  changed += 5;
+  int& observed = observe(number);
+  number += 1;  //~ ERROR GTI-S2017
+  return observed - 17;
+}
+// --- step 4
+int main() {
+  // supplementary character: 😀
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& alias = value;
+    return alias;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& changed = increment(relay(number));
+  changed += 5;
+  int& observed = observe(number);
+  return observed - 17;
+}
+// --- step 5
+int main() {
+  // supplementary character: 😀
+  auto increment = [](mut int& value) -> mut {  //~ ERROR GTI-P0001
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut {  //~ ERROR GTI-P0001
+    mut int& alias = value;
+    return alias;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& changed = increment(relay(number));  //~ ERROR GTI-S2001 //~ ERROR GTI-S2001 //~ ERROR GTI-S2017
+  changed += 5;
+  int& observed = observe(number);
+  return observed - 17;
+}
+// --- step 6
+int main() {
+  // supplementary character: 😀
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& alias = value;
+    return alias;
+  };
+  auto observe = [](mut int& value) -> int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& changed = increment(relay(number));
+  changed += 5;
+  int& observed = observe(number);
+  return observed - 17;
+}

@@ -1,0 +1,13 @@
+// Payload admission: a source destructor body makes a model's cleanup observable.
+import std.polymorphic;
+import std.string;
+interface meter { int read(); };
+
+class noisy : public meter {
+public:
+  noisy() {}
+  ~noisy() {}
+  int read() override { return 1; }
+};
+int need<M>() requires std::inline_polymorphic_payload<M, meter> { return 0; }
+int main() { return need<noisy>(); }  //~ ERROR GTI-S2029

@@ -1,0 +1,27 @@
+// Temporary receiver text publication: #392 a temporary text owner published through a temporary receiver is still rejected.
+import std.string;
+import std.vector;
+class Result {
+  std::string_view subject;
+  std::vector<std::size_t> spans;
+public:
+  Result(std::string_view subject, std::vector<std::size_t> spans)
+      : subject(subject), spans(std::move(spans)) {}
+  std::size_t length() { return this.spans.size(); }
+  std::size_t operator[](std::size_t n) { return this.spans[n]; }
+  std::size_t operator[](std::string_view name) { return this[std::size_t(0)]; }
+};
+class Finder {
+  std::vector<int> program;
+public:
+  Finder(int seed) : program(std::vector<int>()) {}
+  Result find(std::string_view subject) {
+    mut std::vector<std::size_t> spans{};
+    spans.push_back(1);
+    return Result(subject, std::move(spans));
+  }
+};
+int main() {
+  Result r = Finder(1).find(std::string("xyz").view());  //~ ERROR GTI-S2045
+  return int32_t(r.length());
+}

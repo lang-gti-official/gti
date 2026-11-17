@@ -1,0 +1,8 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Pair {
+  int& first;
+  int& second;
+  Pair(int& left, int& right) : first(left), second(right) {}
+};
+int main() { int a = 3; int b = 8; Pair pair{a, b}; return pair.second - 8; }

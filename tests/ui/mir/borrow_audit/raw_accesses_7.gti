@@ -1,0 +1,12 @@
+// Raw accesses: a callee's write through a raw formal is a caller finding, through forwarding calls.
+//@ check-pass
+//@ raw-pointer-audit: warn
+unsafe void write_address(int* pointer) { unsafe { *pointer = 9; } }
+unsafe void write_forwarded(int* pointer) { unsafe { write_address(pointer); } }
+int main() {
+  mut int owner = 7;
+  int* pointer = &owner;
+  int& held = owner;
+  unsafe { write_forwarded(pointer); }  //~ WARN GTI-S2102
+  return held;
+}

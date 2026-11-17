@@ -1,0 +1,30 @@
+// A worker body failure still drops the worker thread-local owners before the report.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: init 1
+//@ stdout: drop 1
+//@ stderr-contains: GTI-R0002
+import std.thread;
+import std.format;
+class State {
+  int32_t id;
+public:
+  State(int32_t id) : id(id) { std::println("init {}", this.id); }
+  int32_t read() { return this.id; }
+  ~State() { std::println("drop {}", this.id); }
+};
+thread_local mut State first = State(1);
+thread_local mut State second = State(2);
+thread_local mut State unused = State(99);
+int main() {
+  auto started = std::thread::start([]() -> void {
+    int32_t value = first.read();
+    int32_t zero = 0;
+    int32_t failed = value / zero;
+  });
+  if (!started) return 1;
+  mut auto worker = std::move(started).value();
+  auto joined = worker.join();
+  return 0;
+}

@@ -1,0 +1,7 @@
+// Source raw writes: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+struct Writer { ~Writer() { int gone = 1; pointer = &gone; }  public: Writer() = default; };int main() { unsafe { return std::assume_ref(pointer, witness); } }

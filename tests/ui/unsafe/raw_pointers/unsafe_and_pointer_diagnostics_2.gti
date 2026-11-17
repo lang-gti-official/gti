@@ -1,0 +1,6 @@
+// Unsafe and pointer diagnostics: an invalid pointer domain should not also suggest unsafe.
+int main() {
+  void* handle = nullptr;
+  unsafe { *handle; }  //~ ERROR GTI-S2056
+  return 0;
+}

@@ -1,0 +1,11 @@
+// Projected raw pointer origins: raw projection transport must preserve an expired origin: raw-field-projection.
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { mut Address first{}; mut Address second{};  public: Pair() = default; };
+
+int main() {
+  mut Address address{};
+  { int gone = 5; address.pointer = &gone; }
+  const Address* outer = &address;
+  unsafe { return *outer->pointer; }  //~ ERROR GTI-S2101
+}

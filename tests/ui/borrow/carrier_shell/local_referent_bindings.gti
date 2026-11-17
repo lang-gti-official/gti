@@ -1,0 +1,14 @@
+// Local referent bindings: local references to stored referents preserve the concrete field dereference rather than reconstructing the overlap-only place.
+//@ check-pass
+class WriteView {
+  mut int& item;
+public:
+  WriteView(mut int& source) : item(source) {}
+  void write(int value) mut { mut int& target = this.item; target = value; }
+  int read() { int& target = this.item; return target; }
+};
+int main() {
+  mut int value = 1;
+  { mut WriteView view{value}; view.write(42); if (view.read() != 42) return 1; }
+  return value - 42;
+}

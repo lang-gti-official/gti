@@ -1,5 +1,0 @@
-import std.panic;
-
-int main() {
-  std::panic("explicit panic");
-}

@@ -1,0 +1,3 @@
+// Cross nominal defaults and finite layouts: finite defaults, explicit self arguments and decreasing concrete nominal containment remain valid.
+//@ check-pass
+struct Earlier<T = Later<>> { public: Earlier() = default; }; struct Later<T = int> { public: Later() = default; }; using Selected = Earlier<>; int main() { return 0; }

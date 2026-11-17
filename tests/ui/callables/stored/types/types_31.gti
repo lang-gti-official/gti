@@ -1,0 +1,22 @@
+// Stored callables: copyable locals and fields can initialize independent owned callable arguments without consuming the source.
+//@ check-pass
+void retain<T>(T callback) {}
+class Holder<T> {
+  T callback;
+public:
+  Holder(T callback) : callback(std::move(callback)) {}
+  void copy_twice() { retain(this.callback); retain(this.callback); }
+};
+void exercise<T>(T callback) {
+  retain(callback);
+  Holder<T> holder{std::move(callback)};
+  holder.copy_twice();
+}
+int main() {
+  int value = 3;
+  auto callback = [value]() -> int { return value; };
+  exercise(std::move(callback));
+  auto second = [value]() -> int { return value; };
+  exercise(std::move(second));
+  return 0;
+}

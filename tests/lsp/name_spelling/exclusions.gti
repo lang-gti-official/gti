@@ -1,0 +1,14 @@
+// Ambiguous, out-of-scope and later bindings do not receive spelling repairs.
+//@ no-code-action @ambiguous
+//@ no-code-action @expired
+//@ no-code-action @later
+int main() {
+  int counter = 1;
+  int counted = 2;
+  /*@ambiguous*/countex; //~ ERROR GTI-S2001
+  { int expired_value = 0; }
+  /*@expired*/expired_vaule; //~ ERROR GTI-S2001
+  /*@later*/future_vaule; //~ ERROR GTI-S2001
+  int future_value = 0;
+  return 0;
+}

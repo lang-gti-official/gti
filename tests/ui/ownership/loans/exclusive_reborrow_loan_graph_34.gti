@@ -1,0 +1,15 @@
+// Exclusive reborrow loan graph: a read-only child of a mutable local parent should return its receiver-owned referent without upgrading access.
+//@ check-pass
+class Cell {
+  mut int value = 0;
+
+public:
+  int& expose() mut {
+    mut int& parent = this.value;
+    int& child = parent;
+    return child;
+  }
+public:
+  Cell() = default;
+};
+int main() { return 0; }

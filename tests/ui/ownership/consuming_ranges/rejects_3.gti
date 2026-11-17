@@ -1,0 +1,9 @@
+// Rejects: consuming iteration rejects reference bindings.
+class Source {
+  mut int count = 0;
+public:
+  Source() {}
+  bool has_next() { return this.count < 3; }
+  int take_next() mut { this.count++; return this.count; }
+};
+int main() { for (auto& v : Source()) {} return 0; }  //~ ERROR GTI-S2083 //~ ERROR GTI-S2017

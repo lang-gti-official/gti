@@ -1,0 +1,70 @@
+// A C thread may create and join a nested C thread.
+//@ run-pass
+//@ execution-profile: concurrent
+// --- cthread_nested.gti
+import std.cthread;
+extern "C" { void* cthread_context(); }
+
+int32_t worker(void* context) {
+  if (context != nullptr) { return 42; }
+  mut std::thrd_t child = 0;
+  mut int32_t result = 0;
+  unsafe {
+    if (std::thrd_create(child, worker, cthread_context()) != std::thrd_success) { return -1; }
+    if (std::thrd_join(child, result) != std::thrd_success) { return -2; }
+  }
+  return result;
+}
+
+int main() {
+  mut std::thrd_t handle = 0;
+  mut int32_t result = 0;
+  unsafe {
+    if (std::thrd_create(handle, worker, nullptr) != std::thrd_success) { return 1; }
+    if (std::thrd_join(handle, result) != std::thrd_success) { return 2; }
+  }
+  return result == 42 ? 0 : 3;
+}
+// --- cthread_context.cpp
+#include <condition_variable>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+#include <mutex>
+#include <thread>
+
+namespace {
+std::int32_t value = 0;
+}
+
+extern "C" void *cthread_context() { return &value; }
+extern "C" void cthread_write(void *context) {
+  *static_cast<std::int32_t *>(context) = 91;
+}
+extern "C" std::int32_t cthread_read() { return value; }
+extern "C" void cthread_reset() { value = 0; }
+extern "C" std::int32_t cthread_zero() { return 0; }
+extern "C" void cthread_cleanup() {
+  std::fputs("worker-cleaned\n", stdout);
+  std::fflush(stdout);
+}
+extern "C" void cthread_install_terminal() {
+  std::set_terminate([] { std::_Exit(86); });
+}
+extern "C" void cthread_block() {
+  // The missing-join test holds a live worker until process termination.
+  // No timing assumption or sanitizer suppression selects this state.
+  static std::mutex mutex;
+  static std::condition_variable condition;
+  std::unique_lock lock(mutex);
+  condition.wait(lock, [] { return false; });
+}
+extern "C" std::int32_t cthread_foreign(std::int32_t (*callback)(void *)) {
+  std::thread worker([=] { (void)callback(nullptr); });
+  worker.join();
+  return 0;
+}
+extern "C" std::int32_t cthread_initial(std::int32_t (*callback)(void *)) {
+  return callback(nullptr);
+}

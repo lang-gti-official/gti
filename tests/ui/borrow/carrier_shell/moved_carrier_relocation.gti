@@ -1,0 +1,16 @@
+// Moved carrier relocation: a moved borrow carrier verifies.
+//@ check-pass
+interface Gauge { int read(); };
+class Scaled : public Gauge {
+  int value;
+  int& scale;
+public:
+  Scaled(int value, int& scale) : value(value), scale(scale) {}
+  int read() override { return this.value * this.scale; }
+};
+int main() {
+  int scale = 3;
+  Scaled first{2, scale};
+  Scaled moved = std::move(first);
+  return moved.read() - 6;
+}

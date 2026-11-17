@@ -1,0 +1,9 @@
+// Storage payload admission: a moved local text borrow still prevents mutation of its original owner rather than merely retaining a borrowed-state flag.
+import std.string;
+int main() {
+  mut std::string owner{"owned"};
+  std::string_view view = owner.view();
+  std::string_view moved = std::move(view);
+  owner.clear();  //~ ERROR GTI-S2017
+  return moved.size() == std::size_t(5) ? 0 : 1;
+}

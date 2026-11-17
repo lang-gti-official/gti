@@ -1,0 +1,16 @@
+// Class payload enums: a copied pattern binding should reject a move-only active payload with a tag-only-match hint.
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  holder held = holder::one(resource());
+  switch (held) {
+  case holder::one(value):  //~ ERROR GTI-S2067
+    return 1;
+  case holder::none:
+    return 0;
+  }
+}

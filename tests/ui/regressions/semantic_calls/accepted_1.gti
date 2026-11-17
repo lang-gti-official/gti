@@ -1,0 +1,14 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+concept steps<I> = requires(mut I& p) { { ++p } -> void; };
+struct Counter { mut int at = 0; public: Counter() = default; void operator++() mut { this.at++; } };
+void step<steps I>(mut I& it) { ++it; }
+I skip<steps I>(mut I first) {
+  step(first);
+  return std::move(first);
+}
+int main() {
+  Counter c{};
+  Counter d = skip(c);
+  return d.at == 1 ? 0 : 1;
+}

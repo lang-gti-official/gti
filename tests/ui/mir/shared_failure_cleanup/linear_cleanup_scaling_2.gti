@@ -1,0 +1,38 @@
+// Linear cleanup scaling: constructions: scaling fixture lowers.
+//@ check-pass
+mut int32_t zero = 0;
+class Owner {
+  int32_t divisor;
+public:
+  Owner(int32_t divisor) : divisor(10 / divisor) {}
+  ~Owner() { int32_t checked = 10 / this.divisor; }
+};
+void step(int32_t at) {
+  if (at == zero) {
+    int32_t failure = 1 / zero;
+  }
+}
+int32_t run(int32_t divisor) {
+  Owner owner1 = Owner(divisor);
+  Owner owner2 = Owner(divisor);
+  Owner owner3 = Owner(divisor);
+  Owner owner4 = Owner(divisor);
+  Owner owner5 = Owner(divisor);
+  Owner owner6 = Owner(divisor);
+  Owner owner7 = Owner(divisor);
+  Owner owner8 = Owner(divisor);
+  Owner owner9 = Owner(divisor);
+  Owner owner10 = Owner(divisor);
+  Owner owner11 = Owner(divisor);
+  Owner owner12 = Owner(divisor);
+  Owner owner13 = Owner(divisor);
+  Owner owner14 = Owner(divisor);
+  Owner owner15 = Owner(divisor);
+  Owner owner16 = Owner(divisor);
+  Owner owner17 = Owner(divisor);
+  Owner owner18 = Owner(divisor);
+  Owner owner19 = Owner(divisor);
+  Owner owner20 = Owner(divisor);
+  return 0;
+}
+int main() { return run(1); }

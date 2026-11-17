@@ -1,0 +1,12 @@
+// Optional raw audit off: default Off does not enforce optional raw lifetime/access findings.
+//@ check-pass
+unsafe int read(const int* pointer) { unsafe { return *pointer; } }
+int main() {
+  mut const int* expired = nullptr;
+  { int dead = 7; expired = &dead; }
+  mut int live = 1;
+  int* address = &live;
+  int& loan = live;
+  unsafe { *address = read(expired); }
+  return loan;
+}

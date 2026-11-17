@@ -1,0 +1,3 @@
+// Lifetimes: rejected with GTI-S2127.
+unsafe T&<a> borrow<T, Owner, lifetime a>(const T* address, Owner&<a> owner) { unsafe { return *address; } }
+struct Box { int value = 7; Box() = default; }; int&<static> invalid() { Box local{}; unsafe { return borrow(&local.value, local); } } int main() { return 0; }  //~ ERROR GTI-S2127

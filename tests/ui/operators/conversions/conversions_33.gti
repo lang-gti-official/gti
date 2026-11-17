@@ -1,0 +1,12 @@
+// Conversion operators: rejected with GTI-S2011.
+import std.string;
+using Count = int;
+using Truth = bool;
+struct Holder {
+  std::string text;
+  int value = 0;
+  Holder() : text("held") {}
+  operator Count() { return 1; }
+  operator int() { return 2; }  //~ ERROR GTI-S2011
+};
+int main() { return 0; }

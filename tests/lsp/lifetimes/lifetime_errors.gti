@@ -1,0 +1,70 @@
+// Lifetime and borrow errors in user terms, each repaired clean: an
+// ambiguous returned reference (S2017, no quick fix) fixed by a binder, a
+// region mismatch fixed by an outlives bound, a write while a reborrow
+// lives, a loan carried into a later loop iteration, a returned local, and
+// assigning a region carrier (S2003). (lifetime_parameters_lsp_test.py,
+// second part; related locations are not asserted)
+//@ no-code-action @choose
+/* 😀 */ int& /*^choose*/choose(int& first, int& second, bool condition) {  //~ ERROR GTI-S2017
+  if (condition) { return first; } return second;
+}
+// --- step 2
+/* 😀 */ int&<a> choose<lifetime a>(int&<a> first, int&<a> second, bool condition) {
+  if (condition) { return first; } return second;
+}
+// --- step 3
+/* 😀 */ int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second) { return second; }  //~ ERROR GTI-S2127
+// --- step 4
+/* 😀 */ int&<a> choose<lifetime a, lifetime b>(int&<a> first, int&<b> second) requires outlives<b, a> { return second; }
+// --- step 5
+int main() {
+  mut int value = 1; mut int& parent = value;
+  { mut int& ended = parent; ended = 2; }
+  /* 😀 */ mut int& child = parent;
+  /* 😀 */ parent = 3;  //~ ERROR GTI-S2017
+  return child;
+}
+// --- step 6
+int main() {
+  mut int value = 1; mut int& parent = value;
+  { mut int& ended = parent; ended = 2; }
+  /* 😀 */ mut int& child = parent;
+  /* 😀 */ int saved = child; parent = 3;
+  return saved;
+}
+// --- step 7
+int main() {
+  mut int value = 1; int& borrowed = value;
+  for (mut int i = 0; i < 2; i += 1) {
+    /* 😀 */ int copy = borrowed;
+    value = copy + 1;  //~ ERROR GTI-S2017
+  } return 0;
+}
+// --- step 8
+int main() {
+  mut int value = 1;
+  for (mut int i = 0; i < 2; i += 1) {
+    /* 😀 */ int& borrowed = value; int copy = borrowed;
+    value = copy + 1;
+  } return 0;
+}
+// --- step 9
+int& invalid() {
+  /* 😀 */ int value = 1;
+  /* 😀 */ return value;  //~ ERROR GTI-S2017 local value 'value'
+}
+// --- step 10
+int invalid() {
+  /* 😀 */ int value = 1;
+  /* 😀 */ return value;
+}
+// --- step 11
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+int main() { int outer = 1; mut View view{outer};
+  { int inner = 2; /* 😀 */ view = View(inner); }  //~ ERROR GTI-S2003 assignment is unavailable for type 'View'
+  return view.value; }
+// --- step 12
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+int main() { int outer = 1; View view{outer};
+  { int inner = 2; /* 😀 */ View inside{inner}; }
+  return view.value; }

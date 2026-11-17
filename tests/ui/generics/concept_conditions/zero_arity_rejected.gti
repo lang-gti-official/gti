@@ -1,0 +1,4 @@
+// A concept applied to no arguments is rejected.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+static_assert(std::integral<>);  //~ ERROR GTI-S2049 requires 1 type argument

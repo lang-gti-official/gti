@@ -1,0 +1,3 @@
+// Analyze: an owner constraint cannot be bypassed through a type member.
+struct Box<std::integral T> { using value_type = T;  public: Box() = default; };
+using Bad = Box<double>::value_type;  //~ ERROR GTI-S2029

@@ -1,0 +1,37 @@
+// Copyable and movable arrays copy and move element-wise at their final addresses.
+//@ run-pass
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+class Cell { public: mut int value; Cell(int value) : value(value) {} };
+int inspect(Cell values[2], mut Cell& original) {
+  original.value = 9;
+  return values[0].value;
+}
+int main() {
+  mut Cell values[2] = {Cell(3), Cell(4)};
+  Cell snapshot[2] = values;
+  if (inspect(values, values[0]) != 3 || values[0].value != 9 || snapshot[0].value != 3) { return 1; }
+  Cell transferred[2] = std::move(values);
+  return transferred[0].value == 9 && transferred[1].value == 4 ? 0 : 2;
+}

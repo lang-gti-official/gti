@@ -1,0 +1,26 @@
+// Field reborrow: a formal stays suspended while its alias's shared child is live.
+class Read {
+  int& value;
+public:
+  Read(int& value) : value(value) {}
+  int get() { return this.value; }
+};
+class Write {
+  mut int& value;
+public:
+  Write(mut int& value) : value(value) {}
+  Read read() { return Read(this.value); }
+  void bump() mut { this.value++; }
+};
+class Holder {
+  mut Write value;
+public:
+  Holder(Write value) : value(std::move(value)) {}
+  int get() { auto view = this.value.read(); return view.get(); }
+};
+int through_alias(mut Write& input) { Write& alias = input; auto view = alias.read(); input.bump(); return view.get(); } int main() {  //~ ERROR GTI-S2017
+  mut int value = 4;
+  Write writer{value};
+  Holder holder{std::move(writer)};
+  mut int other = 4; mut Write direct{other}; return holder.get() + through_alias(direct) - 8;
+}

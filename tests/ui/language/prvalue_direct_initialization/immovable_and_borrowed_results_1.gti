@@ -1,0 +1,17 @@
+// Immovable and borrowed results: initial creation and direct publication do not require movability.
+//@ check-pass
+class Fixed {
+public:
+  int value;
+  Fixed(int value) : value(value) {}
+  Fixed(Fixed&) = delete;
+  Fixed(Fixed&&) = delete;
+};
+Fixed make() { return Fixed(4); }
+Fixed relay() { return Fixed(make()); }
+int main() {
+  auto factory = []() -> Fixed { return Fixed(7); };
+  Fixed result = Fixed((relay()));
+  Fixed from_lambda = Fixed(factory());
+  return result.value + from_lambda.value == 11 ? 0 : 1;
+}

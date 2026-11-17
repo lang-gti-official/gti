@@ -1,0 +1,13 @@
+// Shadowed names remain one candidate, and only captured lambda locals are visible.
+//@ code-action @shadow: "Replace with 'counter'" => return counter;
+//@ code-action @captured: "Replace with 'counter'" => return counter;
+//@ no-code-action @uncaptured
+int main() {
+  int counter = 1;
+  {
+    int counter = 2;
+    auto read = [&counter]() -> int { return /*@captured*/coutner; }; //~ ERROR GTI-S2001
+    auto absent = []() -> int { return /*@uncaptured*/coutner; }; //~ ERROR GTI-S2001
+    return /*@shadow*/coutner; //~ ERROR GTI-S2001
+  }
+}

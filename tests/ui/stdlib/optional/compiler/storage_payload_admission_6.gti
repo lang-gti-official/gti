@@ -1,0 +1,4 @@
+// Storage payload admission: source optional admits ordinary raw pointer values without dereferencing them.
+//@ check-pass
+import std.optional;
+int main() { std::optional<int*> item{}; return 0; }

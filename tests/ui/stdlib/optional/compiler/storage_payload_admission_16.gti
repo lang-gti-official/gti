@@ -1,0 +1,5 @@
+// Storage payload admission: ordinary enum storage of dynamic text, including moved views, cannot escape its owner and is rejected before MIR.
+import std.string;
+enum Text { empty, value(std::string_view text) };
+Text escape() { std::string owner{"owned"}; std::string_view view = owner.view(); auto text = Text::value(std::move(view)); return text; }  //~ ERROR GTI-S2045
+int main() { auto text = escape(); return 0; }

@@ -1,0 +1,3 @@
+// A conditional == whose constraint needs itself is not satisfied.
+//@ check-fail
+concept Equal<T> = requires(T& a, T& b) { { a == b } -> bool; }; class V { public: V() = default; bool operator==(V& other) requires Equal<V> { return true; } }; int main() { V a{}; V b{}; return a == b ? 0 : 1; }  //~ ERROR GTI-S2029 Equal

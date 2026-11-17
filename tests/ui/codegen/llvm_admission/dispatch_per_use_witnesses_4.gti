@@ -1,0 +1,17 @@
+// Dispatch per use witnesses: scalar writes and a complete local's replacement remain distinct from the base view's coalesced source copy and assignment exclusions in the same body.
+//@ check-pass
+    class P {
+    public:
+      mut int value;
+      P() : value(1) {}
+      virtual int read() { return this.value; }
+    };
+    class Q : public P { public: Q() = default; };
+    int poke(mut P& view, P& source) {
+      mut P first{};
+      first.value = 5;
+      first = source;
+      view = source;
+      return first.read() + view.read();
+    }
+    int main() { mut Q derived{}; P second{}; return poke(derived, second); }

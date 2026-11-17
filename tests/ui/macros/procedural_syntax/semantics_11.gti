@@ -1,0 +1,12 @@
+// Semantics: ordinary negation is not a macro-input boundary.
+//@ check-pass
+// --- main.gti
+int main(){ bool result = !(
+#define NEGATED_FLAG
+false);
+#ifndef NEGATED_FLAG
+#error "flag lost"
+#endif
+return result ? 0 : 1; }
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) std::syntax::expr html(std::syntax::tokens input) { return std::syntax::parse(std::syntax::literal("42", std::syntax::location(input, uint64_t(0), uint64_t(1)))); }

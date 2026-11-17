@@ -1,0 +1,25 @@
+// Owner view boundaries: raw-backed view prevents allocation release before last use.
+import std.memory;
+class Box {
+  mut std::storage<int> slots;
+public:
+  Box(std::storage<int> slots) : slots(std::move(slots)) {}
+  int& value() { return this.slots.get(std::size_t(0)); }
+  void release() mut { this.slots.release(); }
+};
+class Reading {
+  Box& owner;
+  const int* address = nullptr;
+public:
+  Reading(Box& owner) : owner(owner), address(&owner.value()) {}
+  int read() { unsafe { return std::assume_ref(this.address, this.owner); } }
+};
+int main() {
+  std::allocator allocator{};
+  mut auto allocated = allocator.try_storage<int>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int> slots = std::move(allocated).value();
+  slots.construct(std::size_t(0), 42);
+  mut Box owner{std::move(slots)};
+  Reading reading{owner};
+owner.release(); return reading.read(); }  //~ ERROR GTI-S2017

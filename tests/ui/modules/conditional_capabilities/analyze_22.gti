@@ -1,0 +1,26 @@
+// Analyze: capability predicates preserve local construction for every payload quadrant.
+//@ check-pass
+concept CrossThread<T> = std::transferable<T> && std::shareable<T>;
+[[unsafe_transfer(CrossThread<T> && std::transferable<D>),
+  unsafe_share(std::shareable<T> && std::transferable<T> && std::transferable<D>)]]
+class SharedResource<T, D> {
+  T* address = nullptr;
+public:
+  SharedResource() {}
+  ~SharedResource() {}
+};
+[[no_transfer]] struct ReadOnly { int value = 0; };
+[[no_share]] struct ExclusiveOnly { int value = 0; };
+[[no_transfer, no_share]] struct Neither { int value = 0; };
+void send<std::transferable T>(T value) {}
+void read<std::shareable T>(T& value) {}
+
+int main() {
+  send(SharedResource<int, int>());
+  SharedResource<int, int> concurrent{}; read(concurrent);
+  SharedResource<ReadOnly, int> local_readonly{};
+  SharedResource<ExclusiveOnly, int> local_exclusive{};
+  SharedResource<Neither, int> local_neither{};
+  SharedResource<int, Neither> local_deleter{};
+  return 0;
+}

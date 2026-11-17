@@ -1,0 +1,4 @@
+// Lifetime and effects: shared TLS borrows permit independent shared observations.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local int value = 1; int read() { return value; } int main() { int& borrowed = value; int copied = read(); return borrowed + copied; }

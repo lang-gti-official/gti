@@ -1,0 +1,19 @@
+// Borrowed payload patterns: an exclusive pattern cannot upgrade an immutable enum.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class data { empty, some(resource item) };
+
+int main() {
+  data value = data::some(resource());
+  switch (value) {
+    case data::some(mut auto& item): item.add(); return 0;  //~ ERROR GTI-S2067
+    case data::empty: return 0;
+  }
+}

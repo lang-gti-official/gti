@@ -1,0 +1,13 @@
+// Owning functions: ordinary nominal operator calls expand empty and mixed argument packs.
+//@ check-pass
+struct Nullary { int operator()() { return 4; }  public: Nullary() = default; };
+struct Binary { int operator()(int value, bool enabled) { return enabled ? value : 0; }  public: Binary() = default; };
+int forward<Callable, Args...>(Callable callable, Args... args) {
+  return callable(args...);
+}
+int main() {
+  Nullary zero{};
+  Binary two{};
+  int first = forward(std::move(zero));
+  return forward(std::move(two), first, true) - 4;
+}

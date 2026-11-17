@@ -1,0 +1,7 @@
+// Ephemeral borrowed carrier receivers: temporary mutex guard cannot export its protected reference.
+import std.mutex;
+int main() {
+  std::mutex<int> owner{1};  //~ ERROR GTI-S2084
+  int& escaped = owner.lock().get();  //~ ERROR GTI-S2084 //~ ERROR GTI-S2017
+  return escaped;
+}

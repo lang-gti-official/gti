@@ -1,0 +1,2 @@
+// Negative: invalid access and retained overlap are diagnosed by semantics.
+float identity(float value){return value;}int main(){float result = identity(16777217); return int32_t(result);}  //~ ERROR GTI-S2003

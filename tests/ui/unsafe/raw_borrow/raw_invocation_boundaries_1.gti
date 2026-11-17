@@ -1,0 +1,16 @@
+// Raw invocation boundaries: derived raw fields cannot disappear behind a base reference.
+//@ raw-pointer-audit: strict
+class Base { public: virtual int read() = 0;  public: Base() = default; };
+class Derived : public Base {
+public:
+  mut const int* pointer = nullptr;
+  int read() override { unsafe { return *this.pointer; } }
+public:
+  Derived() = default;
+};
+int main() {
+  mut Derived value{};
+  { int dead = 7; value.pointer = &dead; }
+  Base& base = value;
+  return base.read();  //~ ERROR GTI-S2101
+}

@@ -1,0 +1,19 @@
+// Non lexical and field boundaries: field-disjoint calls and a later write after last use are accepted.
+//@ check-pass
+class Counters {
+public:
+  mut int32_t left = 1;
+  mut int32_t right = 2;
+public:
+  Counters() = default;
+};
+thread_local mut Counters state{};
+void change_right() { state.right = 3; }
+void change_left() { state.left = 4; }
+int main() {
+  int32_t& borrowed = state.left;
+  change_right();
+  int32_t copied = borrowed;
+  change_left();
+  return copied;
+}

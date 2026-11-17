@@ -1,0 +1,3 @@
+// Lifetimes: rejected with GTI-S2030.
+using bad = int&;  //~ ERROR GTI-S2030
+int main() { return 0; }

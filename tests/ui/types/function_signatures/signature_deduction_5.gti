@@ -1,0 +1,18 @@
+// Signature deduction: a semantically valid emission fixture should complete MIR lowering.
+//@ check-pass
+class Tag<S = void> {
+public:
+  using type = S;
+  int value() { return 7; }
+public:
+  Tag() = default;
+};
+int describe<R, A>(Tag<R(A)>& tag) { return tag.value(); }
+int describe_refs<R, A>(Tag<R&(A&)>& tag) { return tag.value(); }
+int describe_empty<R>(Tag<R()>& tag) { return tag.value(); }
+int metadata<T = void>() { Tag<T> tag{}; return tag.value(); }
+int variadic<R, Args...>(Tag<R()>& tag, Args... values) {
+  return tag.value();
+}
+T* pointer_identity<T>(T* pointer) { return pointer; }
+int main() {Tag<int&(int&)> tag{}; return describe_refs(tag) - 7;}

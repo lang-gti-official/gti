@@ -1,0 +1,22 @@
+// Aliases and generics: lambda-shared-local-reborrow.gti.
+//@ check-pass
+int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> value) { return callback(value); }
+int&<a> invoke_owned<F, lifetime a>(F callback, mut int&<a> value) { return callback(value); }
+void observe_generic<T>(mut T& value) {
+  auto observe = [](mut T& source) -> T& { return source; };
+  T& result = observe(value);
+}
+int main() {
+  auto observe = [](mut int& value) -> int& {
+    mut int& parent = value;
+    int& child = parent;
+    return child;
+  };
+  mut int number = 8;
+  int& result = invoke(observe, number);
+  int first = result;
+  int& owned_result = invoke_owned(observe, number);
+  int second = owned_result;
+  observe_generic(number);
+  return first + second - 16;
+}

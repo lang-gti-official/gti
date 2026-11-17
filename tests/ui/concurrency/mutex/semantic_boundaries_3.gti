@@ -1,0 +1,7 @@
+// Semantic boundaries: application code should not name private mutex storage.
+//@ execution-profile: concurrent
+import std.mutex;
+int main() {
+  gti_internal::mutex_storage<int32_t> storage{1};  //~ ERROR GTI-S2058
+  return 0;
+}

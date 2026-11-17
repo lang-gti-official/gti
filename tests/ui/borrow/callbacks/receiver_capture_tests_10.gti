@@ -1,0 +1,4 @@
+// Receiver capture tests: rejected with GTI-S2003.
+class C { mut int n = 0; public: C() = default;
+        int run() mut { mut auto f = [mut &this]() -> int { return this.n; }; mut auto copy = f; return copy(); }  //~ ERROR GTI-S2003
+      }; int main() { mut C c{}; return c.run(); }

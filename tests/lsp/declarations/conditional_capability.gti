@@ -1,0 +1,23 @@
+// A conditional capability's type argument navigates to the class's type
+// parameter; a non-parameter argument and a repeated capability are S2059,
+// and each repair is clean. (conditional_capability_lsp_test.py)
+//@ definition @binder: @param
+// 😀 UTF-16 control
+[[unsafe_owned, unsafe_transfer(/*@binder*/T), unsafe_share(T)]] class Owner</*@param*/T> { T* pointer = nullptr; };
+int main() { return 0; }
+// --- step 2
+// 😀 UTF-16 control
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(U)]] class Owner<T> { T* pointer = nullptr; };  //~ ERROR GTI-S2059 non-pack type parameter
+int main() { return 0; }
+// --- step 3
+// 😀 UTF-16 control
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Owner<T> { T* pointer = nullptr; };
+int main() { return 0; }
+// --- step 4
+// 😀 UTF-16 control
+[[unsafe_owned, unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Owner<T> { T* pointer = nullptr; };  //~ ERROR GTI-S2059 more than once
+int main() { return 0; }
+// --- step 5
+// 😀 UTF-16 control
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Owner<T> { T* pointer = nullptr; };
+int main() { return 0; }

@@ -1,0 +1,4 @@
+// Raw field witnesses: raw projection type verification preserves readonly, padded, nested-array and base fields.
+//@ build-pass
+//@ slow
+class Padded { public: int8_t tag = int8_t(1); double tail = double(42.5);  public: Padded() = default; }; int main() { Padded object{}; unsafe { const Padded* pointer = &object; return pointer->tail == double(42.5) ? 0 : 1; } }

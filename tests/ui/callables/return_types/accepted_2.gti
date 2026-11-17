@@ -1,0 +1,7 @@
+// Accepted: native pointer result metadata does not require invoking the pointer.
+//@ check-pass
+import std.meta;
+using Native = (int32_t) -> int32_t;
+using NativeResult = std::meta::callable_return_type<Native>;
+NativeResult zero() { return 0; }
+int main() { return zero(); }

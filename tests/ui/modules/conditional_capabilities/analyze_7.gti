@@ -1,0 +1,15 @@
+// Analyze: conditional assertion must not erase a payload capability denial.
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {
+  T* pointer = nullptr;
+public:
+  Reviewed() {}
+  ~Reviewed() {}
+};
+[[no_transfer]] struct Affine { int id = 0;  public: Affine() = default; };
+[[no_share]] struct Exclusive { int id = 0;  public: Exclusive() = default; };
+enum Packet<T> { item(T value) };
+enum Metadata<T> { item(int value) };
+void consume<std::transferable T>(T value) {}
+void observe<std::shareable T>(T& value) {}
+void relay<std::transferable T>(T value) { consume(Reviewed<T>()); }
+int main() { Reviewed<Packet<Exclusive>> value{}; observe(value); return 0; }  //~ ERROR GTI-S2029

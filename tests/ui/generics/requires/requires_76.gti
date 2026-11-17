@@ -1,0 +1,12 @@
+// General requires: reflection implication, disjunction and ordinary constexpr predicates.
+//@ check-pass
+import std.meta;
+constexpr bool integer_alias<T>() { return std::meta::is_integral<T>(); }
+concept integer_value<T> = integer_alias<T>();
+concept possible<T> = std::meta::is_integral<T>() || std::meta::is_floating_point<T>();
+T twice<T>(T value) requires integer_value<T> { return value + value; }
+T identity<T>(T value) requires possible<T> { return value; }
+constexpr bool arbitrary<T>() { return std::meta::is_integral<T>() && (1 + 1 == 2); }
+concept has_size<T> = arbitrary<T>();
+int sized<T>() requires has_size<T> { return 1; }
+int main() { return twice(4) == 8 && identity(3.0) == 3.0 && sized<int>() == 1 ? 0 : 1; }

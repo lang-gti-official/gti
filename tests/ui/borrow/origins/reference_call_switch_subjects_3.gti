@@ -1,0 +1,16 @@
+// Reference call switch subjects: an arm's payload reference keeps its owner borrowed.
+enum Shape { circle(int radius), none };
+class Holder {
+public:
+  mut Shape shape;
+  mut int count;
+  Holder(int radius) : shape(Shape::circle(radius)), count(0) {}
+  Shape& shapeRef() { return this.shape; }
+};
+int main() {
+  mut Holder holder = Holder(3);
+  switch (holder.shapeRef()) {
+  case Shape::circle(auto& radius): holder.count = 1; return radius;  //~ ERROR GTI-S2017
+  case Shape::none: return 0;
+  }
+}

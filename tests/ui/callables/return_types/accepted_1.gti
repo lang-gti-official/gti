@@ -1,0 +1,6 @@
+// Accepted: selected function items are inferred before dependent result checking.
+//@ check-pass
+import std.meta;
+std::meta::callable_return_type<F> apply<F>(F fn, int value) { return fn(value); }
+int increment(int value) { return value + 1; }
+int main() { return apply(increment, 2) - 3; }

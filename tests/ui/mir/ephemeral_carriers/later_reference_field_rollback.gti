@@ -1,0 +1,23 @@
+// Later reference field rollback: later reference publication preserves earlier constructor rollback.
+//@ check-pass
+struct Marker {
+  mut int& slot;
+  Marker(mut int& target) : slot(target) {}
+  ~Marker() { slot = 1; }
+};
+struct Owner {
+  Marker first;
+  Marker second;
+  mut int& slot;
+  int value;
+  Owner(int input, mut int& one, mut int& two, mut int& own)
+    : first(Marker(one)), second(Marker(two)), slot(own), value(input + 1) {}
+  ~Owner() { slot = 1; }
+};
+int main() {
+  mut int one = 0;
+  mut int two = 0;
+  mut int own = 0;
+  { Owner owner{0, one, two, own}; }
+  return one + two + own - 3;
+}

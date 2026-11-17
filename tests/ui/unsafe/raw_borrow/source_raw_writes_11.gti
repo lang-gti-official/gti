@@ -1,0 +1,7 @@
+// Source raw writes: conditional reset cannot erase a previous expired global write.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+int main() { set(); reset(false); unsafe { return std::assume_ref(pointer, witness); } }void set() { int gone = 1; pointer = &gone; }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+void reset(bool choose) { if (choose) { pointer = &witness; } }

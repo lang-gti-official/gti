@@ -1,0 +1,10 @@
+// Include removal: mechanical migration must not bypass private exports.
+//@ analyze-fail
+//@ no-prelude
+// --- main.gti
+import "api.gti";
+int main() { return hidden(); }  //~ ERROR GTI-S2024
+// --- api.gti
+export module api;
+export int answer() { return 42; }
+int hidden() { return 1; }

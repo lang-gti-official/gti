@@ -1,0 +1,11 @@
+// Tryable propagation: rejected with GTI-S2017.
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+
+void change(mut Token& token) {}
+int main() { change(Token::item(7)); return 0; }  //~ ERROR GTI-S2017

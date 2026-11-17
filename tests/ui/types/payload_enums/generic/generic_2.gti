@@ -1,0 +1,21 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+class Resource {
+  int id;
+public:
+  Resource(int value) : id(value) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {}
+  int read() { return this.id; }
+};
+enum Packet<T> { empty, item(T value) };
+int main() {
+  Resource[2] values = {Resource(3), Resource(4)};
+  auto packet = Packet<Resource[2]>::item(std::move(values));
+  switch (std::move(packet)) {
+  case Packet<Resource[2]>::empty: return 1;
+  case Packet<Resource[2]>::item(items):
+    return items[0].read() + items[1].read() - 7;
+  }
+}

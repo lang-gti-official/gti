@@ -1,0 +1,9 @@
+// Alias constructor value arguments: rejected with GTI-S2090.
+class Tag {
+public:
+  Tag<F>(F item) {}
+};
+using T = Tag;
+void work(int value) {}
+void work(bool value) {}
+int main() { auto value = Tag(work); return 0; }  //~ ERROR GTI-S2090

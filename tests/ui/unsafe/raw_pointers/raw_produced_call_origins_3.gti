@@ -1,0 +1,6 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: wrapper-chain.
+//@ raw-pointer-audit: strict
+int main() { auto pointer = relay(); unsafe { return pointer[0]; } }  //~ ERROR GTI-S2102
+const int* relay() { return middle(); }
+const int* middle() { return dangling(); }
+const int* dangling() { int local = 1; return &local; }

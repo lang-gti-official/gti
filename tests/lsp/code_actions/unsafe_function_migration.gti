@@ -1,0 +1,43 @@
+// Calling an unsafe function outside unsafe is S2055 with no quick fix;
+// inside unsafe it hovers as `unsafe` (not `[[unsafe]]`) and both keywords
+// are keyword tokens. The obsolete `[[unsafe]]` (spaced or not) and an
+// unnecessary `unsafe` block each offer one edit that yields the current
+// spelling. (unsafe_function_lsp_test.py, first part; isPreferred, triggers
+// and stale requests are code_actions/stale_unsafe_fixes.jsonl)
+//@ no-code-action @call
+// 😀 UTF-16 control
+unsafe int32_t raw() { return 1; }
+int main() { return raw(/*^call*/); }  //~ ERROR GTI-S2055
+// --- step 2
+//@ hover @raw: unsafe
+//@ hover @raw: ![[unsafe]]
+//@ token @kw1: keyword
+//@ token @kw2: keyword
+// 😀 UTF-16 control
+/*^kw1*/unsafe int32_t raw() { return 1; }
+int main() { /*^kw2*/unsafe { return r/*^raw*/aw(); } }
+// --- step 3
+//@ code-action @attr: "Replace obsolete '[[unsafe]]' with 'unsafe'" => step 4
+// 😀 UTF-16 control
+/*^attr*/[[unsafe]] int32_t raw() { return 1; }  //~ ERROR GTI-P0001
+int main() { unsafe { return raw(); } }
+// --- step 4
+// 😀 UTF-16 control
+unsafe int32_t raw() { return 1; }
+int main() { unsafe { return raw(); } }
+// --- step 5
+//@ code-action @unused: "Remove unnecessary 'unsafe'" => step 6
+// 😀 UTF-16 control
+int main() { /*^unused*/unsafe { return 0; } }  //~ WARN GTI-S2100
+// --- step 6
+// 😀 UTF-16 control
+int main() {  { return 0; } }
+// --- step 7
+//@ code-action @attr: "Replace obsolete '[[unsafe]]' with 'unsafe'" => step 8
+// 😀 UTF-16 control
+/*^attr*/[[unsafe]]int32_t raw() { return 1; }  //~ ERROR GTI-P0001
+int main() { unsafe { return raw(); } }
+// --- step 8
+// 😀 UTF-16 control
+unsafe int32_t raw() { return 1; }
+int main() { unsafe { return raw(); } }

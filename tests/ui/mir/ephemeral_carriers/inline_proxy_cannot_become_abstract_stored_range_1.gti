@@ -1,0 +1,35 @@
+// Inline proxy cannot become abstract stored range: an inline proxy over a borrowed carrier keeps a separate physical cursor despite its Stored parent.
+//@ check-pass
+class End { public: End() {} };
+class Projection {
+  Buffer& source;
+public:
+  Projection(Buffer& source) : source(source) {}
+  int& read() { return this.source.read(); }
+};
+class Cursor {
+  mut Projection projection;
+  mut int position = 0;
+public:
+  Cursor(Buffer& source) : projection(Projection(source)) {}
+  Projection& operator*() { return this.projection; }
+  void operator++() mut { this.position++; }
+  bool operator!=(End end) { return this.position < 2; }
+};
+class Buffer {
+  mut int number = 4;
+public:
+  Buffer() {}
+  int& read() { return this.number; }
+  Cursor begin() { return Cursor(this); }
+  End end() { return End(); }
+};
+expected<Buffer&, int> lookup(Buffer& source) { return source; }
+int main() {
+  Buffer buffer{};
+  auto borrowed = lookup(buffer);
+  auto& stable = borrowed.value();
+  mut int total = 0;
+  for (auto& element : stable) { total += element.read(); }
+  return total - 8;
+}

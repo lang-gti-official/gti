@@ -1,0 +1,9 @@
+// Native identity: the program is accepted.
+//@ check-pass
+struct Constant {
+  int value;
+  implicit constexpr Constant(int input) : value(input) {}
+};
+constexpr Constant constant() { return 7; }
+static_assert(constant().value == 7);
+int main() { return 0; }

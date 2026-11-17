@@ -1,0 +1,4 @@
+// Lifetimes: rejected with GTI-S2017, GTI-S2023.
+void increment(mut int& value) { value++; }
+void update<Args...>(mut Args&... values) { (increment(values), ...); }  //~ ERROR GTI-S2023
+int main() { mut int first = 3; update(first, first); return first - 5; }  //~ ERROR GTI-S2017

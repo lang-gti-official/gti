@@ -1,0 +1,18 @@
+// Raw pointer constructor ranking: nullptr should remain equally ranked for T* and const T* in direct and base construction.
+class PointerBase {
+public:
+  PointerBase(int32_t* value) {}
+  PointerBase(const int32_t* value) {}
+public:
+  PointerBase() = default;
+};
+
+class PointerDerived : public PointerBase {
+public:
+  PointerDerived() : PointerBase(nullptr) {}  //~ ERROR GTI-S2013
+};
+
+int main() {
+  PointerBase direct{nullptr};  //~ ERROR GTI-S2013
+  return 0;
+}

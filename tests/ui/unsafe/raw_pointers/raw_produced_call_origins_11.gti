@@ -1,0 +1,11 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: cached-global-pointer-input.
+//@ raw-pointer-audit: strict
+int global = 1;
+mut const int* address = &global;
+const int* source() { return address; }
+int main() {
+  auto first = source();
+  { int gone = 7; address = &gone; }
+  auto second = source();
+  unsafe { return *second; }  //~ ERROR GTI-S2102
+}

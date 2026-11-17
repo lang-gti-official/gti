@@ -1,0 +1,12 @@
+// General requires: owned consuming queries do not authorize consumption through a borrow.
+//@ check-pass
+struct Once { int operator()(int& value) && { return value; }  public: Once() = default; };
+int main() {
+  static_assert(requires(Once function, int& argument) {
+    { std::move(function)(argument) } -> int;
+  });
+  static_assert(!(requires(Once& function, int& argument) {
+    { std::move(function)(argument) } -> int;
+  }));
+  return 0;
+}

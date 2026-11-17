@@ -1,0 +1,5 @@
+// Shape witnesses: sealed lambda dispatch retains its exact executable body dependency.
+//@ build-pass
+//@ slow
+int dormant(int value) { return value * 3; }
+int main() { auto function = [](int value) -> int { return value; }; return function(0); }

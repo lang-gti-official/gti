@@ -1,0 +1,4 @@
+// Rejected: invalid profile or borrow has no code generation.
+struct Explicit { Explicit() {} };
+Explicit finish() { return; }  //~ ERROR GTI-S2012
+int main() { return 0; }

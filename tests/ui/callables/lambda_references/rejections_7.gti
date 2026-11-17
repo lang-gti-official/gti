@@ -1,0 +1,5 @@
+// Rejections: lambda-repeated-mutation.gti.
+int main() {
+  auto observe = [](mut int& value) -> int& { value += 1; return value; };
+  mut int number = 1;
+int& first = observe(number); int& second = observe(number); return first + second; }  //~ ERROR GTI-S2017

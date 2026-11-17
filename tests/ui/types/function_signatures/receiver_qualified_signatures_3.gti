@@ -1,0 +1,2 @@
+// Receiver qualified signatures: read-only signatures cannot enter a mutable-pattern class.
+class C<R(Args...) mut> { public: C() = default; }; C<int()> bad{};  //~ ERROR GTI-S2023

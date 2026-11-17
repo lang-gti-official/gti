@@ -1,0 +1,13 @@
+// Reference payloads: rejected with GTI-S2018.
+//@ analyze-fail
+enum Reading { empty, item(mut int& value) };
+int consume(mut Reading input) {
+  switch (std::move(input)) {
+  case Reading::item(value): {
+    auto again = std::move(input);  //~ ERROR GTI-S2018
+    return value;
+  }
+  case Reading::empty: return 0;
+  }
+}
+int main() { return 0; }

@@ -1,0 +1,8 @@
+// Complete borrow summaries: rejected with GTI-S2105.
+enum Token { empty, item(int value) };
+
+Token bounded<uint64_t N>() {
+  if constexpr (N == 0) { return Token::empty; }
+  else { return bounded<N - 1>(); }  //~ ERROR GTI-S2105
+}
+int main() { auto value = bounded<66>(); return 0; }

@@ -1,0 +1,3 @@
+// Generics: rejected with GTI-S2026.
+struct Underflow<uint64_t N> { Underflow<N - 1> next; int value = 1;  public: Underflow() = default; };  //~ ERROR GTI-S2026
+int main() { Underflow<0> object{}; return 0; }

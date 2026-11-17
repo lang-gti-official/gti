@@ -1,0 +1,12 @@
+// Borrowing captures: erased-reference-user-wrapper.
+//@ check-pass
+import std.memory;
+class Inspection {
+  std::erased_object& object;
+public:
+  Inspection(int& object) : object(std::erase_ref(object)) {}
+  int read() {
+    unsafe { int& value = std::restore_ref<int>(this.object); return value; }
+  }
+};
+int main() { int owner = 7; Inspection view{owner}; return view.read() - 7; }

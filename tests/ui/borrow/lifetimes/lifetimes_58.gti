@@ -1,0 +1,2 @@
+// Lifetimes: rejected with GTI-S2128.
+struct Callback<R(Args...), lifetime R> {};  //~ ERROR GTI-S2128

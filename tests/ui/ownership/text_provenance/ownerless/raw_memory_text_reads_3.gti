@@ -1,0 +1,8 @@
+// Raw memory text reads: a formal returned beside a raw read still needs one owner.
+std::string_view either(std::string_view s, std::string_view* p, bool b) {
+  if (b) {
+    return s;  //~ ERROR GTI-S2045
+  }
+  unsafe { return p[0]; }
+}
+int main() { mut std::string_view v = "x"; return either("a", &v, true) == "a" ? 0 : 1; }

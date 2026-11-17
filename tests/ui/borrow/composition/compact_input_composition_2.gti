@@ -1,0 +1,12 @@
+// Compact input composition: single-input by-value return remains bounded to its exact carrier dependency.
+struct Reading {
+  int& value;
+  Reading(int& source) : value(source) {}
+};
+struct Readings {
+  Reading first;
+  Reading second;
+  Readings(Reading left, Reading right) : first(left), second(right) {}
+};
+Readings repeat(Reading input) { return Readings(input, input); }
+int main() { mut int v = 3; Readings r = repeat(Reading(v)); v = 4; return r.first.value; }  //~ ERROR GTI-S2017

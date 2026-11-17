@@ -1,0 +1,9 @@
+// Invocation pointer text targets: a text-relaying invocation pointer target is rejected where it is formed: std::string_view(Label&).
+import std.functional;
+import std.string;
+struct Label { std::string_view text = "label";  public: Label() = default; };
+std::string_view target(Label& label) { return label.text; }
+int main() {
+  std::function_ptr<std::string_view(Label&)> pointer{target};  //~ ERROR GTI-S2045
+  return 0;
+}

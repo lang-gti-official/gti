@@ -1,0 +1,21 @@
+// Pointer bearing c abi: opaque void pointer C APIs should work inside unsafe.
+//@ check-pass
+namespace native {
+extern "C" {
+  int32_t scalar();
+  void* open(int32_t value);
+  int32_t inspect(const void* handle);
+  void close(void* handle);
+}
+}
+
+int main() {
+  mut int32_t value = native::scalar();
+  mut void* handle = nullptr;
+  unsafe {
+    handle = native::open(value);
+    value = native::inspect(handle);
+    native::close(handle);
+  }
+  return value;
+}
