@@ -817,9 +817,10 @@ public:
   // AArch64 macOS benefits from keeping allocator state out of the append
   // loop. Linux x64 retains inlining; its measured register/call tradeoff differs.
 #if target.os == "macos" && target.arch == "arm64"
-  [[noinline]]
-#endif
+  [[noinline]] constexpr bool grow_bytes_if_supported(uint64_t count) mut {
+#else
   constexpr bool grow_bytes_if_supported(uint64_t count) mut {
+#endif
     if constexpr (std::bitwise_relocatable<T> && !std::meta::is_text<T>()) {
       if (count <= this.data.capacity()) { return true; }
       if (!this.data.buffer.lease.supports_byte_growth()) { return false; }
