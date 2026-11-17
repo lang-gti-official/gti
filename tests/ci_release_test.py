@@ -1107,9 +1107,14 @@ def change_review_contract(root):
     assert ("GTI_BASE_SHA: ${{ github.event.pull_request.base.sha || "
             "github.event.merge_group.base_sha }}") in job
     assert "merge_group:" in ci.split("\njobs:\n", 1)[0]
+    # The review script's own regression harness runs in the gate as a
+    # tree-consistency entry, from a tree that is configured but not built.
     automation = jobs(ci)["automation-tests"]
-    assert ("python3 tests/stdlib_surface_review_test.py "
-            "scripts/check_stdlib_surface_review.py") in automation
+    assert "-L '^tree-consistency$'" in automation and "cmake --build" not in automation
+    sys.path.insert(0, str(root / "scripts"))
+    import tree_consistency
+    assert "stdlib_surface_review_policy" in tree_consistency.listed(root)
+    assert "stdlib_surface_review_test.py" in tree_consistency.harness_files(root)["stdlib_surface_review_policy"]
     # Execute the fork step: a base that main advanced past still yields the
     # candidate's fork point, and an absent base falls back to HEAD^.
     step = job.split("      - name: Find where the candidate forked\n", 1)[1]

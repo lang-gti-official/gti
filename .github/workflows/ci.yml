@@ -67,34 +67,37 @@ jobs:
         run: python3 scripts/validation_checks.py declared --event "${GTI_EVENT_PATH}"
 
   automation-tests:
+    # The tree-consistency tests: every registered entry that checks the
+    # repository against itself without a built compiler (harness imports and
+    # lists, allowlists, registration and ownership maps, manifests, these
+    # workflows' contracts), including the workflow and release regression
+    # harnesses. They run on every PR, draft and merge-queue candidate from a
+    # configure-only tree, so a file one of them cross-references cannot be
+    # deleted or added unnoticed until post-merge full validation. Membership
+    # is a rule over the CTest inventory (tests/TestThroughput.cmake,
+    # scripts/tree_consistency.py). Nothing is built here: a labelled test
+    # that comes to need a binary fails, and one that skips fails the check
+    # after the run.
     name: Workflow regression tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install workflow test prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake make
-      - name: Verify workflow, batch, preservation and resource rules
+      - name: Install the reviewed compiler, Ninja and LLVM for configuring
+        env:
+          GTI_CI_CONFIGURE_ONLY: "1"
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure without building
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+      - name: Run the tree-consistency tests
         run: |
           git config --global user.name "GTI CI"
           git config --global user.email "ci@example.invalid"
-          python3 tests/agent_workflow_test.py
-          python3 tests/rollup_test.py
-          python3 tests/build_window_test.py
-          python3 tests/bounded_log_test.py
-          python3 tests/release_version_test.py scripts/check_release_version.py
-          python3 tests/stdlib_surface_review_test.py scripts/check_stdlib_surface_review.py
-          python3 tests/cut_release_test.py
-          python3 tests/release_train_test.py
-          python3 tests/ci_release_test.py .
-          python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
-          python3 tests/repository_hosting_test.py .
-          python3 tests/ownership_map_test.py
-          python3 tests/plan_checks_test.py
-          python3 tests/named_test_shards_test.py
-          python3 tests/source_stdlib_ci_test.py
-          python3 tests/lsp_release_test.py
+          ctest --test-dir build --output-on-failure --no-tests=error --parallel "$(nproc)" \
+            -L '^tree-consistency$' --output-junit "${RUNNER_TEMP}/tree-consistency.xml"
+          python3 scripts/tree_consistency.py run --build build --junit "${RUNNER_TEMP}/tree-consistency.xml"
 
   formatting:
     name: Formatting

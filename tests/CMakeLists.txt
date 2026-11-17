@@ -1782,13 +1782,18 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   # Every owner and consumer in tests/ownership.toml must name a test that
-  # this build registers. The Git-based coverage checks run in CI's workflow
-  # regression job instead.
+  # this build registers, and the tree-consistency label must be exactly the
+  # entries scripts/tree_consistency.py selects. The Git-based coverage checks
+  # need a checkout; a source tree without one checks the inventory only.
+  set(gti_ownership_map_scope --inventory-only)
+  if(EXISTS "${PROJECT_SOURCE_DIR}/.git")
+    set(gti_ownership_map_scope)
+  endif()
   add_test(
     NAME test_ownership_map
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/ownership_map_test.py"
-            --inventory-only --ctest "${CMAKE_CTEST_COMMAND}"
+            ${gti_ownership_map_scope} --ctest "${CMAKE_CTEST_COMMAND}"
             --build "${PROJECT_BINARY_DIR}"
   )
   set_tests_properties(test_ownership_map PROPERTIES TIMEOUT 120)

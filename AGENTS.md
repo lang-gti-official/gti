@@ -142,7 +142,7 @@ semantics.
   and rejection behavior where applicable, not just absence of the crash.
 - **CI is the required integration gate.** The `main` ruleset requires pull
   requests, the merge queue and the `CI gate` check, with no bypass for any
-  role. A PR's `CI gate` runs the fast checks (lint, workflow regressions, and
+  role. A PR's `CI gate` runs the fast checks (lint, the `tree-consistency` tests, and
   a macOS arm64 and Linux x64 build with `feedback-fast` and the `gti-test`
   entries: all of them on Linux; on macOS `gti_test_ui`, `gti_unit_tests` and
   one `tests/ui` shard that rotates with the commit); the queue's `CI gate`
@@ -396,6 +396,11 @@ one-off implementation-note or redesign files when an existing category fits.
   or convert it to a new-style test and delete it there; never add to it. Add
   no CMake registration, `tests/ownership.toml` entry, census baseline or
   manifest for a new test.
+- Deleting, adding or renaming a test file, script or fixture can break a
+  meta-test that cross-references the tree. Before pushing, run the
+  `tree-consistency` label from a configure-only tree (the CI gate runs it too):
+  `cmake -S . -B build-consistency -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"`
+  then `ctest --test-dir build-consistency -j 8 --output-on-failure -L '^tree-consistency$'`.
 - Never weaken an expectation to get green. A removed annotation, deleted
   test or downgraded mode in a PR that also changes the compiler needs a
   one-line reason in the PR body (`- expectations:` in its `Validation:`

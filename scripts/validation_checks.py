@@ -42,8 +42,11 @@ AUTOMATION_SCRIPTS = {"agent_workflow.py", "validation_batch.py", "validation_ch
                       "build_window.py", "bounded_log.py",
                       "cut_release.py", "check_release_version.py", "check_stdlib_surface_review.py",
                       "rollup.py", "release_train.py", "full_validation_report.py", "validation_retry.py"}
-# Exactly the existing harnesses that CI's workflow-regression job runs. The
-# batch and validation scripts are covered by agent_workflow_test.
+# Harnesses whose own changes need no native CI: each is the command of a
+# tree-consistency entry, which CI's workflow-regression job runs on every
+# candidate (agent_workflow_test checks this). Other labelled harnesses guard
+# compiler sources and still classify as full. The batch and validation
+# scripts are covered by agent_workflow_test.
 AUTOMATION_TESTS = {"agent_workflow_test.py", "build_window_test.py",
                     "bounded_log_test.py", "release_version_test.py", "stdlib_surface_review_test.py",
                     "ci_resources_test.py",

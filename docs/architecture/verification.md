@@ -9877,7 +9877,18 @@ and the helper scripts and their gates (`ci_resources`, `ci_cache`,
 `ci_sanitizer_capability`, `ci_release`, `release_asset_sync`,
 `release_version_policy`, `repository_hosting`) guard them. The CI workflow
 runs formatting, release-version, Tree-sitter and workflow regressions before
-heavy jobs. Full integration retains the system-LLVM fast checks and Linux
+heavy jobs. The workflow-regression job is the `tree-consistency` CTest label,
+run from a Linux tree that is configured but not built: every registered entry
+that runs under Python or CMake and names no build product (the workflow and
+release harnesses, harness imports and lists, source allowlists, registration
+and ownership maps, manifests), less the reasoned exemptions in
+`scripts/tree_consistency.py`. `test_ownership_map` holds the list in
+`tests/TestThroughput.cmake` to exactly that rule, checks that every module a
+`tests/` or `scripts/` file imports and every bare harness name in an
+expectation table exists, and the job fails on a skipped or unrun labelled
+entry. These checks fail before integration when a change deletes or adds a
+file they cross-reference; post-integration full validation used to be the
+first place they ran with the change. Full integration retains the system-LLVM fast checks and Linux
 system-LLVM installed consumers, and requires production packaging, its installed
 consumer checks and bundled-release suite shards. Packaging precedes the
 release shards so they can reuse its object cache. A failure in any required

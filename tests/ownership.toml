@@ -1464,6 +1464,7 @@ paths = [
   "scripts/named_test_shards.py",
   "tests/named_test_shards_test.py",
   "scripts/gti_test_budget.py",
+  "scripts/tree_consistency.py",
 ]
 owners = [
   "agent_workflow",
@@ -1477,6 +1478,7 @@ owners = [
   "named_test_shards",
   "neovim_local_installer",
   "remote_runner",
+  "test_ownership_map",
 ]
 consumers = [
   "release_version_policy",

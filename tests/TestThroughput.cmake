@@ -214,6 +214,42 @@ foreach(suite IN LISTS gti_fast_feedback_tests)
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "feedback-fast")
   endif()
 endforeach()
+# Tree consistency: the entries that check the repository against itself
+# without a built compiler (harness imports and lists, allowlists, registration
+# and ownership maps, manifests, workflow contracts). CI's gate runs them from
+# a configure-only tree on every pull request and merge-queue candidate, so a
+# deleted or added file they cross-reference fails before integration. The
+# list is exactly what a rule selects: every entry that runs under Python or
+# CMake and names no path in the build tree but the build directory itself,
+# less the exemptions in scripts/tree_consistency.py, which test_ownership_map
+# enforces both ways. Run it with
+# `ctest --test-dir <configure-only tree> -L '^tree-consistency$'`.
+set(gti_tree_consistency_tests
+  agent_workflow backend_execution_protocol borrow_dependency_monotonicity
+  bounded_log build_window ci_cache ci_release ci_resources
+  ci_sanitizer_capability cli_hardlink_fixture cmake_test_ownership
+  coverage_native_fixture_policy cut_release_policy
+  diagnostic_registry_generator execution_coverage feature_interaction_model
+  gcp_spot_runner llvm_backend_dependency_controls llvm_cache_component_mapping
+  llvm_coverage_exhaustiveness llvm_header_install_symlink llvm_link_surface
+  llvm_link_surface_policy llvm_scalar_context_controls
+  lowered_program_source_boundary lsp_release macos_runtime_bundle
+  mir_census_profile_controls mir_header_boundary named_test_shards
+  native_fixture_build native_framework_nonapple native_packages
+  neovim_local_installer optimized_test_compiler_policy
+  optimizer_coverage_growth plan_checks process_resource_policy_harness
+  release_asset_sync release_train release_version_policy remote_runner
+  repository_hosting rollup semantic_header_boundary
+  single_body_scaling_measurement source_stdlib_ci
+  stdlib_surface_context_controls stdlib_surface_manifest
+  stdlib_surface_review_policy test_case_jobs test_ownership_map
+  tree_sitter_queries typed_program_model
+)
+foreach(suite IN LISTS gti_tree_consistency_tests)
+  if(TEST "${suite}")
+    set_property(TEST "${suite}" APPEND PROPERTY LABELS "tree-consistency")
+  endif()
+endforeach()
 foreach(suite IN LISTS gti_throughput_tests)
   if(suite MATCHES "(_lsp$|^lsp_)")
     set_property(TEST "${suite}" APPEND PROPERTY LABELS "lsp")

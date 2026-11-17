@@ -752,7 +752,8 @@ runtime services and allocation, CMake/toolchain, CI and release workflows,
 test infrastructure) validate alone and are never combined with other
 changes. It is the one source the planner, PR CI and reviewers share: the
 verify-change planner selects from it, CI's workflow regression job
-validates it, and reviewers check a change's evidence against it. Its
+validates it (as the `test_ownership_map` entry of the `tree-consistency`
+label), and reviewers check a change's evidence against it. Its
 selection is a lower bound that the author extends from the changed
 invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
 source file has an area or a stated reason, and the `test_ownership_map`
@@ -1096,11 +1097,13 @@ A queue failure belongs to the change that introduced it. The queue removes
 that PR and rebuilds the entries behind it, so other work keeps merging; the
 owner reproduces the failing tests locally, repairs the change without
 weakening unrelated expectations, verifies and re-queues. The Linux
-workflow-regression job installs CMake (including CTest) and Make explicitly
-before its real, disposable CMake/CTest batch fixtures run. `CIEnvironment` in
-`agent_workflow` executes these shell steps with missing event aliases and an
-initially tool-free PATH. The lightweight job also runs `repository_hosting`,
-the ownership-map coverage check and the planner's tests.
+workflow-regression job installs the reviewed toolchain
+(`configure_ci_toolchain.sh` with `GTI_CI_CONFIGURE_ONLY=1`, which keeps the
+preinstalled toolchains a build would delete), configures without building
+and runs the `tree-consistency` CTest label: `agent_workflow` with its real,
+disposable CMake/CTest batch fixtures, `repository_hosting`, the
+ownership-map coverage check, the planner's tests and every other entry that
+checks the tree against itself without a built compiler.
 
 ### LSP adapter CI classification
 

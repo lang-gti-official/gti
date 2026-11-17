@@ -96,7 +96,12 @@ def main() -> None:
     if actual != allowed_analyzer_consumers:
         missing = sorted(allowed_analyzer_consumers - actual)
         extra = sorted(actual - allowed_analyzer_consumers)
-        fail(f"analyzer consumer allowlist mismatch; missing={missing}, extra={extra}")
+        # Each consumer is reviewed: a new file that includes the analyzer
+        # facade joins allowed_analyzer_consumers with a comment saying what
+        # the Frontend facade cannot observe; a deleted one leaves it.
+        fail(f"analyzer consumer allowlist mismatch; missing={missing}, extra={extra}; "
+             "list each new consumer above with the reason Frontend cannot serve it, "
+             "and remove deleted ones")
 
     implementation_sources = {
         "src/compiler/semantic_analyzer.cpp",

@@ -26,7 +26,11 @@ python3 scripts/agent_workflow.py protection
 
 - On a pull request: lint (formatting, release version, the old-suite test
   freeze `scripts/check_test_freeze.py`, Tree-sitter), the
-  workflow regression tests, and a macOS arm64 and Linux x64 build running
+  workflow regression job, which runs every `tree-consistency` CTest entry
+  (the workflow and release harnesses, harness lists, allowlists,
+  registration and ownership maps, manifests) from a Linux tree that is
+  configured but not built, then rejects a skipped or missing entry
+  (`scripts/tree_consistency.py run`), and a macOS arm64 and Linux x64 build running
   `feedback-fast` and the `gti-test` entries, with per-case JUnit reports
   uploaded as `gti-test-<platform>-<attempt>`. Linux runs `gti_test_ui`, every
   `tests/ui` shard `gti_test_ui_<i>`, `gti_test_examples` and
