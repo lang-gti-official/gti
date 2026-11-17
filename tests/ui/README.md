@@ -57,8 +57,9 @@ int main() {
 - Parse only: `//@ parse-pass` / `//@ parse-fail` stop after the lexer and
   parser (syntax and recovery tests; annotations as above). They see
   declarations only: a module unit's `export module`/`import` header belongs
-  to the source loader, so test headers with check or analyze modes. They
-  apply `//@ error-limit:` (ending with GTI-D0002 as the driver does), and a
+  to the source loader, so test headers with check or analyze modes. A
+  written `//@ error-limit:` applies (ending with GTI-D0002 as the driver
+  does; without one every error is reported), and a
   parse-fail test may take `//@ snapshot: diagnostics` (`gti` stops at
   syntax errors).
 - Semantics only: `//@ analyze-pass` / `//@ analyze-fail` stop after

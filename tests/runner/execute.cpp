@@ -767,11 +767,12 @@ void collectRendered(Compiled &compiled, const Materialized &files,
 // after them.
 void parseOnly(Compiled &compiled, const Materialized &files,
                const TestFile &test) {
-  lang::CompileLimitOverrides overrides;
+  // Only a written `//@ error-limit:` applies (0: none), so recovery tests
+  // see every error by default.
+  std::size_t errorLimit = 0;
   for (const auto &[name, value] : test.compileLimits)
-    overrides.set(*lang::findCompileLimit(name), value);
-  const std::size_t errorLimit =
-      lang::resolveCompileLimits({}, overrides).errorLimit;
+    if (name == "error-limit")
+      errorLimit = value;
   std::vector<lang::Diagnostic> diagnostics;
   for (const Section &section : test.sections) {
     if (!section.name.ends_with(".gti"))
