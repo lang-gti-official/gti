@@ -19,12 +19,20 @@ applies normally; an ordinary callable never gains procedural behavior from its
 spelling. The signature is exactly `std::syntax::expr name(std::syntax::tokens
 input)`, without generics, defaults, packs, member/operator forms or constraints.
 
+Procedural definitions, like constexpr definitions, are checked eagerly even
+inside trusted library units: reachable-body deferral must not postpone the
+semantic facts required by expansion.
+
 Completed procedural bodies and their constexpr helpers are type-checked and
 lazily staged through the existing constant HIR/MIR closure service. An explicit
 procedural request enables syntax intrinsics in the same MIR interpreter; there
 is no AST fallback or host plugin. The ordinary constant profile still rejects
 syntax capabilities, including capabilities nested inside persistent aggregates.
 Procedural bodies and syntax-dependent helpers are omitted from runtime HIR/MIR.
+HIR excludes procedural declarations by their declaration mode as well as syntax
+capability types, including discovery through concrete generic analyses. Syntax
+capability classes likewise have no runtime layout inventory, even under full
+declaration discovery.
 
 `std.syntax` declares `tokens`, `expr`, `span`, and `binding` through trusted
 `@compiler_type` identities. Its intrinsic declarations are recognized only in

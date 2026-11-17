@@ -4376,10 +4376,11 @@ auto SemanticVisitor::Impl::reachableDeferrable(const FunctionDecl &stmt) const
       !stmt.isStatic()) {
     return false;
   }
-  // A constexpr definition must be analysed before a constant-evaluated call
-  // executes it; the compile-time path that reaches a deferred one demands it
-  // (requireBody, withBodyDemands). Tests may keep them eager to compare.
-  if (stmt.isConstexpr() && !deferConstexprBodies) {
+  // Procedural expansion requires a checked definition before invocation.
+  // Constexpr calls demand deferred bodies through requireBody/withBodyDemands;
+  // the test-only eager policy keeps their definitions checked in place.
+  if (stmt.isProceduralMacro() ||
+      (stmt.isConstexpr() && !deferConstexprBodies)) {
     return false;
   }
   return true;

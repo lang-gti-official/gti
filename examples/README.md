@@ -20,7 +20,9 @@ small token-based markup grammar, not a browser DOM or a sanitizer.
 [`procedural-macros.gti`](procedural-macros.gti) imports
 [`procedural-macros/library.gti`](procedural-macros/library.gti) and demonstrates
 identity, nested expansion, hygienic generated bindings and evaluating an input
-once. `procedural_execution_example` runs it through LLVM O0/O3.
+once. It also demonstrates `std::concat!({"Hello, ", "GTI!"})`, empty input,
+escapes and returning a joined static literal. `procedural_execution_example`
+runs it through LLVM O0/O3.
 [`procedural-macro-declaration.gti`](procedural-macro-declaration.gti) also keeps
 an ordinary typed macro alongside a procedural declaration. These focused
 examples are outside the numbered full-language census. The imported HTML library and these examples implement the bounded design in
