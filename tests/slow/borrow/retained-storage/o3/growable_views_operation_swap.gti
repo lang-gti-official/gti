@@ -1,4 +1,5 @@
-// Borrowed storage: growable views shared access without reserve.
+// Borrowed storage: growable views operation swap.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -11,6 +12,7 @@ int main() {
   mut std::vector<std::string_view> values{};
   values.push_back(first.view());
   values.push_back(second.view());
-  std::vector<std::string_view>& shared = values;
-  return shared.size() == 2 && shared[0] == "first" && shared[1] == "second" ? 0 : 1;
+  values.reserve(32);
+  mut std::vector<std::string_view> other{}; values.swap(other);
+  return other.size() == 2 && other[0] == "first" && other[1] == "second" ? 0 : 1;
 }

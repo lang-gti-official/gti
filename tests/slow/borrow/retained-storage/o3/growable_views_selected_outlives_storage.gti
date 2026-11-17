@@ -1,4 +1,5 @@
 // Borrowed storage: growable views selected outlives storage.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3

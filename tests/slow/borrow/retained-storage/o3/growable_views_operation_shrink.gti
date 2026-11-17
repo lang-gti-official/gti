@@ -1,4 +1,5 @@
-// Borrowed storage: growable views emplace return.
+// Borrowed storage: growable views operation shrink.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -9,9 +10,9 @@ import std.vector;
 int main() {
   std::string first{"first"}; std::string second{"second"};
   mut std::vector<std::string_view> values{};
-  values.emplace_back(first.view());
-  mut std::string_view& added = values.emplace_back(second.view());
-  auto selected = added;
+  values.push_back(first.view());
+  values.push_back(second.view());
   values.reserve(32);
-  return selected == "second" && values.size() == 2 && values[0] == "first" && values[1] == "second" ? 0 : 1;
+  values.shrink_to_fit();
+  return values.size() == 2 && values[0] == "first" && values[1] == "second" ? 0 : 1;
 }

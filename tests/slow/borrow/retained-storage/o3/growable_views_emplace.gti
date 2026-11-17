@@ -1,4 +1,5 @@
 // Borrowed storage: growable views emplace.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3

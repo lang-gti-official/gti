@@ -1,4 +1,5 @@
-// Borrowed storage: growable views adapter iterator.
+// Borrowed storage: growable views operation swap elements.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -12,7 +13,6 @@ int main() {
   values.push_back(first.view());
   values.push_back(second.view());
   values.reserve(32);
-  auto adapter = values.begin();
-  auto selected = *adapter;
-  return selected == "first" ? 0 : 1;
+  values.swap_elements(0, 1);
+  return values.size() == 2 && values[1] == "first" && values[0] == "second" ? 0 : 1;
 }

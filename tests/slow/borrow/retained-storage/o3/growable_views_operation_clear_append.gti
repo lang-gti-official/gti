@@ -1,4 +1,5 @@
-// Borrowed storage: growable views operation erase.
+// Borrowed storage: growable views operation clear append.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -11,8 +12,7 @@ int main() {
   mut std::vector<std::string_view> values{};
   values.push_back(first.view());
   values.push_back(second.view());
-  values.push_back(second.view());
   values.reserve(32);
-  values.erase(1);
+  values.clear(); values.push_back(first.view()); values.push_back(second.view());
   return values.size() == 2 && values[0] == "first" && values[1] == "second" ? 0 : 1;
 }

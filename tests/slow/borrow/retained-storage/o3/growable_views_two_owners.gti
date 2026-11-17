@@ -1,4 +1,5 @@
 // Borrowed storage: growable views two owners.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3

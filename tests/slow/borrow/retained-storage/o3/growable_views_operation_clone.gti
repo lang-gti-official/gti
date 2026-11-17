@@ -1,4 +1,5 @@
-// Borrowed storage: growable views adapter span.
+// Borrowed storage: growable views operation clone.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -12,7 +13,6 @@ int main() {
   values.push_back(first.view());
   values.push_back(second.view());
   values.reserve(32);
-  auto adapter = values.as_span();
-  auto selected = adapter[0];
-  return selected == "first" ? 0 : 1;
+  auto copied = values.clone();
+  return copied.size() == 2 && copied[0] == "first" && copied[1] == "second" ? 0 : 1;
 }

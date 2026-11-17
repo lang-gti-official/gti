@@ -1,4 +1,5 @@
-// Borrowed storage: growable views operation swap.
+// Borrowed storage: growable views element replacement without prior copy.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -9,9 +10,9 @@ import std.vector;
 int main() {
   std::string first{"first"}; std::string second{"second"};
   mut std::vector<std::string_view> values{};
-  values.push_back(first.view());
-  values.push_back(second.view());
+  values.emplace_back(first.view());
+  values[0] = second.view();
   values.reserve(32);
-  mut std::vector<std::string_view> other{}; values.swap(other);
-  return other.size() == 2 && other[0] == "first" && other[1] == "second" ? 0 : 1;
+  auto current = values[0];
+  return current == "second" ? 0 : 1;
 }

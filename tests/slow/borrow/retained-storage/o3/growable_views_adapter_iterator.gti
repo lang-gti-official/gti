@@ -1,4 +1,5 @@
-// Borrowed storage: growable views adapter user.
+// Borrowed storage: growable views adapter iterator.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -6,19 +7,13 @@
 import std.string;
 import std.utility;
 import std.vector;
-class BorrowedAccess<std::vector_element T, lifetime source> {
-  std::vector<T>&<source> owner;
-public:
-  BorrowedAccess(std::vector<T>&<source> input) : owner(input) {}
-  T& get(std::size_t index) { return this.owner[index]; }
-};
 int main() {
   std::string first{"first"}; std::string second{"second"};
   mut std::vector<std::string_view> values{};
   values.push_back(first.view());
   values.push_back(second.view());
   values.reserve(32);
-  auto adapter = BorrowedAccess<std::string_view>(values);
-  auto selected = adapter.get(0);
+  auto adapter = values.begin();
+  auto selected = *adapter;
   return selected == "first" ? 0 : 1;
 }

@@ -1,4 +1,5 @@
-// Borrowed storage: growable views operation insert.
+// Borrowed storage: growable views shared access.
+//@ slow
 //@ run-pass
 //@ stderr-empty
 //@ opt: O3
@@ -12,6 +13,6 @@ int main() {
   values.push_back(first.view());
   values.push_back(second.view());
   values.reserve(32);
-  values.insert(1, first.view());
-  return values.size() == 3 && values[0] == "first" && values[2] == "second" && values[1] == "first" ? 0 : 1;
+  std::vector<std::string_view>& shared = values;
+  return shared.size() == 2 && shared[0] == "first" && shared[1] == "second" ? 0 : 1;
 }
