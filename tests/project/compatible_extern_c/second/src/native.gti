@@ -1,0 +1,7 @@
+export module native;
+export namespace second {
+extern "C" { [[link_name("abs")]] c_int magnitude(c_int value); }
+}
+
+export namespace common { extern "C" { c_int abs(c_int value); } }
+export c_int second_call(c_int value) { return common::abs(value); }
