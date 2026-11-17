@@ -1,0 +1,3 @@
+// A user specialization of std::formatter for std::pair is rejected.
+//@ check-fail
+import std.format; import std.utility; class std::formatter<std::pair<T, U>> {}; int main() { return 0; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2000 //~ ERROR GTI-S2078 //~ ERROR GTI-S2078

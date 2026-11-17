@@ -1,0 +1,8 @@
+// Borrowing captures: ordinary-reference-block-future-use is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int owner = 3;
+  mut int& reference = owner;
+  { reference += 2; }
+  owner += 1;  //~ ERROR GTI-S2017
+  return reference;
+}

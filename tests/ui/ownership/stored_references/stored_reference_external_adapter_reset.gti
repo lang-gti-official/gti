@@ -1,0 +1,67 @@
+// Stored reference groundwork: an externally relayed adapter still freezes its actual range owner.
+struct SingleSentinel { public: SingleSentinel() = default; };
+
+// RFC 0004: the iterator names its referent region, so a dereference
+// borrows the range, not the iterator shell.
+class BorrowingIterator<T, lifetime a> {
+  T&<a> value;
+  mut uint64_t position = 0;
+
+public:
+  BorrowingIterator(T&<a> source) : value(source) {}
+
+  T&<a> operator*() { return value; }
+  void operator++() mut { this.position++; }
+  bool operator!=(BorrowingIterator<T, a>& other) {
+    return this.position != other.position;
+  }
+  bool operator!=(SingleSentinel& sentinel) { return this.position == 0; }
+};
+
+class SingleRange<T> {
+  mut T value;
+
+public:
+  SingleRange(T initial) : value(initial) {}
+
+  BorrowingIterator<T> begin() {
+    return BorrowingIterator<T>(value);
+  }
+
+  SingleSentinel end() { return SingleSentinel(); }
+
+  void replace(T next) mut { this.value = next; }
+};
+
+// The adapter's result names the region of its stored range reference, so
+// it borrows the range, not the adapter shell.
+class WrappedRange<T, lifetime r> {
+  SingleRange<T>&<r> internal;
+
+public:
+  WrappedRange(SingleRange<T>&<r> source) : internal(source) {}
+
+  BorrowingIterator<T, r> begin() {
+    return internal.begin();
+  }
+};
+
+int main() {
+  mut SingleRange<int> range = SingleRange<int>(7);  //~ WARN GTI-S2096
+  mut BorrowingIterator<int> iterator = range.begin();
+  int& value = *iterator;
+  ++iterator;
+  mut BorrowingIterator<int> moved = std::move(iterator);
+  ++moved;
+  mut BorrowingIterator<int> copied = moved;
+  ++copied;
+  if (!(moved != copied)) { return 1; }
+  mut int total = 0;
+  for (int& item : range) { total += item; }
+  mut SingleRange<int> wrapped_range = SingleRange<int>(7);
+  WrappedRange<int> wrapped = WrappedRange<int>(wrapped_range);
+  mut BorrowingIterator<int> wrapped_iterator = wrapped.begin();  //~ WARN GTI-S2096
+  wrapped_range.replace(9);  //~ ERROR GTI-S2017
+  int& wrapped_value = *wrapped_iterator;
+  return value + total + wrapped_value - 21;
+}

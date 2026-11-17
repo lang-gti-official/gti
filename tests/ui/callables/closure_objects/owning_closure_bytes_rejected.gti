@@ -1,0 +1,9 @@
+// A closure owning a string is not bitwise relocatable.
+//@ check-fail
+
+import std.string;
+int keep<std::bitwise_relocatable Callable>(Callable callable) { return 1; }
+int main() {
+  std::string text = std::string("abc");
+  return keep([text = std::move(text)](int value) -> int { return value; });  //~ ERROR GTI-S2029
+}

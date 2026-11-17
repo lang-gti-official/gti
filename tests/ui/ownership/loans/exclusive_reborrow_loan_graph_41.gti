@@ -1,0 +1,10 @@
+// Exclusive reborrow loan graph: different constant fixed-array elements should be disjoint safe places.
+//@ check-pass
+int main() {
+  mut int values[2] = {};
+  mut int& first = values[0];
+  mut int& second = values[1];
+  second += 1;
+  first += 1;
+  return 0;
+}

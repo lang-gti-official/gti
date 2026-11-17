@@ -1,0 +1,9 @@
+// Type facts: an arbitrary true predicate with a familiar public name cannot invent a transfer safety fact.
+namespace lookalike {
+  constexpr bool is_transferable<T>() { return true; }
+}
+concept claimed<T> = lookalike::is_transferable<T>();
+void needs_transfer<std::transferable T>(T& value) {}
+void relay<T>(T& value) requires claimed<T> { needs_transfer<T>(value); }  //~ ERROR GTI-S2029
+struct RawAddress { int32_t* address = nullptr;  public: RawAddress() = default; };
+int main() { RawAddress value{}; relay(value); return 0; }

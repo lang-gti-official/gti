@@ -1,0 +1,1 @@
+Convert six driver and project harnesses (compiled libraries, scoped configuration defines, executable entry, missing definitions) into `tests/project` transcripts and LSP marker and transcript tests, deleting their CTest entries and registry lines.

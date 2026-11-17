@@ -1,0 +1,6 @@
+// General requires: a mutation proof never grants mutable access to a shared receiver diagnostic.
+concept adjustable<T> = requires(mut T& value, int amount) {
+  { value += amount } -> void;
+};
+void adjust<adjustable T>(T& value, int amount) { value += amount; }  //~ ERROR GTI-S2029
+int main() { return 0; }

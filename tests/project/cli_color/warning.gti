@@ -1,0 +1,1 @@
+int main() { mut int value = 0; return value; }

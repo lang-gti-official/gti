@@ -27,10 +27,26 @@ C++ test asserted acceptance and the compiler accepts). Everything else stays
 in the staging directory with a reason. `survey` classifies test files by
 what their helpers do.
 
+`trace` reads no C++ at all: it builds an instrumented copy of the test
+binary in which `lang::Frontend` records every analysis it runs (source,
+options, diagnostics, the test functions on the call stack, and the messages
+of the assertions that follow), and runs it as its CTest entries do.
+`extract --trace` then makes one case per recorded analysis, expecting what
+the passing test's own compiler run reported (the exact error-code set, or
+acceptance), with directives for the recorded options (execution profile,
+definition closure, audit mode, limits, defines, target, stop phase);
+sibling source files become `// --- name` sections, a repository fixture is
+kept with its path in the report, and anything gti-test cannot express (other
+preludes, other extra source files, package roots) is flagged. Loops over computed sources
+and helper indirection need no specification.
+
 usage:
   extract_cpp_tests.py survey [FILES...]
   extract_cpp_tests.py cases FILE                 # print parsed cases
   extract_cpp_tests.py extract FILE --gti-test BIN [--staging DIR] [--apply]
+  extract_cpp_tests.py trace FILE --out DIR [--build build-release]
+  extract_cpp_tests.py extract FILE --trace DIR/trace.jsonl --area AREA \
+      --topic TOPIC --gti-test BIN [--staging DIR] [--apply]
 """
 
 from __future__ import annotations
@@ -681,6 +697,10 @@ class Helper:
     # How the helper's analysis differs from gti-test's (checked by the
     # compiler-run comparison; listed for review).
     differences: tuple[str, ...] = ()
+    # `//@` lines its analysis options correspond to: (directive, index of
+    # the boolean argument that controls it or None, its default), for
+    # example ("execution-profile: concurrent", 1, True).
+    options: tuple[tuple[str, Optional[int], bool], ...] = ()
 
 
 @dataclasses.dataclass
@@ -738,7 +758,8 @@ SPECS: dict[str, FileSpec] = {
         format_stable=("dde3e00b6d43086c",),
         reviewed={
             "main:77": "drop: examples/150-protected-events.gti is compiled "
-                       "and run by protected_member_runtime",
+                       "and its output checked by "
+                       "tests/ui/language/protected/protected_events.gti",
             "main:199": "drop: the formatted example; protected-section "
                         "formatting is carried by //@ format-stable on "
                         "protected_1, which shares the Base class",
@@ -750,140 +771,6 @@ SPECS: dict[str, FileSpec] = {
         }),
     "shared_ownership_tests.cpp": FileSpec(
         area="stdlib/memory/shared_owner", topic="Shared ownership"),
-    "compiler_ownership_tests.cpp": FileSpec(
-        area="ownership/stored_references", topic="Ownership",
-        helpers={
-            "analyzeWithMemory": Helper(
-                "analyze", source_arg=1, name_arg=0,
-                prefix="import std.memory;\n"),
-            # The file's fixture_storage<T> application helper.
-            "analyzeSourceStorageFixture": Helper(
-                "analyze", source_arg=1, name_arg=0,
-                prefix="import std.memory;\n"
-                       "std::storage<T> fixture_storage<T>(uint64_t count) "
-                       "requires std::storage_element<T> {\n"
-                       "  std::allocator allocator{};\n"
-                       "  auto allocated = allocator.try_storage<T>(count);\n"
-                       "  return std::move(allocated).expect("
-                       "\"test storage allocation\");\n"
-                       "}\n"),
-            # Quoted private imports become a private standard-library copy
-            # exposing the detail module.
-            "analyzePrivateMemoryFixture": Helper(
-                "analyze", source_arg=1, name_arg=0,
-                prefix="//@ stdlib-overlay: std/detail/memory_storage.gti\n"
-                       "import std.memory;\n"
-                       "import std.detail.memory_storage;\n"),
-            "analyzeTrustedPrivateMemoryFixture": Helper(
-                "analyze", source_arg=1, name_arg=0,
-                prefix="//@ stdlib-overlay: std/detail/memory_storage.gti\n"
-                       "import std.memory;\n"
-                       "import std.detail.memory_storage;\n",
-                differences=("trusted entry",)),
-            "analyzeTrustedMemoryFixture": Helper(
-                "analyze", source_arg=1, name_arg=0,
-                prefix="//@ stdlib-overlay: "
-                       "std/detail/memory_capabilities.gti\n"
-                       "import std.memory;\n"
-                       "import std.detail.memory_capabilities;\n",
-                differences=("trusted entry",)),
-            "mirRejectsAlone": Helper("reject", source_arg=1, name_arg=0),
-            # Local lambdas. testExclusiveReborrowLoanGraph's rejects/accepts
-            # analyse without the prelude; the cases do not use it, and the
-            # comparison runs them with it.
-            "rejects": Helper(
-                "reject", default_code="GTI-S2017",
-                dropped=("no GTI-B0001", "message fragment"),
-                differences=("analysed without the prelude",)),
-            "accepts": Helper(
-                "accept", differences=("analysed without the prelude",)),
-            # testBorrowedCallableConditionals' reject(name, source, fragment)
-            # (analyzeWithMemory); testComposedCarrierFunctionTransfer's
-            # reject(name, body, code) is assembled at run time and flagged.
-            "reject": Helper(
-                "reject", source_arg=1, name_arg=0,
-                prefix="import std.memory;\n",
-                dropped=("message fragment", "no GTI-B0001")),
-        },
-        # Named tests outside the stored-reference family land by topic.
-        areas={
-            "testOwnershipSemanticFoundation": "ownership/moves",
-            "testExplicitValueMoves": "ownership/moves",
-            "testImplicitReturnMoves": "ownership/moves",
-            "testEdgeSensitiveMoveFlow": "ownership/moves",
-            "testProjectedFieldMoves": "ownership/moves",
-            "testIndexedPlaceMovesAndInitialization": "ownership/moves",
-            "testMoveOnlyAssignmentResultUse": "ownership/moves",
-            "testExclusiveReborrowLoanGraph": "ownership/loans",
-            "testDisjointFieldReceiverBorrowsThroughReferenceParameters": "ownership/loans",
-            "testSharedReadOnlyLoanAliases": "ownership/loans",
-            "testSwitchAndBreakLoanFlow": "ownership/loans",
-            "testNestedBorrowChainLoanOrdering": "ownership/loans",
-            "testSharedPayloadSiblingReborrows": "ownership/loans",
-            "testCallSiblingArgumentBorrowConflicts": "ownership/loans",
-            "testNonNullReferences": "ownership/reference_returns",
-            "testGlobalReferencePlaces": "ownership/reference_returns",
-            "testGlobalBorrowReturns": "ownership/reference_returns",
-            "testReceiverTiedReferenceReturns": "ownership/reference_returns",
-            "testArgumentTiedReferenceReturns": "ownership/reference_returns",
-            "testNestedMemberReferenceReturnForwarding": "ownership/reference_returns",
-            "testProjectedAccessorReturnLoanOrder": "ownership/reference_returns",
-            "testReferenceArgumentRuntimePlaceCoherence": "ownership/reference_returns",
-            "testGeneralOwnerDependentReturns": "ownership/reference_returns",
-            "testUseBasedAccessorSelection": "ownership/reference_returns",
-            "testRetainedBorrowedCallResults": "ownership/reference_returns",
-            "testExpressionJoinsKeepAssignmentPlaces": "ownership/reference_returns",
-            "testForwardIteratorContractsAndBinarySearch": "ownership/ranges",
-            "testCompleteRangeConceptsAndAlgorithms": "ownership/ranges",
-            "testRangeBasedForAndIteratorProtocol": "ownership/ranges",
-            "testReadOnlyRangeLoans": "ownership/ranges",
-            "testPassiveCleanupRangeTemporary": "ownership/ranges",
-            "testExpectedPayloadRangeLoans": "ownership/ranges",
-            "testSourceOwnedExpectedRangeOrigins": "ownership/ranges",
-            "testMutableRangeLoans": "ownership/ranges",
-            "testUniqueOwnershipAndAllocation": "ownership/owners_and_storage",
-            "testUniqueOwnerSwap": "ownership/owners_and_storage",
-            "testPolymorphicUniqueOwnerUpcast": "ownership/owners_and_storage",
-            "testSourceDefinedStorage": "ownership/owners_and_storage",
-            "testFixedArrayPackForwarding": "ownership/owners_and_storage",
-            "testVariadicStorageConstructionAndVector": "ownership/owners_and_storage",
-            "testAggregateOwnershipTraits": "ownership/lifecycle",
-            "testDefaultedDefaultLifecycle": "ownership/lifecycle",
-            "testDestructorsAndActiveDropState": "ownership/lifecycle",
-            "testFieldInitializerRollbackAndFailureEdges": "ownership/lifecycle",
-            "testConstructorRollbackSpansLocalCleanup": "ownership/lifecycle",
-            "testDefaultFieldRollbackEntersConstructor": "ownership/lifecycle",
-            "testOwnedParameterStageArmsRollback": "ownership/lifecycle",
-            "testConstructorPartialRollbackRepresentation": "ownership/lifecycle",
-            "testRestrictedMemberOperators": "ownership/member_operators",
-            "testArrowNonClassReferents": "ownership/member_operators",
-            "testCallableMemberOperators": "ownership/member_operators",
-            "testConsumingCallableOperators": "ownership/member_operators",
-            "testConsumingMethodsAndValueOperators": "ownership/member_operators",
-            "testLambdas": "ownership/callables",
-            "testConfinedCallableParameters": "ownership/callables",
-            "testConfinedCallableResults": "ownership/callables",
-            "testBorrowedCallableConditionals": "ownership/callables",
-            "testOwnedCallableTransport": "ownership/callables",
-            "testExpectedValues": "ownership/expected",
-            "testFallibleBorrows": "ownership/expected",
-            "testExpectedPropagationOperator": "ownership/expected",
-            "testEphemeralBorrowedCarrierReceivers": "ownership/temporaries",
-            "testMutableTemporaryReceivers": "ownership/temporaries",
-            "testVirtualTemporaryReceivers": "ownership/temporaries",
-            "testGeneratedDefaultTemporaryArgumentBorrows": "ownership/temporaries",
-            "testGeneratedDefaultConstructionContexts": "ownership/temporaries",
-            "testTemporaryArgumentBorrows": "ownership/temporaries",
-            "testConditionalTemporaryArgumentBorrows": "ownership/temporaries",
-            "testCleanupOwningTemporaryArguments": "ownership/temporaries",
-        },
-        review_policy={
-            name: "the C++ test asserts rejection; the reported code "
-                  "(GTI-S2017 invalidated loan, GTI-S2029 unsatisfied "
-                  "iterator concept) is the case's stated reason"
-            for name in ("testStoredReferenceLoopInvalidation3",
-                         "testStoredReferenceLoopInvalidation4",
-                         "testWritableAndMovementIteratorCapabilities")}),
 }
 
 
@@ -915,6 +802,11 @@ class Case:
     substrings: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     # Code families asserted with starts_with("GTI-S").
     families: list[str] = dataclasses.field(default_factory=list)
+    # `//@` directives from the helper's analysis options.
+    directives: list[str] = dataclasses.field(default_factory=list)
+    # "check" (frontend through MIR), or "analyze"/"parse" for a C++
+    # analysis that stopped after semantics or parsing.
+    mode: str = "check"
 
     def key(self) -> str:
         return hashlib.sha256((self.source or "").encode()).hexdigest()[:16]
@@ -1152,6 +1044,10 @@ def _all_tokens(statement: Stmt) -> list[Token]:
     return tokens
 
 
+_STANDARD_LIBRARY_PATHS = {"prelude.gti", "stdlib/prelude.gti", "stdlib",
+                           "/prelude.gti", "/stdlib/prelude.gti", "/stdlib"}
+
+
 class Extractor:
     def __init__(self, unit: Unit, spec: FileSpec, extra: list[Unit]):
         self.unit = unit
@@ -1385,11 +1281,25 @@ class Extractor:
                 case.source = helper.prefix + source + helper.suffix
             if len(args) > helper.source_arg + 1 and helper.kind == "analyze":
                 extra = args[helper.source_arg + 1:]
+                # The standard prelude and library root spelled as paths
+                # (`{library / "prelude.gti"}, {}, {library}`) are what
+                # gti-test analyses with anyway.
                 if any(t.text == "{" for part in extra for t in part[:1]) and \
-                        any(t.kind == "string" for part in extra for t in part):
+                        any(t.kind == "string" and t.value not in
+                            _STANDARD_LIBRARY_PATHS
+                            for part in extra for t in part):
                     case.flags.append("analysis has extra source files or "
                                       "options: " + compact(
                                           [t for p in extra for t in p])[:120])
+            for directive, position, default in helper.options:
+                switch = "true" if default else "false"
+                if position is not None and position < len(args):
+                    switch = compact(args[position])
+                if switch == "true":
+                    case.directives.append(directive)
+                elif switch != "false":
+                    case.flags.append(f"analysis option is not a constant: "
+                                      f"{switch}")
             if helper.kind == "accept":
                 set_expect(case, "accept", f"helper `{name}`")
             elif helper.kind == "reject":
@@ -1511,12 +1421,17 @@ def render(case: Case, header: str) -> str:
     source = case.source or ""
     if source.startswith("\n"):
         source = source[1:]
-    source = source.rstrip() + "\n"
+    source = "\n".join(line.rstrip() for line in
+                       source.rstrip().split("\n")) + "\n"
     lines = [header]
-    if case.expect == "accept":
+    if case.mode != "check":
+        lines.append(f"//@ {case.mode}-" +
+                     ("pass" if case.expect == "accept" else "fail"))
+    elif case.expect == "accept":
         lines.append("//@ check-pass")
     if case.format_stable:
         lines.append("//@ format-stable")
+    lines.extend("//@ " + directive for directive in case.directives)
     return "\n".join(lines) + "\n" + source
 
 
@@ -1539,15 +1454,36 @@ def plan(cases: list[Case], spec: FileSpec, existing: dict[str, str]):
         if case.source is None or case.flags:
             flagged.append(case)
             continue
-        # Compared without surrounding blank space: a rendered file always
-        # ends in one newline whatever the literal did.
+        # Compared without surrounding blank space (a rendered file always
+        # ends in one newline whatever the literal did) and, against existing
+        # tests, without the source's own leading comments (a fixture's).
         body = case.source.strip()
-        if body in existing:
-            case.flags.append(f"duplicate of existing {existing[body]}")
+        lines = body.splitlines()
+        while lines and (lines[0].startswith("//") or not lines[0].strip()):
+            lines.pop(0)
+        uncommented = "\n".join(lines).strip()
+        if body not in existing and uncommented in existing:
+            body_key = uncommented
+        else:
+            body_key = body
+        if body_key in existing and not case.directives and \
+                case.mode == "check":
+            case.flags.append(f"duplicate of existing {existing[body_key]}")
             flagged.append(case)
             continue
-        if body in by_source:
-            kept = by_source[body]
+        keyed = body + "\0" + "\0".join(case.directives)
+        if keyed in by_source:
+            kept = by_source[keyed]
+            # A source edited in place (`text.insert(...)`) is read as its
+            # unedited base; a second, different expectation is a lost case.
+            if "unknown" not in (kept.case.expect, case.expect) and \
+                    (kept.case.expect, sorted(kept.case.codes)) != \
+                    (case.expect, sorted(case.codes)):
+                case.flags.append(
+                    f"same source as {kept.relative} with a different "
+                    "expectation (edited in place?)")
+                flagged.append(case)
+                continue
             kept.duplicates.append(case)
             if case.format_stable:
                 kept.case.format_stable = True
@@ -1567,7 +1503,7 @@ def plan(cases: list[Case], spec: FileSpec, existing: dict[str, str]):
             f"{stem}_{counters[stem]}"
         area = spec.areas.get(case.function, spec.area)
         item = Planned(case, f"{area}/{name}.gti")
-        by_source[body] = item
+        by_source[keyed] = item
         planned.append(item)
     return planned, flagged
 
@@ -1693,20 +1629,27 @@ def attach_substrings(runner: Path, path: Path, case: Case) -> None:
 def extract(args) -> int:
     path = Path(args.file)
     spec = SPECS.get(path.name)
+    if not spec and args.trace and args.area:
+        spec = FileSpec(area=args.area, topic=args.topic or "")
     if not spec:
         sys.exit(f"no helper specification for {path.name}; read its helpers "
                  "and add one to SPECS")
-    extra = [parse_unit(ROOT / "tests/compiler_test_fixture.h")] \
-        if "compiler_test_fixture.h" in path.read_text() else []
-    unit = parse_unit(path)
-    extractor = Extractor(unit, spec, extra)
-    cases = extractor.run()
+    if args.trace:
+        extractor = None
+        cases = cases_from_trace(path, Path(args.trace), spec)
+    else:
+        extra = [parse_unit(ROOT / "tests/compiler_test_fixture.h")] \
+            if "compiler_test_fixture.h" in path.read_text() else []
+        unit = parse_unit(path)
+        extractor = Extractor(unit, spec, extra)
+        cases = extractor.run()
     existing = existing_bodies([ROOT / "tests/ui", ROOT / "tests/slow"])
     planned, flagged = plan(cases, spec, existing)
     staging = Path(args.staging or ROOT / "build-extract" / path.stem)
     if staging.exists():
         shutil.rmtree(staging)
     stage_root = staging / "ui"
+    stage_root.mkdir(parents=True)
     for item in planned:
         target = stage_root / item.relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1714,7 +1657,8 @@ def extract(args) -> int:
     runner = Path(args.gti_test)
     run_runner(runner, stage_root, "--bless", "--jobs", str(args.jobs))
     report = {"file": path.name, "cases": len(cases),
-              "unpaired": extractor.unpaired, "accepted": [],
+              "unpaired": extractor.unpaired if extractor else [],
+              "accepted": [],
               "review": [], "flagged": [], "deduplicated": []}
     for item in planned:
         target = stage_root / item.relative
@@ -1886,9 +1830,349 @@ def _calls_frontend(function: Function, known: set[str]) -> bool:
         for i, t in enumerate(function.body))
 
 
+# --------------------------------------------------------------------------
+# Trace: the analyses a C++ test actually runs
+
+
+# Written beside the instrumented copy. `gti_trace::Frontend` replaces
+# `lang::Frontend` in the test and its local headers, and records every
+# analysis (source, options, diagnostics) with the test functions on the
+# call stack; the file's own `expect`/`check`/`require` record their
+# messages after it.
+TRACE_HEADER = r'''#pragma once
+#include "gti/frontend.h"
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
+namespace gti_trace {
+inline std::mutex &lock() { static std::mutex value; return value; }
+inline std::vector<const char *> &stack() {
+  thread_local std::vector<const char *> value;
+  return value;
+}
+struct Scope {
+  explicit Scope(const char *name) { stack().push_back(name); }
+  ~Scope() { stack().pop_back(); }
+  Scope(const Scope &) = delete;
+  Scope &operator=(const Scope &) = delete;
+};
+inline std::string json(std::string_view text) {
+  std::string out = "\"";
+  for (unsigned char c : text) {
+    if (c == '"' || c == '\\') { out += '\\'; out += static_cast<char>(c); }
+    else if (c == '\n') out += "\\n";
+    else if (c == '\t') out += "\\t";
+    else if (c == '\r') out += "\\r";
+    else if (c < 0x20) { char buffer[8]; std::snprintf(buffer, sizeof buffer, "\\u%04x", c); out += buffer; }
+    else out += static_cast<char>(c);
+  }
+  return out + "\"";
+}
+inline void write(const std::string &line) {
+  const char *file = std::getenv("GTI_TRACE_FILE");
+  if (file == nullptr) return;
+  std::lock_guard<std::mutex> guard(lock());
+  std::ofstream(file, std::ios::app) << line << '\n';
+}
+template <class Message> void note(const Message &message, bool ok) {
+  write("{\"note\":" + json(std::string_view(message)) + ",\"ok\":" + (ok ? "true" : "false") + "}");
+}
+struct Frontend : lang::Frontend {
+  lang::FrontendOptions traced;
+  explicit Frontend(lang::FrontendOptions options = {})
+      : lang::Frontend(options), traced(std::move(options)) {}
+  lang::FrontendResult analyze(
+      const std::filesystem::path &entry,
+      std::optional<std::string> source = std::nullopt,
+      const std::vector<std::filesystem::path> &preludes = {},
+      const std::unordered_map<std::string, std::string> &overrides = {},
+      const std::vector<std::filesystem::path> &roots = {},
+      const std::vector<lang::PackageSourceRoot> &packages = {}) const {
+    auto result = lang::Frontend::analyze(entry, source, preludes, overrides, roots, packages);
+    std::string text;
+    if (source) text = *source;
+    else if (auto found = overrides.find(entry.string()); found != overrides.end()) text = found->second;
+    else { std::ifstream stream(entry); std::stringstream buffer; buffer << stream.rdbuf(); text = buffer.str(); }
+    const auto &o = traced;
+    std::ostringstream line;
+    line << "{\"stack\":[";
+    for (std::size_t i = 0; i < stack().size(); ++i) line << (i ? "," : "") << json(stack()[i]);
+    line << "],\"entry\":" << json(entry.string()) << ",\"source\":" << json(text) << ",\"overrides\":{";
+    bool first = true;
+    for (const auto &[name, body] : overrides) {
+      if (name == entry.string()) continue;
+      line << (first ? "" : ",") << json(name) << ":" << json(body);
+      first = false;
+    }
+    line << "},\"preludes\":[";
+    for (std::size_t i = 0; i < preludes.size(); ++i) line << (i ? "," : "") << json(preludes[i].string());
+    line << "],\"roots\":" << roots.size() << ",\"packages\":" << packages.size()
+         << ",\"stop\":" << static_cast<int>(o.stopAfter)
+         << ",\"profile\":" << static_cast<int>(o.target.executionProfile)
+         << ",\"rfd\":" << (o.requireFunctionDefinitions ? "true" : "false")
+         << ",\"host\":" << (o.target.arch == lang::TargetInfo::host().arch && o.target.vendor == lang::TargetInfo::host().vendor && o.target.os == lang::TargetInfo::host().os ? "true" : "false")
+         << ",\"target\":" << json(o.target.arch + "-" + o.target.vendor + "-" + o.target.os)
+         << ",\"audit\":" << static_cast<int>(o.rawPointerAudit)
+         << ",\"libaudit\":" << (o.reportLibraryAuditFindings ? "true" : "false")
+         << ",\"trusted\":" << static_cast<int>(o.trustedBodies)
+         << ",\"recovered\":" << (o.analyzeRecoveredProgram ? "true" : "false")
+         << ",\"program\":" << static_cast<int>(o.program.kind)
+         << ",\"testSuite\":" << (o.program.testSuite ? "true" : "false")
+         << ",\"flags\":[";
+    for (std::size_t i = 0; i < o.configurationFlags.size(); ++i) line << (i ? "," : "") << json(o.configurationFlags[i]);
+    line << "],\"limits\":{";
+    const lang::CompileLimits d;
+    first = true;
+    auto limit = [&](const char *key, std::size_t value, std::size_t standard) {
+      if (value == standard) return;
+      line << (first ? "" : ",") << json(key) << ":" << value;
+      first = false;
+    };
+    limit("error-limit", o.limits.errorLimit, d.errorLimit);
+    limit("constexpr-steps", o.limits.constexprSteps, d.constexprSteps);
+    limit("constexpr-depth", o.limits.constexprDepth, d.constexprDepth);
+    limit("macro-depth", o.limits.macroDepth, d.macroDepth);
+    limit("macro-expansions", o.limits.macroExpansions, d.macroExpansions);
+    limit("syntax-nodes", o.limits.syntaxNodes, d.syntaxNodes);
+    limit("syntax-bytes", o.limits.syntaxBytes, d.syntaxBytes);
+    limit("syntax-tokens", o.limits.syntaxTokens, d.syntaxTokens);
+    limit("syntax-depth", o.limits.syntaxDepth, d.syntaxDepth);
+    limit("constexpr-for-elements", o.limits.constexprForElements, d.constexprForElements);
+    limit("constexpr-for-copies", o.limits.constexprForCopies, d.constexprForCopies);
+    line << "},\"diagnostics\":[";
+    for (std::size_t i = 0; i < result.diagnostics.size(); ++i) {
+      const auto &diagnostic = result.diagnostics[i];
+      line << (i ? "," : "") << "{\"code\":" << json(diagnostic.code)
+           << ",\"severity\":" << static_cast<int>(diagnostic.severity)
+           << ",\"file\":" << json(diagnostic.primary.source)
+           << ",\"line\":" << diagnostic.primary.line << "}";
+    }
+    line << "],\"valid\":{\"source\":" << result.sourceValid << ",\"syntax\":" << result.syntaxValid
+         << ",\"semantic\":" << result.semanticValid << ",\"hir\":" << result.hirValid
+         << ",\"mir\":" << result.mirValid << ",\"code\":" << result.canGenerateCode() << "}}";
+    write(line.str());
+    return result;
+  }
+};
+} // namespace gti_trace
+'''
+
+_TRACE_FRONTEND = re.compile(
+    r"\blang::Frontend\b(?!Options|Result|Phase|Cache|WorkMetrics|Reuse)")
+_TRACE_ASSERT = re.compile(
+    r"(\bvoid\s+(?:expect|check|require)\s*\(\s*bool\s+(\w+)\s*,[^)]*?"
+    r"\b(\w+)\s*\)\s*\{)")
+
+
+def _instrument(path: Path, text: str, scopes: bool) -> str:
+    """The traced copy of a test source or local header."""
+    text = _TRACE_FRONTEND.sub("gti_trace::Frontend", text)
+    text = _TRACE_ASSERT.sub(r"\1 gti_trace::note(\3, \2);", text)
+    text = re.sub(r'#include "\.\./', f'#include "{ROOT}/', text)
+    lines = text.splitlines(keepends=True)
+    if scopes:
+        try:
+            unit = parse_unit(path, text)
+        except LexError:
+            unit = None
+        for function in sorted(unit.functions.values() if unit else [],
+                               key=lambda f: -f.line):
+            index = function.line - 1
+            head = lines[index].split("//")[0].rstrip()
+            if head.endswith("{") and "constexpr" not in head and \
+                    "consteval" not in head:
+                lines.insert(index + 1, "gti_trace::Scope gti_trace_scope_("
+                             f"\"{function.name}\");\n")
+    # __FILE__ names the original, for paths relative to the test; a #line
+    # directive would also move quoted-include lookup back to tests/.
+    return '#include "gti_trace.h"\n' + "".join(lines).replace(
+        "__FILE__", json.dumps(str(path)))
+
+
+def _ninja_commands(build: Path, target: str) -> list[str]:
+    output = subprocess.run(["ninja", "-C", str(build), "-t", "commands",
+                             target], capture_output=True, text=True,
+                            check=True).stdout
+    return output.splitlines()
+
+
+def trace(args) -> int:
+    path = (ROOT / "tests" / Path(args.file).name).resolve()
+    build = Path(args.build).resolve()
+    out = Path(args.out).resolve()
+    cmake = (ROOT / "tests/CMakeLists.txt").read_text()
+    match = re.search(r'add_executable\(\s*"?([\w-]+)"?\s+[^)]*?\b' +
+                      re.escape(path.name), cmake)
+    if not match:
+        sys.exit(f"no add_executable for {path.name}")
+    target = match.group(1)
+    if out.exists():
+        shutil.rmtree(out)
+    source_dir = out / "src"
+    source_dir.mkdir(parents=True)
+    (source_dir / "gti_trace.h").write_text(TRACE_HEADER)
+    for header in (ROOT / "tests").glob("*.h"):
+        (source_dir / header.name).write_text(
+            _instrument(header, header.read_text(), scopes=False))
+    copy = source_dir / path.name
+    copy.write_text(_instrument(path, path.read_text(), scopes=True))
+    commands = _ninja_commands(build, target)
+    compile_line = next(c for c in commands
+                        if c.rstrip().endswith(str(path)) and " -c " in c)
+    link_line = next(c for c in commands
+                     if re.search(rf" -o \S*\b{re.escape(target)} ", c))
+    linked = re.search(rf" -o (\S*\b{re.escape(target)}) ", link_line).group(1)
+    obj = out / (path.stem + ".o")
+    compile_line = re.sub(r" -MD -MT \S+ -MF \S+", "", compile_line)
+    # A precompiled header would include the uninstrumented fixtures.
+    compile_line = re.sub(r" -Winvalid-pch| -Xclang -include(-pch)? -Xclang "
+                          r"\S+", "", compile_line)
+    compile_line = re.sub(r" -o \S+ -c \S+$", f" -o {obj} -c {copy}",
+                          compile_line).replace(" -Werror", "")
+    compile_line = compile_line.replace(" -I", f" -I{source_dir} -I", 1)
+    old_object = re.search(r"(\S+\.cpp\.o)\s+-o", link_line).group(1)
+    binary = out / target
+    link_line = link_line.replace(old_object, str(obj)).replace(
+        f" -o {linked} ", f" -o {binary} ")
+    for line in (compile_line, link_line):
+        result = subprocess.run(line, shell=True, cwd=build,
+                                capture_output=True, text=True)
+        if result.returncode:
+            sys.exit(f"trace build failed:\n{line}\n{result.stderr[-4000:]}")
+    listing = json.loads(subprocess.run(
+        ["ctest", "--test-dir", str(build), "--show-only=json-v1"],
+        capture_output=True, text=True, check=True).stdout)
+    runs = [test for test in listing.get("tests", [])
+            if test.get("command") and
+            Path(test["command"][0]).name == target]
+    if not runs:  # an unbuilt target has no resolved ctest command
+        for name, rest in re.findall(
+                r'add_test\(\s*NAME\s+"?([\w.-]+)"?\s+COMMAND\s+"?' +
+                re.escape(target) + r'"?([^)]*)\)', cmake):
+            words = [w.strip('"').replace("${PROJECT_SOURCE_DIR}", str(ROOT))
+                     for w in rest.split()]
+            runs.append({"name": name, "command": [target] + words})
+    if not runs:
+        sys.exit(f"no ctest entry runs {target}")
+    trace_file = out / "trace.jsonl"
+    environment = dict(os.environ, GTI_TRACE_FILE=str(trace_file))
+    for test in runs:
+        command = [str(binary)] + test["command"][1:]
+        result = subprocess.run(command, cwd=build, env=environment,
+                                capture_output=True, text=True)
+        print(f"{test['name']}: exit {result.returncode}")
+        if result.returncode:
+            print(result.stderr[-2000:])
+    records = [line for line in trace_file.read_text().splitlines()
+               if line.startswith('{"stack"')] if trace_file.exists() else []
+    print(f"{len(records)} analyses traced to {trace_file}")
+    return 0
+
+
+_STANDARD_PRELUDE = str(ROOT / "stdlib/prelude.gti")
+
+
+def cases_from_trace(path: Path, trace_file: Path, spec: FileSpec) -> list[Case]:
+    """One case per traced analysis, expecting what the passing C++ test's
+    compiler run reported: the exact error-code set, or acceptance."""
+    cases: list[Case] = []
+    for number, line in enumerate(trace_file.read_text().splitlines(), 1):
+        record = json.loads(line)
+        if "note" in record:
+            if cases and not cases[-1].message:
+                cases[-1].message = record["note"]
+            continue
+        stack = [name for name in record["stack"] if name != "main"]
+        function = stack[0] if stack else "main"
+        case = Case(path.name, function, number, record["source"])
+        errors = sorted({d["code"] for d in record["diagnostics"]
+                         if d["severity"] == 1})
+        if errors:
+            case.expect = "reject"
+            case.codes = errors
+        else:
+            case.expect = "accept"
+        stop = record["stop"]
+        if stop == 0:
+            case.mode = "parse"
+        elif stop == 1:
+            case.mode = "analyze"
+        elif stop == 2:
+            case.differences.append("C++ stopped after HIR")
+        if record["profile"] == 1:
+            case.directives.append("execution-profile: concurrent")
+        if record["rfd"]:
+            case.directives.append("require-function-definitions")
+        if record["audit"]:
+            case.directives.append("raw-pointer-audit: " +
+                                   ("warn" if record["audit"] == 1
+                                    else "strict"))
+        if record["libaudit"]:
+            case.directives.append("raw-pointer-audit-library-findings")
+        for key, value in record["limits"].items():
+            case.directives.append(f"{key}: {value}")
+        for flag in record["flags"]:
+            case.directives.append(f"define: {flag}")
+        # Early traces compared whole TargetInfo values (profile included).
+        if not record["host"] and not (sys.platform == "darwin" and
+                                       record["target"] ==
+                                       "arm64-apple-macos"):
+            case.directives.append(f"target: {record['target']}")
+        if not record["preludes"]:
+            if case.mode == "check":
+                # gti-test's check modes always load the prelude; the
+                # compiler-run comparison catches a source that needs it gone.
+                case.differences.append("C++ analysed without the prelude")
+            else:
+                case.directives.append("no-prelude")
+        else:
+            others = [p for p in record["preludes"]
+                      if not p.endswith("stdlib/prelude.gti")]
+            if others == [record["entry"]]:
+                # analyzeTrustedPreludeFixture: the entry is also a prelude.
+                case.differences.append("C++ analysed the source as a "
+                                        "trusted prelude unit")
+            elif others:
+                case.flags.append(f"other preludes: {others}")
+        overrides = {name: body for name, body in record["overrides"].items()
+                     if body != record["source"]}
+        siblings = {Path(name).name: body for name, body in overrides.items()
+                    if Path(name).parent == Path(record["entry"]).parent and
+                    name.endswith(".gti")}
+        if overrides and len(siblings) == len(overrides) and \
+                "main.gti" not in siblings:
+            # Sibling source files become `// --- name` sections.
+            case.source = "// --- main.gti\n" + record["source"].rstrip() + \
+                "\n" + "".join(f"// --- {name}\n{body.rstrip()}\n"
+                                for name, body in sorted(siblings.items()))
+        elif overrides:
+            case.flags.append("extra source files: " +
+                              ", ".join(sorted(overrides)))
+        if record["packages"]:
+            case.flags.append("package source roots")
+        if record["program"] or record["testSuite"]:
+            case.flags.append("non-executable or test-suite program request")
+        entry = Path(record["entry"])
+        if entry.is_absolute() and str(entry).startswith(str(ROOT)) and \
+                "/build" not in str(entry) and entry.is_file():
+            # Kept as a case; the report lists the fixture so the caller can
+            # delete it when nothing else uses it, or drop the case when
+            # another harness already compiles and runs it.
+            case.carried.append(f"fixture: {entry.relative_to(ROOT)}")
+        if record["recovered"]:
+            case.differences.append("recovered-program analysis")
+        cases.append(case)
+    return cases
+
+
 def remove(args) -> int:
     """Deletes converted named tests: their functions, their kTests entries
-    and their compiler_test_manifest.json entries."""
+    and, while it existed, their compiler_test_manifest.json entries."""
     path = Path(args.file)
     text = path.read_text()
     unit = parse_unit(path, text)
@@ -1913,7 +2197,11 @@ def remove(args) -> int:
         if count != 1:
             sys.exit(f"{path.name}: kTests entry for {name} not found")
     path.write_text(result)
+    # The compiler_pipeline manifest left with its last suite; files other
+    # than its suites have no manifest entries.
     manifest = ROOT / "tests/compiler_test_manifest.json"
+    if not manifest.exists():
+        return 0
     data = json.loads(manifest.read_text())
     before = len(data["tests"])
     data["tests"] = [test for test in data["tests"]
@@ -1937,12 +2225,21 @@ def main() -> int:
     e.add_argument("--staging")
     e.add_argument("--jobs", type=int, default=4)
     e.add_argument("--apply", action="store_true")
+    e.add_argument("--trace", help="cases from a `trace` run's records "
+                   "instead of the static reading")
+    e.add_argument("--area", help="with --trace and no SPECS entry: the "
+                   "tests/ui directory")
+    e.add_argument("--topic", help="with --area: the first-line subject")
+    tr = commands.add_parser("trace")
+    tr.add_argument("file")
+    tr.add_argument("--build", default=str(ROOT / "build-release"))
+    tr.add_argument("--out", required=True)
     r = commands.add_parser("remove")
     r.add_argument("file")
     r.add_argument("names", nargs="+")
     args = parser.parse_args()
     return {"survey": survey, "cases": print_cases, "extract": extract,
-            "remove": remove}[args.command](args)
+            "remove": remove, "trace": trace}[args.command](args)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+// Borrowing captures: erased-reference-cannot-escape-local-shell is rejected with a user diagnostic, not an ICE.
+import std.memory;
+struct Reader {
+  int& value;
+  Reader(int& value) : value(value) {}
+};
+std::erased_object& bad(int& value) {
+  Reader local{value};
+  std::erased_object& erased = std::erase_ref(local);
+  return erased;  //~ ERROR GTI-S2017
+}
+int main() { return 0; }

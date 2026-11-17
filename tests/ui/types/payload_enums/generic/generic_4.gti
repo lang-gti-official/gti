@@ -1,0 +1,11 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+enum Event<T> { item(T value) };
+int main() {
+  Event<int> event = Event<int>::item(7);
+  int unrelated = 3;
+  Event<int>& view = event;
+  switch (view) {
+    case Event<int>::item(auto& value): return value - 7;
+  }
+}

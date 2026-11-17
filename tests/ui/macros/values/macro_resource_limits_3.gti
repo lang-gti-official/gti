@@ -1,0 +1,12 @@
+// Macro resource limits: a lowered depth admits exactly its own nesting.
+//@ check-pass
+//@ macro-depth: 8
+#macro int32_t m0(int32_t v) { return v + 1; }
+#macro int32_t m1(int32_t v) { return m0!(v) + 1; }
+#macro int32_t m2(int32_t v) { return m1!(v) + 1; }
+#macro int32_t m3(int32_t v) { return m2!(v) + 1; }
+#macro int32_t m4(int32_t v) { return m3!(v) + 1; }
+#macro int32_t m5(int32_t v) { return m4!(v) + 1; }
+#macro int32_t m6(int32_t v) { return m5!(v) + 1; }
+#macro int32_t m7(int32_t v) { return m6!(v) + 1; }
+int main() { return m7!(0) - 8; }

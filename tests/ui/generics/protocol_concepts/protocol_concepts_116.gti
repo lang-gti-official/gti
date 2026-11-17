@@ -1,0 +1,17 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept maker<P> { typename item<T>; item<int> make(P& policy); };
+struct Policy<T> { T value; Policy(T input) : value(std::move(input)) {} };
+struct Pair<A, B> {
+  A left; B right;
+  Pair(A a, B b) : left(std::move(a)), right(std::move(b)) {}
+};
+for<std::integral T> concept maker<Policy<T>> {
+  using item<U> = Pair<T, U>;
+  item<int> make(Policy<T>& policy) { return Pair<T, int>(policy.value, 7); }
+};
+int main() {
+  Policy<int> policy{3};
+  maker<Policy<int>>::item<int> value = maker<Policy<int>>::make(policy);
+  return value.left + value.right - 10;
+}

@@ -1,0 +1,5 @@
+// Retained consuming field receiver: borrowed-root fields cannot manufacture retained owning receivers.
+class Piece { public: Piece() {} int operator()() && { return 1; } };
+struct Container { mut Piece field{};  public: Container() = default; };
+int invoke(mut Container& owner) { return std::move(owner.field)(); }  //~ ERROR GTI-S2018
+int main() { return 0; }

@@ -1,0 +1,38 @@
+// A failure inside a conditional passive class construction drops what was built.
+//@ run-fail
+//@ revisions: left right
+//@[right] args: right
+//@ exit-code: 70
+//@ stderr-contains: main.gti:16: runtime error[GTI-R0017]: panic: "conditional construction failed"
+//@ stdout: 1
+// --- main.gti
+import std.panic;
+import std.string;
+import std.vector;
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(1); }
+};
+
+class Reading {
+  int value;
+public:
+  Reading(int input) : value(input) {
+    if (input > 0) {
+      std::panic("conditional construction failed"); // failure-site
+    }
+  }
+  Reading(Reading&) = delete;
+};
+
+int check(bool left) {
+  Guard outer = Guard();
+  Reading result = left ? Reading(3) : Reading(7);
+  return 99;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return check(argc == 1);
+}

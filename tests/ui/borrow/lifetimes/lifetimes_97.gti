@@ -1,0 +1,6 @@
+// Lifetimes: rejected with GTI-S2127.
+struct Split<lifetime a, lifetime b> {
+  int&<a> first; int&<b> second;
+  Split(int&<a> left, int&<b> right) : first(left), second(right) {}
+  int&<a> wrong() { return this.second; }  //~ ERROR GTI-S2127
+};

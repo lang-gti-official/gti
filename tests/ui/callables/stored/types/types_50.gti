@@ -1,0 +1,13 @@
+// Stored callables: empty and mixed passive callable packs retain exact contracts.
+//@ check-pass
+void accept<Args...>(int prefix, Args... args) {}
+void relay<Args...>(Args... args) { accept(0, args...); accept(0, args...); }
+int main() {
+  int first = 1;
+  int second = 2;
+  auto left = [first]() -> int { return first; };
+  auto right = [second]() -> int { return second; };
+  relay(std::move(left), 7, std::move(right));
+  accept(0);
+  return 0;
+}

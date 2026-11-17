@@ -1,0 +1,40 @@
+// A concept annotation on a class parameter navigates to the concept; a
+// type failing it is S2029 naming the concept on the application's line
+// (no backend error), and the repair is clean. (structural_class_lsp_test.py;
+// related information is not asserted.)
+//@ definition @annotation: @concept
+// μ: a non-ASCII prefix must not disturb diagnostic locations.
+concept /*@concept*/readable<T> = requires(T& source) { { source.read() } -> int; };
+struct Meter { Meter() = default; int read() { return 7; } };
+class Snapshot</*@annotation*/readable T> {
+  T& source;
+public:
+  Snapshot(T& source) : source(source) {}
+  int read() { return this.source.read(); }
+  ~Snapshot() { int final_sample = this.source.read(); }
+};
+int main() { Meter meter{}; Snapshot<Meter> value{meter}; return value.read()-7; }
+// --- step 2
+// μ: a non-ASCII prefix must not disturb diagnostic locations.
+concept readable<T> = requires(T& source) { { source.read() } -> int; };
+struct Meter { Meter() = default; bool read() { return true; } };
+class Snapshot<readable T> {
+  T& source;
+public:
+  Snapshot(T& source) : source(source) {}
+  int read() { return this.source.read(); }
+  ~Snapshot() { int final_sample = this.source.read(); }
+};
+int main() { Meter meter{}; Snapshot<Meter> value{meter}; return value.read()-7; }  //~ ERROR GTI-S2029 readable
+// --- step 3
+// μ: a non-ASCII prefix must not disturb diagnostic locations.
+concept readable<T> = requires(T& source) { { source.read() } -> int; };
+struct Meter { Meter() = default; int read() { return 7; } };
+class Snapshot<readable T> {
+  T& source;
+public:
+  Snapshot(T& source) : source(source) {}
+  int read() { return this.source.read(); }
+  ~Snapshot() { int final_sample = this.source.read(); }
+};
+int main() { Meter meter{}; Snapshot<Meter> value{meter}; return value.read()-7; }

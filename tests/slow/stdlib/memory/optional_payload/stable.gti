@@ -1,0 +1,109 @@
+// The promoted std::optional through import std gives the same move-only payload traces.
+//@ run-pass
+//@ slow
+//@ revisions: success empty_access failed_try
+//@[success] stdout: 1
+//@[success] stdout: 2
+//@[success] stdout: -2
+//@[success] stdout: -1
+//@[success] stdout: 3
+//@[success] stdout: 3
+//@[success] stdout: -3
+//@[success] stdout: 0
+//@[success] stdout: 4
+//@[success] stdout: 4
+//@[success] stdout: -4
+//@[success] stdout: 5
+//@[success] stdout: 5
+//@[success] stdout: 5
+//@[success] stdout: -5
+//@[empty_access] run-fail
+//@[empty_access] exit-code: 70
+//@[empty_access] args: phase
+//@[empty_access] stdout: 6
+//@[empty_access] stdout: -6
+//@[empty_access] stderr-contains: runtime error[GTI-R0008]
+//@[empty_access] stderr-contains: empty_owner_access
+//@[failed_try] args: phase phase
+//@[failed_try] stdout: 7
+//@[failed_try] stdout: 8
+//@[failed_try] stdout: -7
+//@[failed_try] stdout: 8
+//@[failed_try] stdout: -8
+//@[failed_try] stdout: 0
+//@[failed_try] stdout: 9
+//@[failed_try] stdout: 9
+//@[failed_try] stdout: -9
+// std::optional over a move-only, destructor-traced payload.
+// Construction prints a tracked id and destruction its negation, so each
+// phase's trace follows from this source alone: `?` and the consuming
+// `value() &&` move the payload out without a copy, reset, emplace and move
+// assignment end and start exactly one lifetime each, and an empty access
+// panics after cleanup.
+import std;
+
+class Tracked {
+  int id;
+
+public:
+  Tracked(int value) : id(value) { std::println(std::to_string(value)); }
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() { std::println(std::to_string(-this.id)); }
+  int read() { return this.id; }
+};
+
+std::optional<Tracked> find(int id) {
+  if (id < 0) {
+    std::optional<Tracked> none = std::nullopt;
+    return none;
+  }
+  return std::optional<Tracked>(Tracked(id));
+}
+
+// Each `?` moves its Tracked out of the optional; a failed one returns the
+// empty residual after destroying the values already taken.
+std::optional<int> total(int first, int second) {
+  Tracked left = ?find(first);
+  Tracked right = ?find(second);
+  return std::optional<int>(left.read() + right.read());
+}
+
+int run(int phase) {
+  if (phase == 0) {
+    std::optional<int> sum = total(1, 2);
+    std::println(std::to_string(sum.value()));
+    std::optional<int> none = total(3, -1);
+    std::println(std::to_string(none.has_value() ? 1 : 0));
+    mut std::optional<Tracked> slot{};
+    std::println(std::to_string(slot.emplace(4).read()));
+    slot.reset();
+    std::println(std::to_string(slot.emplace(5).read()));
+    Tracked taken = std::move(slot).value();
+    std::println(std::to_string(taken.read()));
+    return 0;
+  }
+  if (phase == 2) {
+    // Move assignment ends the destination's value, if any, exactly once.
+    mut std::optional<Tracked> held =
+        std::optional<Tracked>(Tracked(7));
+    std::optional<Tracked> other =
+        std::optional<Tracked>(Tracked(8));
+    held = std::move(other);
+    std::println(std::to_string(held.value().read()));
+    std::optional<Tracked> none{};
+    held = std::move(none);
+    std::println(std::to_string(held.has_value() ? 1 : 0));
+    held = std::optional<Tracked>(Tracked(9));
+    std::println(std::to_string(held.value().read()));
+    return 0;
+  }
+  Tracked guard{6};
+  std::optional<Tracked> empty{};
+  Tracked never = std::move(empty).value();
+  return never.read();
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}

@@ -1,0 +1,33 @@
+// Implicit receiver paths preserve owned replacement and constructor rollback.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: cleaned
+//@ stderr-contains: implicit_receiver_owned_assignment_failure.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- implicit_receiver_owned_assignment_failure.gti
+import std.string;
+
+struct Details {
+  mut std::string title = std::string("initial");
+public:
+  Details() = default;
+};
+struct Marker {
+  ~Marker() { std::println("cleaned"); }
+public:
+  Marker() = default;
+};
+class Owner {
+  mut Marker marker{};
+  mut Details details{};
+public:
+  Owner(std::string_view title, int divisor) {
+    details.title = std::string(title);
+    int result = 10 / divisor;
+  }
+public:
+  Owner() = default;
+};
+int main() {
+  Owner owner{"replacement", 0};
+  return 0;
+}

@@ -1,0 +1,2 @@
+// Invalid class type packs: invalid class pack must be rejected by semantics: class Box<T> { using Bad = T&(T&);  public: Box() = default; }; int main() { Box<int&> value{}; return 0; }.
+class Box<T> { using Bad = T&(T&);  public: Box() = default; }; int main() { Box<int&> value{}; return 0; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2017

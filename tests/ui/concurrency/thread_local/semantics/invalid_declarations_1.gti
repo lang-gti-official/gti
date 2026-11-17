@@ -1,0 +1,3 @@
+// Invalid declarations: invalid TLS placement and automatic initializer dependencies are source diagnostics.
+//@ execution-profile: concurrent
+class Bad { thread_local mut int field = 0;  public: Bad() = default; }; int main() { return 0; }  //~ ERROR GTI-S2124

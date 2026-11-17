@@ -1,0 +1,90 @@
+// Each instance of a generic derived class prepares its generic base's arguments, a temporary receiver included.
+//@ run-pass
+//@ revisions: ok p1 p2 p3
+//@[p1] run-fail
+//@[p1] args: phase
+//@[p1] exit-code: 70
+//@[p1] stdout: 2
+//@[p1] stdout: 102
+//@[p1] stderr-contains: main.gti:13: runtime error[GTI-R0002]
+//@[p2] run-fail
+//@[p2] args: phase phase
+//@[p2] exit-code: 70
+//@[p2] stdout: 2
+//@[p2] stdout: 30
+//@[p2] stdout: 102
+//@[p2] stderr-contains: main.gti:26: runtime error[GTI-R0002]
+//@[p3] run-fail
+//@[p3] args: phase phase phase
+//@[p3] exit-code: 70
+//@[p3] stdout: 2
+//@[p3] stdout: 30
+//@[p3] stdout: 102
+//@[p3] stdout: 50
+//@[p3] stdout: 130
+//@[p3] stderr-contains: main.gti:42: runtime error[GTI-R0002]
+//@[ok] stdout: 2
+//@[ok] stdout: 30
+//@[ok] stdout: 102
+//@[ok] stdout: 50
+//@[ok] stdout: 3
+//@[ok] stdout: 30
+//@[ok] stdout: 103
+//@[ok] stdout: 50
+//@[ok] stdout: 150
+//@[ok] stdout: 130
+//@[ok] stdout: 150
+//@[ok] stdout: 130
+// --- main.gti
+import std.string;
+import std.vector;
+
+mut int phase = 0;
+class Probe {
+  int id;
+public:
+  Probe(int id) : id(id) { std::println(id); }
+  ~Probe() { std::println(this.id + 100); }
+  int scaled(int factor) {
+    if (phase == 1 && this.id == 2) {
+      int zero = 0;
+      int failed = factor / zero;
+    }
+    return this.id * factor;
+  }
+};
+int checked(int value) { return value + 1; }
+class Foundation<T> {
+public:
+  int score;
+  Foundation(int first, int second) : score(first + second) {
+    std::println(30);
+    if (phase == 2) {
+      int zero = 0;
+      int failed = score / zero;
+    }
+  }
+  ~Foundation() { std::println(130); }
+};
+// A generic derived class computes its generic base's arguments through a
+// checked call and a temporary receiver. Each concrete instance prepares its
+// own arguments before its own base is built.
+class Building<T> : public Foundation<T> {
+public:
+  T tag;
+  Building(int seed, T tag)
+      : Foundation<T>(checked(seed), Probe(seed + 1).scaled(10)), tag(tag) {
+    std::println(50);
+    if (phase == 3) {
+      int zero = 0;
+      int failed = phase / zero;
+    }
+  }
+  ~Building() { std::println(150); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Building<int> number = Building<int>(1, 7);
+  Building<bool> flag = Building<bool>(2, true);
+  return number.score + flag.score - 55 + number.tag - 7 + (flag.tag ? 0 : 1);
+}

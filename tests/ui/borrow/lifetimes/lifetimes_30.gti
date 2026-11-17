@@ -1,0 +1,4 @@
+// Lifetimes: rejected with GTI-S2127.
+void needs_static<lifetime a>(int&<a> value) requires outlives<int&<a>, static> {}
+void relay<lifetime a>(int&<a> value) { needs_static(value); }  //~ ERROR GTI-S2127
+int main() { return 0; }

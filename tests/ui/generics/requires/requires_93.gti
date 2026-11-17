@@ -1,0 +1,11 @@
+// General requires: compound requirements retain explicit generic arguments.
+//@ check-pass
+import std.meta;
+bool flag<T>() { return std::meta::is_integral<T>(); }
+int number<T>() { return 2; }
+concept selects<T> = requires {
+  { flag<T>() && flag<T>() } -> bool;
+  { flag<T>() ? number<T>() : number<T>() } -> int;
+};
+int selected<T>() requires selects<T> { return 0; }
+int main() { return selected<int>(); }

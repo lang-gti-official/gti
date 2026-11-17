@@ -1,0 +1,1 @@
+Convert 27 more Python LSP scripts (borrowing, declarations, formatting, generics, macros, pointer, C-thread and raw-pointer-audit families) into `gti-test` marker tests and transcripts under `tests/lsp/`, deleting their CTest entries and registry lines.

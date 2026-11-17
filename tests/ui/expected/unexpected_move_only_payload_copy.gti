@@ -1,0 +1,14 @@
+// unexpected(e) is an ordinary function: copying a move-only payload into its
+// by-value parameter is the general deleted-copy error. (From issues_30_33_lsp_test.py.)
+import std.string;
+struct Error {
+  std::string text;
+  Error() : text(std::string("error")) {}
+  Error(Error& other) = delete;
+};
+expected<int, Error> failure() { return unexpected(Error()); }
+expected<int, Error> relay() {
+  auto carrier = failure();
+  /* café 😀 */ return unexpected(carrier.error());  //~ ERROR GTI-S2018 would call the deleted copy constructor of 'Error'
+}
+int main() { auto result = relay(); return result ? 1 : 0; }

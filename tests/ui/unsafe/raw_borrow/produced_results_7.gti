@@ -1,0 +1,9 @@
+// Produced results: concrete generic source result preserves expired parameter storage.
+//@ raw-pointer-audit: strict
+import std.memory;
+int main() {
+  int witness = 9;
+  const int* pointer = source<int>(1);
+  unsafe { int& value = std::assume_ref(pointer, witness); return value; }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+}
+const T* source<T>(T input) { return &input; }

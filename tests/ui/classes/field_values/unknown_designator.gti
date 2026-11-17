@@ -1,0 +1,3 @@
+// A designated initializer naming an unknown field is rejected.
+//@ check-fail
+struct V{int n=1; public: V() = default; };struct H{V v{}; public: H() = default; };int main(){H h={.missing=1};return 0;}  //~ ERROR GTI-S2091

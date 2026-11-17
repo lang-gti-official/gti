@@ -1,0 +1,12 @@
+// A live mutable cursor keeps the std::deque borrowed across mutation.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { mut std::deque<int> x = {1, 2}; mut auto cursor = x.begin_mut(); x.clear(); return *cursor; }  //~ ERROR GTI-S2017

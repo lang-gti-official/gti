@@ -1,0 +1,4 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+Token other() { return unknown(); } Token unknown() { return other(); } int main() { return 0; }

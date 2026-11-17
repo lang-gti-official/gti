@@ -1,0 +1,14 @@
+// A borrowed class result cannot escape from a reference pack function without a declared region.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+struct Borrowed { Ticket& value; Borrowed(Ticket& source) : value(source) {} };
+Borrowed escape<Args...>(Ticket& value, Args&... args) {  //~ ERROR GTI-S2023
+  return Borrowed(value);
+}
+int main() { Ticket value{}; escape(value, value); return 0; }  //~ ERROR GTI-S2009

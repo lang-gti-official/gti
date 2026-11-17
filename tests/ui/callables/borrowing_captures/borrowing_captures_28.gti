@@ -1,0 +1,4 @@
+// Borrowing captures: erased-referent-cannot-be-a-base is rejected with a user diagnostic, not an ICE.
+import std.memory;
+class Derived : public std::erased_object { public: Derived() = default; };  //~ ERROR GTI-S2040
+int main() { Derived forged{}; return 0; }

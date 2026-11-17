@@ -1,0 +1,4 @@
+// An unknown concept name in a condition is rejected.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+static_assert(absent<int>);  //~ ERROR GTI-S2049 Unknown concept 'absent'

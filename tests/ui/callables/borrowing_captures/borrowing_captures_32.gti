@@ -1,0 +1,13 @@
+// Borrowing captures: erased-reference-local-shell-in-scope.
+//@ check-pass
+import std.memory;
+struct Reader {
+  int& value;
+  Reader(int& value) : value(value) {}
+};
+int read(int& value) {
+  Reader local{value};
+  std::erased_object& erased = std::erase_ref(local);
+  unsafe { Reader& restored = std::restore_ref<Reader>(erased); return restored.value; }
+}
+int main() { int value = 3; return read(value) - 3; }

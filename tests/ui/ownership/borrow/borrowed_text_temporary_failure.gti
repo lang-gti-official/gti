@@ -1,0 +1,64 @@
+// Scalar and operator temporaries retain ordered evaluation and cleanup.
+//@ run-pass
+//@ revisions: default producer later-fails body-now-fails
+//@[default] stdout: produce
+//@[default] stdout: branch
+//@[default] stdout: owned
+//@[default] stdout: yes
+//@[default] stdout: cleanup
+//@[producer] run-fail
+//@[producer] args: producer
+//@[producer] exit-code: 70
+//@[producer] stdout: produce
+//@[producer] stdout: cleanup
+//@[producer] stderr-contains: borrowed_text_temporary_failure.gti:13: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-fails] run-fail
+//@[later-fails] args: later fails
+//@[later-fails] exit-code: 70
+//@[later-fails] stdout: produce
+//@[later-fails] stdout: branch
+//@[later-fails] stdout: cleanup
+//@[later-fails] stderr-contains: borrowed_text_temporary_failure.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[body-now-fails] run-fail
+//@[body-now-fails] args: body now fails
+//@[body-now-fails] exit-code: 70
+//@[body-now-fails] stdout: produce
+//@[body-now-fails] stdout: branch
+//@[body-now-fails] stdout: owned
+//@[body-now-fails] stdout: yes
+//@[body-now-fails] stdout: cleanup
+//@[body-now-fails] stderr-contains: borrowed_text_temporary_failure.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- borrowed_text_temporary_failure.gti
+import std.string;
+import std.vector;
+import std.panic;
+
+class Guard {
+public:
+  Guard() = default;
+  ~Guard() { std::println("cleanup"); }
+};
+
+std::string_view produce(std::string& owner, int divisor) {
+  std::println("produce");
+  int checked = 1 / divisor; // producer-failure
+  if (checked != 1) { std::panic("unexpected quotient"); }
+  return owner.view();
+}
+bool choose(int divisor) {
+  std::println("branch");
+  return 1 / divisor == 1; // branch-failure
+}
+int observe(std::string_view& first, std::string_view& second, int divisor) {
+  std::println(first);
+  std::println(second);
+  return 1 / divisor; // body-failure
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  std::string owner = "owned";
+  return observe(produce(owner, argc == 2 ? 0 : 1),
+                 choose(argc == 3 ? 0 : 1) ? "yes" : "no",
+                 argc == 4 ? 0 : 1) - 1;
+}

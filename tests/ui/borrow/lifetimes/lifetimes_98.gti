@@ -1,0 +1,13 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Fixed<int&<source>> {
+  int&<source> value;
+  Fixed(int&<source> input) : value(input) {}
+  int&<source> get() { return this.value; }
+};
+int&<a> read<lifetime a>(int&<a> input) {
+  Fixed<int&<a>> holder{input};
+  return holder.get();
+}
+int main() { int value = 7; return read(value) - 7; }

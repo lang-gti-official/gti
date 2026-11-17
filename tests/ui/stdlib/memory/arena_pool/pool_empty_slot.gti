@@ -1,0 +1,13 @@
+// Reading an empty pool slot reports GTI-R0010.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0010
+//@ stderr-contains: invalid_storage_state
+//@ stderr-contains: uninitialized_access
+import std.memory;
+int main() {
+  mut auto created = std::try_make_pool<int32_t>(std::size_t(1));
+  if (!created) { return 1; }
+  mut std::pool<int32_t> values = std::move(created).value();  //~ WARN GTI-S2096
+  return values.get(std::size_t(0));
+}

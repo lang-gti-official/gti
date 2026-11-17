@@ -1,0 +1,28 @@
+// A failing thread-local destructor at worker exit reports GTI-R0002.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stdout: cleanup failed
+//@ stderr-contains: GTI-R0002
+import std.thread;
+import std.format;
+class Fail {
+public:
+  Fail() = default;
+  int32_t read() { return 1; }
+  ~Fail() {
+    std::println("cleanup failed");
+    int32_t zero = 0;
+    int32_t failed = 1 / zero;
+  }
+};
+thread_local mut Fail failing{};
+int main() {
+  auto started = std::thread::start([]() -> void {
+    int32_t used = failing.read();
+  });
+  if (!started) return 1;
+  mut auto worker = std::move(started).value();
+  auto joined = worker.join();
+  return 0;
+}

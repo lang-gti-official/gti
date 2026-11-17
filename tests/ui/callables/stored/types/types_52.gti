@@ -1,0 +1,8 @@
+// Stored callables: ordinary call into an owned pack still requires explicit closure transfer.
+void accept<Args...>(Args... args) {}
+int main() {
+  int value = 1;
+  auto operation = [value]() -> int { return value; };
+  accept(7, operation);  //~ ERROR GTI-S2046
+  return 0;
+}

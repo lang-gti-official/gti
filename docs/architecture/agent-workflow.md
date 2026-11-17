@@ -477,7 +477,7 @@ attempts in total (at most 12 VM-hours), even if price estimates are wrong.
 These counters also never refund or reset automatically. After enablement:
 
 ```sh
-python3 scripts/remote_runner.py --runner gcp-spot run --target gti --target gti_tests --target gti_lsp --ctest-regex '^compiler_pipeline$'
+python3 scripts/remote_runner.py --runner gcp-spot run --target gti --target gti-test --target gti_lsp --ctest-regex '^gti_test_ui'
 python3 scripts/remote_runner.py --runner gcp-spot status
 python3 scripts/remote_runner.py --runner gcp-spot clean
 ```
@@ -687,9 +687,10 @@ The sanitizer jobs below run in `sanitizers.yml`, daily on the nightly commit,
 not in full validation (see "Primary Targets" in `verification.md`). The
 sanitizer jobs retain per-case outcomes and durations. Missing, stale, failed
 or timed-out case evidence fails the gate.
-Compiler sanitizer jobs build only the targets of `compiler_pipeline`; library
-jobs retain the library subset targets. This avoids filling runner disks with
-unexecuted sanitizer library binaries in compiler jobs.
+The compiler sanitizer job builds only the targets of its library subset
+(which includes `gti_unit_tests`, the compiler-API checks) and
+`gti_test_ui`, whose instrumented `gti-test` run analyses the `tests/ui`
+and `tests/project` cases; this avoids filling runner disks with unexecuted sanitizer binaries.
 The LLVM backend sanitizer job runs the backend's test binaries and its cheap
 control harnesses (`GTI_LLVM_SANITIZER_TESTS` in `sanitizers.yml`) in the
 same sanitized tree under the LLVM-only backend policy. The `llvm_*` execution
@@ -752,11 +753,12 @@ invariant. `tests/ownership_map_test.py` keeps it complete: every tracked
 source file has an area or a stated reason, and the `test_ownership_map`
 CTest requires every named test to be registered. A new test under `tests/ui/`,
 `tests/lsp/`, `tests/project/` or `tests/unit/` needs no map entry: the
-directory-walking `gti_test_ui` and `gti_unit_tests` entries own them.
+directory-walking `gti_test_ui` entries (`gti_test_ui` and its `tests/ui`
+shards `gti_test_ui_<i>`) and `gti_unit_tests` own them.
 
 The compiler-smoke execution covers scalar control flow and owning strings in
 a vector at O0/O3. The GTI executable itself is always optimized. Each plan
-also includes `compiler_pipeline`. Shared semantic/IR/representation/runtime
+also includes `gti_test_ui`. Shared semantic/IR/representation/runtime
 paths have a script-enforced T2 floor; analysis may always raise the tier.
 Tier selection is reviewable policy, not a proof inferred from filenames.
 
@@ -907,7 +909,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` and the PR's declared T0/T1 tests on both; `compiler_pipeline` on Linux, where the platform-independent unit suites are proven once) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, the `gti-test` entries and the PR's declared T0/T1 tests on both) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
 | `workflow_dispatch` on main | full | the same bounded gate, for recovery |
@@ -933,7 +935,7 @@ CTest label is assigned in one place, `gti_slow_test_patterns` in
 `merge-shards`/`ci-gate` still prove each platform ran its per-commit
 inventory exactly once. `slow.yml` proves its own sets the same way with
 `platform:test-set` keys.
-Long aggregates (`compiler_pipeline`, `allocator_raw_audit_independence`) are
+Long aggregates (`allocator_raw_audit_independence`) are
 also registered as per-suite or per-source entries; a sharded run executes the parts and
 skips the aggregate (`SHARDED_AGGREGATES`), so the same cases run spread
 across workers instead of one 16–54-minute test ending a shard alone. The
@@ -992,10 +994,9 @@ including deletions, and verifies that the native payload is unchanged.
 `GTI_REUSE_TOOLCHAIN` imports the optimized production libraries and binaries;
 only test consumer targets are built. The CMake target graph rejects dependencies
 that would rebuild compiler/runtime sources. Ownership-map T1 owners and T2
-consumers, changed registered harnesses/fixtures, compiler_pipeline, native O0/O3
+consumers, changed registered harnesses/fixtures, `gti_test_ui`, native O0/O3
 smoke and affected example gates must execute without missing/disabled/skipped
-results. The existing compiler-pipeline census runs each named case in a fresh
-process to bound retained allocations; no case is removed. This includes runtime
+results. This includes runtime
 and rejection coverage, not compilation alone.
 PR-declared tests add to this mandatory selection. Installed CLI/LSP/project and
 resource checks exercise the updated packaged library without source overrides.
@@ -1073,7 +1074,8 @@ A ready, full-mode pull request declares its evidence in a `Validation:` block
 in its body. The `T0` (reproducer or new regression) and `T1` (owning tests)
 items list CTest names only; other items are prose for reviewers. A new
 `gti-test` case is declared as `gti_test_ui` (a `tests/unit/` case as
-`gti_unit_tests`), never by a per-test name.
+`gti_unit_tests`), never by a per-test name; verify with `-R '^gti_test_ui'`,
+which also selects the `tests/ui` shards the CI gate runs beside it.
 `validation_checks.py declared` parses the block: the plan job rejects a missing
 or malformed declaration, and the `fast` job re-runs the declared tests by exact
 name on both platforms. Each one must be registered and enabled. The body is

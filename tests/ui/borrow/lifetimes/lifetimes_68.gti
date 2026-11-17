@@ -1,0 +1,12 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct PairView {
+  int& first; int& second;
+  PairView(int& left, int& right) : first(left), second(right) {}
+};
+concept Inspect<T> { int inspect(T& value); };
+for concept Inspect<PairView> {
+  int inspect(PairView& value) { return value.first + value.second; }
+};
+int main() { int left = 3; int right = 8; PairView value{left, right}; return Inspect<PairView>::inspect(value) - 11; }

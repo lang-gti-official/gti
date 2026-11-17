@@ -1,0 +1,17 @@
+// Asking storage for more initialized elements than its capacity reports GTI-R0007.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0007
+//@ stderr-contains: index_out_of_bounds
+//@ stderr-contains: private_storage
+//@ stderr-contains: <std/memory>
+import std.memory;
+
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int32_t> values = std::move(allocated).value();  //~ WARN GTI-S2096
+  [[discard]] values.initialized(std::size_t(1));
+  return 2;
+}

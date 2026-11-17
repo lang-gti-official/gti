@@ -1,0 +1,18 @@
+// Exact whole object virtual effects: an exact readonly virtual target still closes hidden helper writes and rejects the actual overlapping persistent path.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1; thread_local mut int other = 2;
+void change() { guarded = 9; }
+class Base {
+public:
+  virtual int read() { return 1; }
+public:
+  Base() = default;
+};
+class Reader : public Base {
+public:
+  int read() override { change(); return 2; }
+public:
+  Reader() = default;
+};
+thread_local Reader reader{}; int main() { int& held = guarded; return reader.read() + held; }  //~ ERROR GTI-S2045

@@ -1,0 +1,6 @@
+// Macro fresh argument boundaries: invalid result macro must stop before emission.
+struct Value { int number; Value(int number) : number(number) {} };
+#macro Value fresh(int number) { Value guard{99}; return Value(number); }
+
+Value& escape(Value& value) { return value; }
+int main() { Value& value = escape(fresh!(1)); return value.number; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2017

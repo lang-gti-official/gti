@@ -1,0 +1,8 @@
+// Stored callables: each expanded lambda argument must match its exact parameter.
+int apply<Args...>(Args... args) {
+  auto callback = [](int value, bool enabled) -> int {
+    return enabled ? value : 0;
+  };
+  return callback(args...);  //~ ERROR GTI-S2003 //~ ERROR GTI-S2003
+}
+int main() { return apply(true, 7) - 7; }

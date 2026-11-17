@@ -1,0 +1,6 @@
+// Lifetime and effects: a checked loan proves that the same TLS slot is already initialized.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+int initialize() { modify(); return 4; } thread_local mut int other = initialize(); int main() { int warmed = other; int& ready = other; int& borrowed = value; int copied = other; return warmed + ready + borrowed + copied; }

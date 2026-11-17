@@ -1,0 +1,41 @@
+// Reassigned text locals: a reassigned local text binding holds ownerless text.
+//@ check-pass
+import std.string;
+struct Note {
+  std::string_view text;
+  int line;
+};
+void setTo(mut std::string_view& out, std::string_view value) { out = value; }
+std::string_view pick(std::string_view unused, bool c) {
+  std::string_view copy = unused;
+  mut std::string_view v = "first";
+  if (c) { v = "second"; }
+  return v;
+}
+std::string_view looped(std::string_view unused, int n) {
+  std::string_view copy = unused;
+  mut std::string_view current = "start";
+  mut std::string_view previous = "none";
+  for (mut int i = 0; i < n; i += 1) {
+    previous = current;
+    current = previous;
+    current = "loop";
+  }
+  return previous;
+}
+std::string_view through(std::string_view unused) {
+  mut std::string_view v = "before";
+  setTo(v, "after");
+  return v;
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view w = "x";
+  w = "y";
+  kept = w;
+  Note note{.text = w, .line = 1};
+  return pick("", true) == "second" && looped("", 2) == "loop" &&
+                 through("") == "after" && kept == "y" && note.text == "y"
+             ? 0
+             : 1;
+}

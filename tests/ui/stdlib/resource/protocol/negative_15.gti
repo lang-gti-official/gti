@@ -1,0 +1,6 @@
+// Negative: binding rejects a provider without exact structural members.
+import std.resource;
+import std.memory;
+
+struct Incomplete { public: Incomplete() = default; };
+int main() { Incomplete resource{}; unsafe { auto bound=std::bind_resource(resource); } return 0; }  //~ ERROR GTI-S2029

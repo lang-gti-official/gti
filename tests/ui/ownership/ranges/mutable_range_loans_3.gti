@@ -1,0 +1,20 @@
+// Mutable range loans: mutable range diagnostics should reject immutable owners, overlapping loans, and escaping element loans.
+int immutable_owner() {
+  int32_t values[2] = {1, 2};
+  for (mut int32_t& value : values) { value = 0; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2083
+  return 0;
+}
+
+int overlapping_owner() {
+  mut int32_t values[2] = {1, 2};
+  for (mut int32_t& value : values) {
+    for (int32_t& observed : values) { return observed + value; }
+  }
+  return 0;
+}
+
+int& escape_element() {  //~ ERROR GTI-S2017
+  mut int32_t values[2] = {1, 2};
+  for (mut int32_t& value : values) { return value; }
+  return values[0];
+}

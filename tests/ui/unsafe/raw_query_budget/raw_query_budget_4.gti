@@ -1,0 +1,44 @@
+// Raw query budget: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: warn
+int main() { int value = 7; const int* pointer = relay0(&value); unsafe { return *pointer - 7; } }  //~ WARN GTI-S2103
+const int* relay0(const int* pointer) { return relay1(pointer); }
+const int* relay1(const int* pointer) { return relay2(pointer); }
+const int* relay2(const int* pointer) { return relay3(pointer); }
+const int* relay3(const int* pointer) { return relay4(pointer); }
+const int* relay4(const int* pointer) { return relay5(pointer); }
+const int* relay5(const int* pointer) { return relay6(pointer); }
+const int* relay6(const int* pointer) { return relay7(pointer); }
+const int* relay7(const int* pointer) { return relay8(pointer); }
+const int* relay8(const int* pointer) { return relay9(pointer); }
+const int* relay9(const int* pointer) { return relay10(pointer); }
+const int* relay10(const int* pointer) { return relay11(pointer); }
+const int* relay11(const int* pointer) { return relay12(pointer); }
+const int* relay12(const int* pointer) { return relay13(pointer); }
+const int* relay13(const int* pointer) { return relay14(pointer); }
+const int* relay14(const int* pointer) { return relay15(pointer); }
+const int* relay15(const int* pointer) { return relay16(pointer); }
+const int* relay16(const int* pointer) { return relay17(pointer); }
+const int* relay17(const int* pointer) { return relay18(pointer); }
+const int* relay18(const int* pointer) { return relay19(pointer); }
+const int* relay19(const int* pointer) { return relay20(pointer); }
+const int* relay20(const int* pointer) { return relay21(pointer); }
+const int* relay21(const int* pointer) { return relay22(pointer); }
+const int* relay22(const int* pointer) { return relay23(pointer); }
+const int* relay23(const int* pointer) { return relay24(pointer); }
+const int* relay24(const int* pointer) { return relay25(pointer); }
+const int* relay25(const int* pointer) { return relay26(pointer); }
+const int* relay26(const int* pointer) { return relay27(pointer); }
+const int* relay27(const int* pointer) { return relay28(pointer); }
+const int* relay28(const int* pointer) { return relay29(pointer); }
+const int* relay29(const int* pointer) { return relay30(pointer); }
+const int* relay30(const int* pointer) { return relay31(pointer); }
+const int* relay31(const int* pointer) { return relay32(pointer); }
+const int* relay32(const int* pointer) { return relay33(pointer); }
+const int* relay33(const int* pointer) { return relay34(pointer); }
+const int* relay34(const int* pointer) { return relay35(pointer); }
+const int* relay35(const int* pointer) { return relay36(pointer); }
+const int* relay36(const int* pointer) { return relay37(pointer); }
+const int* relay37(const int* pointer) { return relay38(pointer); }
+const int* relay38(const int* pointer) { return relay39(pointer); }
+const int* relay39(const int* pointer) { return pointer; }

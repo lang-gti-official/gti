@@ -1,0 +1,5 @@
+// General requires: predicate must have exact bool type diagnostic.
+constexpr int not_bool<T>() { return 1; }
+concept invalid<T> = not_bool<T>();
+int use<T>() requires invalid<T> { return 0; }
+int main() { return use<int>(); }  //~ ERROR GTI-S2029

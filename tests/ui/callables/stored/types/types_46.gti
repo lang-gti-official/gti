@@ -1,0 +1,19 @@
+// Stored callables: heap callback model reaches verified MIR (the C++ trusted-memory fixture also imported the unused private memory capabilities).
+//@ check-pass
+import std.memory;
+
+class HeapModel<T> {
+  T callback;
+public:
+  HeapModel(T callback) : callback(std::move(callback)) {}
+  int invoke(int value) { return this.callback(value); }
+};
+std::unique_ptr<HeapModel<T>> heap_own<T>(T callback) {
+  return std::make_unique<HeapModel<T>>(std::move(callback));
+}
+int main() {
+  int offset = 7;
+  auto callback = [offset](int value) -> int { return offset + value; };
+  auto owner = heap_own(std::move(callback));
+  return owner->invoke(5) - 12;
+}

@@ -1,0 +1,12 @@
+main.gti:57:43: error[GTI-S2057]: Consteval invocation must be evaluated during compilation.
+ 57 | int main() { auto value = std::try_format("{} {}", 1); return 0; }  //~ ERROR GTI-S2057
+    |                                           ^~~~~~~
+main.gti:57:43: note: Compile-time evaluation panicked: "Format pattern field count or index does not match the arguments"
+ 57 | int main() { auto value = std::try_format("{} {}", 1); return 0; }  //~ ERROR GTI-S2057
+    |                                           ^~~~~~~
+$STD/std/format.gti:1034:22: note: Immediate declaration is here.
+ 1034 |   implicit consteval format_pattern(string_view value) : text(value) {
+      |                      ^~~~~~~~~~~~~~
+main.gti:57:43: note: Constant evaluation requested here.
+ 57 | int main() { auto value = std::try_format("{} {}", 1); return 0; }  //~ ERROR GTI-S2057
+    |                                           ^~~~~~~

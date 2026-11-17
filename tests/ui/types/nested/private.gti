@@ -1,0 +1,3 @@
+// A private nested type cannot be named from outside.
+//@ check-fail
+class C { struct N { int value; };  public: C() = default; }; int main() { C::N n{}; return 0; }  //~ ERROR GTI-S2007 Nested type 'N' //~ ERROR GTI-S2012

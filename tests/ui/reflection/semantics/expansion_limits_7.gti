@@ -1,0 +1,10 @@
+// Expansion limits: the per-declaration copy limit names its value and how to raise it.
+//@ constexpr-for-copies: 10
+import std.meta;
+int main() {
+  mut uint64_t total = 0;
+  constexpr for (auto x : std::meta::list<int32_t, int32_t, int32_t, int32_t, int32_t>()) { total = total + uint64_t(1); }
+  constexpr for (auto x : std::meta::list<int32_t, int32_t, int32_t, int32_t, int32_t>()) { total = total + uint64_t(1); }
+  constexpr for (auto x : std::meta::list<int32_t, int32_t, int32_t, int32_t, int32_t>()) { total = total + uint64_t(1); }  //~ ERROR GTI-S2108
+  return int(total);
+}

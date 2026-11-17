@@ -1,0 +1,46 @@
+// General requires: source comparison policy uses general declaration facts and operation proofs.
+//@ check-pass
+import std.meta;
+struct Key {
+  int value = 0;
+  bool operator==(Key& other) { return this.value == other.value; }
+  bool operator!=(Key& other) { return this.value != other.value; }
+  bool operator<(Key& other) { return this.value < other.value; }
+  bool operator<=(Key& other) { return this.value <= other.value; }
+  bool operator>(Key& other) { return this.value > other.value; }
+  bool operator>=(Key& other) { return this.value >= other.value; }
+public:
+  Key() = default;
+};
+bool same<std::equality_comparable T>(T& a, T& b) { return a == b; }
+bool before<std::totally_ordered T>(T& a, T& b) { return a < b; }
+concept ordered_alias<T> = std::totally_ordered<T>;
+bool aliased_before<T>(T& a, T& b) requires ordered_alias<T> {
+  return before(a, b);
+}
+bool ordered_same<std::totally_ordered T>(T& a, T& b) { return same(a, b); }
+bool integer_before<T>(T& a, T& b) requires std::meta::is_integral<T>() {
+  return before(a, b);
+}
+struct Contracts {
+  int read() { return 0; }
+  unsafe int raw() { return 0; }
+  int operator()() && { return 0; }
+  int checked<T>(T& value) requires std::integral<T> { return 0; }
+public:
+  Contracts() = default;
+};
+int main() {
+  static_assert(!std::meta::method<Contracts, 0>().is_consuming());
+  static_assert(!std::meta::method<Contracts, 0>().is_unsafe());
+  static_assert(std::meta::method<Contracts, 1>().is_unsafe());
+  static_assert(std::meta::method<Contracts, 2>().is_consuming());
+  static_assert(std::meta::method<Contracts, 3>().is_generic());
+  static_assert(std::meta::method<Contracts, 3>().is_constrained());
+  static_assert(std::detail::read_equality_members<Key>());
+  static_assert(std::detail::read_ordering_members<Key>());
+  Key a{.value = 1}; Key b{.value = 2};
+  int x = 1; int y = 2;
+  return !same(a, b) && !ordered_same(a, b) && before(a, b) &&
+         aliased_before(a, b) && integer_before(x, y) ? 0 : 1;
+}

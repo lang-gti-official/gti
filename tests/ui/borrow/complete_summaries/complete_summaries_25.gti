@@ -1,0 +1,12 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+
+enum Envelope { wrap(Token item), empty };
+Token unwrap(Envelope input) {
+  switch (input) {
+  case Envelope::wrap(value): return value;
+  case Envelope::empty: return Token::empty;
+  }
+}
+int main() { auto value = unwrap(Envelope::wrap(Token::item(7))); return 0; }

@@ -1,0 +1,22 @@
+// Lambdas: a by-value parameter should be an exact owned move-capture source.
+//@ check-pass
+import std.memory;
+
+class Owner {
+  int value = 3;
+
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  int read() { return this.value; }
+};
+
+int capture_parameter(Owner source) {
+  auto action = [owned = std::move(source)]() -> int {
+    return owned.read();
+  };
+  return action();
+}
+
+int main() { return capture_parameter(Owner()) - 3; }

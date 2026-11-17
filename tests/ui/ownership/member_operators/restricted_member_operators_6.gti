@@ -1,0 +1,12 @@
+// Restricted member operators: operator+= should require its own declaration instead of being synthesized from operator+.
+class PlusOnly {
+public:
+  PlusOnly operator+(int other) { return PlusOnly(); }
+public:
+  PlusOnly() = default;
+};
+int main() {
+  mut PlusOnly value = PlusOnly();
+  value += 1;  //~ ERROR GTI-S2022
+  return 0;
+}

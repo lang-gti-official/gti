@@ -1,0 +1,47 @@
+// A reassigned text local holds the last assigned text, also across loop iterations.
+//@ run-pass
+//@ stdout: second
+//@ stdout: first
+//@ stdout: loop
+//@ stdout: after
+//@ stdout: y
+import std.string;
+// A local text binding holds what any of its writes stored, including a
+// store through a mutable borrow of it: each holds ownerless text here.
+struct Note {
+  std::string_view text;
+  int line;
+};
+void setTo(mut std::string_view& out, std::string_view value) { out = value; }
+std::string_view pick(bool c) {
+  mut std::string_view v = "first";
+  if (c) { v = "second"; }
+  return v;
+}
+std::string_view looped(int n) {
+  mut std::string_view current = "start";
+  mut std::string_view previous = "none";
+  for (mut int i = 0; i < n; i += 1) {
+    previous = current;
+    current = "loop";
+  }
+  return previous;
+}
+std::string_view through() {
+  mut std::string_view v = "before";
+  setTo(v, "after");
+  return v;
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string_view w = "x";
+  w = "y";
+  kept = w;
+  Note note{.text = w, .line = 1};
+  std::println(pick(true));
+  std::println(pick(false));
+  std::println(looped(2));
+  std::println(through());
+  std::println(note.text);
+  return kept == "y" ? 0 : 1;
+}

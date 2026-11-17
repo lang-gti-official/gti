@@ -1,0 +1,20 @@
+// Confined callable parameters: a lambda declared in a generic body should retain one lexical identity while concrete capture layouts produce distinct callable instances.
+//@ check-pass
+struct CopyableCapture {
+  int value = 7;
+  CopyableCapture() {}
+  CopyableCapture(CopyableCapture& other) = default;
+};
+
+int invoke<Operation>(Operation operation) { return operation(); }
+
+int capture_and_invoke<T>(T value) {
+  auto operation = [value]() -> int { return 1; };
+  return invoke(operation);
+}
+
+int main() {
+  int first = capture_and_invoke(1);
+  int second = capture_and_invoke(CopyableCapture());
+  return first + second - 2;
+}

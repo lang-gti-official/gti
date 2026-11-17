@@ -1,0 +1,2 @@
+// Invalid signatures: a signature cannot become an expected payload.
+using A = void(); int main() { expected<A, int> bad = unexpected(1); return 0; }  //~ ERROR GTI-S2067 //~ ERROR GTI-S2067 //~ ERROR GTI-S2003

@@ -1,0 +1,16 @@
+// Borrowed target rejection: unique allocation applies the same rule to an unrelated borrowed class.
+import std.functional;
+import std.memory;
+
+class Reading {
+  int& value;
+public:
+  Reading(int& source) : value(source) {}
+  int get() { return this.value; }
+};
+
+int main() {
+  int value = 7;
+  auto reader = std::make_unique<Reading>(value);  //~ ERROR GTI-S2018
+  return reader->get();
+}

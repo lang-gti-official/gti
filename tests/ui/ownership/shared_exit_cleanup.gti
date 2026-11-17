@@ -1,0 +1,353 @@
+// Every body exit releases exactly its live resources newest first; a failing destructor cleans up the rest, per phase.
+//@ run-pass
+//@ revisions: phase0 phase1 phase2 phase3 phase4 phase5 phase6 phase7 phase8 phase9 phase50 phase51 phase52 phase53 phase101 phase102 phase104 phase111 phase121 phase132 phase141 phase152 phase163 phase173 phase184
+//@[phase0] stdout: 1
+//@[phase0] stdout: 2
+//@[phase0] stdout: 105
+//@[phase0] stdout: -105
+//@[phase0] stdout: 3
+//@[phase0] stdout: 101
+//@[phase0] stdout: -101
+//@[phase0] stdout: -3
+//@[phase0] stdout: 4
+//@[phase0] stdout: -4
+//@[phase0] stdout: -2
+//@[phase0] stdout: -1
+//@[phase0] stdout: 2003
+//@[phase1] args: phase
+//@[phase1] stdout: 1
+//@[phase1] stdout: -1
+//@[phase1] stdout: 1011
+//@[phase2] args: phase phase
+//@[phase2] stdout: 1
+//@[phase2] stdout: -1
+//@[phase2] stdout: 2001
+//@[phase3] args: phase phase phase
+//@[phase3] stdout: 1
+//@[phase3] stdout: 2
+//@[phase3] stdout: 100
+//@[phase3] stdout: -100
+//@[phase3] stdout: -2
+//@[phase3] stdout: -1
+//@[phase3] stdout: 2004
+//@[phase4] args: phase phase phase phase
+//@[phase4] stdout: 1
+//@[phase4] stdout: 2
+//@[phase4] stdout: 105
+//@[phase4] stdout: -105
+//@[phase4] stdout: -2
+//@[phase4] stdout: -1
+//@[phase4] stdout: 1005
+//@[phase5] args: phase phase phase phase phase
+//@[phase5] stdout: 1
+//@[phase5] stdout: 2
+//@[phase5] stdout: 105
+//@[phase5] stdout: -105
+//@[phase5] stdout: 3
+//@[phase5] stdout: -3
+//@[phase5] stdout: -2
+//@[phase5] stdout: -1
+//@[phase5] stdout: 1055
+//@[phase6] args: phase phase phase phase phase phase
+//@[phase6] stdout: 1
+//@[phase6] stdout: 2
+//@[phase6] stdout: 105
+//@[phase6] stdout: -105
+//@[phase6] stdout: 3
+//@[phase6] stdout: -3
+//@[phase6] stdout: -2
+//@[phase6] stdout: -1
+//@[phase6] stdout: 2002
+//@[phase7] args: phase phase phase phase phase phase phase
+//@[phase7] stdout: 1
+//@[phase7] stdout: 2
+//@[phase7] stdout: 105
+//@[phase7] stdout: -105
+//@[phase7] stdout: 3
+//@[phase7] stdout: 100
+//@[phase7] stdout: -100
+//@[phase7] stdout: -3
+//@[phase7] stdout: -2
+//@[phase7] stdout: -1
+//@[phase7] stdout: 2004
+//@[phase8] args: phase phase phase phase phase phase phase phase
+//@[phase8] stdout: 1
+//@[phase8] stdout: 2
+//@[phase8] stdout: 105
+//@[phase8] stdout: -105
+//@[phase8] stdout: 3
+//@[phase8] stdout: 101
+//@[phase8] stdout: -101
+//@[phase8] stdout: -3
+//@[phase8] stdout: 4
+//@[phase8] stdout: -4
+//@[phase8] stdout: -2
+//@[phase8] stdout: -1
+//@[phase8] stdout: 1015
+//@[phase9] args: phase phase phase phase phase phase phase phase phase
+//@[phase9] stdout: 1
+//@[phase9] stdout: 2
+//@[phase9] stdout: 105
+//@[phase9] stdout: -105
+//@[phase9] stdout: 3
+//@[phase9] stdout: 101
+//@[phase9] stdout: -101
+//@[phase9] stdout: -3
+//@[phase9] stdout: 4
+//@[phase9] stdout: -4
+//@[phase9] stdout: -2
+//@[phase9] stdout: -1
+//@[phase9] stdout: 2003
+//@[phase50] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase50] stdout: 10
+//@[phase50] stdout: 20
+//@[phase50] stdout: 30
+//@[phase50] stdout: -30
+//@[phase50] stdout: -20
+//@[phase50] stdout: -10
+//@[phase50] stdout: 900
+//@[phase51] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase51] stdout: 10
+//@[phase51] stdout: -10
+//@[phase51] stdout: 900
+//@[phase52] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase52] stdout: 10
+//@[phase52] stdout: 20
+//@[phase52] stdout: -20
+//@[phase52] stdout: -10
+//@[phase52] stdout: 900
+//@[phase53] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase53] stdout: 10
+//@[phase53] stdout: 20
+//@[phase53] stdout: 30
+//@[phase53] stdout: -30
+//@[phase53] stdout: -20
+//@[phase53] stdout: -10
+//@[phase53] stdout: 900
+//@[phase101] run-fail
+//@[phase101] exit-code: 70
+//@[phase101] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase101] stdout: 1
+//@[phase101] stdout: 2
+//@[phase101] stdout: 105
+//@[phase101] stdout: -105
+//@[phase101] stdout: 3
+//@[phase101] stdout: 101
+//@[phase101] stdout: -101
+//@[phase101] stdout: -3
+//@[phase101] stdout: 4
+//@[phase101] stdout: -4
+//@[phase101] stdout: -2
+//@[phase101] stdout: -1
+//@[phase101] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase102] run-fail
+//@[phase102] exit-code: 70
+//@[phase102] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase102] stdout: 1
+//@[phase102] stdout: 2
+//@[phase102] stdout: 105
+//@[phase102] stdout: -105
+//@[phase102] stdout: 3
+//@[phase102] stdout: 101
+//@[phase102] stdout: -101
+//@[phase102] stdout: -3
+//@[phase102] stdout: 4
+//@[phase102] stdout: -4
+//@[phase102] stdout: -2
+//@[phase102] stdout: -1
+//@[phase102] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase104] run-fail
+//@[phase104] exit-code: 70
+//@[phase104] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase104] stdout: 1
+//@[phase104] stdout: 2
+//@[phase104] stdout: 105
+//@[phase104] stdout: -105
+//@[phase104] stdout: 3
+//@[phase104] stdout: 101
+//@[phase104] stdout: -101
+//@[phase104] stdout: -3
+//@[phase104] stdout: 4
+//@[phase104] stdout: -4
+//@[phase104] stdout: -2
+//@[phase104] stdout: -1
+//@[phase104] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase111] run-fail
+//@[phase111] exit-code: 70
+//@[phase111] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase111] stdout: 1
+//@[phase111] stdout: -1
+//@[phase111] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase121] run-fail
+//@[phase121] exit-code: 70
+//@[phase121] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase121] stdout: 1
+//@[phase121] stdout: -1
+//@[phase121] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase132] run-fail
+//@[phase132] exit-code: 70
+//@[phase132] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase132] stdout: 1
+//@[phase132] stdout: 2
+//@[phase132] stdout: 100
+//@[phase132] stdout: -100
+//@[phase132] stdout: -2
+//@[phase132] stdout: -1
+//@[phase132] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase141] run-fail
+//@[phase141] exit-code: 70
+//@[phase141] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase141] stdout: 1
+//@[phase141] stdout: 2
+//@[phase141] stdout: 105
+//@[phase141] stdout: -105
+//@[phase141] stdout: -2
+//@[phase141] stdout: -1
+//@[phase141] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase152] run-fail
+//@[phase152] exit-code: 70
+//@[phase152] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase152] stdout: 1
+//@[phase152] stdout: 2
+//@[phase152] stdout: 105
+//@[phase152] stdout: -105
+//@[phase152] stdout: 3
+//@[phase152] stdout: -3
+//@[phase152] stdout: -2
+//@[phase152] stdout: -1
+//@[phase152] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase163] run-fail
+//@[phase163] exit-code: 70
+//@[phase163] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase163] stdout: 1
+//@[phase163] stdout: 2
+//@[phase163] stdout: 105
+//@[phase163] stdout: -105
+//@[phase163] stdout: 3
+//@[phase163] stdout: -3
+//@[phase163] stdout: -2
+//@[phase163] stdout: -1
+//@[phase163] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase173] run-fail
+//@[phase173] exit-code: 70
+//@[phase173] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase173] stdout: 1
+//@[phase173] stdout: 2
+//@[phase173] stdout: 105
+//@[phase173] stdout: -105
+//@[phase173] stdout: 3
+//@[phase173] stdout: 100
+//@[phase173] stdout: -100
+//@[phase173] stdout: -3
+//@[phase173] stdout: -2
+//@[phase173] stdout: -1
+//@[phase173] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase184] run-fail
+//@[phase184] exit-code: 70
+//@[phase184] args: phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase phase
+//@[phase184] stdout: 1
+//@[phase184] stdout: 2
+//@[phase184] stdout: 105
+//@[phase184] stdout: -105
+//@[phase184] stdout: 3
+//@[phase184] stdout: 101
+//@[phase184] stdout: -101
+//@[phase184] stdout: -3
+//@[phase184] stdout: 4
+//@[phase184] stdout: -4
+//@[phase184] stdout: -2
+//@[phase184] stdout: -1
+//@[phase184] stderr-contains: shared_exit_cleanup.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- shared_exit_cleanup.gti
+import std.string;
+import std.vector;
+
+// Shared normal-exit cleanup. Each phase leaves `run` or `drain` through a
+// different exit while a different set of user-defined resources is live:
+// plain returns, `?` propagations, `unexpected(...)` returns, a void body's
+// returns and its end. Every exit must release exactly the live resources,
+// newest first and once each, and the value or error it returns must survive
+// the cleanup it shares with the other exits. A destructor failing during
+// that cleanup reports an ordinary failure at the destructor.
+mut int32_t phase = 0;
+mut int32_t fail_destructor = 0;
+mut int32_t zero = 0;
+
+enum class Err : int32_t { Early = 1, Mid = 2, Late = 3, Probe = 4 };
+
+class Resource {
+  int32_t id;
+public:
+  Resource(int32_t id) : id(id) { std::println(id); }
+  ~Resource() {
+    std::println(0 - this.id);
+    if (fail_destructor == this.id) {
+      int32_t cleanup_failure = 7 / zero;
+    }
+  }
+};
+
+// A callee whose own exits share cleanup: `inner` is released by each exit.
+expected<int32_t, Err> probe(int32_t at) {
+  Resource inner = Resource(100 + at);
+  if (at == 0) { return unexpected(Err::Probe); }
+  if (at == 1) { return 10; }
+  return at;
+}
+
+expected<int32_t, Err> run(int32_t p) {
+  Resource a = Resource(1);
+  if (p == 1) { return 11; }
+  if (p == 2) { return unexpected(Err::Early); }
+  Resource b = Resource(2);
+  mut int32_t x = ?probe(p == 3 ? 0 : 5);
+  if (p == 4) { return x; }
+  {
+    Resource c = Resource(3);
+    if (p == 5) { return 55; }
+    if (p == 6) { return unexpected(Err::Mid); }
+    int32_t y = ?probe(p == 7 ? 0 : 1);
+    x = x + y;
+  }
+  Resource d = Resource(4);
+  if (p == 8) { return x; }
+  return unexpected(Err::Late);
+}
+
+void drain(int32_t p) {
+  Resource a = Resource(10);
+  if (p == 1) { return; }
+  Resource b = Resource(20);
+  if (p == 2) { return; }
+  Resource c = Resource(30);
+  if (p == 3) { return; }
+}
+
+int32_t code(Err error) {
+  if (error == Err::Early) { return 1; }
+  if (error == Err::Mid) { return 2; }
+  if (error == Err::Late) { return 3; }
+  return 4;
+}
+
+// Phase P below 50 runs `run(P)`; phase 50 + P runs `drain(P)`; phase
+// 100 + 10 * P + D runs `run(P)` with the destructor of resource D failing.
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  if (phase >= 100) {
+    fail_destructor = (phase - 100) % 10;
+    phase = (phase - 100) / 10;
+  }
+  if (phase >= 50) {
+    drain(phase - 50);
+    std::println(900);
+    return 0;
+  }
+  expected<int32_t, Err> result = run(phase);
+  if (result.has_value()) {
+    std::println(1000 + result.value());
+  } else {
+    std::println(2000 + code(result.error()));
+  }
+  return 0;
+}

@@ -1,0 +1,8 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+int main() { int number = 7; View view{number}; return view.value - 7; }

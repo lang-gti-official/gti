@@ -1,0 +1,19 @@
+// An uninstantiated application generic over every capability family builds natively.
+//@ build-pass
+//@ execution-profile: concurrent
+import std.atomic;
+import std.mutex;
+import std.memory;
+
+class guarded_counter<std::atomic_scalar T> {
+  std::mutex<T> value;
+  std::atomic<T> generation;
+  std::shared_ptr<T> snapshot;
+
+public:
+  guarded_counter(T initial)
+      : value(std::mutex<T>(initial)), generation(std::atomic<T>(initial)),
+        snapshot(std::shared_ptr<T>()) {}
+};
+
+int main() { return 0; }

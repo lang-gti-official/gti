@@ -1,0 +1,6 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+concept Survives<lifetime longer, lifetime shorter> = outlives<longer, shorter>;
+int&<shorter> shorten<lifetime longer, lifetime shorter>(int&<longer> input)
+  requires Survives<longer, shorter> { return input; }

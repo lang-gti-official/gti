@@ -1,0 +1,18 @@
+// Macro result storage effects: concrete fresh-callable macro effects remain disjoint and query-qualified in either specialization order.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3;
+#macro int invoke<F>(F action) { return action(); }
+#macro int relay<F>(F action) { return invoke!(action); }
+int selected<uint64_t Mode>() {
+  int& held = guarded;
+  int result = relay!([]() -> int {
+    if constexpr (Mode == 0) { other = 9; }
+    else if constexpr (Mode == 1) { guarded = 9; }
+    else { third = 9; }
+    return 1;
+  });
+  return held + result;
+}
+int main() { int first = selected<0>(); int second = selected<2>(); return first + second; }

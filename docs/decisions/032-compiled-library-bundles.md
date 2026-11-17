@@ -240,7 +240,7 @@ types before using them in record fields, enum defaults and callable signatures.
 This prevents ordinary relative namespace lookup from selecting a shadowing type
 while preserving source-language visibility and existing type identity. The alias
 mechanism adds no runtime adapter or new language rule. The `compiled_namespaces`
-fixture proves two independent bundles, namespace shadowing, private layout and
+project transcript proves two independent bundles, namespace shadowing, private layout and
 borrow checking with producer sources removed. Exposing dependency-owned nominal
 types through another library's interface remains a separate prerequisite.
 

@@ -1,0 +1,1 @@
+Convert seven stand-alone C++ test binaries (reflection, ownerless text, panic contracts, carrier shells, thread-local semantics, consuming receivers, raw borrows) to gti-test cases through a new trace mode of the extractor.

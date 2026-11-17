@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+enum State { value(int item) };
+int&<a> select<lifetime a>(State&<a> state) {
+  switch (state) { case State::value(auto& payload): return payload; }
+}
+int main() { State state = State::value(7); return select(state) - 7; }

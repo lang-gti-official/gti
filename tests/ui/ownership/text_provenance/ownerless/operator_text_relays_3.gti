@@ -1,0 +1,31 @@
+// Operator text relays: an operator's text result keeps its relayed owner borrowed: std::string_view kept = same[owner.view()];.
+import std.string;
+class Same {
+public:
+  Same() {}
+  std::string_view operator()(std::string_view s) { return s; }
+  std::string_view operator[](std::string_view s) { return s; }
+};
+class Plain {
+  mut std::string s;
+public:
+  Plain() : s("plain") {}
+  std::string_view operator()() { return this.s.view(); }
+  void grow() mut { this.s.append("!"); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R operator()(R text) { return text; }
+};
+
+int main() {
+  Same same{};
+  mut Plain plain{};  //~ WARN GTI-S2096
+  Echo<std::string_view> echo{};
+  mut std::string owner{"owned"};
+  std::string_view kept = same[owner.view()];
+  owner.append("!");  //~ ERROR GTI-S2017
+  return int(kept.size());
+}

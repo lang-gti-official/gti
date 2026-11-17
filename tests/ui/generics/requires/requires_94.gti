@@ -1,0 +1,8 @@
+// General requires: unsafe expressions retain their call obligation in generic facts.
+//@ check-pass
+concept raw_read<T> = requires(T& value) {
+  { unsafe { value.raw() } } -> int;
+};
+struct Device { unsafe int raw() { return 9; }  public: Device() = default; };
+int read<T>(T& value) requires raw_read<T> { return unsafe { value.raw() }; }
+int main() { Device value{}; return read(value) == 9 ? 0 : 1; }

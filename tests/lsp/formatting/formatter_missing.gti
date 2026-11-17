@@ -1,0 +1,6 @@
+// Formatting a type without a formatter is a formattable<T> contract error
+// at the argument. (From extensible_formatting_lsp_test.py.)
+import std.format;
+import std.string;
+struct AssetId { AssetId() = default; uint64_t value = uint64_t(42); };
+int main() { AssetId id{}; std::runtime_println("{}", /* 😀 */ id); return 0; }  //~ ERROR GTI-S2029 formattable<AssetId>

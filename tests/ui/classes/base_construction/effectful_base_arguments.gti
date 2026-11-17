@@ -1,0 +1,96 @@
+// Effectful base-constructor arguments run in order and unwind on failure.
+//@ run-pass
+//@ revisions: ok p1 p2 p3
+//@[p1] run-fail
+//@[p1] args: phase
+//@[p1] exit-code: 70
+//@[p1] stdout: 9
+//@[p1] stdout: 1
+//@[p1] stdout: 2
+//@[p1] stdout: 109
+//@[p1] stderr-contains: main.gti:11: runtime error[GTI-R0002]
+//@[p2] run-fail
+//@[p2] args: phase phase
+//@[p2] exit-code: 70
+//@[p2] stdout: 9
+//@[p2] stdout: 1
+//@[p2] stdout: 2
+//@[p2] stdout: 30
+//@[p2] stdout: 109
+//@[p2] stderr-contains: main.gti:28: runtime error[GTI-R0002]
+//@[p3] run-fail
+//@[p3] args: phase phase phase
+//@[p3] exit-code: 70
+//@[p3] stdout: 9
+//@[p3] stdout: 1
+//@[p3] stdout: 2
+//@[p3] stdout: 30
+//@[p3] stdout: 40
+//@[p3] stdout: 50
+//@[p3] stdout: 140
+//@[p3] stdout: 130
+//@[p3] stdout: 109
+//@[p3] stderr-contains: main.gti:42: runtime error[GTI-R0002]
+//@[ok] stdout: 9
+//@[ok] stdout: 1
+//@[ok] stdout: 2
+//@[ok] stdout: 30
+//@[ok] stdout: 40
+//@[ok] stdout: 50
+//@[ok] stdout: 150
+//@[ok] stdout: 140
+//@[ok] stdout: 130
+//@[ok] stdout: 109
+// --- main.gti
+import std.string;
+import std.vector;
+
+mut int phase = 0;
+mut int order = 0;
+int argument(int value) {
+  order = order * 10 + value;
+  std::println(value);
+  if (phase == 1 && value == 2) {
+    int zero = 0;
+    int failed = value / zero;
+  }
+  return value + 10;
+}
+class Resource {
+  int id;
+public:
+  Resource(int id) : id(id) { std::println(id); }
+  ~Resource() { std::println(this.id + 100); }
+};
+class Foundation {
+public:
+  int score;
+  Foundation(int first, int second) : score(first + second) {
+    std::println(30);
+    if (phase == 2) {
+      int zero = 0;
+      int failed = score / zero;
+    }
+  }
+  ~Foundation() { std::println(130); }
+};
+class Building : public Foundation {
+  Resource resource;
+  std::string label;
+public:
+  int input_after;
+  Building(mut int initial) : Foundation(argument(initial), argument(initial > 0 ? ++initial : 2)), resource(Resource(40)), label(std::string("building")), input_after(initial) {
+    std::println(50);
+    if (phase == 3) {
+      int zero = 0;
+      int failed = initial / zero;
+    }
+  }
+  ~Building() { std::println(150); }
+};
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Resource caller = Resource(9);
+  Building value = Building(1);
+  return value.score - 23 + order - 12 + value.input_after - 2;
+}
