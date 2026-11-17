@@ -2,7 +2,7 @@
 //@ run-fail
 //@ exit-code: 70
 //@ stdout: cleaned
-//@ stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in 
+//@ stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in
 //@ revisions: shorter_first shorter_second subspan_count subspan_offset
 //@[shorter_first] args: shorter-first
 //@[shorter_second] args: shorter-second

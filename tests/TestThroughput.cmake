@@ -76,7 +76,7 @@ if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     consuming_range_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
-    owner_chain_runtime 
+    owner_chain_runtime
     complete_containers
     constructor_null_native_runtime
     paired_span_iterator_completion cursor_carrier_publication
