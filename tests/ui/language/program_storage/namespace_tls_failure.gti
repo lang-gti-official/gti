@@ -9,7 +9,7 @@ class Marker {
   int divisor;
 public:
   Marker(int value, int divisor) : value(value), divisor(divisor) {}
-  int read() const { return value; }
+  int read() { return value; }
   ~Marker() {
     std::println(value);
     int checked = 12 / divisor;

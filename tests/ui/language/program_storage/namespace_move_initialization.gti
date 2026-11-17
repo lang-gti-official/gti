@@ -7,7 +7,7 @@ public:
   Item(int value) : value(value) {}
   Item(Item& other) = delete;
   Item(Item&& other) = default;
-  int read() const { return value; }
+  int read() { return value; }
   ~Item() {}
 };
 Item make() {
