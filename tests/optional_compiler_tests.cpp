@@ -619,8 +619,12 @@ int main() { auto text = Text::value("static"); return 0; }
             expression +
             "); return text; }\nint main() { auto text = escape(); return 0; }",
         {standardLibraryPrelude()}, {}, {standardLibraryRoot()});
+    if (escapingPayload.canGenerateCode() ||
+        !hasDiagnosticCode(escapingPayload.diagnostics, "GTI-S2045"))
+      for (const auto &diagnostic : escapingPayload.diagnostics)
+        std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
     expect(!escapingPayload.canGenerateCode() &&
-               hasDiagnosticCode(escapingPayload.diagnostics, "GTI-S2017") &&
+               hasDiagnosticCode(escapingPayload.diagnostics, "GTI-S2045") &&
                !hasDiagnosticCode(escapingPayload.diagnostics, "GTI-B0001"),
            "ordinary enum storage of dynamic text, including moved views, "
            "cannot escape its owner");

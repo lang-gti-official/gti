@@ -4293,10 +4293,18 @@ public:
     // (text views and borrowed records, for example). Both native layouts
     // must exist; this neither constructs nor loads the pointee here.
     if (stage.intrinsic == IntrinsicKind::ObjectBorrowOwned ||
-        stage.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut)
+        stage.intrinsic == IntrinsicKind::ObjectBorrowOwnedMut) {
+      const auto representedAddress = [&](const SemanticType &type) {
+        return nativeValue(type) || (dispatchProofs.contains(type) &&
+                                     dispatchProofs.metadata(type).has_value());
+      };
+      // Like a raw borrow, this publishes an already adjusted address. A
+      // hierarchy view needs its dispatch layout, not by-value transport.
+      // The independently verified loan still owns the source and access.
       return stage.info.type == pointer.arguments.front() &&
-             nativeValue(stage.info.type) &&
-             nativeValue(stage.parameterTypes[1].arguments.front());
+             representedAddress(stage.info.type) &&
+             representedAddress(stage.parameterTypes[1].arguments.front());
+    }
     if (!(passiveAddress(pointer) && passiveReferenceType(stage.info.type)) &&
         !ordinaryRawReferenceObject(pointer.arguments.front()) &&
         !nativeRecordObject(pointer.arguments.front()) &&
