@@ -167,7 +167,6 @@ if(Python3_Interpreter_FOUND)
     operator_relay_pipeline 285
     language_coverage_corpus 170
     aggregate_projection_runtime 140
-    container_contract_failure 115
     cli_workflow 95
     mir_cutover_corpus_oracle 85
     simd_runtime 85)

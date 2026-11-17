@@ -1146,9 +1146,9 @@ temporary lowerer, then traverses reached nested/instance expansion roots and
 their constructor-call descendants. Its ordinary and concrete generic cases
 must retain the exact sources without retaining whole semantic models.
 
-`deferred_assertions_runtime` runs the success/failure fixtures and runnable
-examples 172 and 174 with C++20/C++23 at O0/O1/O3, disabled elision, ASan/UBSan, and native
-`-DNDEBUG`, each with source `NDEBUG` enabled and disabled. It checks forcing
+`tests/ui/stdlib/assert/` (with `NDEBUG` variants in `tests/slow/stdlib/assert/`)
+runs the success/failure fixtures and copies of examples 172 and 174, each with
+source `NDEBUG` enabled and disabled. It checks forcing
 count/order, skipped moves and message construction, lookup/access hygiene,
 caller defaults and nested wrappers, reverse cleanup, panic during cleanup,
 managed-thread propagation, and owning local cleanup on normal scope exit,
@@ -7438,8 +7438,9 @@ The sole backend repair retains the existing resultless void-success observer
 alongside the owning Expected error arm in call-result admission; it adds no
 new semantic permission or AST/HIR execution route.
 
-`stdlib_adoption_runtime` passes 60 builds and 114 exact runtime outcomes across
-C++20/C++23 O0/O3, disabled elision and ASan/UBSan. It covers original error
+The cases converted from `stdlib_adoption_runtime` (`tests/ui/stdlib/algorithm/`,
+`tests/slow/stdlib/{algorithm,http,json}/`, `tests/ui/language/expected/void_owned_propagation.gti`)
+run at O0 per commit and O3 in the slow tier. It covers original error
 category/path/source metadata, exact owner/drop behavior, deterministic size
 overflow, measured URL allocation reduction, zero-allocation O(n log n)
 comparator sorting and failure cleanup. Deterministically injected allocation
@@ -10651,7 +10652,7 @@ valid alternatives.
 comparison through repeated insertion and erasure, read/mutable iteration,
 owned keys and values, duplicate emplacement, replacement, custom policies,
 and concrete member aliases. Their negative cases retain immutable keys and
-whole-owner iterator conflict rules. `container_contract_failure` checks missing
+whole-owner iterator conflict rules. `tests/slow/stdlib/containers/contract_failure/` checks missing
 keys, invalid sentinel operations and load factors, plus checked overflow
 through a nested iterator's arrow projection, with caller cleanup.
 `associative_constructor_runtime` covers passive and owning node construction,

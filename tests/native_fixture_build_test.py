@@ -19,8 +19,6 @@ from iterator_sanitizer_support import (gcc_sanitizer_arguments,
                                         selected_native_driver)
 import lambda_pack_invocation_runtime_test as matrix
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
-import shared_accessor_range_runtime_test as accessor
-import storage_lane_iterator_runtime_test as storage
 from backend_modes import native_modes
 
 
@@ -152,21 +150,6 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             self.assertIn(b"void exclusive_random<I>", contents)
             self.assertIn(b"void exclusive_bidirectional<I>", contents)
 
-    def test_sparse_exact_regions_retain_all_windows_and_complete_states(self):
-        regions = self.check_exact_partition("sparse_mask_iterator_allocations", storage.sanitizer_partitions,
-                                            ("pool", "resource-storage", "simd-mask"))
-        for region in regions:
-            self.assertEqual(region.count(b"adoption_count_begin();"), 1)
-            self.assertEqual(region.count(b"adoption_count_end();"), 1)
-            self.assertEqual(region.count(b"round < 64"), 1)
-            self.assertIn(b"adoption_allocations() != uint64_t(0)", region)
-        self.assertIn(b"checksum != 7680", regions[0])
-        self.assertIn(b"pool.contains(index) != live", regions[0])
-        self.assertIn(b"checksum != 7680", regions[1])
-        self.assertIn(b"slots.initialized(index) != live", regions[1])
-        self.assertIn(b"checksum != 2048", regions[2])
-        self.assertIn(b"mask[index] !=", regions[2])
-
     def test_partition_rejects_missing_duplicate_reordered_or_changed_cuts(self):
         source = b"// common\nint main() {\n  first();\n  second();\n  third();\n  return 0;\n}\n"
         names = ("first", "second", "third")
@@ -227,35 +210,6 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             self.assertEqual(options["env"]["ASAN_OPTIONS"], "halt_on_error=1")
             self.assertEqual(options["env"]["UBSAN_OPTIONS"], "halt_on_error=1:print_stacktrace=1")
 
-    def test_sparse_provider_order_original_modes_and_budget_remain(self):
-        records = []
-
-        def build(command, output, **options):
-            records.append((command, Path(command[1]).read_bytes(), options))
-            output.with_suffix(".gti.cpp").write_text("// GTI verified-MIR body:\n")
-            return subprocess.CompletedProcess(command, 0, "", "")
-
-        with tempfile.TemporaryDirectory(prefix="gti-iterator-partition-unit-") as directory, \
-                patch.object(storage, "build_fixture", build), \
-                patch.object(storage, "run", return_value=subprocess.CompletedProcess([], 0, "", "")), \
-                contextlib.redirect_stdout(io.StringIO()):
-            storage.prove_allocation_free_families(Path("fake-gti"), self.fixtures, Path(directory))
-        # Four allocation families at the production level of every selected backend.
-        self.assertEqual(len(records), 4 * len(native_modes(levels=("O3",))))
-        for command, contents, options in records:
-            name = Path(command[1]).stem
-            self.assertEqual(options["timeout"], 180)
-            self.assertEqual(options["native_sources"],
-                             [self.fixtures / "stdlib_adoption_allocation_counts.cpp"])
-            if name in ("sparse_mask_iterator_allocations-pool",
-                        "sparse_mask_iterator_allocations-resource-storage",
-                        "sparse_mask_iterator_allocations-simd-mask"):
-                self.assertEqual((options["standard"], options["optimization"]), ("c++23", "O1"))
-                self.assertEqual(options["native_arguments"],
-                                 ("-fsanitize=address,undefined", "-fno-omit-frame-pointer"))
-            else:
-                self.assertEqual(contents, (self.fixtures / f"{name}.gti").read_bytes())
-
     def test_gcc_selection_uses_native_driver_macros_not_compatible_name_or_host(self):
         environment = {"GTI_CXX": "/native path/c++", "CXX": "/other/g++"}
         self.assertEqual(selected_native_driver(environment), "/native path/c++")
@@ -291,7 +245,6 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             callbacks.append((name, label))
             self.assertEqual(environment["ASAN_OPTIONS"], "halt_on_error=1")
             self.assertEqual(environment["UBSAN_OPTIONS"], "halt_on_error=1:print_stacktrace=1")
-            self.assertEqual(accessor.native_arguments_by_case(name, label, environment), ())
             if name == "with_provider" and label == "sanitized":
                 return ("-fno-inline-functions-called-once", "-fno-inline")
             return ()

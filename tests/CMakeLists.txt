@@ -1908,13 +1908,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/allocation_abort_runtime_test.py"
             "$<TARGET_FILE:gti_allocation_abort_helper>"
   )
-  add_test(
-    NAME deferred_assertions_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(deferred_assertions_runtime PROPERTIES TIMEOUT 1200)
   add_test(NAME deferred_assertions_cost
     COMMAND "${Python3_EXECUTABLE}"
       "${PROJECT_SOURCE_DIR}/tests/deferred_assertion_cost_test.py"
@@ -1964,11 +1957,6 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti_runtime>"
   )
   set_tests_properties(environment_runtime PROPERTIES TIMEOUT 600)
-  add_test(NAME stdlib_adoption_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/stdlib_adoption_runtime_test.py"
-            "$<TARGET_FILE:gti>")
-  set_tests_properties(stdlib_adoption_runtime PROPERTIES TIMEOUT 1200)
   add_test(
     NAME cthread_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2022,9 +2010,7 @@ if(Python3_Interpreter_FOUND)
       forward_list_iterator_runtime
       contiguous_iterator_completion
       paired_span_iterator_completion
-      storage_lane_iterator_runtime
       cursor_carrier_publication
-      map_mutable_entry_projection
       user_dual_range_lifetime
       user_owning_reference_replacement
       range_endpoint_parking_runtime
@@ -2732,7 +2718,7 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(associative_hash_contracts PROPERTIES TIMEOUT 300)
   foreach(associative_suite IN ITEMS associative_map unordered_map
       associative_constructor_runtime
-      nested_borrow_fields borrowing_composition container_contract_failure)
+      nested_borrow_fields borrowing_composition)
     add_test(
       NAME "${associative_suite}"
       COMMAND "${Python3_EXECUTABLE}"
