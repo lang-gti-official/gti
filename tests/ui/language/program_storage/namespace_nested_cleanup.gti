@@ -1,0 +1,26 @@
+// Namespace owners destroy their fields and bases before earlier roots.
+//@ run-pass
+//@ stdout: 4
+//@ stdout: 3
+//@ stdout: 2
+//@ stdout: 1
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  ~Marker() { std::println(value); }
+};
+class Base {
+public:
+  Base() {}
+  ~Base() { std::println(2); }
+};
+class Derived : public Base {
+  Marker member;
+public:
+  Derived() : Base(), member(3) {}
+  ~Derived() { std::println(4); }
+};
+Marker earlier{1};
+Derived later{};
+int main() { return 0; }

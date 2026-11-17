@@ -1,0 +1,21 @@
+// A second global destructor failure preserves the cleanup emergency.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 2
+//@ stdout: 1
+//@ stderr-contains: failure_during_cleanup
+class Marker {
+  int value;
+  int divisor;
+public:
+  Marker(int value, int divisor) : value(value), divisor(divisor) {}
+  ~Marker() {
+    std::println(value);
+    int checked = 12 / divisor;
+    if (checked == 99) { std::println(99); }
+  }
+};
+Marker abandoned{0, 1};
+Marker first{1, 0};
+Marker second{2, 0};
+int main() { return 0; }
