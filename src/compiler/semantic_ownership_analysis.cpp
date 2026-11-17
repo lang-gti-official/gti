@@ -13031,6 +13031,8 @@ auto SemanticVisitor::Impl::metaQueryConstant(
         return ConstantValue{facts->generic};
       case 9:
         return ConstantValue{facts->constrained};
+      case 10:
+        return ConstantValue{facts->resultOutlivesReceiver};
       default:
         return std::nullopt;
       }

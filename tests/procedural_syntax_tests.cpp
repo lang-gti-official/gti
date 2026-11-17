@@ -988,8 +988,70 @@ int main(){return 0;}
             result.execution.detail.find("cancelled") != std::string::npos,
         "in-flight cancellation publishes neither syntax nor constants");
 }
+
+void standardConcat() {
+  for (const auto policy : {lang::TrustedBodyAnalysis::Complete,
+                            lang::TrustedBodyAnalysis::Reachable}) {
+    lang::FrontendOptions options;
+    options.trustedBodies = policy;
+    const auto result = analyze(R"(
+import std.string;
+constexpr std::string_view empty = std::concat!({});
+constexpr std::string_view value = std::concat!({"a", /* separator */ "b",});
+constexpr std::string_view binary = std::concat!({"\0", "7", "\x41", "B", "\\", "n"});
+constexpr std::string_view unicode = std::concat!({"\u00E9", "\U0001F600", "é"});
+static_assert(empty.size() == 0);
+static_assert(value == "ab");
+static_assert(binary.size() == 6);
+int invoke<F>(F callback) { return callback(); }
+int main() {
+  if (invoke([]() -> int { return 42; }) != 42) { return 2; }
+  return value == "ab" && binary.size() == 6 && binary[0] == '\0' &&
+      binary[1] == '7' && binary[2] == 'A' && binary[3] == 'B' &&
+      binary[4] == '\\' && binary[5] == 'n' && unicode.size() == 8 ? 0 : 1;
+}
+)",
+                                std::string(proceduralDeclaration), options);
+    if (!result.canGenerateCode())
+      for (const auto &d : result.diagnostics)
+        std::cerr << d.code << ": " << d.message << '\n';
+    check(result.canGenerateCode(), "concat expands to static literal storage "
+                                    "under both trusted-body policies");
+    check(std::none_of(result.mir.functionInstances().begin(),
+                       result.mir.functionInstances().end(),
+                       [](const auto &f) { return f.proceduralFunction; }),
+          "generic discovery never publishes a procedural runtime body");
+    check(
+        std::none_of(result.mir.classInstances().begin(),
+                     result.mir.classInstances().end(),
+                     [](const auto &c) {
+                       return c.syntaxKind != lang::CompileTimeSyntaxKind::None;
+                     }),
+        "full discovery never publishes a compile-time syntax runtime layout");
+  }
+  for (const auto &[input, message] :
+       std::array<std::pair<std::string_view, std::string_view>, 6>{
+           {{"{\"a\" \"b\"}", "expects ','"},
+            {"{,}", "expects a string literal"},
+            {"{\"a\",,}", "expects a string literal"},
+            {"{42}", "expects a string literal"},
+            {"{name}", "expects a string literal"},
+            {"{(\"a\")}", "expects a string literal"}}}) {
+    lang::FrontendOptions options;
+    options.trustedBodies = lang::TrustedBodyAnalysis::Reachable;
+    const auto result =
+        analyze("import std.string; int main() { auto value = std::concat!(" +
+                    std::string(input) + "); return 0; }",
+                std::string(proceduralDeclaration), options);
+    diagnostic(result, message);
+    check(std::any_of(result.diagnostics.begin(), result.diagnostics.end(),
+                      [](const auto &d) { return d.code == "GTI-S2124"; }),
+          "concat misuse has the procedural expansion diagnostic");
+  }
+}
 } // namespace
 int main() {
+  standardConcat();
   parserAndFormatter();
   arena();
   sharedSyntaxConstruction();

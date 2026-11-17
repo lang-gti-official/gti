@@ -308,6 +308,10 @@ public:
   constexpr bool is_unsafe() { return gti_internal::meta_method_trait<T, I, 7>(); }
   constexpr bool is_generic() { return gti_internal::meta_method_trait<T, I, 8>(); }
   constexpr bool is_constrained() { return gti_internal::meta_method_trait<T, I, 9>(); }
+  /// Whether the result never borrows the receiver: it carries no borrowed
+  /// state, or every region its signature writes is one of the class's own
+  /// lifetime parameters, `static`, or a region its parameters supply.
+  constexpr bool result_outlives_receiver() { return gti_internal::meta_method_trait<T, I, 10>(); }
   constexpr uint64_t parameter_count() { return gti_internal::meta_method_parameter_count<T, I>(); }
   constexpr parameter_list<T, I> parameters() { return parameter_list<T, I>(); }
   constexpr type<return_type<T, I>> result() {
