@@ -120,7 +120,9 @@ def main():
     ci, nightly, release = text(root, CI), text(root, NIGHTLY), text(root, RELEASE)
     full, sanitizers = text(root, FULL_VALIDATION), text(root, SANITIZERS)
     expect("merge_group:" in ci and "ready_for_review" in ci and "name: CI gate" in ci
-           and "python3 tests/repository_hosting_test.py ." in ci
+           and "-L '^tree-consistency$'" in ci
+           and re.search(r"\bset\(gti_tree_consistency_tests\b[^)]*\brepository_hosting\b",
+                         text(root, "tests/TestThroughput.cmake")) is not None
            and "npm run test:source-text" in ci
            and "installed_library_smoke" in ci,
            "CI lost its gate, Tree-sitter or installed-toolchain checks")

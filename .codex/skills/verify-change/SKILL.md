@@ -70,6 +70,15 @@ tooling that consume them. For the changed paths the planner prints:
   tracked file under `src/`, `include/`, `runtime/`, `stdlib/`, `scripts/` or
   `lua/` has neither, and the selection silently misses its checks.
 
+A change that deletes, adds or renames a test file, script or fixture also
+runs the `tree-consistency` label (meta-tests that cross-reference the tree;
+the CI gate runs it too) from a configure-only tree:
+
+```sh
+cmake -S . -B build-consistency -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"
+ctest --test-dir build-consistency -j 8 --output-on-failure -L '^tree-consistency$'
+```
+
 The selection is a lower bound, never a proof of sufficiency. The author
 extends it from their own analysis of the changed invariant: which phases and
 tools consume the changed fact, which feature regressions exercise it, and
