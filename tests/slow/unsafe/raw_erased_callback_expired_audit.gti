@@ -2,6 +2,7 @@
 // pointer payload whose scope has ended. (Converted from
 // raw_native_record_transport_runtime_test.)
 //@ raw-pointer-audit: strict
+//@ slow
 import std.functional;
 
 [[c_abi]] struct NativeAddress {

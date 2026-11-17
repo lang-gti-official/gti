@@ -1,5 +1,6 @@
 // A std::set brace list copies no owning element: a named std::string must be moved in.
 //@ check-fail
+//@ slow
 import std.set;
 import std.string;
 int main() {

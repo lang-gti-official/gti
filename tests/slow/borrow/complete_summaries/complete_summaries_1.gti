@@ -1,5 +1,6 @@
 // Complete borrow summaries: the program is accepted.
 //@ check-pass
+//@ slow
 import std.memory;
 import std.panic;
 enum State { empty, number(int64_t value) };

@@ -1,5 +1,6 @@
 // Instance text relay effects: payload/accessor text relays retain their TLS owner against hidden concrete mutation in either query order.
 //@ execution-profile: concurrent
+//@ slow
 //@ require-function-definitions
 import std.panic;
 import std.string;

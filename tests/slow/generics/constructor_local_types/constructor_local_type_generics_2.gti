@@ -1,5 +1,6 @@
 // Constructor local type generics: constructor-local type arguments should infer exactly, satisfy declared requirements, and lower through verified MIR.
 //@ check-pass
+//@ slow
 import std.string;
 import std.memory;
 

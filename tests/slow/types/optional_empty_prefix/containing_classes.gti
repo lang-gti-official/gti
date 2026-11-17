@@ -1,5 +1,6 @@
 // Containing classes: nonassignable constructor fields have valid MIR.
 //@ check-pass
+//@ slow
 //@ execution-profile: concurrent
 import std.optional;
 import std.string;

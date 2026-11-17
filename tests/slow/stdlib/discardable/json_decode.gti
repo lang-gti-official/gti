@@ -1,5 +1,6 @@
 // JSON optional and map decoding instantiates through verified MIR after its redundant discards were removed.
 //@ check-pass
+//@ slow
 import std.json;
 import std.optional;
 import std.map;

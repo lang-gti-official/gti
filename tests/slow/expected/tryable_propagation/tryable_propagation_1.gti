@@ -1,5 +1,6 @@
 // Tryable propagation: the program is accepted.
 //@ check-pass
+//@ slow
 import std.string;
 import std.panic;
 

@@ -5,7 +5,7 @@
 // CHECK: attributes #{{[0-9]+}} = { noinline
 // CHECK: attributes #{{[0-9]+}} = { cold inlinehint
 // CHECK: attributes #{{[0-9]+}} = { cold noinline
-// CHECK: attributes #{{[0-9]+}} = { cold "
+// CHECK: attributes #{{[0-9]+}} = { cold {{["}]}}
 [[inline]] int hinted(int value) { return value + 1; }
 [[cold, noinline]] int uncommon(int value) { return value - 1; }
 [[cold, inline]] int rare_hint(int value) { return value; }

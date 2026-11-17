@@ -1,5 +1,6 @@
 // Read only constructor dependencies: read-only constructor shell retains external dependency: Shared.
 //@ check-pass
+//@ slow
 import std.panic;
 
 import std.utility;

@@ -2,6 +2,7 @@
 // failure channels: the recursive `parse` frame reserves three, not one per
 // fallible call (issue #397; from llvm_hosted_execution_test.py).
 //@ snapshot: llvm-ir
+//@ slow
 // CHECK: define {{.*}} ; parse
 // CHECK: alloca %gti.failure_channel.v1
 // CHECK: alloca %gti.failure_channel.v1
