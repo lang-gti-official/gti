@@ -8,17 +8,24 @@ namespace std {
 namespace detail {
 // Declaration metadata supplies the result type; an ordinary expression query
 // separately validates access, overload selection, and the checked origin.
+// A value result may carry borrowed state only when the declaration writes
+// it in the cursor's own lifetime parameters: it then borrows what the cursor
+// stores, never the cursor, and survives advancement.
 constexpr bool readable_dereference_result<I, R>(std::meta::type<I> owner,
-                                                 std::meta::type<R> result) {
+                                                 std::meta::type<R> result,
+                                                 bool outlives_cursor) {
   if constexpr (std::meta::type<R>().is_reference()) {
     return requires(I&<cursor> cursor) { { *cursor } -> R<cursor>; };
-  } else {
+  } else if constexpr (std::meta::is_borrow_free<R>()) {
     // Legacy text handles can retain expression-specific owner dependencies.
     return !std::meta::type<R>().is_void() && std::meta::is_copyable<R>() &&
-           std::meta::is_borrow_free<R>() &&
            !std::meta::is_same<R, std::string_view>() &&
            !std::meta::is_same<R, c_string>() &&
            (requires(I& cursor) { { *cursor } -> R; });
+  } else {
+    // A borrow carrier copies its loans but cannot be reassigned over them.
+    return outlives_cursor && std::meta::is_copy_constructible<R>() &&
+           (requires(I& cursor) { { *cursor }; });
   }
 }
 constexpr bool dereference_declaration<I, T, uint64_t Typed>() {
@@ -32,12 +39,14 @@ constexpr bool dereference_declaration<I, T, uint64_t Typed>() {
                     !member.is_generic() && !member.is_constrained() &&
                     member.parameter_count() == uint64_t(0)) {
         if constexpr (Typed == uint64_t(0)) {
-          found = readable_dereference_result(std::meta::type<I>(), member.result());
+          found = readable_dereference_result(std::meta::type<I>(), member.result(),
+                                              member.result_outlives_receiver());
         } else {
           if constexpr (!std::meta::type<T>().is_void() &&
                         !std::meta::type<T>().is_reference()) {
             if constexpr (member.result().is_same<T>() || member.result().is_same<T&>()) {
-              found = readable_dereference_result(std::meta::type<I>(), member.result());
+              found = readable_dereference_result(std::meta::type<I>(), member.result(),
+                                              member.result_outlives_receiver());
             }
           }
         }

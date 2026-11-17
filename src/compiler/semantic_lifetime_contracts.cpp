@@ -10,6 +10,7 @@
 #include "semantic_analyzer_impl.h"
 
 #include <algorithm>
+#include <functional>
 
 namespace lang {
 
@@ -316,6 +317,59 @@ auto SemanticVisitor::Impl::explicitLifetimeResult(
   return result;
 }
 
+auto SemanticVisitor::Impl::resultBorrowsOnlyStoredRegions(
+    const FunctionDecl &syntax, ClassId ownerClass, bool elidedPositions) const
+    -> bool {
+  if (ownerClass == 0)
+    return false;
+  const auto *declaration = classInfo(ownerClass).declaration;
+  if (declaration == nullptr)
+    return false;
+  // The regions the receiver stores, and `static`, outlive any one receiver
+  // borrow; `this`, `_` and a method's own binder do not.
+  std::vector<std::string> external{"static"};
+  for (const auto &parameter : declaration->lifetimeParameters())
+    external.push_back(parameter.name.lexeme);
+  for (const auto &pattern : declaration->genericArgumentPatterns())
+    collectRegionNames(pattern, external);
+  bool written = false;
+  const auto externalRegion = [&](const std::string &name) {
+    written = true;
+    return contains(external, name);
+  };
+  const auto covered = [&](const auto &self, const TypeRef &type) -> bool {
+    if (type.reference &&
+        (!type.referenceLifetime ||
+         !externalRegion(type.referenceLifetime->name.lexeme)))
+      return false;
+    for (const auto &argument : type.lifetimeArguments)
+      if (argument.name.segments.size() != 1 ||
+          !externalRegion(argument.name.last().lexeme))
+        return false;
+    if (elidedPositions && !type.reference && type.lifetimeArguments.empty()) {
+      // A position written without regions elides them to the receiver
+      // unless its borrowed state comes only through its type arguments.
+      const SemanticType resolved = typeOf(type);
+      if (resolved.kind == SemanticType::Class && resolved.classId != 0)
+        if (const auto *owner = classInfo(resolved.classId).declaration;
+            owner != nullptr && !owner->lifetimeParameters().empty())
+          return false;
+      if (typeTraits(resolved).containsBorrowedState &&
+          std::none_of(
+              type.arguments.begin(), type.arguments.end(),
+              [&](const TypeRef &argument) {
+                return typeTraits(typeOf(argument)).containsBorrowedState;
+              }))
+        return false;
+    }
+    for (const TypeRef &argument : type.arguments)
+      if (!self(self, argument))
+        return false;
+    return true;
+  };
+  return covered(covered, syntax.returnType()) && written;
+}
+
 auto SemanticVisitor::Impl::constructorLifetimeSuppliers(
     const ClassDecl &owner, const ConstructorDecl &constructor) const
     -> std::vector<std::size_t> {
@@ -493,43 +547,114 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
   const ExpressionInfo *info = semanticModel.findExpression(*value);
   if (info == nullptr)
     return;
+  // The places a returned reference can borrow, followed through the shapes
+  // that only relay a supplier: a field of a reference call result names a
+  // part of that call's suppliers, a method's receiver supplies its result,
+  // and the arguments bound to reference parameters supply a result written
+  // in their region. Nullopt leaves a shape to the general place query.
+  std::function<std::optional<std::vector<SemanticLoanPlace>>(const ExprPtr &)>
+      suppliers;
+  suppliers = [&](const ExprPtr &expression)
+      -> std::optional<std::vector<SemanticLoanPlace>> {
+    const ExprPtr *current = &expression;
+    while (*current)
+      if (const auto *group = exprAs<Grouping>(current->get()))
+        current = &group->expression();
+      else
+        break;
+    const Expr *node = current->get();
+    if (node == nullptr)
+      return std::nullopt;
+    if (semanticPlace(node).root != nullptr)
+      return loanPlaces(*current);
+    if (const auto *member = exprAs<Get>(node)) {
+      const MemberInfo *field =
+          findMember(memberAccessObjectType(*member), member->name());
+      if (field == nullptr || field->symbol.type == SemanticType::Function ||
+          field->symbol.variableDeclaration == nullptr)
+        return std::nullopt;
+      auto places = suppliers(member->object());
+      if (!places)
+        return std::nullopt;
+      for (auto &place : *places) {
+        if (member->access().kind == TokenKind::ARROW)
+          place.projections.push_back(
+              {.kind = PlaceProjectionKind::Dereference});
+        place.projections.push_back({.kind = PlaceProjectionKind::Field,
+                                     .field = toolingSymbolFor(field->symbol)});
+      }
+      return places;
+    }
+    const auto *call = exprAs<Call>(node);
+    const ResolvedCallInfo *resolved =
+        call == nullptr ? nullptr : semanticModel.findCall(*call);
+    if (resolved == nullptr ||
+        resolved->returnType.kind != SemanticType::Reference)
+      return std::nullopt;
+    if (resolved->borrowOrigin == BorrowOriginKind::Receiver) {
+      const FunctionInfo *callee =
+          resolved->function == 0
+              ? nullptr
+              : semanticModel.findFunction(resolved->function);
+      // Argument suppliers beside the receiver stay with the general query.
+      if (callee == nullptr || callee->ownerClass == 0 ||
+          callee->staticMember || callee->declaration == nullptr ||
+          !resolved->borrowArguments.empty())
+        return std::nullopt;
+      // A result in the callee's own stored region is supplied by references
+      // that receiver stores, so a call on this receiver in the same region
+      // returns no storage the receiver owns.
+      const auto *member = exprAs<Get>(call->callee().get());
+      const bool thisReceiver =
+          member == nullptr || exprAs<This>(member->object().get()) != nullptr;
+      const auto calleeLifetime =
+          explicitLifetimeResult(*callee->declaration, {}, callee->ownerClass);
+      if (thisReceiver && callee->ownerClass == owner &&
+          calleeLifetime.classBinder && calleeLifetime.classStoresRegion &&
+          calleeLifetime.region == lifetime.region)
+        return std::vector<SemanticLoanPlace>{};
+      if (member == nullptr)
+        return std::vector<SemanticLoanPlace>{{.receiver = true}};
+      return suppliers(member->object());
+    }
+    if (resolved->borrowOrigin == BorrowOriginKind::Argument) {
+      const std::size_t count = resolvedCallArgumentCount(*call, resolved);
+      std::vector<std::size_t> positions = resolved->borrowArguments;
+      if (positions.empty())
+        positions.push_back(resolved->borrowArgument);
+      std::vector<SemanticLoanPlace> places;
+      for (const std::size_t position : positions) {
+        // A reference parameter borrows the argument's place itself; a
+        // by-value carrier would supply what it stores instead.
+        if (position >= count || resolved->parameterTypes.size() != count ||
+            resolved->parameterTypes[position].kind != SemanticType::Reference)
+          return std::nullopt;
+        auto argument =
+            suppliers(*resolvedCallArgument(*call, resolved, position));
+        if (!argument)
+          return std::nullopt;
+        for (auto &place : *argument)
+          appendUniquePlace(places, std::move(place));
+      }
+      return places;
+    }
+    return std::nullopt;
+  };
   std::vector<SemanticLoanPlace> places;
-  const Expr *returned = value.get();
-  while (const auto *group = exprAs<Grouping>(returned))
-    returned = group->expression().get();
-  const auto *call = exprAs<Call>(returned);
-  const ResolvedCallInfo *resolved =
-      call == nullptr ? nullptr : semanticModel.findCall(*call);
-  const FunctionInfo *callee =
-      resolved == nullptr || resolved->function == 0
-          ? nullptr
-          : semanticModel.findFunction(resolved->function);
-  if (currentReturnType.kind == SemanticType::Reference && callee != nullptr &&
-      callee->ownerClass != 0 && !callee->staticMember &&
-      callee->declaration != nullptr &&
-      resolved->borrowOrigin == BorrowOriginKind::Receiver) {
-    // A method call's reference result is supplied by its receiver object.
-    // A result in the callee's own stored region is supplied by references
-    // that receiver stores, so a call on this receiver in the same region
-    // returns no storage the receiver owns.
-    const auto *member = exprAs<Get>(call->callee().get());
-    const bool thisReceiver =
-        member == nullptr || exprAs<This>(member->object().get()) != nullptr;
-    const auto calleeLifetime =
-        explicitLifetimeResult(*callee->declaration, {}, callee->ownerClass);
-    if (thisReceiver && callee->ownerClass == owner &&
-        calleeLifetime.classBinder && calleeLifetime.classStoresRegion &&
-        calleeLifetime.region == lifetime.region)
-      return;
-    if (member != nullptr)
-      places = {loanPlace(member->object())};
+  if (currentReturnType.kind == SemanticType::Reference) {
+    if (auto resolved = suppliers(value))
+      places = std::move(*resolved);
     else
       places = loanPlaces(value);
-  } else if (currentReturnType.kind == SemanticType::Reference)
-    places = loanPlaces(value);
-  else
+  } else
     for (const auto &dependency : storedBorrowDependencies(value))
       places.push_back(dependency.place);
+  const auto fieldRecord = [&](SymbolId id) -> const SymbolRecord * {
+    const SymbolRecord *field = semanticModel.database().findSymbol(id);
+    if (field == nullptr && instanceBaseModel != nullptr)
+      field = instanceBaseModel->database().findSymbol(id);
+    return field;
+  };
   // A receiver place crosses a stored reference when it dereferences one or
   // projects a reference-typed field: it names that reference's referent.
   const auto crossesStoredReference = [&](const SemanticLoanPlace &place) {
@@ -538,10 +663,7 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
         return true;
       if (projection.kind != PlaceProjectionKind::Field)
         continue;
-      const SymbolRecord *field =
-          semanticModel.database().findSymbol(projection.field);
-      if (field == nullptr && instanceBaseModel != nullptr)
-        field = instanceBaseModel->database().findSymbol(projection.field);
+      const SymbolRecord *field = fieldRecord(projection.field);
       if (field == nullptr)
         return true; // Unknown structure: leave the proof to MIR.
       if (field->type.kind == SemanticType::Reference)
@@ -549,21 +671,61 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
     }
     return false;
   };
-  if (std::none_of(places.begin(), places.end(),
-                   [&](const SemanticLoanPlace &place) {
-                     return place.receiver && place.root == 0 &&
-                            !crossesStoredReference(place);
-                   }))
+  if (std::any_of(places.begin(), places.end(),
+                  [&](const SemanticLoanPlace &place) {
+                    return place.receiver && place.root == 0 &&
+                           !crossesStoredReference(place);
+                  })) {
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2127", DiagnosticPhase::Semantics, expressionToken(value),
+        "The result declares region '" + lifetime.region +
+            "', which the receiver supplies only through the references it "
+            "stores, but this return borrows storage the receiver owns.");
+    diagnostic.hints.emplace_back(
+        "Return a reference stored in region '" + lifetime.region +
+        "', or declare a result borrowed from 'this'.");
+    diagnostics.emplace_back(std::move(diagnostic));
     return;
-  Diagnostic diagnostic = makeDiagnostic(
-      "GTI-S2127", DiagnosticPhase::Semantics, expressionToken(value),
-      "The result declares region '" + lifetime.region +
-          "', which the receiver supplies only through the references it "
-          "stores, but this return borrows storage the receiver owns.");
-  diagnostic.hints.emplace_back("Return a reference stored in region '" +
-                                lifetime.region +
-                                "', or declare a result borrowed from 'this'.");
-  diagnostics.emplace_back(std::move(diagnostic));
+  }
+  // Only the receiver's fields written in the result's region supply it. A
+  // place that reaches through a receiver field written only in other
+  // regions borrows what those references keep alive, not the result's.
+  const auto *declaration = classInfo(owner).declaration;
+  if (declaration == nullptr)
+    return;
+  for (const auto &place : places) {
+    if (!place.receiver || place.root != 0 || place.projections.empty() ||
+        place.projections.front().kind != PlaceProjectionKind::Field ||
+        !crossesStoredReference(place))
+      continue;
+    const SymbolRecord *field = fieldRecord(place.projections.front().field);
+    if (field == nullptr)
+      continue;
+    for (const auto &member : declaration->members()) {
+      const auto *stored = stmtAs<VariableDecl>(member.get());
+      if (stored == nullptr || stored->name().lexeme != field->name)
+        continue;
+      std::vector<std::string> names;
+      collectRegionNames(stored->type(), names);
+      if (names.empty() || contains(names, lifetime.region))
+        break;
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2127", DiagnosticPhase::Semantics, expressionToken(value),
+          "The result declares region '" + lifetime.region +
+              "', but this return borrows through field '" + field->name +
+              "', which holds region '" + names.front() + "'.");
+      diagnostic.related.push_back(
+          {tokenSpan(stored->name()), "Field '" + field->name +
+                                          "' is declared in region '" +
+                                          names.front() + "'."});
+      diagnostic.hints.emplace_back(
+          "Return a reference reached through a field stored in region '" +
+          lifetime.region + "', or declare the result in region '" +
+          names.front() + "'.");
+      diagnostics.emplace_back(std::move(diagnostic));
+      return;
+    }
+  }
 }
 
 auto SemanticVisitor::Impl::declaredOutlives(const FunctionDecl &syntax) const

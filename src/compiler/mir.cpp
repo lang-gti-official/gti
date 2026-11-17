@@ -10202,6 +10202,43 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
              std::find(loan.carriers.begin(), loan.carriers.end(), binding) !=
                  loan.carriers.end();
     };
+    // A read-only value yield whose borrowed state lies in the cursor's
+    // stored regions retains its own Stored loan on an external owner the
+    // cursor already protects, never the cursor or the range shell, so
+    // advancing the cursor cannot invalidate it.
+    const auto cursorProtects = [&](MirPlaceId source) {
+      return source != 0 &&
+             std::any_of(body.loans.begin(), body.loans.end(),
+                         [&](const MirLoan &loan) {
+                           return loan.id != range.rangeLoan &&
+                                  loan.kind == MirLoanKind::Stored &&
+                                  carries(loan, iteratorPlace->binding) &&
+                                  loan.protectsSource(source);
+                         });
+    };
+    const auto cursorRegionLoan = [&](const MirLoan *loan) {
+      return range.elementBorrowsCursorRegions &&
+             range.strategy == RangeIterationStrategy::Structural &&
+             range.elementAccess == AccessMode::ReadOnly && loan != nullptr &&
+             loan->id != range.rangeLoan && loan->kind == MirLoanKind::Stored &&
+             loan->parent == 0 && !loan->entry && !loan->escapes &&
+             loan->access == AccessMode::ReadOnly &&
+             loan->producedBy == range.elementAccessSource &&
+             !mirCanonicalPlaceContains(body, range.iterator, loan->source) &&
+             cursorProtects(loan->source) &&
+             std::all_of(loan->additionalDependencies.begin(),
+                         loan->additionalDependencies.end(),
+                         [&](const MirLoanDependency &dependency) {
+                           return dependency.source == 0 ||
+                                  cursorProtects(dependency.source);
+                         });
+    };
+    if (range.elementBorrowsCursorRegions &&
+        (range.strategy != RangeIterationStrategy::Structural ||
+         range.elementAccess != AccessMode::ReadOnly))
+      return failure(body, owner,
+                     "cursor-region range element must be a read-only "
+                     "structural yield");
     if (range.elementOwner == 0) {
       if (range.elementOwnerStatement != 0 || range.elementOwnerLoan != 0 ||
           range.elementAccessValue != 0 || range.materializesElementValue ||
@@ -10343,20 +10380,63 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
                         initialize->lifecycle ==
                             std::vector<MirLifecycleEvent>{
                                 {.kind = MirLifecycleEventKind::Initialize,
+                                 .target = ownedDrop->id}}) ||
+                       // A cursor-region carrier's lexical drop only retires
+                       // the loans it carries; its nonfailing producer's
+                       // value initializes the binding directly.
+                       (range.elementBorrowsCursorRegions && !sourceDrop &&
+                        range.elementSourceDrop == 0 && producer &&
+                        !producer->successResultDrop &&
+                        !producer->successResultDestination &&
+                        initialize->operands.size() == 1 &&
+                        initialize->operands.front().kind ==
+                            MirOperandKind::Value &&
+                        initialize->operands.front().value ==
+                            range.elementAccessValue &&
+                        std::none_of(
+                            body.dropObligations.begin(),
+                            body.dropObligations.end(),
+                            [&](const MirDropObligation &drop) {
+                              return drop.kind ==
+                                         MirDropObligationKind::Value &&
+                                     drop.value == range.elementAccessSource;
+                            }) &&
+                        initialize->lifecycle ==
+                            std::vector<MirLifecycleEvent>{
+                                {.kind = MirLifecycleEventKind::Initialize,
                                  .target = ownedDrop->id}}));
+        // The producer of a cursor-region yield publishes exactly one Stored
+        // loan, carried by the hidden owner, on what the cursor stores.
+        const MirLoan *yieldLoan = producer && producer->loan
+                                       ? body.findLoan(*producer->loan)
+                                       : nullptr;
+        const bool exactYieldBorrows =
+            range.elementBorrowsCursorRegions
+                ? producer && yieldLoan &&
+                      producer->borrowOrigin == BorrowOriginKind::Receiver &&
+                      !producer->borrowFields.empty() &&
+                      cursorRegionLoan(yieldLoan) &&
+                      carries(*yieldLoan, elementOwner->binding) &&
+                      range.elementOwnerLoan == yieldLoan->id && elementLoan &&
+                      elementLoan->storedDependency == yieldLoan->id
+                : producer && producer->borrowFields.empty() &&
+                      producer->borrowOrigin == BorrowOriginKind::None &&
+                      !producer->loan && range.elementOwnerLoan == 0 &&
+                      elementLoan && elementLoan->storedDependency == 0;
         if (!access || !producer || !initialize || ambiguousInitialization ||
             !initializationBlock || elementOwner->type != range.elementType ||
             elementOwner->type.kind == SemanticType::Reference ||
             elementOwner->type.kind == SemanticType::StringView ||
             elementOwner->type.kind == SemanticType::CString ||
             !elementOwner->traits.copyable ||
-            elementOwner->traits.containsBorrowedState ||
-            range.elementOwnerLoan != 0 ||
-            range.elementAccess != AccessMode::ReadOnly ||
+            elementOwner->traits.containsBorrowedState !=
+                range.elementBorrowsCursorRegions ||
+            !exactYieldBorrows || range.elementAccess != AccessMode::ReadOnly ||
             access->info.type != elementOwner->type ||
             access->info.category != ValueCategory::Value ||
             !access->info.traits.copyable ||
-            access->info.traits.containsBorrowedState ||
+            access->info.traits.containsBorrowedState !=
+                range.elementBorrowsCursorRegions ||
             access->sourceValue != range.elementAccessSource ||
             producer->hirValue != range.elementAccessSource ||
             range.dereferenceFunction == 0 ||
@@ -10364,18 +10444,16 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
             producer->intrinsic != IntrinsicKind::None ||
             !producer->functionTarget || !producer->operands.empty() ||
             !producer->parameterTypes.empty() ||
-            !producer->borrowArguments.empty() ||
-            !producer->borrowFields.empty() || !exactReceiver ||
-            producer->borrowOrigin != BorrowOriginKind::None ||
-            producer->loan || producer->result != range.elementAccessValue ||
+            !producer->borrowArguments.empty() || !exactReceiver ||
+            producer->result != range.elementAccessValue ||
             initialize->hirStatement != range.elementOwnerStatement ||
             !exactOperand || !exactDropTransfer ||
             !dominance->dominates(range.bodyBlock, access->definitionBlock) ||
             !dominance->dominates(range.bodyBlock, initializationBlock->id) ||
             !elementLoan || elementLoan->kind != MirLoanKind::Local ||
             elementLoan->source != elementOwner->id || elementLoan->parent ||
-            elementLoan->storedDependency || elementLoan->entry ||
-            elementLoan->escapes || elementLoan->lifecycleBound ||
+            elementLoan->entry || elementLoan->escapes ||
+            elementLoan->lifecycleBound ||
             elementLoan->access != AccessMode::ReadOnly)
           return failure(
               body, owner,
@@ -10461,6 +10539,13 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
         elementLoan->parent == 0 && elementLoan->producedBy != 0 &&
         elementLoan->source == range.iterator &&
         elementLoan->storedDependency == physicalCursor->id;
+    const bool externalStoredYield =
+        !range.materializesElementValue && cursorRegionLoan(elementLoan);
+    if (range.elementBorrowsCursorRegions && !range.materializesElementValue &&
+        !externalStoredYield)
+      return failure(body, owner,
+                     "cursor-region range element lost its external Stored "
+                     "loan on what the cursor stores");
     const MirInstruction *elementProducer = nullptr;
     bool ambiguousElementProducer = false;
     if (elementLoan)
@@ -10638,7 +10723,7 @@ verifyMirRangeIterations(const MirBody &body, std::size_t owner) {
            (range.elementLoan == range.rangeLoan ||
             (elementLoan->parent != range.rangeLoan && !physicalProxy))) ||
           (physicalCursor != nullptr && !physicalProxy &&
-           !range.materializesElementValue)))) {
+           !range.materializesElementValue && !externalStoredYield)))) {
       return failure(body, owner,
                      "range iteration contains an incoherent or escaping "
                      "range/element loan");

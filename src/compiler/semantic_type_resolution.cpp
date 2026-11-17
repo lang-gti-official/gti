@@ -8450,6 +8450,21 @@ auto SemanticVisitor::Impl::readableIteratorValue(
   return traits.copyable && !traits.containsBorrowedState;
 }
 
+auto SemanticVisitor::Impl::readableIteratorYield(const FunctionDecl &syntax,
+                                                  const SemanticType &type,
+                                                  ClassId ownerClass) const
+    -> bool {
+  if (readableIteratorValue(type))
+    return true;
+  if (type == SemanticType::Void || type == SemanticType::Unknown ||
+      type.kind == SemanticType::Reference ||
+      type.kind == SemanticType::StringView ||
+      type.kind == SemanticType::CString)
+    return false;
+  return typeTraits(type).copyable &&
+         resultBorrowsOnlyStoredRegions(syntax, ownerClass);
+}
+
 auto SemanticVisitor::Impl::validateOperatorDeclaration(
     const FunctionDecl &function, bool methodDeclaration) -> void {
   if (!function.operatorName()) {
@@ -8605,10 +8620,12 @@ auto SemanticVisitor::Impl::validateOperatorDeclaration(
   if (name.kind == OverloadedOperator::Dereference &&
       returnType.kind != SemanticType::Reference &&
       (function.receiverMutability() != ReceiverMutability::ReadOnly ||
-       !readableIteratorValue(returnType))) {
+       !readableIteratorYield(function, returnType,
+                              currentClass ? *currentClass : ClassId{0}))) {
     fail("operator* must return a checked reference, or use a read-only "
          "receiver to return an independent copyable value without borrowed "
-         "state.");
+         "state, or one whose borrowed state names only the class's own "
+         "lifetime parameters.");
   }
   if (name.kind == OverloadedOperator::Arrow &&
       returnType.kind != SemanticType::Reference) {

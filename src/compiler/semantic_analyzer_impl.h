@@ -2422,6 +2422,25 @@ private:
   // A readonly iterator can yield an independent ordinary value instead of
   // lending an element. Shared by operator and structural range contracts.
   [[nodiscard]] bool readableIteratorValue(const SemanticType &type) const;
+  // A readonly iterator can also yield a copyable value that carries borrowed
+  // state when its written result regions name only the class's own lifetime
+  // parameters or `static`: the yield borrows what the cursor stores, never
+  // the cursor itself.
+  [[nodiscard]] bool readableIteratorYield(const FunctionDecl &syntax,
+                                           const SemanticType &type,
+                                           ClassId ownerClass) const;
+  // Whether every region of a by-value result is written and external to the
+  // receiver: a binder of `ownerClass` or `static`. With `elidedPositions`,
+  // the declaration's own scope also proves that no written type elides a
+  // region; a use site, outside that scope, checks only the written regions.
+  [[nodiscard]] bool
+  resultBorrowsOnlyStoredRegions(const FunctionDecl &syntax, ClassId ownerClass,
+                                 bool elidedPositions = true) const;
+  // A selected read-only operator* whose copyable, borrow-carrying `value`
+  // result its signature writes only in its cursor's stored regions.
+  [[nodiscard]] bool
+  cursorRegionDereference(const ResolvedOperatorInfo *dereference,
+                          const SemanticType &value) const;
 
   struct ActiveCleanupCause {
     const Token *source = nullptr;
@@ -3125,8 +3144,9 @@ private:
   // as long as the shortest; each must outlive the declared result region.
   bool validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
-  // A result in a region the class stores is supplied by references the
-  // receiver stores, never by storage the receiver owns (GTI-S2127).
+  // A result in a region the class stores is supplied by the references the
+  // receiver stores in that region, never by storage the receiver owns or a
+  // reference stored in another region (GTI-S2127).
   void validateReturnedReceiverRegion(const FunctionDecl &syntax, ClassId owner,
                                       const ExprPtr &value);
   // `requires outlives<T, r>` on a callee: the type bound to T must outlive
@@ -5989,6 +6009,10 @@ private:
     bool requiresUnsafe = false;
     bool generic = false;
     bool constrained = false;
+    // The result never borrows the receiver: it carries no borrowed state,
+    // or its signature writes every region in the class's own lifetime
+    // parameters, `static`, or regions its parameters supply.
+    bool resultOutlivesReceiver = false;
     SemanticType returnType = SemanticType::Unknown;
     std::vector<SemanticType> parameterTypes;
     std::vector<std::string> parameterNames;
