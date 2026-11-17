@@ -1,0 +1,13 @@
+// Diagnostics: a field index out of range is rejected.
+import std.meta;
+struct Player {
+  uint32_t health = 100;
+  float speed = 1.5;
+public:
+  Player() = default;
+};
+int main() {
+  Player player{};
+  std::meta::field<Player, 5> missing{};
+  return int(missing.get(player));  //~ ERROR GTI-S2111
+}

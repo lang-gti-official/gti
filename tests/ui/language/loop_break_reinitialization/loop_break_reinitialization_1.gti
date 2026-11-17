@@ -1,0 +1,12 @@
+// Loop break reinitialization: literal loop exit availability must agree with semantic state.
+//@ check-pass
+class Own {
+  int value;
+public:
+  Own(int value) : value(value) {}
+  Own(Own& other) = delete;
+  Own(Own&& other) = default;
+  int get() { return this.value; }
+};
+void consume(Own value) {}
+int main() { mut Own value = Own(1); while (true) { consume(std::move(value)); break; } value = Own(2); return value.get() - 2; }

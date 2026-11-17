@@ -1,0 +1,11 @@
+// $contains and $match: a subset of an array in any order, a substring, and
+// a regular expression.
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}}}
+{"expect": {"id": 1, "result": {"capabilities": {"hoverProvider": true}, "serverInfo": {"name": {"$match": "^gti"}}}}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "int main() { int a = missing; int b = absent; return a + b; }\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": {"$contains": [{"message": {"$contains": "absent"}}, {"code": "GTI-S2001", "message": {"$match": "'missing'"}}]}}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "shutdown"}}
+{"expect": {"id": 2, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}

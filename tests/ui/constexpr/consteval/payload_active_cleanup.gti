@@ -1,0 +1,10 @@
+// A consteval payload enum holding an owner with cleanup is rejected.
+//@ check-fail
+struct Owner {
+  int value;
+  constexpr Owner(int value) : value(value) {}
+  ~Owner() {}
+};
+enum Choice { empty, value(Owner payload) };
+consteval Choice make() { return Choice::value(Owner(7)); }
+int main() { Choice value = make(); return 0; }  //~ ERROR GTI-S2057

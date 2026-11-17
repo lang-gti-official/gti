@@ -1,0 +1,5 @@
+// Staged borrow may publish its original lifetime: an ordered persistent input may publish its actual storage lifetime.
+//@ check-pass
+thread_local mut int32_t value = 1;
+int32_t& retain(int32_t& input, int32_t copied) { return input; }
+int main() { int32_t& result = retain(value, 0); return result; }

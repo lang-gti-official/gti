@@ -1,0 +1,56 @@
+// Selected configuration flags (package, target and profile defines, and -D)
+// reach metadata, check, run, test and build --all; a changed profile or
+// target flag invalidates cached artifacts and selects source before check
+// and build; source-order #undef still wins; and direct mode reads no
+// manifest but accepts explicit -D. (From scoped_configuration_defines_test.py.)
+$ cd project
+$ cp gti.toml ../manifest.orig
+$ gti metadata
+stdout: "defines": ["PSYCH_ASSERTIONS", "PSYCH_GAME", "PSYCH_PROJECT"]
+stdout: "defines": ["NDEBUG", "PSYCH_GAME", "PSYCH_PROJECT"]
+stdout: "defines": ["PSYCH_ASSERTIONS", "PSYCH_PROJECT", "PSYCH_TESTS"]
+stdout: "defines": ["NDEBUG", "PSYCH_PROJECT", "PSYCH_TESTS"]
+$ gti check game
+!stderr: GTI-S2075
+$ gti run game
+!stderr: GTI-S2075
+stdout: game: assertions enabled
+$ gti check game --release
+!stderr: GTI-S2075
+$ gti run game --release
+!stderr: GTI-S2075
+stdout: game: assertions disabled
+$ gti check game --release -D PSYCH_ASSERTIONS
+!stderr: GTI-S2075
+$ gti run game --release -D PSYCH_ASSERTIONS
+!stderr: GTI-S2075
+stdout: game: assertions enabled
+$ gti test unit
+$ gti build --all --jobs 2
+$ sh -c "build/gti/dev/*/game"
+stdout: game: assertions enabled
+$ sh -c "build/gti/dev/*/unit"
+stdout: unit: test target selected
+// Changing selected profile flags invalidates the existing artifact.
+$ sh -c "sed 's/defines = \\[\"PSYCH_ASSERTIONS\"\\]/defines = []/' ../manifest.orig > gti.toml"
+$ gti run game
+stdout: game: assertions disabled
+// Target flags select source before both check and cached builds.
+$ sh -c "sed 's/defines = \\[\"PSYCH_GAME\"\\]/defines = []/' ../manifest.orig > gti.toml"
+$ gti check game
+? 65
+stderr: game target configuration is missing
+$ gti build game
+? 65
+stderr: game target configuration is missing
+$ cp ../manifest.orig gti.toml
+$ gti run game
+stdout: game: assertions enabled
+// Selected flags seed source loading; source-order #undef still wins.
+$ sh -c "{ echo '#undef PSYCH_ASSERTIONS'; cat src/main.gti; } > ../main.new && rm src/main.gti && mv ../main.new src/main.gti"
+$ gti run game
+stdout: game: assertions disabled
+// Direct mode reads no project manifest and still accepts explicit -D.
+$ gti src/main.gti -D PSYCH_PROJECT -D PSYCH_GAME -o ../direct
+$ ../direct
+stdout: game: assertions disabled

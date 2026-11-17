@@ -1,0 +1,10 @@
+// Generics: the program is accepted.
+//@ check-pass
+class Token {
+  int identity = 4;
+public:
+  Token(int identity) : identity(identity) {}
+public:
+  Token() = default;
+};
+int main() { Token value{}; return 0; }

@@ -1,0 +1,2 @@
+// A lexical spelling repair keeps the unknown-name diagnostic identity.
+int count(int counter) { return coutner; } //~ ERROR GTI-S2001

@@ -1,0 +1,27 @@
+// General requires: a different value argument is checked on a reused query catalog diagnostic.
+constexpr bool compact<T>() { return sizeof(T) <= uint64_t(8); }
+concept small<T> = compact<T>();
+concept doubles<T> = requires(T& value) {
+  { value.read() + value.read() } -> int;
+};
+struct Lane<uint64_t N> {
+  int slots[N] = {};
+  int read() { return 1; }
+public:
+  Lane() = default;
+};
+struct Probe<T> {
+  T level;
+  T read() { return this.level; }
+public:
+  Probe(T input) : level(input) {}
+};
+class Sealed {
+  int read() { return 2; }
+public:
+  Sealed() = default;
+};
+int take<doubles T>(T& value) { return 1; }
+int fit<small T>(T& value) { return 1; }
+
+int main() { Lane<1> a{}; Lane<2> b{}; Lane<3> c{}; return fit(a) + fit(b) + fit(c); }  //~ ERROR GTI-S2029

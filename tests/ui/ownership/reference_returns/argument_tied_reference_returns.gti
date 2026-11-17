@@ -1,0 +1,37 @@
+// Argument tied reference returns: a borrowed return derived from a read-only reference parameter should lower to verified MIR.
+//@ check-pass
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+};
+
+int32_t& pick(int32_t& candidate) { return candidate; }
+
+int32_t& forward(int32_t& candidate) { return pick(candidate); }
+
+int32_t retain_argument_return() {
+  mut int32_t local = 7;  //~ WARN GTI-S2096
+  int32_t& chosen = pick(local);
+  return chosen;
+}
+
+int32_t retain_forwarded_return() {
+  mut int32_t local = 11;  //~ WARN GTI-S2096
+  int32_t& chosen = forward(local);
+  return chosen;
+}
+
+int32_t retain_call_result_argument() {
+  mut Box box = Box(13);  //~ WARN GTI-S2096
+  int32_t& chosen = pick(box.observe());
+  return chosen;
+}
+
+int main() {
+  return retain_argument_return() + retain_forwarded_return() +
+         retain_call_result_argument() - 31;
+}

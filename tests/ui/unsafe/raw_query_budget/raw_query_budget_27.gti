@@ -1,0 +1,12 @@
+// Raw query budget: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: strict
+struct Relay7 { mut const int* pointer = nullptr; Relay7(const int* input) { this.pointer = input; } };
+struct Relay6 { mut const int* pointer = nullptr; Relay6(const int* input) { this.pointer = Relay7(input).pointer; } };
+struct Relay5 { mut const int* pointer = nullptr; Relay5(const int* input) { this.pointer = Relay6(input).pointer; } };
+struct Relay4 { mut const int* pointer = nullptr; Relay4(const int* input) { this.pointer = Relay5(input).pointer; } };
+struct Relay3 { mut const int* pointer = nullptr; Relay3(const int* input) { this.pointer = Relay4(input).pointer; } };
+struct Relay2 { mut const int* pointer = nullptr; Relay2(const int* input) { this.pointer = Relay3(input).pointer; } };
+struct Relay1 { mut const int* pointer = nullptr; Relay1(const int* input) { this.pointer = Relay2(input).pointer; } };
+struct Relay0 { mut const int* pointer = nullptr; Relay0(const int* input) { this.pointer = Relay1(input).pointer; } };
+int main() { int value = 7; const int* pointer = Relay0(&value).pointer; unsafe { return *pointer - 7; } }

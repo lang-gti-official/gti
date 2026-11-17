@@ -1,0 +1,12 @@
+// S: mutable borrowed closures use ordinary explicit mutable local invocation.
+//@ check-pass
+#macro when_mut<F>(bool enabled, F action) {
+  if (enabled) { mut F callback = action; callback(); }
+}
+int main() {
+  mut int value = 1;
+  when_mut!(false, [mut &value]() -> void { value += 100; });
+  value += 1;
+  when_mut!(true, [mut &value]() -> void { value += 1; });
+  return value == 3 ? 0 : 1;
+}

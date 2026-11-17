@@ -1,0 +1,3 @@
+// Lifetimes: rejected with GTI-S2012.
+struct StaticInput { StaticInput(mut int&<static> input) {} };
+int main() { int value = 7; StaticInput invalid{value}; return 0; }  //~ ERROR GTI-S2012

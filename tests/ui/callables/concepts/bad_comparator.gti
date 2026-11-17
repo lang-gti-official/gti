@@ -1,0 +1,19 @@
+// A comparator without a safe repeatable binary call does not satisfy std::comparator.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+
+class difference {
+public:
+  int32_t operator()(int32_t& left, int32_t& right) {
+    return left - right;
+  }
+public:
+  difference() = default;
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({2, 1});
+  std::sort(values, difference());  //~ ERROR GTI-S2029 concept 'std::comparator
+  return 0;
+}

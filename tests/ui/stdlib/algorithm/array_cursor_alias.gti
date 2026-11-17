@@ -1,0 +1,12 @@
+// A live mutable cursor keeps the std::array borrowed across mutation.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { mut std::array<int, 2> x{}; mut auto cursor = x.begin_mut(); x.fill(3); return *cursor; }  //~ ERROR GTI-S2017

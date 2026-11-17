@@ -1,0 +1,25 @@
+// A borrowed optional payload cannot escape through a return.
+//@ check-fail
+import std.optional;
+
+class View {
+  int& source;
+public:
+  View(int& value) : source(value) {}
+};
+
+struct Envelope<std::move_constructible T> {
+  std::optional<T> value;
+  Envelope(T input) : value(std::optional<T>(std::move(input))) {}
+  ~Envelope() {}
+};
+
+Envelope<View> escape() {
+  int source = 7;
+  return Envelope<View>(View(source));  //~ ERROR GTI-S2045 //~ ERROR GTI-S2045
+}
+
+int main() {
+  auto escaped = escape();
+  return 0;
+}

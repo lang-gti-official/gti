@@ -1,0 +1,2 @@
+// Analyze: API-visible, missing or rvalue inference is rejected.
+int owner = 3; auto& alias = owner; int main() { return 0; }  //~ ERROR GTI-S2028

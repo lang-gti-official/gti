@@ -1,0 +1,11 @@
+// Temporary owner borrow: temporary string views retain exact receiver identity and failure cleanup.
+//@ check-pass
+//@ slow
+import std.string;
+std::string produce() { return std::string("hello"); }
+int read(std::string_view value, int divisor) { return int(value.size()) / divisor; }
+int later(int divisor) { return 1 / divisor; }
+int main() {
+  int first = read(produce().view(), later(1));
+  return first + read(std::string("hello").view(), 1) - 10;
+}

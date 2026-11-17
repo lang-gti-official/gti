@@ -1,0 +1,20 @@
+// Fresh results: fresh wrappers compose through HIR/MIR.
+//@ check-pass
+class Point {
+public:
+  int value;
+  Point(int value) : value(value) {}
+};
+Point make() { return Point(4); }
+Point relay() { return Point(Point((make()))); }
+Point adjust(Point& source) { return Point(source.value + 1); }
+int main() {
+  Point a = Point(make());
+  Point b{Point((relay()))};
+  Point existing{7};
+  Point copied = Point(Point(existing));
+  Point moved = Point(Point((std::move(existing))));
+  Point observed = adjust(Point(make()));
+  return a.value + b.value + copied.value + moved.value == 22 &&
+      observed.value == 5 ? 0 : 1;
+}

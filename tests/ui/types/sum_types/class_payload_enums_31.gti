@@ -1,0 +1,4 @@
+// Class payload enums: a by-value cycle through a payload enum must be rejected before HIR or native layout planning.
+enum class tree { one(node value), none };  //~ ERROR GTI-S2067
+class node { tree data = tree::none;  public: node() = default; };  //~ ERROR GTI-S2082 //~ ERROR GTI-S2067 //~ ERROR GTI-S2003
+int main() { return 0; }

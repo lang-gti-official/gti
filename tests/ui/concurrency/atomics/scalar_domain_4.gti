@@ -1,0 +1,8 @@
+// Scalar domain: enum should be rejected at the public atomic constraint.
+//@ execution-profile: concurrent
+import std.atomic;
+enum class choice { one };
+int main() {
+  std::atomic<choice> value{choice::one};  //~ ERROR GTI-S2029
+  return 0;
+}

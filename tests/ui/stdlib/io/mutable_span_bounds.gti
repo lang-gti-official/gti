@@ -1,0 +1,60 @@
+// Checked mutable slices and generic buffered transports execute through MIR.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5 run6
+//@[run1] run-fail
+//@[run1] exit-code: 70
+//@[run1] stderr-contains: <std/span>:
+//@[run1] stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in private_storage
+//@[run2] run-fail
+//@[run2] args: offset
+//@[run2] exit-code: 70
+//@[run2] stderr-contains: <std/span>:
+//@[run2] stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in private_storage
+//@[run3] run-fail
+//@[run3] args: empty back
+//@[run3] exit-code: 70
+//@[run3] stderr-contains: <std/span>:
+//@[run3] stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in private_storage
+//@[run4] run-fail
+//@[run4] args: read cursor end
+//@[run4] exit-code: 70
+//@[run4] stderr-contains: <std/span>:
+//@[run4] stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in private_storage
+//@[run5] run-fail
+//@[run5] args: mutable cursor past end
+//@[run5] exit-code: 70
+//@[run5] stderr-contains: <std/span>:
+//@[run5] stderr-contains: : runtime error[GTI-R0007]: index_out_of_bounds in private_storage
+//@[run6] args: valid end empty subspan now
+import std.span;
+import std.vector;
+import std.string;
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::vector<int> values = {1, 2, 3};
+  mut auto view = values.as_mutable_span();
+  if (argc == 1) { view[std::size_t(3)] = 4; }
+  if (argc == 2) {
+    auto invalid = view.subspan(std::size_t(4), std::size_t(0));
+    return int(invalid.size());
+  }
+  if (argc == 3) {
+    // A read would select the read-only back(); writing keeps the mut path.
+    mut auto empty = view.first(std::size_t(0));
+    empty.back() = 4;
+  }
+  if (argc == 4) {
+    auto first = view.first(std::size_t(1));
+    mut auto cursor = first.begin();
+    ++cursor;
+    return *cursor;
+  }
+  if (argc == 5) {
+    mut auto first = view.first(std::size_t(1));
+    mut auto cursor = first.begin_mut();
+    ++cursor;
+    *cursor = 5;
+  }
+  auto empty = view.subspan(view.size(), std::size_t(0));
+  return empty.empty() ? 0 : 9;
+}

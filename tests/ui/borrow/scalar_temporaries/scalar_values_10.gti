@@ -1,0 +1,10 @@
+// Scalar values: foreign function result.
+//@ check-pass
+enum Color { Red, Green };
+int read(int& value) { return value; }
+int make() { return 42; }
+Color pick() { return Color::Red; }
+bool red(Color& value) { return value == Color::Red; }
+
+extern "C" { int abs(int value); }
+int main() { return read(abs(-42)) - 42; }

@@ -1,0 +1,22 @@
+// Rejected: one causal error without follow-on diagnostics.
+import std.functional;
+class Payload {
+public:
+  int value;
+  Payload(int value) : value(value) {}
+  Payload(Payload&) = delete;
+  Payload(Payload&&) = default;
+};
+struct Consumer {
+  Consumer() = default;
+  uint64_t operator()(Payload value) { return uint64_t(value.value); }
+};
+class Holder<F> {
+  F callback;
+public:
+  Holder(F callback) : callback(std::move(callback)) {}
+  uint64_t call(Payload& value) requires std::read_callable<F, Payload, uint64_t> {
+    return this.callback(value) % uint64_t(4);  //~ ERROR GTI-S2022
+  }
+};
+int main() { Holder<Consumer> holder{Consumer()}; Payload p{9}; return int(holder.call(p)); }

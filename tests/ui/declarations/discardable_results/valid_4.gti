@@ -1,0 +1,6 @@
+// Valid: struct Base { [[discardable]] virtual int get() { return 1; }  public: Base() = default; }; struct Child : public Base { int get() override { return 2; }  public: Child() = default; }; void use(Base& value) { value.get(); } int main() { Child child{}; use(child); return 0; }.
+//@ check-pass
+struct Base { [[discardable]] virtual int get() { return 1; }  public: Base() = default; };
+struct Child : public Base { int get() override { return 2; }  public: Child() = default; };
+void use(Base& value) { value.get(); }
+int main() { Child child{}; use(child); return 0; }

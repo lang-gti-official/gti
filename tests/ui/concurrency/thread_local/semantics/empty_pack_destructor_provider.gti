@@ -1,0 +1,5 @@
+// Empty pack destructor provider: the empty-pack destructor provider fixture has valid primary semantic facts.
+//@ check-pass
+//@ execution-profile: concurrent
+class Empty<Args...> { public: ~Empty() {}  public: Empty() = default; };
+int main() { Empty<> value{}; return 0; }

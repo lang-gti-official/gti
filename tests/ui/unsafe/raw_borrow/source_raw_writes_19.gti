@@ -1,0 +1,8 @@
+// Source raw writes: source destructor cleanup retains unresolved global writes.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+
+struct Writer { ~Writer() { int gone = 1; pointer = &gone; }  public: Writer() = default; };
+int main() { { Writer writer{}; } unsafe { return std::assume_ref(pointer, witness); } }  //~ ERROR GTI-S2103

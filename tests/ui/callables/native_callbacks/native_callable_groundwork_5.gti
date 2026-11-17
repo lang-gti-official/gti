@@ -1,0 +1,8 @@
+// Native callable groundwork: generic-native-invoke.gti must retain a verified native indirect invocation.
+//@ check-pass
+using Transform = (int32_t) -> int32_t;
+extern "C" { Transform obtain_transform(); }
+int32_t invoke<F>(F callback, int32_t value) {
+  unsafe { return callback(value); }
+}
+int main() { unsafe { return invoke(obtain_transform(), 7); } }

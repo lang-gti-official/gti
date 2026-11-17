@@ -1,0 +1,3 @@
+// A private constructor of a class with nested types stays private.
+//@ check-fail
+class C { C(int value) {} public: struct N { public: N() = default; };  public: C() = default; }; int main() { C value{1}; return 0; }  //~ ERROR GTI-S2007 Constructor

@@ -1,0 +1,9 @@
+// Valid: [[discardable]] int value() {   return 3; } int main() {   value();   return 0; }.
+//@ check-pass
+[[discardable]] int value() {
+  return 3;
+}
+int main() {
+  value();
+  return 0;
+}

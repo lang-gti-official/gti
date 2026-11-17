@@ -1,0 +1,13 @@
+// Ownerless text relay loans: a relay of ownerless text verifies without borrowed state.
+//@ check-pass
+import std.string_view;
+std::string_view relay(std::string_view value) { return value; }
+int inspect(std::string_view value) {
+  if (value.size() != uint64_t(4) || value[1] != '\0' || value[3] != 'c') { return 1; }
+  return 0;
+}
+int main() {
+  std::string_view text = "a\0bc";
+  std::string_view kept = relay(text);
+  return inspect(relay(text)) + inspect(kept);
+}

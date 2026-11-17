@@ -1,0 +1,15 @@
+// Reference payloads: rejected with GTI-S2045.
+//@ analyze-fail
+class carrier {
+  int32_t& source;
+public:
+  carrier(int32_t& value) : source(value) {}
+};
+enum holder { one(carrier value), none };
+
+holder dangling() {
+  mut int32_t backing = 3;
+  carrier value = carrier(backing);
+  return holder::one(value);  //~ ERROR GTI-S2045
+}
+int main() { return 0; }

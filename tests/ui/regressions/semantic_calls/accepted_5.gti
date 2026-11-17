@@ -1,0 +1,12 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+class Parcel {
+public:
+  int value;
+  Parcel(int v) : value(v) {}
+  Parcel(Parcel&) = delete;
+  Parcel(Parcel&&) = default;
+};
+void consume<Args...>(int tag, Args... args) {}
+void consume(char tag) {}
+int main() { Parcel p{42}; consume(1, std::move(p)); return 0; }

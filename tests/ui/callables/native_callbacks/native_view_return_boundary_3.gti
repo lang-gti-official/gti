@@ -1,0 +1,3 @@
+// Native view return boundary: counted-view return must fail at its semantic return token.
+using Bad = (std::string_view) -> std::string_view;  //~ ERROR GTI-S2076
+int main() { return 0; }

@@ -1,0 +1,16 @@
+// Audit negative: expired pointer cannot hide behind aliased wrapper.
+//@ raw-pointer-audit: strict
+import std.memory;
+unsafe int& relay(const int* address, int& owner) {
+  const int* alias = address;
+  unsafe { return std::assume_ref(alias, owner); }
+}
+int main() {
+  mut const int* address = nullptr;
+  int witness = 9;
+  unsafe {
+    { int dead = 42; address = &dead; }
+    int& value = relay(address, witness);  //~ ERROR GTI-S2102 //~ ERROR GTI-S2101 //~ ERROR GTI-S2101
+    return value;
+  }
+}

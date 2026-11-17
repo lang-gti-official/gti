@@ -1,0 +1,31 @@
+// A reference pack parameter hovers and navigates, its parameter is a
+// parameter token, two mutable borrows of one variable through a pack are
+// S2017, and the repaired text formats unchanged.
+// (reference_parameter_packs_lsp_test.py)
+//@ hover @call: observe
+//@ hover @call: &
+//@ definition @call: @decl
+//@ token @args: parameter
+void /*@decl*/observe<Args...>(Args&... /*@args*/args) {}
+void change<Args...>(mut Args&... args) {}
+int main() { mut int number = 4; /*@call*/observe(number, number); change(number); return number; }
+// --- step 2
+void observe<Args...>(Args&... args) {}
+void change<Args...>(mut Args&... args) {}
+int main() { mut int number = 4; observe(number, number); change(number, number); return number; }  //~ ERROR GTI-S2017
+// --- step 3
+//@ formatting: void observe<Args...>(Args &... args) {}
+//@ formatting: observe(number, number);
+void observe<Args...>(Args&... args) {}
+void change<Args...>(mut Args&... args) {}
+int main() { mut int number = 4; observe(number, number); change(number); return number; }
+// --- step 4
+//@ formatting: unchanged
+void observe<Args...>(Args &... args) {}
+void change<Args...>(mut Args &... args) {}
+int main() {
+  mut int number = 4;
+  observe(number, number);
+  change(number);
+  return number;
+}

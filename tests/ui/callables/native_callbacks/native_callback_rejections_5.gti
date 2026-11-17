@@ -1,0 +1,3 @@
+// Native callback rejections: uninitialized-callback.gti should be rejected by the native callback semantic boundary.
+using Callback = (int32_t) -> int32_t;
+int main() { Callback callback; return 0; }  //~ ERROR GTI-S2076

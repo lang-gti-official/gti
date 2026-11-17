@@ -1,0 +1,19 @@
+// Owned callable transport: owned callable transport should inspect captured aggregate fields for raw-pointer state.
+class RawState {
+  int* pointer;  //~ ERROR GTI-S2056
+
+public:
+  RawState(int* pointer) : pointer(pointer) {}
+};
+
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  int value = 1;
+  unsafe {
+    int* raw = &value;  //~ ERROR GTI-S2003
+    RawState state = RawState(raw);
+    auto operation = [state]() -> int { return 1; };
+    auto escaped = relay(std::move(operation));  //~ ERROR GTI-S2046
+  }
+  return 0;
+}

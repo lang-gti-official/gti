@@ -1,0 +1,4 @@
+// Once: a live once flag cannot be copied or moved.
+//@ execution-profile: concurrent
+import std.cthread;
+int main() { mut std::once_flag original{}; std::once_flag copied = std::move(original); return 0; }  //~ ERROR GTI-S2018

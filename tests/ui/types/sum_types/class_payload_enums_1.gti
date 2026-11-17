@@ -1,0 +1,23 @@
+// Class payload enums: class-scoped aliases should canonicalize before owning payload lifecycle analysis and MIR verification.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+class payload_traits {
+public:
+  using resource_type = resource;
+public:
+  payload_traits() = default;
+};
+enum class holder { one(payload_traits::resource_type value), none };
+int main() {
+  holder value = holder::one(resource());
+  switch (value) {
+  case holder::one:
+    return 0;
+  case holder::none:
+    return 1;
+  }
+}

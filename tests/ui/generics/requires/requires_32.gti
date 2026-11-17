@@ -1,0 +1,24 @@
+// General requires: heterogeneous operator result and grouped checks.
+//@ check-pass
+concept adds_to<L, R, V> = requires(L& left, R& right) {
+  { left + right } -> V;
+};
+struct Count {
+  int value = 0;
+  int operator+(Count& other) { return this.value + other.value; }
+public:
+  Count() = default;
+};
+V add<L, R, V>(L& left, R& right) requires adds_to<L, R, V> {
+  return left + right;
+}
+int main() {
+  static_assert(requires(int& a, int& b) {
+    { a + b } -> int;
+    { a == b } -> bool;
+    { -a } -> int;
+  });
+  static_assert(!(requires(int& a) { { a + a } -> bool; }));
+  Count a{.value = 3}; Count b{.value = 4};
+  return add<Count, Count, int>(a, b) == 7 ? 0 : 1;
+}

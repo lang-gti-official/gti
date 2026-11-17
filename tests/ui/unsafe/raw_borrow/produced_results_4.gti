@@ -1,0 +1,9 @@
+// Produced results: callee-produced expired origin cannot become unknown.
+//@ raw-pointer-audit: strict
+import std.memory;
+int main() {
+  int witness = 9;
+  const int* pointer = dangling();
+  unsafe { int& value = std::assume_ref(pointer, witness); return value; }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+}
+const int* dangling() { int local = 1; return &local; }

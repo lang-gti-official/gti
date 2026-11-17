@@ -1,0 +1,15 @@
+// Reference payloads: a by-value binding of a mutable reference payload, its use and a copied payload carrier are rejected (binding `value` renamed `held`: an undefined common name pays import-suggestion trials, issue #500).
+//@ analyze-fail
+enum Reading { empty, value(mut int& owner) };
+int inspect(Reading input) {
+  switch (input) {
+    case Reading::empty: return 0;
+    case Reading::value(held): return held;  //~ ERROR GTI-S2067 //~ ERROR GTI-S2001
+  }
+}
+int main() {
+  mut int owner = 3;
+  auto first = Reading::value(owner);
+  auto second = first;  //~ ERROR GTI-S2003
+  return inspect(std::move(first)) + inspect(std::move(second));
+}

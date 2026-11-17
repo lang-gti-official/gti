@@ -1,0 +1,3 @@
+// Diagnostic: invalid result macro must stop before emission.
+#macro stop() { return 1; }
+int main() { stop!(); return 0; }  //~ ERROR GTI-S2000

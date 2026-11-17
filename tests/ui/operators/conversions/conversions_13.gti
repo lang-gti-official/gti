@@ -1,0 +1,4 @@
+// Conversion operators: rejected with GTI-S2003.
+import std.optional;
+int take(std::optional<int> value) { return 0; }
+int main() { return take(7); }  //~ ERROR GTI-S2003

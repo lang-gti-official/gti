@@ -1,0 +1,35 @@
+// Conditional temporary argument borrows: temporary arguments inside conditional arms and short-circuit operands should lower to verified MIR.
+//@ check-pass
+class Report {
+  int value;
+
+public:
+  Report(int value) : value(value) {}
+  int code() { return this.value; }
+};
+
+class Tracked {
+  int value;
+
+public:
+  Tracked(int value) : value(value) {}
+  Tracked(Tracked& other) = delete;
+  Tracked(Tracked&& other) = default;
+  ~Tracked() {}
+  int code() { return this.value; }
+};
+
+Report make_report(int value) { return Report(value); }
+Tracked make_tracked(int value) { return Tracked(value); }
+bool positive(Report& report) { return report.code() > 0; }
+bool tracked(Tracked& value) { return value.code() > 0; }
+
+int main() {
+  bool direct = positive(Report(1));
+  bool joined =
+      positive(make_report(2)) && direct && !positive(make_report(-3));
+  bool either = !direct || tracked(make_tracked(4));
+  int chosen =
+      direct ? (positive(Report(5)) ? 1 : 2) : (tracked(Tracked(6)) ? 3 : 4);
+  return joined && either && chosen == 1 ? 0 : 1;
+}

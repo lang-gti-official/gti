@@ -109,7 +109,7 @@ def run_tests(doc, build, stage, jobs, test_jobs):
                     "-DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF"], check=True)
     inventory = json.loads(subprocess.check_output(["ctest", "--test-dir", str(build), "--show-only=json-v1"], text=True))
     names = {row["name"] for row in inventory["tests"]}
-    required = {"lsp_protocol", "frontend_cache_invalidation", "compiler_pipeline", "project_model",
+    required = {"lsp_protocol", "frontend_cache_invalidation", "gti_test_ui", "project_model",
                 "neovim_gtiup", "neovim_lsp_configuration"}
     declared = doc.get("declared", [])
     if not isinstance(declared, list) or any(not validation_checks.NAME.fullmatch(n) for n in declared):

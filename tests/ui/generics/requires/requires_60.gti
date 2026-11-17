@@ -1,0 +1,13 @@
+// General requires: nested conjunctions preserve opaque source predicate proofs.
+//@ check-pass
+import std.iterator;
+void retreat<I>(mut I& cursor) requires std::bidirectional_cursor<I> {
+  --cursor;
+}
+void jump_then_retreat<I>(mut I& cursor)
+    requires std::random_access_cursor<I> && std::writes_to<I, int> {
+  cursor += std::ptrdiff_t(2);
+  retreat(cursor);
+  std::advance(cursor, std::ptrdiff_t(-1));
+}
+int main() { return 0; }

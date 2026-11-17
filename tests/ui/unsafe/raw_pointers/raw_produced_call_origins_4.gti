@@ -1,0 +1,5 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: aggregate-field.
+//@ raw-pointer-audit: strict
+struct Address { const int* pointer = nullptr;  public: Address() = default; };
+int main() { auto address = dangling(); unsafe { return *address.pointer; } }  //~ ERROR GTI-S2102
+Address dangling() { int local = 1; return {.pointer = &local}; }

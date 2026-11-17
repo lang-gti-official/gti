@@ -767,7 +767,7 @@ template is defined. The complete definitions and their native headers
 (`<atomic>`, `<mutex>`) require a concrete MIR capability instance or a
 verified capability operation. The managed-thread handle representation is
 not a template, so a retained thread-handle declaration selects its complete
-support. `dormant_capability_runtime` builds and runs each family's
+support. `tests/ui/modules/dormant_capability` builds and runs each family's
 import-only program natively.
 
 Scoped groups select the same managed-thread support from the verified
@@ -5440,7 +5440,7 @@ that relays such a view to a non-hierarchy base, as `pickBase(plain)` does,
 returns the callee's checked address, not a dispatch view, and so does a
 function returning a non-hierarchy base reference to a carrier parameter
 (`Base& up(Plain&)`): its reference return relays the parameter's loan like
-any class reference return. `dispatch.upcast-carriers` and `carrier_reference_runtime`
+any class reference return. `dispatch.upcast-carriers` and `tests/ui/borrow/carrier_references/`
 run these forms at O0-O3.
 
 A base or interface view of a carrier now takes a `Local` loan on the
@@ -6308,7 +6308,7 @@ representation shapes. This task does not relax its gates. Recursive source
 move-state clearing covers class arrays as well as class subobjects, while
 passive arrays/classes emit no state-clear walk.
 
-`llvm_placement_execution` checks deleted-copy/deleted-move objects, fresh return
+`tests/ui/memory/placement/` checks deleted-copy/deleted-move objects, fresh return
 chains, branch-selected returns, constructor/default field publication, TLS,
 class-array copies/movement and retained semantic rejections at O0-O3. Fresh
 direct/nested/default/field arrays compare C++20/C++23 with native execution.

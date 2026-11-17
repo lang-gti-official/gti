@@ -1,0 +1,3 @@
+// Native identity: rejected with GTI-S2020, GTI-S2121.
+struct Same { int value = 0; Same() {} implicit Same(Same& other) {} };  //~ ERROR GTI-S2121 //~ ERROR GTI-S2020
+int main() { return 0; }

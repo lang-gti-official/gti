@@ -1,0 +1,9 @@
+// Alias constructor value arguments: an ambiguous function name through an alias reports the class name's diagnostic.
+class Tag {
+public:
+  Tag<F>(F item) {}
+};
+using T = Tag;
+void work(int value) {}
+void work(bool value) {}
+int main() { auto value = T(work); return 0; }  //~ ERROR GTI-S2090

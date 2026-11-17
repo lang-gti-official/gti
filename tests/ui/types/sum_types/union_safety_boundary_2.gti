@@ -1,0 +1,2 @@
+// Union safety boundary: the passive native-union baseline should reject generic storage.
+union Slot<T> { T value; }; int main() { return 0; }  //~ ERROR GTI-S2066 //~ ERROR GTI-S2066

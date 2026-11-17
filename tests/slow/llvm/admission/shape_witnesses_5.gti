@@ -1,0 +1,5 @@
+// Shape witnesses: an exact consuming method retains its sealed direct dependency closure.
+//@ build-pass
+//@ slow
+class Value { public: int read() && { return 42; }  public: Value() = default; };
+int main() { return Value().read() - 42; }

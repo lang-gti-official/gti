@@ -1,0 +1,2 @@
+import "api.gti";
+int main() { mut int first = 1; mut int second = 2; int& v = choose(first, second); store(second, 3); return v; }

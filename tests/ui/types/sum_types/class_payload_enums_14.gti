@@ -1,0 +1,12 @@
+// Class payload enums: fixed arrays retain each owning enum element's verified cleanup.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  return 0;
+}

@@ -1,0 +1,1 @@
+Convert 26 more Python compile/run harnesses (the native-companion group) into `gti-test` cases, and reduce seven more to the parts `gti-test` cannot express, deleting their CTest entries, registry lines and unreferenced fixtures.

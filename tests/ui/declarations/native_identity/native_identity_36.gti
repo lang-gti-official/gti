@@ -1,0 +1,10 @@
+// Native identity: the program is accepted.
+//@ check-pass
+extern "C" {
+  uint64_t strlen(const uint8_t* text);
+  [[link_name("unrelated_native_length")]] uint64_t length(const uint8_t* text);
+}
+int probe(const uint8_t* text) {
+  unsafe { return strlen(text) == length(text) ? 0 : 1; }
+}
+int main() { return 0; }

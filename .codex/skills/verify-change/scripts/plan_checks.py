@@ -355,7 +355,7 @@ def candidate_checks(paths: list[str], selection: dict, regressions: dict[str, l
             "the selected tests need a current optimized build; a full build holds a build-window slot"))
         checks.append(Check(
             "baseline", ctest_command([SMOKE], build),
-            "every implementation change runs compiler_pipeline"))
+            "every implementation change runs gti_test_ui"))
         checks.append(Check(
             "native-smoke", f"python3 scripts/validation_checks.py smoke --build {build}",
             "every implementation change runs the native O0/O3 smoke"))

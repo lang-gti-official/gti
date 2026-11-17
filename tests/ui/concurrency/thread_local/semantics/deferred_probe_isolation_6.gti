@@ -1,0 +1,21 @@
+// Deferred probe isolation: real cleanup after an ignored probe is not suppressed in either concrete query order.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+void observe(bool value) {}
+#macro ignore(bool value) {}
+#macro force(bool value) { observe(value); }
+
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    ignore!(inspect(Cleanup()));
+    return first + second + third;
+  } else {
+ignore!(inspect(Cleanup())); bool seen = inspect(Cleanup()); return seen ? 1 : 0; } }int main() { int& borrowed = value; int first = selected<0>(); int second = selected<1>(); return borrowed + first + second; }  //~ ERROR GTI-S2045

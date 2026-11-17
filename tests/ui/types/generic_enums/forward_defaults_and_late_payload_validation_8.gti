@@ -1,0 +1,2 @@
+// Forward defaults and late payload validation: invalid aliases and cyclic defaults reject before HIR/MIR/backend entry.
+enum First<T = Later<>> { item(T value) }; enum Later<T = First<>> { item(T value) }; int main() { return 0; }  //~ ERROR GTI-S2023 //~ ERROR GTI-S2067 //~ ERROR GTI-S2067

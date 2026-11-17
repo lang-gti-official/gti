@@ -1,0 +1,9 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: mixed-native-result.
+//@ raw-pointer-audit: strict
+extern "C" { const int32_t* foreign(); }
+int main() { auto pointer = source(false); unsafe { return *pointer; } }  //~ ERROR GTI-S2102
+const int32_t* source(bool choose) {
+  int32_t local = 1;
+  if (choose) { unsafe { return foreign(); } }
+  return &local;
+}

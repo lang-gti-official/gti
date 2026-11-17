@@ -1,0 +1,5 @@
+// Execution: expected procedural diagnostic before code generation.
+// --- main.gti
+import "library.gti"; int main(){return reject!({42});}  //~ ERROR GTI-S2124
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) std::syntax::expr reject(std::syntax::tokens input) { return std::syntax::fail(std::syntax::location(input,uint64_t(1),uint64_t(2)), "library rejection"); }

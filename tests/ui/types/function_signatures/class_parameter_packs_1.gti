@@ -1,0 +1,29 @@
+// Class parameter packs: methods must bind their owner's exact argument pack.
+//@ check-pass
+void consume<Values...>(Values... values) {}
+class Relay<Args...> {
+public:
+  void send(Args... args) { consume(args...); }
+  int inspect<T>(T first, Args... args) { consume(first, args...); return 7; }
+  void twice(Args... args) { send(args...); send(args...); }
+  int operator()(Args... args) { consume(args...); return 7; }
+public:
+  Relay() = default;
+};
+interface Invocable<Args...> { int invoke(Args... args); };
+class Target<Args...> : public Invocable<Args...> {
+public:
+  int invoke(Args... args) override { consume(args...); return 7; }
+public:
+  Target() = default;
+};
+int dispatch(Invocable<int, bool>& target) { return target.invoke(1, true); }
+int main() {
+  Relay<> empty{};
+  Relay<int, bool> pair{};
+  Target<int, bool> target{};
+  empty.send();
+  pair.send(1, true);
+  pair.twice(2, false);
+  return empty.inspect(1) + pair.inspect(1, 2, true) + empty() + pair(1, true) + dispatch(target) - 35;
+}

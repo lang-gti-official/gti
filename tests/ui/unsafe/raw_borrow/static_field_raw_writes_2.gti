@@ -1,0 +1,16 @@
+// Static field raw writes: class static field raw write effects are declaration-order independent.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+struct Holder {
+  static mut const int* slot = &witness;
+  static void keep(const int* address) { slot = address; }
+  static const int* current() { return slot; }
+public:
+  Holder() = default;
+};
+void set() { int gone = 1; Holder::slot = &gone; }
+const int* get() { return Holder::slot; }
+
+int main() { set(); auto address = get();
+  unsafe { int& value = std::assume_ref(address, witness); return value; } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

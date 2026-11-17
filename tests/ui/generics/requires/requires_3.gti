@@ -1,0 +1,6 @@
+// General requires: unused aliases still validate source-defined constraints diagnostic.
+constexpr bool accepts<T>() { return false; }
+concept rejected_type<T> = accepts<T>();
+class Box<rejected_type T> { public: Box() = default; };
+using Unused = Box<int>;  //~ ERROR GTI-S2029
+int main() { return 0; }

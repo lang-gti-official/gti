@@ -1,0 +1,24 @@
+// Consuming callable operators: concrete generic once-call selection retains its cleanup-owning nominal receiver through the full expression.
+//@ check-pass
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() {}
+};
+
+class CleanupCallable {
+  Cleanup cleanup = Cleanup();
+public:
+  int operator()() && { return 1; }
+public:
+  CleanupCallable() = default;
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int main() {
+  CleanupCallable generic{};
+  return invoke_once(std::move(generic));
+}

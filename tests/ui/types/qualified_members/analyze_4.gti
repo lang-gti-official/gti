@@ -1,0 +1,9 @@
+// Analyze: public iterator aliases reject owner mutation at the actual call, with borrow-origin and later-use locations.
+import std.vector;
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(1);
+  std::vector<int>::const_iterator cursor = values.begin();
+  values.push_back(2);  //~ ERROR GTI-S2017
+  return *cursor;
+}

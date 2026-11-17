@@ -1,0 +1,3 @@
+// Native indirect verification and queries: native-generic-arguments.gti should be rejected by the native callback semantic boundary.
+using Unary = (int32_t) -> int32_t;
+int main() { Unary callback = nullptr; unsafe { return callback<int32_t>(7); } }  //~ ERROR GTI-S2076

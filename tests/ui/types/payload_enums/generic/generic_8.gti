@@ -1,0 +1,21 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+class Res {
+public:
+  Res() {}
+  ~Res() {}
+  int id() { return 7; }
+};
+enum ShapeFamily<T> { rect(int width), owned(T resource) }; using Shape = ShapeFamily<Res>;
+class Slot {
+public:
+  Shape shape;
+  Slot(Shape shape) : shape(std::move(shape)) {}
+};
+int main() {
+  Slot slot = Slot(Shape::rect(3));
+  switch (slot.shape) {
+    case Shape::rect(width): return width - 3;
+    case Shape::owned(auto& resource): return resource.id();
+  }
+}

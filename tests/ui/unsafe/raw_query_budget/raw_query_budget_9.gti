@@ -1,0 +1,12 @@
+// Raw query budget: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: warn
+const int* relay7(const int* pointer) { return pointer; }
+const int* relay6(const int* pointer) { return relay7(pointer); }
+const int* relay5(const int* pointer) { return relay6(pointer); }
+const int* relay4(const int* pointer) { return relay5(pointer); }
+const int* relay3(const int* pointer) { return relay4(pointer); }
+const int* relay2(const int* pointer) { return relay3(pointer); }
+const int* relay1(const int* pointer) { return relay2(pointer); }
+const int* relay0(const int* pointer) { return relay1(pointer); }
+int main() { int value = 7; const int* pointer = relay0(&value); unsafe { return *pointer - 7; } }

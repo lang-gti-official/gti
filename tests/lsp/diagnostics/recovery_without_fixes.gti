@@ -1,0 +1,23 @@
+// A deferred local initializer and an untyped designated argument are one
+// diagnostic each without a quick fix, a qualified built-in type is one
+// parse error, and each repair is clean. (diagnostic_recovery_lsp_test.py,
+// second part)
+//@ no-code-action @value
+int main() { /* 😀 */ mut int32_t /*@value*/value; value = 4; return value; }  //~ ERROR GTI-S2000 requires an initializer
+// --- step 2
+int main() { /* 😀 */ mut int32_t value = 0; value = 4; return value; }
+// --- step 3
+//@ no-code-action @brace
+struct Point { int x; };
+int read(Point value) { return value.x; }
+int main() { /* 😀 */ return read(/*^brace*/{.x = 1}); }  //~ ERROR GTI-S2091 destination struct type
+// --- step 4
+struct Point { int x; };
+int read(Point value) { return value.x; }
+int main() { /* 😀 */ Point point = {.x = 1}; return read(point); }
+// --- step 5
+/* 😀 */ constexpr std::uint64_t download_limit = 1024 * 1024 * 1024;  //~ ERROR GTI-P0001 Built-in type 'uint64_t' cannot be qualified
+int main() { return 0; }
+// --- step 6
+/* 😀 */ constexpr uint64_t download_limit = uint64_t(1024) * 1024 * 1024;
+int main() { return 0; }

@@ -1,0 +1,4 @@
+// Valid: int main() { put(3); [[discard]] put(4); return put(5); } [[discardable]] int put(int value) { return value; }.
+//@ check-pass
+int main() { put(3); [[discard]] put(4); return put(5); }
+[[discardable]] int put(int value) { return value; }

@@ -1,0 +1,12 @@
+// Once: rejected with GTI-S2084.
+import std.cthread;
+std::once_flag shared{std::ONCE_FLAG_INIT};
+void initialize() {}
+int main() {
+  std::once_flag local{};
+  unsafe {
+    std::call_once(shared, initialize);  //~ ERROR GTI-S2084
+    std::call_once(&local, initialize);  //~ ERROR GTI-S2084
+  }
+  return 0;
+}

@@ -1,0 +1,17 @@
+// Conversion operators: the program is accepted.
+//@ check-pass
+struct Flag {
+  bool on;
+  Flag(bool value) : on(value) {}
+  operator bool() { return this.on; }
+};
+Flag make(bool value) { return Flag(value); }
+bool choose(bool yes) {
+  mut int total = 0;
+  if ((make(true))) { total += 1; }
+  if ((yes ? make(true) : make(false))) { total += 2; }
+  total += (yes ? make(true) : make(false)) ? 4 : 0;
+  total += (make(true)) ? 8 : 0;
+  return total == 15;
+}
+int main() { return choose(true) ? 0 : 1; }

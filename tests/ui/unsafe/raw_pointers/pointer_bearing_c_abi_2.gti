@@ -1,0 +1,3 @@
+// Pointer bearing c abi: pointer-bearing C calls should require unsafe and identify their declaration.
+extern "C" { void* open(); int32_t scalar(); }
+int main() { int32_t value = scalar(); void* handle = open(); return value; }  //~ ERROR GTI-S2055

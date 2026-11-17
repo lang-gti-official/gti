@@ -1,0 +1,8 @@
+// Two imported modules each declaring a namespace and a type of the same name link and keep their own meanings.
+//@ run-pass
+// --- main.gti
+import "left.gti"; import "right.gti"; int main(){return left()+right()-42;}
+// --- left.gti
+export module left;namespace Common {int value(){return 20;}} export int left(){return Common::value();}
+// --- right.gti
+export module right;struct Common{int value;}; export int right(){Common value{.value=22};return value.value;}

@@ -1,0 +1,4 @@
+// A nested requires clause is not a required expression.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+concept nested<T> = requires(T& v) { requires sized<T>; };  //~ ERROR GTI-P0001 required expression //~ ERROR GTI-P0001

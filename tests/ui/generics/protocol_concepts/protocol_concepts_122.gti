@@ -1,0 +1,17 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept relation<P, Q> { typename item<A, B>; };
+struct Owner<T> {};
+struct Pair<A, B> {
+  A first; B second;
+  Pair(A one, B two) : first(std::move(one)), second(std::move(two)) {}
+};
+for <T, U> concept relation<Owner<T>, Owner<U>> {
+  using item<X, Y> = Pair<Pair<T, X>, Pair<U, Y>>;
+};
+int main() {
+  Pair<int, char> first{3, 'x'};
+  Pair<bool, int> second{true, 4};
+  relation<Owner<int>, Owner<bool>>::item<char, int> value{first, second};
+  return value.first.first + value.second.second - 7;
+}

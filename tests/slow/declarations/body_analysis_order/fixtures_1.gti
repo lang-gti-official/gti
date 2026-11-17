@@ -1,0 +1,27 @@
+// Fixtures: the program is accepted.
+//@ check-pass
+//@ slow
+import std.iterator;
+import std.list;
+
+Iterator my_find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                        T& value)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::equality_comparable<T> {
+  while (first != last) {
+    if (*first == value) {
+      break;
+    }
+    ++first;
+  }
+  return std::move(first);
+}
+
+int main() {
+  std::list<int> priorities = {2, 4, 4, 9};
+  int urgent = 9;
+  auto found = my_find(priorities.begin(), priorities.end(), urgent);
+  return found != priorities.end() ? 0 : 1;
+}

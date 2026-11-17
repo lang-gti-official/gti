@@ -1,0 +1,4 @@
+// Rejects: ordinary indexed vector extraction still cannot leave a hole.
+import std.vector; import std.string; int main() {
+    mut std::vector<std::string> values{}; values.emplace_back("owned");
+    auto value = std::move(values[std::size_t(0)]); return 0; }  //~ ERROR GTI-S2018

@@ -1,0 +1,14 @@
+// Receiver fields: read-only receiver cannot publish a mutable field reference.
+struct Entry {
+  int& key;
+  mut int& value;
+  Entry(int& k, mut int& v) : key(k), value(v) {}
+};
+class Owner {
+public:
+  mut int key = 1;
+  mut int value = 2;
+  Owner() {}
+  Entry entry() { return Entry(this.key, this.value); }  //~ ERROR GTI-S2012 //~ ERROR GTI-S2045
+};
+int main() { return 0; }

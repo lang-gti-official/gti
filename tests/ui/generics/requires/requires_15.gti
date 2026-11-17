@@ -1,0 +1,60 @@
+// General requires: iteration checks use the actual materialized loop binding and cannot invent body proofs.
+//@ check-pass
+import std.algorithm;
+import std.string_view;
+struct End { public: End() = default; };
+struct Cursor {
+  int operator*() { return 3; }
+  void operator++() mut {}
+  bool operator!=(End& end) { return false; }
+public:
+  Cursor() = default;
+};
+struct Values { Cursor begin() { return Cursor(); } End end() { return End(); }  public: Values() = default; };
+bool positive(int& value) { return value > 0; }
+struct Count { void operator()(char& value) mut {}  public: Count() = default; };
+concept bound_call<F, R, Result> = requires(mut F& function, R& range) {
+  for (auto& element : range) {
+    static_assert(requires { { function(element) } -> Result; });
+  }
+};
+bool accepts<F, R, Result>() requires bound_call<F, R, Result> { return true; }
+concept matching_layout<R, T> = requires(R& range) {
+  for (auto& element : range) {
+    static_assert(sizeof(T) == sizeof(int));
+    static_assert(alignof(T) == alignof(int));
+  }
+};
+bool sized<R, T>() requires matching_layout<R, T> { return true; }
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+bool check_false<R>() requires iterable<R> {
+  return requires(R& range) {
+    for (auto& element : range) { static_assert(false); }
+  };
+}
+int main() {
+  static_assert(requires { { accepts<Count, std::string_view, void>() } -> bool; });
+  static_assert(!(requires { { accepts<Count, std::string_view, bool>() } -> bool; }));
+  static_assert(requires { { sized<Values, int>() } -> bool; });
+  static_assert(!(requires { { sized<Values, bool>() } -> bool; }));
+  static_assert(requires(Values& range) {
+    for (auto& element : range) {
+      static_assert(requires { { positive(element) } -> bool; });
+    }
+  });
+  static_assert(!(requires(Values& range) {
+    for (auto& element : range) { static_assert(false); }
+  }));
+  static_assert(!(requires(Values& range) {
+    for (mut auto& element : range) { static_assert(true); }
+  }));
+  static_assert(!(requires(Values& range) {
+    for (auto& element : range) {
+      static_assert(requires { { positive(element) } -> int; });
+    }
+  }));
+  Values values{};
+  std::string_view text = "abc";
+  auto count = std::for_each(text, Count());
+  return std::all_of(values, positive) && !check_false<Values>() ? 0 : 1;
+}

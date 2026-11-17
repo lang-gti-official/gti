@@ -1,0 +1,4 @@
+// Invalid: invalid discard contract must reject.
+[[discardable]] int select(int value) { return value; }
+bool select(bool value) { return value; }
+int main() { select(1); select(true); return 0; }  //~ ERROR GTI-S2009

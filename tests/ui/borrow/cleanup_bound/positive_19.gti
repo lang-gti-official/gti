@@ -1,0 +1,40 @@
+// Positive: resource is available after the complete cleanup dependency scope.
+//@ check-pass
+import std.utility;
+mut int observed = 0;
+struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed += this.resource.value; }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item) : item(std::move(item)) {}
+};
+
+class View {
+  Resource& resource;
+public:
+  View(Resource& resource) : resource(resource) {}
+  int read() { return this.resource.value; }
+};
+class Adapter {
+  View& view;
+public:
+  Adapter(View& view) : view(view) {}
+  ~Adapter() { observed += this.view.read(); }
+};
+int main() {
+  mut Resource resource{};
+  { View view{resource}; Adapter adapter{view}; }
+  resource.reset();
+  return observed - 7;
+}

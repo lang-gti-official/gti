@@ -1,0 +1,14 @@
+// Cleanup owning temporary arguments: a named move-only lvalue should remain rejected as a deleted by-value copy.
+class cleanup_t {
+public:
+  cleanup_t() {}
+  cleanup_t(cleanup_t& other) = delete;
+  cleanup_t(cleanup_t&& other) = default;
+  ~cleanup_t() {}
+};
+void consume(cleanup_t value) {}
+int main() {
+  cleanup_t local{};
+  consume(local);  //~ ERROR GTI-S2018
+  return 0;
+}

@@ -1,0 +1,2 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept C<P> { typename result<uint64_t N>; };  //~ ERROR GTI-S2123

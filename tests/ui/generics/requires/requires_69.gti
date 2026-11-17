@@ -1,0 +1,26 @@
+// General requires: default and argument-bearing construction.
+//@ check-pass
+concept defaults<T> = requires { { T() } -> T; };
+concept builds<T, A> = requires(A& argument) { { T(argument) } -> T; };
+class Box {
+  int value;
+public:
+  Box(int& value) : value(value) {}
+  int read() { return this.value; }
+};
+T make<T, A>(A& argument) requires builds<T, A> { return T(argument); }
+T empty<T>() requires defaults<T> { return T(); }
+T standard_empty<T>() requires std::default_initializable<T> { return T(); }
+class Leaf { public: Leaf() {} };
+class Holder<T> {
+  T value;
+public:
+  Holder() requires std::default_initializable<T> : value(T()) {}
+};
+int main() {
+  int value = 9;
+  Box result = make<Box, int>(value);
+  Leaf leaf = standard_empty<Leaf>();
+  Holder<Leaf> holder{};
+  return result.read() == 9 && empty<int>() == 0 ? 0 : 1;
+}

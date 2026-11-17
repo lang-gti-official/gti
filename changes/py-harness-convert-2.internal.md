@@ -1,0 +1,1 @@
+Convert 22 more non-wrapper Python compile/run harnesses (and parts of four more) into `gti-test` cases under `tests/ui/` and `tests/slow/`, deleting their CTest entries, registry lines and unreferenced fixtures.

@@ -1,0 +1,6 @@
+// Dispatch state dependencies: a table target's callable helper retains the exact sealed virtual target, helper dependency and callable representation witness.
+//@ build-pass
+//@ slow
+int unsupported_helper() { auto call = []() -> int { return 9; }; return call(); }
+class Value { public: virtual int read() { return unsupported_helper(); }  public: Value() = default; };
+int main() { Value value{}; return 0; }

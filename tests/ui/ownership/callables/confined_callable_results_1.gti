@@ -1,0 +1,50 @@
+// Confined callable results: confined predicates should support exact bool results in conditions, initializers, assignments, and returns.
+//@ check-pass
+bool accepts<Predicate>(int value, Predicate predicate) {
+  return predicate(value);
+}
+
+bool accepts_split<Predicate>(int left, int right, Predicate predicate) {
+  if (predicate(left) && !predicate(right)) {
+    return true;
+  }
+  return false;
+}
+
+bool stores_result<Predicate>(int value, Predicate predicate) {
+  bool initialized = predicate(value);
+  mut bool assigned = false;
+  assigned = predicate(value);
+  return initialized && assigned;
+}
+
+void checks_loops<Predicate>(Predicate predicate) {
+  mut int value = 0;
+  while (predicate(value)) {
+    value++;
+  }
+  for (mut int index = 0; predicate(index); index++) {}
+}
+
+class GreaterThan {
+  int threshold;
+
+public:
+  GreaterThan(int threshold) : threshold(threshold) {}
+  bool operator()(int value) { return value > this.threshold; }
+};
+
+int main() {
+  auto positive = [](int value) -> bool { return value > 0; };
+  bool lambda_result = accepts(4, positive);
+  bool split_result = accepts_split(4, -1, positive);
+  bool stored_result = stores_result(4, positive);
+  auto never = [](int value) -> bool { return value < 0; };
+  checks_loops(never);
+  GreaterThan greater_than = GreaterThan(3);
+  bool object_result = accepts(4, greater_than);
+  if (lambda_result && split_result && stored_result && object_result) {
+    return 0;
+  }
+  return 1;
+}

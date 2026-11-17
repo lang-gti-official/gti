@@ -1,0 +1,5 @@
+// Dormant import: an unused mutex import should remain valid in both execution profiles.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+int main() { return 0; }

@@ -1,0 +1,7 @@
+// Source raw writes: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+int main() { int value = 7; mut Holder out{}; set(out, value); unsafe { return std::assume_ref(out.pointer, value); } }
+void set(mut Holder& out, int& input) { out.pointer = &input; }

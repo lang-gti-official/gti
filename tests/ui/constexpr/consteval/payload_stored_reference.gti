@@ -1,0 +1,6 @@
+// A consteval payload enum holding a stored reference is rejected.
+//@ check-fail
+enum Choice { empty, value(int& payload) };
+constexpr int stored = 7;
+consteval Choice make() { return Choice::value(stored); }  //~ ERROR GTI-S2057
+int main() { Choice value = make(); return 0; }  //~ ERROR GTI-S2057

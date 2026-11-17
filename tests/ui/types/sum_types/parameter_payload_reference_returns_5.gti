@@ -1,0 +1,26 @@
+// Parameter payload reference returns: a pattern over a parameter's field derives from that parameter.
+//@ check-pass
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+class gauge {
+public:
+  wrap reading;
+  gauge(wrap reading) : reading(reading) {}
+};
+int32_t& reading(gauge& value) {
+  switch (value.reading) {
+  case wrap::one(auto& item): return item;
+  case wrap::two(auto& item): return item;
+  }
+}
+int main() { gauge g = gauge(wrap::one(4)); return reading(g) - 4; }

@@ -1,0 +1,5 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+Token leaf() { return Token::empty; }
+int main() { return 0; }

@@ -1,0 +1,22 @@
+// Source prefix owner: the program is accepted.
+//@ check-pass
+//@ stdlib-overlay: std/trusted_source_prefix_owner_1.gti
+// --- main.gti
+import std.memory;
+import std.memory;
+import std.trusted_source_prefix_owner_1;
+int main() { return trusted_case_main(); }
+// --- std/trusted_source_prefix_owner_1.gti
+export module trusted_source_prefix_owner_1;
+import std.memory; import "detail/memory_storage.gti";
+import std.memory;
+export int trusted_case_main() {
+  mut std::detail::prefix_owner<int> source{uint64_t(4)};
+  source.append_value(3);
+  source.append_value(7);
+  mut std::detail::prefix_owner<int> destination{uint64_t(8)};
+  source.relocate_to(destination);
+  destination.insert(uint64_t(1), 5);
+  destination.erase(uint64_t(0));
+  return destination.read(uint64_t(0)) == 5 ? 0 : 1;
+}

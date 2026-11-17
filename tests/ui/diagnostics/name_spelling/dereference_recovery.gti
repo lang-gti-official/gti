@@ -1,0 +1,7 @@
+// Dereference retains independent invalid known-type errors after lookup failure.
+int main() {
+  int present = 1;
+  *missing; //~ ERROR GTI-S2001
+  *present; //~ ERROR GTI-S2022
+  return 0;
+}

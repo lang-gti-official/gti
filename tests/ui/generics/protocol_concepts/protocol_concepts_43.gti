@@ -1,0 +1,54 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept measurable<T> {
+  typename unit_type;
+  unit_type measure(T& item);
+  bool is_empty(T& item);
+};
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+class Rope {
+public:
+  int length;
+  Rope(int amount) : length(amount) {}
+};
+class Crate<T> {
+public:
+  T item;
+  int count;
+  Crate(T stored, int amount) : item(stored), count(amount) {}
+};
+
+for concept measurable<Rope> {
+  using unit_type = Meters;
+  Meters measure(Rope& item) { return Meters(item.length); }
+  bool is_empty(Rope& item) { return item.length == 0; }
+};
+for <T> concept measurable<Crate<T>> {
+  using unit_type = int;
+  unit_type measure(Crate<T>& item) { return item.count; }
+  bool is_empty(Crate<T>& item) {
+    measurable<Crate<T>>::unit_type count = measure(item);
+    return count == 0;
+  }
+};
+
+measurable<T>::unit_type total<T>(T& item) requires measurable<T> {
+  if (measurable<T>::is_empty(item)) {
+    return measurable<T>::measure(item);
+  }
+  measurable<T>::unit_type result = measurable<T>::measure(item);
+  return result;
+}
+measurable<T>::unit_type twice<T>(T& item) requires measurable<T> {
+  return total(item);
+}
+int main() {
+  Rope rope{12};
+  Crate<bool> crate{true, 30};
+  Meters length = twice(rope);
+  int count = total(crate);
+  return length.value + count - 42;
+}

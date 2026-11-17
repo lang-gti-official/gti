@@ -1,0 +1,38 @@
+// A method's text result through its receiver's field is ownerless.
+//@ run-pass
+//@ stdout: small
+//@ stdout: large
+//@ stdout: inner-text
+import std.string_view;
+// A method whose relay its body never uses returns an ownerless call result
+// through its receiver's field or a nested one.
+class Inner {
+public:
+  int n;
+  std::string_view text;
+  Inner(int n) : n(n), text("inner-text") {}
+  std::string_view label() { return this.n < 10 ? "small" : "large"; }
+  std::string_view field() { return this.text; }
+};
+class Middle {
+public:
+  Inner inner;
+  Middle(int n) : inner(Inner(n)) {}
+};
+class Box {
+  Inner inner;
+  Middle middle;
+public:
+  Box(int n) : inner(Inner(n)), middle(Middle(n)) {}
+  std::string_view name() { return this.inner.label(); }
+  std::string_view deep() { return this.middle.inner.label(); }
+  std::string_view relay() { return this.inner.field(); }
+};
+int main() {
+  Box small = Box(3);
+  Box large = Box(30);
+  std::println(small.name());
+  std::println(large.deep());
+  std::println(small.relay());
+  return small.name() == "small" ? 0 : 1;
+}

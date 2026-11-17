@@ -1,0 +1,69 @@
+// General requires: borrow-carrying requirement results name and check one origin.
+//@ check-pass
+mut int32_t global_value = 5;
+class Slice {
+  int32_t& first;
+public:
+  Slice(int32_t& first) : first(first) {}
+  int32_t get() { return this.first; }
+};
+class Pair {
+  int32_t& left;
+  int32_t& right;
+public:
+  Pair(int32_t& left, int32_t& right) : left(left), right(right) {}
+};
+class MutSlice {
+  mut int32_t& first;
+public:
+  MutSlice(mut int32_t& first) : first(first) {}
+};
+class Holder {
+  mut int32_t value = 3;
+public:
+  Holder() = default;
+  Slice view() { return Slice(this.value); }
+  MutSlice edit_view() mut { return MutSlice(this.value); }
+  int32_t count() { return this.value; }
+  void bump() mut { this.value = this.value + 1; }
+};
+concept viewable<H> = requires(H&<h> h) {
+  { h.view() } -> Slice<h>;
+};
+concept bumpable<H> = requires(mut H& h) { { h.bump() } -> void; };
+
+concept inferred_view<H> = requires(H&<h> h) {
+  { h.view() } -> auto<h>;
+};
+int32_t peek<H>(H& h) requires viewable<H> {
+  Slice view = h.view();
+  return view.get();
+}
+int32_t peek_inferred<H>(H& h) requires inferred_view<H> {
+  auto view = h.view();
+  return 0;
+}
+int32_t bump_after<H>(mut H& h) requires viewable<H> && bumpable<H> {
+  { Slice first = h.view(); [[discard]] first.get(); }
+  h.bump();
+  Slice second = h.view();
+  return second.get();
+}
+int main() {
+  static_assert(requires(Holder&<h> h) { { h.view() } -> Slice<h>; });
+  static_assert(requires(Holder&<h> h) { { h.view() } -> auto<h>; });
+  static_assert(requires(int32_t&<x> x) { { Slice(x) } -> Slice<x>; });
+  static_assert(requires(int32_t&<x> x) { { Pair(x, x) } -> Pair<x>; });
+  static_assert(requires(mut Holder&<h> h) { { h.edit_view() } -> MutSlice<h>; });
+  static_assert(!(requires(Holder& a, Holder&<b> b) { { a.view() } -> Slice<b>; }));
+  static_assert(!(requires(Holder&<h> h) { { Slice(global_value) } -> Slice<h>; }));
+  static_assert(!(requires(Holder&<h> h) { { Holder().view() } -> Slice<h>; }));
+  static_assert(!(requires(int32_t&<x> x, int32_t& y) { { Pair(x, y) } -> Pair<x>; }));
+  static_assert(!(requires(Holder&<h> h) { { h.edit_view() } -> MutSlice<h>; }));
+  static_assert(!(requires(int32_t&<x> x) { { MutSlice(x) } -> MutSlice<x>; }));
+  static_assert(!(requires(Holder& h) { { h.view() } -> Slice; }));
+  mut Holder holder{};
+  if (peek(holder) != 3) { return 1; }
+  if (peek_inferred(holder) != 0) { return 2; }
+  return bump_after(holder) == 4 ? 0 : 3;
+}

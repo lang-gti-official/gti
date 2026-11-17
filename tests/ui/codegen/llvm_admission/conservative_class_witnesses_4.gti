@@ -1,0 +1,5 @@
+// Conservative class witnesses: required function-item creation and its target remain inventoried with the exact callable-storage witness.
+//@ check-pass
+int identity(int value) { return value; }
+class Value { public: int read(){auto callback=identity; return callback(1);}  public: Value() = default; };
+int inspect(Value& value) { return value.read(); }

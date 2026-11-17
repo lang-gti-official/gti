@@ -1,13 +1,9 @@
-// A malformed formatter override for an integral enum is rejected at the
-// formatted argument, with UTF-16 columns after a non-BMP character.
-// (From integral_enum_lsp_test.py.)
+// A malformed formatter override for a uint64_t enum is rejected at the
+// formatted argument, with UTF-16 columns after a non-BMP character, and
+// hover still works there. (From integral_enum_lsp_test.py.)
 //@ hover @value: Status
 import std.format;
 import std.string;
 enum class Status : uint64_t { failed = 18446744073709551615 };
 class std::formatter<Status> {};
-int main() {
-  Status value = Status::failed;
-  std::runtime_println("{}", /* 😀 */ /*@value*/value);  //~ ERROR GTI-S2029 formattable<Status>
-  return 0;
-}
+int main() { Status value = Status::failed; uint64_t raw = std::to_underlying<uint64_t, Status>(value); std::runtime_println("{}", /* 😀 */ /*@value*/value); return 0; }  //~ ERROR GTI-S2029 formattable<Status>

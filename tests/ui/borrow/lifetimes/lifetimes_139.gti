@@ -1,0 +1,5 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Number { int value = 7; Number() = default; };
+int&<a> field<lifetime a>(Number&<a> number) { return number.value; }
+int main() { Number number{}; return field(number) - 7; }

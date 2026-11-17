@@ -1,0 +1,337 @@
+// Public panic: raw and formatted messages, truncation, cleanup failure, workers, tracked and stored callers.
+//@ run-pass
+//@ slow
+//@ revisions: ready raw format owned truncation cleanup invalid_format count unsupported worker worker_again tracked untracked generic value worker_cleanup stored_library stored_wrapper tracked_stored owned_format terminal_argument terminal_argument_again
+//@ execution-profile: concurrent
+//@[ready] stdout: ready
+//@[ready] stdout: 90
+//@[raw] run-fail
+//@[raw] exit-code: 70
+//@[raw] args: case
+//@[raw] stdout: 10
+//@[raw] stdout: 90
+//@[raw] stderr-contains: panic_runtime.gti:101: runtime error[GTI-R0017]: panic: "raw panic with {literal braces}"
+//@[format] run-fail
+//@[format] exit-code: 70
+//@[format] args: case case
+//@[format] stdout: 1
+//@[format] stdout: 2
+//@[format] stdout: 20
+//@[format] stdout: 90
+//@[format] stderr-contains: panic_runtime.gti:105: runtime error[GTI-R0017]: panic: "arguments 1 then 2"
+//@[owned] run-fail
+//@[owned] exit-code: 70
+//@[owned] args: case case case
+//@[owned] stdout: 30
+//@[owned] stdout: 90
+//@[owned] stderr-contains: panic_runtime.gti:110: runtime error[GTI-R0017]: panic: "owned message survives cleanup"
+//@[truncation] run-fail
+//@[truncation] exit-code: 70
+//@[truncation] args: case case case case
+//@[truncation] stdout: 40
+//@[truncation] stdout: 90
+//@[truncation] stderr-contains: panic_runtime.gti:118: runtime error[GTI-R0017]: panic: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+//@[truncation] stderr-contains: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" [truncated]
+//@[cleanup] run-fail
+//@[cleanup] exit-code: 70
+//@[cleanup] args: case case case case case
+//@[cleanup] stdout: 50
+//@[cleanup] stderr-contains: panic_runtime.gti:15: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at panic_runtime.gti:123 message="primary failure"; secondary [GTI-R0017] message="cleanup failed"
+//@[invalid_format] run-fail
+//@[invalid_format] exit-code: 70
+//@[invalid_format] args: case case case case case case
+//@[invalid_format] stdout: 60
+//@[invalid_format] stdout: 90
+//@[invalid_format] stderr-contains: panic_runtime.gti:127: runtime error[GTI-R0017]: panic: "Panic message formatting failed: invalid format"
+//@[count] run-fail
+//@[count] exit-code: 70
+//@[count] args: case case case case case case case
+//@[count] stdout: 70
+//@[count] stdout: 90
+//@[count] stderr-contains: panic_runtime.gti:131: runtime error[GTI-R0017]: panic: "Panic message formatting failed: argument count mismatch"
+//@[unsupported] run-fail
+//@[unsupported] exit-code: 70
+//@[unsupported] args: case case case case case case case case
+//@[unsupported] stdout: 80
+//@[unsupported] stdout: 90
+//@[unsupported] stderr-contains: panic_runtime.gti:136: runtime error[GTI-R0017]: panic: "Panic message formatting failed: unsupported argument"
+//@[worker] run-fail
+//@[worker] exit-code: 70
+//@[worker] args: case case case case case case case case case
+//@[worker] stdout: 81
+//@[worker] stdout: 90
+//@[worker] stderr-contains: panic_runtime.gti:142: runtime error[GTI-R0017]: panic: "worker failed"
+//@[worker_again] run-fail
+//@[worker_again] exit-code: 70
+//@[worker_again] args: case case case case case case case case case case
+//@[worker_again] stdout: 81
+//@[worker_again] stdout: 90
+//@[worker_again] stderr-contains: panic_runtime.gti:142: runtime error[GTI-R0017]: panic: "worker failed"
+//@[tracked] run-fail
+//@[tracked] exit-code: 70
+//@[tracked] args: case case case case case case case case case case case
+//@[tracked] stdout: 90
+//@[tracked] stderr-contains: panic_runtime.gti:157: runtime error[GTI-R0017]: panic: "tracked wrapper"
+//@[untracked] run-fail
+//@[untracked] exit-code: 70
+//@[untracked] args: case case case case case case case case case case case case
+//@[untracked] stdout: 90
+//@[untracked] stderr-contains: panic_runtime.gti:50: runtime error[GTI-R0017]: panic: "untracked boundary"
+//@[generic] run-fail
+//@[generic] exit-code: 70
+//@[generic] args: case case case case case case case case case case case case case
+//@[generic] stdout: 90
+//@[generic] stderr-contains: panic_runtime.gti:163: runtime error[GTI-R0017]: panic: "generic 42"
+//@[value] run-fail
+//@[value] exit-code: 70
+//@[value] args: case case case case case case case case case case case case case case
+//@[value] stdout: 90
+//@[value] stderr-contains: panic_runtime.gti:59: runtime error[GTI-R0017]: panic: "value function failed"
+//@[worker_cleanup] run-fail
+//@[worker_cleanup] exit-code: 70
+//@[worker_cleanup] args: case case case case case case case case case case case case case case case
+//@[worker_cleanup] stdout: 82
+//@[worker_cleanup] stderr-contains: panic_runtime.gti:15: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at panic_runtime.gti:94 message="worker primary failure"; secondary [GTI-R0017] message="cleanup failed"
+//@[stored_library] run-fail
+//@[stored_library] exit-code: 70
+//@[stored_library] args: case case case case case case case case case case case case case case case case
+//@[stored_library] stdout: 90
+//@[stored_library] stderr-contains: <std/functional>:54: runtime error[GTI-R0017]: panic: "stored 6"
+//@[stored_wrapper] run-fail
+//@[stored_wrapper] exit-code: 70
+//@[stored_wrapper] args: case case case case case case case case case case case case case case case case case
+//@[stored_wrapper] stdout: 90
+//@[stored_wrapper] stderr-contains: panic_runtime.gti:80: runtime error[GTI-R0017]: panic: "stored 7"
+//@[tracked_stored] run-fail
+//@[tracked_stored] exit-code: 70
+//@[tracked_stored] args: case case case case case case case case case case case case case case case case case case
+//@[tracked_stored] stdout: 90
+//@[tracked_stored] stderr-contains: panic_runtime.gti:193: runtime error[GTI-R0017]: panic: "stored 8"
+//@[owned_format] run-fail
+//@[owned_format] exit-code: 70
+//@[owned_format] args: case case case case case case case case case case case case case case case case case case case
+//@[owned_format] stdout: 84
+//@[owned_format] stdout: 90
+//@[owned_format] stderr-contains: panic_runtime.gti:197: runtime error[GTI-R0017]: panic: "owned first second"
+//@[terminal_argument] run-fail
+//@[terminal_argument] exit-code: 70
+//@[terminal_argument] args: case case case case case case case case case case case case case case case case case case case case
+//@[terminal_argument] stdout: 85
+//@[terminal_argument] stdout: 90
+//@[terminal_argument] stderr-contains: panic_runtime.gti:64: runtime error[GTI-R0017]: panic: "argument failed"
+//@[terminal_argument_again] run-fail
+//@[terminal_argument_again] exit-code: 70
+//@[terminal_argument_again] args: case case case case case case case case case case case case case case case case case case case case case
+//@[terminal_argument_again] stdout: 86
+//@[terminal_argument_again] stdout: 90
+//@[terminal_argument_again] stderr-contains: panic_runtime.gti:64: runtime error[GTI-R0017]: panic: "argument failed"
+// --- panic_runtime.gti
+import std.panic;
+import std.format;
+import std.functional;
+import std.string;
+import std.thread;
+import std.vector;
+
+struct Guard {
+  int id;
+  bool fails;
+  Guard(int value, bool failure = false) : id(value), fails(failure) {}
+  ~Guard() {
+    std::println(id);
+    if (fails) {
+      std::panic("cleanup failed"); // cleanup-site
+    }
+  }
+};
+
+struct Uuid {
+  int value;
+};
+class std::formatter<Uuid> {
+public:
+  expected<void, std::format_errc> format(Uuid& value,
+      mut std::string& output, std::format_spec& spec) {
+    return unexpected(std::format_errc::unsupported_argument);
+  }
+public:
+  formatter() = default;
+};
+
+int argument(int value) {
+  std::println(value);
+  return value;
+}
+
+[[noreturn, track_caller]]
+void tracked_inner(std::string_view message) {
+  std::panic(message);
+}
+
+[[noreturn, track_caller]]
+void tracked_outer(std::string_view message) {
+  tracked_inner(message);
+}
+
+[[noreturn]]
+void untracked_boundary() {
+  tracked_outer("untracked boundary"); // untracked-site
+}
+
+[[noreturn, track_caller]]
+void generic_failure<T>(T value) requires std::formattable<T> {
+  std::runtime_panic("generic {}", value);
+}
+
+int terminal_value() {
+  std::panic("value function failed"); // value-site
+}
+
+[[noreturn]]
+int terminal_argument() {
+  std::panic("argument failed"); // terminal-argument-site
+}
+
+void consume_three(Guard first, int second, int third) {
+  std::println(999);
+}
+
+[[track_caller]]
+int stored_failure(int value) {
+  std::runtime_panic("stored {}", value);
+}
+
+struct StoredCallback<F> {
+  F callback;
+  StoredCallback(F value) : callback(value) {}
+  int invoke(int value) {
+    return callback(value); // stored-wrapper-site
+  }
+  [[track_caller]] int tracked_invoke(int value) {
+    return callback(value);
+  }
+};
+
+StoredCallback<F> retain<F>(F value) {
+  return StoredCallback<F>(value);
+}
+
+void worker_double_failure(Guard skipped_parameter) {
+  Guard skipped{83};
+  Guard worker{82, true};
+  std::panic("worker primary failure"); // worker-primary-site
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Guard outer{90};
+  if (argc == 2) {
+    Guard inner{10};
+    std::panic("raw panic with {literal braces}"); // raw-site
+  }
+  if (argc == 3) {
+    Guard inner{20};
+    std::runtime_panic("arguments {} then {}", argument(1), argument(2)); // format-site
+  }
+  if (argc == 4) {
+    std::string message{"owned message survives cleanup"};
+    Guard inner{30};
+    std::panic(message.view()); // owned-site
+  }
+  if (argc == 5) {
+    mut std::string message{""};
+    for (mut int index = 0; index < 600; index++) {
+      message.push_back('a');
+    }
+    Guard inner{40};
+    std::panic(message.view()); // truncation-site
+  }
+  if (argc == 6) {
+    Guard skipped{5};
+    Guard inner{50, true};
+    std::panic("primary failure"); // primary-site
+  }
+  if (argc == 7) {
+    Guard inner{60};
+    std::runtime_panic("{", 1); // invalid-format-site
+  }
+  if (argc == 8) {
+    Guard inner{70};
+    std::runtime_panic("{} {}", 1); // count-site
+  }
+  if (argc == 9) {
+    Guard inner{80};
+    Uuid value = {.value = 7};
+    std::runtime_panic("{}", value); // unsupported-site
+  }
+  if (argc == 10 || argc == 11) {
+    auto started = std::thread::start([]() -> void {
+      std::string message{"worker failed"};
+      Guard worker{81};
+      std::panic(message.view()); // worker-site
+    });
+    if (!started) {
+      return 99;
+    }
+    mut std::thread worker = std::move(started).value();
+    if (argc == 10) {
+      auto joined = worker.join();
+      if (!joined) {
+        return 98;
+      }
+    }
+    return 0;
+  }
+  if (argc == 12) {
+    tracked_outer("tracked wrapper"); // tracked-site
+  }
+  if (argc == 13) {
+    untracked_boundary();
+  }
+  if (argc == 14) {
+    generic_failure(42); // generic-site
+  }
+  if (argc == 15) {
+    return terminal_value();
+  }
+  if (argc == 16) {
+    auto started = std::thread::start([]() -> void {
+      Guard skipped_caller{84};
+      worker_double_failure(Guard(87));
+    });
+    if (!started) {
+      return 99;
+    }
+    mut std::thread worker = std::move(started).value();
+    auto joined = worker.join();
+    if (!joined) {
+      return 98;
+    }
+    return 0;
+  }
+  if (argc == 17) {
+    std::function<int(int)> callback{stored_failure};
+    return callback(6);
+  }
+  if (argc == 18) {
+    auto callback = retain(stored_failure);
+    return callback.invoke(7);
+  }
+  if (argc == 19) {
+    auto callback = retain(stored_failure);
+    return callback.tracked_invoke(8); // tracked-stored-site
+  }
+  if (argc == 20) {
+    Guard inner{84};
+    std::runtime_panic("owned {} {}", std::string("first"), std::string("second")); // owned-format-site
+  }
+  if (argc == 21) {
+    consume_three(Guard(85), terminal_argument(), argument(999));
+  }
+  if (argc == 22) {
+    Guard inner{86};
+    int total = 1 + (terminal_argument());
+    std::println(total);  //~ WARN GTI-S2095
+  }
+  std::println("ready");
+  return 0;
+}

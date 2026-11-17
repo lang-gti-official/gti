@@ -1,0 +1,23 @@
+// Cleanup owning temporary arguments: cleanup-owning constructor and Expected results should lower to verified by-value argument transfers.
+//@ check-pass
+class cleanup_t {
+public:
+  cleanup_t(int32_t initial) : value(initial) {}
+  cleanup_t(cleanup_t& other) = delete;
+  cleanup_t(cleanup_t&& other) = default;
+  ~cleanup_t() {}
+
+  int32_t value;
+};
+
+int32_t read(cleanup_t value) { return value.value; }
+
+expected<cleanup_t, int32_t> make_ready(int32_t value) {
+  return cleanup_t(value);
+}
+
+int main() {
+  int32_t direct = read(cleanup_t(3));
+  expected<cleanup_t, int32_t> ready = make_ready(4);
+  return direct + read(std::move(ready).value()) - 7;
+}

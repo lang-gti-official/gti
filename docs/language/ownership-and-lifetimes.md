@@ -485,9 +485,16 @@ public:
 A caller keeps the receiver's stored referents and every such argument
 borrowed while the result is live, so writing `fallback` or mutating the
 table then is GTI-S2017, and a temporary or local argument cannot let the
-result escape. A parameter in another region still cannot supply it. Such a
-result never borrows
-storage the receiver owns (GTI-S2127), so a consuming method may return it,
+result escape. A parameter in another region still cannot supply it. The
+body may return any borrow it reaches through a stored reference of that
+region: the field itself, a field of a method result on it
+(`this.nodes.at(i).value`), or the result of a call whose suppliers it binds
+to reference parameters (`pass(this.box)`). A borrow reached through a field
+written only in other regions supplies those regions, not the result's, and
+is rejected (GTI-S2127). Such a result never borrows storage the receiver
+owns (GTI-S2127): the receiver's own fields stay owned when reached through a
+method call, an argument, or a mutable or consuming receiver. A consuming
+method may therefore return it,
 by reference or as a carrier like `View<a> take() &&`: it outlives the
 consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
 

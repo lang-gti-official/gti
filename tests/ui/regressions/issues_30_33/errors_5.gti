@@ -1,0 +1,13 @@
+// Errors: fresh, moved and copyable error transport remains accepted.
+//@ check-pass
+struct Error {
+  int id;
+  Error(int value) : id(value) {}
+  Error(Error& other) = delete;
+};
+expected<int, Error> failure() { return unexpected(Error(1)); }
+
+expected<int, Error> moved() { Error error{2}; return unexpected(std::move(error)); }
+expected<int, Error> relay() { auto result = failure(); return unexpected(std::move(result).error()); }
+expected<int, int> copied() { int error = 2; return unexpected(error); }
+int main() { auto first = moved(); auto second = relay(); auto third = copied(); return 0; }

@@ -1,0 +1,10 @@
+// A std::set brace list copies no owning element: a named std::string must be moved in.
+//@ check-fail
+//@ slow
+import std.set;
+import std.string;
+int main() {
+  std::string named{"owned"};
+  std::set<std::string> values = {named};  //~ ERROR GTI-S2092
+  return int(values.size());
+}

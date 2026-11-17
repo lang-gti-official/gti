@@ -1,0 +1,7 @@
+// Edge sensitive move flow: a consecutive unreachable statement tail keeps an isolated scope and gets one warning.
+int helper() {
+  return 0;
+  int32_t declared = 1;  //~ WARN GTI-S2095
+  int32_t copied = declared;
+}
+int main() { return helper(); }

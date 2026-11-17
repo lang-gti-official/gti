@@ -1,0 +1,2 @@
+import "helper.gti";
+int main() { return tea::main(); }

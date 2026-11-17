@@ -1,0 +1,15 @@
+// Provisional initialization keeps failure cleanup: provisional module lowering preserves initializer failures and armed local cleanup.
+//@ check-pass
+thread_local mut int32_t source = 2147483647;
+thread_local mut int32_t cleanup_count = 0;
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { cleanup_count = 1; }
+};
+int32_t initialize() {
+  Guard armed{};
+  return source + 1;
+}
+int32_t initialized = initialize();
+int main() { return initialized; }

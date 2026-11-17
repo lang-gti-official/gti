@@ -1,0 +1,18 @@
+// Analyze: invalid raw relocation rejected.
+import std.memory;
+import std.string;
+struct Plain { int value = 8;  public: Plain() = default; };
+class Stationary {
+public:
+  Stationary(int value) {}
+  Stationary(Stationary& other) = delete;
+  Stationary(Stationary&& other) = delete;
+public:
+  Stationary() = default;
+};
+class Holder<std::layout_queryable T> {
+  mut std::uninitialized<T> bytes{};
+public:
+  Holder() {}
+};
+int main() { Stationary* a = nullptr; Stationary* b = nullptr; unsafe { std::relocate_at(a, b); } return 0; }  //~ ERROR GTI-S2029

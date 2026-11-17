@@ -1,0 +1,6 @@
+// Initialization: the program is accepted.
+//@ check-pass
+int later = 8;
+int read<T>() { return later; }
+int first = read<int>();
+int main() { return first - 8; }

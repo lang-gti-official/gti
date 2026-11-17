@@ -1,0 +1,14 @@
+// Lifetime and effects: a function-local TLS borrow retains a joined scoped dependency.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.thread;
+struct Read {
+  int& target;
+  Read(int& value) : target(value) {}
+  void operator()() { int copied = this.target; }
+};
+int main() {
+  thread_local mut int source = 7;  //~ WARN GTI-S2096
+  auto result = std::parallel_invoke(Read(source));
+  return 0;
+}

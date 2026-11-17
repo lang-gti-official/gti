@@ -1,0 +1,2 @@
+// Thread confined callbacks: invalid confinement contract gets source diagnostic: [[thread_confined_callback]] int main() { return 0; }.
+[[thread_confined_callback]] int main() { return 0; }  //~ ERROR GTI-S2099

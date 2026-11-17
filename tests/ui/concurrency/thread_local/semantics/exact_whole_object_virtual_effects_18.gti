@@ -1,0 +1,19 @@
+// Exact whole object virtual effects: an inherited final overrider keeps its exact selected declaration.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1; thread_local mut int other = 2;
+class Base {
+public:
+  virtual int read() { return 1; }
+public:
+  Base() = default;
+};
+class Reader : public Base {
+public:
+  int read() override { return 2; }
+public:
+  Reader() = default;
+};
+class Leaf : public Reader { public: Leaf() = default; };
+thread_local Leaf leaf{}; int main() { int& held = guarded; return leaf.read() + held; }

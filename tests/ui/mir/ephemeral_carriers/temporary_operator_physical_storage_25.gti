@@ -1,0 +1,14 @@
+// Temporary operator physical storage: compiler-owned fallible extraction preserves its external owner, not the temporary expected carrier's shell.
+//@ check-pass
+import std.utility;
+enum class Error { absent };
+struct Owner { int value = 7;  public: Owner() = default; };
+expected<Owner&, Error> lookup(Owner& source) { return source; }
+Owner& relay(Owner& source) { return lookup(source).expect("owner required"); }
+int main() {
+  Owner owner{};
+  Owner& temporary = lookup(owner).expect("owner required");
+  auto pending = lookup(owner);
+  Owner& consumed = std::move(pending).expect("owner still required");
+  return temporary.value + consumed.value + relay(owner).value - 21;
+}

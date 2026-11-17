@@ -1,0 +1,7 @@
+// Dispatch per use witnesses: a thread-local copy of program storage is a generated copy.
+//@ build-pass
+//@ slow
+    class P { public: P() {} virtual int read() { return 1; } };
+ P global{};
+ thread_local P value = global;
+    int main() { return value.read(); }

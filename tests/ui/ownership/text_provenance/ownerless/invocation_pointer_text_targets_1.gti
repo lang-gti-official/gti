@@ -1,0 +1,20 @@
+// Invocation pointer text targets: an invocation pointer over an ownerless text target is accepted.
+//@ check-pass
+import std.functional;
+import std.string;
+std::string_view tag(std::string_view s) {
+  if (s.empty()) { return "empty"; }
+  return "full";
+}
+int main() {
+  auto quiet = [](std::string_view s) -> std::string_view {
+    return s.empty() ? "none" : "some";
+  };
+  std::function_ptr<std::string_view(std::string_view)> named{tag};
+  std::function_ptr<std::string_view(std::string_view)> lambda{quiet};
+  mut std::string owner{"owned"};
+  std::string_view first = named(owner.view());
+  std::string_view second = lambda(owner.view());
+  owner.append("!");
+  return first == "full" && second == "some" ? 0 : 1;
+}

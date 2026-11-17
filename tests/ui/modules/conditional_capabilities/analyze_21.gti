@@ -1,0 +1,2 @@
+// Analyze: malformed or conflicting conditional policies fail closed.
+[[unsafe_transfer(int)]] class Wrong {}; int main() { return 0; }  //~ ERROR GTI-P0001

@@ -1,0 +1,9 @@
+// Pack fold storage effects: a nonempty fold retains dynamic fixed-prefix TLS initialization effects and rejects its hidden conflicting write.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1;
+int32_t initialize() { guarded += 1; return 2; }
+thread_local mut int32_t input = initialize();
+void leaf<T>(mut int32_t& fixed, T& element) { fixed += 1; }
+void folded<Args...>(Args... args) { (leaf(input, args), ...); }
+int main() { int32_t& held = guarded; folded(1); return held; }  //~ ERROR GTI-S2045

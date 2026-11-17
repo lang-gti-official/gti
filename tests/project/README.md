@@ -35,17 +35,25 @@ $ gti check --profile nosuch
 
 | Line | Meaning |
 | --- | --- |
-| `$ program args…` | run a command; `gti` and `gti_lsp` are the built tools, other programs come from `PATH`; `"…"` groups words, `$DIR` is the copied directory |
+| `$ program args…` | run a command; `gti` and `gti_lsp` are the built tools, other programs come from `PATH`; `"…"` groups words, `$DIR` is the copied directory and `$HOME` the commands' home |
+| `$ tty: program args…` | run it with stdout and stderr on one pseudo-terminal (80×24, newlines untranslated); its expectations are all `stdout:` |
 | `$ cd dir` | change the directory later commands run in |
+| `env NAME=value` | set a variable for every later command; `$DIR`, `$HOME` and `$PATH` (the PATH later commands would otherwise see) expand in the value |
+| `unset NAME` | remove a variable (also `HOME`, `NO_COLOR`, `TERM`) from later commands |
+| `slow` | the slow tier's limit; only under a `slow/` directory (`tests/slow/project/<name>/`, run by `gti_test_slow`) |
 | `? N` | the exit code (default 0) |
 | `stdout: text`, `stderr: text` | that stream contains `text` |
 | `!stdout: text`, `!stderr: text` | that stream does not contain `text` |
 
+In expectation text `\e` is the escape character (colour sequences such as
+`\e[1;33m`) and `\\` a backslash; failure output shows escapes as `\e`.
+
 Output is normalised before matching: the copied directory becomes `$DIR`,
+the home `$HOME`,
 the standard library root `$STD`, the `gti` path `gti`, and durations such
 as `0.63s` or `12 ms` become `<time>`. All commands together get 20 s of CPU
 (scaled by `GTI_TEST_TIME_SCALE`); a test that needs more belongs in
-tests/slow. `--bless` runs every command and rewrites only what it can
+`tests/slow/project/` with a `slow` line (120 s). `--bless` runs every command and rewrites only what it can
 know: each `? N` becomes the actual exit code, and a command with no
 `stdout:`/`stderr:` lines gains a `stderr:` line per diagnostic header it
 printed (at most five). Other expectations are written by hand and are never

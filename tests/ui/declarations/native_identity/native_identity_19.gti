@@ -1,0 +1,9 @@
+// Native identity: rejected with GTI-S2013.
+struct Twice {
+  implicit Twice(int value) {}
+  implicit Twice(int value, int extra = 2) {}
+public:
+  Twice() = default;
+};
+Twice make() { return 1; }  //~ ERROR GTI-S2013
+int main() { return 0; }

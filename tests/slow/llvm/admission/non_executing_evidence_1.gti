@@ -1,0 +1,5 @@
+// Non executing evidence: exact pack construction lowers to Identity before LLVM admission.
+//@ build-pass
+//@ slow
+T pack_construct<T, Args...>(Args... values) { return T(values...); }
+int main() { return pack_construct<int>(7) - 7; }
