@@ -1,6 +1,7 @@
 // A read-only cursor or span yields element references tied to the container
 // it views, not to the cursor or span object: they survive advancing, outlive
 // a temporary cursor or span, and can be returned through a reference formal.
+//@ slow
 //@ run-pass
 //@ stdout: vector 1 2 7 9
 //@ stdout: span 7 3 9
