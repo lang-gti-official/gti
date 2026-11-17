@@ -1,0 +1,156 @@
+// Temporary arguments: selection, evaluation order and cleanup of borrowed temporaries.
+//@ run-pass
+mut int32_t drops = 0;
+mut int64_t trace = 0;
+mut int32_t generated_drops = 0;
+
+struct BodyDefault { BodyDefault() {} };
+struct Defaulted { Defaulted() = default; };
+struct GeneratedCleanup {
+  GeneratedCleanup() = default;
+  ~GeneratedCleanup() { generated_drops += 1; }
+};
+bool inspect_default(BodyDefault& value) { return true; }
+bool inspect_default(Defaulted& value) { return true; }
+bool inspect_default(GeneratedCleanup& value) { return true; }
+
+class Tracker {
+public:
+  Tracker(int32_t initial) : value(initial) {
+    trace = trace * 10 + initial;
+  }
+
+  Tracker(Tracker& other) = delete;
+  Tracker(Tracker&& other) = default;
+
+  ~Tracker() {
+    drops += 1;
+    trace = trace * 10 + 9;
+  }
+
+  int32_t read() { return this.value; }
+
+private:
+  int32_t value;
+};
+
+class Choice {
+public:
+  Choice() {}
+};
+
+class Factory {
+public:
+  Factory() {}
+  Tracker build(int32_t value) { return Tracker(value); }
+};
+
+Tracker make_tracker(int32_t value) {
+  return Tracker(value);
+}
+
+int32_t inspect(Tracker& value) {
+  return value.read();
+}
+
+int32_t ordered(int32_t left, Tracker& value, int32_t right) {
+  trace = trace * 10 + 8;
+  return left + value.read() + right;
+}
+
+int32_t multiple(Tracker& left, Tracker& right) {
+  trace = trace * 10 + 8;
+  return left.read() + right.read();
+}
+
+int32_t generic<T>(T& value) {
+  trace = trace * 10 + 8;
+  return 7;
+}
+
+void observe(Tracker& value) {
+  trace = trace * 10 + 8;
+}
+
+Tracker duplicate(Tracker& value) {
+  return Tracker(value.read() + 1);
+}
+
+int32_t choose(Choice& value) {
+  return 1;
+}
+
+int32_t choose(Choice value) {
+  return 2;
+}
+
+int32_t side(int32_t value) {
+  trace = trace * 10 + value;
+  return value;
+}
+
+int main() {
+  trace = 0;
+  int32_t direct = inspect(Tracker(1));
+  if (direct != 1 || drops != 1 || trace != 19) {
+    return 1;
+  }
+
+  trace = 0;
+  int32_t produced = inspect((make_tracker(2)));
+  if (produced != 2 || drops != 2 || trace != 29) {
+    return 2;
+  }
+
+  trace = 0;
+  int32_t sequenced = ordered(side(1), Tracker(2), side(3));
+  if (sequenced != 6 || drops != 3 || trace != 12389) {
+    return 3;
+  }
+
+  trace = 0;
+  int32_t paired = multiple(Tracker(4), make_tracker(5));
+  if (paired != 9 || drops != 5 || trace != 45899) {
+    return 4;
+  }
+
+  trace = 0;
+  int32_t concrete = generic(Tracker(6));
+  if (concrete != 7 || drops != 6 || trace != 689) {
+    return 5;
+  }
+
+  trace = 0;
+  observe(Tracker(7));
+  if (drops != 7 || trace != 789) {
+    return 6;
+  }
+
+  trace = 0;
+  int32_t owned = duplicate(Tracker(8)).read();
+  if (owned != 9 || drops != 9 || trace != 8999) {
+    return 7;
+  }
+
+  int32_t owning = choose(Choice());
+  if (owning != 2 || drops != 9) {
+    return 8;
+  }
+
+  Factory factory = Factory();
+  trace = 0;
+  int32_t member_produced = inspect(factory.build(3));
+  if (member_produced != 3 || drops != 10 || trace != 39) {
+    return 9;
+  }
+
+  if (!inspect_default(BodyDefault()) || !inspect_default(Defaulted()) ||
+      !inspect_default(GeneratedCleanup())) {
+    return 10;
+  }
+  if (generated_drops != 1) {
+    return 11;
+  }
+
+  return 0;
+}

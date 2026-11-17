@@ -2812,7 +2812,7 @@ temporary to use its owned slot rather than the cleanup-free value slot.
 
 ## Constructor-initializer temporaries (0.430.1)
 
-`mutable_temporary_receiver_runtime` binds temporaries, with and without a
+`tests/ui/ownership/temporaries/mutable_temporary_receiver/` binds temporaries, with and without a
 destructor, to reference parameters in an explicit member initializer, field
 defaults and a generated default constructor. Its C++20/C++23 O0/O3 builds
 check that each temporary ends before the next initializer observes the drop
@@ -9577,7 +9577,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/stdlib/atomic` / `atomic_tsan` | scalar construction/load/store/exchange/strong-CAS success, failure, observation, movement, and every explicit order overload; managed-thread CAS contention; the SC store-buffer litmus; deterministic release/acquire publication with relaxed payload access; O0/O3 under C++20/C++23; repeated stress; and ThreadSanitizer over the LLVM backend's emission where supported |
 | `tests/ui/stdlib/mutex` | C++20/23 O0/O3 moved trivial/nontrivial mutex owners and moved guards; exactly-once reverse payload cleanup; inactive moved-from native shells leave primary records unchanged; active secondary failure preserves the emergency envelope and abandons later cleanup. A retained-C++ oracle repair, not native LLVM mutex acceptance. |
 | `tests/ui/expected/value_on_error.gti` | wrong-state `expected.value()` and `expected.error()` terminate through `GTI-R0009` at O0/O3 under C++20/C++23 rather than inheriting native-library behavior |
-| `expected_propagation_runtime` | exact once-only, left-to-right `?` evaluation; `expected<void, E>` forwarding; named-operand copy versus prvalue/`std::move` move behavior; active-alternative error transport; and ordinary branch/return cleanup at O0/O3 under C++20/C++23 |
+| `tests/ui/expected/propagation/expected_propagation.gti` | exact once-only, left-to-right `?` evaluation; `expected<void, E>` forwarding; named-operand copy versus prvalue/`std::move` move behavior; active-alternative error transport; and ordinary branch/return cleanup at O0/O3 under C++20/C++23 |
 | `tests/ui/expected/transform_error_compiler/` / `tests/lsp/expected/transform_error_*.gti` | exact namespace mapper selection, consuming receiver and owned-result diagnostics with source/UTF-16 spans and related declarations, HIR branch/call lowering, verified MIR return and join ownership, fail-closed mutation tests, and compiler-backed completion/hover/definition and recovery |
 | `tests/ui/expected/transform_error` | scalar, void, passive noncopyable and owning alternatives; named/prvalue receivers, chaining, loop re-entry, onward calls, prefix `?`, once-only mapping, reverse-order cleanup, and mapper/later-argument/destructor failures; C++20/C++23 at O0/O1/O3, disabled elision, and ASan/UBSan |
 | `expected_payload_range_runtime` | payload iteration with named and by-value `expected` owners, nested loops, continue/break/early return, local and parameter wrong-state failures, and cstdio payload integration under C++20/C++23 at O0/O3; explicit lifetime slots execute their MIR drops rather than deferring to native parameter scope |
@@ -9590,7 +9590,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `compiler_ownership` / `tests/ui/borrow/ordered_composition` | completed mutation before checked lookup through user-defined tree/table, method, generic/free helper and constructor paths; borrowed-carrier call inputs; exact MIR order and forged-order rejection; earlier mutation, lookup and invocation failures; reverse-order, lexical-loan, exclusive-read, mutable-parameter and escaping-local rejection; precise diagnostic spans; C++20/C++23 O0/O1/O3 parity, disabled elision, and ASan/UBSan |
 | `tests/ui/classes/returned_class_field.gti` | free-function and method class results can be projected directly in initializers and larger expressions at O0/O3 under C++20/C++23 |
 | `global_class_storage_runtime` | runtime-initialized cleanup-free global class storage uses one shared lifetime-slot representation across declarations, module initialization, and exact member reads/writes at O0/O3 under C++20/C++23 |
-| `reference_parameter_range_runtime` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; direct concrete virtual calls cover local, global, field, generic, returned-bound, and ordinary-base receivers; failure-capable descendants retain the status ABI; and the matrix runs at O0/O3 under C++20/C++23 |
+| `tests/ui/ownership/borrow/reference_parameter_range.gti` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; direct concrete virtual calls cover local, global, field, generic, returned-bound, and ordinary-base receivers; failure-capable descendants retain the status ABI; and the matrix runs at O0/O3 under C++20/C++23 |
 | `tests/ui/borrow/carrier_shell/` / `tests/ui/ownership/borrow/shared_accessor_range.gti` | borrowed-success carrier to reference accessor to read-only element traversal, reduced from Tea's JSON decoder and repeated with an unrelated application owner and noncopyable elements; exact retained call-result identity, nested iteration, continue/break/return and failure cleanup; forged local/access metadata and premature range retirement rejected; owner invalidation and escaping-local negatives; C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan |
 | `compiler_pipeline` / `tests/ui/borrow/mutable_range_for.gti` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
 | `compiler_ownership` / `generic_algorithm_cluster` complete-range coverage | L-RANGE-04 exact `input_range`, `range_of`, `mutable_range_of`, `sized_range`, range predicate/operation relationships; application-defined nominal and fixed-array instantiation; concrete HIR protocol/strategy replacement; checked fixed-array index arithmetic after symbolic-operator suppression; missing endpoints, wrong referent, missing mutable endpoint, wrong size result, and callable mismatch rejection; C++20/C++23 O0/O3 runtime parity |
@@ -10192,7 +10192,7 @@ owners, nested alias qualifiers, owner defaults/value arguments, exact-definitio
 alias restrictions, private/cyclic/missing aliases, generic signatures, retained iterator
 loans and move-only targets. `tests/lsp/types/specialized_member_*.gti` checks completion,
 hover, definition, references, tokens, precise diagnostic ranges, recovery and
-format/reanalysis. `qualified_type_member_runtime` compiles and runs example 132
+format/reanalysis. `tests/ui/types/qualified_type_members.gti` runs a copy of example 132
 at O0/O1/O3 under C++20/C++23, including unique-owner cleanup. The example also
 participates in the standard MIR and LoweredProgram censuses and the Tree-sitter
 shipped-source gate. This slice extends type contexts, not dependent alias
@@ -10413,7 +10413,7 @@ marker. `tests/ui/ownership/temporaries/virtual_temporary_receivers.gti`
 checks virtual, override, interface-override, inherited and virtual
 `operator()` members (the former C++ test's semantic/HIR/MIR assertions and
 its three receiver-dispatch forgeries were dropped with the suite).
-`mutable_temporary_receiver_runtime` runs C++20/C++23 at O0/O3 and
+`tests/ui/ownership/temporaries/mutable_temporary_receiver/` runs C++20/C++23 at O0/O3 and
 proves overload selection plus exactly-once destruction for constructor and
 class-return producers. It also proves that method/argument failure begins
 receiver cleanup and that producer failure does not activate a receiver drop.
@@ -10508,7 +10508,7 @@ reverse loan end, and full-expression drop. Mutations forge argument indices,
 place/loan access, producer identity, full-expression identity, and loan
 ending. Negative cases retain rejection of mutable references, local bindings,
 explicit moves, compound and borrowed-state producers, escaping results, and
-fallback-tier ambiguity. `temporary_argument_borrow_runtime` runs successful
+fallback-tier ambiguity. `tests/ui/ownership/temporaries/temporary_argument_borrow/` runs successful
 and defined-failure cases at O0/O3 under C++20/C++23, including failure before
 production, in a later argument, and in the selected body.
 `tests/ui/ownership/temporaries/conditional_temporary_argument_borrows.gti`

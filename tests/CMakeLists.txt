@@ -176,12 +176,6 @@ add_test(NAME nested_type_syntax COMMAND gti_nested_type_syntax_tests)
 set_tests_properties(nested_type_syntax PROPERTIES TIMEOUT 10)
 
 if(Python3_Interpreter_FOUND)
-  add_test(NAME qualified_type_member_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-      "${PROJECT_SOURCE_DIR}/tests/qualified_type_member_runtime_test.py"
-      $<TARGET_FILE:gti>
-      "${PROJECT_SOURCE_DIR}/examples/132-qualified-type-members.gti")
-  set_tests_properties(qualified_type_member_runtime PROPERTIES TIMEOUT 600)
 endif()
 
 add_test(NAME bounded_array_borrows_runtime
@@ -2496,24 +2490,12 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(vector_scalar_constructor_runtime PROPERTIES TIMEOUT 240)
-  add_test(
-    NAME expected_propagation_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/expected_propagation_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
   # Its GCC sanitized build may take minutes under a parallel suite;
   # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
   add_test(
     NAME expected_payload_range_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/expected_payload_range_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  add_test(
-    NAME reference_parameter_range_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/reference_parameter_range_runtime_test.py"
             "$<TARGET_FILE:gti>"
   )
   add_test(
@@ -2933,14 +2915,6 @@ if(Python3_Interpreter_FOUND)
               "${PROJECT_SOURCE_DIR}/tests/fixtures"
     )
     set_tests_properties(class_prvalue_assignment_runtime PROPERTIES TIMEOUT 240)
-    add_test(
-      NAME mutable_temporary_receiver_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/mutable_temporary_receiver_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(mutable_temporary_receiver_runtime
-                       PROPERTIES TIMEOUT 180)
   add_test(
     NAME ephemeral_carrier_receiver_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2987,14 +2961,6 @@ if(Python3_Interpreter_FOUND)
               "$<TARGET_FILE:gti>"
     )
     set_tests_properties(generic_enum_instances_runtime PROPERTIES TIMEOUT 600)
-    add_test(
-      NAME temporary_argument_borrow_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/temporary_argument_borrow_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(temporary_argument_borrow_runtime
-                         PROPERTIES TIMEOUT 300)
     add_test(
       NAME field_subscript_store_runtime
       COMMAND "${Python3_EXECUTABLE}"
