@@ -206,7 +206,24 @@ def self_test(runner):
                     "new_directives.gti: line 6: target 'nonsense' is not a "
                     "supported triple",
                     "new_directives.gti: line 0: analyze tests stop before "
-                    "HIR"):
+                    "HIR",
+                    "project/test.transcript: line 5: environment lines are "
+                    "`env NAME=value`",
+                    "project/test.transcript: line 6: `unset NAME` names one "
+                    "variable",
+                    "project/test.transcript: line 8: a `$ tty:` command's "
+                    "output is all `stdout:`",
+                    "project/test.transcript: `slow` is only legal under a "
+                    "slow/ directory",
+                    "round4_directives.gti: line 5: INFO and HINT annotations "
+                    "are for LSP tests",
+                    "round4_directives.gti: line 0: no-prelude is for "
+                    "analyze-pass/analyze-fail tests",
+                    "round4_directives.gti: line 0: snapshot: "
+                    "optimization-report is checked by `// CHECK:` patterns",
+                    "round4_directives.gti: line 0: stdout/stdout-closed/",
+                    "parse_snapshot.gti: line 0: a diagnostics snapshot of a "
+                    "parse test needs parse-fail"):
         expect(code == 1 and problem in out, f"tidy reports {problem}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "pass")
     expect(code == 0, "tidy accepts the passing fixtures", out)
@@ -367,7 +384,7 @@ def kinds_self_test(runner):
     """Parse-only modes, analysis options and snapshot kinds."""
     for isolate in ((), ("--isolate",)):
         code, out = run(runner, FIXTURES / "kinds", "--jobs", "4", *isolate)
-        expect(code == 0 and "RESULT ok: 24 passed, 0 failed" in out,
+        expect(code == 0 and "RESULT ok: 29 passed, 0 failed" in out,
                f"the other test kinds pass {isolate}", out)
     code, out = run(runner, "--tidy", "--root", FIXTURES / "kinds")
     expect(code == 0, "tidy accepts the kind fixtures", out)
@@ -376,8 +393,11 @@ def kinds_self_test(runner):
     defaults_self_test(runner)
 
     code, out = run(runner, FIXTURES / "snapshot", "--jobs", "4")
-    expect(code == 1 and "RESULT fail: 0 passed, 6 failed" in out,
+    expect(code == 1 and "RESULT fail: 0 passed, 7 failed" in out,
            "drifted snapshots fail", out)
+    expect("CHECK at line 3: `applied [exact-receiver-dispatch` not found" in
+           block(out, "FAIL", "report_missing.gti"),
+           "a missing optimization-report pattern fails", out)
     mir = block(out, "FAIL", "mir_drift.gti")
     expect("snapshot mir differs from mir_drift.mir (-expected +actual)" in mir
            and "-stale" in mir and "+body kind=3" in mir,
@@ -410,8 +430,24 @@ def kinds_self_test(runner):
                "the format snapshot is the formatter's output",
                (work / "drift/format_new.formatted").read_text())
         code, out = run(runner, work, "--jobs", "4")
-        expect("RESULT fail: 3 passed, 3 failed" in out,
+        expect("RESULT fail: 3 passed, 4 failed" in out,
                "blessed snapshots pass", out)
+
+    # --bless seeds a fail-mode test that has no annotation yet.
+    with tempfile.TemporaryDirectory() as directory:
+        test = Path(directory) / "ui/x/seed.gti"
+        test.parent.mkdir(parents=True)
+        test.write_text("// A parse-fail test blessed from nothing.\n"
+                        "//@ parse-fail\nint main() {\n  int a = 1\n"
+                        "  return a;\n}\n")
+        code, out = run(runner, test)
+        expect(code == 1 and "has no `//~ ERROR` expectation" in out,
+               "an unannotated parse-fail test is invalid", out)
+        code, out = run(runner, test, "--bless")
+        expect(code == 0 and "//~ ERROR GTI-P0001" in test.read_text(),
+               "bless seeds the first annotation", out + test.read_text())
+        code, out = run(runner, test)
+        expect(code == 0, "the seeded test passes", out)
 
 
 def features_self_test(runner):
@@ -461,12 +497,22 @@ def defaults_self_test(runner):
 def project_self_test(runner):
     """Project transcripts: commands in a copy of the directory."""
     code, out = run(runner, FIXTURES / "project/ok")
-    expect(code == 0 and "RESULT ok: 1 passed, 0 failed" in out,
-           "a project transcript passes", out)
+    expect(code == 0 and "RESULT ok: 3 passed, 0 failed" in out,
+           "project transcripts pass: env/unset lines, $HOME and $PATH, "
+           "a pseudo-terminal", out)
     code, out = run(runner, FIXTURES / "project/fail", "--jobs", "3",
                     env={"GTI_TEST_TIME_SCALE": "0.1"})
-    expect(code == 1 and "0 passed, 2 failed, 0 ice, 1 timeout" in out,
+    expect(code == 1 and "0 passed, 4 failed, 0 ice, 1 timeout" in out,
            "failing transcripts fail", out)
+    late = block(out, "FAIL", "environment/test.transcript")
+    expect('stdout lacks "set early"' in late and "      unset" in late,
+           "an env line reaches only later commands", out)
+    terminal = block(out, "FAIL", "terminal/test.transcript")
+    expect("line 2: $ tty: sh -c" in terminal and
+           'stdout lacks "\\e[31mbold"' in terminal and
+           "terminal (normalised):\n        \\e[1mbold\\e[0m" in terminal and
+           "\x1b" not in terminal,
+           "a terminal mismatch shows escapes as \\e", out)
     wrong = block(out, "FAIL", "wrong_exit/test.transcript")
     expect("line 2: $ gti main.gti --emit-mir -o out.mir" in wrong and
            "exit code 65, expected 2" in wrong and
@@ -491,14 +537,20 @@ def project_self_test(runner):
                "bless records exit codes and diagnostics", out + text)
         code, out = run(runner, work)
         expect(code == 0, "a blessed transcript passes", out)
+    # The slow tier's limit: 2-3 s of CPU, over a transcript's 1 s here.
+    code, out = run(runner, FIXTURES / "slow", env={"GTI_TEST_TIME_SCALE":
+                                                    "0.05"})
+    expect(code == 0 and "RESULT ok: 1 passed" in out,
+           "a `slow` transcript under slow/ has the slow limit", out)
 
 
 def lsp_self_test(runner):
     """LSP marker tests and transcripts against a per-worker gti_lsp."""
     code, out = run(runner, FIXTURES / "lsp/ok", "--jobs", "2")
-    expect(code == 0 and "RESULT ok: 10 passed, 0 failed" in out,
+    expect(code == 0 and "RESULT ok: 14 passed, 0 failed" in out,
            "LSP fixtures pass: edit steps, server options, code actions, "
-           "several files, a project, cursor markers", out)
+           "several files, a project, cursor markers, prepare-rename, "
+           "format options, INFO annotations, $contains/$match", out)
     # One worker keeps a server per option list: the same call is checked
     # under the concurrent and the default profile in turn.
     code, out = run(runner, FIXTURES / "lsp/ok/server_concurrent.gti",
@@ -507,8 +559,28 @@ def lsp_self_test(runner):
     expect(code == 0 and "RESULT ok: 2 passed" in out,
            "tests with different server options share a worker", out)
     code, out = run(runner, FIXTURES / "lsp/fail", "--jobs", "3")
-    expect(code == 1 and "RESULT fail: 0 passed, 9 failed" in out,
+    expect(code == 1 and "RESULT fail: 0 passed, 13 failed" in out,
            "failing LSP fixtures fail without timing out", out)
+    renamed = block(out, "FAIL", "wrong_rename_format.gti")
+    for problem in ("line 2 (prepare-rename): expected a rename at @other; "
+                    "got @start",
+                    "line 3 (prepare-rename): expected no rename here",
+                    'line 4 (prepare-rename): expected placeholder "wrong"; '
+                    'got "total"',
+                    'line 6 (formatting): formatted text does not contain "{',
+                    "line 7 (formatting): an unterminated or malformed"):
+        expect(problem in renamed, f"prepare-rename/formatting failure "
+               f"reported: {problem}", out)
+    expect("actual:   INFO GTI-S2003 at line 5" in
+           block(out, "FAIL", "wrong_info.gti"),
+           "a test annotating INFO must annotate every information "
+           "diagnostic", out)
+    expect("line 3: expected a message matching" in
+           block(out, "FAIL", "wrong_matchers.jsonl"),
+           "an unmatched $contains fails", out)
+    expect("invalid test: line 3: `$match` (" in
+           block(out, "FAIL", "bad_matcher.jsonl"),
+           "a malformed $match is an invalid test", out)
     actions = block(out, "FAIL", "wrong_code_actions.gti")
     for problem in ('line 2 (code-action): no code action titled "no such fix"; '
                     "offered: ",
@@ -565,6 +637,40 @@ def lsp_self_test(runner):
     expect("line 3: expected a message matching" in
            block(out, "FAIL", "wrong_transcript.jsonl") and "seen: " in out,
            "a transcript mismatch shows what was seen", out)
+    # The budget is the server's CPU: replies that are slow in wall time
+    # pass, a server burning CPU fails, a server that never publishes hits
+    # the hang guard. The shim stands in for gti_lsp (the first test of a
+    # server is cold, so the second is the one judged).
+    shim = ROOT / "tests/runner/lsp_shim.py"
+    pair = (FIXTURES / "lsp/ok/requests.gti", FIXTURES / "lsp/ok/diagnostics.gti")
+    shimmed = {"GTI_TEST_SHIM_SERVER": str(runner.parent / "gti_lsp"),
+               "GTI_TEST_TIME_SCALE": "0.5"}
+    with tempfile.TemporaryDirectory() as directory:
+        report = Path(directory) / "junit.xml"
+        code, out = run(runner, *pair, "--lsp", shim, "--jobs", "1",
+                        "--junit", report,
+                        env=shimmed | {"GTI_TEST_SHIM_MODE": "slow",
+                                       "GTI_TEST_SHIM_SECONDS": "0.4"})
+        walls = [float(case.get("time")) for case in
+                 ElementTree.parse(report).getroot().iter("testcase")]
+        cpus = [float(prop.get("value")) for prop in
+                ElementTree.parse(report).getroot().iter("property")]
+        expect(code == 0 and "RESULT ok: 2 passed" in out and
+               max(walls) > 1.5 and len(cpus) == 2 and max(cpus) < 1.5,
+               "replies slow in wall time pass the CPU budget, and JUnit "
+               "reports both times", out + report.read_text())
+    code, out = run(runner, *pair, "--lsp", shim, "--jobs", "1",
+                    env=shimmed | {"GTI_TEST_SHIM_MODE": "spin",
+                                   "GTI_TEST_SHIM_SECONDS": "2"})
+    expect(code == 1 and "over the CPU budget: gti_lsp used" in out and
+           "RESULT fail: 1 passed, 0 failed, 0 ice, 1 timeout" in out,
+           "a server burning CPU exceeds the budget", out)
+    code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp", shim,
+                    env=shimmed | {"GTI_TEST_SHIM_MODE": "hang",
+                                   "GTI_TEST_TIME_SCALE": "0.05"})
+    expect(code == 1 and "within the hang guard" in out and
+           "over the CPU budget" not in out,
+           "a server that never publishes hits the hang guard", out)
     code, out = run(runner, FIXTURES / "lsp/ok/requests.gti", "--lsp",
                     "/usr/bin/true")
     expect(code == 1 and "could not start /usr/bin/true" in out,

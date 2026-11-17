@@ -1,0 +1,13 @@
+// An error inside a macro body is reported at the invocation and also
+// published as an informational companion at the body line, related back
+// to the invocation. (From lsp_macro_body_diagnostic_test.py.)
+{"send": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {"textDocument": {"publishDiagnostics": {"relatedInformation": true}}}}}}
+{"expect": {"id": 1, "result": "$ANY"}}
+{"send": {"jsonrpc": "2.0", "method": "initialized", "params": {}}}
+{"file": {"name": "main.gti", "text": "import std.source_location;\nimport std.string;\n#macro check_value(int value, std::source_location loc) {\n  std::string hidden = loc.file;\n}\nint main() {\n  check_value!(1, std::source_location::current());\n  return 0;\n}\n"}}
+{"send": {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": "$URI", "languageId": "gti", "version": 1, "text": "import std.source_location;\nimport std.string;\n#macro check_value(int value, std::source_location loc) {\n  std::string hidden = loc.file;\n}\nint main() {\n  check_value!(1, std::source_location::current());\n  return 0;\n}\n"}}}}
+{"expect": {"method": "textDocument/publishDiagnostics", "params": {"uri": "$URI", "version": 1, "diagnostics": {"$contains": [{"severity": 1, "code": "GTI-S2007", "range": {"start": {"line": 6}}}, {"severity": 3, "code": "GTI-S2007", "message": {"$match": "^A macro expansion fails here: "}, "range": {"start": {"line": 3}}, "relatedInformation": [{"location": {"uri": "$URI", "range": {"start": {"line": 6}}}, "message": "$ANY"}]}]}}}}
+{"send": {"jsonrpc": "2.0", "id": 2, "method": "shutdown"}}
+{"expect": {"id": 2, "result": null}}
+{"send": {"jsonrpc": "2.0", "method": "exit"}}
+{"exit": 0}
