@@ -44,6 +44,9 @@ public:
     size_t extent = this.page_extent();
     return this.pages[index / extent].get(index % extent);
   }
+  // One call that projects the entry, so a cursor reading through its
+  // stored reference keeps that reference's region for the result.
+  map_entry<K, V>& entry_at(size_t index) { return this.at(index).entry; }
   mut unordered_map_node<K, V>& at(size_t index) mut {
     size_t extent = this.page_extent();
     return this.pages[index / extent].get_mut(index % extent);
@@ -89,17 +92,17 @@ public:
   size_t position() { return this.limit; }
 };
 
-class unordered_map_iterator<K, V> {
-  unordered_map_nodes<K, V>& nodes;
+class unordered_map_iterator<K, V, lifetime owner> {
+  unordered_map_nodes<K, V>&<owner> nodes;
   mut size_t current;
 public:
-  unordered_map_iterator(unordered_map_nodes<K, V>& nodes,
+  unordered_map_iterator(unordered_map_nodes<K, V>&<owner> nodes,
                          size_t position) : nodes(nodes), current(position) {}
-  map_entry<K, V>& operator*() {
+  map_entry<K, V>&<owner> operator*() {
     gti_internal::require_container_argument(this.current < this.nodes.size());
-    return this.nodes.at(this.current).entry;
+    return this.nodes.entry_at(this.current);
   }
-  map_entry<K, V>& operator->() { return *this; }
+  map_entry<K, V>&<owner> operator->() { return *this; }
   void operator++() mut {
     gti_internal::require_container_argument(this.current < this.nodes.size());
     this.current++;
