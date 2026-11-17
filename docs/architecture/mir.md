@@ -4834,6 +4834,22 @@ endpoint. The MIR profile remains metadata: mutable process-wide storage is
 rejected by semantics in the concurrent profile rather than reinterpreted by
 lowering.
 
+A call whose result is written in its receiver's class region
+(`receiverClassRegionRelay`) borrows what the receiver stores, never the
+receiver. Lowering parents a fresh temporary receiver's call-result loan to
+the ancestry of the stored dependency its single source field designates
+(the primary path or the matching additional dependency), so the shell may
+end with its full expression while only that region's external owner stays
+borrowed. A returned call result parented to a carrier formal's stored entry
+relays that entry, as returning the designated field does; when the carrier
+is a local relayed by a reference formal, `canonicalPlace` identifies the
+dereferenced field as the formal's whole referent. The verifier admits the
+temporary receiver input under the same summary shape, accepts the
+call-result source one dereference below the designated stored path
+(`staticStorageLoan`, `independentlyStaticTextBinding`), and lets
+`referenceParameterReturnPublication` accept a local carrier whose single
+initialization stores a call result sourced at the formal.
+
 A transient call-result loan used only as the receiver of a non-borrowing
 member call ends immediately after that call. Lowering carries the source HIR
 receiver identity through call preparation and emits the same selected
