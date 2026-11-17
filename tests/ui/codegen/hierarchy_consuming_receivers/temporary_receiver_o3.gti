@@ -1,0 +1,31 @@
+// The same derived-class consuming receivers stay correct in the optimized pipeline.
+//@ run-pass
+//@ exit-code: 0
+//@ opt: O3
+//@ reason: the optimized LLVM pipeline must keep the temporary receiver's shell and relayed referents
+
+struct Box { mut int value; Box(int v) : value(v) {} };
+class Base<lifetime b> {
+protected:
+  Box&<b> other;
+public:
+  Base(Box&<b> o) : other(o) {}
+  virtual int tag() { return 1; }
+};
+class Derived<lifetime a, lifetime b> : public Base<b> {
+  Box&<a> mine;
+public:
+  Derived(Box&<a> m, Box&<b> o) : Base<b>(o), mine(m) {}
+  int tag() override { return 2; }
+  int&<b> right() && { return this.other.value; }
+  int&<a> left() && { return this.mine.value; }
+  int both() && { return this.mine.value + this.other.value + this.tag(); }
+};
+int main() {
+  Box x{1};
+  Box y{2};
+  int& r = Derived(x, y).right();
+  int& l = Derived(x, y).left();
+  int sum = Derived(x, y).both();
+  return r * 10 + l + sum == 26 ? 0 : 1;
+}
