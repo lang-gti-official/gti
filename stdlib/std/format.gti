@@ -1270,56 +1270,58 @@ void runtime_println_impl<Args...>(string_view pattern, Args&... args) {
 }
 
 /// Targeted literal output preserves braces and submits the newline with the text.
-export expected<void, print_errc> try_println(output_target target, string_view text) {
+export expected<void, print_errc> try_println(output_target& target, string_view text) {
   mut string line = string(text);
   line.push_back('\n');
   return detail::submit_print(target, line.view());
 }
 
 export [[track_caller]]
-void println(output_target target, string_view text) {
+void println(output_target& target, string_view text) {
   auto result = try_println(target, text);
   if (!result) { detail::panic_target_print_error(target, result.error()); }
 }
 
+namespace detail {
 expected<void, print_errc>
-try_target_println_impl<Args...>(output_target target, string_view pattern, Args&... args) {
-  mut auto formatted = try_runtime_format_impl(pattern, args...);
+submit_formatted_line(output_target target, mut expected<string, format_errc> formatted) {
   if (!formatted) {
     return unexpected(detail::print_format_error(formatted.error()));
   }
   formatted.value().push_back('\n');
-  return detail::submit_print(target, formatted.value().view());
+  return submit_print(target, formatted.value().view());
+}
 }
 
 export [[track_caller]]
-expected<void, print_errc> try_println<formattable Args...>(output_target target, format_pattern<Args...> pattern, Args&... args) {
-  return try_target_println_impl(target, pattern.text, args...);
+expected<void, print_errc> try_println<formattable Args...>(output_target& target, format_pattern<Args...> pattern, Args&... args) {
+  return detail::submit_formatted_line(target, try_runtime_format_impl(pattern.text, args...));
 }
 
 export [[track_caller]]
-void println<formattable Args...>(output_target target, format_pattern<Args...> pattern, Args&... args) {
-  auto result = try_target_println_impl(target, pattern.text, args...);
+void println<formattable Args...>(output_target& target, format_pattern<Args...> pattern, Args&... args) {
+  auto result = detail::submit_formatted_line(target, try_runtime_format_impl(pattern.text, args...));
   if (!result) { detail::panic_target_print_error(target, result.error()); }
 }
 
 export [[track_caller]]
-expected<void, print_errc> try_runtime_println(output_target target, string_view pattern) {
-  return try_target_println_impl(target, pattern);
+expected<void, print_errc> try_runtime_println(output_target& target, string_view pattern) {
+  return detail::submit_formatted_line(target, try_runtime_format(pattern));
 }
 export [[track_caller]]
-expected<void, print_errc> try_runtime_println<formattable First, formattable Args...>(output_target target, string_view pattern, First& first, Args&... args) {
-  return try_target_println_impl(target, pattern, first, args...);
+expected<void, print_errc> try_runtime_println<formattable First, formattable Args...>(output_target& target, string_view pattern, First& first, Args&... args) {
+  mut auto formatted = try_runtime_format(pattern, first, args...);
+  return detail::submit_formatted_line(target, std::move(formatted));
 }
 
 export [[track_caller]]
-void runtime_println(output_target target, string_view pattern) {
-  auto result = try_target_println_impl(target, pattern);
+void runtime_println(output_target& target, string_view pattern) {
+  auto result = try_runtime_println(target, pattern);
   if (!result) { detail::panic_target_print_error(target, result.error()); }
 }
 export [[track_caller]]
-void runtime_println<formattable First, formattable Args...>(output_target target, string_view pattern, First& first, Args&... args) {
-  auto result = try_target_println_impl(target, pattern, first, args...);
+void runtime_println<formattable First, formattable Args...>(output_target& target, string_view pattern, First& first, Args&... args) {
+  auto result = try_runtime_println(target, pattern, first, args...);
   if (!result) { detail::panic_target_print_error(target, result.error()); }
 }
 

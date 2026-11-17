@@ -561,7 +561,8 @@ std::println(std::cout, "finished");
 owning streams. They acquire no resources, require no dynamic initialization,
 and select stdout or stderr respectively. Calls without a destination retain
 stdout behavior. Targeted `println` and `try_println` support literal text and
-checked format patterns with borrowed arguments. Their `runtime_println` and
+checked format patterns with borrowed arguments. Destinations are borrowed
+read-only for the duration of the call, including temporary selector values. Their `runtime_println` and
 `try_runtime_println` counterparts explicitly accept dynamic patterns.
 Formatting and newline construction finish before a single counted write;
 formatting failure writes nothing, but a host error can leave a written prefix.

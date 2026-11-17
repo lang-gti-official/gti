@@ -2,6 +2,7 @@
 //@ run-pass
 //@ stderr-contains: custom token
 import std.format;
+import std.string;
 struct Token { int value; };
 class std::formatter<Token> {
 public:
@@ -13,10 +14,10 @@ public:
   formatter() = default;
 };
 int main() {
-  Token token{1};
+  Token token{.value=1};
   auto good = std::try_println(std::cerr, "custom {}", token);
   if (!good || token.value != 1) { return 1; }
-  Token rejected{0};
+  Token rejected{.value=0};
   auto bad = std::try_runtime_println(std::cout, "must not print {}", rejected);
   if (bad || bad.error() != std::print_errc::unsupported_argument) { return 2; }
   auto count = std::try_runtime_println(std::cout, "{} {}", token);
