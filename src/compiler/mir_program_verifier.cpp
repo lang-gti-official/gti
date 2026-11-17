@@ -10575,7 +10575,13 @@ verifyMirProgramInitialization(const MirProgram &program) {
         !symbolSteps.emplace(step.symbol, step.id).second ||
         !storagePlaces.insert(step.storagePlace).second ||
         !storageInitializations.insert(step.storageInitialization).second ||
-        step.requiresActiveCleanup != step.nativeRetirement.has_value() ||
+        step.requiresActiveCleanup != (step.nativeRetirement.has_value() ||
+                                       step.sourceCleanup.has_value()) ||
+        (step.nativeRetirement && step.sourceCleanup) ||
+        (step.sourceCleanup &&
+         (!storage || step.sourceCleanup->type != storage->type ||
+          mirUniqueCleanupType(program, storage->type) != step.sourceCleanup ||
+          mirDropIsNativeRetirement(program, *step.sourceCleanup))) ||
         (step.nativeRetirement &&
          (!storage || step.nativeRetirement->type != storage->type ||
           !mirDropIsNativeRetirement(program, *step.nativeRetirement))) ||
@@ -11966,6 +11972,16 @@ verifyMirHostedStartup(const MirProgram &program) {
       program.programInitializationPlan().steps.begin(),
       program.programInitializationPlan().steps.end(),
       [](const auto &step) { return step.nativeRetirement.has_value(); });
+  const bool cleansProgramStorage = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(),
+      [](const auto &step) { return step.sourceCleanup.has_value(); });
+  const bool programCleanupMayRaise = std::any_of(
+      program.programInitializationPlan().steps.begin(),
+      program.programInitializationPlan().steps.end(), [&](const auto &step) {
+        return step.sourceCleanup &&
+               mirDropMayRaiseDefinedFailure(program, *step.sourceCleanup);
+      });
   bool cThreadStarted = false;
   std::function<void(MirBlockId)> takeNativeFailureTail;
   const auto destructorMayRaise = [&](MirDropObligationId obligation) {
@@ -12062,7 +12078,7 @@ verifyMirHostedStartup(const MirProgram &program) {
                        {.kind = MirInstructionKind::Lifecycle,
                         .cleanupBoundaryEnd = end.expected.cleanupBoundary});
     }
-    if (retiresProgramStorage)
+    if (retiresProgramStorage || cleansProgramStorage)
       takeNativeFailureTail(cleanupBlock);
     const TakenOperation contain =
         take(MirHostedStartupOperationKind::ContainFailure,
@@ -12121,8 +12137,23 @@ verifyMirHostedStartup(const MirProgram &program) {
                      {.kind = MirInstructionKind::RetireProgramStorage,
                       .info = generatedInfo(SemanticType::Void)});
   };
+  const auto takeProgramCleanup = [&](MirBlockId block, bool unwinding) {
+    if (!cleansProgramStorage)
+      return MirInstructionId{0};
+    const bool mayRaise = !unwinding && programCleanupMayRaise;
+    const auto operation =
+        take(MirHostedStartupOperationKind::CleanupProgramStorage,
+             failureBehavior(mayRaise), block, true, false, false, false);
+    exactInstruction(operation,
+                     {.kind = MirInstructionKind::CleanupProgramStorage,
+                      .definedFailure = propagation(
+                          FailurePropagationKind::Destructor, mayRaise),
+                      .info = generatedInfo(SemanticType::Void)});
+    return operation.expected.instruction;
+  };
   takeNativeFailureTail = [&](MirBlockId block) {
     takeThreadLocalDrain(block);
+    takeProgramCleanup(block, true);
     if (cThreadStarted)
       takeCThreadBoundary(block, false);
     takeNativeRetirement(block);
@@ -12178,6 +12209,9 @@ verifyMirHostedStartup(const MirProgram &program) {
           takeFailureRoute(currentBlock, callEntry.expected.instruction, {});
     }
     takeThreadLocalDrain(currentBlock);
+    const auto programCleanup = takeProgramCleanup(currentBlock, false);
+    if (programCleanup && programCleanupMayRaise)
+      currentBlock = takeFailureRoute(currentBlock, programCleanup, {});
     takeCThreadBoundary(currentBlock, false);
     takeNativeRetirement(currentBlock);
     const TakenOperation returnEntry =
@@ -12730,6 +12764,9 @@ verifyMirHostedStartup(const MirProgram &program) {
           takeFailureRoute(finalBlock, callEntry.expected.instruction, {});
     }
     takeThreadLocalDrain(finalBlock);
+    const auto programCleanup = takeProgramCleanup(finalBlock, false);
+    if (programCleanup && programCleanupMayRaise)
+      finalBlock = takeFailureRoute(finalBlock, programCleanup, {});
     takeCThreadBoundary(finalBlock, false);
     takeNativeRetirement(finalBlock);
     const TakenOperation returnEntry =

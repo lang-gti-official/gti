@@ -111,6 +111,7 @@ public:
   enum class ProgramEffectOwnerKind {
     None,
     Initializer,
+    ProgramCleanup,
     Function,
     Constructor,
     FunctionDefaultArgument,
@@ -5773,6 +5774,7 @@ private:
 
   void
   validateProgramInitializationEffects(const ProgramInitializationPlan &plan);
+  void validateProgramCleanupEffects(const ProgramInitializationPlan &plan);
 
   void finalizeDeferredProgramConstantSubstitutions(
       const ProgramInitializationPlan &plan);

@@ -2384,6 +2384,33 @@ private:
            channel ? failures.origin(ir, channel) : null});
       break;
     }
+    case MirInstructionKind::CleanupProgramStorage: {
+      const auto &term = current->terminator;
+      const bool checked = term.kind == MirTerminatorKind::Invoke &&
+                           term.invokeInstruction == instruction.id;
+      auto *channel =
+          checked ? channels.at(term.failureRecord) : scratchChannel();
+      auto *status = lifetimes.cleanupProgramStorage(ir, channel);
+      auto *done = llvm::BasicBlock::Create(session.context(),
+                                            "program.cleanup.done", &function);
+      auto *bad = llvm::BasicBlock::Create(session.context(),
+                                           "program.cleanup.failed", &function);
+      Failures::branchOnSuccess(ir, status, done, bad);
+      ir.SetInsertPoint(bad);
+      if (checked) {
+        failedOperation();
+      } else if (current->activeFailure) {
+        failures.terminateCleanup(ir, channels.at(current->activeFailure),
+                                  channel);
+        if (failures.workerContainment())
+          abandonFrame();
+      } else {
+        // An infallible recipe cannot produce a failure status.
+        ir.CreateUnreachable();
+      }
+      ir.SetInsertPoint(done);
+      break;
+    }
     case MirInstructionKind::RetireProgramStorage:
       lifetimes.retireProgramStorage(ir);
       break;

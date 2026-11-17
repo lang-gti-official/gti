@@ -632,7 +632,7 @@ public:
     const auto *place = body ? body->findPlace(step.storagePlace) : nullptr;
     if (!place || place->type.kind != SemanticType::Class ||
         step.requiresActiveCleanup || step.nativeRetirement ||
-        program.findThreadLocalStorage(step.symbol) ||
+        step.sourceCleanup || program.findThreadLocalStorage(step.symbol) ||
         step.role != ProgramInitializationStepRole::Initializer)
       return false;
     native_llvm::Placement placement(*body);
@@ -4021,6 +4021,34 @@ public:
       }
     return found;
   }
+  bool sourceProgramCleanup(const MirHostedStartupOperation &operation) const {
+    const auto &plan = program.hostedStartupPlan();
+    if (!plan ||
+        operation.kind !=
+            MirHostedStartupOperationKind::CleanupProgramStorage ||
+        operation.terminator || operation.place || operation.value ||
+        operation.dropObligation || operation.failureRecord ||
+        operation.cleanupBoundary)
+      return false;
+    const auto *startup =
+        findMirBody(program, {MirBodyKind::HostedStartup, plan->entry});
+    const auto *owner = startup ? startup->findBlock(operation.block) : nullptr;
+    if (!owner)
+      return false;
+    const auto found = std::find_if(
+        owner->instructions.begin(), owner->instructions.end(),
+        [&](const auto &stage) {
+          return stage.id == operation.instruction &&
+                 stage.hostedStartupOperation == operation.id &&
+                 stage.kind == MirInstructionKind::CleanupProgramStorage;
+        });
+    if (found == owner->instructions.end())
+      return false;
+    return std::any_of(
+        program.programInitializationPlan().steps.begin(),
+        program.programInitializationPlan().steps.end(),
+        [](const auto &step) { return step.sourceCleanup.has_value(); });
+  }
   const MirClassInstance *bodyClass() const {
     if (!body)
       return nullptr;
@@ -5506,6 +5534,14 @@ public:
                 operation.block == block && operation.instruction == stage.id &&
                 nativeRetirement(operation))
               storageShape = Shape::NativeProgramRetirement;
+        if (stage.kind == MirInstructionKind::CleanupProgramStorage &&
+            body->kind == MirBodyKind::HostedStartup &&
+            program.hostedStartupPlan())
+          for (const auto &operation : program.hostedStartupPlan()->operations)
+            if (operation.id == stage.hostedStartupOperation &&
+                operation.block == block && operation.instruction == stage.id &&
+                sourceProgramCleanup(operation))
+              storageShape = Shape::NativeProgramCleanup;
         if (stage.kind == MirInstructionKind::EnsureThreadLocal)
           if (const auto *storage =
                   program.findThreadLocalStorage(stage.threadLocalStorage)) {
@@ -6377,6 +6413,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
     inventory.add(step.dataInitialization);
     inventory.add(step.storageKind);
     inventory.add(step.role);
+    if (step.sourceCleanup)
+      inventory.cleanup(*step.sourceCleanup);
     if (const auto *module = findMirBody(mir, {MirBodyKind::Module, 0}))
       if (const auto *place = module->findPlace(step.storagePlace))
         if (dispatchProofs.contains(place->type))
@@ -6394,6 +6432,8 @@ LlvmAdmissionPlan planLlvmAdmission(VerifiedLoweredProgram program,
       inventory.add(operation.kind,
                     native_llvm::nativeCThreadLifecycleOperation(mir, operation)
                         ? std::optional(Shape::NativeCThreadLifecycle)
+                    : inventory.sourceProgramCleanup(operation)
+                        ? std::optional(Shape::NativeProgramCleanup)
                     : inventory.nativeRetirement(operation)
                         ? std::optional(Shape::NativeProgramRetirement)
                         : std::nullopt);
