@@ -8784,6 +8784,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            instruction.bodyTarget.has_value();
   case FailurePropagationKind::Destructor:
     return instruction.kind == MirInstructionKind::Drop ||
+           (instruction.kind == MirInstructionKind::CleanupProgramStorage &&
+            instruction.hostedStartupOperation != 0) ||
            (instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
             instruction.replacementCleanup) ||
            (instruction.kind == MirInstructionKind::Call &&
