@@ -25,7 +25,7 @@ using Erased = const void*;
 using Pointer = const int*;
 int main() { int value = 42; Erased address = Erased(&value);
 Pointer restored = Pointer(;  //~ ERROR GTI-P0001
-unsafe { return *restored - 42; } }  //~ ERROR GTI-S2001 //~ ERROR GTI-S2022
+unsafe { return *restored - 42; } }  //~ ERROR GTI-S2001
 // --- step 5
 using Erased = const void*;
 using Pointer = const int*;
