@@ -1,0 +1,16 @@
+// Stored receiver publication: ancestor access/publication rejects in semantics while an unused exclusive carrier remains alive.
+//@ execution-profile: concurrent
+import std.mutex;
+void see(std::mutex<int32_t>& value) {}
+class User {
+  std::mutex<int32_t>& owner;
+public:
+  User(std::mutex<int32_t>& owner) : owner(owner) {}
+  void use() { auto guard = this.owner.lock(); auto second = this.owner.lock(); }  //~ ERROR GTI-S2017
+};
+int main() {
+  std::mutex<int32_t> owner{7};
+  User user{owner};
+  user.use();
+  return 0;
+}

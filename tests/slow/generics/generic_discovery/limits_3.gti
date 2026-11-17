@@ -1,0 +1,12 @@
+// Limits: runtime-guarded type-growing recursion terminates with a diagnostic.
+//@ slow
+class Box<T> {
+  T value;
+public:
+  Box(T value) : value(value) {}
+};
+int depth<T>(T value, int count) {
+  if (count == 0) { return 0; }
+  return 1 + depth(Box<T>(value), count - 1);  //~ ERROR GTI-S2105
+}
+int main() { return depth(1, 3) - 3; }

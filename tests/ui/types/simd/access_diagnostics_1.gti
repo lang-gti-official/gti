@@ -1,0 +1,7 @@
+// Access diagnostics: SIMD must retain source-located ordinary mutation/alias diagnostics.
+import std.simd;
+int main() {
+std::simd<float, 4> value{};
+value.set(std::size_t(0), 1.0);  //~ ERROR GTI-S2000
+return 0;
+}

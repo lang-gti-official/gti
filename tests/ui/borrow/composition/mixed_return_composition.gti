@@ -1,0 +1,21 @@
+// Mixed return composition: mixed borrowed aggregates compose through value relay and reference parameters.
+//@ check-pass
+struct Services {
+  int& first;
+  mut int& second;
+  mut int& third;
+  Services(int& a, mut int& b, mut int& c) : first(a), second(b), third(c) {}
+  int& read() { return this.first; }
+  mut int& write() mut { return this.second; }
+};
+Services relay(Services value) { return std::move(value); }
+int inspect(Services& value) { return value.read(); }
+int main() {
+  int a = 40; mut int b = 0; mut int c = 2;
+  Services original{a, b, c};
+  mut Services moved = relay(std::move(original));
+  mut int& target = moved.write();
+  target = 40;
+  int first = inspect(moved);
+  return first + b + c - 82;
+}

@@ -1,0 +1,14 @@
+// Payload admission: a cleanup-free relocatable model is an inline payload.
+//@ check-pass
+import std.polymorphic;
+import std.string;
+interface meter { int read(); };
+
+class gauge : public meter {
+  int value;
+public:
+  gauge(int value) : value(value) {}
+  int read() override { return this.value; }
+};
+int need<M>() requires std::inline_polymorphic_payload<M, meter> { return 0; }
+int main() { return need<gauge>(); }

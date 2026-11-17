@@ -1,0 +1,17 @@
+// Moved scalar observer: moved Expected scalar observer lowers.
+//@ check-pass
+struct Ticket {
+  int identity;
+  Ticket(int value) : identity(value) {}
+};
+expected<Ticket, int> issue(bool fail) {
+  if (fail) { return unexpected(17); }
+  return Ticket(7);
+}
+expected<int, int> read(bool fail) {
+  auto ticket = issue(fail);
+  if (!ticket) { return unexpected(std::move(ticket).error()); }
+  Ticket value = std::move(ticket).value();
+  return value.identity;
+}
+int main() { return read(false).value() + read(true).error() - 24; }

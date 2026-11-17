@@ -1,0 +1,7 @@
+// Ranges: generic range reanalysis does not authorize mutable immutable-owner access.
+int change<T>(T seed) {
+  int[2] local = {1, 2};
+  for (mut auto& value : local) { value += 1; }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2083
+  return 0;
+}
+int main() { return change(1); }

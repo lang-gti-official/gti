@@ -1,0 +1,17 @@
+// Class payload enums: consuming invocation leaves an enum-owning closure unavailable.
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum holder { one(resource value), none };
+
+int main() {
+  auto source = holder::one(resource());
+  auto callback = [value = std::move(source)]() -> int { return 0; };
+  std::move(callback)();  //~ ERROR GTI-S2009
+  std::move(callback)();  //~ ERROR GTI-S2018
+  return 0;
+}

@@ -105,10 +105,8 @@ owners = [
   "pack_fold_syntax",
   "thread_local_syntax",
   "macro_result_parser",
-  "procedural_syntax",
   "procedural_declaration_example",
   "procedural_execution_example",
-  "sum_type_pipeline",
   "generic_enum_declaration",
 ]
 consumers = [
@@ -243,7 +241,6 @@ consumers = [
 [[area]]
 area = "semantics"
 paths = [
-  "tests/semantic_call_regression_tests.cpp",
   "tests/semantic_call_regressions*_test.py",
   "tests/fixtures/semantic_call_regressions.gti",
   "tests/scalar_temporary_borrow*_test.py",
@@ -259,7 +256,6 @@ owners = [
   "protocol_format_hash_runtime",
   "reference_parameter_packs",
   "reference_parameter_pack_mir",
-  "scalar_temporary_borrow",
   "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
@@ -269,17 +265,13 @@ owners = [
   "body_analysis_order_fixtures",
   "gti_corpus",
   "executable_entry_semantics",
-  "generic_discovery",
   "generic_initialization",
   "lambda_reference",
-  "local_reference_inference",
   "bounded_array_borrows",
   "bounded_array_borrows_runtime",
   "unsafe_function_contract",
   "unsafe_expression_contract",
   "discardable_result",
-  "callable_return_type",
-  "semantic_call_regressions",
   "^gti_test_ui(_[0-9]+)?$",
 ]
 consumers = [
@@ -303,13 +295,11 @@ paths = [
 owners = [
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "cleanup_bound_borrow",
   "temporary_owner_borrow",
   "fresh_callable_borrow",
   "foreign_variable_borrow",
 ]
 consumers = [
-  "procedural_syntax",
   "procedural_execution_example",
   "procedural_html_semantics",
   "procedural_html_lsp",
@@ -352,7 +342,6 @@ paths = [
 owners = [
   "binary64_pipeline",
   "binary64_runtime",
-  "defined_integer_arithmetic",
   "checked_integer_overflow_runtime",
   "^gti_test_ui(_[0-9]+)?$",
 ]
@@ -390,7 +379,6 @@ paths = [
   "include/gti/hir*",
 ]
 owners = [
-  "generic_discovery",
   "generic_layout",
   "generic_initialization",
   "instance_reuse_fixtures",
@@ -426,7 +414,6 @@ owners = [
   "reference_parameter_pack_mir",
   "^mir_",
   "borrow_origin_publication",
-  "ephemeral_carrier_mir",
   "borrowing_callbacks_mir",
   "storage_adoption_contract",
   "cleanup_bound_borrow_mutations",
@@ -634,7 +621,6 @@ owners = [
   "native_record_c_oracle",
   "compact_owner_layout",
   "compact_owner_layout_runtime",
-  "environment_target_capability",
 ]
 consumers = [
   "embedding_header_c17_oracle",
@@ -1115,8 +1101,6 @@ paths = [
 owners = [
   "managed_thread_end_to_end",
   "scoped_parallel_threads",
-  "mutex_semantic_ir",
-  "atomic_semantic_ir",
   "cthread_runtime",
   "cthread_semantic_ir",
 ]
@@ -1202,7 +1186,6 @@ owners = [
   "http_runtime",
   "http_url_operators",
   "simd_runtime",
-  "simd_semantic_ir",
 ]
 consumers = [
   "practical_examples",
@@ -1881,7 +1864,7 @@ consumers = ["source_stdlib_ci", "ci_release", "lsp_protocol", "neovim_lsp_confi
 
 [[area]]
 area = "function-codegen-attributes"
-paths = ["tests/codegen_attribute_tests.cpp", "examples/llvm/codegen-attributes.gti"]
-owners = ["codegen_attribute_contract", "codegen_attribute_runtime"]
+paths = ["tests/ui/codegen/attributes/*.gti", "examples/llvm/codegen-attributes.gti"]
+owners = ["codegen_attribute_runtime"]
 consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
 risk = "shared"

@@ -1,0 +1,6 @@
+// Carrier boundaries: temporary carrier cannot retain a temporary owner.
+class Cursor { int& source; public: Cursor(int& value) : source(value) {} int read() { return this.source; } };
+Cursor cursor(int& source) { return Cursor(source); }
+int mutate(mut int& owner) { owner = 8; return owner; }
+int observe(Cursor& cursor, int later) { return cursor.read() + later; }
+int main() { return observe(cursor(42), 0); }  //~ ERROR GTI-S2017

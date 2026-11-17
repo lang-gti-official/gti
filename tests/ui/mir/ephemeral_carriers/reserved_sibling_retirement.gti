@@ -1,0 +1,16 @@
+// Reserved sibling retirement: ending a read sibling restores the parent despite an unactivated two-phase reservation.
+//@ check-pass
+class Slot {
+  mut int value = 3;
+public:
+  int& operator[](int index) { return this.value; }
+  mut int& operator[](int index) mut { return this.value; }
+public:
+  Slot() = default;
+};
+void bump(mut Slot& slot) { slot[0] = slot[0] + 1; }
+int main() {
+  mut Slot slot{};
+  bump(slot);
+  return slot[0] == 4 ? 0 : 1;
+}

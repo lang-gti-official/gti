@@ -1,0 +1,7 @@
+// Contextual diagnostics and boundaries: a contextually selected item should reject an inexact signature without conversion ranking.
+void invoke<Function>(Function function) { function(1); }
+void selected(bool value) {}
+int main() {
+  invoke(selected);  //~ ERROR GTI-S2090
+  return 0;
+}

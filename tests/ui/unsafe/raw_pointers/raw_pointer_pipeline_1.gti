@@ -1,0 +1,69 @@
+// Raw pointer pipeline: well-typed raw pointer operations in unsafe should lower.
+//@ check-pass
+struct Cell {
+  mut int32_t value = 0;
+
+  void set(int32_t next) mut {
+    this.value = next;
+  }
+public:
+  Cell() = default;
+};
+
+struct PointerHolder {
+  mut int32_t* pointer = nullptr;
+public:
+  PointerHolder() = default;
+};
+
+class Box<T> {
+  T stored;
+
+public:
+  Box(T value) : stored(value) {}
+
+  T get() {
+    return this.stored;
+  }
+};
+
+int32_t identify(int32_t* value) { return 1; }
+int32_t identify(const int32_t* value) { return 2; }
+
+int main() {
+  mut int32_t values[3] = {10, 20, 30};
+  mut int32_t* pointer = nullptr;
+  mut Cell cell{};
+  mut Cell* cell_pointer = nullptr;
+  mut Box<int32_t> box{9};
+  mut Box<int32_t>* box_pointer = nullptr;
+  mut PointerHolder holder{};
+  mut PointerHolder* holder_pointer = nullptr;
+  mut int32_t* pointers[2] = {};
+  unsafe {
+    pointer = &values[0];
+    holder.pointer = pointer;
+    pointers[0] = pointer;
+    holder.pointer += 1;
+    pointers[0] += 2;
+    holder_pointer = &holder;
+    holder_pointer->pointer -= 1;
+    pointer[1] = 25;
+    *(pointer + 2) = 35;
+    int64_t distance = (pointer + 2) - pointer;
+    pointer++;
+    pointer--;
+    cell_pointer = &cell;
+    cell_pointer->set(pointer[1]);
+    box_pointer = &box;
+    int32_t exact = identify(pointer);
+    const int32_t* read_only = pointer;
+    const int32_t* selected = true ? read_only : nullptr;
+    if (distance == 2 and exact == 1 and selected[1] == 25 and
+        cell_pointer->value == 25 and box_pointer->get() == 9 and
+        *holder.pointer == 10 and *pointers[0] == 35) {
+      return 0;
+    }
+  }
+  return 1;
+}

@@ -1,0 +1,4 @@
+// Rejects: an owned cursor cannot hide a stored borrow.
+class Source { int& value; public: Source(int& value) : value(value) {}
+    bool has_next() { return true; } int take_next() mut { return this.value; } };
+    int main() { int value = 2; for (auto v : Source(value)) {} return 0; }  //~ ERROR GTI-S2083

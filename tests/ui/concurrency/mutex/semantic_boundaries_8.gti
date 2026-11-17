@@ -1,0 +1,7 @@
+// Semantic boundaries: guard-derived access should not outlive the temporary or local guard.
+//@ execution-profile: concurrent
+import std.mutex;
+int32_t& escape(std::mutex<int32_t>& value) {
+  std::mutex_guard<int32_t> guard = value.lock();
+  return guard.get();  //~ ERROR GTI-S2017
+}

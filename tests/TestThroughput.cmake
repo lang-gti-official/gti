@@ -212,12 +212,12 @@ set_property(TEST ${gti_throughput_tests} APPEND PROPERTY LABELS "coverage-full"
 set(gti_fast_feedback_tests
   compiler_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
-  raw_pointer_pipeline raw_access_contract
+  raw_access_contract
   mir_full_expression mir_program_initialization
   optimizer_foundation optimizer_analyses optimizer_conformance
   layout_query_pipeline native_record_pipeline bindgen_pipeline
   source_text_pipeline source_unit_services
-  storage_adoption_contract ephemeral_carrier_mir
+  storage_adoption_contract
   parser_conditional_recovery
 )
 foreach(suite IN LISTS gti_fast_feedback_tests)

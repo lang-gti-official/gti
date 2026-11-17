@@ -1,0 +1,12 @@
+// Raw accesses: a closure's read through a captured raw pointer is a caller finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+int main() {
+  mut int owner = 7;
+  const int* pointer = &owner;
+  auto read = [pointer]() -> int { unsafe { return *pointer; } };
+  mut int& held = owner;
+  int observed = read();  //~ WARN GTI-S2102
+  held = 8;
+  return observed + held;
+}

@@ -1,0 +1,4 @@
+// Diagnostics: the failure is one error, without consequences.
+expected<int, int> read() { return 7; }
+struct Mapper { Mapper() = default; int operator()(int value) { return value; } };
+int main() { Mapper mapper{}; [[discard]] read().transform_error(mapper); return 0; }  //~ ERROR GTI-S2023

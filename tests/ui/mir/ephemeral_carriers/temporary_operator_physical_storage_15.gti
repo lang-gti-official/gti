@@ -1,0 +1,14 @@
+// Temporary operator physical storage: ordinary temporary methods preserve their existing borrowed-result rejection at both return and binding boundaries.
+class Cursor {
+  int& owner;
+  int inline_value = 7;
+public:
+  Cursor(int& source) : owner(source) {}
+  // The checked addition keeps a failure edge, so the temporary also has a
+  // failure-cleanup endpoint after its interior result loan.
+  int& operator*() { int checked = this.inline_value + 0; return this.inline_value; }
+  int& ref() { return this.inline_value; }
+
+};
+Cursor cursor(int& source) { return Cursor(source); }
+int& bad(int& owner) { return cursor(owner).ref(); }  //~ ERROR GTI-S2081 //~ ERROR GTI-S2017

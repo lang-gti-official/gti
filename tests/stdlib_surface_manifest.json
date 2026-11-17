@@ -3749,7 +3749,7 @@
         "docs/language/concurrency.md",
         "examples/076-scalar-atomics.gti",
         "stdlib/std/atomic.gti",
-        "tests/atomic_tests.cpp",
+        "tests/ui/concurrency/atomics",
         "tests/atomic_runtime_test.py",
         "tests/atomic_tsan_test.py",
         "tests/fixtures/atomic_fetch.gti",
@@ -3773,7 +3773,7 @@
         "LLVM-only; both execution profiles; all signed/unsigned integer widths and RMW orders"
       ],
       "evidence": [
-        "tests/atomic_tests.cpp",
+        "tests/ui/concurrency/atomics",
         "tests/llvm_atomic_contract_tests.cpp",
         "tests/llvm_atomic_execution_test.py",
         "examples/178-wrapping-atomic-counters.gti"
@@ -5185,7 +5185,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/fixtures/forward_list_iterator_completion.gti",
         "tests/fixtures/paired_span_iterator_completion.gti",
-        "tests/ephemeral_carrier_mir_tests.cpp",
+        "tests/ui/mir/ephemeral_carriers",
         "tests/ui/language/iterators/span_chunk_yields.gti",
         "tests/ui/language/iterators/user_carrier_yields.gti",
         "examples/197-borrowed-yield-cursors.gti"
@@ -5916,7 +5916,7 @@
         "raw source reuse and owned scalar results"
       ],
       "evidence": [
-        "tests/consuming_range_tests.cpp",
+        "tests/ui/ownership/consuming_ranges",
         "tests/consuming_range_runtime_test.py",
         "tests/fixtures/consuming_range.gti",
         "tests/fixtures/consuming_range_failures.gti",
@@ -6407,7 +6407,7 @@
         "tests/fixtures/mutex_concurrent.gti",
         "tests/fixtures/mutex_move_only.gti",
         "tests/ui/stdlib/mutex",
-        "tests/mutex_tests.cpp",
+        "tests/ui/concurrency/mutex",
         "tests/mutex_tsan_test.py"
       ]
     },
@@ -6640,7 +6640,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_polymorphic.gti",
         "tests/slow/memory/inline_polymorphic_lifecycle.gti",
-        "tests/polymorphic_storage_compiler_tests.cpp",
+        "tests/ui/classes/polymorphic_storage",
         "tests/ui/callables/closure_objects",
         "stdlib/std/polymorphic.gti",
         "tests/ui/callables/owned_inline/borrowed_receiver_rejected.gti",
@@ -6755,7 +6755,7 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
-        "tests/expected_ergonomics_tests.cpp",
+        "tests/ui/expected/ergonomics",
         "tests/slow/expected/ergonomics.gti"
       ]
     },
@@ -7408,7 +7408,7 @@
       ],
       "evidence": [
         "tests/fixtures/simd_values.gti",
-        "tests/simd_tests.cpp",
+        "tests/ui/types/simd",
         "tests/simd_runtime_test.py"
       ]
     },
@@ -7886,7 +7886,7 @@
       "evidence": [
         "examples/procedural-macros/library.gti",
         "examples/procedural-macros.gti",
-        "tests/procedural_syntax_tests.cpp",
+        "tests/ui/macros/procedural_syntax",
         "examples/procedural-html.gti",
         "tests/procedural_html_tests.cpp",
         "tests/procedural_html_workflow_test.py"
@@ -8463,7 +8463,7 @@
         "raw source reuse and owned scalar results"
       ],
       "evidence": [
-        "tests/consuming_range_tests.cpp",
+        "tests/ui/ownership/consuming_ranges",
         "tests/consuming_range_runtime_test.py",
         "tests/fixtures/consuming_range.gti",
         "tests/fixtures/consuming_range_failures.gti",

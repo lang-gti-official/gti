@@ -1963,7 +1963,8 @@ struct Frontend : lang::Frontend {
 '''
 
 _TRACE_FRONTEND = re.compile(
-    r"\blang::Frontend\b(?!Options|Result|Phase|Cache|WorkMetrics|Reuse)")
+    r"(?<![\w:])(?:lang::)?Frontend\b(?!Options|Result|Phase|Cache|WorkMetrics|"
+    r"Reuse)")
 _TRACE_ASSERT = re.compile(
     r"(\bvoid\s+(?:expect|check|require)\s*\(\s*bool\s+(\w+)\s*,[^)]*?"
     r"\b(\w+)\s*\)\s*\{)")

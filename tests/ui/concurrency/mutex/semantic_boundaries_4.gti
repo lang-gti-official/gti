@@ -1,0 +1,8 @@
+// Semantic boundaries: the public mutex owner should be move-only.
+//@ execution-profile: concurrent
+import std.mutex;
+int main() {
+  std::mutex<int32_t> first{1};
+  std::mutex<int32_t> second = first;  //~ ERROR GTI-S2003
+  return 0;
+}

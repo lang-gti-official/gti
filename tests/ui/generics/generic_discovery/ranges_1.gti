@@ -1,0 +1,9 @@
+// Ranges: non-dependent ranges retain each concrete body's loan domain.
+//@ check-pass
+int sum<T>(T seed) {
+  int[2] local = {1, 2};
+  mut int total = 0;
+  for (auto& value : local) { total += value; }
+  return total;
+}
+int main() { return sum(1) + sum(true) - 6; }

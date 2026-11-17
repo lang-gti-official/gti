@@ -1,0 +1,9 @@
+// Rejects: a named source needs explicit ownership transfer.
+class Source {
+  mut int count = 0;
+public:
+  Source() {}
+  bool has_next() { return this.count < 3; }
+  int take_next() mut { this.count++; return this.count; }
+};
+int main() { Source s{}; for (auto v : s) {} return 0; }  //~ ERROR GTI-S2083 //~ ERROR GTI-S2018 //~ ERROR GTI-S2083 //~ ERROR GTI-S2083

@@ -1,0 +1,34 @@
+// Positive and mir: unrelated type, qualification and source helpers compose.
+//@ check-pass
+import std.memory;
+struct Item { mut int value = 42;  public: Item() = default; };
+using Address = void*;
+using Pointer = Item*;
+using ReadPointer = const Item*;
+using IntPointer = int*;
+T forward_exact<T, Args...>(Args... args) { return T(args...); }
+T default_value<std::default_initializable T>() { return T(); }
+unsafe int* member_address(Item* input) {
+  Pointer restored = Pointer(Address(input));
+  unsafe { return &restored->value; }
+}
+int main() {
+  mut Item item{};
+  Address erased = Address(&item);
+  Pointer restored = Pointer(erased);
+  Pointer forwarded = forward_exact<Pointer>(restored);
+  if (forwarded != restored) return 2;
+  if (default_value<Pointer>() != nullptr) return 3;
+  ReadPointer readonly = ReadPointer(restored);
+  const void* shared = std::erase_address(readonly);
+  const Item* recovered = std::typed_address<Item>(shared);
+  unsafe {
+    mut Item& edit = std::assume_mut(restored, item);
+    edit.value = 43;
+  }
+  unsafe {
+    int* field = member_address(restored);
+    if (*field != 43) return 1;
+    return recovered->value - 43;
+  }
+}

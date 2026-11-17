@@ -1,0 +1,16 @@
+// Execution: expected procedural diagnostic before code generation.
+// --- main.gti
+import "library.gti"; int main(){return cycle!({1});}  //~ ERROR GTI-S2124
+// --- library.gti
+
+export module library;
+import std.syntax;
+export #macro(proc) std::syntax::expr cycle(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+  auto name = std::syntax::identifier("cycle", origin);
+  mut auto output = std::syntax::join(name, std::syntax::punctuation("!", origin));
+  output = std::syntax::join(output, std::syntax::punctuation("(", origin));
+  output = std::syntax::join(output, input);
+  output = std::syntax::join(output, std::syntax::punctuation(")", origin));
+  return std::syntax::parse(output);
+}

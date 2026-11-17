@@ -1,0 +1,4 @@
+// Rejects: has_next must return bool exactly.
+class Source { public: Source() {} int has_next() { return 1; }
+    int take_next() mut { return 2; } };
+    int main() { for (auto v : Source()) {} return 0; }  //~ ERROR GTI-S2003 //~ ERROR GTI-S2083

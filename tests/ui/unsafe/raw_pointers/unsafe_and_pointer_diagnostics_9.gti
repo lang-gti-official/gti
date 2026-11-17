@@ -1,0 +1,3 @@
+// Unsafe and pointer diagnostics: fixed arrays of one-level raw pointers should remain supported.
+//@ check-pass
+int main() { int32_t* pointers[2] = {}; return 0; }

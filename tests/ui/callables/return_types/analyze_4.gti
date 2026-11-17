@@ -1,0 +1,13 @@
+// Analyze: class callback result initializes a local.
+//@ check-pass
+import std.meta;
+import std.string;
+std::meta::callable_return_type<F> invoke<F>(F& mapper) {
+  std::meta::callable_return_type<F> value = mapper();
+  return value;
+}
+int main() {
+  auto mapper = []() -> std::string { return std::string("owned"); };
+  auto result = invoke(mapper);
+  return result.size() == 5 ? 0 : 1;
+}

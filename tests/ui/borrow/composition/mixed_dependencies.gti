@@ -1,0 +1,25 @@
+// Mixed dependencies: five mixed borrowed fields should retain independent permissions.
+//@ check-pass
+struct Services {
+  int& database;
+  mut int& renderer;
+  int& logger;
+  mut int& cache;
+  int& clock;
+  Services(int& db, mut int& render, int& log, mut int& entries, int& time)
+      : database(db), renderer(render), logger(log), cache(entries), clock(time) {}
+  int update() mut {
+    renderer = database + logger;
+    cache = renderer + clock;
+    return cache;
+  }
+};
+int main() {
+  int database = 10;
+  mut int renderer = 0;
+  int logger = 20;
+  mut int cache = 0;
+  int clock = 12;
+  mut Services services{database, renderer, logger, cache, clock};
+  return services.update() - 42;
+}

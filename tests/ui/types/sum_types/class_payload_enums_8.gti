@@ -1,0 +1,18 @@
+// Class payload enums: an ordinary constructor should accept an owning payload enum by value through verified MIR.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+class consumer {
+public:
+  consumer(holder value) {}
+public:
+  consumer() = default;
+};
+int main() {
+  consumer value = consumer(holder::one(resource()));
+  return 0;
+}
