@@ -1309,6 +1309,57 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
     }
     return contains(reached, target);
   };
+  // A local reference aliases the place it was bound to, and a reference
+  // binding is never rebound: it supplies the region of the parameter whose
+  // referent it designates, unless it reaches through another reference.
+  const auto aliasedRegion =
+      [&](const ExprPtr &argument) -> std::optional<std::string> {
+    const Expr *expression = argument.get();
+    while (const auto *group = exprAs<Grouping>(expression))
+      expression = group->expression().get();
+    const auto *variable = exprAs<Variable>(expression);
+    const Symbol *symbol =
+        variable == nullptr ? nullptr : resolve(variable->name());
+    if (symbol == nullptr ||
+        symbol->bindingKind != SemanticBindingKind::LocalVariable ||
+        symbol->type.kind != SemanticType::Reference ||
+        symbol->retainedDependency == nullptr)
+      return std::nullopt;
+    const SemanticLoanPlace &place = symbol->retainedDependency->place;
+    if (place.receiver || place.root == 0)
+      return std::nullopt;
+    for (const auto &projection : place.projections) {
+      if (projection.kind == PlaceProjectionKind::ConstantIndex ||
+          projection.kind == PlaceProjectionKind::DynamicIndex)
+        continue;
+      if (projection.kind != PlaceProjectionKind::Field)
+        return std::nullopt;
+      const SymbolRecord *field =
+          semanticModel.database().findSymbol(projection.field);
+      if (field == nullptr && instanceBaseModel != nullptr)
+        field = instanceBaseModel->database().findSymbol(projection.field);
+      if (field == nullptr || field->type.kind == SemanticType::Reference)
+        return std::nullopt;
+    }
+    for (const auto &parameter : syntax.parameters()) {
+      if (!parameter.type.reference || parameter.pack)
+        continue;
+      const Symbol *formal = resolve(parameter.name);
+      if (formal == nullptr ||
+          formal->bindingKind != SemanticBindingKind::Parameter ||
+          toolingSymbolFor(*formal) != place.root)
+        continue;
+      // The referent lives for the reference's own region, not for a
+      // region its type carries.
+      if (parameter.type.referenceLifetime &&
+          parameter.type.referenceLifetime->name.kind ==
+              TokenKind::IDENTIFIER &&
+          parameter.type.referenceLifetime->name.lexeme != "_")
+        return parameter.type.referenceLifetime->name.lexeme;
+      return "<param " + parameter.name.lexeme + ">";
+    }
+    return std::nullopt;
+  };
   const auto &parameters = callee.parameters();
   const auto &arguments = call->arguments();
   // A final forwarded pack supplies every remaining fixed parameter.
@@ -1324,8 +1375,11 @@ auto SemanticVisitor::Impl::validateReturnedCallRegion(
     collectRegionNames(parameters[index].type, names);
     if (!contains(names, calleeRegion->lexeme))
       continue;
-    const std::string supplier = callerRegionOf(
-        syntax, arguments[std::min(index, arguments.size() - 1)]);
+    const ExprPtr &argument = arguments[std::min(index, arguments.size() - 1)];
+    std::string supplier = callerRegionOf(syntax, argument);
+    if (supplier == "<local>")
+      if (auto aliased = aliasedRegion(argument))
+        supplier = std::move(*aliased);
     if (outlives(supplier))
       continue;
     report(call->paren(),
