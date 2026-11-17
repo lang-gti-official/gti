@@ -2950,7 +2950,10 @@ declared constructors as `std::meta::constructor<T, I>`. A method reports
 `is_mutating()` (non-read-only receiver), `is_public()`,
 `is_consuming()` (an `&&` receiver), `is_unsafe()` (caller obligation),
 `is_generic()` (method-owned generic parameters), `is_constrained()`
-(method requirements), `parameter_count()`,
+(method requirements), `result_outlives_receiver()` (the result carries no
+borrowed state, or every region its signature writes is a class lifetime
+parameter, `static` or a region its parameters supply; a legacy text handle
+from an instance method reports false), `parameter_count()`,
 `parameters()` (a list of `std::meta::parameter<T, I, P>` with `name()`,
 `index()` and `type()`, backed by the computed `parameter_type<T, I, P>`)
 and `result()` (a type metaobject of `return_type<T, I>`); a constructor
