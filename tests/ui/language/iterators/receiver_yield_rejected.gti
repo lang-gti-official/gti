@@ -1,0 +1,68 @@
+// operator* may yield borrowed state only in the cursor's own lifetime
+// parameters; a yield that borrows the receiver, elides a region, or is a
+// legacy text handle stays rejected, as does a mutable receiver.
+import std.vector;
+import std.span;
+import std.string_view;
+
+struct Readings {
+  mut int values[4];
+  Readings() : values({1, 2, 3, 4}) {}
+};
+class window<lifetime w> {
+  Readings&<w> source;
+public:
+  window(Readings&<w> source) : source(source) {}
+};
+class holder<T> {
+  T value;
+public:
+  holder(T value) : value(value) {}
+};
+
+class owning_cursor {
+  std::vector<int> data;
+public:
+  owning_cursor() : data(std::vector<int>()) {}
+  std::span<int> operator*() { return this.data.as_span(); }  //~ ERROR GTI-S2022 operator* must return a checked reference
+};
+class receiver_cursor<lifetime owner> {
+  Readings&<owner> source;
+  Readings local;
+public:
+  receiver_cursor(Readings&<owner> source) : source(source), local(Readings()) {}
+  window<this> operator*() { return window(this.local); }  //~ ERROR GTI-S2022
+};
+class elided_cursor<lifetime owner> {
+  Readings&<owner> source;
+public:
+  elided_cursor(Readings&<owner> source) : source(source) {}
+  window operator*() { return window(this.source); }  //~ ERROR GTI-S2022
+};
+class nested_elided_cursor<lifetime owner> {
+  Readings&<owner> source;
+public:
+  nested_elided_cursor(Readings&<owner> source) : source(source) {}
+  holder<window> operator*() { return holder<window<owner>>(window(this.source)); }  //~ ERROR GTI-S2022
+};
+class text_cursor<lifetime owner> {
+  std::string_view&<owner> text;
+public:
+  text_cursor(std::string_view&<owner> text) : text(text) {}
+  std::string_view operator*() { return this.text; }  //~ ERROR GTI-S2022
+};
+class mutable_cursor<lifetime owner> {
+  Readings&<owner> source;
+public:
+  mutable_cursor(Readings&<owner> source) : source(source) {}
+  window<owner> operator*() mut { return window(this.source); }  //~ ERROR GTI-S2022
+};
+// The written region is checked against the body.
+class lying_cursor<lifetime owner> {
+  Readings&<owner> source;
+  Readings local;
+public:
+  lying_cursor(Readings&<owner> source) : source(source), local(Readings()) {}
+  window<owner> operator*() { return window(this.local); }  //~ ERROR GTI-S2127
+};
+int main() { return 0; }

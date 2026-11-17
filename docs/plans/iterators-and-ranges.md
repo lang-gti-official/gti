@@ -11,8 +11,9 @@ The range foundation and substantial algorithm breadth are implemented.
 Remaining work is not a repeat of range syntax, vector construction or the
 original one-owner borrowing slice. The 0.406.0 container campaign below
 is delivered, including its recorded validation exception; later bounded
-value-yield/readable-iterator and proxy endpoints are implemented. Broader
-single-pass adaptors and dependency replacement remain separate.
+value-yield/readable-iterator and proxy endpoints are implemented, including
+cursor-region borrow-carrier yields (2026-11-16). Broader single-pass adaptors
+and dependency replacement remain separate.
 
 ## Container completion campaign (delivered, 2026-10-12)
 
@@ -157,6 +158,21 @@ owns the result per iteration and borrows that storage; cleanup retires its
 borrowers before the value and before advancement. Reference yields remain
 aliases without element copies. This does not establish move-only generator
 yields, state-mutating read traversal, or a complete lazy-adaptor protocol.
+
+Cursor-region yields (2026-11-16) extend the value case to copyable borrow
+carriers whose signature regions are only the iterator class's own lifetime
+parameters or `static` ([Ranges](../language/ranges.md#cursor-region-yields)):
+a chunk `std::span<int, owner>` or an application `window<owner>` survives
+`++`, binds by value or `auto&` in range-for, and satisfies
+`std::input_iterator`/`std::forward_iterator` through the reflected
+`result_outlives_receiver()` declaration fact. Semantics owns admissibility
+(`GTI-S2022` at the declaration, `GTI-S2083` at a loop), the range plan
+carries `elementBorrowsCursorRegions` through HIR, and MIR verifies the
+element's own read-only Stored loan on what the cursor stores. Still outside
+it: `string_view`/`c_string` yields (per-value owner tracking, no signature
+region), receiver-borrowing yields (a written `this` or elided region), and a
+carrier whose regions are only partly the cursor's (for example one region
+written `this`).
 
 Lookup is member-based. There is no ADL, free `begin`/`end` search,
 `tag_invoke`, C++ customization-point lookup or implicit element conversion.

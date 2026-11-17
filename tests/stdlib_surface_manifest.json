@@ -5178,13 +5178,17 @@
         "noncopyable exclusive movement",
         "unrelated source cursor",
         "scalar and owning reference elements",
-        "inline reference proxy"
+        "inline reference proxy",
+        "cursor-region borrow-carrier yields"
       ],
       "evidence": [
         "tests/fixtures/container_iterator_movement.gti",
         "tests/fixtures/forward_list_iterator_completion.gti",
         "tests/fixtures/paired_span_iterator_completion.gti",
-        "tests/ephemeral_carrier_mir_tests.cpp"
+        "tests/ephemeral_carrier_mir_tests.cpp",
+        "tests/ui/language/iterators/span_chunk_yields.gti",
+        "tests/ui/language/iterators/user_carrier_yields.gti",
+        "examples/197-borrowed-yield-cursors.gti"
       ]
     },
     {
@@ -6190,6 +6194,7 @@
         "std::meta::method::parameter_count",
         "std::meta::method::parameters",
         "std::meta::method::result",
+        "std::meta::method::result_outlives_receiver",
         "std::meta::methods_of",
         "std::meta::name_of",
         "std::meta::operators_of",

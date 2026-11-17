@@ -157,6 +157,175 @@ int main() {
       },
       "narrowing keeps its unsafe extent obligation");
 }
+// A read-only operator* may yield a borrow carrier whose regions name only
+// the cursor's own lifetime parameters. MIR carries the yield's own Stored
+// loan on the cursor's referent, never a loan of the cursor, and verification
+// rejects every forged variant of that family.
+void checkCursorRegionYields(const std::filesystem::path &root) {
+  const auto entry = root / "cursor-region-yield-compiler-test.gti";
+  const std::string source = R"(
+struct Readings {
+  mut int values[4];
+  Readings() : values({3, 1, 4, 1}) {}
+};
+class window<lifetime w> {
+  Readings&<w> source;
+  uint64_t first;
+public:
+  window(Readings&<w> source, uint64_t first) : source(source), first(first) {}
+  int value() { return this.source.values[this.first]; }
+};
+class window_end { public: window_end() = default; };
+class window_cursor<lifetime owner> {
+  Readings&<owner> source;
+  mut uint64_t first;
+public:
+  window_cursor(Readings&<owner> source) : source(source), first(0) {}
+  window<owner> operator*() { return window(this.source, this.first); }
+  void operator++() mut { this.first = this.first + uint64_t(1); }
+  bool operator!=(window_end end) { return this.first < uint64_t(4); }
+};
+class windows<lifetime owner> {
+  Readings&<owner> source;
+public:
+  windows(Readings&<owner> source) : source(source) {}
+  window_cursor<owner> begin() { return window_cursor(this.source); }
+  window_end end() { return window_end(); }
+};
+int by_value(Readings& readings) {
+  mut int sum = 0;
+  for (auto part : windows(readings)) sum += part.value();
+  return sum;
+}
+int by_reference(Readings& readings) {
+  mut int sum = 0;
+  for (auto& part : windows(readings)) sum += part.value();
+  return sum;
+}
+int main() {
+  Readings readings{};
+  return by_value(readings) == by_reference(readings) ? 0 : 1;
+}
+)";
+  const auto frontend = lang::Frontend().analyze(
+      entry, source, {root / "stdlib/prelude.gti"},
+      {{std::filesystem::weakly_canonical(entry).string(), source}},
+      {root / "stdlib"});
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    expect(false, "cursor-region yield source analyzes");
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "cursor-region yields verify by value and by reference");
+  std::size_t flagged = 0;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &range : function.body.rangeIterations)
+      flagged += range.elementBorrowsCursorRegions ? 1 : 0;
+  expect(flagged == 2, "both loops publish the cursor-region element fact");
+  const auto forge = [&](bool materialized, auto mutation,
+                         std::string_view label) {
+    auto mir = frontend.mir;
+    bool changed = false;
+    for (auto &function : const_cast<std::vector<lang::MirFunctionInstance> &>(
+             mir.functionInstances()))
+      for (auto &range : function.body.rangeIterations)
+        if (!changed && range.elementBorrowsCursorRegions &&
+            range.materializesElementValue == materialized) {
+          mutation(mir, function, range);
+          changed = true;
+        }
+    expect(changed && !lang::verifyMirProgram(mir).valid(), label);
+  };
+  const auto yieldLoan =
+      [](lang::MirBody &body,
+         const lang::MirRangeIteration &range) -> lang::MirLoan * {
+    for (auto &loan : body.loans)
+      if (loan.kind == lang::MirLoanKind::Stored &&
+          loan.producedBy == range.elementAccessSource)
+        return &loan;
+    return nullptr;
+  };
+  for (const bool materialized : {false, true}) {
+    forge(
+        materialized,
+        [](auto &, auto &, auto &range) {
+          range.elementBorrowsCursorRegions = false;
+        },
+        "a borrowed yield cannot pass as an independent element");
+    forge(
+        materialized,
+        [&](auto &, auto &function, auto &range) {
+          if (auto *loan = yieldLoan(function.body, range))
+            loan->source = range.iterator;
+        },
+        "the yield's loan cannot borrow the cursor itself");
+    forge(
+        materialized,
+        [&](auto &, auto &function, auto &range) {
+          if (auto *loan = yieldLoan(function.body, range))
+            loan->escapes = true;
+        },
+        "the yield's stored loan cannot escape the iteration");
+    forge(
+        materialized,
+        [&](auto &, auto &function, auto &range) {
+          for (auto &loan : function.body.loans)
+            if (loan.kind == lang::MirLoanKind::Stored &&
+                loan.producedBy != range.elementAccessSource &&
+                std::find(loan.carriers.begin(), loan.carriers.end(),
+                          function.body.findPlace(range.iterator)->binding) !=
+                    loan.carriers.end())
+              loan.carriers.clear();
+        },
+        "the yield needs a cursor loan protecting its referent");
+    forge(
+        materialized,
+        [](auto &, auto &, auto &range) {
+          range.elementAccess = lang::AccessMode::Mutable;
+        },
+        "a cursor-region yield is read-only");
+    forge(
+        materialized,
+        [](auto &mir, auto &function, auto &range) {
+          for (auto &block : function.body.blocks)
+            for (auto &instruction : block.instructions)
+              if (instruction.kind == lang::MirInstructionKind::Call &&
+                  instruction.hirValue == range.elementAccessSource &&
+                  instruction.functionTarget)
+                for (auto &callee :
+                     const_cast<std::vector<lang::MirFunctionInstance> &>(
+                         mir.functionInstances()))
+                  if (callee.id == *instruction.functionTarget)
+                    callee.returnBorrowFields.clear();
+        },
+        "the selected operator* must supply the yield from stored fields");
+  }
+  forge(
+      true,
+      [](auto &, auto &function, auto &range) {
+        function.body.loans[range.elementLoan - 1].storedDependency = 0;
+      },
+      "the element reference retains the hidden value's stored loan");
+  forge(
+      true, [](auto &, auto &, auto &range) { range.elementOwnerLoan = 0; },
+      "the hidden value carries its yield loan");
+  auto malformedHir = frontend.hir;
+  bool flipped = false;
+  for (auto &function : const_cast<std::vector<lang::HirFunctionInstance> &>(
+           malformedHir.functionInstances()))
+    for (auto &statement : function.body.statements)
+      if (!flipped && statement.rangeIteration &&
+          statement.rangeIteration->elementBorrowsCursorRegions) {
+        statement.rangeIteration->elementBorrowsCursorRegions = false;
+        flipped = true;
+      }
+  expect(flipped &&
+             !lang::verifyHirProgramPlans(frontend.semantics, malformedHir)
+                  .valid(),
+         "HIR rejects a range fact that disagrees with semantics");
+}
 } // namespace
 
 int main() {
@@ -253,6 +422,10 @@ int main() {
           }
       },
       "same-type source binding cannot replace the exact hidden value owner");
+  forgedRange(
+      frontend,
+      [](auto &, auto &range) { range.elementBorrowsCursorRegions = true; },
+      "an independent value yield cannot claim cursor-region borrows");
   forgedRange(
       frontend, [](auto &, auto &range) { range.elementOwnerStatement = 0; },
       "iteration storage must retain its synthetic declaration identity");
@@ -382,5 +555,6 @@ int main() {
   }
   expect(normalized, "test contains a normalized builtin member call");
   checkSubviews(root);
+  checkCursorRegionYields(root);
   return failures == 0 ? 0 : 1;
 }

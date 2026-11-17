@@ -199,6 +199,7 @@ You do not need to read the entire sequence to find an API pattern:
 | Encode counted bytes as Base64 or hex; decode UTF-8 scalars | [94: text encoding](094-binary-text-encoding.gti) |
 | Duplicate a vector of strings or constrain a generic member call | [95: explicit cloning](095-explicit-cloning.gti) |
 | Consume owned vector elements into a record without cloning values | [186: consuming ranges](186-consuming-ranges.gti) |
+| Write an iterator that yields spans or views of the data it walks | [197: borrowed-yield cursors](197-borrowed-yield-cursors.gti) |
 | Translate library errors into application errors | [96: error mapping](096-error-mapping.gti) |
 | Build and validate data at compile time | [97: constexpr tables](097-constexpr-tables.gti) |
 | Build constants with mutable helpers, result composition, constructors, enum states and reflection | [142: constexpr builders](142-constexpr-builders.gti) |
@@ -442,6 +443,7 @@ the modules other examples import.
 | `192-lifetime-parameters.gti` | Named reference relationships, elided identity, mutable input, shared result suppliers, borrowed records, inferred typed copy/move destinations, checked type-erasure round trips, copied shared fields across carrier cleanup, inferred conformance-head regions, projected reference regions, function items, stored higher-ranked invocation pointers and fixed lambda environment premises; ordinary callers infer lifetime arguments (LLVM). |
 | `193-tcp-line-server.gti` | A loopback line service: `std::tcp::listen`/`connect` by host and port, `serve` driving an application type through the `connection_handler` protocol concept, and `buffered_stream` frames borrowed in place (`span<uint8_t, this>`) until `consume` (LLVM). |
 | `194-string-view-subviews.gti` | Counted sub-views: `substr` with clamped counts, in-place `remove_prefix`/`remove_suffix` trimming, owner relay through a by-value `mut` view parameter, and the `GTI-R0007` boundary (LLVM). |
+| `197-borrowed-yield-cursors.gti` | Cursors whose read-only `operator*` yields a borrow carrier in the cursor's own lifetime parameter: `std::span` frames and an application view type, kept across `++`, bound by value and `auto&` in range-for, `std::input_iterator`/`std::forward_iterator` and a generic algorithm (LLVM). |
 | `143-checked-container-iteration.gti` | shared forward-list cursor copies, exclusive reverse vector writes, predecessor-based linked traversal, and ordered map/set reverse access |
 | `144-checked-view-iteration.gti` | shared and exclusive text/subspan cursors, resource-backed reverse access, and no-copy paired proxies retaining two owning buffers |
 | `145-live-slot-and-lane-iteration.gti` | sparse live-slot and arena-prefix iteration, resource-bound cleanup, and checked SIMD/mask lane traversal |

@@ -316,6 +316,59 @@ auto SemanticVisitor::Impl::explicitLifetimeResult(
   return result;
 }
 
+auto SemanticVisitor::Impl::resultBorrowsOnlyStoredRegions(
+    const FunctionDecl &syntax, ClassId ownerClass, bool elidedPositions) const
+    -> bool {
+  if (ownerClass == 0)
+    return false;
+  const auto *declaration = classInfo(ownerClass).declaration;
+  if (declaration == nullptr)
+    return false;
+  // The regions the receiver stores, and `static`, outlive any one receiver
+  // borrow; `this`, `_` and a method's own binder do not.
+  std::vector<std::string> external{"static"};
+  for (const auto &parameter : declaration->lifetimeParameters())
+    external.push_back(parameter.name.lexeme);
+  for (const auto &pattern : declaration->genericArgumentPatterns())
+    collectRegionNames(pattern, external);
+  bool written = false;
+  const auto externalRegion = [&](const std::string &name) {
+    written = true;
+    return contains(external, name);
+  };
+  const auto covered = [&](const auto &self, const TypeRef &type) -> bool {
+    if (type.reference &&
+        (!type.referenceLifetime ||
+         !externalRegion(type.referenceLifetime->name.lexeme)))
+      return false;
+    for (const auto &argument : type.lifetimeArguments)
+      if (argument.name.segments.size() != 1 ||
+          !externalRegion(argument.name.last().lexeme))
+        return false;
+    if (elidedPositions && !type.reference && type.lifetimeArguments.empty()) {
+      // A position written without regions elides them to the receiver
+      // unless its borrowed state comes only through its type arguments.
+      const SemanticType resolved = typeOf(type);
+      if (resolved.kind == SemanticType::Class && resolved.classId != 0)
+        if (const auto *owner = classInfo(resolved.classId).declaration;
+            owner != nullptr && !owner->lifetimeParameters().empty())
+          return false;
+      if (typeTraits(resolved).containsBorrowedState &&
+          std::none_of(
+              type.arguments.begin(), type.arguments.end(),
+              [&](const TypeRef &argument) {
+                return typeTraits(typeOf(argument)).containsBorrowedState;
+              }))
+        return false;
+    }
+    for (const TypeRef &argument : type.arguments)
+      if (!self(self, argument))
+        return false;
+    return true;
+  };
+  return covered(covered, syntax.returnType()) && written;
+}
+
 auto SemanticVisitor::Impl::constructorLifetimeSuppliers(
     const ClassDecl &owner, const ConstructorDecl &constructor) const
     -> std::vector<std::size_t> {

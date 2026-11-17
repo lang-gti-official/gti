@@ -2119,6 +2119,8 @@ private:
              << item.exitBlock << " extent=" << item.arrayLength
              << " owns-temporary=" << item.ownsRangeTemporary;
       output << " materializes-element-value=" << item.materializesElementValue;
+      if (item.elementBorrowsCursorRegions)
+        output << " element-borrows-cursor-regions=1";
       if (item.endpointParking) {
         const auto &parking = *item.endpointParking;
         output << " endpoint-parking=loan" << parking.cursor
