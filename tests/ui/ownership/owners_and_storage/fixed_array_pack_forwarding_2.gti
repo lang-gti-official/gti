@@ -1,0 +1,15 @@
+// Fixed array pack forwarding: pack forwarding retains exact array extents and element types.
+import std.memory;
+
+class Holder {
+  int32_t values[3];
+public:
+  Holder(int32_t initial[3]) : values(initial) {}
+};
+T forward_construct<T, Args...>(Args... args) { return T(args...); }  //~ ERROR GTI-S2012
+
+int main() {
+  bool seed[3] = {true, false, true};
+  Holder result = forward_construct<Holder>(seed);
+  return 0;
+}

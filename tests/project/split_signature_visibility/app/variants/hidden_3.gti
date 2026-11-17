@@ -1,0 +1,2 @@
+module api;
+namespace demo { int Factory::make(Parcel<int>* input) { return 7; } }

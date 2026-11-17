@@ -166,8 +166,6 @@
   "compiler_failure_reducer": 12.1,
   "compiler_library_boundary": 0.0,
   "compiler_pipeline": 1108.9,
-  "compiler_pipeline_declarations": 386.7,
-  "compiler_pipeline_e2e": 15.4,
   "compiler_pipeline_ownership": 351.0,
   "complete_borrow_summaries": 189.1,
   "complete_containers": 62.5,

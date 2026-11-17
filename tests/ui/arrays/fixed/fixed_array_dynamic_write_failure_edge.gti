@@ -1,0 +1,13 @@
+// Fixed arrays: an out-of-bounds dynamic element write takes its index_out_of_bounds failure edge instead of silently doing nothing.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: index_out_of_bounds
+int main() {
+  mut int32_t cells[4] = {};
+  mut uint64_t index = uint64_t(0);
+  while (index < uint64_t(9)) {
+    index++;
+  }
+  cells[index] = 7;
+  return int(cells[uint64_t(0)]);
+}

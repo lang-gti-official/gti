@@ -1,0 +1,2 @@
+// Default parameters: method defaults should not acquire an implicit receiver.
+class Item { public: int read(int value = this.read()) { return value; }  public: Item() = default; };  //~ ERROR GTI-S2077 cannot use 'this'

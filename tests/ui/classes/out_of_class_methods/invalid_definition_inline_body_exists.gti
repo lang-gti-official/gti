@@ -1,0 +1,3 @@
+// Out-of-class methods: an invalid separate definition (inline body exists) gets a source diagnostic.
+struct A { int read() { return 1; }  public: A() = default; }; int A::read() { return 2; }  //~ ERROR GTI-S2120 already has
+int main() { return 0; }

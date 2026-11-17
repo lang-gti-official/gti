@@ -1,0 +1,2 @@
+// Mutable field groups: invalid group contents (destructor) get a focused parser diagnostic: only direct instance field declarations.
+struct Bad { mut { ~Bad() {} } int recovered = 1; };  //~ ERROR GTI-P0001 only direct instance field declarations //~ ERROR GTI-P0001

@@ -1,0 +1,53 @@
+// Ordered class value call inputs: each class-value parameter is staged in caller-owned storage (a copy, an explicit move, a temporary), in source order, and the callee takes over all three shells exactly once when it begins; a borrowed-carrier shell is staged the same way.
+//@ check-pass
+//@ snapshot: mir
+//@ mir-function: main
+// CHECK: call-input {{.*}}call-site=#3 call-input-role=argument call-input-kind=copy-value {{.*}}prepared-parameter-drop=
+// CHECK-NEXT: {{^ *i[0-9]+ move }}
+// CHECK-NEXT: call-input {{.*}}call-site=#3 call-input-role=argument call-input-index=1 call-input-kind=move-value {{.*}}prepared-parameter-drop=
+// CHECK: {{^ *i[0-9]+ construct }}
+// CHECK-NEXT: call-input {{.*}}call-site=#3 call-input-role=argument call-input-index=2 call-input-kind=move-value {{.*}}prepared-parameter-drop=
+// CHECK-NEXT: {{^ *i[0-9]+ call .*call-site=#3 .*lifecycle=\[lifecycle\(kind=4;[^\]]*\),lifecycle\(kind=4;[^\]]*\),lifecycle\(kind=4;[^\]]*\)\]}}
+// CHECK: call-input {{.*}}call-input-kind=move-value {{.*}}prepared-parameter-drop=
+// CHECK-NEXT: {{^ *i[0-9]+ call }}
+class CopiedValue {
+  int value;
+
+public:
+  CopiedValue(int input) : value(input) {}
+  int read() { return this.value; }
+};
+
+class MovedValue {
+  int value;
+
+public:
+  MovedValue(int input) : value(input) {}
+  MovedValue(MovedValue& other) = delete;
+  MovedValue(MovedValue&& other) = default;
+  ~MovedValue() {}
+  int read() { return this.value; }
+};
+
+class BorrowedValue {
+  int& value;
+
+public:
+  BorrowedValue(int& input) : value(input) {}
+  int read() { return this.value; }
+};
+
+int ordered_values(CopiedValue copied, MovedValue moved,
+                   MovedValue temporary) {
+  return copied.read() + moved.read() + temporary.read();
+}
+
+int observe_borrowed(BorrowedValue view) { return view.read(); }
+
+int main() {
+  mut int observed = 4;  //~ WARN GTI-S2096
+  CopiedValue copied = CopiedValue(1);
+  MovedValue moved = MovedValue(2);
+  int total = ordered_values(copied, std::move(moved), MovedValue(3));
+  return total + observe_borrowed(BorrowedValue(observed)) - 10;
+}

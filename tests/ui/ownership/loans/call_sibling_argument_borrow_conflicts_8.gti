@@ -1,0 +1,12 @@
+// Call sibling argument borrow conflicts: sibling argument borrows of two different owners should stay accepted through MIR verification.
+//@ check-pass
+import std.vector;
+
+void consume<A, B>(A first, B last) {}
+
+int use() {
+  mut std::vector<int32_t> left = std::vector<int32_t>({1});
+  mut std::vector<int32_t> right = std::vector<int32_t>({2});  //~ WARN GTI-S2096
+  consume(left.begin_mut(), right.end());
+  return 0;
+}

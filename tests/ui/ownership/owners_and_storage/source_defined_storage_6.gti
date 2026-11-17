@@ -1,0 +1,16 @@
+// Source defined storage: std allocator, storage, arena, and pool policy should remain ordinary source-defined calls while only private implementation calls are intrinsic.
+//@ check-pass
+import std.memory;
+
+int main() {
+  std::allocator allocator = std::allocator();
+  mut auto allocated = allocator.try_storage<int32_t>(std::size_t(1));
+  if (!allocated) { return 1; }
+  mut std::storage<int32_t> values = std::move(allocated).value();
+  values.construct(std::size_t(0), int32_t(42));
+  int32_t observed = values.get(std::size_t(0));
+  mut auto arena = std::try_make_arena<int32_t>(std::size_t(1));
+  mut auto pool = std::try_make_pool<int32_t>(std::size_t(1));
+  if (!arena || !pool) { return 2; }
+  return observed - 42;
+}

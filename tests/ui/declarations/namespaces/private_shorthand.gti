@@ -1,0 +1,7 @@
+// Namespaces and aliases: shorthand does not export private module declarations.
+// --- main.gti
+import "api.gti"; int main() { return private_api::nested::secret(); }  //~ ERROR GTI-S2024
+// --- api.gti
+export module api;
+export namespace public_api::nested { int value() { return 3; } }
+namespace private_api::nested { int secret() { return 4; } }

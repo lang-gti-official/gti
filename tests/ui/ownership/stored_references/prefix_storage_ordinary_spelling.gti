@@ -1,0 +1,22 @@
+// Prefix storage capability: even a trusted declaration with the old spelling has no special capability identity.
+//@ check-pass
+//@ stdlib-overlay: std/ordinary_prefix.gti std/detail/memory_capabilities.gti
+// --- main.gti
+import std.ordinary_prefix;
+int main() { return ordinary_prefix_main(); }
+// --- std/ordinary_prefix.gti
+export module ordinary_prefix;
+import std.memory;
+import std.detail.memory_capabilities;
+namespace gti_internal {
+  class prefix_storage<std::copy_constructible T> {
+  public:
+    T value;
+    prefix_storage(T initial) : value(initial) {}
+  };
+}
+export int ordinary_prefix_main() {
+  gti_internal::prefix_storage<int> first{7};
+  gti_internal::prefix_storage<int> second = first;
+  return second.value - 7;
+}

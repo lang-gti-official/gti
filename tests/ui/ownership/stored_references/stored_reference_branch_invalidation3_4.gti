@@ -1,0 +1,10 @@
+// Stored reference branch invalidation3: a nested if whose two arms return should leave an unreachable MIR merge and not constrain its enclosing join.
+//@ snapshot: mir
+//@ mir-function: choose
+// The inner merge is explicitly unreachable and empty (no phantom loan cleanup).
+// CHECK: {{^ *bb[0-9]+ failure-parameter=fail0 }}
+// CHECK-NEXT: term 7 hir-statement=
+//@ check-pass
+import std.string;
+char choose(bool outer, bool inner) { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (outer) { if (inner) { return *iterator; } else { return *iterator; } } else { value.push_back('!'); } return value[0]; }
+int main() { if (choose(false, false) == 'g' and choose(true, false) == 'g' and choose(true, true) == 'g') { return 0; } return 1; }

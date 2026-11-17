@@ -1,0 +1,39 @@
+// A cursor that leaves its range during constant evaluation is the same
+// defined failure it is at run time, never a wrong compile-time value.
+class Row {
+  int cells[3];
+public:
+  constexpr Row() : cells({1, 2, 3}) {}
+  constexpr int& cell(std::size_t index) { return this.cells[index]; }  //~ ERROR GTI-S2057
+  constexpr RowCursor begin() { return RowCursor(this, std::size_t(0)); }
+  // The end is one element past the storage.
+  constexpr RowEnd end() { return RowEnd(std::size_t(4)); }
+};
+
+class RowEnd {
+  std::size_t at;
+public:
+  constexpr RowEnd(std::size_t at) : at(at) {}
+  constexpr std::size_t position() { return this.at; }
+};
+
+class RowCursor {
+  Row& row;
+  mut std::size_t index;
+public:
+  constexpr RowCursor(Row& row, std::size_t index) : row(row), index(index) {}
+  constexpr int& operator*() { return this.row.cell(this.index); }
+  constexpr void operator++() mut { this.index = this.index + std::size_t(1); }
+  constexpr bool operator!=(RowEnd end) { return this.index != end.position(); }
+};
+
+constexpr int overrun() {
+  Row row = Row();
+  mut int sum = 0;
+  for (auto x : row) { sum += x; }
+  return sum;
+}
+
+static_assert(overrun() == 6);
+
+int main() { return 0; }

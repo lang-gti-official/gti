@@ -1,0 +1,12 @@
+// Container scaffold surfaces: native C-string results without a GTI owner should remain usable through an exact C-string relay.
+//@ check-pass
+extern "C" {
+  c_string native_name();
+}
+
+c_string identity(c_string value) { return value; }
+
+int main() {
+  c_string value = identity(native_name());
+  return value == nullptr ? 1 : 0;
+}

@@ -1,0 +1,9 @@
+// Program initialization plans: construction effects should include the exact selected constructor body even when no destructor exists.
+class Probe {
+public:
+  Probe() { Probe::later = 1; }
+  static int32_t make_probe() { Probe probe = Probe(); return 1; }
+  static mut int32_t first = Probe::make_probe();  //~ ERROR GTI-S2068
+  static mut int32_t later = 0;
+};
+int main() { return Probe::first; }

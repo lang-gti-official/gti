@@ -1,0 +1,7 @@
+main.gti:5:3: error[GTI-S2082]: Type 'Cell' cannot contain itself by value through field 'inner'.
+ 5 |   Cell inner;  //~ ERROR GTI-S2082
+   |   ^~~~
+main.gti:3:8: note: The recursively contained type is declared here.
+ 3 | struct Cell {
+   |        ^~~~
+help: Break the recursive layout with an owning standard-library indirection such as std::unique_ptr<Cell>, or use a reference when another object owns the value.

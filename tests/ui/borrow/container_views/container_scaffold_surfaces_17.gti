@@ -1,0 +1,14 @@
+// Container scaffold surfaces: a literal-backed static field must not gain a receiver dependency.
+//@ check-pass
+import std.string;
+class StaticText {
+  static std::string_view text = "static";
+public:
+  std::string_view view() { return text; }
+public:
+  StaticText() = default;
+};
+int main() {
+  auto text = StaticText().view();
+  return int(text.size());
+}

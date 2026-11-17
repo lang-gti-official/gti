@@ -1,0 +1,3 @@
+// Interface static methods: the invalid interface static boundary (pure static) is rejected with GTI-S2042.
+//@ require-function-definitions
+interface I { static int invalid() = 0; };  //~ ERROR GTI-S2042

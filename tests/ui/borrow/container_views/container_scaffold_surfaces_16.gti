@@ -1,0 +1,18 @@
+// Container scaffold surfaces: a same-named read-only parameter retains its own origin, not this.
+//@ check-pass
+import std.string;
+class Owner {
+  mut std::string text{"field"};
+public:
+  std::string_view view(std::string& text) { return text.view(); }
+  void edit() mut { text.clear(); }
+public:
+  Owner() = default;
+};
+int main() {
+  mut Owner owner{};
+  std::string text{"argument"};
+  auto view = owner.view(text);
+  owner.edit();
+  return int(view.size());
+}

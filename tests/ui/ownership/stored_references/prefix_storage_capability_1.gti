@@ -1,0 +1,30 @@
+// Prefix storage capability: ordinary source prefix owner must pass.
+//@ check-pass
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+concept prefix_fixture_element<T> = std::storage_element<T> && std::relocatable<T>;
+class Prefixed<prefix_fixture_element T> {
+  mut std::detail::prefix_owner<T> data;
+public:
+  Prefixed(uint64_t capacity) : data(std::detail::prefix_owner<T>(capacity)) {}
+  void push(T value) mut { this.data.append_value(std::move(value)); }
+  void pop() mut { this.data.pop(); }
+  T& at(uint64_t index) { return this.data.read(index); }
+  mut T& at_mut(uint64_t index) mut { return this.data.read_mut(index); }
+  uint64_t length() { return this.data.length(); }
+  void take_from(mut Prefixed<T>& source) mut { source.data.relocate_to(this.data); }
+};
+int main() {
+  mut Prefixed<int> values{uint64_t(4)};
+  values.push(7);
+  values.push(9);
+  if (values.length() != uint64_t(2) or values.at(uint64_t(0)) != 7) return 1;
+  mut int& slot = values.at_mut(uint64_t(1));
+  slot = 11;
+  values.pop();
+  mut Prefixed<int> moved{uint64_t(4)};
+  moved.take_from(values);
+  return moved.length() == uint64_t(1) && moved.at(uint64_t(0)) == 7 ? 0 : 2;
+}

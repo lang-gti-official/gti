@@ -1,0 +1,4 @@
+// Shared read only loan aliases: a mutable carrier shell reference is independent of read-only owner access.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); mut std::string::const_iterator& alias = iterator; return 0; }  //~ WARN GTI-S2096

@@ -1,0 +1,48 @@
+// Projected field moves: projected moves should reject unavailable fields, incomplete receiver returns, immutable places, and whole-owner transfer.
+import std.memory;
+
+struct Item {
+  int value;
+public:
+  Item(int initial) : value(initial) {}
+  int read() { return this.value; }
+};
+
+struct Pair {
+  mut std::unique_ptr<Item> left = std::make_unique<Item>(1);
+  mut std::unique_ptr<Item> right = std::make_unique<Item>(2);
+
+  int use_after_move() mut {
+    auto removed = std::move(this.left);
+    return this.left->read();  //~ ERROR GTI-S2018 //~ ERROR GTI-S2018
+  }
+
+  void leave_uninitialized() mut {  //~ ERROR GTI-S2018
+    auto removed = std::move(this.left);
+  }
+public:
+  Pair() = default;
+};
+
+struct ImmutableField {
+  std::unique_ptr<Item> value = std::make_unique<Item>(3);
+
+  void take() mut {
+    auto removed = std::move(this.value);  //~ ERROR GTI-S2018
+  }
+public:
+  ImmutableField() = default;
+};
+
+int main() {
+  mut Pair pair = Pair();
+  if (true) {
+    auto removed = std::move(pair.left);
+  }
+  int maybe_moved = pair.left->read();  //~ ERROR GTI-S2018
+
+  mut Pair partial = Pair();
+  auto removed = std::move(partial.left);
+  Pair transferred = std::move(partial);  //~ ERROR GTI-S2018
+  return maybe_moved + transferred.right->read();
+}

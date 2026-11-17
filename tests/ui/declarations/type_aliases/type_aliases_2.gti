@@ -1,0 +1,13 @@
+// Type aliases: a generic class alias should preserve the owner's capabilities and substitute its concrete target in an instantiated member body.
+//@ check-pass
+class NumericBox<std::numeric T> {
+public:
+  using value_type = T;
+  value_type copy(value_type input) { return value_type(input); }
+public:
+  NumericBox() = default;
+};
+int main() {
+  NumericBox<int> box{};
+  return box.copy(7) - 7;
+}

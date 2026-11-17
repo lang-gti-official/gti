@@ -1,0 +1,6 @@
+// Fixed arrays: the formatter keeps compact C++-style array declarations, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+mut int buffer[1 + 2] = {1, 2, 3};
+int matrix[0x2][0b10] = {{1, 2}, {3, 4}};

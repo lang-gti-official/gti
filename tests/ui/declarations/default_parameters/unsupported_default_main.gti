@@ -1,0 +1,2 @@
+// Default parameters: a default in an unsupported context (the main entry point) is rejected.
+int main(int value = 0) { return value; }  //~ ERROR GTI-S2077 the main entry point //~ ERROR GTI-S2032

@@ -1,0 +1,115 @@
+// Constructors and receiver mutability: invalid construction and receiver use should be rejected.
+//@ error-limit: 0
+class MissingInitialization {
+  int value;  //~ ERROR GTI-S2000
+};
+
+class InvalidConstructor {
+  int first;
+  int second;
+
+public:
+  InvalidConstructor(int value)
+      : second(value), first(this.second), second(value) { return; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2000 //~ ERROR GTI-S2000 //~ ERROR GTI-S2000
+  InvalidConstructor(mut int value) : first(value), second(value) {}  //~ ERROR GTI-S2011
+};
+
+class ReservedCopy {
+  int value = 0;
+
+public:
+  ReservedCopy(ReservedCopy& other) : value(other.value) {}  //~ ERROR GTI-S2020 //~ ERROR GTI-S2020
+public:
+  ReservedCopy() = default;
+};
+
+class CleanupCopy {
+  int value = 0;
+
+public:
+  CleanupCopy(CleanupCopy& other) = default;  //~ ERROR GTI-S2020
+  ~CleanupCopy() {}
+public:
+  CleanupCopy() = default;
+};
+
+class DeletedCopy {
+  int value = 0;
+
+public:
+  DeletedCopy(DeletedCopy& other) = delete;
+  DeletedCopy(DeletedCopy&& other) = default;
+public:
+  DeletedCopy() = default;
+};
+
+class DeletedMove {
+  int value = 0;
+
+public:
+  DeletedMove(DeletedMove& other) = default;
+  DeletedMove(DeletedMove&& other) = delete;
+public:
+  DeletedMove() = default;
+};
+
+class InvalidDefaultTarget {
+  int value = 0;
+
+public:
+  InvalidDefaultTarget(int value) = default;  //~ ERROR GTI-S2020
+public:
+  InvalidDefaultTarget() = default;
+};
+
+class PrivatePolicy {
+  PrivatePolicy(PrivatePolicy& other) = delete;  //~ ERROR GTI-S2020
+public:
+  PrivatePolicy() = default;
+};
+
+void invalid_rvalue_reference(DeletedCopy&& value) {}  //~ ERROR GTI-S2020
+void consume_deleted(DeletedCopy value) {}
+
+class PrivateValue {
+  int value;
+  PrivateValue(int initial) : value(initial) {}
+};
+
+class MutableValue {
+  mut int value = 0;
+
+public:
+  void mutate() { this.value = 1; }  //~ ERROR GTI-S2002
+  void mutate_other(MutableValue other) mut { other.value = 1; }  //~ ERROR GTI-S2000
+  void bump() mut { this.value += 1; }
+public:
+  MutableValue() = default;
+};
+
+class ImmutableField {
+  int value = 0;
+
+public:
+  void replace() mut { this.value = 1; }  //~ ERROR GTI-S2000
+public:
+  ImmutableField() = default;
+};
+
+int main() {
+  PrivateValue hidden = PrivateValue(1);  //~ ERROR GTI-S2007
+  MutableValue fixed = MutableValue();
+  fixed.bump();  //~ ERROR GTI-S2000
+  mut MutableValue moving = MutableValue();
+  moving.bump();
+  mut MutableValue uninitialized;  //~ ERROR GTI-S2000
+  InvalidConstructor mismatch = InvalidConstructor(true);  //~ ERROR GTI-S2012
+  MutableValue implicit_value = 1;  //~ ERROR GTI-S2003
+  DeletedCopy original{};
+  DeletedCopy copied = DeletedCopy(original);  //~ ERROR GTI-S2020
+  DeletedCopy copied_directly = original;  //~ ERROR GTI-S2003
+  consume_deleted(original);  //~ ERROR GTI-S2018
+  mut DeletedMove stationary{};
+  DeletedMove moved = DeletedMove(std::move(stationary));  //~ ERROR GTI-S2018 //~ ERROR GTI-S2003
+  return 0;
+}

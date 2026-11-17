@@ -1,0 +1,8 @@
+// Recursive class layouts: generic self-layout diagnostics should preserve the written owner type in their indirection hint.
+class Node<T> {
+  T value;
+  Node<T> next;  //~ ERROR GTI-S2082
+
+public:
+  Node(T value, Node<T> next) : value(value), next(next) {}
+};

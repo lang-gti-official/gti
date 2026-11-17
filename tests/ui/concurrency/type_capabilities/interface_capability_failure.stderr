@@ -1,0 +1,7 @@
+main.gti:4:23: error[GTI-S2059]: Type 'Broken' does not satisfy the transfer capability required by interface 'Concurrent'.
+ 4 | [[no_transfer]] class Broken : public Concurrent { int value = 0;  public: Broken() = default; };  //~ ERROR GTI-S2059
+   |                       ^~~~~~
+main.gti:3:3: note: Interface capability required here.
+ 3 | [[transfer, share]] interface Concurrent {};
+   |   ^~~~~~~~
+help: Remove non-capable state or cleanup, constrain generic state with std::transferable, or use [[unsafe_transfer]] only after auditing the full nominal contract.

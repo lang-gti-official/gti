@@ -1,0 +1,45 @@
+// Contextual array arguments: brace call arguments should form exact contextual fixed-array values through semantics, HIR, and MIR.
+//@ check-pass
+int total<uint64_t N>(int values[N]) {
+  mut int result = 0;
+  for (mut uint64_t index = 0; index < N; index++) {
+    result += values[index];
+  }
+  return result;
+}
+
+T first<T, uint64_t N>(T fallback, T values[N]) { return values[0]; }
+
+constexpr uint64_t exact_extent<uint64_t N>() { return N; }
+
+int relay_total<uint64_t N>(int values[N]) { return total<N>(values); }
+
+int choose(int values[2]) { return 2; }
+int choose(int values[3]) { return 3; }
+
+class Total {
+  int stored;
+
+public:
+  Total<uint64_t N>(int values[N]) : stored(total(values)) {}
+  int read() { return this.stored; }
+  int add<uint64_t N>(int values[N]) { return this.stored + total(values); }
+};
+
+int main() {
+  int summed = total({1, 2, 3});
+  int selected = first(0, {4, 5});
+  int extent = choose({6, 7, 8});
+  Total object = Total({9, 10});
+  int method = object.add({2, 3});
+  int named_values[2] = {11, 12};
+  int named = total(named_values);
+  int explicit_total = total<3>({3, 4, 5});
+  int explicit_mixed = first<int, 2>(0, {6, 7});
+  int relayed = relay_total<2>({8, 9});
+  uint64_t explicit_extent = exact_extent<4>();
+  int explicit_method = object.add<2>({1, 1});
+  return summed + selected + extent + object.read() + method + named +
+         explicit_total + explicit_mixed + relayed + int(explicit_extent) +
+         explicit_method - 139;
+}

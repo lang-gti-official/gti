@@ -14094,9 +14094,12 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
     return false;
   }
   const ClassInfo *owner = classInfo(type);
+  // A stored checked reference is execution-local, like a raw pointer: the
+  // verified executor designates the referent it was bound to, checks every
+  // access through it, and never publishes a value that contains it.
   if (owner == nullptr || owner->kind == ClassKind::Interface ||
       owner->kind == ClassKind::Union || !owner->bases.empty() ||
-      owner->polymorphic || owner->storedReference ||
+      owner->polymorphic || (!transient && owner->storedReference) ||
       (!transient && owner->destructor)) {
     return false;
   }
@@ -14115,6 +14118,10 @@ auto SemanticVisitor::Impl::isSupportedConstexprType(
       return false;
     }
     const auto member = owner->members.find(field.declaration->name().lexeme);
+    if (member != owner->members.end() && transient &&
+        member->second.symbol.type.kind == SemanticType::Reference &&
+        member->second.symbol.type.arguments.size() == 1)
+      continue;
     if (member == owner->members.end() ||
         !isSupportedConstexprType(
             substituteType(member->second.symbol.type, substitution),

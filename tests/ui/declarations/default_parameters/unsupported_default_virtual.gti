@@ -1,0 +1,2 @@
+// Default parameters: a default in an unsupported context (virtual, override, or interface methods) is rejected.
+class Base { public: virtual int inspect(int value = 1) { return value; }  public: Base() = default; };  //~ ERROR GTI-S2077 virtual, override, or interface methods

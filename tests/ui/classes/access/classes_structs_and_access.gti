@@ -1,0 +1,31 @@
+// Classes structs and access: access-controlled declaration defaults should retain verified MIR.
+//@ check-pass
+class Vault {
+  int secret = 7;
+
+public:
+  int reveal() { return this.secret; }
+  int reveal_other(Vault other) { return other.secret; }
+public:
+  Vault() = default;
+};
+
+struct Reading {
+  int value = 1;
+
+private:
+  int hidden = 2;
+
+public:
+  int total() { return this.value + this.hidden; }
+public:
+  Reading() = default;
+};
+
+int open(mut Vault vault) { return vault.reveal(); }
+int read(Reading reading) { return reading.value; }
+int main() {
+  Vault vault{};
+  Reading reading{};
+  return vault.reveal() + reading.total() - 10;
+}

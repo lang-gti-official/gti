@@ -1,0 +1,2 @@
+// Default parameters: recursive default expansion should be rejected before HIR lowering.
+int recurse(int value = recurse()) { return value; }  //~ ERROR GTI-S2077 recursive expansion

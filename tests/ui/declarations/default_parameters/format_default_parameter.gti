@@ -1,0 +1,6 @@
+// Default parameters: the formatter spaces default parameters, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+int choose(int required,int fallback=2){return required+fallback;}
+int main() { return choose(1) - 3; }

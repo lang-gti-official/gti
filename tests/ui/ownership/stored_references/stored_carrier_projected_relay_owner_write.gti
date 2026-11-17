@@ -1,0 +1,20 @@
+// Stored carrier return provenance: moving a relay's carrier does not allow mutation of its still borrowed external field.
+struct Counter { mut int value = 4;  public: Counter() = default; };
+// RFC 0004: results in the stored region borrow the external owner, not the
+// carrier shell; an elided result would borrow the receiver.
+class ProjectedCarrier<lifetime a> {
+  Counter&<a> owner;
+public:
+  ProjectedCarrier(Counter&<a> source) : owner(source) {}
+  int&<a> relay() { return this.read(); }
+  int&<a> read() { return this.owner.value; }
+};
+int main() {
+  mut Counter owner{};
+  ProjectedCarrier original = ProjectedCarrier(owner);
+  ProjectedCarrier& alias = original;
+  int& value = alias.relay();
+  ProjectedCarrier moved = std::move(original);
+  owner.value = 9;  //~ ERROR GTI-S2017
+  return value + moved.read() - 8;
+}

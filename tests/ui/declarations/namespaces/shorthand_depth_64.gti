@@ -1,0 +1,3 @@
+// Namespaces and aliases: 64 empty namespace levels fit the parser budget.
+//@ parse-pass
+namespace n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n::n {}

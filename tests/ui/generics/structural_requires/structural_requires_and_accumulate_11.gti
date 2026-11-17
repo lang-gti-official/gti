@@ -1,0 +1,8 @@
+// Structural requires and accumulate: requires-clause concept applications should enforce exact arity and reject unexpanded type packs.
+import std.iterator;
+T invalid<I, T>(I iterator, T value)
+  requires std::input_iterator<I, T> {  //~ ERROR GTI-S2049 Concept 'std::input_iterator' requires 1 type argument
+  return value;
+}
+void invalid_pack<Args...>(Args... args)
+  requires std::input_iterator<Args> {}  //~ ERROR GTI-S2049 unexpanded type pack

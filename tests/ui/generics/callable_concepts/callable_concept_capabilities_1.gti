@@ -1,0 +1,74 @@
+// Callable concept capabilities: public callable concepts should establish exact read, repeatable mutable, consuming, predicate, comparator, and once-action contracts before concrete generic reanalysis.
+//@ check-pass
+import std.functional;
+
+class reader {
+public:
+  bool operator()(int32_t& value) { return value == 7; }
+public:
+  reader() = default;
+};
+
+class counter {
+  mut int32_t calls;
+
+public:
+  counter() : calls(0) {}
+  bool operator()(int32_t& value) mut {
+    this.calls++;
+    return value == 7;
+  }
+};
+
+class once_reader {
+public:
+  bool operator()(int32_t& value) && { return value == 7; }
+public:
+  once_reader() = default;
+};
+
+class descending {
+public:
+  bool operator()(int32_t& left, int32_t& right) {
+    return left > right;
+  }
+public:
+  descending() = default;
+};
+
+class once_action {
+public:
+  void operator()() && {}
+public:
+  once_action() = default;
+};
+
+bool read_value<Function>(int32_t value, Function function)
+  requires std::read_callable<Function, int32_t, bool> {
+  return function(value);
+}
+
+bool mutate_value<Function>(int32_t value, mut Function function)
+  requires std::predicate<Function, int32_t> {
+  return function(value);
+}
+
+bool consume_value<Function>(int32_t value, Function function)
+  requires std::once_callable<Function, int32_t, bool> {
+  return std::move(function)(value);
+}
+
+bool order_values<Function>(int32_t left, int32_t right,
+                            mut Function function)
+  requires std::comparator<Function, int32_t> {
+  return function(left, right);
+}
+
+int main() {
+  bool read = read_value(7, reader());
+  bool mutable_result = mutate_value(7, counter());
+  bool consumed = consume_value(7, once_reader());
+  bool ordered = order_values(8, 7, descending());
+  std::invoke_once(once_action());
+  return read && mutable_result && consumed && ordered ? 0 : 1;
+}

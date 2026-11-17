@@ -1,0 +1,38 @@
+// Exact function overloads and conversions: return-only and qualifier-only overloads, alpha-equivalent generics, read-only receivers, bare function names, inexact or ambiguous calls and invalid conversions are rejected.
+//@ error-limit: 0
+int same(int value) { return value; }
+float same(int value) { return float(value); }  //~ ERROR GTI-S2011
+
+int mutate(int value) { return value; }
+int mutate(mut int value) { return value; }  //~ ERROR GTI-S2011
+
+T echo<T>(T value) { return value; }
+U echo<U>(U value) { return value; }  //~ ERROR GTI-S2011
+
+struct MutableOnly {
+  int inspect() mut { return 1; }
+public:
+  MutableOnly() = default;
+};
+
+int choose(int value) { return value; }
+T choose<T>(T value) { return value; }
+
+uint64_t width(uint64_t value) { return value; }
+float width(float value) { return value; }
+float only_float(float value) { return value; }
+void function_value() {}
+
+int main(int value) { return value; }  //~ ERROR GTI-S2032
+int main() {  //~ ERROR GTI-S2011
+  MutableOnly read_only = MutableOnly();
+  int invalid_receiver = read_only.inspect();  //~ ERROR GTI-S2000
+  function_value;
+  width;  //~ ERROR GTI-S2090
+  float mismatch = width(true);  //~ ERROR GTI-S2012
+  int ambiguous = choose(1);  //~ ERROR GTI-S2013
+  float inexact = only_float(1);  //~ ERROR GTI-S2003
+  uint8_t too_small = uint8_t(300);  //~ ERROR GTI-S2014
+  int not_numeric = int("text");  //~ ERROR GTI-S2014
+  return 0;
+}

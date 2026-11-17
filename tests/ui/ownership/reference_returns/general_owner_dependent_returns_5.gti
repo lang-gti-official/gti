@@ -1,0 +1,23 @@
+// General owner dependent returns: a result's owned pointee may be retained or returned from its read-only owner parameter.
+//@ check-pass
+import std.memory;
+
+class DirectPayload {
+public:
+  int value;
+  DirectPayload(int initial) : value(initial) {}
+};
+
+DirectPayload& nested_owner_return(
+    expected<std::unique_ptr<DirectPayload>, int>& opened) {
+  return *opened.value();
+}
+
+int nested_owner_retention() {
+  expected<std::unique_ptr<DirectPayload>, int> opened =
+      std::make_unique<DirectPayload>(1);
+  DirectPayload& nested = *opened.value();
+  return nested.value;
+}
+
+int main() { return nested_owner_retention() - 1; }
