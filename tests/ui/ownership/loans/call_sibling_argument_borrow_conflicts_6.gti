@@ -1,0 +1,19 @@
+// Call sibling argument borrow conflicts: a read borrow consumed by a nested call still holds its owner loan, so a later sibling mutation is rejected at semantics.
+import std.vector;
+
+int32_t drain<Iterator>(Iterator cursor) {
+  return 0;
+}
+
+int32_t bump(mut std::vector<int32_t>& sink) {
+  sink.push_back(9);
+  return 0;
+}
+
+void consume<A, B>(A first, B second) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(drain(values.begin()), bump(values));  //~ ERROR GTI-S2017 A later call operand mutates storage borrowed by an earlier operand
+  return 0;
+}

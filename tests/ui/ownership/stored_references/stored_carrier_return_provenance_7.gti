@@ -1,0 +1,8 @@
+// Stored carrier return provenance: a carrier object's ordinary field should fail at the returned field with the carrier-shell provenance reason.
+class ReadCarrier {
+public:
+  int& referent;
+  mut int shell = 0;
+  ReadCarrier(int& source) : referent(source) {}
+};
+int& escape_shell(ReadCarrier carrier) { return carrier.shell; }  //~ ERROR GTI-S2085

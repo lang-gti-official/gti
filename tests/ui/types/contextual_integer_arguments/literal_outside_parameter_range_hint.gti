@@ -1,0 +1,4 @@
+// Contextual integer literal arguments: the out-of-range rejection carries its value-specific range hint.
+//@ snapshot: diagnostics
+uint8_t take(uint8_t value) { return value; }
+int main() { uint8_t value = take(256); return 0; }  //~ ERROR GTI-S2003

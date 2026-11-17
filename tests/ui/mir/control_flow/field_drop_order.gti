@@ -1,0 +1,35 @@
+// Mir control flow and ownership effects: a class's cleanup-owning fields are dropped in reverse declaration order.
+//@ run-pass
+mut int32_t order = 0;
+mut int32_t first_drop = 0;
+mut int32_t second_drop = 0;
+
+class Resource {
+  int32_t value;
+
+public:
+  Resource(int32_t initial) : value(initial) {}
+  ~Resource() {
+    order += 1;
+    if (this.value == 1) {
+      first_drop = order;
+    } else {
+      second_drop = order;
+    }
+  }
+};
+
+class Bundle {
+  Resource first;
+  Resource second;
+
+public:
+  Bundle() : first(Resource(1)), second(Resource(2)) {}
+};
+
+void make() { Bundle bundle = Bundle(); }
+
+int main() {
+  make();
+  return second_drop == 1 && first_drop == 2 ? 0 : 1;
+}

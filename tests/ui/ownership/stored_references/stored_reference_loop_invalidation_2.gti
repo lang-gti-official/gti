@@ -1,0 +1,4 @@
+// Stored reference loop invalidation: the condition-false edge should end a loop-carried loan even when the body executes zero times.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (false) { char current = *iterator; } value.push_back('!'); return 0; }

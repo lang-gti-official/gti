@@ -1,0 +1,20 @@
+// Callable concept capabilities: analysis result.
+import std.functional;
+class counting_less<std::totally_ordered T> {
+  mut int32_t calls;
+
+public:
+  counting_less() : calls(0) {}
+  bool operator()(T& left, T& right) mut {
+    this.calls++;
+    return left < right;
+  }
+};
+bool inspect<T, Compare>(T& left, T& right, Compare compare)
+  requires std::read_binary_callable<Compare, T, T, bool> {
+  return compare(left, right);
+}
+bool generic_order<std::totally_ordered T>(T& left, T& right) {
+  return inspect(left, right, counting_less<T>());  //~ ERROR GTI-S2029
+}
+int main() { int32_t a = 1; int32_t b = 2; return generic_order(a, b) ? 0 : 1; }

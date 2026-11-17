@@ -1,0 +1,3 @@
+// Structured bindings: the parser diagnoses local declarations.
+//@ parse-fail
+auto [left, right] = value;  //~ ERROR GTI-P0001

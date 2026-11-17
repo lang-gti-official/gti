@@ -1,0 +1,27 @@
+// Scoped enums: scoped enum declarations and qualified enumerators should compile.
+//@ check-pass
+namespace engine {
+enum class State : uint8_t {
+  Idle,
+  Running = 4,
+  Stopped,
+};
+enum class Mode { editor, game };
+}
+
+using StateAlias = engine::State;
+
+StateAlias next(StateAlias state) {
+  if (state == StateAlias::Idle) {
+    return engine::State::Running;
+  }
+  return StateAlias::Stopped;
+}
+
+int main() {
+  auto state = next(StateAlias::Idle);
+  if (state == engine::State::Running) {
+    return 0;
+  }
+  return 1;
+}

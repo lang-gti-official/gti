@@ -1,0 +1,17 @@
+// This receiver keyword: this member access and self identifiers should compile together.
+//@ check-pass
+class Counter {
+  int value = 4;
+public:
+  int read() {
+    int self = 1;
+    return this.value + self - 1;
+  }
+public:
+  Counter() = default;
+};
+
+int main() {
+  Counter counter = Counter();
+  return counter.read() - 4;
+}

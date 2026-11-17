@@ -1,0 +1,14 @@
+// Prefix storage capability: retired optional private operations are no longer declared by the standard library (trusted source).
+//@ stdlib-overlay: std/retired_optional.gti std/detail/memory_storage.gti
+// --- main.gti
+import std.retired_optional;
+int main() { return retired_optional_main(); }
+// --- std/retired_optional.gti
+export module retired_optional;
+import std.memory;
+import std.detail.memory_storage;
+import std.optional;
+export int retired_optional_main() {
+  mut std::detail::prefix_owner<int> values{uint64_t(1)};
+  return int(gti_internal::optional_storage_read(values));  //~ ERROR GTI-S2000
+}

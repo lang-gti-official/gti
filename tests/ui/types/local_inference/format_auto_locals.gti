@@ -1,0 +1,5 @@
+// Local type inference: local auto declarations get stable C++-style formatting.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+int main(){auto fixed=1;mut auto changing=fixed;for(mut auto i=0;i<2;i++){changing+=i;}return changing;}

@@ -1,0 +1,34 @@
+// Extern C interop: semantics rejects unsafe ABI types, modifiers, generics, overloads and global C-symbol collisions before backend emission (trusted source, so the compiler-private text_view row is an ABI rejection).
+//@ stdlib-overlay: std/extern_fixture.gti
+//@ error-limit: 100
+// --- main.gti
+import std.extern_fixture;
+int main() { return extern_main(); }
+// --- std/extern_fixture.gti
+export module extern_fixture;
+class Handle { public: Handle() = default; };
+enum class Mode { One };
+[[link_name("native_plain")]] int32_t plain();  //~ ERROR GTI-S2054
+extern "C" {
+  [[link_name("bad-symbol")]] int32_t bad_link_name();  //~ ERROR GTI-S2054
+  [[link_name("shared_symbol")]] int32_t first_name();
+  [[link_name("shared_symbol")]] int32_t second_name();  //~ ERROR GTI-S2054
+  [[link_name("overload_i32")]] int32_t overloaded_name(int32_t value);
+  [[link_name("overload_i64")]] int32_t overloaded_name(int64_t value);  //~ ERROR GTI-S2054
+  bool bad_bool(bool value);
+  char bad_char(char value);  //~ ERROR GTI-S2054 //~ ERROR GTI-S2054
+  int32_t bad_reference(int32_t& value);  //~ ERROR GTI-S2054
+  int32_t bad_array(int32_t values[4]);  //~ ERROR GTI-S2054
+  Handle bad_class(Handle value);  //~ ERROR GTI-S2054 //~ ERROR GTI-S2054
+  Mode bad_enum(Mode value);  //~ ERROR GTI-S2054 //~ ERROR GTI-S2054
+  expected<int32_t, int32_t> bad_expected(int32_t value);  //~ ERROR GTI-S2054
+  gti_internal::text_view bad_text_return();  //~ ERROR GTI-S2054
+  static int32_t bad_static(int32_t value);  //~ ERROR GTI-S2054
+  int32_t bad_generic<T>(T value);  //~ ERROR GTI-S2054 //~ ERROR GTI-S2054
+  int32_t duplicate(int32_t value);
+  int32_t duplicate(int64_t value);  //~ ERROR GTI-S2054
+}
+namespace other {
+extern "C" { int32_t duplicate(uint32_t value); }  //~ ERROR GTI-S2054
+}
+export int extern_main() { return 0; }

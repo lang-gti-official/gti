@@ -1,0 +1,11 @@
+// Expected payload range loans: an rvalue Expected payload should remain an owning range temporary, not masquerade as a retained named-owner projection.
+//@ check-pass
+import std.string;
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+int main() {
+  mut int count = 0;
+  for (auto& byte : make_text().value()) { count += 1; }
+  return count - 2;
+}

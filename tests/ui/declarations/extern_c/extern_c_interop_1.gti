@@ -1,0 +1,14 @@
+// Extern c interop: fixed-width extern C declarations and calls should compile.
+//@ check-pass
+extern "C" {
+  int32_t socket(int32_t domain, int32_t type, int32_t protocol);
+  int32_t close(int32_t descriptor);
+}
+
+int main() {
+  int32_t descriptor = socket(2, 1, 0);
+  if (descriptor >= 0) {
+    [[discard]] close(descriptor);
+  }
+  return 0;
+}

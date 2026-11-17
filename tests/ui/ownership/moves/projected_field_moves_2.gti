@@ -1,0 +1,26 @@
+// Projected field moves: restoring direct and checked-arrow fields should permit moving the whole owner through verified MIR.
+//@ check-pass
+import std.memory;
+
+struct Link {
+  mut std::unique_ptr<int32_t> next = std::unique_ptr<int32_t>();
+public:
+  Link() = default;
+};
+std::unique_ptr<Link> detach() {
+  mut auto owner = std::make_unique<Link>();
+  auto previous = std::move(owner->next);
+  owner->next = std::unique_ptr<int32_t>();
+  return std::move(owner);
+}
+Link direct() {
+  mut Link owner = Link();
+  auto previous = std::move(owner.next);
+  owner.next = std::unique_ptr<int32_t>();
+  return std::move(owner);
+}
+int main() {
+  auto indirect = detach();
+  auto value = direct();
+  return 0;
+}

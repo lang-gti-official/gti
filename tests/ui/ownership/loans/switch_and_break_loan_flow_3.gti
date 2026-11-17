@@ -1,0 +1,3 @@
+// Switch and break loan flow: an intervening statement must keep the immediate-break proof conservative.
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); while (true) { char current = *iterator; value.push_back('!'); int marker = 0; break; } return 0; }  //~ ERROR GTI-S2017

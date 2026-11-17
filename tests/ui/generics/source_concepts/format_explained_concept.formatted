@@ -1,0 +1,5 @@
+// Source-defined concepts: an explained concept formats like other attributed declarations.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+[[unsatisfied("A dial turns.")]] concept dial<T> = std::integral<T>;

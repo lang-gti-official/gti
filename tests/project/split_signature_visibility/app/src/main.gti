@@ -1,0 +1,2 @@
+import api;
+int main() { return 0; }

@@ -1,0 +1,3 @@
+// Container scaffold surfaces: implicit-field predeclaration must not authorize local, by-value parameter or static receiver escape.
+import std.string;
+class Owner { std::string text{"field"}; public: static std::string_view view() { return text.view(); } };  //~ ERROR GTI-S2039

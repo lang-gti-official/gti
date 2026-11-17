@@ -1,0 +1,32 @@
+// Read only range loans: nested and triple read-only traversals of the same local or field range should coexist through verified MIR loans.
+//@ slow
+//@ check-pass
+import std.string;
+import std.vector;
+
+class Holder {
+public:
+  Holder() {}
+  mut std::vector<int32_t> items = std::vector<int32_t>();
+};
+
+int main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();  //~ WARN GTI-S2096
+  for (auto& first : values) {
+    for (auto& second : values) {
+      for (auto& third : values) {}
+    }
+  }
+
+  mut Holder holder = Holder();  //~ WARN GTI-S2096
+  for (auto& first : holder.items) {
+    for (auto& second : holder.items) {}
+  }
+
+  mut std::string text = std::string("ab");  //~ WARN GTI-S2096
+  mut int32_t count = 0;
+  for (auto& first : text) {
+    for (auto& second : text) { count += 1; }
+  }
+  return count - 4;
+}

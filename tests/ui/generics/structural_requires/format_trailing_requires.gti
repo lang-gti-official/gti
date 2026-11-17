@@ -1,0 +1,7 @@
+// Structural requires: a multi-parameter trailing requires clause starts its own line one level past the declaration, idempotently.
+//@ check-pass
+//@ format-stable
+//@ snapshot: format
+import std.iterator;
+import std.numeric;
+T sum<I,std::numeric T>(I first,T init)requires std::input_iterator<I>&&std::accumulates_into<I,T>{return init;}

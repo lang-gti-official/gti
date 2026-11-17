@@ -1,0 +1,4 @@
+// Recursive class layouts: inline Expected alternatives preserve the recursive layout edge at the source field, including arrays and the error alternative.
+struct Cell {
+  expected<Cell, int> inner;  //~ ERROR GTI-S2082
+};

@@ -1,0 +1,3 @@
+// Named generics: parser recovery continues after malformed generic parameters.
+//@ parse-fail
+class Broken<> {}; int okay = 1;  //~ ERROR GTI-P0001

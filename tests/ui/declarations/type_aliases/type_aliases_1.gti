@@ -1,0 +1,46 @@
+// Type aliases: the program is accepted.
+//@ check-pass
+using LaterSize = Size;
+using Size = uint64_t;
+using Triple = int[3];
+
+class Box<T> {
+  using stored_type = T;
+  T value;
+public:
+  using value_type = stored_type;
+  Box(T value) : value(value) {}
+  value_type get() { return this.value; }
+};
+
+class Traits {
+public:
+  using value_type = hidden_type;
+private:
+  using hidden_type = int;
+public:
+  value_type identity(value_type value) { return value; }
+public:
+  Traits() = default;
+};
+
+using IntBox = Box<int>;
+using TraitValue = Traits::value_type;
+using BoxValue = IntBox::value_type;
+using Completion = Box<bool>;
+using Result = int;
+
+Completion complete() { return Completion(true); }
+
+Result main() {
+  LaterSize count = Size(3);
+  Triple values = {1, 2, 3};
+  IntBox box = IntBox(values[1]);
+  Traits traits{};
+  BoxValue input = 4;
+  TraitValue trait_value = traits.identity(input);
+  Completion completion = complete();
+  if (count == 3 and box.get() == 2 and trait_value == 4 and
+      completion.get()) { return 0; }
+  return 1;
+}

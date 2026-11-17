@@ -1,0 +1,8 @@
+// Borrowed callable conditionals: analysis result.
+import std.memory;
+
+void capture<F>(F& f) {
+  int n = f(1);
+  auto retained = [f]() -> int { return 1; };  //~ ERROR GTI-S2027 //~ ERROR GTI-S2046
+}
+int main() { return 0; }

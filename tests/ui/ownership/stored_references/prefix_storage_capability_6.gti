@@ -1,0 +1,22 @@
+// Prefix storage capability: prefix mutations permit disjoint owners and ended shared/mutable loans.
+//@ check-pass
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+int main() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  other.pop();
+  int copied = value;
+  values.pop();
+  other.append_value(9);
+  other.relocate_to(values);
+  mut int& edit = values.read_mut(uint64_t(0));
+  edit = copied;
+  values.pop();
+  return 0;
+}

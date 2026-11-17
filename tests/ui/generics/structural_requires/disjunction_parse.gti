@@ -1,0 +1,7 @@
+// Structural requires: a requires-clause disjunction parses without losing the next declaration.
+//@ parse-pass
+T broken<I>(I value)
+  requires std::input_iterator<I> || std::input_iterator<I> {
+  return value;
+}
+int okay() { return 0; }

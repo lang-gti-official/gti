@@ -1,0 +1,62 @@
+// Constructors and receiver mutability: explicit construction and mutable receiver calls should validate.
+//@ check-pass
+class Counter {
+  mut int value;
+  int step = 1;
+
+public:
+  Counter() : value(0) {}
+  Counter(int initial) : value(initial) {}
+  Counter(bool reset) : value(0) {}
+  int read() { return this.value; }
+  int advance(int amount) mut {
+    this.value += amount;
+    return this.value;
+  }
+};
+
+struct Origin {
+  int x = 0;
+  Origin(int initial) : x(initial) {}
+public:
+  Origin() = default;
+};
+
+class LifecycleValue {
+  int value = 0;
+
+public:
+  LifecycleValue(LifecycleValue& other) = default;
+  LifecycleValue(LifecycleValue&& other) = default;
+public:
+  LifecycleValue() = default;
+};
+
+class MoveOnlyPolicy {
+  int value = 0;
+
+public:
+  MoveOnlyPolicy(MoveOnlyPolicy& other) = delete;
+  MoveOnlyPolicy(MoveOnlyPolicy&& other) = default;
+public:
+  MoveOnlyPolicy() = default;
+};
+
+int inspect(Counter counter) { return counter.read(); }
+int main() {
+  Counter zero = Counter();
+  Counter fixed = Counter(1);
+  mut int observed = fixed.read();
+  mut Counter moving = Counter(observed);
+  observed = moving.advance(2);
+  Origin origin = Origin();
+  Origin shifted = Origin(4);
+  Counter reset = Counter(true);
+  LifecycleValue source{};
+  LifecycleValue copied = LifecycleValue(source);
+  mut LifecycleValue movable{};  //~ WARN GTI-S2096
+  LifecycleValue moved = LifecycleValue(std::move(movable));
+  mut MoveOnlyPolicy owner{};  //~ WARN GTI-S2096
+  MoveOnlyPolicy transferred = MoveOnlyPolicy(std::move(owner));
+  return observed + origin.x;
+}

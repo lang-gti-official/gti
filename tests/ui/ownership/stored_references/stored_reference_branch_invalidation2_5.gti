@@ -1,0 +1,4 @@
+// Stored reference branch invalidation2: nested arms should end a retained loan independently before owner-invalidating calls and keep it ended after their merge.
+//@ check-pass
+import std.string;
+int main() { mut std::string value = std::string("gti"); mut auto iterator = value.begin(); if (true) { if (value.empty()) { char first = *iterator; value.push_back('!'); } else { value.push_back('?'); } value.push_back('.'); } return 0; }

@@ -1,0 +1,10 @@
+// Call sibling argument borrow conflicts: an ephemeral receiver read after a sibling exclusive argument borrow of the same owner should be rejected at semantics.
+import std.vector;
+
+void consume<A, B>(A first, B count) {}
+
+int use() {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+  consume(values.begin_mut(), values.size());  //~ ERROR GTI-S2017
+  return 0;
+}

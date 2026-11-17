@@ -1,0 +1,3 @@
+// Source-defined concepts: a malformed concept explanation (on class) is a syntax error.
+//@ parse-fail
+[[unsatisfied("a")]] class C {};  //~ ERROR GTI-P0001

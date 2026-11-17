@@ -2,214 +2,6 @@
   "schema_version": 1,
   "tests": [
     {
-      "name": "testFunctionContracts",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstructorTextStorageContracts",
-      "suite": "declarations"
-    },
-    {
-      "name": "testContainerScaffoldSurfaces",
-      "suite": "declarations"
-    },
-    {
-      "name": "testMovedLoopLocalRedeclarations",
-      "suite": "declarations"
-    },
-    {
-      "name": "testTrustedIntrinsicDeclarations",
-      "suite": "declarations"
-    },
-    {
-      "name": "testThisReceiverKeyword",
-      "suite": "declarations"
-    },
-    {
-      "name": "testClassesStructsAndAccess",
-      "suite": "declarations"
-    },
-    {
-      "name": "testMutableFieldGroups",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstructorsAndReceiverMutability",
-      "suite": "declarations"
-    },
-    {
-      "name": "testInheritanceAndInterfaces",
-      "suite": "declarations"
-    },
-    {
-      "name": "testOutOfClassMethods",
-      "suite": "declarations"
-    },
-    {
-      "name": "testInterfaceStaticMethods",
-      "suite": "declarations"
-    },
-    {
-      "name": "testInheritedGenericTargetInstances",
-      "suite": "declarations"
-    },
-    {
-      "name": "testDirectBraceConstruction",
-      "suite": "declarations"
-    },
-    {
-      "name": "testRecursiveClassLayouts",
-      "suite": "declarations"
-    },
-    {
-      "name": "testNamedGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testNativeGenericCarrierClosure",
-      "suite": "declarations"
-    },
-    {
-      "name": "testUninstantiatedGenericSignatureClosure",
-      "suite": "declarations"
-    },
-    {
-      "name": "testDependentCarrierRepresentationClosure",
-      "suite": "declarations"
-    },
-    {
-      "name": "testExactQualifiedClassSpecializations",
-      "suite": "declarations"
-    },
-    {
-      "name": "testContextualNumericLiterals",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstrainedGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testMoveConstructionCapability",
-      "suite": "declarations"
-    },
-    {
-      "name": "testFiniteWrapperTraits",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConcurrencyTypeCapabilities",
-      "suite": "declarations"
-    },
-    {
-      "name": "testSourceDefinedConcepts",
-      "suite": "declarations"
-    },
-    {
-      "name": "testCompilerPrivateMemberRequirements",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstraintFailureProvenance",
-      "suite": "declarations"
-    },
-    {
-      "name": "testRequiresDisjunction",
-      "suite": "declarations"
-    },
-    {
-      "name": "testStructuralRequiresAndAccumulate",
-      "suite": "declarations"
-    },
-    {
-      "name": "testDomainValueOperatorCapabilities",
-      "suite": "declarations"
-    },
-    {
-      "name": "testCallableConceptCapabilities",
-      "suite": "declarations"
-    },
-    {
-      "name": "testSymbolicAutoLocalBinding",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConstructorLocalTypeGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testPackSpecialMemberConstruction",
-      "suite": "declarations"
-    },
-    {
-      "name": "testValueGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testContextualArrayArguments",
-      "suite": "declarations"
-    },
-    {
-      "name": "testVariadicGenerics",
-      "suite": "declarations"
-    },
-    {
-      "name": "testExactFunctionOverloadsAndConversions",
-      "suite": "declarations"
-    },
-    {
-      "name": "testFixedArrays",
-      "suite": "declarations"
-    },
-    {
-      "name": "testFreshArrayOwnership",
-      "suite": "declarations"
-    },
-    {
-      "name": "testFixedArrayDynamicWriteFailureEdge",
-      "suite": "declarations"
-    },
-    {
-      "name": "testFixedArrayChainedDynamicIndex",
-      "suite": "declarations"
-    },
-    {
-      "name": "testLocalTypeInference",
-      "suite": "declarations"
-    },
-    {
-      "name": "testStructuredBindings",
-      "suite": "declarations"
-    },
-    {
-      "name": "testTypeAliases",
-      "suite": "declarations"
-    },
-    {
-      "name": "testNamespacesAndAliases",
-      "suite": "declarations"
-    },
-    {
-      "name": "testExternCInterop",
-      "suite": "declarations"
-    },
-    {
-      "name": "testScopedEnums",
-      "suite": "declarations"
-    },
-    {
-      "name": "testConcreteApplicationSpecialMembers",
-      "suite": "declarations"
-    },
-    {
-      "name": "testDefaultParameters",
-      "suite": "declarations"
-    },
-    {
-      "name": "testContextualIntegerLiteralArguments",
-      "suite": "declarations"
-    },
-    {
       "name": "testOwnershipSemanticFoundation",
       "suite": "ownership"
     },
@@ -223,10 +15,6 @@
     },
     {
       "name": "testEdgeSensitiveMoveFlow",
-      "suite": "ownership"
-    },
-    {
-      "name": "testProjectedFieldMoves",
       "suite": "ownership"
     },
     {
@@ -254,10 +42,6 @@
       "suite": "ownership"
     },
     {
-      "name": "testPrefixStorageCapability",
-      "suite": "ownership"
-    },
-    {
       "name": "testReceiverTiedReferenceReturns",
       "suite": "ownership"
     },
@@ -270,47 +54,11 @@
       "suite": "ownership"
     },
     {
-      "name": "testStoredReferenceStandardStringRanges",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation2",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation3",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceBranchInvalidation4",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceLoopInvalidation",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceLoopInvalidation2",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredReferenceScopedStorage",
-      "suite": "ownership"
-    },
-    {
       "name": "testMutableStoredDependencies",
       "suite": "ownership"
     },
     {
       "name": "testComposedCarrierFunctionTransfer",
-      "suite": "ownership"
-    },
-    {
-      "name": "testStoredCarrierReturnProvenance",
       "suite": "ownership"
     },
     {
@@ -330,51 +78,11 @@
       "suite": "ownership"
     },
     {
-      "name": "testCallSiblingArgumentBorrowConflicts",
-      "suite": "ownership"
-    },
-    {
-      "name": "testForwardIteratorContractsAndBinarySearch",
-      "suite": "ownership"
-    },
-    {
-      "name": "testCompleteRangeConceptsAndAlgorithms",
-      "suite": "ownership"
-    },
-    {
-      "name": "testGeneralOwnerDependentReturns",
-      "suite": "ownership"
-    },
-    {
-      "name": "testSwitchAndBreakLoanFlow",
-      "suite": "ownership"
-    },
-    {
-      "name": "testSharedReadOnlyLoanAliases",
-      "suite": "ownership"
-    },
-    {
-      "name": "testUniqueOwnershipAndAllocation",
-      "suite": "ownership"
-    },
-    {
       "name": "testUniqueOwnerSwap",
       "suite": "ownership"
     },
     {
       "name": "testPolymorphicUniqueOwnerUpcast",
-      "suite": "ownership"
-    },
-    {
-      "name": "testSourceDefinedStorage",
-      "suite": "ownership"
-    },
-    {
-      "name": "testFixedArrayPackForwarding",
-      "suite": "ownership"
-    },
-    {
-      "name": "testVariadicStorageConstructionAndVector",
       "suite": "ownership"
     },
     {
@@ -394,10 +102,6 @@
       "suite": "ownership"
     },
     {
-      "name": "testArrowNonClassReferents",
-      "suite": "ownership"
-    },
-    {
       "name": "testCallableMemberOperators",
       "suite": "ownership"
     },
@@ -414,19 +118,11 @@
       "suite": "ownership"
     },
     {
-      "name": "testReadOnlyRangeLoans",
-      "suite": "ownership"
-    },
-    {
       "name": "testPassiveCleanupRangeTemporary",
       "suite": "ownership"
     },
     {
       "name": "testSharedPayloadSiblingReborrows",
-      "suite": "ownership"
-    },
-    {
-      "name": "testExpectedPayloadRangeLoans",
       "suite": "ownership"
     },
     {
@@ -447,10 +143,6 @@
     },
     {
       "name": "testConfinedCallableResults",
-      "suite": "ownership"
-    },
-    {
-      "name": "testBorrowedCallableConditionals",
       "suite": "ownership"
     },
     {
@@ -536,54 +228,6 @@
     {
       "name": "testUseBasedAccessorSelection",
       "suite": "ownership"
-    },
-    {
-      "name": "testMoveOnlyAssignmentResultUse",
-      "suite": "ownership"
-    },
-    {
-      "name": "testFrontendBackendAndOptimizationPipeline",
-      "suite": "e2e"
-    },
-    {
-      "name": "testMirControlFlowAndOwnershipEffects",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedOrdinaryCallInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedRawReceiverInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedClassValueCallInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testOrderedOrdinaryConstructorInputs",
-      "suite": "e2e"
-    },
-    {
-      "name": "testMirTemporaryAndDropObligations",
-      "suite": "e2e"
-    },
-    {
-      "name": "testProgramArgumentsEntryPoint",
-      "suite": "e2e"
-    },
-    {
-      "name": "testProgramInitializationPlans",
-      "suite": "e2e"
-    },
-    {
-      "name": "testTypedHirGenericInstances",
-      "suite": "e2e"
-    },
-    {
-      "name": "testCompletePipeline",
-      "suite": "e2e"
     }
   ]
 }

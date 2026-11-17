@@ -1,0 +1,8 @@
+// Container scaffold surfaces: moving a string while its dynamic string_view is live should be rejected.
+import std.string;
+int main() {
+  mut std::string text = std::string("abc");  //~ WARN GTI-S2096
+  std::string_view view = text.view();
+  std::string moved = std::move(text);  //~ ERROR GTI-S2017 Cannot move storage while an overlapping borrow may still be live
+  return view.empty() ? 0 : 1;
+}

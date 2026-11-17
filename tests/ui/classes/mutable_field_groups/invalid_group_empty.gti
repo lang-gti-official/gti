@@ -1,0 +1,2 @@
+// Mutable field groups: invalid group contents (empty) get a focused parser diagnostic: A mutable field group must contain at least one field.
+struct Bad { mut {} };  //~ ERROR GTI-P0001 A mutable field group must contain at least one field

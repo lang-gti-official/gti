@@ -1,0 +1,69 @@
+// Prefix storage capability: every ordinary prefix mutation (pop, append, insert, erase, read_mut, relocation from or into) rejects a live element loan of the owner it changes.
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+int live_1() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  values.pop();  //~ ERROR GTI-S2017
+  return value;
+}
+int live_2() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  values.append_value(11);  //~ ERROR GTI-S2017
+  return value;
+}
+int live_3() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  values.insert(uint64_t(0), 11);  //~ ERROR GTI-S2017
+  return value;
+}
+int live_4() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  values.erase(uint64_t(0));  //~ ERROR GTI-S2017
+  return value;
+}
+int live_5() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  mut int& edit = values.read_mut(uint64_t(0));  //~ ERROR GTI-S2017
+  return value;
+}
+int live_6() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = values.read(uint64_t(0));
+  values.relocate_to(other);  //~ ERROR GTI-S2017
+  return value;
+}
+int live_7() {
+  mut std::detail::prefix_owner<int> values{uint64_t(2)};
+  mut std::detail::prefix_owner<int> other{uint64_t(2)};
+  values.append_value(7);
+  other.append_value(9);
+  int& value = other.read(uint64_t(0));
+  values.relocate_to(other);  //~ ERROR GTI-S2017
+  return value;
+}
+int main() { return 0; }

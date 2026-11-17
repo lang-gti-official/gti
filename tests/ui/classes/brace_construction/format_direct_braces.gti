@@ -1,0 +1,4 @@
+// Direct brace construction: the formatter keeps direct braces compact and distinct from array initialization, idempotently.
+//@ parse-pass
+//@ snapshot: format
+class Box<T>{public:Box(T value){} public: Box() = default; };int main(){mut Box<int> value { 1, };Box<int> empty { };int values[1]={1};return 0;}

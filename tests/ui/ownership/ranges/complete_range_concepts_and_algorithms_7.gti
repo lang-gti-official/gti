@@ -1,0 +1,21 @@
+// Complete range concepts and algorithms: mutable_range_of should reject a read-only complete range and explain its exact mutable endpoint contract.
+import std.iterator;
+import std.vector;
+class read_range {
+  mut std::vector<int32_t> values = std::vector<int32_t>({1});
+public:
+  std::vector<int32_t>::const_iterator begin() {
+    return this.values.begin();
+  }
+  std::vector<int32_t>::sentinel end() { return this.values.end(); }
+public:
+  read_range() = default;
+};
+bool accepts<Range>(mut Range& values)
+  requires std::mutable_range_of<Range, int32_t> {
+  return true;
+}
+int main() {
+  mut read_range values{};
+  return accepts(values) ? 0 : 1;  //~ ERROR GTI-S2029
+}

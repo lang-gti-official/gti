@@ -1,0 +1,19 @@
+// Scoped enums: invalid scoped enum uses should block code generation.
+enum class Tiny : uint8_t {
+  First,
+  TooLarge = 256,  //~ ERROR GTI-S2036
+  First = 2,  //~ ERROR GTI-S2006
+};
+enum class Other { First };
+
+int main() {
+  mut Tiny uninitialized;  //~ ERROR GTI-S2036
+  Tiny value = 1;  //~ ERROR GTI-S2003
+  int raw = Tiny::First;  //~ ERROR GTI-S2003
+  if (Tiny::First) {  //~ ERROR GTI-S2003
+    return 1;
+  }
+  bool mixed = Tiny::First == Other::First;  //~ ERROR GTI-S2000
+  auto missing = Tiny::Missing;  //~ ERROR GTI-S2036
+  return 0;
+}

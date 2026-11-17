@@ -1,0 +1,16 @@
+// Source defined storage: public storage rejects wrong index/element types, copies and reuse after movement.
+import std.memory;
+std::storage<T> fixture_storage<T>(uint64_t count) requires std::storage_element<T> {
+  std::allocator allocator{};
+  auto allocated = allocator.try_storage<T>(count);
+  return std::move(allocated).expect("test storage allocation");
+}
+
+int main() {
+  mut std::storage<int> values = fixture_storage<int>(uint64_t(2));
+  values.construct(true, 1);  //~ ERROR GTI-S2003
+  values.construct(uint64_t(0), true);  //~ ERROR GTI-S2003
+  std::storage<int> copied = values;  //~ ERROR GTI-S2003
+  std::storage<int> moved = std::move(values);
+  return values.get(uint64_t(0));  //~ ERROR GTI-S2018
+}

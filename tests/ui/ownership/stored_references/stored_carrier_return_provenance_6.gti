@@ -1,0 +1,33 @@
+// Stored carrier return provenance: a read-only by-value carrier should copy, move, and relay only its exact external referent.
+//@ check-pass
+class ReadCarrier<lifetime a> {
+public:
+  int&<a> referent;
+  mut int shell = 0;
+  ReadCarrier(int&<a> source) : referent(source) {}
+  int&<a> identity() { return this.referent; }
+  int&<a> relay_call() { return this.identity(); }
+};
+
+int& relay_reference(int& source) { return source; }
+int& relay_external(ReadCarrier carrier) {
+  int& ordinary = relay_reference(carrier.referent);
+  return carrier.referent;
+}
+ReadCarrier relay_carrier(ReadCarrier carrier) {
+  mut int unrelated_owner = 11;  //~ WARN GTI-S2096
+  ReadCarrier unrelated = ReadCarrier(unrelated_owner);
+  ReadCarrier unused = unrelated;
+  return carrier;
+}
+
+int main() {
+  mut int owner = 7;  //~ WARN GTI-S2096
+  ReadCarrier first = ReadCarrier(owner);
+  ReadCarrier copied = first;
+  ReadCarrier moved = std::move(copied);
+  int& exact = relay_external(moved);
+  int& relayed_exact = moved.relay_call();
+  ReadCarrier relayed = relay_carrier(std::move(moved));
+  return exact + relayed_exact + relayed.referent - 21;
+}

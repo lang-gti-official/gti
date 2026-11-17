@@ -1,0 +1,10 @@
+// Mutable field groups: a mutable field group should form the same exact mutable stored dependency as an individually mutable reference field.
+//@ check-pass
+class Borrowed {
+  mut {
+    int& value;
+  }
+
+public:
+  Borrowed(mut int& input) : value(input) {}
+};

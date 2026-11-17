@@ -1,0 +1,3 @@
+// Complete range concepts and algorithms: explicit, aliased and signature array references use the same complete array type as generic range substitution.
+//@ check-pass
+void invalid(int[3]& values) {}

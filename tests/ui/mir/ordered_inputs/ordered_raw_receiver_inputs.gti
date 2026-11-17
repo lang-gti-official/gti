@@ -1,0 +1,24 @@
+// Ordered raw receiver inputs: raw member owning inputs should pass semantic and MIR checks.
+//@ run-pass
+import std.memory;
+struct Item {
+  mut std::unique_ptr<int> value;
+  Item(int n) : value(std::make_unique<int>(n)) {}
+};
+struct Receiver {
+  void Accept(Item item) mut {}
+  void Observe(Item item) {}
+public:
+  Receiver() = default;
+};
+int main() {
+  mut Receiver receiver{};
+  mut Receiver* pointer = &receiver;
+  expected<Item, int> first = Item(1);
+  expected<Item, int> second = Item(2);
+  unsafe {
+    pointer->Accept(std::move(first).value());
+    pointer->Observe(std::move(second).value());
+  }
+  return 0;
+}

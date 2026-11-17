@@ -1,0 +1,9 @@
+// Recursive class layouts: ordinary classes should reject direct by-value recursion at the field without cascading into constructor conversion diagnostics.
+//@ snapshot: diagnostics
+struct Cell {
+  int value;
+  Cell inner;  //~ ERROR GTI-S2082
+
+public:
+  Cell(int value, Cell cell) : value(value), inner(cell) {}
+};

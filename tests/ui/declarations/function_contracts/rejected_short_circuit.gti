@@ -1,0 +1,7 @@
+// Function contracts: the function-contract diagnostic rejects short circuit.
+[[noreturn]] void stop() { while (true) {} }
+[[noreturn]] int stop_number() { while (true) {} }
+[[noreturn]] bool stop_test() { while (true) {} }
+int identity(int value) { return value; }
+[[noreturn]] void run(bool value) { bool result = value && stop_test(); }  //~ ERROR GTI-S2099
+int main() { return 0; }

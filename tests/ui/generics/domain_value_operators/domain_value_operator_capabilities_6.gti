@@ -1,0 +1,9 @@
+// Domain value operator capabilities: a borrowed operator result is rejected at its invalid declaration without requiring a secondary std::addable failure.
+class holder {
+public:
+  holder(float v) : v(v) {}
+  mut float v;
+  holder& operator+(holder& other) { return other; }  //~ ERROR GTI-S2022 must return an owned value //~ ERROR GTI-S2017
+};
+T twice<T>(T& a) requires std::addable<T> { return a + a; }
+int main() { holder h = holder(1.0); holder r = twice(h); return 0; }  //~ ERROR GTI-S2029

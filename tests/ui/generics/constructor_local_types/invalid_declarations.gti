@@ -1,0 +1,20 @@
+// Constructor-local generics: constructor-local parameters keep the bounded shadowing, pack, and inference-only declaration rules.
+class Owner<T> {
+public:
+  Owner<T>(int value) {}  //~ ERROR GTI-S2026 //~ ERROR GTI-S2026
+public:
+  Owner() = default;
+};
+class Packed {
+public:
+  Packed<Args...>(Args value) {}  //~ ERROR GTI-S2023 //~ ERROR GTI-S2023
+public:
+  Packed() = default;
+};
+class Uninferable {
+public:
+  Uninferable<T>(int value) {}  //~ ERROR GTI-S2026
+public:
+  Uninferable() = default;
+};
+int main() { return 0; }

@@ -1,0 +1,9 @@
+// Container scaffold surfaces: moving an owner while one of its spans is live should be rejected.
+import std.vector;
+import std.span;
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2});  //~ WARN GTI-S2096
+  std::span<int> view = values.as_span();
+  std::vector<int> moved = std::move(values);  //~ ERROR GTI-S2017 Cannot move storage while an overlapping borrow may still be live
+  return view.empty() ? 0 : 1;
+}
