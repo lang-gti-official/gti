@@ -252,7 +252,10 @@ generic binders before resolving defaults and payloads. Demand-resolved class
 and enum defaults share recursion detection and avoid declaration-order-dependent
 type acceptance. Value defaults retain the existing earlier-visible constant
 rule. A concrete enum type retains its
-primary identity and complete canonical arguments; existing substitution
+primary identity and complete canonical arguments. Overload signature equality
+compares that nominal enum identity recursively, including reference parameters
+and enum arguments inside generic wrappers; aliases of one enum still denote
+the same signature. Existing substitution
 produces its exact alternative types. Payload admissibility is revalidated
 through aliases after field facts are available. Ownership, cleanup and
 concurrency traits fold actual substituted fields, not generic metadata.

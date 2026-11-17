@@ -1,0 +1,12 @@
+// Enum identity distinguishes nested generic signatures while generic binders remain alpha-equivalent.
+//@ run-pass
+namespace a { enum errc { failed }; }
+namespace b { enum errc { failed }; }
+struct Box<T, E> { Box() = default; };
+int code<T>(Box<T, a::errc>& value) { return 1; }
+int code<U>(Box<U, b::errc>& value) { return 2; }
+int main() {
+  Box<int, a::errc> first{};
+  Box<int, b::errc> second{};
+  return code(first) + code(second) - 3;
+}
