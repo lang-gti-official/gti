@@ -1,0 +1,6 @@
+import first.native;
+import second.native;
+extern "C" { c_int abs(c_int value); }
+int main() {
+  return first::absolute(-2) + second::magnitude(-3) + abs(-4) + common::abs(-5) + first_call(-6) + second_call(-7) - 27;
+}
