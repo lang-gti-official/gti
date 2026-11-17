@@ -1,0 +1,9 @@
+// Tryable propagation: rejected with GTI-S2017.
+class Guard {
+public:
+  mut int& owner;
+  Guard(mut int& value) : owner(value) {}
+  ~Guard() { this.owner = 0; }
+};
+mut int&<a> escape<lifetime a>(mut Guard<a> value) { return value.owner; }  //~ ERROR GTI-S2017
+int main() { return 0; }

@@ -1,0 +1,5 @@
+// Lifetimes: rejected with GTI-S2123.
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Marker<T> { int value(); };
+for concept Marker<View> { int value() { return 1; } };
+for<lifetime a> concept Marker<View<a>> { int value() { return 2; } };  //~ ERROR GTI-S2123

@@ -1,0 +1,17 @@
+// Audit output parity: the program is accepted.
+//@ check-pass
+int main() {
+  int live = 7;
+  Wrapper wrapper{&live};
+  unsafe { return *wrapper.inner.pointer - 7; }
+}
+struct Wrapper {
+  Holder inner;
+  Wrapper(const int* input) : inner(Holder(input)) {}
+};
+struct Holder {
+  const int* pointer = nullptr;
+  Holder(const int* input) : pointer(input) {}
+public:
+  Holder() = default;
+};

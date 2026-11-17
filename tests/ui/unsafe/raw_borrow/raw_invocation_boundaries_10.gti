@@ -1,0 +1,16 @@
+// Raw invocation boundaries: source cleanup prevents an inert restoring-transfer proof.
+//@ raw-pointer-audit: strict
+import std.utility;
+struct Dropping {
+  mut const int* pointer = nullptr;
+  ~Dropping() { unsafe { int observed = *this.pointer; } }
+public:
+  Dropping() = default;
+};
+int main() {
+  mut Dropping first{};
+  mut Dropping second{};
+  { int dead = 7; first.pointer = &dead; second.pointer = &dead; }
+  std::swap(first, second);  //~ ERROR GTI-S2101 //~ ERROR GTI-S2101
+  return 0;
+}

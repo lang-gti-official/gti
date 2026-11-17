@@ -1,0 +1,10 @@
+// Raw pointer call transport: reinitialization must not revive raw addresses into a consumed object.
+//@ raw-pointer-audit: strict
+struct Owner { int value = 1;  public: Owner() = default; };
+int main() {
+  mut Owner original{};
+  const int* pointer = &original.value;
+  Owner moved = std::move(original);
+  original = Owner();
+  unsafe { return *pointer; }  //~ ERROR GTI-S2102
+}

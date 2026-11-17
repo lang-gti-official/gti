@@ -1,0 +1,9 @@
+// General requires: aliases evaluate source predicates after preceding definitions.
+//@ check-pass
+import std.meta;
+constexpr bool accepts<T>() { bool result = std::meta::is_integral<T>(); return result; }
+concept integer_type<T> = accepts<T>();
+class Box<integer_type T> { public: Box() = default; };
+using IntBox = Box<int>;
+class Holder { public: using Value = Box<int>;  public: Holder() = default; };
+int main() { IntBox value{}; return 0; }

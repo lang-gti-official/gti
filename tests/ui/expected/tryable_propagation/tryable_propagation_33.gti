@@ -1,0 +1,16 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+class Guard {
+public:
+  int& owner;
+  Guard(int& value) : owner(value) {}
+  ~Guard() {}
+};
+class Envelope {
+public:
+  Guard guard;
+  Envelope(Guard value) : guard(std::move(value)) {}
+};
+
+int&<a> escape<lifetime a>(Guard<a> value) { return value.owner; }
+int main() { int owner = 7; return escape(Guard(owner)) - 7; }

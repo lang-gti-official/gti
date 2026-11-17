@@ -1,0 +1,17 @@
+// General requires: symbolic metadata cannot assume an unresolved specialization inventory diagnostic.
+import std.meta;
+namespace shapes {
+struct Cell<T> { T value; T& operator*() { return value; } };
+}
+struct shapes::Cell<bool> { public: Cell() = default; };
+constexpr bool readable<T>() {
+  mut bool found = false;
+  constexpr for (auto member : std::meta::lookup_operators_of<T>()) {
+    if constexpr (member.name() == "operator*") { found = true; }
+  }
+  return found;
+}
+concept reads<T> = readable<T>();
+void consume<reads C>(C& cell) {}
+void forward<T>(shapes::Cell<T>& cell) { consume(cell); }  //~ ERROR GTI-S2029
+int main() { return 0; }

@@ -1,0 +1,117 @@
+// Selected base construction and rollback follow one schedule; each failure phase unwinds exactly the built stages.
+//@ run-pass
+//@ revisions: ok p1 p2 p3 p4
+//@[p1] run-fail
+//@[p1] args: phase
+//@[p1] exit-code: 70
+//@[p1] stdout: 1
+//@[p1] stdout: 5
+//@[p1] stdout: 11
+//@[p1] stderr-contains: main.gti:27: runtime error[GTI-R0002]
+//@[p2] run-fail
+//@[p2] args: phase phase
+//@[p2] exit-code: 70
+//@[p2] stdout: 1
+//@[p2] stdout: 5
+//@[p2] stdout: 2
+//@[p2] stdout: 3
+//@[p2] stdout: 6
+//@[p2] stdout: 13
+//@[p2] stdout: 12
+//@[p2] stdout: 15
+//@[p2] stdout: 11
+//@[p2] stderr-contains: main.gti:48: runtime error[GTI-R0002]
+//@[p3] run-fail
+//@[p3] args: phase phase phase
+//@[p3] exit-code: 70
+//@[p3] stdout: 1
+//@[p3] stdout: 5
+//@[p3] stdout: 2
+//@[p3] stdout: 3
+//@[p3] stdout: 12
+//@[p3] stdout: 15
+//@[p3] stdout: 11
+//@[p3] stderr-contains: main.gti:13: runtime error[GTI-R0002]
+//@[p4] run-fail
+//@[p4] args: phase phase phase phase
+//@[p4] exit-code: 70
+//@[p4] stdout: 1
+//@[p4] stdout: 5
+//@[p4] stdout: 2
+//@[p4] stdout: 3
+//@[p4] stdout: 6
+//@[p4] stdout: 13
+//@[p4] stdout: 12
+//@[p4] stdout: 15
+//@[p4] stderr-contains: main.gti:34: runtime error[GTI-R0014]
+//@[p4] stderr-contains: primary [GTI-R0002] at main.gti:48
+//@[p4] stderr-contains: secondary [GTI-R0002]
+//@[ok] stdout: 1
+//@[ok] stdout: 5
+//@[ok] stdout: 2
+//@[ok] stdout: 3
+//@[ok] stdout: 6
+//@[ok] stdout: 16
+//@[ok] stdout: 13
+//@[ok] stdout: 12
+//@[ok] stdout: 15
+//@[ok] stdout: 11
+// --- main.gti
+import std.string;
+import std.vector;
+
+mut int phase = 0;
+
+class Part {
+  int id;
+public:
+  Part(int id) : id(id) {
+    std::println(id);
+    if (phase == 3 && id == 3) {
+      int zero = 0;
+      int failed = 7 / zero;
+    }
+  }
+  ~Part() { std::println(this.id + 10); }
+};
+
+class Foundation {
+  Part resource;
+public:
+  int value;
+  Foundation(int value) : resource(Part(1)), value(value) {
+    std::println(5);
+    if (phase == 1) {
+      int zero = 0;
+      int failed = 8 / zero;
+    }
+  }
+  ~Foundation() {
+    std::println(15);
+    if (phase == 4) {
+      int zero = 0;
+      int failed = 9 / zero;
+    }
+  }
+};
+
+class Building : public Foundation {
+  Part first;
+  Part second;
+  std::string name;
+public:
+  Building(int value) : Foundation(value), first(Part(2)), second(Part(3)), name(std::string("building")) {
+    std::println(6);
+    if (phase == 2 || phase == 4) {
+      int zero = 0;
+      int failed = 10 / zero;
+    }
+  }
+  ~Building() { std::println(16); }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  phase = argc - 1;
+  Building value = Building(50);
+  return value.value - 50;
+}

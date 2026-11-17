@@ -1,0 +1,6 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+int&<c> shorten<lifetime a, lifetime b, lifetime c, lifetime d>(int&<a> input)
+  requires (outlives<a, b> && outlives<b, c>) ||
+           (outlives<a, d> && outlives<d, c>) { return input; }
+int main() { int value = 7; return shorten(value) - 7; }

@@ -1,0 +1,81 @@
+// Local bindings and loops: macro locals, references, moves and scoped loops lower through MIR.
+//@ slow
+//@ check-pass
+import std.assert;
+import std.string;
+namespace library {
+  struct Item { int code = 1;  public: Item() = default; };
+  #macro once(bool enabled, int expression) {
+    if (enabled) {
+      int saved = expression;
+      auto& read = saved;
+      std::assert!(read == saved);
+    }
+  }
+  #macro shadow(int value) {
+    { int value = 4; std::assert!(value == 4); }
+    std::assert!(value == 9);
+  }
+  #macro typed() { Item item{}; std::assert!(item.code == 1); }
+  #macro own(bool enabled, std::string expression) {
+    if (enabled) {
+      std::string local = expression;
+      auto& borrowed = local;
+      std::assert!(!borrowed.empty());
+    }
+  }
+  #macro loops(int count) {
+    mut int total = 0;
+    for (mut int index = 0; index < count; index++) {
+      if (index == 1) { continue; }
+      total += index;
+      if (index == 3) { break; }
+    }
+    while (total > 1) { total--; }
+    do { total++; } while (total < 2);
+    int values[3] = {1, 2, 3};
+    for (auto& value : values) { std::assert!(value > 0); }
+  }
+  #macro assign(int destination, int value) { destination = value; }
+  #macro defaults(int expression = 9) {
+    int expression = expression;
+    std::assert!(expression == 9);
+  }
+  #macro decompose() {
+    int values[2] = {1, 2};
+    auto [first, second] = values;
+    std::assert!(first == 1 && second == 2);
+  }
+  #macro check_lambda(bool condition) { std::assert!(condition); }
+}
+namespace application {
+  struct Item { int code = 2;  public: Item() = default; };
+  int run() {
+    int saved = 9;
+    mut int evaluations = 0;
+    library::once!(false, evaluations++);
+    library::once!(true, saved);
+    library::once!(true, saved);
+    library::shadow!(saved);
+    library::typed!();
+    library::loops!(5);
+    library::defaults!();
+    library::decompose!();
+    library::decompose!();
+    library::check_lambda!([](int count) -> bool {
+      { { { int count = 2; return count == 2; } } }
+    }(1));
+    library::check_lambda!([]() -> bool {
+      std::assert!(true);
+      { { { int own_local = 1; return own_local == 1; } } }
+    }());
+    mut int output = 0;
+    library::assign!(output, saved);
+    std::string owner{"kept"};
+    library::own!(false, std::move(owner));
+    std::assert!(!owner.empty());
+    library::own!(true, std::move(owner));
+    return 0;
+  }
+}
+int main() { return application::run(); }

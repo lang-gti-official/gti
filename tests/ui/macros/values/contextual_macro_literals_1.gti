@@ -1,0 +1,25 @@
+// Contextual macro literals: typed macro literals retain selected types through verified MIR.
+//@ check-pass
+int select(int value) { return 1; }
+int select(uint8_t value) { return 2; }
+#macro int choose(int value) { return 1; }
+#macro int choose(uint8_t value) { return 2; }
+#macro uint8_t narrow(uint8_t value) { return value; }
+#macro int selected(uint8_t value) { return select(value); }
+#macro int nested(uint8_t value) { return selected!(value); }
+#macro int expression(uint8_t value) { return select(narrow!(value)); }
+#macro T generic<T>(T value) { return value; }
+#macro int8_t signed_min(int8_t value) { return value; }
+#macro int64_t wide_min(int64_t value) { return value; }
+#macro unused(uint8_t value) {}
+#macro int defaulted(uint8_t value = 33) { return select(value); }
+int instantiate<T>(T value) { return nested!(33); }
+int main() {
+  unused!(33);
+  auto a = narrow!((+(255)));
+  auto b = signed_min!((-(128)));
+  auto c = wide_min!(-((9223372036854775808)));
+  auto d = generic<uint8_t>!(33);
+  auto e = generic!(33);
+  return selected!(33) + nested!(33) + expression!(33) + choose!(33) + defaulted!() + instantiate(0) - 11;
+}

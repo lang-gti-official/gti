@@ -1,0 +1,5 @@
+// Analyze: an unsupported callable-result query in a call's signature is one error at the call.
+import std.meta;
+std::meta::callable_return_type<F> apply<F>(F& fn) { return fn(1); }
+struct Mapper { int operator()(int value) { return value; }  public: Mapper() = default; };
+int main() { Mapper mapper{}; return apply(mapper); }  //~ ERROR GTI-S2023

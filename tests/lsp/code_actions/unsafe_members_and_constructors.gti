@@ -1,0 +1,64 @@
+// Unsafe members, requirement members and constructors: a call outside
+// unsafe is S2055, inside it hovers with `unsafe`, broken signatures
+// recover, an unsafe expression block is a keyword token, and an unused
+// unsafe expression block offers no keyword-only removal.
+// (unsafe_function_lsp_test.py, second part)
+// 😀 UTF-16 control
+concept readable<T> = requires(T& x) { unsafe { x.read() } -> int; };
+struct Meter { Meter() = default; unsafe int read() { return 7; } };
+int main() { Meter meter{}; return meter.read(); }  //~ ERROR GTI-S2055
+// --- step 2
+//@ hover @read: unsafe int32_t Meter::read
+//@ hover @readable: unsafe { x.read() } -> int
+// 😀 UTF-16 control
+concept r/*^readable*/eadable<T> = requires(T& x) { unsafe { x.read() } -> int; };
+struct Meter { Meter() = default; unsafe int read() { return 7; } };
+int main() { Meter meter{}; unsafe { return meter.r/*^read*/ead(); } }
+// --- step 3
+// 😀 UTF-16 control
+concept readable<T> = requires(T& x) { unsafe { x.read() } -> int; };
+struct Meter { Meter() = default; unsafe int read( { return 7; } };  //~ ERROR GTI-P0001
+int main() { Meter meter{}; unsafe { return meter.read(); } }  //~ ERROR GTI-S2000
+// --- step 4
+// 😀 UTF-16 control
+concept readable<T> = requires(T& x) { unsafe { x.read() } -> int; };
+struct Meter { Meter() = default; unsafe int read() { return 7; } };
+int main() { Meter meter{}; unsafe { return meter.read(); } }
+// --- step 5
+// 😀 UTF-16 control
+struct Packet { int n; unsafe Packet(int v) : n(v) {} };
+int main() { Packet packet{1}; return packet.n; }  //~ ERROR GTI-S2055
+// --- step 6
+//@ hover @ctor: unsafe Packet(
+// 😀 UTF-16 control
+struct Packet { int n; unsafe P/*^ctor*/acket(int v) : n(v) {} };
+int main() { unsafe { Packet packet{1}; return packet.n; } }
+// --- step 7
+// 😀 UTF-16 control
+struct Packet { int n; unsafe Packet(int : n(v) {} };  //~ ERROR GTI-P0001
+int main() { unsafe { Packet packet{1}; return packet.n; } }  //~ ERROR GTI-S2012
+// --- step 8
+// 😀 UTF-16 control
+struct Packet { int n; unsafe Packet(int v) : n(v) {} };
+int main() { unsafe { Packet packet{1}; return packet.n; } }
+// --- step 9
+//@ hover @use: Packet
+//@ token @kw: keyword
+// 😀 UTF-16 control
+struct Packet { int n; unsafe Packet(int v) : n(v) {} };
+int main() { auto packet = /*^kw*/unsafe { Packet(1) }; return p/*^use*/acket.n; }
+// --- step 10
+// 😀 UTF-16 control
+struct Packet { int n; unsafe Packet(int v) : n(v) {} };
+int main() { auto packet = unsafe { Packet( }; return packet.n; }  //~ ERROR GTI-P0001 //~ ERROR GTI-P0001 //~ ERROR GTI-P0001
+// --- step 11
+// 😀 UTF-16 control
+struct Packet { int n; unsafe Packet(int v) : n(v) {} };
+int main() { auto packet = unsafe { Packet(1) }; return packet.n; }
+// --- step 12
+//@ no-code-action @unused
+int main() { /* 😀 */ return /*^unused*/unsafe { 1 }; }  //~ WARN GTI-S2100
+// --- step 13
+// 😀 UTF-16 control
+struct Packet { int n; unsafe Packet(int v) : n(v) {} };
+int main() { auto packet = unsafe { Packet(1) }; return packet.n; }

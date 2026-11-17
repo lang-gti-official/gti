@@ -1,0 +1,5 @@
+// Importing std.thread without using it builds natively under the concurrent profile.
+//@ build-pass
+//@ execution-profile: concurrent
+import std.thread;
+int main() { return 0; }

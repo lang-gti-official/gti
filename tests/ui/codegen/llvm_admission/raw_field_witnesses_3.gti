@@ -1,0 +1,2 @@
+// Raw field witnesses: raw argument borrows preserve unsafe and mutable access requirements.
+struct Cell { mut int value = 7; Cell() = default; }; void change(mut int& value) { value = 9; } int main() { Cell object{}; const Cell* p = &object; unsafe { change(p->value); } return 0; }  //~ ERROR GTI-S2017

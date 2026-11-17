@@ -1,0 +1,7 @@
+// Unsafe and pointer diagnostics: compound arithmetic on a raw-pointer field should require unsafe.
+struct Holder { mut int32_t* pointer = nullptr;  public: Holder() = default; };
+int main() {
+  mut Holder holder{};
+  holder.pointer += 1;  //~ ERROR GTI-S2055
+  return 0;
+}

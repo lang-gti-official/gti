@@ -1,0 +1,16 @@
+// Unstaged constructor field publication plan: an exact callable record publication witnesses the pending shared constructor requirement.
+//@ build-pass
+//@ slow
+class Holder<F> {
+  F callable;
+public:
+  Holder(F input) : callable(input) {}
+  int invoke() { return this.callable(); }
+};
+int run<F>(F callable) {
+  Holder<F> holder{callable};
+  return holder.invoke();
+}
+int main() {
+  return run([]() -> int { return 7; }) - 7;
+}

@@ -1,0 +1,12 @@
+// General requires: generic result origins retain exclusive-loan conflicts diagnostic.
+concept editable<C> = requires(mut C&<owner> owner) {
+  { owner.edit() } -> mut int&<owner>;
+};
+void alias<C>(mut C& owner) requires editable<C> {
+  mut int& first = owner.edit();
+  mut int& second = owner.edit();
+  first = 1;
+  second = 2;
+}
+struct Cell { int value = 0; Cell() = default; mut int& edit() mut { return this.value; } };  //~ ERROR GTI-S2017
+int main() { mut Cell cell{}; alias(cell); return cell.value; }

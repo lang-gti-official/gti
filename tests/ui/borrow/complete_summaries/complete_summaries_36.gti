@@ -1,0 +1,10 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum EntryShape { empty, both(int first, int second) };
+int inspect(EntryShape input) {
+  switch (input) {
+  case EntryShape::empty: return 0;
+  case EntryShape::both(first, second): return first + second;
+  }
+}
+int main() { return 0; }

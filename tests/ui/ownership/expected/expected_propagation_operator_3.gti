@@ -1,0 +1,13 @@
+// Expected propagation operator: materializing propagation extractions must not turn an ordinary std::move(expected).value() receiver into a borrow.
+//@ check-pass
+expected<int, int> manual_leaf(bool fail) {
+  if (fail) { return unexpected(16); }
+  return 44;
+}
+
+int manual_extract(bool fail) {
+  expected<int, int> result = manual_leaf(fail);
+  return std::move(result).value();
+}
+
+int main() { return manual_extract(false) - 44; }

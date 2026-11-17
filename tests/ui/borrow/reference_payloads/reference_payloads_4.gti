@@ -1,0 +1,11 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(mut Point& value) };
+int inspect(mut Reading input) {
+  switch (input) {
+  case Reading::item(mut auto& value): { value.y = value.y + 5; return value.y; }
+  case Reading::empty: return 0;
+  }
+}
+int main() { mut Point p = Point(1, 2); return inspect(Reading::item(p)) - 7; }  //~ WARN GTI-S2096

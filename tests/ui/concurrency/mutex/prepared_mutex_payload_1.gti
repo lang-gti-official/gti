@@ -1,0 +1,12 @@
+// Prepared mutex payload: prepared native payload lowers.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+class payload {
+  int value;
+public:
+  payload(int initial) : value(initial) {}
+  payload(payload& other) = delete;
+  payload(payload&& other) = default;
+};
+int exercise() { std::mutex<payload> value{payload(4)}; return 0; }

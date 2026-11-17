@@ -1,0 +1,5 @@
+// Contextual diagnostics and boundaries: ordinary exact overloaded direct calls should remain unchanged.
+//@ check-pass
+int32_t choose(int32_t value) { return value + 1; }
+bool choose(bool value) { return !value; }
+int main() { return choose(1) - 2; }

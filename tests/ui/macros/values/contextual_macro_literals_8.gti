@@ -1,0 +1,4 @@
+// Contextual macro literals: invalid result macro must stop before emission.
+void sink(uint16_t value) {}
+#macro forward(uint8_t value) { sink(value); }
+int main() { forward!(33); return 0; }  //~ ERROR GTI-S2003

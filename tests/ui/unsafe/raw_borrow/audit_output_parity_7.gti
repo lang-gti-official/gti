@@ -1,0 +1,15 @@
+// Audit output parity: the program is accepted.
+//@ check-pass
+import std.memory;
+unsafe T&<a> observe<T, lifetime a>(const T* address, T&<a> owner) {
+  unsafe { return *address; }
+}
+int main() {
+  int owner = 7;
+  const int* address = &owner;
+  unsafe {
+    int& first = observe<int>(address, owner);
+    int& second = std::assume_ref(address, owner);
+    return first + second - 14;
+  }
+}

@@ -1,0 +1,2 @@
+import "api/geometry.gti"; import "api/telemetry.gti";
+int main() { mut domain::geometry::Point value = domain::geometry::make(1, 2); domain::geometry::Point& loan = domain::geometry::view(value); mut domain::geometry::Point& write = domain::geometry::edit(value); write.x = 3; return loan.x; }

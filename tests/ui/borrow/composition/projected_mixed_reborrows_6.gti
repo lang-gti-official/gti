@@ -1,0 +1,12 @@
+// Projected mixed reborrows: a projected borrow rejects conflicting access or permission upgrades.
+struct Mixed {
+  int& read;
+  mut int& write;
+  mut int& other;
+  Mixed(int& a, mut int& b, mut int& c) : read(a), write(b), other(c) {}
+};
+int main() {
+  mut int a = 42; mut int b = 0; mut int c = 3;  //~ WARN GTI-S2096
+  mut Mixed view{a, b, c};
+mut int& selected = view.write; b = 9; return selected;  //~ ERROR GTI-S2017
+}

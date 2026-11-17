@@ -1,0 +1,4 @@
+// Condition: manual waits require unsafe.
+//@ execution-profile: concurrent
+import std.cthread;
+int main() { return std::cnd_wait(uint64_t(0), uint64_t(0)); }  //~ ERROR GTI-S2055

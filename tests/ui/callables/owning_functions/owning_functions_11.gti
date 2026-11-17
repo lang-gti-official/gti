@@ -1,0 +1,11 @@
+// Owning functions: owning callbacks reject noncopyable clone targets, inexact signatures and implicit wrapper copies without a compiler ICE.
+import std.functional;
+import std.memory;
+int main() {
+
+auto callback = []() -> int { return 7; };
+std::function<int()> wrapper{std::move(callback)};
+auto copy = wrapper;  //~ ERROR GTI-S2003
+
+return 0;
+}

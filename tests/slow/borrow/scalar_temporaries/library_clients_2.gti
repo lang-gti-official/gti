@@ -1,0 +1,9 @@
+// Library clients: temporary regex does not own the match's text dependency.
+//@ check-pass
+//@ slow
+import std.regex;
+import std.string;
+bool matches(std::string& text) {
+  return std::regex_match(text.view(), std::regex("hello")) ? true : false;
+}
+int main() { std::string text{"hello"}; return matches(text) ? 0 : 1; }

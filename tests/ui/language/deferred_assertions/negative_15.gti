@@ -1,0 +1,10 @@
+// Negative: borrow.
+import std.string;
+void consume(std::string value) {}
+#macro invalid() {
+  std::string owned{"owned"};
+  std::string_view held = owned.view();
+  consume(std::move(owned));  //~ ERROR GTI-S2017
+  [[discard]] held.size();
+}
+int main() { invalid!(); return 0; }

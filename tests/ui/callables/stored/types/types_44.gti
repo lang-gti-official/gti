@@ -1,0 +1,22 @@
+// Stored callables: source-defined callable model supports ordinary polymorphic erasure (the C++ trusted-memory fixture also imported the unused private memory capabilities).
+//@ check-pass
+import std.memory;
+
+interface Invoker { int invoke(int value); };
+class Model<T> : public Invoker {
+  T callback;
+public:
+  Model(T callback) : callback(std::move(callback)) {}
+  int invoke(int value) override { return this.callback(value); }
+};
+std::unique_ptr<Invoker> erase<T>(T callback) {
+  auto model = std::make_unique<Model<T>>(std::move(callback));
+  auto result = std::upcast_unique<Invoker, Model<T>>(std::move(model));
+  return std::move(result);
+}
+int main() {
+  int offset = 7;
+  auto callback = [offset](int value) -> int { return offset + value; };
+  auto owner = erase(std::move(callback));
+  return owner->invoke(5) - 12;
+}

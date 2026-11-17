@@ -1,0 +1,8 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept ReadPair<T> { int read(T& first, T& second); };
+for concept ReadPair<View> {
+  int read(View& first, View& second) { return first.value + second.value; }
+};
+int main() { int value = 7; View view{value}; return ReadPair<View>::read(view, view) - 14; }

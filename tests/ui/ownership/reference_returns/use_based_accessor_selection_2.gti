@@ -1,0 +1,20 @@
+// Use based accessor selection: assigning through the accessor still selects the mut form and conflicts with a live read-only result.
+struct Slot {
+  mut int32_t value = 2;
+  int32_t& get() { return this.value; }
+  mut int32_t& get() mut { return this.value; }
+  int32_t& operator[](std::size_t index) { return this.value; }
+  mut int32_t& operator[](std::size_t index) mut { return this.value; }
+  bool empty() { return this.value == 0; }
+public:
+  Slot() = default;
+};
+int32_t read(int32_t& value) { return value; }
+void write(mut int32_t& value) { value += 1; }
+
+int main() {
+  mut Slot slot{};
+  int32_t& held = slot.get();
+  slot.get() = 4;  //~ ERROR GTI-S2017
+  return held;
+}

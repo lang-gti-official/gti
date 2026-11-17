@@ -1,0 +1,18 @@
+// Waiting: unrelated source wrapper can wait and notify.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.atomic;
+class Completion {
+  std::atomic<int32_t> state{1};
+public:
+  void wait() {
+    this.state.wait(0);
+    this.state.wait(0, std::memory_order_relaxed());
+    this.state.wait(0, std::memory_order_acquire());
+    this.state.wait(0, std::memory_order_seq_cst());
+  }
+  void wake() { this.state.notify_one(); this.state.notify_all(); }
+public:
+  Completion() = default;
+};
+int main() { Completion completion{}; completion.wait(); completion.wake(); return 0; }

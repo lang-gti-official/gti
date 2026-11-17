@@ -1,0 +1,4 @@
+// Operators: class operator temporary argument.
+//@ check-pass
+class Tag { public: int value; Tag(int v) : value(v) {} bool operator==(Tag& other) { return this.value == other.value; } };
+int main() { Tag a{7}; return a == Tag(7) ? 0 : 1; }

@@ -1,0 +1,8 @@
+// Hierarchy storage exclusion: source-sealed repeated ordinary subobjects remain outside hierarchy-storage exclusion.
+//@ build-pass
+//@ slow
+    struct Plain { int value = 1;  public: Plain() = default; };
+    class P { public: virtual int read() { return 1; }  public: P() = default; };
+    struct Pair { Plain left = Plain(); Plain right = Plain();  public: Pair() = default; };
+    struct Wrapper { P value = P();  public: Wrapper() = default; };
+    int main() { Pair pair{}; Wrapper wrapper{}; return 0; }

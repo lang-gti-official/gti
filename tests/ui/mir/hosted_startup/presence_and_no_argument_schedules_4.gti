@@ -1,0 +1,3 @@
+// Presence and no argument schedules: a dynamic Module plan must have one exact CallBody startup stage.
+//@ check-pass
+mut int32_t base = 1; mut int32_t value = base; int main() { return value; }

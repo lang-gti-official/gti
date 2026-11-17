@@ -1,0 +1,22 @@
+// A generic call through a moved callback has an int32_t result; using the
+// callback after the move is reported. (From function_signature_lsp_test.py.)
+//@ hover @combine: int32_t
+import std.memory;
+int combine(int left, int right) { return left + right; }
+int invoke<T>(T callback) {
+  return /*@combine*/combine(std::move(callback)(3), 2);
+}
+int main() {
+  auto callback = [](int value) -> int { return value; };
+  return invoke(std::move(callback));
+}
+// --- step 2
+import std.memory;
+int combine(int left, int right) { return left + right; }
+int invoke<T>(T callback) {
+  return combine(std::move(callback)(3), callback(2));  //~ ERROR GTI-S2018 moved
+}
+int main() {
+  auto callback = [](int value) -> int { return value; };
+  return invoke(std::move(callback));
+}

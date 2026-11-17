@@ -1,0 +1,13 @@
+// Layout class assertions: self layout assertions terminate and indirection does not demand the pointee's class assertions.
+//@ check-pass
+struct Bad<T> { static_assert(sizeof(T) == uint64_t(0)); T value; };
+struct Self<T> { T value; static_assert(sizeof(Self<T>) == sizeof(T)); };
+struct Indirect<T> { T* value = nullptr; };
+constexpr bool fits<T>() { return sizeof(T) <= uint64_t(8); }
+struct Checked<T> { static_assert(fits<T>()); T value; };
+static_assert(sizeof(Self<int>) == uint64_t(4));
+static_assert(alignof(Self<int>) == uint64_t(4));
+static_assert(sizeof(Checked<int>) == uint64_t(4));
+static_assert(sizeof(Indirect<Bad<int>>) == sizeof(void*));
+static_assert(sizeof(Bad<int>*) == sizeof(void*));
+int main() { return 0; }

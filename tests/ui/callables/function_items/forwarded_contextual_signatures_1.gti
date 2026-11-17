@@ -1,0 +1,19 @@
+// Forwarded contextual signatures: exact callable signatures propagate through ordinary generic function and class helper forwarding.
+//@ check-pass
+int selected(int value) { return value + 1; }
+bool selected(bool value) { return !value; }
+int relay<F>(F& callback, int value) { return invoke(callback, value); }
+int invoke<F>(F& callback, int value) { return callback(value); }
+class Router<T> {
+public:
+  T route<F>(F& callback, T value) { return this.forward(callback, value); }
+private:
+  T forward<F>(F& callback, T value) { return callback(value); }
+public:
+  Router() = default;
+};
+
+int main() {
+  Router<int> router{};
+  return relay(selected, 3) + router.route(selected, 4) - 9;
+}

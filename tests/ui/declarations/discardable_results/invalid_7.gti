@@ -1,0 +1,5 @@
+// Invalid: invalid discard contract must reject.
+struct Base { virtual int get() { return 1; }  public: Base() = default; };
+struct Child : public Base { [[discardable]] int get() override { return 2; }  public: Child() = default; };
+void use(Base& value) { value.get(); }  //~ ERROR GTI-S2009
+int main() { Child child{}; child.get(); use(child); return 0; }

@@ -1,0 +1,7 @@
+// A source-defined mapping transports an owning payload enum like any
+// other class result. (From expected_transform_error_lsp_test.py.)
+struct Resource { Resource() = default; ~Resource() {} };
+enum class Packet { item(Resource value), idle };
+expected<int, int> read() { return 7; }
+Packet map(int input) { return Packet::item(Resource()); }
+int main() { /*😀*/ [[discard]] read().transform(map); return 0; }

@@ -1,0 +1,10 @@
+// General requires: one non-atomic alternative cannot justify atomic storage diagnostic.
+//@ execution-profile: concurrent
+import std.atomic;
+import std.meta;
+concept integer_or_float<T> = std::meta::is_integral<T>() ||
+                              std::meta::is_floating_point<T>();
+T load<T>(std::atomic<T>& value) requires integer_or_float<T> {  //~ ERROR GTI-S2029
+  return value.load();
+}
+int main() { return 0; }

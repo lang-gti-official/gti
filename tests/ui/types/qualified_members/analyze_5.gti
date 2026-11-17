@@ -1,0 +1,17 @@
+// Analyze: user generic classes can alias public specialized iterator types.
+//@ check-pass
+import std.vector;
+struct CursorTraits<std::vector_element T> {
+  using iterator = std::vector<T>::const_iterator;
+  using sentinel = std::vector<T>::sentinel;
+public:
+  CursorTraits() = default;
+};
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(7);
+  CursorTraits<int>::iterator cursor = values.begin();
+  CursorTraits<int>::sentinel finish = values.end();
+  if (cursor != finish) { return *cursor - 7; }
+  return 1;
+}

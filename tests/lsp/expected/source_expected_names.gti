@@ -1,0 +1,56 @@
+// The prelude's expected and unexpected are ordinary declarations in editor
+// queries: hover, navigation into the prelude, type and function tokens and
+// member completion, while locals of the same names stay ordinary.
+// (source_expected_lsp_test.py)
+//@ hover @expected: expected
+//@ definition @expected: @std:prelude.gti
+//@ token @expected: class
+//@ hover @unexpected: unexpected
+//@ definition @unexpected: @std:prelude.gti
+//@ token @unexpected: function
+enum Error { missing };
+/*@expected*/expected<int, Error> read(bool available) {
+  if (available) { return 7; }
+  return /*@unexpected*/unexpected(Error::missing);
+}
+int ordinary_names() {
+  int expected = 3;
+  int unexpected = 4;
+  return expected + unexpected;
+}
+int main() {
+  auto result = read(true);
+  return result.has_value() ? result.value() : ordinary_names();
+}
+// --- step 2
+//@ completion @member: value has_value transform_error and_then
+enum Error { missing };
+expected<int, Error> read(bool available) {
+  if (available) { return 7; }
+  return unexpected(Error::missing);
+}
+int ordinary_names() {
+  int expected = 3;
+  int unexpected = 4;
+  return expected + unexpected;
+}
+int main() {
+  auto result = read(true);
+  return result./*^member*/;  //~ ERROR GTI-P0001
+}
+// --- step 3
+//@ hover @unexpected: unexpected
+enum Error { missing };
+/*@expected*/expected<int, Error> read(bool available) {
+  if (available) { return 7; }
+  return /*@unexpected*/unexpected(Error::missing);
+}
+int ordinary_names() {
+  int expected = 3;
+  int unexpected = 4;
+  return expected + unexpected;
+}
+int main() {
+  auto result = read(true);
+  return result.has_value() ? result.value() : ordinary_names();
+}

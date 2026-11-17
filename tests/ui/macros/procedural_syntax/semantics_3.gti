@@ -1,0 +1,6 @@
+// Semantics: class-scoped aliases retain syntax capability identity.
+//@ check-pass
+// --- main.gti
+import std.syntax; struct Names { using Input = std::syntax::tokens; using Output = std::syntax::expr; }; #macro(proc) Names::Output chosen(Names::Input input) { return std::syntax::parse(input); } int main(){return 0;}
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) std::syntax::expr html(std::syntax::tokens input) { return std::syntax::parse(std::syntax::literal("42", std::syntax::location(input, uint64_t(0), uint64_t(1)))); }

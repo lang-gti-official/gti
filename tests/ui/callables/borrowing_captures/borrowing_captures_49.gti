@@ -1,0 +1,10 @@
+// Borrowing captures: invocation-pointer-origin-mismatch is rejected with a user diagnostic, not an ICE.
+import std.functional;
+import std.memory;
+int&<a> pick<lifetime a>(std::erased_object&<a> object, int& value) {
+  unsafe { return std::restore_ref<int>(object); }
+}
+int main() {
+  std::function_ptr<int&(std::erased_object&, int&)> pointer{pick};  //~ ERROR GTI-S2093
+  return 0;
+}

@@ -1,0 +1,5 @@
+// Native callable groundwork: Transform foreign_transform; must describe external storage without GTI initialization.
+//@ check-pass
+using Transform = (int32_t) -> int32_t;
+extern "C" { Transform foreign_transform; }
+int main() { return 0; }

@@ -1,0 +1,7 @@
+// Recursive payload composition: direct lexical closure payloads retain their semantic boundary until closure fields have a concrete representation.
+enum Event<T> { empty, item(T value) };
+int keep<T>(T callable) {
+  auto value = Event<T>::item(callable);  //~ ERROR GTI-S2067
+  return 0;
+}
+int main() { return keep([]() -> int { return 1; }); }

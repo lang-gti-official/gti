@@ -1,0 +1,15 @@
+// Raw accesses: provenance stored through a raw alias reaches the later access.
+//@ check-pass
+//@ raw-pointer-audit: warn
+struct Address { mut int* pointer = nullptr;  public: Address() = default; };
+int main() {
+  mut int value = 7;
+  mut Address address{};
+  Address* alias = &address;
+  unsafe {
+    alias->pointer = &value;
+    int& checked = value;
+    *address.pointer = 9;  //~ WARN GTI-S2102
+    return checked;
+  }
+}

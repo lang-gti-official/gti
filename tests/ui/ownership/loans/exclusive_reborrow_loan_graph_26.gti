@@ -1,0 +1,15 @@
+// Exclusive reborrow loan graph: receiver-tied reference call results should retain their stable place at an outer call boundary.
+class Box {
+  mut int value = 0;
+
+public:
+  mut int& get() mut { return this.value; }
+public:
+  Box() = default;
+};
+void both(int& observed, mut int& changed) { changed += observed; }
+int main() {
+  mut Box box = Box();
+  both(box.get(), box.get());  //~ ERROR GTI-S2017
+  return 0;
+}

@@ -1,0 +1,2 @@
+// Bounded arrays: overlap uses valid existing syntax.
+int main() { mut int a[2] = {1,2}; mut int[2]& x = a; mut int[2]& y = a; return x[0] + y[1]; }  //~ ERROR GTI-S2017

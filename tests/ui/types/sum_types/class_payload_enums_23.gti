@@ -1,0 +1,15 @@
+// Class payload enums: capturing lambdas transport owning enums through ordinary parameters and results.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  mut int32_t marker = 1;  //~ WARN GTI-S2096
+  auto captured = [marker = std::move(marker)](holder value) -> holder {
+    return holder::none;
+  };
+  return 0;
+}

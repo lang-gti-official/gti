@@ -1,0 +1,15 @@
+// Class payload enums: owned enum captures retain verified closure-environment cleanup.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  holder source = holder::one(resource());
+  auto captured = [value = std::move(source)]() -> int32_t {
+    return 1;
+  };
+  return 0;
+}

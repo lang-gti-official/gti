@@ -1,0 +1,6 @@
+// Storage payload admission: an optional over literal text holds ownerless text and may be returned.
+//@ check-pass
+import std.optional;
+import std.string;
+std::optional<std::string_view> escape() { std::string owner{"owned"}; return std::optional<std::string_view>("static"); }
+int main() { auto result = escape(); return 0; }

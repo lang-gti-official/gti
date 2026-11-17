@@ -1,0 +1,6 @@
+// Formatting options reach the request, and a quoted expectation keeps its
+// leading blanks.
+//@ format-options: tabSize=4 insertSpaces=true
+//@ formatting: "{\n    return value * 2;\n}"
+int twice(int value) { return value * 2; }
+int main() { return twice(1) - 2; }

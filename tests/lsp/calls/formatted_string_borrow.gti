@@ -1,0 +1,5 @@
+// Formatting a std::string borrows it: no copy error.
+// (From semantic_call_regressions_lsp_test.py.)
+import std.string;
+import std.format;
+int main() { std::string text{"hello"}; std::println("{}", text); return 0; }

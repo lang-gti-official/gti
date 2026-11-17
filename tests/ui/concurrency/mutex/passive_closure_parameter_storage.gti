@@ -1,0 +1,19 @@
+// Passive closure parameter storage: passive closure parameter lowers.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.thread;
+struct MoveOnly {
+  int number = 42;
+  MoveOnly() = default;
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+int main() {
+  MoveOnly value{};
+  mut std::thread_result<int> worker{};
+  if (!worker.start([owned = std::move(value)]() -> int {
+        return owned.number;
+      })) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}

@@ -1,0 +1,49 @@
+// A class reference argument may be returned.
+//@ run-pass
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  mut int32_t& write() mut { return this.value; }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+  void store(int32_t next) mut { this.value = next; }
+};
+
+class Boxes {
+public:
+  Boxes() = default;
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+class Pair {
+public:
+  Pair() {}
+  mut int32_t first = 3;
+  mut int32_t second = 4;
+};
+
+int32_t& pick(int32_t& candidate) { return candidate; }
+
+Box& identity(Box& candidate) { return candidate; }
+
+int main() {
+  mut Box box = Box(0);
+  box.store(31);
+  {
+    Box& alias = identity(box);
+    if (alias.read() != 31) {
+      return 1;
+    }
+  }
+  box.store(32);
+  {
+    Box& alias = identity(box);
+    if (alias.read() != 32) {
+      return 2;
+    }
+  }
+  return 0;
+}

@@ -1,0 +1,13 @@
+// Constrained macro query cycle: changing concrete generic query instances may terminate within the existing depth budget.
+//@ analyze-pass
+//@ no-prelude
+struct Leaf { public: Leaf() = default; };
+struct Wrap<T> { public: Wrap() = default; };
+concept available<T> = requires(T value) { { step(value) } -> int; };
+int step(Leaf value) { return 1; }
+int step<T>(Wrap<T> value) requires available<T> { return 1; }
+#macro int constrained<T>(T value) requires available<T> { return 1; }
+int main() {
+  Wrap<Wrap<Leaf>> value{};
+  return constrained!(value) - 1;
+}

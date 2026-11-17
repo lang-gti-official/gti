@@ -1,0 +1,13 @@
+// A pool element type must be movable.
+//@ check-fail
+import std.memory;
+class pinned {
+public:
+  pinned() {}
+  pinned(pinned& other) = delete;
+  pinned(pinned&& other) = delete;
+};
+int main() {
+  auto created = std::try_make_pool<pinned>(std::size_t(1));  //~ ERROR GTI-S2029 Type 'pinned' does not satisfy concept 'std::movable<pinned>'
+  return 0;
+}

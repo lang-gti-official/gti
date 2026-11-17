@@ -1,0 +1,33 @@
+// Lifecycle policy: source lifecycle attributes are accepted.
+//@ check-pass
+mut int destroyed = 0;
+struct Box<T> {
+  T value;
+  [[inline]] Box(T value) : value(value) {}
+  [[cold, noinline]] ~Box() { destroyed += 1; }
+};
+struct Converted {
+  int value;
+  [[noinline]] implicit Converted(int value) : value(value) {}
+};
+struct Constant {
+  int value;
+  [[inline]] constexpr Constant(int value) : value(value) {}
+};
+struct Plain {
+  [[cold]] Plain() {}
+  [[inline]] ~Plain() {}
+};
+struct Unsafe {
+  int value;
+  [[noinline]] unsafe Unsafe(int value) : value(value) {}
+};
+static_assert(Constant(3).value == 3);
+int main() {
+  unsafe { Unsafe value{3}; if (value.value != 3) { return 1; } }
+  { Box<int> box{7}; if (box.value != 7) { return 1; } }
+  Converted converted = 2;
+  Constant constant{3};
+  Plain plain{};
+  return destroyed + converted.value + constant.value - 6;
+}

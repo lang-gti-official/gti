@@ -1,0 +1,5 @@
+// Reference payloads: rejected with GTI-S2045.
+//@ analyze-fail
+enum Reading { empty, value(int& owner) };
+Reading escape() { int local = 3; return Reading::value(local); }  //~ ERROR GTI-S2045
+int main() { return 0; }

@@ -1,0 +1,13 @@
+// Class payload enums: concrete generic callables should preserve owning payload-enum argument and result obligations.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+holder transfer<T>(holder value) { return std::move(value); }
+int main() {
+  holder result = transfer<int32_t>(holder::one(resource()));
+  return 0;
+}

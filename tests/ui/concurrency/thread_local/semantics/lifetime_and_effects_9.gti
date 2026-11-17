@@ -1,0 +1,4 @@
+// Lifetime and effects: captured loans do not alias disjoint persistent callback effects.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1; thread_local mut int other = 2; void modify() { other = 3; } int main() { int& input = value; auto callback = [&input]() -> int { modify(); return input; }; return callback(); }

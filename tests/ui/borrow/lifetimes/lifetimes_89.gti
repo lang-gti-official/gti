@@ -1,0 +1,11 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+class Box<T> {
+  T value;
+public:
+  Box(T input) : value(input) {}
+  int inspect() { return 7; }
+};
+int inspect<T>(Box<T> value) { return value.inspect(); }
+int main() { Box<int> box{42}; return inspect(box) - 7; }

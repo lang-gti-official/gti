@@ -1,0 +1,17 @@
+// Generated default temporary argument borrows: implicit/defaulted passive and cleanup-owning temporary arguments use the ordinary generated-default producer.
+//@ check-pass
+struct Implicit { public: Implicit() = default; };
+struct Defaulted { Defaulted() = default; };
+struct Cleanup { ~Cleanup() {}  public: Cleanup() = default; };
+bool inspect(Implicit& value) { return true; }
+bool inspect(Defaulted& value) { return true; }
+bool inspect(Cleanup& value) { return true; }
+void observe(bool value) {}
+Implicit make() { return Implicit(); }
+int main() {
+  Implicit named = make();
+  observe(inspect(Implicit()));
+  observe(inspect(Defaulted()));
+  observe(inspect(Cleanup()));
+  return 0;
+}

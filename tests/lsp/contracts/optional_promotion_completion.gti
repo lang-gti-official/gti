@@ -1,0 +1,50 @@
+// An optional promoted with `?` analyses clean, and member completion on an
+// incomplete receiver offers its members. (From optional_contract_lsp_test.py.)
+import std.optional;
+std::optional<int> find(bool available) {
+  if (available) { return std::optional<int>(7); }
+  std::optional<int> none = std::nullopt;
+  return none;
+}
+std::optional<int> relay(bool available) {
+  int value = ?find(available);
+  return std::optional<int>(value + 1);
+}
+int main() {
+  mut std::optional<int> value = relay(true);
+  value = relay(false);
+  return value.has_value() ? 1 : 0;
+}
+// --- step 2
+//@ completion @dot: value has_value reset
+import std.optional;
+std::optional<int> find(bool available) {
+  if (available) { return std::optional<int>(7); }
+  std::optional<int> none = std::nullopt;
+  return none;
+}
+std::optional<int> relay(bool available) {
+  int value = ?find(available);
+  return std::optional<int>(value + 1);
+}
+int main() {
+  mut std::optional<int> value = relay(true);
+  value = relay(false);
+  return value./*@dot*/;  //~ ERROR GTI-P0001
+}
+// --- step 3
+import std.optional;
+std::optional<int> find(bool available) {
+  if (available) { return std::optional<int>(7); }
+  std::optional<int> none = std::nullopt;
+  return none;
+}
+std::optional<int> relay(bool available) {
+  int value = ?find(available);
+  return std::optional<int>(value + 1);
+}
+int main() {
+  mut std::optional<int> value = relay(true);
+  value = relay(false);
+  return value.has_value() ? 1 : 0;
+}

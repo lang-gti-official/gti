@@ -1,0 +1,2 @@
+// Consuming methods and value operators: invalid consuming-method use fails in the frontend (consuming method cannot return).
+class C<T> { public: T take(T value) && { return value; }  public: C() = default; }; int main() { C<std::string_view> c{}; auto value = std::move(c).take(""); return 0; }  //~ ERROR GTI-S2022

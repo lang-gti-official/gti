@@ -1,0 +1,5 @@
+// Environment target: rejected with GTI-S2047.
+//@ target: arm64-apple-windows
+import std.environment;
+int main() { return 0; }
+//~? ERROR GTI-S2047

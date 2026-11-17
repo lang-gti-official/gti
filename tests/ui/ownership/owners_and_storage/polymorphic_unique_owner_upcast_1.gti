@@ -1,0 +1,38 @@
+// Polymorphic unique owner upcast: an explicit unique owner upcast should preserve one polymorphic owner through MIR.
+//@ check-pass
+import std.memory;
+
+[[transfer, share]] interface Layer {
+  uint64_t id();
+  void update() mut;
+};
+
+class DemoLayer : public Layer {
+  mut uint64_t updates = 0;
+
+public:
+  DemoLayer() {}
+  uint64_t id() override { return 7; }
+  void update() mut override { this.updates++; }
+};
+
+class OtherLayer : public Layer {
+  mut uint64_t updates = 0;
+
+public:
+  OtherLayer() {}
+  uint64_t id() override { return 8; }
+  void update() mut override { this.updates++; }
+};
+
+int main() {
+  mut std::unique_ptr<Layer> layer =
+      std::upcast_unique<Layer, DemoLayer>(
+          std::make_unique<DemoLayer>());
+  mut std::unique_ptr<Layer> other =
+      std::upcast_unique<Layer, OtherLayer>(
+          std::make_unique<OtherLayer>());
+  layer->update();
+  other->update();
+  return layer->id() == 7 and other->id() == 8 ? 0 : 1;
+}

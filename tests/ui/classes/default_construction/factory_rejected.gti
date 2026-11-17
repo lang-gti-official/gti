@@ -1,0 +1,4 @@
+// std::make_unique<T>() needs an explicit default constructor.
+//@ check-fail
+import std.memory;
+struct Value { int value = 7; Value(int input) : value(input) {} }; int main() { auto value = std::make_unique<Value>(); return 0; }  //~ ERROR GTI-S2012

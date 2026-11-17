@@ -1,0 +1,12 @@
+// Reference input base conversion: shared and mutable staged class references preserve verified public base conversion.
+//@ check-pass
+class Base { public: Base() {} };
+class Derived : public Base { public: Derived() : Base() {} };
+class Unrelated { public: Unrelated() {} };
+void observe(Base& value) {}
+void change(mut Base& value) {}
+int main() {
+  mut Derived owner{};
+  mut Unrelated unrelated{};  //~ WARN GTI-S2096
+  observe(owner); change(owner); return 0;
+}

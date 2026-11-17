@@ -1,0 +1,28 @@
+// Nested argument rejections: nested owning arguments retain their source through destruction.
+import std.utility;
+struct View {
+  int& value;
+  View(int& value) : value(value) {}
+};
+class Lease {
+  View view;
+public:
+  Lease(View view) : view(view) {}
+  ~Lease() { int observed = this.view.value; }
+};
+class Buffer {
+  Lease lease;
+public:
+  Buffer(Lease lease) : lease(std::move(lease)) {}
+};
+class Owner {
+  Buffer buffer;
+public:
+  Owner(int& value) : buffer(Buffer(Lease(View(value)))) {}
+};
+int main() {
+  mut int resource = 7;
+  Owner owner{resource};
+  resource = 9;  //~ ERROR GTI-S2017
+  return 0;
+}

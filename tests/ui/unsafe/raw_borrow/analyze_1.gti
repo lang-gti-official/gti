@@ -1,0 +1,18 @@
+// Analyze: application-defined raw bridge needs no private declaration.
+//@ check-pass
+struct Witness { mut int value = 42;  public: Witness() = default; };
+unsafe int&<a> observe<lifetime a>(const int* address, Witness&<a> witness) {
+  unsafe { return *address; }
+}
+unsafe mut int&<a> edit<lifetime a>(int* address, mut Witness&<a> witness) {
+  unsafe { return *address; }
+}
+int main() {
+  mut Witness owner{};
+  int* address = &owner.value;
+  unsafe {
+    { mut int& value = edit(address, owner); value = 7; }
+    int& value = observe(address, owner);
+    return value - 7;
+  }
+}

@@ -1,0 +1,90 @@
+// A mutable borrowed callable called in a conditional hovers with its borrow
+// mode and navigates to the generic; a branch mismatch is S2050 (no backend
+// error), a read-only borrow cannot call a mutating operator, and edits
+// recover. (borrowed_callable_conditionals_lsp_test.py)
+//@ hover @pick: mut Counter&
+//@ definition @pick: @decl
+class Counter {
+public: Counter() = default;
+  mut int count = 0;
+  int operator()(int n) mut { this.count += n; return this.count; }
+};
+int /*@decl*/pick<F>(mut F& producer, bool ok) {
+  auto result = ok ? producer(1) : 2;
+  return result;
+}
+int main() {
+  mut Counter counter{};
+  /* 😀 */ return /*@pick*/pick(counter, true);
+}
+// --- step 2
+class Counter {
+public: Counter() = default;
+  mut int count = 0;
+  int operator()(int n) mut { this.count += n; return this.count; }
+};
+int pick<F>(mut F& producer, bool ok) {
+  auto result = ok ? producer(1) : false;  //~ ERROR GTI-S2050 same exact type
+  return result;
+}
+int main() {
+  mut Counter counter{};
+  /* 😀 */ return pick(counter, true);
+}
+// --- step 3
+class Counter {
+public: Counter() = default;
+  mut int count = 0;
+  int operator()(int n) mut { this.count += n; return this.count; }
+};
+int pick<F>(mut F& producer, bool ok) {
+  auto result = ok ? producer(1) : 2;
+  return result;
+}
+int main() {
+  mut Counter counter{};
+  /* 😀 */ return pick(counter, true);
+}
+// --- step 4
+class Counter {
+public: Counter() = default;
+  mut int count = 0;
+  int operator()(int n) mut { this.count += n; return this.count; }
+};
+int pick<F>(F& producer, bool ok) {
+  auto result = ok ? producer(1) : 2;  //~ ERROR GTI-S2046 read-callable
+  return result;
+}
+int main() {
+  mut Counter counter{};  //~ WARN GTI-S2096
+  /* 😀 */ return pick(counter, true);
+}
+// --- step 5
+class Counter {
+public: Counter() = default;
+  mut int count = 0;
+  int operator()(int n) mut { this.count += n; return this.count; }
+};
+int pick<F>(mut F& producer, bool ok) {
+  auto result = ok ? producer(1) :;  //~ ERROR GTI-P0001
+  return result;  //~ ERROR GTI-S2001
+}
+int main() {
+  mut Counter counter{};
+  /* 😀 */ return pick(counter, true);
+}
+// --- step 6
+//@ hover @pick: mut Counter&
+class Counter {
+public: Counter() = default;
+  mut int count = 0;
+  int operator()(int n) mut { this.count += n; return this.count; }
+};
+int /*@decl*/pick<F>(mut F& producer, bool ok) {
+  auto result = ok ? producer(1) : 2;
+  return result;
+}
+int main() {
+  mut Counter counter{};
+  /* 😀 */ return /*@pick*/pick(counter, true);
+}

@@ -1,0 +1,14 @@
+// Captured text borrows owner: captured text keeps its owner borrowed: std::string_view held = same(captured()); owner.append("!"); std::println(held); return 0;.
+import std.string;
+import std.functional;
+struct Doc {
+  mut std::string body;
+  Doc() : body("doc-body") {}
+};
+std::string_view same(std::string_view text) { return text; }
+int main() {
+  mut std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  auto captured = [view]() -> std::string_view { return view; };
+  std::string_view held = same(captured()); owner.append("!"); std::println(held); return 0;  //~ ERROR GTI-S2017
+}

@@ -1,0 +1,16 @@
+// Macro result storage effects: fresh lambdas forced through nested result macros retain their exact hidden conflicting effect in both query orders.
+//@ require-function-definitions
+mut int guarded = 1; mut int other = 2; mut int third = 3;
+#macro int invoke<F>(F action) { return action(); }  //~ ERROR GTI-S2045
+#macro int relay<F>(F action) { return invoke!(action); }
+int selected<uint64_t Mode>() {
+  int& held = guarded;
+  int result = relay!([]() -> int {
+    if constexpr (Mode == 0) { other = 9; }
+    else if constexpr (Mode == 1) { guarded = 9; }
+    else { third = 9; }
+    return 1;
+  });
+  return held + result;
+}
+int main() { int first = selected<0>(); int second = selected<1>(); return first + second; }

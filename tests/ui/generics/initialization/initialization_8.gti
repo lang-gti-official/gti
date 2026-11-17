@@ -1,0 +1,11 @@
+// Initialization: the program is accepted.
+//@ check-pass
+class Values<uint64_t N> {
+public:
+  Values() {}
+  int read() { if constexpr (N == 0) { return 7; } else { return later; } }
+};
+int fetch() { Values<0> values{}; return values.read(); }
+int first = fetch();
+int later = 9;
+int main() { return first - 7; }

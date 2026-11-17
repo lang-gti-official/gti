@@ -1,0 +1,7 @@
+// Borrowing captures: lambda-reference-result-from-capture is rejected with a user diagnostic, not an ICE.
+int main() {
+  int cell = 4;
+  auto bad = [&cell](int ignored) -> int& { return cell; };  //~ ERROR GTI-S2017
+  int& view = bad(1);  //~ ERROR GTI-S2017
+  return view;
+}

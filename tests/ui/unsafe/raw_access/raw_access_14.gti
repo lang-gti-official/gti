@@ -1,0 +1,14 @@
+// Raw access: rejected with GTI-S2102.
+//@ raw-pointer-audit: strict
+struct Observed {
+  mut int value = 0;
+  Observed(const int* pointer) { unsafe { this.value = *pointer; } }
+public:
+  Observed() = default;
+};
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  Observed observed{pointer};  //~ ERROR GTI-S2102
+  return observed.value;
+}

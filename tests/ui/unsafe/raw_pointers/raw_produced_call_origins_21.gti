@@ -1,0 +1,11 @@
+// Raw produced call origins: valid callee-produced raw transport: constructor-reference-input.
+//@ check-pass
+//@ raw-pointer-audit: strict
+class Address {
+public:
+  const int* pointer = nullptr;
+  Address(int& source) : pointer(&source) {}
+public:
+  Address() = default;
+};
+int main() { int live = 7; Address address{live}; unsafe { return *address.pointer; } }

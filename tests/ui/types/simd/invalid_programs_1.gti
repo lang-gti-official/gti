@@ -1,0 +1,3 @@
+// Invalid programs: invalid lane types and extents must fail in semantics.
+import std.simd;
+int main() { std::simd<int, 4> value{}; return 0; }  //~ ERROR GTI-S2029

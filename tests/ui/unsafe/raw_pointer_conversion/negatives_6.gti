@@ -1,0 +1,4 @@
+// Negatives: known type survives erasure.
+//@ raw-pointer-audit: strict
+using E = void*; using P = uint64_t*;
+int main() { mut int value = 0; E e = E(&value); P p = P(e); return 0; }  //~ ERROR GTI-S2101 //~ ERROR GTI-S2101

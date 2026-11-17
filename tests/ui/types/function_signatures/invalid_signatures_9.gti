@@ -1,0 +1,2 @@
+// Invalid signatures: invalid signature use must fail in semantics: using A = void(); using Bad = A[2];.
+using A = void(); using Bad = A[2];  //~ ERROR GTI-S2093

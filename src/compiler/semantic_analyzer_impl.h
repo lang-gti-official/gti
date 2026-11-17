@@ -3152,8 +3152,9 @@ private:
   // as long as the shortest; each must outlive the declared result region.
   bool validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
-  // A result in a region the class stores is supplied by references the
-  // receiver stores, never by storage the receiver owns (GTI-S2127).
+  // A result in a region the class stores is supplied by the references the
+  // receiver stores in that region, never by storage the receiver owns or a
+  // reference stored in another region (GTI-S2127).
   void validateReturnedReceiverRegion(const FunctionDecl &syntax, ClassId owner,
                                       const ExprPtr &value);
   // `requires outlives<T, r>` on a callee: the type bound to T must outlive
@@ -6418,6 +6419,7 @@ private:
                                bool mutableReceiver);
 
   [[nodiscard]] const Symbol *resolve(const Token &name) const;
+  void suggestVisibleLocalName(const Token &name, Diagnostic &diagnostic) const;
   [[nodiscard]] const Symbol *
   resolveGeneratedTestReference(const NamePath &path) const;
 

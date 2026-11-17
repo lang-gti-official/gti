@@ -1,0 +1,13 @@
+// Inline projection: inline owning projection passes frontend.
+//@ check-pass
+import std.polymorphic;
+interface Command { int operator()(int value) &&; };
+class Increment : public Command {
+public:
+  Increment() = default;
+  int operator()(int value) && override { return value + 1; }
+};
+int main() {
+  std::inline_polymorphic<Command, 32, 8> value{Increment()};
+  return std::move(value).invoke_once<int>(41);
+}

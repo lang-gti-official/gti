@@ -1,0 +1,3 @@
+// Field initializers do not declare a default constructor.
+//@ check-fail
+class Value { int value = 7; }; int main() { Value value{}; return 0; }  //~ ERROR GTI-S2012

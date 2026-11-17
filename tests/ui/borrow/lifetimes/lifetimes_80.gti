@@ -1,0 +1,9 @@
+// Lifetimes: rejected with GTI-S2045.
+struct View<lifetime a> {
+  int&<a> value;
+  View(int&<a> input) : value(input) {}
+};
+View<a> bad<lifetime a>(int&<a> outside) {
+  int local = 7;
+  return View<a>(local);  //~ ERROR GTI-S2045
+}

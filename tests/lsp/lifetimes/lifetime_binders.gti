@@ -1,0 +1,92 @@
+// A lifetime binder keeps its identity: uses hover and navigate to it, its
+// four mentions are references, typeParameter tokens and rename edits (`_`
+// and `static` are rejected), a variable named `lifetime` stays a
+// variable, completion inside `<...>` offers the binder and not values,
+// broken and unknown regions recover, and lifetime contracts on types,
+// callbacks, concepts and receivers hover with their regions.
+// (lifetime_parameters_lsp_test.py, first part; reopening the document is
+// not re-checked)
+//@ hover @r1: lifetime sourceRegion
+//@ hover @identity: identity<lifetime sourceRegion>
+//@ hover @identity: int32_t&<sourceRegion>
+//@ definition @r1: @binder
+//@ references @r1: @r1 @binder @r3 @r4
+//@ token @r1: typeParameter
+//@ token @binder: typeParameter
+//@ token @r3: typeParameter
+//@ token @r4: typeParameter
+//@ token @variable: variable
+//@ rename @r1 inputRegion: @r1 @binder @r3 @r4
+//@ rename @r1 _: error
+//@ rename @r1 static: error
+/* UTF-16: 😀 */ int&</*@r1*/sourceRegion> i/*^identity*/dentity<lifetime /*@binder*/sourceRegion>(int&</*@r3*/sourceRegion> value) {
+  int&</*@r4*/sourceRegion> local = value;
+  return local;
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int /*@variable*/lifetime = 1;
+// --- step 2
+//@ completion-detail @sou sourceRegion: lifetime sourceRegion
+//@ completion @sou: sourceRegion !value !local
+/* UTF-16: 😀 */ int&<sourceRegion> identity<lifetime sourceRegion>(int&<sourceRegion> value) {
+  int&<sou/*^sou*/> local = value;  //~ ERROR GTI-S2128
+  return local;
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int lifetime = 1;
+// --- step 3
+/* UTF-16: 😀 */ int&<sourceRegion> identity<lifetime sourceRegion>(int&<sourceRegion> value) {
+  int&<> local = value;  //~ ERROR GTI-P0001
+  return local;  //~ ERROR GTI-S2001
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int lifetime = 1;
+// --- step 4
+//@ definition @use: @binder
+/* UTF-16: 😀 */ int&</*@use*/sourceRegion> identity<lifetime /*@binder*/sourceRegion>(int&<sourceRegion> value) {
+  int&<sourceRegion> local = value;
+  return local;
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int lifetime = 1;
+// --- step 5
+/* UTF-16: 😀 */ int&<sourceRegion> identity<lifetime sourceRegion>(int&<sourceRegion> value) {
+  int&<missingRegion> local = value;  //~ ERROR GTI-S2128 lifetime
+  return local;
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int lifetime = 1;
+// --- step 6
+/* UTF-16: 😀 */ int&<sourceRegion> identity<lifetime sourceRegion>(int&<sourceRegion> value) {
+  int&<sourceRegion> local = value;
+  return local;
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int lifetime = 1;
+// --- step 7
+//@ hover @forever: Borrowed<int32_t, static>
+//@ hover @read: for<lifetime fresh> int32_t&<fresh>(int32_t&<fresh>)
+//@ hover @related: Related<T, lifetime region>
+//@ hover @receiver: int32_t&<this>
+//@ references @f2: @f1 @f2 @f3
+/* UTF-16: 😀 */ int&<sourceRegion> identity<lifetime sourceRegion>(int&<sourceRegion> value) {
+  int&<sourceRegion> local = value;
+  return local;
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int lifetime = 1;
+struct Borrowed<T, lifetime owner> {
+  T&<owner> value;
+  Borrowed(T&<owner> input) : value(input) {}
+};
+using /*@forever*/Forever = Borrowed<int, static>;
+using /*@read*/Read = for<lifetime /*@f1*/fresh> int&</*@f2*/fresh>(int&</*@f3*/fresh>);
+concept /*@related*/Related<T, lifetime region> = outlives<T, region>;
+struct Receiver { int value; int&<this> /*@receiver*/read() { return value; } };
+// --- step 8
+/* UTF-16: 😀 */ int&<sourceRegion> identity<lifetime sourceRegion>(int&<sourceRegion> value) {
+  int&<sourceRegion> local = value;
+  return local;
+}
+int&<sourceRegion> other<lifetime sourceRegion>(int&<sourceRegion> value) { return value; }
+int lifetime = 1;

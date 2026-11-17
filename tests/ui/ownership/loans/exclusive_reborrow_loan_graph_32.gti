@@ -1,0 +1,15 @@
+// Exclusive reborrow loan graph: local mutable child loans should relay caller-owned receiver storage.
+//@ check-pass
+class Cell {
+  mut int value = 0;
+
+public:
+  mut int& expose() mut {
+    mut int& parent = this.value;
+    mut int& child = parent;
+    return child;
+  }
+public:
+  Cell() = default;
+};
+int main() { return 0; }

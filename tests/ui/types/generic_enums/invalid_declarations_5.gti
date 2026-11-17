@@ -1,0 +1,2 @@
+// Invalid declarations: invalid generic enum declarations or uninstantiated values fail before executable lowering.
+enum class Event<T> { empty, item(T value) }; int main() { auto event = Event::empty; return 0; }  //~ ERROR GTI-S2067

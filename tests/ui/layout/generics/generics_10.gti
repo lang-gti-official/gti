@@ -1,0 +1,5 @@
+// Generics: the program is accepted.
+//@ check-pass
+struct Inner { int32_t value = 17;  public: Inner() = default; };
+struct Outer { Inner inner;  public: Outer() = default; };
+int main() { Outer object{}; return object.inner.value - 17; }

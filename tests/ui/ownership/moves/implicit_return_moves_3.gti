@@ -1,0 +1,29 @@
+// Implicit return moves: a return's implicit construction reports a move-only copy as the return's own GTI-S2003, at the returned value.
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+};
+class Wrapper {
+  Owner owner;
+public:
+  implicit Wrapper(Owner owner) : owner(std::move(owner)) {}
+};
+class Holder {
+  Owner value;
+public:
+  Holder() : value(Owner()) {}
+  Wrapper wrap() { return this.value; }  //~ ERROR GTI-S2003
+};
+Wrapper wrap_local() {
+  Owner local = Owner();
+  return local;  //~ ERROR GTI-S2003
+}
+Wrapper wrap_parameter(Owner input) { return input; }  //~ ERROR GTI-S2003
+Wrapper wrap_moved() {
+  Owner moved = Owner();
+  return std::move(moved);
+}
+int main() { return 0; }

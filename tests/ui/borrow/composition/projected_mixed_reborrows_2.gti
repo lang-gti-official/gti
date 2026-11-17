@@ -1,0 +1,13 @@
+// Projected mixed reborrows: a projected dependency carries its own access and owner.
+//@ check-pass
+struct Mixed {
+  int& read;
+  mut int& write;
+  mut int& other;
+  Mixed(int& a, mut int& b, mut int& c) : read(a), write(b), other(c) {}
+};
+int main() {
+  mut int a = 42; mut int b = 0; mut int c = 3;  //~ WARN GTI-S2096
+  mut Mixed view{a, b, c};  //~ WARN GTI-S2096
+int& selected = view.read; return selected - 42;
+}

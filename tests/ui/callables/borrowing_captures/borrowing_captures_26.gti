@@ -1,0 +1,3 @@
+// Borrowing captures: erased-referent-cannot-be-constructed is rejected with a user diagnostic, not an ICE.
+import std.memory;
+int main() { std::erased_object forged{}; return 0; }  //~ ERROR GTI-S2019

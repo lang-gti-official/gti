@@ -1,0 +1,13 @@
+// A moved-from optional local reads as empty.
+//@ run-pass
+import std.optional;
+import std.string;
+
+int main() {
+  std::optional<std::string_view> empty{};
+  if (empty.has_value()) { return 1; }
+  std::string owner{"owned"};
+  std::string_view view = owner.view();
+  std::string_view moved = std::move(view);
+  return moved.size() == std::size_t(5) ? 0 : 2;
+}

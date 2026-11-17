@@ -1,0 +1,18 @@
+// Confined callable results: direct open-callable composition must infer a concrete intermediate without guessing it from the enclosing result.
+//@ check-pass
+int compose<Outer, Inner>(Outer outer, Inner inner, int value) {
+  return outer(inner(value));
+}
+double widen(int value) { return double(value) + 0.5; }
+class Narrow {
+public:
+  int operator()(double value) { return int(value); }
+public:
+  Narrow() = default;
+};
+int main() {
+  auto inner = [](int value) -> double { return double(value) + 0.5; };
+  auto outer = [](double value) -> int { return int(value); };
+  Narrow narrow{};
+  return compose(outer, inner, 4) + compose(narrow, widen, 5) - 9;
+}

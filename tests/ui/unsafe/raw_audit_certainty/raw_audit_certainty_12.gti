@@ -1,0 +1,12 @@
+// Raw audit certainty: rejected with GTI-S2102.
+//@ analyze-fail
+//@ raw-pointer-audit: strict
+//@ no-prelude
+extern "C" { const int* foreign(); }
+
+int inspect(bool choice) {
+  int live = 1;
+  mut const int* pointer = nullptr;
+  { int dead = 2; pointer = &dead; }
+unsafe { const int* selected = choice ? pointer : foreign(); return *selected; }}  //~ ERROR GTI-S2102
+int main() { return 0; }

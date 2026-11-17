@@ -1,0 +1,4 @@
+// An allocation result is not discardable: ignoring it is rejected.
+//@ check-fail
+import std.memory;
+int main() { std::allocator allocator{}; allocator.try_storage<int>(std::size_t(1)); return 0; }  //~ ERROR GTI-S2009

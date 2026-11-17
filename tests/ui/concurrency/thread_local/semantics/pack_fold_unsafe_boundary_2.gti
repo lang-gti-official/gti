@@ -1,0 +1,5 @@
+// Pack fold unsafe boundary: an explicitly admitted fold retains the exact source unsafe operation on its ordinary per-element call.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+unsafe void leaf<T>(T& element) {} void folded<Args...>(Args... args) { unsafe { (leaf(args), ...); } } int main() { folded(); return 0; }

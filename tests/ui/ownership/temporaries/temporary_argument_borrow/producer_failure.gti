@@ -1,0 +1,27 @@
+// A failing temporary argument preserves activation and cleanup (producer-failure).
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0001
+class FailureTracker {
+public:
+  FailureTracker() = default;
+
+  ~FailureTracker() {
+    mut int32_t cleanup = 2147483647;
+    cleanup += 1;
+  }
+};
+
+FailureTracker fail_before_production() {
+  mut int32_t checked = 2147483647;
+  checked += 1;
+  return FailureTracker();
+}
+
+int32_t inspect(FailureTracker& value) {
+  return 0;
+}
+
+int main() {
+  return inspect(fail_before_production());
+}

@@ -1,0 +1,2 @@
+// Signature receiver family: a component mismatch relates the selected receiver definition without guessing a fix.
+class C<R(Args...)> { public: C() = default; }; class C<R(R) mut> { public: C() = default; }; C<int(bool) mut> bad{};  //~ ERROR GTI-S2023

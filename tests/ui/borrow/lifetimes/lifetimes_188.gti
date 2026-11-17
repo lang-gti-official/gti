@@ -1,0 +1,16 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Base {
+  mut int left = 1;
+  Base() = default;
+};
+struct Derived : public Base {
+  mut int right = 2;
+  Derived() = default;
+};
+int bump(mut int& first, mut int& second) {
+  first = first + 1;
+  second = second + 1;
+  return first + second;
+}
+int main() { mut Derived pair{}; return bump(pair.left, pair.right) - 5; }

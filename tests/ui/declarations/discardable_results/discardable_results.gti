@@ -1,0 +1,4 @@
+// Discardable results: declaration and selected-call hover must expose discard policy.
+//@ check-pass
+[[discardable]] int value(){return 3;}
+int main(){value();return 0;}

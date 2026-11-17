@@ -1,0 +1,8 @@
+// Borrowing captures: lambda-reference-result-ambiguous is rejected with a user diagnostic, not an ICE.
+int main() {
+  int left = 1;
+  int right = 2;
+  auto bad = [](int& a, int& b) -> int& { return a; };  //~ ERROR GTI-S2017
+  int& view = bad(left, right);  //~ ERROR GTI-S2017
+  return view;
+}

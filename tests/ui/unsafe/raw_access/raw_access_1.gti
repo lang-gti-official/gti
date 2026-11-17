@@ -1,0 +1,21 @@
+// Raw access: rejected with GTI-S2102.
+//@ raw-pointer-audit: strict
+unsafe int read_address(const int* pointer) {
+  unsafe { return *pointer; }
+}
+unsafe int read_forwarded(const int* pointer) {
+  unsafe { return read_address(pointer); }
+}
+unsafe void write_address(int* pointer) {
+  unsafe { *pointer = 9; }
+}
+unsafe void write_forwarded(int* pointer) {
+  unsafe { write_address(pointer); }
+}
+const int* copy_address(const int* pointer) { return pointer; }
+bool same_address(const int* left, const int* right) { return left == right; }
+
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  unsafe { return read_address(pointer); } }  //~ ERROR GTI-S2102

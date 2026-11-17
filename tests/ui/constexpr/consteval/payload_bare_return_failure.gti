@@ -1,0 +1,5 @@
+// A bare return through a failing implicit consteval constructor is rejected.
+//@ check-fail
+struct Port { int value; implicit consteval Port() : value(1 / 0) {} };  //~ ERROR GTI-S2004
+Port make() { return; }  //~ ERROR GTI-S2057
+int main() { return make().value; }

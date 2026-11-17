@@ -1,0 +1,23 @@
+// Negative: local resource cannot escape.
+import std.utility;
+mut int observed = 0;
+struct Resource {
+  mut int value = 7;
+  void reset() mut { this.value = 9; }
+public:
+  Resource() = default;
+};
+class Guard {
+  Resource& resource;
+public:
+  Guard(Resource& resource) : resource(resource) {}
+  ~Guard() { observed += this.resource.value; }
+};
+class Box<T> {
+  T item;
+public:
+  Box(T item) : item(std::move(item)) {}
+};
+
+Guard bad() { Resource owner{}; return Guard(owner); }  //~ ERROR GTI-S2127
+int main() { auto guard = bad(); return 0; }

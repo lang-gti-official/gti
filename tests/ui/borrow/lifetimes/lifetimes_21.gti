@@ -1,0 +1,12 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Callback<R&<environment>(Args...), lifetime environment> {
+  R&<environment> value;
+  Callback(R&<environment> input) : value(input) {}
+};
+int read<lifetime a>(int&<a> input) {
+  Callback<int&<a>(), a> value{input};
+  return value.value;
+}
+int main() { int value = 7; return read(value) - 7; }

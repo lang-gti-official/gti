@@ -1,0 +1,10 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct View<lifetime a> {
+ int&<a> external; mut int local = 7;
+ View(int&<a> input) : external(input) {}
+ int& read() { return this.local; }
+ mut int& edit() mut { return this.local; }
+};
+int main() { int value = 3; mut View view{value}; view.edit() = 11; return view.read() - 11; }

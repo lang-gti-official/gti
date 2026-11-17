@@ -1,0 +1,6 @@
+// Invalid programs: mixed extents must not silently truncate or convert.
+import std.simd;
+int main() {
+  std::simd<float, 4> a{}; std::simd<float, 3> b{};
+  auto wrong = a + b; return 0;  //~ ERROR GTI-S2022
+}

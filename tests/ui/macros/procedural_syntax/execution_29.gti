@@ -1,0 +1,5 @@
+// Execution: expected procedural diagnostic before code generation.
+// --- main.gti
+import "library.gti"; int main(){return effect!({1});}  //~ ERROR GTI-S2124
+// --- library.gti
+export module library; import std.syntax; mut int state=0; export #macro(proc) std::syntax::expr effect(std::syntax::tokens input) {state += 1; return std::syntax::parse(std::syntax::slice(input, uint64_t(1), std::syntax::size(input)-uint64_t(1))); }

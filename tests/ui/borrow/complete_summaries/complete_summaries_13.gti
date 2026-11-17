@@ -1,0 +1,12 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+import std.panic;
+enum Selected { empty, value(int& owner) };
+int&<a> selected<lifetime a>(mut Selected<a> input, int& other) {
+  int ignored = other;
+  switch (std::move(input)) {
+  case Selected::value(owner): return owner;
+  case Selected::empty: std::panic("empty");
+  }
+}
+int main() { return 0; }

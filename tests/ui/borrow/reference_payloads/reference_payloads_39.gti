@@ -1,0 +1,22 @@
+// Reference payloads: rejected with GTI-S2017.
+import std.panic;
+enum Cell { empty, value(int& owner) };
+class View {
+  mut Cell cell;
+public:
+  View(int& owner) : cell(Cell::value(owner)) {}
+  View() : cell(Cell::empty) {}
+  int& read() {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+  int& take() && {
+    switch(this.cell) {
+    case Cell::value(auto& owner): return owner;
+    case Cell::empty: std::panic("empty");
+    }
+  }
+};
+int& escape() { int local = 42; mut auto view = View(local); return std::move(view).take(); } int main() { return 0; }  //~ ERROR GTI-S2017

@@ -1,0 +1,14 @@
+// Reading past an arena's logical size reports GTI-R0007.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0007
+//@ stderr-contains: index_out_of_bounds
+//@ stderr-contains: private_storage
+import std.memory;
+int main() {
+  mut auto created = std::try_make_arena<int32_t>(std::size_t(2));
+  if (!created) { return 1; }
+  mut std::arena<int32_t> values = std::move(created).value();
+  [[discard]] values.try_insert(int32_t(1));
+  return values.get(std::size_t(1));
+}

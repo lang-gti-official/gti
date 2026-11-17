@@ -14,25 +14,6 @@ import tempfile
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
 
 
-def verify_algorithm_partitions(tests):
-    """The breadth harness is one entry whose modes come from backend policy.
-
-    The former c++20/c++23 x O0/O1/O3, no-elide and sanitized partitions were
-    C++-backend configurations; tests/backend_modes.py now selects the modes
-    (LLVM at GTI_TEST_LLVM_LEVELS), so the entry must not pin any --mode itself.
-    """
-    partitions = [test for test in tests if any(
-        pathlib.Path(arg).name == "generic_algorithm_breadth_test.py"
-        for arg in test.get("command", []))]
-    if len(partitions) != 1 or partitions[0]["name"] != "generic_algorithm_breadth":
-        raise AssertionError("generic algorithm breadth must be one backend-policy entry")
-    command = partitions[0]["command"]
-    if "--mode" in command or any(arg.startswith("--fixture") for arg in command):
-        raise AssertionError("generic algorithm breadth must not pin modes or fixtures")
-    properties = {p["name"]: p["value"] for p in partitions[0].get("properties", [])}
-    if properties.get("TIMEOUT", 0) < 900 or not properties.get("RUN_SERIAL"):
-        raise AssertionError("generic algorithm breadth keeps its serial bound")
-
 def verify_corpus_walk(tests, repository):
     # One gti-corpus entry walks the example corpus in the daily slow tier; the
     # old per-binary corpus partitions are gone.
@@ -52,6 +33,39 @@ def verify_corpus_walk(tests, repository):
                          test["name"])]
     if stale:
         raise AssertionError(f"old corpus partitions are registered again: {stale}")
+
+def verify_gti_test_tiers(tests):
+    # The PR gate and per-commit full validation run gti_test_ui,
+    # gti_test_examples and gti_unit_tests; the daily slow tier runs
+    # tests/slow and the --isolate run (.github/workflows/ci.yml, slow.yml).
+    labels = {test["name"]: next((item["value"] for item in test.get("properties", [])
+                                  if item["name"] == "LABELS"), [])
+              for test in tests}
+    for name, slow in (("gti_test_ui", False), ("gti_test_examples", False),
+                       ("gti_unit_tests", False), ("gti_test_slow", True),
+                       ("gti_test_isolate", True)):
+        if name not in labels:
+            raise AssertionError(f"{name} is not registered")
+        if ("slow" in labels[name]) != slow:
+            raise AssertionError(f"{name} must {'' if slow else 'not '}be in the slow tier")
+    commands = {test["name"]: test.get("command", []) for test in tests}
+    if not any(pathlib.Path(arg).name == "slow" for arg in commands["gti_test_slow"]):
+        raise AssertionError("gti_test_slow must run tests/slow")
+    if "--isolate" not in commands["gti_test_isolate"]:
+        raise AssertionError("gti_test_isolate must run every case through the CLI")
+    # tests/ui runs as gti_test_ui_1..N, each `--shard i/N`, per commit; the
+    # gti_test_ui entry leaves tests/ui's cases to them.
+    shards = sorted(name for name in commands if re.match(r"^gti_test_ui_[0-9]+$", name))
+    count = len(shards)
+    if count == 0 or "--without-ui" not in commands["gti_test_ui"]:
+        raise AssertionError("tests/ui must run as gti_test_ui_<i> shards beside gti_test_ui --without-ui")
+    for index in range(1, count + 1):
+        name = f"gti_test_ui_{index}"
+        command = commands.get(name, [])
+        if f"{index}/{count}" not in command or "--shard" not in command:
+            raise AssertionError(f"{name} must run `--shard {index}/{count}`")
+        if "slow" in labels[name]:
+            raise AssertionError(f"{name} must not be in the slow tier")
 
 def inventory(build):
     # `ctest --show-only` writes LastTest.log. Query a copy of only the generated
@@ -125,8 +139,8 @@ def verify(tests, repository):
         raise AssertionError(f"unregistered shared matrix clients: {wrappers - found}")
     if not feedback or feedback == names:
         raise AssertionError("fast feedback must be a nonempty partial selection")
-    verify_algorithm_partitions(tests)
     verify_corpus_walk(tests, repository)
+    verify_gti_test_tiers(tests)
     return found
 
 
@@ -265,26 +279,6 @@ def main():
             pass
         else:
             raise AssertionError(f"accepted forged {kind} standalone harness inventory")
-    for mutation in ("omitted-partition", "pinned-mode", "fixture-filter", "short-timeout", "parallel"):
-        changed = copy.deepcopy(tests)
-        target = next(test for test in changed if test["name"] == "generic_algorithm_breadth")
-        if mutation == "omitted-partition":
-            changed.remove(target)
-        elif mutation == "pinned-mode":
-            target["command"].extend(["--mode", "llvm-O0"])
-        elif mutation == "fixture-filter":
-            target["command"].append("--fixture=algorithm_search")
-        elif mutation == "short-timeout":
-            target["properties"] = [p if p["name"] != "TIMEOUT" else {"name": "TIMEOUT", "value": 60}
-                                    for p in target["properties"]]
-        else:
-            target["properties"] = [p for p in target["properties"] if p["name"] != "RUN_SERIAL"]
-        try:
-            verify_algorithm_partitions(changed)
-        except AssertionError:
-            pass
-        else:
-            raise AssertionError(f"accepted forged breadth registration: {mutation}")
     verify_cold_ordering()
     print(f"Full census: {len(tests)} gates; {len(clients)} parallel clients accounted; "
           f"{standalone} standalone harnesses inventoried; "

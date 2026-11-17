@@ -1,0 +1,20 @@
+// Analyze: moving an immovable element remains rejected by the relocation contract.
+import std.memory;
+
+class Anchor {
+public:
+  Anchor() {}
+  Anchor(Anchor& other) = delete;
+  Anchor(Anchor&& other) = delete;
+};
+int main() {
+  std::allocator allocator{};
+  mut auto first_result = allocator.try_storage<Anchor>(std::size_t(1));
+  mut auto second_result = allocator.try_storage<Anchor>(std::size_t(1));
+  if (!first_result || !second_result) { return 1; }
+  mut auto first = std::move(first_result).value();
+  mut auto second = std::move(second_result).value();
+  first.emplace(std::size_t(0));
+  first.relocate_to(second, std::size_t(1));  //~ ERROR GTI-S2029
+  return 0;
+}

@@ -1,0 +1,6 @@
+// Initialization: the program is accepted.
+//@ check-pass
+constexpr int later = 8;
+int read<T>(int& value) { return value; }
+int first = read<int>(later);
+int main() { return first - 8; }

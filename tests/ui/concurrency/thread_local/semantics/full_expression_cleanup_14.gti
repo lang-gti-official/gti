@@ -1,0 +1,8 @@
+// Full expression cleanup: a callee's actual destructor effects are preserved even when only its caller holds the persistent loan.
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+void helper() { Cleanup local{}; } int main() { int& borrowed = value; helper(); return borrowed; }  //~ ERROR GTI-S2045

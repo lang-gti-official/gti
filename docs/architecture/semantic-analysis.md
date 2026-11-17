@@ -985,7 +985,7 @@ analyses compiler-trusted bodies after the application bodies, in reverse
 lexical order. The `order` invariant of the slow-tier `gti-corpus` walk
 (`tests/corpus/gti_corpus.cpp`) proves that it produces the same diagnostics
 as the complete pass over the examples and the standard-library tests;
-`body_analysis_order_fixtures` checks fixtures for both orders of the moved-return generic, global
+`tests/ui/declarations/body_analysis_order/` checks fixtures for both orders of the moved-return generic, global
 and `constexpr` visibility across a demand, and mutually recursive demands.
 `TrustedBodyAnalysis::Reachable` extends that infrastructure for artifact
 builds and editor snapshots/completion. Function lookups during body analysis
@@ -3445,7 +3445,7 @@ and body analysis validates the returned reference against that contract.
 The selected referent and protecting root remain distinct in MIR. Owner
 reset, movement and unlinking conflict with the retained root loan; arbitrary
 raw-pointer reachability does not establish an owner dependency. The
-`borrow_origin` owner-chain regressions and `owner_chain_runtime` example cover
+`tests/ui/borrow/origins/` owner-chain regressions and `owner_chain_runtime` example cover
 both shared and mutable recursion, invalidation and escaping-reference
 rejections, return-loan verifier mutations and native cleanup.
 Synthesized range dereference retains the selected physical range-storage loan

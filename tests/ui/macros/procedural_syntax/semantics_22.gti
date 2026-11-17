@@ -1,0 +1,5 @@
+// Semantics: expected procedural diagnostic before code generation.
+// --- main.gti
+import "library.gti"; int main(){return 0;}
+// --- library.gti
+export module library; import std.syntax; export #macro(proc) int html(int x) {}  //~ ERROR GTI-S2099 //~ ERROR GTI-S2031

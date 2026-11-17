@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Source atomic once arbitration and exact native initializer entry in eight modes."""
+"""Native once runtime unit checks; the GTI clients are tests/ui/concurrency/cthread."""
 
 import pathlib
 import os
@@ -10,21 +10,6 @@ import tempfile
 from cthread_mutex_test import run
 from sanitizer_support import thread_sanitizer_enabled
 from backend_modes import cpp_modes, cpp_variant_mode, is_cpp_mode, keep_cpp, native_modes, optimization_level
-
-
-def execute(binary, status, stdout):
-    environment = os.environ.copy()
-    environment.update(ASAN_OPTIONS="halt_on_error=1:abort_on_error=1",
-                       UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1",
-                       TSAN_OPTIONS="halt_on_error=1:abort_on_error=1")
-    result = subprocess.run([str(binary)], capture_output=True, text=True,
-                            timeout=120, env=environment)
-    if (result.returncode != status or result.stdout != stdout or
-            (status == 70 and ("GTI-R0002" not in result.stderr or
-                              "cthread_once_failure" not in result.stderr)) or
-            (status != 70 and result.stderr)):
-        raise AssertionError(f"{binary}: {result.returncode}\n"
-                             f"stdout={result.stdout!r}\nstderr={result.stderr!r}")
 
 
 def main():
@@ -39,15 +24,6 @@ def main():
     # when the policy selects the C++ backend.
     if thread_sanitizer_enabled() and cpp_modes():
         modes.append(cpp_variant_mode("tsan", native=["-fsanitize=thread", "-fno-omit-frame-pointer"]))
-    cases = [("immobile_fresh_construction", 0, ""),
-             ("cthread_once", 0, ""),
-             ("cthread_once_failure", 70, "once-cleaned\n"),
-             ("cthread_once_failure_managed", 70, "once-cleaned\n"),
-             ("cthread_once_failure_after_return", 70, "once-cleaned\nowner-cleaned\n"),
-             ("cthread_once_entry_rejected", 86, ""),
-             ("cthread_once_foreign_rejected", 86, ""),
-             ("cthread_once_null_flag", 86, ""),
-             ("cthread_once_null_initializer", 86, "")]
     with tempfile.TemporaryDirectory(prefix="gti-cthread-once-") as directory:
         output = pathlib.Path(directory)
         for mode, flags, sanitizers in modes:
@@ -62,21 +38,6 @@ def main():
             run([native])
             for terminal in ("throws", "incomplete", "null"):
                 run([native, terminal], 86)
-            for fixture, status, stdout in cases:
-                binary = output / f"{fixture}-{mode}"
-                run([compiler, fixtures / f"{fixture}.gti", "--progress=never", *flags, *keep_cpp(flags), "--execution-profile", "concurrent", "-o", binary,
-                     "--", *sanitizers, fixtures / "cthread_once_context.cpp"])
-                execute(binary, status, stdout)
-                if is_cpp_mode(flags):
-                    generated = binary.with_suffix(".gti.cpp").read_text()
-                markers = ["// GTI verified-MIR body:"]
-                if fixture not in ("cthread_once_null_initializer", "immobile_fresh_construction"):
-                    markers += ["gti_rt_once_enter_v1(&__gti_native_callback_",
-                                "gti_rt_once_leave_v1(&__gti_native_callback_"]
-                if is_cpp_mode(flags):
-                    for marker in markers:
-                        if marker not in generated:
-                            raise AssertionError(f"{fixture} lost {marker!r}")
             print(f"C-thread once: {mode} passed", flush=True)
 
 

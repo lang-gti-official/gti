@@ -1,0 +1,4 @@
+// std::midpoint rejects bool.
+//@ check-fail
+import std.numeric;
+int main() { std::midpoint<bool>(true, false); return 0; }  //~ ERROR GTI-S2029

@@ -1,0 +1,12 @@
+// A concrete atomic runs while the mutex family stays dormant beside it.
+//@ run-pass
+//@ execution-profile: concurrent
+import std.atomic;
+import std.mutex;
+
+std::atomic<int32_t> counter{0};
+
+int main() {
+  counter.store(2);
+  return counter.load() - 2;
+}

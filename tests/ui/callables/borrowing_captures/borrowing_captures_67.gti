@@ -1,0 +1,8 @@
+// Borrowing captures: exclusive-capture-alias is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int value = 0;
+  mut auto& first = value;
+  mut auto& second = value;
+  mut auto callback = [mut &first, mut &second]() -> int { return first + second; };  //~ ERROR GTI-S2017
+  return callback();
+}

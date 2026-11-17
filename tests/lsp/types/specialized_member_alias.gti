@@ -1,0 +1,21 @@
+// A member alias reached through specialized owners hovers with its
+// substituted type, navigates, is a type token and has two references; it
+// completes on a specialized owner. (From qualified_type_member_lsp_test.py.)
+//@ hover @use: value_type
+//@ hover @use: int32_t
+//@ definition @use: @decl
+//@ token @use: type
+//@ references @use: @decl @use
+//@ formatting: Outer<int>::inner::value_type
+// UTF-16 provenance: 😀
+struct Box<T> { using /*@decl*/value_type = T; };
+struct Outer<T> { using inner = Box<T>; };
+using Value = Outer<int>::inner::/*@use*/value_type;
+int main() { Value item = 7; return item - 7; }
+// --- step 2
+//@ completion @c: value_type
+// UTF-16 provenance: 😀
+struct Box<T> { using value_type = T; };
+struct Outer<T> { using inner = Box<T>; };
+using Value = Box<uint64_t>::/*@c*/val;  //~ ERROR GTI-S2030 //~ ERROR GTI-S2030
+int main() { Value item = 7; return item - 7; }

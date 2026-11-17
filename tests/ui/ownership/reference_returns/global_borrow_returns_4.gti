@@ -1,0 +1,13 @@
+// Global borrow returns: a global borrow accessor should reject differing return roots.
+class Values {
+public:
+  static mut int left = 1;
+  static mut int right = 2;
+  static mut int& pick(bool choose) {  //~ ERROR GTI-S2017 requires either one exact global/static storage origin
+    if (choose) { return Values::left; }
+    return Values::right;
+  }
+public:
+  Values() = default;
+};
+int main() { return 0; }

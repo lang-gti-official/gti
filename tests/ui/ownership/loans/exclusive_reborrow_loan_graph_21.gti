@@ -1,0 +1,24 @@
+// Exclusive reborrow loan graph: a transient borrowed receiver should conflict with overlapping argument mutation.
+class Inner {
+public:
+  mut int value = 1;
+  int inspect(int changed) { return this.value + changed; }
+public:
+  Inner() = default;
+};
+class Outer {
+public:
+  mut Inner inner = Inner();
+  mut int count = 1;
+  Inner& get() { return this.inner; }
+  int bump() mut {
+    this.count += 1;
+    return this.count;
+  }
+public:
+  Outer() = default;
+};
+int run(mut Outer& parent) {
+  return parent.get().inspect(parent.bump());  //~ ERROR GTI-S2017 call operand mutates storage borrowed
+}
+int main() { return 0; }

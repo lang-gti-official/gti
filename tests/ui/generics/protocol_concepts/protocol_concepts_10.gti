@@ -1,0 +1,16 @@
+// Protocol concepts: rejected with GTI-S2012, GTI-S2029.
+concept selecting<T> {
+  typename element;
+  element<a> choose<lifetime a>(element<a> source, element other);
+};
+struct Marker<T> { int tag; };
+for <T> concept selecting<Marker<T>> {
+  using element = T;
+  T choose(T source, T other) { return source; }
+};
+
+int evaluate<T>(T marker) requires selecting<T> { return 0; }
+int main() {
+  Marker<int&> marker{0};  //~ ERROR GTI-S2012
+  return evaluate(marker);  //~ ERROR GTI-S2029
+}

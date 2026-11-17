@@ -1,0 +1,19 @@
+// Recursive ownerless returns: a recursive text result is ownerless when its other returns are, and may be stored or relayed as such.
+//@ check-pass
+struct Label {
+  std::string_view text;
+  int line;
+};
+std::string_view loop(std::string_view s, int n) {
+  if (n == 0) {
+    return "done";
+  }
+  return loop(s, n - 1);
+}
+std::string_view id(std::string_view s) { return s; }
+Label make(std::string_view s) {
+  Label label{.text = loop(s, 2), .line = 1};
+  return label;
+}
+std::string_view twice() { return id(id("lit")); }
+int main() { return make("x").text.size() + twice().size() == 7 ? 0 : 1; }

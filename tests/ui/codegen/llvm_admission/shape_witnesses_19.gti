@@ -1,0 +1,6 @@
+// Shape witnesses: caller permission cannot admit an unsupported source callee body.
+//@ check-pass
+class Owner { public: virtual int read() { return 0; }  public: Owner() = default; };
+class Derived : public Owner { public: Derived() = default; };
+unsafe int create(mut Owner& value, Owner& other) { value = other; return 0; }
+int main() { mut Derived first{}; Derived second{}; unsafe { return create(first, second); } }

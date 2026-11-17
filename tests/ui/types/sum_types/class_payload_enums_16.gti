@@ -1,0 +1,17 @@
+// Class payload enums: an owning enum array element cannot be moved twice.
+import std.memory;
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+
+int main() {
+  mut holder values[2] = {holder::one(resource()), holder::none};
+  auto first = std::move(values[0]);
+  auto second = std::move(values[0]);  //~ ERROR GTI-S2018
+  return 0;
+}

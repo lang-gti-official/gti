@@ -1,0 +1,12 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+//@ slow
+import std.string;
+import std.format;
+
+int main() {
+  std::string s = "hello";
+  std::println("{}", s);
+  std::println("{} {}", s, s);
+  return 0;
+}

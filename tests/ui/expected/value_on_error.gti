@@ -1,0 +1,13 @@
+// Reading the value of an error reports GTI-R0009 at the access.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: value-on-error.gti:7: runtime error[GTI-R0009]: invalid_expected_access in value_on_error
+// --- value-on-error.gti
+expected<int32_t, int32_t> make_result() {
+  return unexpected(int32_t(7));
+}
+
+int main() {
+  mut expected<int32_t, int32_t> result = make_result();  //~ WARN GTI-S2096
+  return result.value();
+}

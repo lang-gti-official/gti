@@ -1,0 +1,19 @@
+// Confined callable parameters: concrete callable instances should reject inexact arguments and non-void operations before backend lowering.
+void invoke<Operation>(Operation operation) { operation(1); }  //~ ERROR GTI-S2003 //~ ERROR GTI-S2046 //~ ERROR GTI-S2046
+
+class MutableOnly {
+public:
+  void operator()(int value) mut {}
+public:
+  MutableOnly() = default;
+};
+
+int main() {
+  auto wrong_argument = [](bool value) -> void {};
+  invoke(wrong_argument);
+  auto wrong_return = [](int value) -> int { return value; };
+  invoke(wrong_return);
+  MutableOnly mutable_only = MutableOnly();
+  invoke(mutable_only);
+  return 0;
+}

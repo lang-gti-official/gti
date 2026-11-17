@@ -1,0 +1,2 @@
+// Bounded arrays: read only uses valid existing syntax.
+void change(int[2]& x) { x[0] = 3; }  //~ ERROR GTI-S2002

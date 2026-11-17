@@ -1,0 +1,12 @@
+// Concrete query diagnostic ownership: a recursive same-key reflection query supplies facts while its outer provider reports the failed assertion exactly once.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+import std.meta;
+class Node<T> {
+  static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(2),  //~ ERROR GTI-S2079
+                "outer reflection assertion");
+  T value;
+public:
+  Node(T value) : value(value) {}
+};
+int main() { Node<int32_t> value{1}; return 0; }
