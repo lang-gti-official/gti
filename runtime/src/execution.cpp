@@ -11,6 +11,13 @@ extern "C" void gti_rt_thread_locals_drain_v2(
   gti_runtime_detail::drain_thread_local_cleanup(primary, primary_artifact);
 }
 
+extern "C" uint32_t gti_rt_thread_locals_drain_checked_v3(
+    gti_failure_record_v2 *failure,
+    const gti_failure_artifact_descriptor_v1 **artifact) {
+  return gti_runtime_detail::drain_thread_local_cleanup_checked(failure,
+                                                                artifact);
+}
+
 extern "C" uint32_t gti_rt_thread_locals_attached_v1(void) {
   return gti_runtime_detail::thread_local_storage_lifetime_active();
 }

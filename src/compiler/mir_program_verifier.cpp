@@ -12089,15 +12089,18 @@ verifyMirHostedStartup(const MirProgram &program) {
     return normalBlock;
   };
 
-  const auto takeThreadLocalDrain = [&](MirBlockId block) {
+  const auto takeThreadLocalDrain = [&](MirBlockId block, bool unwinding) {
     if (program.threadLocalStorage().empty())
-      return;
+      return MirInstructionId{0};
+    const bool mayRaise = cleansProgramStorage && !unwinding;
     const TakenOperation drain =
         take(MirHostedStartupOperationKind::DrainThreadLocals,
-             MirHostedStartupFailureBehavior::None, block, true, false, false,
-             false);
+             failureBehavior(mayRaise), block, true, false, false, false);
     exactInstruction(drain, {.kind = MirInstructionKind::DrainThreadLocals,
+                             .definedFailure = propagation(
+                                 FailurePropagationKind::Destructor, mayRaise),
                              .info = generatedInfo(SemanticType::Void)});
+    return drain.expected.instruction;
   };
   const auto takeCThreadBoundary = [&](MirBlockId block, bool begin) {
     const auto targetId = begin ? plan.cThreadBegin : plan.cThreadEnd;
@@ -12152,7 +12155,7 @@ verifyMirHostedStartup(const MirProgram &program) {
     return operation.expected.instruction;
   };
   takeNativeFailureTail = [&](MirBlockId block) {
-    takeThreadLocalDrain(block);
+    takeThreadLocalDrain(block, true);
     if (cThreadStarted)
       takeCThreadBoundary(block, false);
     takeProgramCleanup(block, true);
@@ -12208,7 +12211,9 @@ verifyMirHostedStartup(const MirProgram &program) {
       currentBlock =
           takeFailureRoute(currentBlock, callEntry.expected.instruction, {});
     }
-    takeThreadLocalDrain(currentBlock);
+    const auto tlsDrain = takeThreadLocalDrain(currentBlock, false);
+    if (tlsDrain && cleansProgramStorage)
+      currentBlock = takeFailureRoute(currentBlock, tlsDrain, {});
     takeCThreadBoundary(currentBlock, false);
     cThreadStarted = false;
     const auto programCleanup = takeProgramCleanup(currentBlock, false);
@@ -12764,7 +12769,9 @@ verifyMirHostedStartup(const MirProgram &program) {
       finalBlock =
           takeFailureRoute(finalBlock, callEntry.expected.instruction, {});
     }
-    takeThreadLocalDrain(finalBlock);
+    const auto tlsDrain = takeThreadLocalDrain(finalBlock, false);
+    if (tlsDrain && cleansProgramStorage)
+      finalBlock = takeFailureRoute(finalBlock, tlsDrain, {});
     takeCThreadBoundary(finalBlock, false);
     cThreadStarted = false;
     const auto programCleanup = takeProgramCleanup(finalBlock, false);

@@ -121,3 +121,49 @@ GTI_UNIT_TEST(runtime_execution_boundary) {
              ? 0
              : 3;
 }
+
+// Checked hosted TLS draining returns the first failure after completing
+// cleanup.
+GTI_UNIT_TEST(runtime_execution_checked_drain) {
+  bool valid = false;
+  std::thread worker([&] {
+    gti_failure_artifact_descriptor_v1 artifact{};
+    PrimaryFacts facts;
+    facts.artifact = &artifact;
+    facts.expected.abi_version = GTI_FAILURE_ABI_VERSION_V2;
+    facts.expected.code = GTI_FAILURE_CODE_PANIC_V2;
+    facts.expected.detail = GTI_FAILURE_DETAIL_EXPLICIT_PANIC_V2;
+    facts.expected.site_index = 42;
+    PrimaryNode first{&facts, 1};
+    gti_thread_local_cleanup_entry_v1 a{
+        .storage = &first, .cleanup = explicitPrimary, .artifact = &artifact};
+    gti_thread_local_cleanup_entry_v1 b{
+        .storage = &facts,
+        .cleanup =
+            [](void *storage, gti_failure_record_v2 *failure,
+               const gti_failure_record_v2 *primary,
+               const gti_failure_artifact_descriptor_v1 *origin) {
+              auto &state = *static_cast<PrimaryFacts *>(storage);
+              state.valid &= !primary && !origin;
+              state.order = 2;
+              *failure = state.expected;
+              return false;
+            },
+        .artifact = &artifact};
+    gti_rt_thread_locals_begin_v1();
+    gti_rt_thread_locals_register_v1(&a);
+    gti_rt_thread_locals_register_v1(&b);
+    gti_failure_record_v2 failure{};
+    const gti_failure_artifact_descriptor_v1 *origin = nullptr;
+    valid = gti_rt_thread_locals_drain_checked_v3(&failure, &origin) == 0 &&
+            facts.valid && facts.order == 21 && origin == &artifact &&
+            std::memcmp(&failure, &facts.expected, sizeof(failure)) == 0 &&
+            !a.registered && !b.registered &&
+            !gti_rt_thread_locals_attached_v1();
+    valid &= gti_rt_thread_locals_drain_checked_v3(&failure, &origin) == 1 &&
+             origin == &artifact &&
+             std::memcmp(&failure, &facts.expected, sizeof(failure)) == 0;
+  });
+  worker.join();
+  return valid ? 0 : 1;
+}

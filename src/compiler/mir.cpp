@@ -8784,7 +8784,8 @@ validFailureInstructionShape(const MirInstruction &instruction) {
            instruction.bodyTarget.has_value();
   case FailurePropagationKind::Destructor:
     return instruction.kind == MirInstructionKind::Drop ||
-           (instruction.kind == MirInstructionKind::CleanupProgramStorage &&
+           ((instruction.kind == MirInstructionKind::CleanupProgramStorage ||
+             instruction.kind == MirInstructionKind::DrainThreadLocals) &&
             instruction.hostedStartupOperation != 0) ||
            (instruction.kind == MirInstructionKind::CleanupBeforeAssign &&
             instruction.replacementCleanup) ||
@@ -9657,7 +9658,8 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
            (producer->kind == MirInstructionKind::CallBody &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::BodyCall) ||
-           (producer->kind == MirInstructionKind::CleanupProgramStorage &&
+           ((producer->kind == MirInstructionKind::CleanupProgramStorage ||
+             producer->kind == MirInstructionKind::DrainThreadLocals) &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::Destructor) ||
            (block.activeFailure != 0 &&
@@ -13311,6 +13313,7 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
                   FailurePropagationKind::BodyCall ||
               instruction.definedFailure.empty());
     case MirInstructionKind::CleanupProgramStorage:
+    case MirInstructionKind::DrainThreadLocals:
       return body.kind == MirBodyKind::HostedStartup && noOperation &&
              !hasResult && !instruction.destination && !instruction.receiver &&
              instruction.operands.empty() &&
@@ -13324,7 +13327,6 @@ verifyMirBodyImpl(const MirBody &body, std::size_t owner,
              instruction.lifecycle.empty();
     case MirInstructionKind::BeginThreadLocals:
     case MirInstructionKind::RetireProgramStorage:
-    case MirInstructionKind::DrainThreadLocals:
       return body.kind == MirBodyKind::HostedStartup && noOperation &&
              !hasResult && !instruction.destination && !instruction.receiver &&
              instruction.operands.empty() &&
