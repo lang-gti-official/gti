@@ -1,5 +1,10 @@
 // Standard concat: concat expands to static literal storage under both trusted-body policies.
 //@ check-pass
+//@ snapshot: mir
+// Generic discovery (the lambda passed to invoke) never publishes the
+// procedural macro body as a runtime function.
+// CHECK: function main
+// CHECK-NOT: function {{.*}}html
 // --- main.gti
 
 import std.string;
