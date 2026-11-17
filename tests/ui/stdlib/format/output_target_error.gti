@@ -15,4 +15,5 @@ int main() {
 }
 // --- helper.c
 #include <unistd.h>
-int close_stderr(void) { return close(2); }
+#include <stdio.h>
+int close_stderr(void) { setvbuf(stderr, NULL, _IONBF, 0); return close(2); }
