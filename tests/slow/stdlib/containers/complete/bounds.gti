@@ -1,3 +1,26 @@
+// Out-of-range access and cursor misuse on complete containers fail with their report after cleanup.
+//@ slow
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 99
+//@ revisions: b0 b1 b2 b3 b4 b5 b6 b7 b8
+//@[b0] stderr-contains: runtime error[GTI-R0007]
+//@[b1] args: bounds
+//@[b1] stderr-contains: runtime error[GTI-R0007]
+//@[b2] args: bounds bounds
+//@[b2] stderr-contains: runtime error[GTI-R0007]
+//@[b3] args: bounds bounds bounds
+//@[b3] stderr-contains: runtime error[GTI-R0007]
+//@[b4] args: bounds bounds bounds bounds
+//@[b4] stderr-contains: runtime error[GTI-R0007]
+//@[b5] args: bounds bounds bounds bounds bounds
+//@[b5] stderr-contains: runtime error[GTI-R0016]
+//@[b6] args: bounds bounds bounds bounds bounds bounds
+//@[b6] stderr-contains: runtime error[GTI-R0016]
+//@[b7] args: bounds bounds bounds bounds bounds bounds bounds
+//@[b7] stderr-contains: runtime error[GTI-R0007]
+//@[b8] args: bounds bounds bounds bounds bounds bounds bounds bounds
+//@[b8] stderr-contains: runtime error[GTI-R0007]
 import std.list;
 import std.deque;
 import std.queue;

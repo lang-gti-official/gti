@@ -1,3 +1,15 @@
+// Complete containers destroy every element exactly once, also when an element constructor fails.
+//@ slow
+//@ run-pass
+//@ revisions: ok fail fail_deque
+//@[fail] args: fail
+//@[fail_deque] args: fail deque
+//@[fail] run-fail
+//@[fail] exit-code: 70
+//@[fail] stderr-contains: runtime error[GTI-R0002]: division_by_zero
+//@[fail_deque] run-fail
+//@[fail_deque] exit-code: 70
+//@[fail_deque] stderr-contains: runtime error[GTI-R0002]: division_by_zero
 import std.list;
 import std.deque;
 import std.queue;

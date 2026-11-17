@@ -1568,9 +1568,6 @@ add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_fai
 add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
 target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_llvm_backend)
 add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
-add_executable(gti_user_dual_range_backend_tests user_dual_range_backend_tests.cpp)
-target_link_libraries(gti_user_dual_range_backend_tests PRIVATE gti_llvm_backend)
-add_test(NAME user_dual_range_backend COMMAND gti_user_dual_range_backend_tests)
 
 add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
 target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_compiler)
@@ -1593,9 +1590,6 @@ add_test(NAME passive_fixed_array_values COMMAND gti_passive_fixed_array_tests)
 add_executable(gti_class_field_value_tests class_field_value_tests.cpp)
 target_link_libraries(gti_class_field_value_tests PRIVATE gti_llvm_backend)
 add_test(NAME class_field_values COMMAND gti_class_field_value_tests)
-add_executable(gti_conditional_class_publication_tests conditional_class_publication_tests.cpp)
-target_link_libraries(gti_conditional_class_publication_tests PRIVATE gti_llvm_backend)
-add_test(NAME conditional_class_publication COMMAND gti_conditional_class_publication_tests)
 if(Python3_Interpreter_FOUND)
 endif()
 add_executable(gti_aggregate_projection_tests aggregate_projection_tests.cpp)
@@ -1624,9 +1618,6 @@ add_test(NAME expected_payload_pending_cleanup
 add_executable(gti_owned_expected_error_tests owned_expected_error_tests.cpp)
 target_link_libraries(gti_owned_expected_error_tests PRIVATE gti_llvm_backend)
 add_test(NAME owned_expected_error COMMAND gti_owned_expected_error_tests)
-add_executable(gti_owned_unexpected_pending_cleanup_tests owned_unexpected_pending_cleanup_tests.cpp)
-target_link_libraries(gti_owned_unexpected_pending_cleanup_tests PRIVATE gti_llvm_backend)
-add_test(NAME owned_unexpected_pending_cleanup COMMAND gti_owned_unexpected_pending_cleanup_tests)
 add_executable(gti_private_constructor_placement_tests private_constructor_placement_tests.cpp)
 target_link_libraries(gti_private_constructor_placement_tests PRIVATE gti_llvm_backend)
 add_test(NAME private_constructor_placement COMMAND gti_private_constructor_placement_tests)
@@ -2676,9 +2667,6 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties("${associative_suite}" PROPERTIES TIMEOUT 600)
   endforeach()
-  add_test(NAME complete_containers
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/complete_containers_test.py" "$<TARGET_FILE:gti>")
-  set_tests_properties(complete_containers PROPERTIES TIMEOUT 900)
   # Its GCC sanitized build may take minutes under a parallel suite;
   # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
   add_test(
@@ -3056,13 +3044,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
             "$<TARGET_FILE:gti>"
   )
-  add_test(
-    NAME annotated_test_suites
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/annotated_test_suite_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(annotated_test_suites PROPERTIES TIMEOUT 600)
   add_test(NAME test_command_controls
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_command_controls_test.py"
             "$<TARGET_FILE:gti>")

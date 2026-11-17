@@ -1,0 +1,12 @@
+import std.testing;
+import std.string;
+extern "C" { int raise(int signal); }
+namespace sample {
+  struct Guard {
+    ~Guard() { std::println("guard-cleaned"); }
+   public: Guard() = default; };
+  [[test]] void a_success() { std::testing::check(true); }
+  [[test]] void b_panic() { Guard guard{}; std::testing::check(false, "isolated panic"); }
+  [[test]] void c_signal() { unsafe { [[discard]] raise(9); } }
+  [[test]] void d_after_panic() { std::println("after-panic-ran"); }
+}
