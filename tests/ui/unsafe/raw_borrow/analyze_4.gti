@@ -1,0 +1,8 @@
+// Analyze: explicit source contract selects one of multiple reference inputs.
+//@ check-pass
+int&<a> select<lifetime a>(int&<a> left, int& right) { return left; }
+int main() {
+  int first = 42;
+  int second = 7;
+  return select(first, second) - 42;
+}

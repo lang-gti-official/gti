@@ -1,0 +1,18 @@
+// Exact whole object virtual effects: known virtual effects preserve an unrelated persistent loan.
+//@ check-pass
+//@ require-function-definitions
+mut int guarded = 1; mut int other = 2;
+class Base {
+public:
+  virtual int read() { return 1; }
+public:
+  Base() = default;
+};
+class Reader : public Base {
+public:
+  int read() override { return 2; }
+public:
+  Reader() = default;
+};
+class Leaf : public Reader { public: Leaf() = default; };
+Reader reader{}; int main() { int& held = guarded; return reader.read() + held; }

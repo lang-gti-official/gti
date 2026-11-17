@@ -1,0 +1,36 @@
+// Native identity: the program is accepted.
+//@ check-pass
+class Celsius {
+  int degrees;
+public:
+  implicit Celsius(int value) : degrees(value) {}
+  int read() { return this.degrees; }
+};
+struct Pair {
+  int first = 0;
+  int second = 0;
+  Pair(int left, int right) : first(left), second(right) {}
+public:
+  Pair() = default;
+};
+struct Sum {
+  int total;
+  implicit Sum(Pair& pair, int bias = 1)
+      : total(pair.first + pair.second + bias) {}
+};
+class Reading {
+  Celsius current = 20;
+  Celsius minimum;
+public:
+  Reading(int low) : minimum(low) {}
+  int span() { return this.current.read() - this.minimum.read(); }
+};
+Celsius freezing = 0;
+int main() {
+  Celsius warm = 21;
+  Pair pair{3, 4};
+  Sum sum = pair;
+  Reading reading{5};
+  int implicit = 44;
+  return warm.read() + freezing.read() + reading.span() + sum.total - implicit;
+}

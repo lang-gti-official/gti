@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: second invocation is rejected.
+import std.functional;
+import std.memory;
+int main() { std::function<int() &&> callback{[]() -> int { return 3; }}; int first = std::move(callback)(); int second = std::move(callback)(); return 0; }  //~ ERROR GTI-S2018

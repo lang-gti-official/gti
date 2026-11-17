@@ -1,0 +1,5 @@
+// Lifetime and effects: TLS first-use initializer effects cannot hide a conflicting storage access.
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+int initialize() { modify(); return 4; } thread_local mut int other = initialize(); int main() { int& borrowed = value; int copied = other; return borrowed + copied; }  //~ ERROR GTI-S2045

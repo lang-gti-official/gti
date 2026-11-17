@@ -1,0 +1,3 @@
+// Diagnostic: invalid result macro must stop before emission.
+#macro int bad(expected<int, int> value) { return ?value; }  //~ ERROR GTI-S2099
+int main() { return 0; }

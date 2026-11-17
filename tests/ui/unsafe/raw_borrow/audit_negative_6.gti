@@ -1,0 +1,12 @@
+// Audit negative: known unrelated witness is rejected.
+//@ raw-pointer-audit: strict
+import std.memory;
+int main() {
+  int owner = 42;
+  int unrelated = 7;
+  unsafe {
+    const int* address = &owner;
+    int& value = std::assume_ref(address, unrelated);  //~ ERROR GTI-S2101
+    return value;
+  }
+}

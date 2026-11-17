@@ -1,0 +1,5 @@
+// Lifetimes: rejected with GTI-S2127.
+struct Cell<T> { T* value = nullptr; };
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }  //~ ERROR GTI-S2127
+int main() { return 0; }

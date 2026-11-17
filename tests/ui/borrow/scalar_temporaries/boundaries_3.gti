@@ -1,0 +1,2 @@
+// Boundaries: reference result cannot retain temporary.
+int& relay(int& value) { return value; } int main() { return relay(42); }  //~ ERROR GTI-S2017

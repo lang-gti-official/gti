@@ -1,0 +1,14 @@
+// General requires: an owned receiver filter cannot weaken borrowed movement checks diagnostic.
+concept owns_invocation<F, A, R> = requires(F function, A& argument) {
+  { std::move(function)(argument) } -> R;
+};
+int borrowed<F>(F& function, int& argument)
+    requires owns_invocation<F, int, int> {
+  return std::move(function)(argument);  //~ ERROR GTI-S2018
+}
+struct Once { int operator()(int& value) && { return value; }  public: Once() = default; };
+int main() {
+  Once function{};
+  int argument = 3;
+  return borrowed(function, argument);
+}

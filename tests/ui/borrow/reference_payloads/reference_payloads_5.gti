@@ -1,0 +1,11 @@
+// Reference payloads: rejected with GTI-S2017.
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(Point& value) };
+int main() {
+  mut Point p = Point(1, 2);
+  Reading r = Reading::item(p);
+  switch (r) {
+  case Reading::item(value): { p.y = 9; return value.y; }  //~ ERROR GTI-S2017
+  case Reading::empty: return 0;
+  }
+}

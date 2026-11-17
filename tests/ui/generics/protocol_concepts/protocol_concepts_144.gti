@@ -1,0 +1,5 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept C<P> { typename result<T>; };
+struct Policy {};
+for concept C<Policy> { using result<T> = T; };
+for concept C<Policy> { using result<U> = U; };  //~ ERROR GTI-S2123

@@ -1,0 +1,4 @@
+// Diagnostics: the failure is one error, without consequences.
+int value = 7; int& map(int input) { return value; }
+expected<int, int> read() { return 7; }
+int main() { [[discard]] read().transform(map); return 0; }  //~ ERROR GTI-S2022

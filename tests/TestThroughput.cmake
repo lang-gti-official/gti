@@ -37,7 +37,6 @@ endif()
 set(gti_long_gate_timeouts
   failure_metadata 2400
   operator_relay_pipeline 2400
-  reflection_semantics 1800
   view_fields 900)
 list(LENGTH gti_long_gate_timeouts gti_long_timeout_count)
 math(EXPR gti_long_timeout_last "${gti_long_timeout_count} - 1")
@@ -75,11 +74,10 @@ endforeach()
 
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
-    callable_return_type_runtime
     consuming_range_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
     owner_chain_runtime borrowing_composition
-    complete_containers composable_io_runtime
+    complete_containers
     constructor_null_native_runtime
     contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication
@@ -93,15 +91,12 @@ if(Python3_Interpreter_FOUND)
     lambda_pack_invocation_runtime
     nested_borrow_fields
     programmable_allocators_runtime
-    shared_accessor_range_runtime
     scoped_parallel_threads
     source_prefix_owner_runtime source_resource_prefix_runtime
     source_text_address_runtime source_prefix_string_runtime
-    many_fallible_scope_guards_runtime
-    optimizer_raw_context_runtime optimizer_object_context_runtime
+    optimizer_object_context_runtime
     cleanup_context_scope_runtime
     unordered_map
-    vector_empty_constructor_runtime
     stdlib_modules
     stdlib_surface
   )
@@ -213,12 +208,10 @@ set_property(TEST ${gti_throughput_tests} APPEND PROPERTY LABELS "coverage-full"
 set(gti_fast_feedback_tests
   compiler_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
-  raw_pointer_pipeline raw_borrow_contract raw_access_contract
-  mir_full_expression mir_program_initialization mir_hosted_startup
+  mir_program_initialization
   optimizer_foundation optimizer_analyses optimizer_conformance
-  layout_query_pipeline native_record_pipeline bindgen_pipeline
-  source_text_pipeline source_unit_services optional_compiler_contract
-  storage_adoption_contract resource_protocol_contract ephemeral_carrier_mir
+  native_record_pipeline bindgen_pipeline
+  source_text_pipeline source_unit_services
   parser_conditional_recovery
 )
 foreach(suite IN LISTS gti_fast_feedback_tests)
@@ -247,7 +240,6 @@ set(gti_slow_test_patterns
   "^gti_corpus$"
   # The corpus binaries' own fixtures (40-50 s of std-importing analyses
   # each) until they move to tests/ui.
-  "^body_analysis_order_fixtures$"
   "^instance_reuse_fixtures$"
   "^trusted_body_analysis_fixtures$"
   "^mir_cutover_corpus_oracle$"

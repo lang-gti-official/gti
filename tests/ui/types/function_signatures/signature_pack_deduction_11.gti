@@ -1,0 +1,5 @@
+// Signature pack deduction: signature pack deduction must not introduce specialization ranking between exact overloads.
+class Tag<S> { public: Tag() = default; };
+int pick<S>(Tag<S>& tag) { return 1; }
+int pick<R, Args...>(Tag<R(Args...)>& tag) { return 2; }
+int main() { Tag<void(int)> tag{}; return pick(tag); }  //~ ERROR GTI-S2013

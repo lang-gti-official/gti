@@ -1,0 +1,12 @@
+// Derived reference arguments: an unrelated class or read-only derived object for a function item's base reference fails in semantics, not in MIR.
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + 1; }
+};
+class Unrelated { public: Unrelated() {} };
+int inspect(Operation& selected, int value) { return selected.run(value); }
+int update(mut Operation& selected, int value) { return selected.run(value); }
+int invoke<Function>(Function function) { Unrelated other{}; return function(other, 40); }
+int main() { return invoke(inspect); }  //~ ERROR GTI-S2090

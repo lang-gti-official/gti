@@ -1,0 +1,12 @@
+// Value or contract: value_or diagnoses its source API contract at the call, with the copy-construction requirement and no misleading fix.
+import std.optional;
+struct Resource {
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+};
+int main() {
+  std::optional<Resource> value{};
+  auto result = value.value_or(Resource());  //~ ERROR GTI-S2029
+  return 0;
+}

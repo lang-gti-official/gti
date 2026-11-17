@@ -1,0 +1,9 @@
+// Integral enum references: integral enum payload fields have the same address witness.
+//@ build-pass
+//@ slow
+enum class E { first, second };
+enum Message { item(E value) };
+E& read(Message& message) {
+  switch (message) { case Message::item(auto& value): return value; }
+}
+int main() { Message message = Message::item(E::first); return read(message) == E::first ? 0 : 1; }

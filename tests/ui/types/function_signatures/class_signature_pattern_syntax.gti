@@ -1,0 +1,2 @@
+// Class signature pattern syntax: a nonsignature must not enter a signature-pattern class.
+class Callback<R(Args...)> { public: Callback() = default; }; Callback<int> bad{};  //~ ERROR GTI-S2023

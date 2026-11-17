@@ -1,0 +1,15 @@
+// Ordinary bindings retain physical storage types: ordinary reference aliases and explicit owning copies remain valid.
+//@ check-pass
+class Sample {
+public:
+  int32_t member = 3;
+public:
+  Sample() = default;
+};
+Sample& identity(Sample& input) { return input; }
+int32_t read(Sample& input) {
+  Sample& alias = identity(input);
+  Sample copy = alias;
+  return copy.member;
+}
+int main() { Sample sample{}; return read(sample); }

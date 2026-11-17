@@ -1,0 +1,39 @@
+// Numeric suffixes and digit separators are part of one number token, a raw
+// string (including each continuation line) is a string token in which `//`
+// and `/*` start no comment, formatting keeps all of them verbatim, and a
+// misplaced separator or an unterminated raw string is a lexical error.
+// (block_comment_lsp_test.py lexical-literal checks; token lengths are not
+// asserted, so markers sit at the end of each literal; the formatting
+// expectations end in a newline so the directive lines cannot match them.)
+//@ token @big: number
+//@ token @big_suffix: number
+//@ token @ratio_suffix: number
+//@ token @raw: string
+//@ token @raw_line: string
+//@ token @raw_block: string
+//@ token @raw_end: string
+//@ token @continuation: string
+//@ token @continuation_end: string
+//@ formatting: "  uint64_t big = 1_000_000u64;\n"
+//@ formatting: "  float ratio = 2.5f32;\n"
+//@ formatting: "pattern = R\"re(\\d+ \"x\" // kept)re\";\n"
+//@ formatting: "R\"(first\nsecond /* kept */)\";\n"
+int main() {
+  uint64_t big = /*^big*/1_000_000u6/*^big_suffix*/4;
+  float ratio = 2.5f3/*^ratio_suffix*/2;
+  std::string_view pattern = /*^raw*/R"re(\d+ "x" /*^raw_line*/// kept)r/*^raw_end*/e";
+  std::string_view block = R"(first
+/*^continuation*/second /*^raw_block*//* kept */)/*^continuation_end*/";
+  int32_t R = 3;
+  return R - 3;
+}
+// --- step 2
+int main() {
+  uint64_t bad = 0x_ff;  //~ ERROR GTI-L0007
+  return 0;
+}
+// --- step 3
+int main() {
+  auto text = R"x(open  //~ ERROR GTI-L0004
+  return 0;
+}

@@ -1,0 +1,22 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+class Token {
+  int value;
+public:
+  Token(int value) : value(value) {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() {}
+  int get() { return this.value; }
+};
+int take(Token token = Token(3)) { return token.get(); }
+class Base {
+  int value;
+public:
+  Base(int value = take()) : value(value) {}
+};
+class Explicit : public Base {
+public:
+  Explicit() : Base() {}
+};
+int main() { Explicit first{}; return 0; }

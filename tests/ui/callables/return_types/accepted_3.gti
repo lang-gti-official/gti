@@ -1,0 +1,15 @@
+// Accepted: signature results preserve scalar, void and reference metadata.
+//@ check-pass
+import std.meta;
+using Number = std::meta::callable_return_type<int(int)>;
+using Empty = std::meta::callable_return_type<void()>;
+using MutableAction = std::meta::callable_return_type<void() mut>;
+Number identity(Number value) { return value; }
+Empty nothing() { return; }
+std::meta::callable_return_type<int&(int&), a> shared<lifetime a>(int&<a> value) { return value; }
+int main() {
+  int value = 0;
+  int& result = shared(value);
+  nothing();
+  return identity(result);
+}

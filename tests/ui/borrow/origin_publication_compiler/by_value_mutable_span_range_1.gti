@@ -1,0 +1,14 @@
+// By value mutable span range: a mutable range over a by-value mutable_span formal is accepted.
+//@ check-pass
+import std.span;
+import std.vector;
+
+void twice(mut std::mutable_span<int> elements) {
+  for (mut auto& value : elements) { value = value * 2; }
+  for (mut auto& value : elements) { value = value + 1; }
+}
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2, 3});
+  twice(values.as_mutable_span());
+  return values[std::size_t(2)] - 7;
+}

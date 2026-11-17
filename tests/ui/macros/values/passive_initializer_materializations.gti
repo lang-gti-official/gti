@@ -1,0 +1,12 @@
+// Passive initializer materializations: passive field and array materializations retain exact lifetime transfers.
+//@ check-pass
+struct Leaf { int number = 7;  public: Leaf() = default; };
+class Record {
+  Leaf object = Leaf();
+  Leaf elements[2] = {};
+public:
+  int read() { return this.object.number + this.elements[1].number; }
+public:
+  Record() = default;
+};
+int main() { Record record{}; return record.read() - 14; }

@@ -307,15 +307,15 @@ reproducers were removed from this directory.
 | #109 payload-class diagnostic spelling | `v0.306.1` | `tests/sum_type_tests.cpp` |
 | #110 self-nested generic identity | `v0.306.1` | `tests/ui/classes/returned_class_field.gti` |
 | #111 grouped binding and comma operands | `v0.306.1` | `tests/fixtures/mir_backend_scalar_cfg.gti`, `tests/mir_backend_scalar_cfg_runtime_test.py` |
-| #113 virtual call through a base-class reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
-| #114 concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/reference_parameter_range_runtime_test.py` |
+| #113 virtual call through a base-class reference | `v0.306.1` | `tests/ui/ownership/borrow/reference_parameter_range.gti` |
+| #114 concrete public-derived argument to a base/interface reference | `v0.306.1` | `tests/ui/ownership/borrow/reference_parameter_range.gti` |
 | #115 global/static fixed-array member write | `v0.306.1` | `tests/fixtures/global_class_storage.gti`, `tests/global_class_storage_runtime_test.py` |
 | #116 include-only generic destructor and optional empty state | `v0.306.1` | `cpp_mir_representation_snapshot`, `stdlib_include_sweep` |
 | #117 adjacent place, lambda, generic, aggregate-cleanup, and assignment-recovery shapes | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `place_shape_matrix.py`, ASan compiler run |
 | #118 lambda discarded by a comma operand | `v0.306.3` | `issues_117_120_regressions` |
 | #119 compact generic close followed by `=` | `v0.306.3` | `issues_117_120_regressions`, `compiler_pipeline` formatter coverage |
 | #120 generic destructor type argument | `v0.306.3` | `issues_117_120_regressions`, `cpp_mir_representation_snapshot` |
-| #121 direct call to a concrete override | `v0.312.3` | `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `reference_parameter_range_runtime` |
+| #121 direct call to a concrete override | `v0.312.3` | `compiler_pipeline`, `cpp_mir_body_emitter_1of4`..`4of4`, `tests/ui/ownership/borrow/reference_parameter_range.gti` |
 | #122 grouped and converted field initializers | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |
 | #123 cleanup-owning class temporaries passed directly by value | `v0.312.7` | `compiler_pipeline cleanup-temporary-arguments`, `cpp_mir_body_emitter_1of4`..`4of4`, `issue_123_cleanup_temporary_argument_runtime` |
 | #124 payload-enum class fields | `v0.312.4` | `cpp_mir_body_emitter_1of4`..`4of4`, `issues_122_124_field_initializers_runtime` |

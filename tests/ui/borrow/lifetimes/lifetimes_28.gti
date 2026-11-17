@@ -1,0 +1,6 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Inner<T> { T* pointer = nullptr; int size() { return 0; } };
+struct Outer<T> { Inner<T> data; int size() { return this.data.size(); } };
+int main() { return 0; }

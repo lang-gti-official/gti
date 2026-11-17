@@ -1,0 +1,10 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept identity_family<P> { typename value<T>; };
+struct Policy {};
+for concept identity_family<Policy> { using value<U> = U; };
+
+identity_family<Policy>::value<int&<a>> view<lifetime a>(int&<a> value) {
+  return value;
+}
+int main() { int owner = 7; int& result = view(owner); return result - 7; }

@@ -1,0 +1,5 @@
+// General requires: non-constexpr predicate diagnostic.
+bool runtime_only<T>() { return true; }
+concept invalid<T> = runtime_only<T>();
+int use<T>() requires invalid<T> { return 0; }
+int main() { return use<int>(); }  //~ ERROR GTI-S2029

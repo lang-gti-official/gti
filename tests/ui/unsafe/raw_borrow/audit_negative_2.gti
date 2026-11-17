@@ -1,0 +1,10 @@
+// Audit negative: raw assertion wrapper preserves aggregate field provenance.
+//@ raw-pointer-audit: strict
+struct Address { const int* value = nullptr;  public: Address() = default; };
+int&<a> read<lifetime a>(Address address, int&<a> owner) { unsafe { return *address.value; } }
+int main() {
+  int owner = 42;
+  int other = 7;
+  Address address{.value = &other};
+  return read(address, owner);  //~ ERROR GTI-S2101
+}

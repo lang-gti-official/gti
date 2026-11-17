@@ -1,0 +1,5 @@
+// Shape witnesses: reference results retain address and loan requirements.
+//@ build-pass
+//@ slow
+int& identity(int& value) { return value; }
+int main() { int value = 3; int& alias = identity(value); return alias - 3; }

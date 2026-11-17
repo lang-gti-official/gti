@@ -1,0 +1,14 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+class View<lifetime a> {
+  int&<a> value;
+public:
+  View(int&<a> input) : value(input) {}
+  int read() { return this.value; }
+};
+int inspect<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  return view.read();
+}
+int main() { int value = 7; return inspect(value) - 7; }

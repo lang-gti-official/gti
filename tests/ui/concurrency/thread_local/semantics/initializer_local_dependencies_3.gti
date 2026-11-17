@@ -1,0 +1,25 @@
+// Initializer local dependencies: nested independent TLS initialization restores the outer initializer's exact lexical declaration authority.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value!(saved);
+}
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
+}
+
+#macro int nested_storage() {
+  int local = 3;
+  thread_local int nested = local_value!(4);
+  return local + nested;
+}
+thread_local int outer = nested_storage!();
+int main() { return outer; }

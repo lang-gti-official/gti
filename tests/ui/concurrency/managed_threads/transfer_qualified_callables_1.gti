@@ -1,0 +1,16 @@
+// Transfer qualified callables: a concrete empty parameter pack is an exact zero-argument task.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.thread;
+struct PackedTask<Args...> {
+  int operator()(Args... arguments) { return 42; }
+public:
+  PackedTask() = default;
+};
+int main() {
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(PackedTask<>());
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}

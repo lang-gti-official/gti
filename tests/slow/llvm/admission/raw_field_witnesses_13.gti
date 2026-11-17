@@ -1,0 +1,5 @@
+// Raw field witnesses: a virtual method reached through a raw pointer dispatches through the pointee's checked view.
+//@ build-pass
+//@ slow
+class Dynamic { public: int value = 7; virtual int read() { return this.value; }  public: Dynamic() = default; };
+int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->read(); } }

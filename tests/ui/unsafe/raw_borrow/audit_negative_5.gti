@@ -1,0 +1,12 @@
+// Audit negative: backedge cannot turn expired storage into a checked borrow.
+//@ raw-pointer-audit: strict
+import std.memory;
+int main() {
+  int owner = 42;
+  mut const int* address = &owner;
+  for (mut int i = 0; i < 2; ++i) {
+    unsafe { int& value = std::assume_ref(address, owner); if (value == 0) return 1; }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+    { int dead = 9; address = &dead; }
+  }
+  return 0;
+}

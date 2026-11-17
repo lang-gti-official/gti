@@ -1,0 +1,5 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+int&<a> second<lifetime a>(int&<a> first, int&<a> selected) { return selected; }
+int&<a> relay<lifetime a>(int&<a> x, int&<a> y) { return second(x, y); }
+int main() { int first = 3; int selected = 8; return relay(first, selected) - 8; }

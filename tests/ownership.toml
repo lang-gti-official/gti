@@ -94,7 +94,6 @@ paths = [
 ]
 owners = [
   "gti_test_ui",
-  "reference_parameter_packs",
   "parser_conditional_recovery",
   "source_text_pipeline",
   "source_unit_services",
@@ -105,11 +104,8 @@ owners = [
   "pack_fold_syntax",
   "thread_local_syntax",
   "macro_result_parser",
-  "procedural_syntax",
   "procedural_declaration_example",
   "procedural_execution_example",
-  "sum_type_pipeline",
-  "generic_enum_declaration",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -170,7 +166,6 @@ owners = [
   "module_editor_recovery",
   "module_system_runtime",
   "module_initialization_runtime",
-  "include_removal",
   "frontend_cache_invalidation",
   "stdlib_module_boundaries",
   "stdlib_modules",
@@ -243,7 +238,6 @@ consumers = [
 [[area]]
 area = "semantics"
 paths = [
-  "tests/semantic_call_regression_tests.cpp",
   "tests/semantic_call_regressions*_test.py",
   "tests/fixtures/semantic_call_regressions.gti",
   "tests/scalar_temporary_borrow*_test.py",
@@ -256,44 +250,16 @@ paths = [
 ]
 owners = [
   "protocol_requirements_runtime",
-  "protocol_format_hash_runtime",
-  "reference_parameter_packs",
   "reference_parameter_pack_mir",
-  "scalar_temporary_borrow",
-  "^.*_semantic_ir$",
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "general_requires_semantics",
-  "reflection_semantics",
-  "reference_payload_semantics",
-  "borrowing_capture_semantics",
-  "protocol_concepts",
-  "qualified_type_members",
   "instance_reuse_fixtures",
   "trusted_body_analysis_fixtures",
-  "body_analysis_order_fixtures",
   "gti_corpus",
-  "thread_local_semantic",
   "executable_entry_semantics",
-  "generic_discovery",
-  "generic_initialization",
-  "tryable_propagation",
-  "borrow_origin",
-  "lambda_reference",
-  "local_reference_inference",
-  "bounded_array_borrows",
   "bounded_array_borrows_runtime",
   "unsafe_function_contract",
-  "unsafe_expression_contract",
-  "discardable_result",
-  "conversion_operators",
-  "function_signature_types",
-  "callable_return_type",
-  "stored_callable_types",
-  "semantic_call_regressions",
   "^gti_test_ui(_[0-9]+)?$",
-  "owning_function_types",
-  "consuming_receiver_types",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -316,14 +282,9 @@ paths = [
 owners = [
   "semantic_header_boundary",
   "semantic_header_self_containment",
-  "complete_borrow_summaries",
-  "cleanup_bound_borrow",
-  "temporary_owner_borrow",
-  "fresh_callable_borrow",
   "foreign_variable_borrow",
 ]
 consumers = [
-  "procedural_syntax",
   "procedural_execution_example",
   "procedural_html_semantics",
   "procedural_html_lsp",
@@ -348,8 +309,6 @@ paths = [
 owners = [
   "^constexpr_",
   "compile_limits",
-  "macro_values_semantic_ir",
-  "macro_fresh_callables",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -367,7 +326,6 @@ paths = [
 owners = [
   "binary64_pipeline",
   "binary64_runtime",
-  "defined_integer_arithmetic",
   "checked_integer_overflow_runtime",
   "^gti_test_ui(_[0-9]+)?$",
 ]
@@ -405,11 +363,7 @@ paths = [
   "include/gti/hir*",
 ]
 owners = [
-  "generic_discovery",
-  "generic_layout",
-  "generic_initialization",
   "instance_reuse_fixtures",
-  "ownerless_text_contracts",
   "view_fields",
   "field_symbol_identity",
   "typed_program_model",
@@ -417,8 +371,6 @@ owners = [
 ]
 consumers = [
   "reference_parameter_pack_mir",
-  "reference_parameter_packs",
-  "mir_full_expression",
   "mir_program_initialization",
   "lowered_program_contract",
   "mir_cutover_corpus_oracle",
@@ -430,7 +382,6 @@ consumers = [
 area = "mir"
 risk = "shared"
 paths = [
-  "tests/borrow_origin_publication_tests.cpp",
   "tests/fixtures/borrowed_text_field_reborrow.gti",
   "tests/fixtures/temporary_cursor_cleanup_provider.gti",
   "tests/fixtures/receiver_field_carriers*.gti",
@@ -441,25 +392,12 @@ paths = [
 owners = [
   "reference_parameter_pack_mir",
   "^mir_",
-  "borrow_origin_publication",
-  "ephemeral_carrier_mir",
-  "borrowing_callbacks_mir",
-  "storage_adoption_contract",
-  "resource_protocol_contract",
-  "complete_borrow_summaries",
   "cleanup_bound_borrow_mutations",
-  "uninitialized_carrier_contract",
-  "object_lifetime_contract",
   "source_sparse_storage_contract",
   "text_address_bridge_contract",
-  "raw_access_contract",
-  "borrowing_callback_alias_proof",
-  "borrowing_callback_relay_proof",
-  "borrowing_callback_restoration_return",
 ]
 consumers = [
   "protocol_requirements_runtime",
-  "reference_parameter_packs",
   "lowered_program_contract",
   "lowered_program_corpus_census",
   "language_coverage_corpus",
@@ -543,7 +481,6 @@ paths = [
   "tests/fixtures/projected_move_failure.gti",
   "tests/fixtures/projected_move_user.gti",
   "tests/fixtures/mutex_vector_storage.gti",
-  "tests/panic_contract_tests.cpp",
   "src/compiler/backend.cpp",
   "src/compiler/native_header.cpp",
   "src/compiler/failure_metadata.cpp",
@@ -561,7 +498,6 @@ paths = [
 owners = [
   "backend_execution_protocol",
   "backend_contract_regressions",
-  "panic_contracts",
   "backend_lowered_program_boundary",
   "failure_metadata",
   "failure_descriptor_backend",
@@ -645,17 +581,13 @@ owners = [
   "llvm_raw_pointer_array_execution",
   "c_abi_header_boundary",
   "runtime_abi_inventory",
-  "runtime_object_layout_contract",
   "runtime_object_layout_runtime",
-  "layout_query_pipeline",
   "layout_query_native_boundary",
   "gti_unit_tests",
-  "native_c_scalar_pipeline",
   "native_record_pipeline",
   "native_record_c_oracle",
   "compact_owner_layout",
   "compact_owner_layout_runtime",
-  "environment_target_capability",
 ]
 consumers = [
   "embedding_header_c17_oracle",
@@ -871,7 +803,6 @@ owners = [
   "runtime_failure_subprocess",
   "runtime_failure_header_coexistence",
   "panic_adoption_runtime",
-  "panic_contracts",
   "failure_descriptor_backend",
 ]
 consumers = [
@@ -902,7 +833,6 @@ owners = [
   "llvm_hosted_execution",
 ]
 consumers = [
-  "mir_hosted_startup",
   "cli_workflow",
 ]
 
@@ -949,7 +879,7 @@ owners = [
   "environment_c_header",
   "environment_runtime",
   "filesystem_path_runtime",
-  "composable_io_runtime",
+  "^gti_test_ui(_[0-9]+)?$",
   "process_runtime",
   "process_resource_policy",
   "process_capture_failure",
@@ -987,7 +917,6 @@ consumers = [
   "lowered_program_corpus_census",
   "mir_cutover_corpus_oracle",
   "trusted_body_analysis_fixtures",
-  "body_analysis_order_fixtures",
   "gti_corpus",
 ]
 
@@ -1079,7 +1008,6 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
-  "protocol_format_hash_runtime",
   "complete_containers",
   "container_contract_failure",
   "container_iterator_movement",
@@ -1116,8 +1044,6 @@ paths = [
   "stdlib/std/cstdio.gti",
 ]
 owners = [
-  "protocol_format_hash_runtime",
-  "reference_parameter_packs",
   "string_c_string_runtime",
   "text_view_iterator_runtime",
   "encoding_runtime",
@@ -1137,12 +1063,8 @@ paths = [
 ]
 owners = [
   "managed_thread_end_to_end",
-  "managed_thread_semantic_ir",
   "scoped_parallel_threads",
-  "mutex_semantic_ir",
-  "atomic_semantic_ir",
   "cthread_runtime",
-  "cthread_semantic_ir",
 ]
 consumers = [
   "concurrency_composition_lsp",
@@ -1167,7 +1089,6 @@ paths = [
   "stdlib/std/meta.gti",
 ]
 owners = [
-  "protocol_format_hash_runtime",
   "^gti_test_ui(_[0-9]+)?$",
   "shared_ownership_failure",
   "unique_owner_access_runtime",
@@ -1192,7 +1113,6 @@ paths = [
   "stdlib/std/source_location.gti",
 ]
 owners = [
-  "optional_compiler_contract",
   "panic_adoption_runtime",
   "deferred_assertions_runtime",
   "source_location_runtime",
@@ -1220,14 +1140,13 @@ paths = [
 ]
 owners = [
   "filesystem_path_runtime",
-  "composable_io_runtime",
+  "^gti_test_ui(_[0-9]+)?$",
   "process_runtime",
   "environment_runtime",
   "cmath_runtime",
   "http_runtime",
   "http_url_operators",
   "simd_runtime",
-  "simd_semantic_ir",
 ]
 consumers = [
   "practical_examples",
@@ -1825,7 +1744,6 @@ owners = [
 consumers = [
   "language_coverage_corpus",
   "trusted_body_analysis_fixtures",
-  "body_analysis_order_fixtures",
   "gti_corpus",
   "native_packages",
 ]
@@ -1906,7 +1824,7 @@ consumers = ["source_stdlib_ci", "ci_release", "lsp_protocol", "neovim_lsp_confi
 
 [[area]]
 area = "function-codegen-attributes"
-paths = ["tests/codegen_attribute_tests.cpp", "examples/llvm/codegen-attributes.gti"]
-owners = ["codegen_attribute_contract", "codegen_attribute_runtime"]
+paths = ["tests/ui/codegen/attributes/*.gti", "examples/llvm/codegen-attributes.gti"]
+owners = ["codegen_attribute_runtime"]
 consumers = ["codegen_attribute_lsp", "tree_sitter_queries"]
 risk = "shared"

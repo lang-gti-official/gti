@@ -1,0 +1,13 @@
+// Deferred probe isolation: an ignored deferred expression does not eagerly execute a temporary's conflicting TLS cleanup.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+void observe(bool value) {}
+#macro ignore(bool value) {}
+#macro force(bool value) { observe(value); }
+int main() { int& borrowed = value; ignore!(inspect(Cleanup())); return borrowed; }

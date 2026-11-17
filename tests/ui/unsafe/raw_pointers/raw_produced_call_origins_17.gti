@@ -1,0 +1,6 @@
+// Raw produced call origins: valid callee-produced raw transport: expired-reseat.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() { int live = 7; mut const int* pointer = dangling(); pointer = &live;
+  unsafe { return *pointer; } }
+const int* dangling() { int local = 1; return &local; }

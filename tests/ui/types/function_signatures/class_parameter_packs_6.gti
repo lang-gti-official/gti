@@ -1,0 +1,2 @@
+// Class parameter packs: owner-pack errors must be frontend diagnostics: class Relay<Args...> { public: void send(Args... args) {} int operator()(Args... args) { return 0; }  public: Relay() = default; }; int main() { Relay<int, bool> value{}; value.send(true, 1); return 0; }.
+class Relay<Args...> { public: void send(Args... args) {} int operator()(Args... args) { return 0; }  public: Relay() = default; }; int main() { Relay<int, bool> value{}; value.send(true, 1); return 0; }  //~ ERROR GTI-S2003 //~ ERROR GTI-S2003

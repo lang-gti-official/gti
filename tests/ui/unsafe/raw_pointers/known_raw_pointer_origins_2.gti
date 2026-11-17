@@ -1,0 +1,12 @@
+// Known raw pointer origins: flow joins must preserve each possible raw address origin.
+//@ raw-pointer-audit: strict
+int read(bool choose) {
+  int alive = 7;
+  mut const int* pointer = nullptr;
+  unsafe {
+    pointer = &alive;
+    { int gone = 42; if (choose) { pointer = &gone; } }
+    return pointer[0];  //~ ERROR GTI-S2102
+  }
+}
+int main() { return read(false); }

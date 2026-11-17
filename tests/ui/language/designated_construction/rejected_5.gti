@@ -1,0 +1,2 @@
+// Rejected: invalid construction must stop compilation.
+struct S { int x; int y; }; int main(){ S s = {.x = 1}; return 0; }  //~ ERROR GTI-S2091

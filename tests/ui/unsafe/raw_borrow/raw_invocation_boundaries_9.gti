@@ -1,0 +1,13 @@
+// Raw invocation boundaries: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.utility;
+struct Passive { mut const int* pointer = nullptr;  public: Passive() = default; };
+int main() {
+  mut Passive first{};
+  mut Passive second{};
+  { int dead = 7; first.pointer = &dead; second.pointer = &dead; }
+  std::swap(first, second);
+  Passive previous = std::exchange(first, second);
+  return previous.pointer == first.pointer ? 0 : 1;
+}

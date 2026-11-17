@@ -1,0 +1,26 @@
+// Rejected source: aliases, extraction, second invocation, and owner reuse remain semantic errors.
+import std.memory;
+interface Operation { int operator()(int value) &&; };
+class Increment : public Operation {
+public:
+  int operator()(int value) && override { return value + 1; }
+public:
+  Increment() = default;
+};
+void observe(Operation& value) {}
+class Owner {
+  mut std::unique_ptr<Operation> operation;
+  mut std::unique_ptr<Operation> spare{nullptr};
+public:
+  Owner(std::unique_ptr<Operation> operation)
+      : operation(std::move(operation)) {}
+  int operator()(int value) && {
+    auto saved = std::move(*this.operation); return std::move(saved)(value);  //~ ERROR GTI-S2018 //~ ERROR GTI-S2018
+  }
+};
+int main() {
+  auto concrete = std::make_unique<Increment>();
+  auto erased = std::upcast_unique<Operation, Increment>(std::move(concrete));
+  Owner owner{std::move(erased)};
+  return std::move(owner)(4) - 5;
+}

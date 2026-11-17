@@ -1,0 +1,6 @@
+// Union safety boundary: union member reads should require an unsafe block.
+union Bits { uint32_t integer; float real; };
+int main() {
+  Bits bits{uint32_t(7)};
+  return int32_t(bits.integer);  //~ ERROR GTI-S2055
+}

@@ -1,0 +1,4 @@
+// Receiver capture tests: rejected with GTI-S2000.
+class C { mut int n = 0; public: C() = default;
+        void run() mut { auto f = [&this]() -> void { this.n += 1; }; f(); }  //~ ERROR GTI-S2000
+      }; int main() { mut C c{}; c.run(); }

@@ -1,0 +1,23 @@
+// Fixtures: the program is accepted.
+//@ check-pass
+import std.iterator;
+import std.list;
+
+int main() {
+  std::list<int> values = {1, 2};
+  int wanted = 2;
+  auto cursor = ping(values.begin(), values.end(), wanted, 3);
+  return cursor != values.end() ? 0 : 1;
+}
+Iterator ping<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value, int depth)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
+  if (depth > 0) { return pong(std::move(first), last, value, depth - 1); }
+  return std::move(first);
+}
+Iterator pong<Iterator, Sentinel, T>(mut Iterator first, Sentinel last, T& value, int depth)
+  requires std::input_iterator<Iterator> && std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> && std::equality_comparable<T> {
+  if (depth > 0) { return ping(std::move(first), last, value, depth - 1); }
+  return std::move(first);
+}

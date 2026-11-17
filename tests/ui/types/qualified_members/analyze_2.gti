@@ -1,0 +1,3 @@
+// Analyze: owner arguments cannot hide references to later default parameters.
+struct Box<T> { using value_type = T;  public: Box() = default; };
+struct Later<T = Box<U>::value_type, U = int> { public: Later() = default; };  //~ ERROR GTI-S2023

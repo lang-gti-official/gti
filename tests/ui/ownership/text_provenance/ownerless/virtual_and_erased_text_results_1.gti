@@ -1,0 +1,52 @@
+// Virtual and erased text results: virtual, lambda and generic text results lower through MIR.
+//@ check-pass
+import std.functional;
+import std.polymorphic;
+import std.string;
+interface Labeler {
+  std::string_view label();
+};
+class Fixed : public Labeler {
+public:
+  Fixed() {}
+  std::string_view label() override { return "fixed"; }
+};
+class Wrapped<F> : public Labeler {
+  F fn;
+public:
+  Wrapped(F fn) : fn(fn) {}
+  std::string_view label() override { return this.fn(); }
+};
+class Erased {
+  mut std::inline_polymorphic<Labeler, 32, 8> target{};
+public:
+  Erased() {}
+  void set<F>(F fn) mut { this.target.replace(Wrapped<F>(fn)); }
+  std::string_view operator()() { return this.target.get().label(); }
+};
+class Echo<R> {
+public:
+  int n;
+  Echo() : n(0) {}
+  R same(R text) { return text; }
+  R operator()(R text) { return text; }
+};
+mut std::string_view kept = "";
+
+int main() {
+  auto lit = []() -> std::string_view { return "lit"; };
+  mut Erased erased{};
+  erased.set(std::move(lit));
+  kept = erased();
+  mut std::inline_polymorphic<Labeler, 32, 8> slot{};
+  slot.replace(Fixed());
+  std::println(slot.get().label());
+  auto word = []() -> std::string_view { return "word"; };
+  std::function<std::string_view()> fn{word};
+  std::string_view held = fn();
+  Echo<std::string_view> echo{};
+  std::string owner{"echoed"};
+  std::string_view relayed = echo.same(owner.view());
+  std::string_view called = echo(owner.view());
+  return kept == "lit" && held == "word" && relayed == called ? 0 : 1;
+}

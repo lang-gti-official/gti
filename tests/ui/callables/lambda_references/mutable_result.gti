@@ -1,0 +1,12 @@
+// Mutable result: mutable-lambda-result.gti.
+//@ check-pass
+int main() {
+  auto increment = [](mut int& value) -> mut int& {
+    value += 1;
+    return value;
+  };
+  mut int number = 10;
+  mut int& result = increment(number);
+  result += 5;
+  return number - 16;
+}

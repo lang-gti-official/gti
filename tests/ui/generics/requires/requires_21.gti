@@ -1,0 +1,34 @@
+// General requires: source range callable queries inspect the actual element, not unrelated indexing.
+//@ check-pass
+import std.functional;
+import std.algorithm;
+import std.meta;
+struct End { public: End() = default; };
+struct Cursor {
+  int value = 1;
+  int& operator*() { return this.value; }
+  void operator++() mut {}
+  bool operator!=(End& end) { return false; }
+public:
+  Cursor() = default;
+};
+struct Range {
+  Cursor begin() { return Cursor(); }
+  End end() { return End(); }
+  bool operator[](std::size_t index) { return false; }
+public:
+  Range() = default;
+};
+struct WantsInt { bool operator()(int& value) { return value > 0; }  public: WantsInt() = default; };
+struct WantsBool { bool operator()(bool& value) { return value; }  public: WantsBool() = default; };
+struct Consumes { bool operator()(int& value) && { return true; }  public: Consumes() = default; };
+int main() {
+  static_assert(std::meta::is_array<int[3]>());
+  static_assert(std::meta::type<int[0]>().is_array());
+  static_assert(!std::meta::is_array<Range>());
+  static_assert(requires(Range& range) { { std::all_of(range, WantsInt()) } -> bool; });
+  static_assert(!(requires(Range& range) { { std::all_of(range, WantsBool()) } -> bool; }));
+  static_assert(!(requires(Range& range) { { std::all_of(range, Consumes()) } -> bool; }));
+  int[3] numbers = {1, 2, 3};
+  return std::all_of(numbers, WantsInt()) ? 0 : 1;
+}

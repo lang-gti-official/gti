@@ -1,0 +1,6 @@
+// Execution: ordinary constant profile fixture lowers.
+//@ check-pass
+// --- main.gti
+constexpr int same(int value){return value;} int main(){return same(1);}
+// --- library.gti
+export module library;

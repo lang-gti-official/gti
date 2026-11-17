@@ -1,0 +1,3 @@
+// Sleep: safe sleep cannot write an immutable output.
+import std.cthread;
+int main() { std::timespec value = std::timespec(); return std::thrd_sleep(value, value); }  //~ ERROR GTI-S2012

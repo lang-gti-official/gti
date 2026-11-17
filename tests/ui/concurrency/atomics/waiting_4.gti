@@ -1,0 +1,16 @@
+// Waiting: waiting requires concurrent execution profile.
+import std.atomic;
+class Completion {
+  std::atomic<int32_t> state{1};
+public:
+  void wait() {
+    this.state.wait(0);  //~ ERROR GTI-S2084
+    this.state.wait(0, std::memory_order_relaxed());  //~ ERROR GTI-S2084
+    this.state.wait(0, std::memory_order_acquire());  //~ ERROR GTI-S2084
+    this.state.wait(0, std::memory_order_seq_cst());  //~ ERROR GTI-S2084
+  }
+  void wake() { this.state.notify_one(); this.state.notify_all(); }  //~ ERROR GTI-S2084 //~ ERROR GTI-S2084
+public:
+  Completion() = default;
+};
+int main() { Completion completion{}; completion.wait(); completion.wake(); return 0; }  //~ ERROR GTI-S2084 //~ ERROR GTI-S2084

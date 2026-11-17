@@ -1,0 +1,6 @@
+// Dispatch per use witnesses: a namespace hierarchy object constructed in place by its initialization step carries its program-storage witness.
+//@ build-pass
+//@ slow
+    class P { public: P() {} virtual int read() { return 1; } };
+    P value{};
+    int main() { return value.read(); }

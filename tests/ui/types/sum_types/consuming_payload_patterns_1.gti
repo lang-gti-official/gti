@@ -1,0 +1,37 @@
+// Consuming payload patterns: a prvalue or explicitly moved subject moves move-only payloads into by-value bindings through verified MIR.
+//@ check-pass
+class resource {
+  int32_t id;
+public:
+  resource(int32_t value) : id(value) {}
+  ~resource() {}
+  int32_t read() { return this.id; }
+};
+enum class data {
+  empty,
+  some(resource item),
+  pair(resource left, resource right),
+  mixed(resource item, int32_t code),
+};
+data make(int32_t id) { return data::some(resource(id)); }
+
+int32_t total(data value) {
+  switch (std::move(value)) {
+  case data::some(item):
+    return item.read();
+  case data::pair(left, right):
+    return left.read() + right.read();
+  case data::mixed(item, code):
+    return item.read() * code;
+  case data::empty:
+    return 0;
+  }
+}
+int main() {
+  switch (make(3)) {
+  case data::some(item):
+    return total(data::pair(resource(1), resource(2))) - item.read();
+  default:
+    return 1;
+  }
+}

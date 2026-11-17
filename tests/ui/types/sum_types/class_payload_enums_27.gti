@@ -1,0 +1,16 @@
+// Class payload enums: conditional borrowed enum captures retain their separate boundary.
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum holder { one(resource value), none };
+
+enum mixed { owned(resource value), borrowed(int& value) };
+int main() {
+  auto source = mixed::owned(resource());
+  auto callback = [value = std::move(source)]() -> int { return 0; };  //~ ERROR GTI-S2067 //~ ERROR GTI-S2017
+  return 0;
+}

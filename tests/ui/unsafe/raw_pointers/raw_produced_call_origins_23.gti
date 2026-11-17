@@ -1,0 +1,7 @@
+// Raw produced call origins: valid callee-produced raw transport: separate-result-fields.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int global = 7;
+struct Pair { const int* live = nullptr; const int* dead = nullptr;  public: Pair() = default; };
+int main() { auto pair = source(); unsafe { return *pair.live; } }
+Pair source() { int local = 1; return {.live = &global, .dead = &local}; }

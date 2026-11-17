@@ -1,0 +1,2 @@
+// Import diagnostics: missing SIMD imports need an exact compiler-owned import fix.
+using lanes = std::simd<float, 4>;  //~ ERROR GTI-S2089

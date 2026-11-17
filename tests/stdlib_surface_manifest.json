@@ -3696,7 +3696,7 @@
         "explicit ! invocation syntax and missing-marker insertion diagnostics"
       ],
       "evidence": [
-        "tests/deferred_assertion_tests.cpp",
+        "tests/ui/language/deferred_assertions",
         "tests/deferred_assertion_runtime_test.py",
         "examples/172-deferred-assertions.gti",
         "examples/174-typed-macros.gti",
@@ -3749,7 +3749,7 @@
         "docs/language/concurrency.md",
         "examples/076-scalar-atomics.gti",
         "stdlib/std/atomic.gti",
-        "tests/atomic_tests.cpp",
+        "tests/ui/concurrency/atomics",
         "tests/atomic_runtime_test.py",
         "tests/atomic_tsan_test.py",
         "tests/fixtures/atomic_fetch.gti",
@@ -3773,7 +3773,7 @@
         "LLVM-only; both execution profiles; all signed/unsigned integer widths and RMW orders"
       ],
       "evidence": [
-        "tests/atomic_tests.cpp",
+        "tests/ui/concurrency/atomics",
         "tests/llvm_atomic_contract_tests.cpp",
         "tests/llvm_atomic_execution_test.py",
         "examples/178-wrapping-atomic-counters.gti"
@@ -4042,7 +4042,7 @@
         "tests/cthread_condition_test.py",
         "tests/cthread_once_test.py",
         "tests/ui/stdlib/cthread",
-        "tests/cthread_tests.cpp",
+        "tests/ui/concurrency/cthread",
         "tests/fixtures/cthread_yield_call_count.cpp",
         "docs/language/concurrency.md"
       ]
@@ -4234,7 +4234,7 @@
       ],
       "evidence": [
         "tests/ui/stdlib/memory/shared_owner",
-        "tests/borrowing_capture_tests.cpp"
+        "tests/ui/callables/borrowing_captures"
       ]
     },
     {
@@ -4294,7 +4294,7 @@
         "string"
       ],
       "evidence": [
-        "tests/source_prefix_owner_tests.cpp",
+        "tests/ui/memory/source_prefix_owner",
         "tests/source_sparse_storage_tests.cpp",
         "tests/fixtures/process_storage_policy.gti",
         "tests/ui/stdlib/process/storage_query_policy.gti",
@@ -4616,8 +4616,8 @@
         "tests/fixtures/stdlib_surface_format.gti",
         "tests/fixtures/extensible_formatting.gti",
         "stdlib/std/format.gti",
-        "tests/protocol_format_hash_runtime_test.py",
-        "tests/reference_parameter_packs_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
+        "tests/ui/packs/reference_packs/function_text_escape.gti",
         "tests/ui/constexpr/consteval",
         "tests/fixtures/checked_literal_arguments.gti",
         "tests/ui/stdlib/contracts"
@@ -4784,7 +4784,7 @@
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp",
+        "tests/ui/callables/borrowing_captures",
         "examples/156-borrowing-callbacks.gti"
       ]
     },
@@ -4852,7 +4852,7 @@
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp",
+        "tests/ui/callables/borrowing_captures",
         "examples/156-borrowing-callbacks.gti",
         "stdlib/std/detail/function_pointer.gti"
       ]
@@ -4899,7 +4899,7 @@
         "stdlib/std/functional.gti",
         "tests/fixtures/associative_hash_contracts.gti",
         "tests/associative_hash_contracts_test.py",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/protocol_format_hash.gti",
         "tests/fixtures/legacy_hash_policy_state.gti"
       ]
@@ -4949,7 +4949,7 @@
         "tests/fixtures/owning_function_mutable_arguments.gti",
         "tests/ui/callables/owning_function_policy_failure.gti",
         "tests/slow/memory/inline_polymorphic_lifecycle.gti",
-        "tests/owning_function_tests.cpp",
+        "tests/ui/callables/owning_functions",
         "stdlib/std/functional.gti",
         "tests/ui/callables/owned_inline/callbacks.gti",
         "tests/ui/callables/owned_inline"
@@ -4978,7 +4978,7 @@
       "evidence": [
         "stdlib/std/functional.gti",
         "tests/fixtures/transfer_function_threads.gti",
-        "tests/managed_thread_tests.cpp",
+        "tests/ui/concurrency/managed_threads",
         "tests/ui/callables/owned_inline/callbacks.gti",
         "tests/ui/callables/owned_inline"
       ]
@@ -5143,7 +5143,6 @@
         "user-defined buffered_source windows"
       ],
       "evidence": [
-        "tests/composable_io_runtime_test.py",
         "tests/unit/runtime_io_tests.cpp",
         "docs/language/io.md"
       ]
@@ -5185,7 +5184,7 @@
         "tests/fixtures/container_iterator_movement.gti",
         "tests/fixtures/forward_list_iterator_completion.gti",
         "tests/fixtures/paired_span_iterator_completion.gti",
-        "tests/ephemeral_carrier_mir_tests.cpp",
+        "tests/ui/mir/ephemeral_carriers",
         "tests/ui/language/iterators/span_chunk_yields.gti",
         "tests/ui/language/iterators/user_carrier_yields.gti",
         "examples/197-borrowed-yield-cursors.gti"
@@ -5640,7 +5639,7 @@
       "evidence": [
         "stdlib/std/memory.gti",
         "tests/fixtures/checked_callable_erasure.gti",
-        "tests/borrowing_capture_tests.cpp"
+        "tests/ui/callables/borrowing_captures"
       ]
     },
     {
@@ -5837,7 +5836,7 @@
       ],
       "evidence": [
         "examples/119-runtime-object-layout.gti",
-        "tests/runtime_object_layout_tests.cpp",
+        "tests/ui/layout/runtime_objects",
         "tests/runtime_object_layout_test.py",
         "docs/language/standard-library.md",
         "examples/181-general-object-layout.gti",
@@ -5894,8 +5893,8 @@
       "evidence": [
         "examples/125-manual-object-lifetimes.gti",
         "examples/128-inline-object-pool.gti",
-        "tests/uninitialized_carrier_tests.cpp",
-        "tests/object_lifetime_tests.cpp",
+        "tests/ui/ownership/uninitialized_carriers",
+        "tests/ui/memory/object_lifetime",
         "docs/language/raw-pointers.md"
       ]
     },
@@ -5916,7 +5915,7 @@
         "raw source reuse and owned scalar results"
       ],
       "evidence": [
-        "tests/consuming_range_tests.cpp",
+        "tests/ui/ownership/consuming_ranges",
         "tests/consuming_range_runtime_test.py",
         "tests/fixtures/consuming_range.gti",
         "tests/fixtures/consuming_range_failures.gti",
@@ -6289,7 +6288,7 @@
         "tests/fixtures/stdlib_surface_meta.gti",
         "tests/fixtures/reflection_type_facts.gti",
         "tests/reflection_runtime_test.py",
-        "tests/reflection_tests.cpp",
+        "tests/ui/reflection/semantics",
         "stdlib/std/meta.gti",
         "tests/slow/reflection/attributes.gti",
         "tests/ui/reflection/construct.gti",
@@ -6374,8 +6373,7 @@
         "mutable iterators"
       ],
       "evidence": [
-        "tests/composable_io_runtime_test.py",
-        "tests/carrier_shell_reference_tests.cpp",
+        "tests/ui/borrow/carrier_shell",
         "docs/language/ranges.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
       ]
@@ -6407,7 +6405,7 @@
         "tests/fixtures/mutex_concurrent.gti",
         "tests/fixtures/mutex_move_only.gti",
         "tests/ui/stdlib/mutex",
-        "tests/mutex_tests.cpp",
+        "tests/ui/concurrency/mutex",
         "tests/mutex_tsan_test.py"
       ]
     },
@@ -6527,7 +6525,7 @@
         "tests/ui/language/construction/expected_constructor_payload.gti",
         "tests/ui/stdlib/optional/constructor_failure.gti",
         "tests/ui/stdlib/optional/reset_failure.gti",
-        "tests/optional_compiler_tests.cpp",
+        "tests/ui/stdlib/optional/compiler",
         "tests/ui/stdlib/optional",
         "stdlib/std/optional.gti"
       ]
@@ -6609,9 +6607,9 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/ui/runtime/panic",
-        "tests/panic_contract_tests.cpp",
+        "tests/ui/runtime/panic/contracts",
         "stdlib/std/panic.gti",
-        "tests/reference_parameter_packs_test.py",
+        "tests/ui/packs/reference_packs/function_text_escape.gti",
         "tests/fixtures/checked_format_panic.gti",
         "tests/ui/stdlib/contracts"
       ]
@@ -6640,7 +6638,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_polymorphic.gti",
         "tests/slow/memory/inline_polymorphic_lifecycle.gti",
-        "tests/polymorphic_storage_compiler_tests.cpp",
+        "tests/ui/classes/polymorphic_storage",
         "tests/ui/callables/closure_objects",
         "stdlib/std/polymorphic.gti",
         "tests/ui/callables/owned_inline/borrowed_receiver_rejected.gti",
@@ -6682,7 +6680,7 @@
         "unrelated generic aggregates"
       ],
       "evidence": [
-        "tests/native_c_scalar_tests.cpp",
+        "tests/ui/declarations/native_c_scalars",
         "tests/unit/native_c_scalar_target_tests.cpp",
         "examples/123-native-c-scalars.gti",
         "docs/language/native-c-interop.md"
@@ -6755,7 +6753,7 @@
       ],
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
-        "tests/expected_ergonomics_tests.cpp",
+        "tests/ui/expected/ergonomics",
         "tests/slow/expected/ergonomics.gti"
       ]
     },
@@ -6852,8 +6850,8 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_tryable.gti",
         "tests/ui/expected/tryable_propagation.gti",
-        "tests/tryable_propagation_tests.cpp",
-        "tests/protocol_concept_tests.cpp",
+        "tests/ui/expected/tryable_propagation",
+        "tests/ui/generics/protocol_concepts",
         "examples/165-borrowed-payload-results.gti"
       ]
     },
@@ -7118,7 +7116,7 @@
         "examples/121-programmable-allocators.gti",
         "tests/fixtures/programmable_allocators.gti",
         "tests/programmable_allocators_runtime_test.py",
-        "tests/resource_protocol_tests.cpp",
+        "tests/ui/stdlib/resource/protocol",
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
         "tests/fixtures/resource_vector_constructor_rollback.gti",
@@ -7176,7 +7174,7 @@
       "evidence": [
         "stdlib/std/resource.gti",
         "examples/allocator-support/arena.gti",
-        "tests/resource_protocol_tests.cpp",
+        "tests/ui/stdlib/resource/protocol",
         "tests/unit/resource_memory_runtime_tests.cpp",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/fixtures/raw_resource_movement.gti",
@@ -7229,7 +7227,7 @@
         "tests/fixtures/resource_constructor_rollback.gti",
         "tests/fixtures/resource_region_contracts.gti",
         "tests/programmable_allocators_runtime_test.py",
-        "tests/resource_protocol_tests.cpp",
+        "tests/ui/stdlib/resource/protocol",
         "docs/language/raw-pointers.md",
         "tests/fixtures/resource_container_usage.gti",
         "tests/fixtures/resource_vector_constructor_rollback.gti"
@@ -7408,7 +7406,7 @@
       ],
       "evidence": [
         "tests/fixtures/simd_values.gti",
-        "tests/simd_tests.cpp",
+        "tests/ui/types/simd",
         "tests/simd_runtime_test.py"
       ]
     },
@@ -7456,7 +7454,7 @@
       ],
       "evidence": [
         "tests/fixtures/expression_text.gti",
-        "tests/expression_text_tests.cpp",
+        "tests/ui/language/expression_text",
         "tests/expression_text_runtime_test.py",
         "stdlib/std/source_location.gti"
       ]
@@ -7590,7 +7588,7 @@
         "tests/fixtures/text_view_iterator_module.gti",
         "stdlib/std/string_view.gti",
         "tests/text_view_iterator_runtime_test.py",
-        "tests/text_view_iterator_compiler_tests.cpp",
+        "tests/ui/stdlib/text/view_iterators",
         "examples/146-counted-text-view-iteration.gti"
       ]
     },
@@ -7749,7 +7747,7 @@
         "tests/fixtures/associative_hash_contracts.gti",
         "stdlib/std/string.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/constexpr_owned_storage.gti"
       ]
     },
@@ -7886,7 +7884,7 @@
       "evidence": [
         "examples/procedural-macros/library.gti",
         "examples/procedural-macros.gti",
-        "tests/procedural_syntax_tests.cpp",
+        "tests/ui/macros/procedural_syntax",
         "examples/procedural-html.gti",
         "tests/procedural_html_tests.cpp",
         "tests/procedural_html_workflow_test.py"
@@ -8032,7 +8030,7 @@
         "tests/fixtures/testing_assertions.gti",
         "tests/ui/stdlib/testing/assertions",
         "tests/fixtures/protocol_testing_assertions.gti",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti"
       ]
     },
     {
@@ -8064,7 +8062,7 @@
         "examples/066-managed-threads.gti",
         "stdlib/std/thread.gti",
         "tests/managed_thread_runtime_test.py",
-        "tests/managed_thread_tests.cpp",
+        "tests/ui/concurrency/managed_threads",
         "tests/runtime_thread_tests.cpp"
       ]
     },
@@ -8199,7 +8197,7 @@
         "tests/fixtures/stdlib_surface_container_aliases.gti",
         "tests/ui/operators/conditional_members",
         "tests/fixtures/conditional_member_operators.gti",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/legacy_hash_policy_state.gti"
       ]
     },
@@ -8303,7 +8301,7 @@
         "tests/complete_containers_test.py",
         "tests/fixtures/complete_containers_ownership.gti",
         "tests/fixtures/stdlib_surface_container_aliases.gti",
-        "tests/protocol_format_hash_runtime_test.py",
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti",
         "tests/fixtures/legacy_hash_policy_state.gti",
         "tests/ui/stdlib/contracts"
       ]
@@ -8379,7 +8377,7 @@
         "tests/fixtures/stdlib_surface_utility_pair.gti",
         "stdlib/std/utility.gti",
         "tests/ui/operators/conditional_members",
-        "tests/protocol_format_hash_runtime_test.py"
+        "tests/ui/stdlib/protocols/protocol_testing_assertion.gti"
       ],
       "required_instantiations": [
         "std::pair<int32_t,int64_t>",
@@ -8463,7 +8461,7 @@
         "raw source reuse and owned scalar results"
       ],
       "evidence": [
-        "tests/consuming_range_tests.cpp",
+        "tests/ui/ownership/consuming_ranges",
         "tests/consuming_range_runtime_test.py",
         "tests/fixtures/consuming_range.gti",
         "tests/fixtures/consuming_range_failures.gti",

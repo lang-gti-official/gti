@@ -1,0 +1,15 @@
+// Temporary operator physical storage: an exact external-field operator result does not depend on the temporary cursor's physical lifetime.
+//@ check-pass
+class Cursor<lifetime data> {
+  int&<data> owner;
+public:
+  Cursor(int&<data> source) : owner(source) {}
+  int&<data> operator*() { return this.owner; }
+};
+Cursor cursor(int& source) { return Cursor(source); }
+int& relay(int& owner) { return *cursor(owner); }
+int main() {
+  int owner = 7;
+  int& extracted = *cursor(owner);
+  return relay(extracted) - 7;
+}

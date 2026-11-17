@@ -1,0 +1,2 @@
+// Analyze: malformed or conflicting conditional policies fail closed.
+[[unsafe_transfer(U)]] class Wrong<T> { public: Wrong() = default; }; int main() { return 0; }  //~ ERROR GTI-S2059

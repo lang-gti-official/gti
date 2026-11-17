@@ -1,0 +1,8 @@
+// Rejections: lambda-local-copy-mutable-escape.gti.
+int main() {
+  auto bad = [](mut int& source) -> mut int& {
+    mut int copy = source;
+    return copy;  //~ ERROR GTI-S2017
+  };
+  return 0;
+}

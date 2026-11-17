@@ -1,0 +1,17 @@
+// Conditional consuming temporary: conditional moved receiver keeps one exact invocation.
+//@ build-pass
+//@ slow
+import std.polymorphic;
+interface Action { int operator()() &&; };
+class Value : public Action {
+public:
+  Value() = default;
+  int operator()() && override { return 42; }
+};
+int main() {
+  std::inline_polymorphic<Action, 32, 8> first{Value()};
+  std::inline_polymorphic<Action, 32, 8> second{Value()};
+  if (std::move(first).invoke_once<int>() != 42 ||
+      std::move(second).invoke_once<int>() != 42) return 1;
+  return 0;
+}

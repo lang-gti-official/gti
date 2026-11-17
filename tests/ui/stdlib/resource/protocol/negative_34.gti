@@ -1,0 +1,9 @@
+// Negative: a resource binding cannot outlive its checked resource.
+import std.resource;
+import std.memory;
+
+std::resource_ref<std::process_resource> escape() {
+  std::process_resource local{};
+  unsafe { return std::bind_resource(local); }  //~ ERROR GTI-S2127
+}
+int main() { return 0; }

@@ -1,0 +1,3 @@
+// Negatives: cannot drop const.
+using P = int*;
+int main() { const void* p = nullptr; P q = P(p); return 0; }  //~ ERROR GTI-S2014

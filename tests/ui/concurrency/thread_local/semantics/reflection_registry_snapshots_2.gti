@@ -1,0 +1,8 @@
+// Reflection registry snapshots: a trusted preamble snapshot carries computed-type declaration bindings into a later reflected generic query.
+//@ check-pass
+import std.meta;
+struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
+void inspect<T>() { constexpr for (auto field : std::meta::fields_of<T>()) {} }
+int main() { inspect<Reading>(); return 0; }
+
+// a later editor snapshot

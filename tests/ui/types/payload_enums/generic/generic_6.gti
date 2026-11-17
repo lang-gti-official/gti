@@ -1,0 +1,18 @@
+// Generic payload enums: the program is accepted.
+//@ check-pass
+struct Counts { mut int value = 0;  public: Counts() = default; };
+class Counter {
+  int& source;
+  Counts* state = nullptr;
+public:
+  Counter(int& source, Counts* state) : source(source), state(state) {}
+  unsafe void increment() { unsafe { this.state->value++; } }
+  int count() { unsafe { return this.state->value; } }
+};
+int main() {
+  int owner = 7;
+  mut Counts counts{};
+  Counter counter{owner, &counts};
+  unsafe { counter.increment(); }
+  return counter.count() - 1;
+}

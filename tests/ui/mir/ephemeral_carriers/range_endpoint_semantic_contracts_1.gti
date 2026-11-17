@@ -1,0 +1,37 @@
+// Range endpoint semantic contracts: concrete zero-argument readonly endpoint supports an exclusive inline proxy, including an empty variadic instantiation.
+//@ check-pass
+class Endpoint {
+  int count;
+public:
+  Endpoint(int count) : count(count) {}
+  int length() { return this.count; }
+};
+class EntryProjection {
+  mut EndpointRange& owner;
+public:
+  EntryProjection(mut EndpointRange& owner) : owner(owner) {}
+  mut int& value() mut { return this.owner.value(); }
+};
+class EntryCursor {
+  mut EntryProjection projection;
+  mut int position = 0;
+public:
+  EntryCursor(mut EndpointRange& owner) : projection(EntryProjection(owner)) {}
+  mut EntryProjection& operator*() mut { return this.projection; }
+  bool operator!=(Endpoint endpoint) { return this.position < endpoint.length(); }
+  void operator++() mut { this.position++; }
+};
+class EndpointRange {
+  mut int number = 1;
+  Endpoint terminal{1};
+public:
+  EndpointRange() {}
+  mut int& value() mut { return this.number; }
+  EntryCursor begin_mut() mut { return EntryCursor(this); }
+Endpoint end() { return Endpoint(1); }
+};
+int main() {
+  mut EndpointRange source{};
+  for (mut auto& entry : source) { entry.value() += 1; }
+  return source.value() - 2;
+}

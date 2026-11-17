@@ -1,0 +1,13 @@
+// Aliases and generics: lambda-local-reborrow.gti.
+//@ check-pass
+int main() {
+  auto relay = [](mut int& value) -> mut int& {
+    mut int& parent = value;
+    mut int& child = parent;
+    return child;
+  };
+  mut int number = 4;
+  mut int& result = relay(number);
+  result += 3;
+  return number - 7;
+}

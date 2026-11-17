@@ -1,0 +1,2 @@
+// Layout diagnostics: invalid layout query 'layout-query-void.gti' should produce one focused GTI-S2063 without a fix-it.
+uint64_t query() { return sizeof(void); }  //~ ERROR GTI-S2063

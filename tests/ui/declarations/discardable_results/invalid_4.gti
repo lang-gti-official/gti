@@ -1,0 +1,2 @@
+// Invalid: invalid discard contract must reject.
+[[discardable, discardable]] int value() { return 1; }  //~ ERROR GTI-S2099

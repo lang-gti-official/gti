@@ -1,0 +1,31 @@
+// Text reference reads: a text reference read cannot launder, outlive or escape its owner.
+import std.string;
+class Named {
+  std::string_view name;
+public:
+  Named(std::string_view name) : name(name) {}
+};
+std::string_view relay(std::string_view text) { return text; }
+struct TextReader {
+  std::string_view& text;
+  TextReader(std::string_view& input) : text(input) {}
+  std::string_view view() { return this.text; }
+  std::size_t size() { return this.text.size(); }
+  std::size_t copied_size() {
+    std::string_view copy = this.text;
+    return copy.size();
+  }
+  std::size_t relayed_size() {
+    std::string_view copy = relay(this.text);
+    return copy.size();
+  }
+};
+std::size_t copied_size(std::string_view& input) {
+  std::string_view copy = input;
+  return copy.size();
+}
+std::size_t relayed_size(std::string_view& input) {
+  std::string_view copy = relay(input);
+  return copy.size();
+}
+int main() { mut std::string owner = std::string("text"); std::string_view view = owner.view(); std::string_view& reference = view; std::string_view copy = relay(reference); owner.clear(); return int(copy.size()); }  //~ ERROR GTI-S2017

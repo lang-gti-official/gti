@@ -1,0 +1,15 @@
+// Source result audit policy: the program is accepted.
+//@ check-pass
+using Address = void*;
+using BytePointer = uint8_t*;
+using ItemPointer = int*;
+Address byte_transport(Address address) {
+  BytePointer bytes = BytePointer(address);
+  return Address(bytes);
+}
+Target restore<Target>(Address address) { return Target(address); }
+int main() {
+  Address address = byte_transport(nullptr);
+  ItemPointer restored = restore<ItemPointer>(address);
+  return restored == nullptr ? 0 : 1;
+}

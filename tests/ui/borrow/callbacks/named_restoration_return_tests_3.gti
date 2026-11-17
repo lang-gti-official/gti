@@ -1,0 +1,7 @@
+// Named restoration return tests: rejected with GTI-S2017.
+import std.memory;
+struct Reader { int& value; Reader(int& source) : value(source) {} };
+unsafe mut Reader& bad(std::erased_object& object) {  //~ ERROR GTI-S2017
+  unsafe { Reader& restored = std::restore_ref<Reader>(object); return restored; }  //~ ERROR GTI-S2017
+}
+int main() { return 0; }

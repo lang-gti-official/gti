@@ -1,0 +1,10 @@
+// Schedules: narrow and implicit member updates have verified MIR.
+//@ check-pass
+struct Counter { mut uint16_t value = 1;
+  void implicit_update() mut { value += uint16_t(2); }
+  void explicit_update() mut { this.value += uint16_t(2); }
+public:
+  Counter() = default;
+};
+int main() { mut uint8_t value = 1; uint8_t old = value++; --value;
+  mut Counter counter{}; counter.implicit_update(); counter.explicit_update(); return int(old); }

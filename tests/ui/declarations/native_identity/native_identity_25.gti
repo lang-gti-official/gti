@@ -1,0 +1,7 @@
+// Native identity: rejected with GTI-S2013.
+struct Twice {
+  int value;
+  implicit Twice(int first) : value(first) {}
+  implicit Twice(int first, int second = 2) : value(first + second) {}
+};
+int main() { Twice twice = 1; return twice.value; }  //~ ERROR GTI-S2013

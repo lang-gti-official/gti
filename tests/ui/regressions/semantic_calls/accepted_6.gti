@@ -1,0 +1,5 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+constexpr int source() { return 7; }
+consteval int check(int value) { return value; }
+int main() { return check(source()) - 7; }

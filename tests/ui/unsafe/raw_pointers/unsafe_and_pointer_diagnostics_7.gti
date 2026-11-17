@@ -1,0 +1,4 @@
+// Unsafe and pointer diagnostics: a transparent alias should compose with further pointer layers.
+//@ check-pass
+using Pointer = int32_t*;
+int main() { Pointer* nested = nullptr; return 0; }

@@ -1,0 +1,35 @@
+// Retained consuming field receiver: transparent receiver grouping preserves both retained stages.
+//@ check-pass
+class Piece {
+public:
+  Piece() {}
+  ~Piece() {}
+  int operator()() && { return 1; }
+  int read() { return 1; }
+};
+class Owner {
+  mut Piece first;
+  mut Piece second;
+public:
+  Owner(Piece first, Piece second)
+      : first(std::move(first)), second(std::move(second)) {}
+  int operator()() && {
+    int value = ((std::move(this.first)))();
+    return std::move(this.second)();
+  }
+};
+class Extract {
+  mut Piece field;
+public:
+  Extract(Piece field) : field(std::move(field)) {}
+  Piece operator()() && { return std::move(this.field); }
+};
+int main() {
+  Piece first{};
+  Piece second{};
+  Piece third{};
+  Owner owner{std::move(first), std::move(second)};
+  Extract extract{std::move(third)};
+  Piece extracted = std::move(extract)();
+  return std::move(owner)();
+}

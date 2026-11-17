@@ -1,0 +1,4 @@
+// Receiver capture tests: rejected with GTI-S2017.
+class C { int n = 0; public: C() = default;
+        int run() { auto f = [&this]() -> int& { return this.n; }; return f(); }  //~ ERROR GTI-S2017
+      }; int main() { C c{}; return c.run(); }

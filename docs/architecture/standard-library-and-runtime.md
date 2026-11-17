@@ -247,7 +247,7 @@ Evidence: [memory](../../stdlib/std/memory.gti),
 [cthread](../../stdlib/std/cthread.gti).
 Existing acceptance includes the
 [source-allocation completion evidence](verification.md#completion-acceptance-2026-10-08)
-and [object-lifetime tests](../../tests/object_lifetime_tests.cpp).
+and [object-lifetime tests](../../tests/ui/memory/object_lifetime).
 These links identify existing acceptance evidence; this documentation ledger
 does not claim a new test run.
 

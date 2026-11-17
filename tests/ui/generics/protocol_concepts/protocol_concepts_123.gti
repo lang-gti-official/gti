@@ -1,0 +1,6 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept numeric_family<P> { typename number<std::integral T>; };
+struct Policy {};
+for concept numeric_family<Policy> { using number<std::integral U> = U; };
+int main() { numeric_family<Policy>::number<int> value = 42; return value - 42; }

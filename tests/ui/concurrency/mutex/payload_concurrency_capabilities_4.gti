@@ -1,0 +1,11 @@
+// Payload concurrency capabilities: a mutex must not erase its payload's thread affinity.
+//@ execution-profile: concurrent
+import std.mutex;
+import std.memory;
+import std.thread;
+[[no_transfer]] struct Affine { int value = 0;  public: Affine() = default; };
+int main() {
+  auto owner = std::make_shared<std::mutex<Affine>>(Affine());
+  auto started = std::thread::start([value = std::move(owner)]() -> void {});  //~ ERROR GTI-S2084
+  return 0;
+}

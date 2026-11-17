@@ -1,0 +1,8 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept counted<T> {
+  int count(T value);
+};
+for <T> concept counted<T**> {  //~ ERROR GTI-S2123
+  int count(T** value) { return 0; }
+};
+int main() { return 0; }

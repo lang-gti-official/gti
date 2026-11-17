@@ -1,0 +1,2 @@
+// Rejected: invalid construction must stop compilation.
+class S { public: int x = 0;  public: S() = default; }; int main(){ S s = {.x = 1}; return 0; }  //~ ERROR GTI-S2091

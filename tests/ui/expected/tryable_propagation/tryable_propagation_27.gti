@@ -1,0 +1,20 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+enum Token { item(int value), empty };
+int inspect(Token& token) {
+  switch (token) {
+    case Token::item(value): return value;
+    case Token::empty: return 0;
+  }
+}
+
+Token repeated(int count) {
+  mut auto value = Token::empty;
+  for (mut int index = 0; index < count; ++index) {
+    auto previous = value;
+    [[discard]] inspect(previous);
+    value = Token::item(index);
+  }
+  return value;
+}
+int main() { auto value = repeated(3); return inspect(value) - 2; }

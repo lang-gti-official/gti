@@ -1,0 +1,8 @@
+// Analyze: type aliases cannot make a unique owner copyable.
+import std.memory;
+struct Box<T> { using value_type = T;  public: Box() = default; };
+int main() {
+  Box<std::unique_ptr<int>>::value_type first = std::make_unique<int>(7);
+  Box<std::unique_ptr<int>>::value_type second = first;  //~ ERROR GTI-S2003
+  return 0;
+}

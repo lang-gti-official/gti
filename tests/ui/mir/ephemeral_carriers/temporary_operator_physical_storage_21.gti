@@ -1,0 +1,14 @@
+// Temporary operator physical storage: a local carrier's external owner cannot authorize its inline relayed *local return.
+class Cursor {
+  int& owner;
+  int inline_value = 7;
+public:
+  Cursor(int& source) : owner(source) {}
+  // The checked addition keeps a failure edge, so the temporary also has a
+  // failure-cleanup endpoint after its interior result loan.
+  int& operator*() { int checked = this.inline_value + 0; return this.inline_value; }
+  int& ref() { return this.inline_value; }
+
+};
+Cursor cursor(int& source) { return Cursor(source); }
+int& identity(int& source) { return source; } int& bad(int& owner) { Cursor local = cursor(owner); int& selected = *local; return selected; }  //~ ERROR GTI-S2017

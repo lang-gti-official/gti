@@ -1,0 +1,3 @@
+// Invalid declarations: checked borrowed state cannot be retained in TLS through thread shutdown.
+//@ execution-profile: concurrent
+struct View { int& item; View(int& value) : item(value) {} }; int source = 1; thread_local View retained{source}; int main() { return 0; }  //~ ERROR GTI-S2045

@@ -1,0 +1,16 @@
+// Synchronized guards through formals: guard-through-returned-reference-formal lowers to verified MIR.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+std::mutex<int32_t>& touch(std::mutex<int32_t>& shared) {
+  {
+    auto guard = shared.lock();
+    if (guard.get() != 4) { return shared; }
+  }
+  return shared;
+}
+int main() {
+  std::mutex<int32_t> value{4};
+  auto guard = touch(value).lock();
+  return guard.get() == 4 ? 0 : 1;
+}

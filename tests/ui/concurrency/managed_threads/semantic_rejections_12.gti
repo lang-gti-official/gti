@@ -1,0 +1,8 @@
+// Semantic rejections: a named thread task should require one explicit ownership move.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  auto task = []() -> void {};
+  auto started = std::thread::start(task);  //~ ERROR GTI-S2046
+  return 0;
+}

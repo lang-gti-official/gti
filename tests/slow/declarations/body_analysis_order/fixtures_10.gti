@@ -1,0 +1,32 @@
+// Fixtures: callee-first demand from a constexpr for expansion is accepted.
+//@ check-pass
+//@ slow
+import std.iterator;
+import std.list;
+
+import std.meta;
+int main() {
+  std::list<int> priorities = {2, 4, 4, 9};
+  int urgent = 9;
+  mut int hits = 0;
+  constexpr for (auto element : std::meta::list<int32_t, bool>()) {
+    auto found = my_find(priorities.begin(), priorities.end(), urgent);
+    if (found != priorities.end()) { hits = hits + 1; }
+  }
+  return hits == 2 ? 0 : 1;
+}
+
+Iterator my_find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                        T& value)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::equality_comparable<T> {
+  while (first != last) {
+    if (*first == value) {
+      break;
+    }
+    ++first;
+  }
+  return std::move(first);
+}

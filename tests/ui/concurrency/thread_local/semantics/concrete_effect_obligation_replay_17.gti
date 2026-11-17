@@ -1,0 +1,9 @@
+// Concrete effect obligation replay: an actual nonempty fold's internal persistent input obligation is checked before HIR in either declaration order.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; thread_local mut int32_t third = 3; void leaf<T>(int32_t& fixed, T& element) { guarded = 9; }
+void selected<Args...>(Args... args) {
+  int32_t& fixed = guarded;
+  (leaf(fixed, args), ...);  //~ ERROR GTI-S2045
+}
+int main() { selected(1); return 0; }

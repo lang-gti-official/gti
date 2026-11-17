@@ -1,0 +1,29 @@
+// General requires: source scalar policies transport common proofs across alternatives.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.atomic;
+import std.meta;
+constexpr bool truth_type<T>() { return std::meta::is_bool<T>(); }
+concept integer_or_boolean<T> = std::meta::is_integral<T>() || truth_type<T>();
+concept signed_or_unsigned<T> = std::meta::is_signed_integral<T>() ||
+                               std::meta::is_unsigned_integral<T>();
+T load<T>(std::atomic<T>& value) requires integer_or_boolean<T> {
+  return value.load();
+}
+T load_truth<T>(std::atomic<T>& value) requires truth_type<T>() {
+  return value.load();
+}
+T increment<T>(T value) requires signed_or_unsigned<T> { return value + 1; }
+struct Record { int value = 0;  public: Record() = default; };
+concept public_record<T> = std::meta::is_reflectable<T>();
+uint64_t fields<T>() requires public_record<T> {
+  return std::meta::type<T>().field_count();
+}
+int main() {
+  static_assert(std::meta::is_bool<bool>());
+  static_assert(!std::meta::is_bool<int>());
+  std::atomic<bool> truth{true};
+  std::atomic<int> number{7};
+  return load<bool>(truth) && load_truth<bool>(truth) && load<int>(number) == 7 &&
+         increment<int>(3) == 4 && fields<Record>() == uint64_t(1) ? 0 : 1;
+}

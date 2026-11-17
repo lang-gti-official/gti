@@ -1,0 +1,20 @@
+// Ownerless forwarding: conditional ownerless forwarding is generic and order independent.
+//@ check-pass
+import std.string;
+import std.utility;
+struct Label<T> {
+  mut T text;
+  Label(T input) : text(std::move(input)) {}
+  T take() && { return std::move(this.text); }
+};
+Label<T> forward<T>(T input) { return later(std::move(input)); }
+Label<T> later<T>(T input) { return Label<T>(std::move(input)); }
+Label<std::string_view> uncalled(std::string_view input) { return later(input); }
+mut Label<std::string_view> latest = Label<std::string_view>("initial");
+void remember(std::string_view input) { latest = later(input); }
+int main() {
+  auto label = forward("literal");
+  auto integer = forward(42);
+  remember("remembered");
+  return std::move(label).take() == "literal" && std::move(integer).take() == 42 ? 0 : 1;
+}

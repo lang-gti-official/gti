@@ -1,0 +1,12 @@
+// Raw audit certainty: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: warn
+//@ no-prelude
+unsafe int read(bool choice, const int* pointer) { unsafe { if (choice) { return *pointer; } } return 0; }
+
+int inspect(bool choice) {
+  int live = 1;
+  mut const int* pointer = nullptr;
+  { int dead = 2; pointer = &dead; }
+unsafe { return read(choice, pointer); }}  //~ WARN GTI-S2102
+int main() { return 0; }

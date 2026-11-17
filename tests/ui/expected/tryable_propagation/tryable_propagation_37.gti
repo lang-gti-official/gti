@@ -1,0 +1,40 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+import std.panic;
+enum class Result<T, E> {
+  ok(T value),
+  failed(E error),
+};
+for <std::copyable T, std::copyable E> concept std::tryable<Result<T, E>> {
+  using value_type = T;
+  using residual_type = Result<T, E>;
+  bool has_value(Result<T, E>& result) {
+    switch (result) {
+    case Result<T, E>::ok:
+      return true;
+    case Result<T, E>::failed:
+      return false;
+    }
+  }
+  T take_value(Result<T, E> result) {
+    switch (result) {
+    case Result<T, E>::ok(value):
+      return value;
+    case Result<T, E>::failed(error):
+      std::panic("take_value on a failed result");
+    }
+  }
+  Result<T, E> take_residual(Result<T, E> result) { return result; }
+};
+Result<int, int> twice(int value) {
+  int half = ?Result<int, int>::ok(value);
+  return Result<int, int>::ok(half * 2);
+}
+int main() {
+  switch (twice(2)) {
+  case Result<int, int>::ok(value):
+    return value - 4;
+  case Result<int, int>::failed(error):
+    return 1;
+  }
+}

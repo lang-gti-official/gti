@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import runpy
@@ -46,7 +47,12 @@ REGISTRIES = ("tests/CMakeLists.txt", "tests/TestThroughput.cmake",
 # there are reported instead.
 UNTOUCHABLE: tuple[str, ...] = ()
 SUPPORTED_ARGUMENTS = {"names", "cases", "llvm_modes", "stdin_by_name", "fixture_paths",
-                       "execution_profile", "cpp_unsupported"}
+                       "execution_profile", "cpp_unsupported", "native_inputs_by_name",
+                       "native_arguments_by_case", "generated"}
+# Native inputs a wrapper passes after `--`: C and C++ files become test
+# sections (with the headers they include from their own directory); warning
+# flags only tuned the frozen C++ backend's generated source and are dropped.
+NATIVE_SECTION_SUFFIXES = (".c", ".cpp")
 # `cpp_unsupported` declared a C++-backend limitation; that backend is no
 # longer tested, so the declaration is dropped.
 
@@ -101,6 +107,11 @@ AREAS = (
     (r"^prvalue_direct_initialization", "language/construction"),
     (r"^(shared_getter_worker_loans|shared_ownership_threads|conditional_capability)", "concurrency"),
     (r"^shared_ownership_runtime", "stdlib/memory/shared_owner"),
+    (r"^many_fallible_scope_guards", "ownership/cleanup"),
+    (r"^vector_", "stdlib/vector"),
+    (r"^scoped_parallel", "concurrency"),
+    (r"^programmable_allocators", "memory"),
+    (r"^optimizer_", "optimizer"),
 )
 
 
@@ -123,6 +134,16 @@ def capture(wrapper: pathlib.Path) -> tuple[list[dict], str | None]:
                  "native_inputs_by_name", "native_arguments_by_case", "llvm_modes",
                  "cpp_unsupported", "private_modules_by_name", "llvm_unsupported")
         keywords = dict(keywords, **dict(zip(order, positional)))
+        # A wrapper may generate fixtures in a temporary directory that is
+        # gone once it returns: keep their text as the harness would read it.
+        keywords["generated"] = {
+            name: pathlib.Path(path).read_text()
+            for name, path in (keywords.get("fixture_paths") or {}).items()
+            if pathlib.Path(path).is_file()
+            and not pathlib.Path(path).resolve().is_relative_to(ROOT)}
+        library = os.environ.get("GTI_STDLIB_PATH")
+        if library and pathlib.Path(library).resolve() != (ROOT / "stdlib").resolve():
+            keywords["private_library"] = library
         calls.append(keywords)
 
     stub = types.ModuleType(HARNESS)
@@ -225,6 +246,17 @@ class Plan:
         self.modes.pop(fixture, None)
 
 
+class Generated:
+    """A fixture the wrapper wrote to a temporary file: its name and text."""
+
+    def __init__(self, name: str, text: str):
+        self.name = name
+        self.text = text
+
+    def read_text(self) -> str:
+        return self.text
+
+
 def docstring(wrapper: pathlib.Path) -> str:
     import ast
     text = ast.get_docstring(ast.parse(wrapper.read_text())) or ""
@@ -261,6 +293,13 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
     unsupported = sorted(set(call) - SUPPORTED_ARGUMENTS)
     if unsupported:
         result.reasons.append("harness arguments " + ", ".join(unsupported))
+    by_case = call.get("native_arguments_by_case")
+    if by_case is not None:
+        for name in call.get("names") or ():
+            for label in ("llvm-O0", "llvm-O3"):
+                if tuple(by_case(name, label, {})):
+                    result.reasons.append(f"{name}: per-mode native arguments")
+                    break
     area = area or area_of(result.test_name)
     if area is None:
         result.reasons.append("no area rule matches; pass --area")
@@ -275,10 +314,17 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
     stdin_by_name = call.get("stdin_by_name") or {}
     fixture_paths = {name: pathlib.Path(path) for name, path in
                      (call.get("fixture_paths") or {}).items()}
+    generated = call.get("generated") or {}
     for name in names:
         source = fixture_paths.get(name, FIXTURES / f"{name}.gti")
-        example = source.resolve().is_relative_to(ROOT / "examples")
-        if not source.is_file() or not (example or source.resolve().is_relative_to(TESTS)):
+        if name in generated:
+            # The wrapper's own derivation: written as a test, nothing moves.
+            source = Generated(source.name, generated[name])
+        example = not isinstance(source, Generated) and \
+            source.resolve().is_relative_to(ROOT / "examples")
+        if isinstance(source, Generated):
+            pass
+        elif not source.is_file() or not (example or source.resolve().is_relative_to(TESTS)):
             result.reasons.append(f"{name}: fixture {source} is not a file under tests/")
             continue
         runs = cases.get(name, [((), (0, "", ""))])
@@ -290,14 +336,18 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
             result.notes.append(f"{name}: {source.resolve().relative_to(ROOT)} is left to "
                                 "gti_test_examples (analysis); its bare run is dropped")
             continue
-        seeded = seeded_case(source, runs, stdin)
+        seeded = None if isinstance(source, Generated) else seeded_case(source, runs, stdin)
         if seeded:
             # A stdlib surface case seeded from this fixture, with its sibling
             # modules as sections, already makes the same observations.
             result.notes.append(f"{name}: {seeded.relative_to(ROOT)} already checks it")
             continue
+        natives = native_inputs(name, (call.get("native_inputs_by_name") or {}).get(name, ()),
+                                result)
+        if natives is None:
+            continue
         converted = convert(name, source, runs, stdin, description, result,
-                            call.get("execution_profile"))
+                            call.get("execution_profile"), natives)
         if converted is None:
             continue
         target = TESTS / "ui" / area / f"{name}.gti"
@@ -318,7 +368,14 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
                 str(path.relative_to(ROOT)) for path in namesakes))
         result.files[target] = text
         for suffix, content in stdout_files.items():
-            result.files[target.with_name(f"{name}{suffix}.stdout")] = content
+            if suffix == ".stdin":
+                result.files[target.with_name(f"{name}.stdin")] = content
+            else:
+                result.files[target.with_name(f"{name}{suffix}.stdout")] = content
+        if isinstance(source, Generated):
+            result.fixtures.append(name)
+            result.signatures[name] = repr((runs, stdin))
+            continue
         # An example stays where it is; its observed output becomes a test.
         (result.copies if example or shared(source, name, wrapper) else result.moves).append((source, target))
         result.fixtures.append(name)
@@ -327,12 +384,9 @@ def plan(wrapper: pathlib.Path, test_names: dict[str, str], area: str | None,
 
 
 def analysed_examples() -> set[pathlib.Path]:
-    """The examples gti_test_examples checks: top-level ones not excluded in
-    tests/gti_test.cmake."""
-    text = "\n".join(line.split("#")[0] for line in (TESTS / "gti_test.cmake").read_text().split("\n"))
-    excluded = set(re.search(r"set\(gti_examples_excluded(.*?)\)", text, re.S).group(1).split())
-    return {path.resolve() for path in (ROOT / "examples").glob("*.gti")
-            if path.stem not in excluded}
+    """The examples gti_test_examples checks: every top-level one (the
+    per-example options live in examples/gti-test.defaults)."""
+    return {path.resolve() for path in (ROOT / "examples").glob("*.gti")}
 
 
 def seeded_case(source: pathlib.Path, runs, stdin) -> pathlib.Path | None:
@@ -468,6 +522,11 @@ def sibling_sections(source: pathlib.Path, plan_, name) -> list[pathlib.Path] | 
     """Files `source` imports by a plain sibling file name, transitively, in
     first-import order; None (with a reason) for a module the runner cannot
     supply as a section."""
+    if isinstance(source, Generated):
+        if re.search(r"^\s*import\s+(\"[^\"]+\"|(?!std\b)[\w.]+)", source.text, re.M):
+            plan_.reasons.append(f"{name}: a generated fixture imports a module")
+            return None
+        return []
     found: list[pathlib.Path] = []
     pending = [source]
     while pending:
@@ -485,7 +544,39 @@ def sibling_sections(source: pathlib.Path, plan_, name) -> list[pathlib.Path] | 
     return found
 
 
-def convert(name, source, runs, stdin, description, plan_, profile=None):
+def native_inputs(name, inputs, plan_) -> list[pathlib.Path] | None:
+    """The native files to give as sections, or None (with a reason)."""
+    files: list[pathlib.Path] = []
+    for item in inputs:
+        item = str(item)
+        path = pathlib.Path(item)
+        if path.suffix in NATIVE_SECTION_SUFFIXES and path.is_file():
+            pending = [path]
+            while pending:
+                current = pending.pop(0)
+                if current in files:
+                    continue
+                files.append(current)
+                for include in re.findall(r'^\s*#\s*include\s+"([^"]+)"', current.read_text(), re.M):
+                    header = current.parent / include
+                    if "/" in include or not header.is_file():
+                        plan_.reasons.append(f"{name}: {current.name} includes {include}, "
+                                             "which is not a sibling file")
+                        return None
+                    pending.append(header)
+        elif item.startswith("-W"):
+            plan_.notes.append(f"{name}: native warning flag {item} dropped")
+        else:
+            plan_.reasons.append(f"{name}: native input {item}")
+            return None
+    names = [file.name for file in files]
+    if len(set(names)) != len(names):
+        plan_.reasons.append(f"{name}: native inputs share a file name")
+        return None
+    return files
+
+
+def convert(name, source, runs, stdin, description, plan_, profile=None, natives=()):
     text = source.read_text()
     siblings = sibling_sections(source, plan_, name)
     if siblings is None:
@@ -502,22 +593,26 @@ def convert(name, source, runs, stdin, description, plan_, profile=None):
         if any(not argument or any(c.isspace() for c in argument) for argument in arguments):
             plan_.reasons.append(f"{name}: an argument contains whitespace or is empty")
             return None
-        if any(argument.startswith(tempfile.gettempdir()) or "/gti-" in argument
-               for argument in arguments):
-            plan_.reasons.append(f"{name}: an argument names a temporary file the wrapper creates")
+        if "\0" in stderr:
+            plan_.reasons.append(f"{name}: NUL bytes in stderr")
             return None
-        if "\0" in _stdout + stderr + (stdin or ""):
-            plan_.reasons.append(f"{name}: NUL bytes in stdin, stdout or stderr")
-            return None
-    if stdin is not None and stdin and not stdin.endswith("\n"):
-        plan_.reasons.append(f"{name}: stdin without a final newline")
+    # A file in the wrapper's temporary directory is the same file name in
+    # the test directory, where gti-test runs the program.
+    runs = [(tuple(pathlib.Path(argument).name
+                   if argument.startswith(tempfile.gettempdir()) or "/gti-" in argument
+                   else argument for argument in arguments), expected)
+            for arguments, expected in runs]
+    if any(pathlib.Path(argument).name != argument for arguments, _ in runs
+           for argument in arguments if argument.startswith("/")):
+        plan_.reasons.append(f"{name}: an argument names an absolute path")
         return None
+    stdin_file = bool(stdin) and ("\0" in stdin or not stdin.endswith("\n"))
     if profile not in (None, "single-threaded", "concurrent"):
         plan_.reasons.append(f"{name}: execution profile {profile}")
         return None
     analysis = [f"//@ execution-profile: {profile}"] if profile == "concurrent" else []
     if (len(runs) == 1 and not runs[0][0] and tuple(runs[0][1]) == (0, "", "")
-            and not stdin and not analysis and shows_nothing(text)):
+            and not stdin and not analysis and not natives and shows_nothing(text)):
         plan_.modes[name] = "check-pass"
         lines = text.split("\n")
         if lines and lines[0].startswith("// ") and not lines[0].startswith("// ---"):
@@ -527,7 +622,9 @@ def convert(name, source, runs, stdin, description, plan_, profile=None):
     file_mode = "run-pass" if 0 in codes else "run-fail"
     directives.append(f"//@ {file_mode}")
     directives += analysis
-    if stdin:
+    if stdin and stdin_file:
+        stdout_files[".stdin"] = stdin  # a sibling name.stdin, compared bytewise
+    elif stdin:
         directives += [f"//@ stdin: {line}" for line in stdin[:-1].split("\n")]
     revisions = len(runs) > 1
     labels = revision_names(runs) if revisions else [""]
@@ -542,7 +639,7 @@ def convert(name, source, runs, stdin, description, plan_, profile=None):
             directives.append(f"//@{prefix} args: {' '.join(arguments)}")
         if code != 0:
             directives.append(f"//@{prefix} exit-code: {code}")
-        inline = stdout_directives(prefix, stdout)
+        inline = None if "\0" in stdout else stdout_directives(prefix, stdout)
         if inline is None:
             stdout_files[f".{label}" if revisions else ""] = stdout
         else:
@@ -555,12 +652,13 @@ def convert(name, source, runs, stdin, description, plan_, profile=None):
             pass
     plan_.modes[name] = file_mode if not revisions else f"{file_mode} ({len(runs)} revisions)"
     lines = text.split("\n")
-    if mentions_self or siblings:
+    if mentions_self or siblings or natives:
         # Expectations name the fixture's file and lines, or the fixture
         # imports sibling files: keep names and lines exactly by giving each
         # file its own section, as the old harness compiled them.
         header = [f"// {description}", *directives, f"// --- {source.name}"]
-        sections = "".join(f"// --- {file.name}\n" + file.read_text() for file in siblings)
+        sections = "".join(f"// --- {file.name}\n" + file.read_text()
+                           for file in [*siblings, *natives])
         body = text if text.endswith("\n") or not sections else text + "\n"
         return "\n".join(header) + "\n" + body + sections, stdout_files
     if lines and lines[0].startswith("// ") and not lines[0].startswith("// ---"):

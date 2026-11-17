@@ -1,0 +1,21 @@
+// Unstaged constructor field publication plan: the hierarchy field fixture retains an exact record-only publication plan.
+//@ check-pass
+class P {
+  int value;
+public:
+  P(int input) : value(input) {}
+  virtual int read() { return this.value; }
+};
+class Holder<F> {
+public:
+  F callable;
+  Holder(F input) : callable(input) {}
+};
+int store<F>(F callable) {
+  Holder<F> holder{callable};
+  return 0;
+}
+int main() {
+  P value{7};
+  return store([value]() -> int { return value.read(); });
+}

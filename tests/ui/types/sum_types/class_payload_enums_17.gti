@@ -1,0 +1,16 @@
+// Class payload enums: owning enum arrays require every element to be initialized.
+import std.memory;
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+
+int main() {
+  holder uninitialized[2];  //~ ERROR GTI-S2015
+  holder partial[2] = {holder::none};  //~ ERROR GTI-S2015
+  return 0;
+}

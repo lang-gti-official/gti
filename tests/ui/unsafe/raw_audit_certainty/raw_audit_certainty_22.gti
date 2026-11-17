@@ -1,0 +1,14 @@
+// Raw audit certainty: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+int inspect(bool choice, const Address* other) {
+  mut Address address{};
+  { int dead = 2; address.pointer = &dead; }
+  unsafe {
+    const Address* owner = choice ? &address : other;
+    const int* selected = owner->pointer;
+    return *selected;
+  }
+}
+int main() { return 0; }

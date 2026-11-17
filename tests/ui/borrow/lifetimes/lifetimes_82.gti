@@ -1,0 +1,5 @@
+// Lifetimes: rejected with GTI-S2127.
+struct View<lifetime owner> {
+  int&<owner> value;
+  View(int& input) : value(input) {}  //~ ERROR GTI-S2127
+};

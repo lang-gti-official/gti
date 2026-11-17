@@ -1,0 +1,15 @@
+// Stored callables: stored invocation reaches concrete MIR.
+//@ check-pass
+class Owner<T> {
+  T value;
+public:
+  Owner(T value) : value(std::move(value)) {}
+  int call(int argument) { return this.value(argument); }
+};
+Owner<T> own<T>(T value) { return Owner<T>(std::move(value)); }
+int main() {
+  int offset = 7;
+  auto operation = [offset](int value) -> int { return offset + value; };
+  auto owner = own(std::move(operation));
+  return owner.call(5) - 12;
+}
