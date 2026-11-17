@@ -256,7 +256,6 @@ owners = [
   "trusted_body_analysis_fixtures",
   "gti_corpus",
   "executable_entry_semantics",
-  "bounded_array_borrows_runtime",
   "unsafe_function_contract",
   "^gti_test_ui(_[0-9]+)?$",
 ]
@@ -1006,9 +1005,6 @@ paths = [
   "stdlib/std/detail/unordered_map_iterators.gti",
 ]
 owners = [
-  "paired_span_iterator_completion",
-  "forward_list_iterator_runtime",
-  "associative_map",
   "associative_hash_contracts",
   "associative_constructor_runtime",
   "mir_associative_determinism",

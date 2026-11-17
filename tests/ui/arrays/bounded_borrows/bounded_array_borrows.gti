@@ -1,3 +1,5 @@
+// Borrowing fixed arrays by bounded reference reads and writes their elements.
+//@ run-pass
 // Array references preserve extents and storage, including through generic calls.
 using Triple = int[3];
 using Observer = int(Triple&);

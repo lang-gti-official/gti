@@ -178,9 +178,6 @@ set_tests_properties(nested_type_syntax PROPERTIES TIMEOUT 10)
 if(Python3_Interpreter_FOUND)
 endif()
 
-add_test(NAME bounded_array_borrows_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/bounded_array_borrows_runtime_test.py" $<TARGET_FILE:gti>)
-set_tests_properties(bounded_array_borrows_runtime PROPERTIES TIMEOUT 300)
 
 
 
@@ -1972,8 +1969,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(string_c_string_runtime PROPERTIES TIMEOUT 300)
   foreach(iterator_gate IN ITEMS
-      forward_list_iterator_runtime
-      paired_span_iterator_completion
       cursor_carrier_publication
       user_dual_range_lifetime
       user_owning_reference_replacement
@@ -2656,7 +2651,7 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(associative_hash_contracts PROPERTIES TIMEOUT 300)
-  foreach(associative_suite IN ITEMS associative_map
+  foreach(associative_suite IN ITEMS
       associative_constructor_runtime
       nested_borrow_fields)
     add_test(

@@ -1,0 +1,53 @@
+// Forward-list cursors reject owner mutation and movement, competing reads, exclusive copies, read-only writes, raw-field misuse and a local owner's escaped cursor.
+//@ check-fail
+import std.forward_list;
+
+namespace case_mutable_cursor_copy {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+int entry() { mut std::forward_list<int32_t> values{}; values.push_front(1); mut auto cursor = values.begin_mut(); auto copied = cursor; if (*copied == 0) return 1; return 0; }  //~ ERROR GTI-S2003
+}
+
+namespace case_readonly_element_write {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+int entry() { mut std::forward_list<int32_t> values{}; values.push_front(1); auto cursor = values.begin(); *cursor = 2; return 0; }  //~ ERROR GTI-S2002
+}
+
+namespace case_raw_field_needs_unsafe {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+int entry() { mut UserRawOwner owner{}; UserRawOwner* address = &owner; address->field.write(); return 0; }  //~ ERROR GTI-S2055
+}
+
+namespace case_raw_field_constness {
+class UserMutableField {
+  mut int32_t value = 1;
+public:
+  void write() mut { this.value = 2; }
+public:
+  UserMutableField() = default;
+};
+struct UserRawOwner { mut UserMutableField field{};  public: UserRawOwner() = default; };
+int entry() { mut UserRawOwner owner{}; const UserRawOwner* address = &owner; unsafe { address->field.write(); } return 0; }  //~ ERROR GTI-S2000
+}
+
+int main() { return 0; }

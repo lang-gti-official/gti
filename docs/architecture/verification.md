@@ -10647,7 +10647,7 @@ requires `GTI-S2003` before backend entry, with the exact named-owner move hint;
 native direct/move success and installed LSP span/clearing checks cover its
 valid alternatives.
 
-`associative_map` and `unordered_map` cover ordering/bucket collisions, model
+The `std::map` and `std::unordered_map` cases (`tests/ui/stdlib/{map,unordered_map}/` and the `stdlib_surface` fixtures) cover ordering/bucket collisions, model
 comparison through repeated insertion and erasure, read/mutable iteration,
 owned keys and values, duplicate emplacement, replacement, custom policies,
 and concrete member aliases. Their negative cases retain immutable keys and

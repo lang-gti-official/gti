@@ -1,0 +1,55 @@
+// Paired-span cursors reject invalidated sides, read-only writes and cursor-child loans across a step.
+//@ check-fail
+import std.paired_span;
+import std.vector;
+
+namespace case_first_invalidation {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};  //~ WARN GTI-S2096
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+left.clear(); return (*cursor).first(); }  //~ ERROR GTI-S2017
+}
+
+namespace case_second_invalidation {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};  //~ WARN GTI-S2096
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+right.clear(); return (*cursor).second(); }  //~ ERROR GTI-S2017
+}
+
+namespace case_cursor_child {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};  //~ WARN GTI-S2096 //~ WARN GTI-S2096
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+std::paired_span<int, int>::value_type& entry = *cursor; ++cursor; return entry.first(); }  //~ ERROR GTI-S2017
+}
+
+namespace case_cursor_element_child {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};  //~ WARN GTI-S2096 //~ WARN GTI-S2096
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+int& value = (*cursor).first(); ++cursor; return value; }  //~ ERROR GTI-S2017
+}
+
+namespace case_indexed_first_invalidation {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};  //~ WARN GTI-S2096
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+auto entry = cursor[std::ptrdiff_t(1)]; left.clear(); return entry.first(); }  //~ ERROR GTI-S2017
+}
+
+namespace case_indexed_second_invalidation {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};  //~ WARN GTI-S2096
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+auto entry = cursor[std::ptrdiff_t(1)]; right.clear(); return entry.second(); }  //~ ERROR GTI-S2017
+}
+
+namespace case_by_value_element_invalidation {
+int entry() { mut std::vector<int> left = {1, 2}; mut std::vector<int> right = {3, 4};  //~ WARN GTI-S2096
+auto pairs = std::paired_span<int, int>(left.as_span(), right.as_span());
+mut auto cursor = pairs.begin();
+for (auto entry : pairs) { left.clear(); return entry.first(); } return 0; }  //~ ERROR GTI-S2017
+}
+
+int main() { return 0; }

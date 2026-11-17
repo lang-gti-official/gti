@@ -1,3 +1,9 @@
+// Forward-list nodes projected through raw pointers run and lower to raw-memory calls with field projections.
+//@ run-pass
+//@ snapshot: mir
+// CHECK: raw-memory=1
+// CHECK: raw-memory=1
+// CHECK: raw-memory=1
 import std.memory;
 
 struct UserNode {

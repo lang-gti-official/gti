@@ -1,3 +1,30 @@
+// Paired-span cursors read or moved out of range fail with the bounds or argument report.
+//@ run-fail
+//@ exit-code: 70
+//@ revisions: a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11
+//@[a0] stderr-contains: runtime error[GTI-R0016]
+//@[a1] args: argument
+//@[a1] stderr-contains: runtime error[GTI-R0016]
+//@[a2] args: argument argument
+//@[a2] stderr-contains: runtime error[GTI-R0007]
+//@[a3] args: argument argument argument
+//@[a3] stderr-contains: runtime error[GTI-R0016]
+//@[a4] args: argument argument argument argument
+//@[a4] stderr-contains: runtime error[GTI-R0016]
+//@[a5] args: argument argument argument argument argument
+//@[a5] stderr-contains: runtime error[GTI-R0016]
+//@[a6] args: argument argument argument argument argument argument
+//@[a6] stderr-contains: runtime error[GTI-R0007]
+//@[a7] args: argument argument argument argument argument argument argument
+//@[a7] stderr-contains: runtime error[GTI-R0016]
+//@[a8] args: argument argument argument argument argument argument argument argument
+//@[a8] stderr-contains: runtime error[GTI-R0016]
+//@[a9] args: argument argument argument argument argument argument argument argument argument
+//@[a9] stderr-contains: runtime error[GTI-R0016]
+//@[a10] args: argument argument argument argument argument argument argument argument argument argument
+//@[a10] stderr-contains: runtime error[GTI-R0016]
+//@[a11] args: argument argument argument argument argument argument argument argument argument argument argument
+//@[a11] stderr-contains: runtime error[GTI-R0016]
 import std.paired_span;
 import std.vector;
 import std.string;

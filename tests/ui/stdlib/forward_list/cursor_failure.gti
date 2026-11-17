@@ -1,3 +1,16 @@
+// Misusing a forward_list cursor fails with GTI-R0016 after exact cleanup.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 3
+//@ stdout: 2
+//@ stdout: 1
+//@ stdout: cleaned
+//@ stderr-contains: : runtime error[GTI-R0016]: invalid_container_argument in container_argument
+//@ revisions: f0 f1 f2 f3 f4
+//@[f1] args: fail
+//@[f2] args: fail fail
+//@[f3] args: fail fail fail
+//@[f4] args: fail fail fail fail
 import std.forward_list;
 import std.string;
 import std.vector;
