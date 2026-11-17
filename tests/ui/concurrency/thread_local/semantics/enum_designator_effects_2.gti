@@ -1,0 +1,16 @@
+// Enum designator effects: a real payload construction transfers into an owner whose scope cleanup follows the later reference binding's endpoint.
+//@ check-pass
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2; 
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { guarded = 3; }
+};
+enum Payload { owned(Cleanup value), empty };
+
+int main() {
+  Payload owned = Payload::owned(Cleanup());
+  int32_t& held = guarded;
+  return held;
+}

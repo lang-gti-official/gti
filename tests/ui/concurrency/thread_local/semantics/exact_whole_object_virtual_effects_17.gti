@@ -1,0 +1,19 @@
+// Exact whole object virtual effects: a by-value class formal owns an exact complete receiver rather than an arbitrary reference to a derived object.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1; thread_local mut int other = 2; 
+class Base {
+public:
+  virtual int read() { return 1; }
+public:
+  Base() = default;
+};
+class Reader : public Base {
+public:
+  int read() override { return 2; }
+public:
+  Reader() = default;
+};
+class Leaf : public Reader { public: Leaf() = default; };
+int invoke(Reader value) { int& held = guarded; return value.read() + held; } int main() { return invoke(Reader()); }

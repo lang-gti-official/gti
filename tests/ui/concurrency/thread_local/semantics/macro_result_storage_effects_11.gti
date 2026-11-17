@@ -1,0 +1,19 @@
+// Macro result storage effects: actual owning macro cleanup remains legal for a disjoint persistent owner.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1; thread_local mut int other = 2; thread_local mut int third = 3; 
+struct Cleanup {
+  Cleanup() {}
+  Cleanup(Cleanup& other) = delete;
+  Cleanup(Cleanup&& other) = default;
+  ~Cleanup() { guarded = 9; }
+};
+#macro Cleanup owned() { return Cleanup(); }
+#macro Cleanup nested_owned() { return owned!(); }
+
+int main() {
+  int& held = other;
+  [[discard]] nested_owned!();
+  return held;
+}

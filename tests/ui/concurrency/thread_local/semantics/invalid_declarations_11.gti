@@ -1,0 +1,5 @@
+// Invalid declarations: passive TLS requires no managed drain in a library artifact.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local int state = 1; int read() { return state; }

@@ -1,0 +1,11 @@
+// Pack fold storage effects: nonempty user fold hidden reads conflict with exclusive loans.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+void read(int32_t& input) { int32_t copy = input; }
+void leaf<T>(int32_t& input, T& element) { read(guarded); }
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;  //~ WARN GTI-S2096
+  (leaf(input, args), ...);
+}
+int main() { mut int32_t& held = guarded; folded(1); return held; }  //~ ERROR GTI-S2045

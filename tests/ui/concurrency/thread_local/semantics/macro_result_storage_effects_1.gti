@@ -1,0 +1,19 @@
+// Macro result storage effects: owning macro results transfer through nested result regions without a phantom cleanup under the caller's persistent loan.
+//@ check-pass
+//@ require-function-definitions
+mut int guarded = 1; mut int other = 2; mut int third = 3; 
+struct Cleanup {
+  Cleanup() {}
+  Cleanup(Cleanup& other) = delete;
+  Cleanup(Cleanup&& other) = default;
+  ~Cleanup() { guarded = 9; }
+};
+#macro Cleanup owned() { return Cleanup(); }
+#macro Cleanup nested_owned() { return owned!(); }
+
+int main() {
+  int& held = guarded;
+  Cleanup saved = nested_owned!();
+  int snapshot = held;
+  return snapshot;
+}

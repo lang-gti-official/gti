@@ -1,0 +1,9 @@
+// Concrete effect obligation replay: an uninstantiated symbolic fold retains a dependent effect obligation without claiming an executed nonempty call.
+//@ check-pass
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2; mut int32_t third = 3; void leaf<T>(int32_t& fixed, T& element) { guarded = 9; } 
+void selected<Args...>(Args... args) {
+  int32_t& fixed = guarded;
+  (leaf(fixed, args), ...);
+}
+int main() { return 0; }

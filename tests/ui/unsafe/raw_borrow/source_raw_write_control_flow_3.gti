@@ -1,0 +1,9 @@
+// Source raw write control flow: global raw writes preserve conditional and backedge origins.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+void bad() { int gone = 1; pointer = &gone; }
+void reset() { pointer = &witness; }
+void unchanged() {}
+int probe(mut bool run) { bad(); run ? reset() : unchanged(); unsafe { return std::assume_ref(pointer, witness); } } int main() { return probe(false); }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

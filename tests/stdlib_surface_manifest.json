@@ -6289,7 +6289,7 @@
         "tests/fixtures/stdlib_surface_meta.gti",
         "tests/fixtures/reflection_type_facts.gti",
         "tests/reflection_runtime_test.py",
-        "tests/reflection_tests.cpp",
+        "tests/ui/reflection/semantics",
         "stdlib/std/meta.gti",
         "tests/slow/reflection/attributes.gti",
         "tests/ui/reflection/construct.gti",
@@ -6375,7 +6375,7 @@
       ],
       "evidence": [
         "tests/composable_io_runtime_test.py",
-        "tests/carrier_shell_reference_tests.cpp",
+        "tests/ui/borrow/carrier_shell",
         "docs/language/ranges.md",
         "tests/fixtures/stdlib_surface_container_aliases.gti"
       ]
@@ -6609,7 +6609,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_panic_expected.gti",
         "tests/ui/runtime/panic",
-        "tests/panic_contract_tests.cpp",
+        "tests/ui/runtime/panic/contracts",
         "stdlib/std/panic.gti",
         "tests/reference_parameter_packs_test.py",
         "tests/fixtures/checked_format_panic.gti",

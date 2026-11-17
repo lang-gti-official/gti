@@ -1,0 +1,16 @@
+// Concrete effect obligation replay: an analyzed empty local lambda owns an exact empty summary rather than an unresolved or inherited source ID.
+//@ check-pass
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2; mut int32_t third = 3; 
+void selected<uint64_t Mode>() {
+  if constexpr (Mode < 2) {
+    int32_t& held = guarded;
+    auto hidden = []() -> void {
+      if constexpr (Mode == 0) {  }
+      else { guarded = 9; }
+    };
+    hidden();
+    int32_t copy = held;
+  }
+}
+int main() { selected<0>(); return 0; }

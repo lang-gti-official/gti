@@ -1,0 +1,17 @@
+// Exact whole object virtual effects: a base reference must never replace its mutating override with the harmless statically selected base body.
+//@ require-function-definitions
+mut int guarded = 1; mut int other = 2; 
+void change() { guarded = 9; }
+class Base {
+public:
+  virtual int read() { return 1; }
+public:
+  Base() = default;
+};
+class Reader : public Base {
+public:
+  int read() override { change(); return 2; }
+public:
+  Reader() = default;
+};
+Reader reader{}; int main() { Base& view = reader; int& held = guarded; return view.read() + held; }  //~ ERROR GTI-S2045

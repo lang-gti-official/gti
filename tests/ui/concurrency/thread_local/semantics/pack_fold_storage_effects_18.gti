@@ -1,0 +1,8 @@
+// Pack fold storage effects: direct persistent readonly fixed inputs permit shared reads.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+void leaf<T>(int32_t& input, T& element) { int32_t copy = input; }
+void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }
+int main() { int32_t& held = guarded; folded(1, true); return held; }

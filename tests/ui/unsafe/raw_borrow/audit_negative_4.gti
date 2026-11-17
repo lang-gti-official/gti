@@ -1,0 +1,13 @@
+// Audit negative: backedge cannot change a borrow to an unrelated live owner.
+//@ raw-pointer-audit: strict
+import std.memory;
+int main() {
+  int owner = 42;
+  int other = 9;
+  mut const int* address = &owner;
+  for (mut int i = 0; i < 2; ++i) {
+    unsafe { int& value = std::assume_ref(address, owner); if (value == 0) return 1; }  //~ ERROR GTI-S2102
+    address = &other;
+  }
+  return 0;
+}

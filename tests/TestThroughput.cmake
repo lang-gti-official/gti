@@ -37,7 +37,6 @@ endif()
 set(gti_long_gate_timeouts
   failure_metadata 2400
   operator_relay_pipeline 2400
-  reflection_semantics 1800
   view_fields 900)
 list(LENGTH gti_long_gate_timeouts gti_long_timeout_count)
 math(EXPR gti_long_timeout_last "${gti_long_timeout_count} - 1")
@@ -213,7 +212,7 @@ set_property(TEST ${gti_throughput_tests} APPEND PROPERTY LABELS "coverage-full"
 set(gti_fast_feedback_tests
   compiler_library_boundary driver_library_boundary
   project_model executable_entry_semantics include_suggestions
-  raw_pointer_pipeline raw_borrow_contract raw_access_contract
+  raw_pointer_pipeline raw_access_contract
   mir_full_expression mir_program_initialization mir_hosted_startup
   optimizer_foundation optimizer_analyses optimizer_conformance
   layout_query_pipeline native_record_pipeline bindgen_pipeline

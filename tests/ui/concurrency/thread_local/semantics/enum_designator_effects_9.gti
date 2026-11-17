@@ -1,0 +1,26 @@
+// Enum designator effects: case designators do not create phantom enum cleanup when a borrowed switch body can propagate a failure.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { guarded = 3; }
+};
+enum Payload { owned(Cleanup value), empty };
+
+thread_local mut Payload input = Payload::empty;
+int32_t inspect(Payload& value, int32_t index) {
+  switch(value) {
+  case Payload::owned(auto& payload):
+    int32_t values[1] = {1};
+    return values[index];
+  case Payload::empty: return 0;
+  }
+}
+int main() {
+  int32_t& held = guarded;
+  int32_t observed = inspect(input, 0);
+  return held + observed;
+}

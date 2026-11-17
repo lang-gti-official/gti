@@ -1,0 +1,16 @@
+// Enum designator effects: scope cleanup after the reference's last use does not conflict with its ended loan.
+//@ check-pass
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2; 
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { guarded = 3; }
+};
+enum Payload { owned(Cleanup value), empty };
+
+int main() {
+  int32_t& held = guarded;
+  Payload owned = Payload::owned(Cleanup());
+  return held;
+}

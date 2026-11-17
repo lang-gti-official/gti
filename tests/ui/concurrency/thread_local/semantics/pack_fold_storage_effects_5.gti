@@ -1,0 +1,10 @@
+// Pack fold storage effects: a real readonly reference-local fixed prefix remains valid for empty and nonempty expansions.
+//@ check-pass
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2; 
+void leaf<T>(int32_t& input, T& element) { int32_t copy = input; }
+void folded<Args...>(Args... args) {
+  int32_t& input = guarded;
+  (leaf(input, args), ...);
+}
+int main() { int32_t& held = guarded; folded(); return held; }

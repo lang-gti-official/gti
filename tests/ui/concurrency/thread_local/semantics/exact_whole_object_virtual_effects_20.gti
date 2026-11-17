@@ -1,0 +1,19 @@
+// Exact whole object virtual effects: field initialization may call an independent complete object's virtual method without treating constructor this as complete.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int guarded = 1; thread_local mut int other = 2; 
+class Base {
+public:
+  virtual int read() { return 1; }
+public:
+  Base() = default;
+};
+class Reader : public Base {
+public:
+  int read() override { return 2; }
+public:
+  Reader() = default;
+};
+class Leaf : public Reader { public: Leaf() = default; };
+thread_local Reader reader{}; class Holder { int kept = reader.read(); public: int value() { return this.kept; }  public: Holder() = default; }; int main() { Holder held{}; return held.value() - 2; }

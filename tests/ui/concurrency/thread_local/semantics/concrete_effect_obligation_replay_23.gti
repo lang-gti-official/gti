@@ -1,0 +1,16 @@
+// Concrete effect obligation replay: the same lambda syntax's distinct concrete effects cannot be lost or cross-contaminated by either instance query order.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; thread_local mut int32_t third = 3; 
+void selected<uint64_t Mode>() {
+  if constexpr (Mode < 2) {
+    int32_t& held = guarded;
+    auto hidden = []() -> void {
+      if constexpr (Mode == 0) { other = 9; }
+      else { guarded = 9; }
+    };
+    hidden();  //~ ERROR GTI-S2045
+    int32_t copy = held;
+  }
+}
+int main() { selected<0>(); selected<1>(); return 0; }

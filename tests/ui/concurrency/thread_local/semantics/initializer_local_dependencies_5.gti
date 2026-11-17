@@ -1,0 +1,24 @@
+// Initializer local dependencies: a nested TLS initializer cannot capture another initializer's lexical local in either typed or inferred storage.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value!(saved);
+}
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
+}
+
+#macro int nested_storage() {
+  int local = 3;
+  thread_local int nested = nested_value!(local);
+  return nested;
+}
+thread_local int outer = nested_storage!();  //~ ERROR GTI-S2124
+int main() { return outer; }

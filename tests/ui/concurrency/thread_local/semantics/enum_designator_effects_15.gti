@@ -1,0 +1,18 @@
+// Enum designator effects: a real enum temporary's destructor preserves disjoint loans.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { guarded = 3; }
+};
+enum Payload { owned(Cleanup value), empty };
+
+void inspect(Payload& value) {}
+int main() {
+  int32_t& held = other; 
+  inspect(Payload::owned(Cleanup()));
+  return held;
+}

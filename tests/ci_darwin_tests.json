@@ -142,7 +142,6 @@
     "simd_semantic_ir",
     "source_debug_lldb",
     "thread_confined_callback_runtime",
-    "thread_local_semantic",
     "thread_local_syntax",
     "transfer_function_threads_tsan",
     "weak_ownership_threads_tsan"

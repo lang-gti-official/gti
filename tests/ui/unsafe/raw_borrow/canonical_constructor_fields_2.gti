@@ -1,0 +1,8 @@
+// Canonical constructor fields: earlier constructor field identity preserves expired output.
+//@ raw-pointer-audit: strict
+struct Holder {
+  mut const int* pointer = nullptr;
+  Holder() { int dead = 7; this.pointer = &dead; }
+};
+
+int main() { Holder value{}; unsafe { return *value.pointer; } }  //~ ERROR GTI-S2102

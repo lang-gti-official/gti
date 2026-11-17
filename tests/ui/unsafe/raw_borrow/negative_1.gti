@@ -1,0 +1,3 @@
+// Negative: safe origin annotation cannot relabel another parameter.
+int&<a> select<lifetime a>(int&<a> left, int& right) { return right; }  //~ ERROR GTI-S2017
+int main() { int first = 42; int second = 7; return select(first, second); }

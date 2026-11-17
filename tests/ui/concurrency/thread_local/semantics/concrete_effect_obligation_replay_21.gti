@@ -1,0 +1,17 @@
+// Concrete effect obligation replay: an exact concrete local lambda preserves a disjoint hidden storage effect without an outer caller loan.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; thread_local mut int32_t third = 3; 
+void selected<uint64_t Mode>() {
+  if constexpr (Mode < 2) {
+    int32_t& held = guarded;
+    auto hidden = []() -> void {
+      if constexpr (Mode == 0) { other = 9; }
+      else { guarded = 9; }
+    };
+    hidden();
+    int32_t copy = held;
+  }
+}
+int main() { selected<0>(); return 0; }

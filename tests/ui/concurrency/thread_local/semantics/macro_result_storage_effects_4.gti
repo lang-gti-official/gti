@@ -1,0 +1,12 @@
+// Macro result storage effects: source-text and ignored fresh-callable probes never execute their operand's conflicting persistent write.
+//@ check-pass
+//@ require-function-definitions
+import std.source_location;
+mut int guarded = 1; mut int other = 2; mut int third = 3; 
+#macro ignore<F>(F action) {}
+int main() {
+  int& held = guarded;
+  std::string_view written = std::expression_text!(++guarded);
+  ignore!([]() -> void { guarded = 9; });
+  return held + int(written.size());
+}

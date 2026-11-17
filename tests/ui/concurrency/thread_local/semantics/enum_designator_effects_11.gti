@@ -1,0 +1,17 @@
+// Enum designator effects: actual unit-alternative values and groupings still construct ordinary owning enum values.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int32_t guarded = 1; thread_local mut int32_t other = 2; 
+class Cleanup {
+public:
+  Cleanup() {}
+  ~Cleanup() { guarded = 3; }
+};
+enum Payload { owned(Cleanup value), empty };
+
+int main() {
+  Payload first = Payload::empty;
+  Payload second = (Payload::empty);
+  return 0;
+}

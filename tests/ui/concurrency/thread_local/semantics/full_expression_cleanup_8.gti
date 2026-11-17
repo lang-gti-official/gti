@@ -1,0 +1,8 @@
+// Full expression cleanup: a result whose origin excludes the temporary parameter borrows it; the cleanup's write to the result's storage is the conflict.
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+int& current(Cleanup& input) { return value; }
+int main() { int& borrowed = current(Cleanup()); return borrowed; }  //~ ERROR GTI-S2045

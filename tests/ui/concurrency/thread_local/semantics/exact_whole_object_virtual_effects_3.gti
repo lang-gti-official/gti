@@ -1,0 +1,18 @@
+// Exact whole object virtual effects: the physical receiver proof applies equally to owning locals.
+//@ check-pass
+//@ require-function-definitions
+mut int guarded = 1; mut int other = 2; 
+class Base {
+public:
+  virtual int read() { return 1; }
+public:
+  Base() = default;
+};
+class Reader : public Base {
+public:
+  int read() override { return 2; }
+public:
+  Reader() = default;
+};
+class Leaf : public Reader { public: Leaf() = default; };
+int main() { Reader local{}; int& held = guarded; return local.read() + held; }

@@ -1,0 +1,24 @@
+// Expansion: deferred expansion in a generic function is accepted.
+//@ check-pass
+import std.meta;
+struct Player {
+  uint32_t health = 100;
+  float speed = 1.5;
+public:
+  Player() = default;
+};
+double total<T>(T& value) {
+  mut double sum = 0.0;
+  constexpr for (auto field : std::meta::fields_of<T>()) {
+    if constexpr (field.type().is_integral()) {
+      sum = sum + double(field.get(value));
+    } else if constexpr (field.type().is_floating_point()) {
+      sum = sum + double(field.get(value));
+    }
+  }
+  return sum;
+}
+int main() {
+  Player player = {.health = uint32_t(7), .speed = 2.0};
+  return int(total(player));
+}

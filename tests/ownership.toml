@@ -264,7 +264,6 @@ owners = [
   "semantic_header_boundary",
   "semantic_header_self_containment",
   "general_requires_semantics",
-  "reflection_semantics",
   "reference_payload_semantics",
   "borrowing_capture_semantics",
   "protocol_concepts",
@@ -273,7 +272,6 @@ owners = [
   "trusted_body_analysis_fixtures",
   "body_analysis_order_fixtures",
   "gti_corpus",
-  "thread_local_semantic",
   "executable_entry_semantics",
   "generic_discovery",
   "generic_initialization",
@@ -293,7 +291,6 @@ owners = [
   "semantic_call_regressions",
   "^gti_test_ui(_[0-9]+)?$",
   "owning_function_types",
-  "consuming_receiver_types",
 ]
 consumers = [
   "language_coverage_corpus",
@@ -409,7 +406,6 @@ owners = [
   "generic_layout",
   "generic_initialization",
   "instance_reuse_fixtures",
-  "ownerless_text_contracts",
   "view_fields",
   "field_symbol_identity",
   "typed_program_model",
@@ -543,7 +539,6 @@ paths = [
   "tests/fixtures/projected_move_failure.gti",
   "tests/fixtures/projected_move_user.gti",
   "tests/fixtures/mutex_vector_storage.gti",
-  "tests/panic_contract_tests.cpp",
   "src/compiler/backend.cpp",
   "src/compiler/native_header.cpp",
   "src/compiler/failure_metadata.cpp",
@@ -561,7 +556,6 @@ paths = [
 owners = [
   "backend_execution_protocol",
   "backend_contract_regressions",
-  "panic_contracts",
   "backend_lowered_program_boundary",
   "failure_metadata",
   "failure_descriptor_backend",
@@ -871,7 +865,6 @@ owners = [
   "runtime_failure_subprocess",
   "runtime_failure_header_coexistence",
   "panic_adoption_runtime",
-  "panic_contracts",
   "failure_descriptor_backend",
 ]
 consumers = [

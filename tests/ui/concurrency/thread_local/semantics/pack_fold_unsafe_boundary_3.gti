@@ -1,0 +1,4 @@
+// Pack fold unsafe boundary: an unsafe selected fold callable requires ordinary lexical unsafe admission, not inferred backend permission.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+unsafe void leaf<T>(T& element) {} void folded<Args...>(Args... args) { (leaf(args), ...); } int main() { folded(1); return 0; }  //~ ERROR GTI-S2055

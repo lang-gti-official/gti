@@ -1,0 +1,6 @@
+// Pack fold storage effects: a readonly direct persistent fixed input protects against its own target's hidden write without a separate named loan.
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2; 
+void leaf<T>(int32_t& input, T& element) { guarded = 3; }
+void folded<Args...>(Args... args) { (leaf(guarded, args), ...); }  //~ ERROR GTI-S2045
+int main() { folded(1, true); return 0; }
