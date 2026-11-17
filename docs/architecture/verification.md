@@ -2257,7 +2257,7 @@ rejected. `tests/ui/constexpr/static_assertions/` adds class and function assert
 a constexpr helper declared after them; class and function instances, reached
 from a constant evaluation and from global initializers, that read a namespace
 constant, call a constexpr helper and select an `if constexpr` arm; and a
-function whose assertion evaluates its own instance. `reflection_runtime`
+function whose assertion evaluates its own instance. `tests/ui/reflection/runtime/`
 compiles and runs `reflection_class_assertions.gti` at O0/O1/O3 in C++20/C++23.
 Main `6d502f02` crashes the reflection test (SIGBUS) and fails all four
 `static_assertions` additions; a genuine `if constexpr` cycle still reports
@@ -7913,7 +7913,7 @@ optimized build tree supplied the combined evidence.
 factory construction, read-only and mutable methods, sequential owner reuse,
 named equivalents, and global owners. Negative cases retain temporary-owner,
 mutable/cleanup-owning multi-origin, borrowed-result, overlapping-access and
-owner-move rejection. `borrowing_composition` preserves the existing passive
+owner-move rejection. `tests/ui/ownership/borrowing_composition/` preserves the existing passive
 read-only multi-owner value-receiver rule, including forwarding from by-value
 and reference parameters. Its 14 negative cases include conflicting access to
 the secondary owner as a method argument or later operand; these must receive

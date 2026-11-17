@@ -1,0 +1,169 @@
+// Composed borrows keep every owner borrowed: owner writes, temporary owners, reseats and aliases are rejected.
+//@ check-fail
+
+namespace case_temporary_owner {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  int a = 1; PairView view{a, 2}; return view.sum();  //~ ERROR GTI-S2012 //~ ERROR GTI-S2045
+}
+}
+
+namespace case_temporary_receiver_owner {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  int a = 1; return PairView(a, 2).sum();  //~ ERROR GTI-S2012
+}
+}
+
+namespace case_local_second_owner_return {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+PairView bad(int& a) {
+  int b = 2; return PairView(a, b);  //~ ERROR GTI-S2045
+}
+int entry() { int a = 1; auto view = bad(a); return view.sum(); }
+}
+
+namespace case_dependency_reseat {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  int a = 1; int b = 2; int c = 3;
+  mut PairView view{a, b}; view = PairView(a, c); return view.sum();  //~ ERROR GTI-S2003
+}
+}
+
+namespace case_call_secondary_alias {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int inspect(PairView view, mut int& other) {
+  other = 9; return view.sum();
+}
+int entry() {
+  int a = 1; mut int b = 2;
+  return inspect(PairView(a, b), b);  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_later_operand_secondary_mutation {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int change(mut int& value) {
+  value = 9; return value;
+}
+int inspect(PairView view, int other) { return view.sum() + other; }
+int entry() {
+  int a = 1; mut int b = 2;
+  return inspect(PairView(a, b), change(b));  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_receiver_secondary_alias {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  int a = 1; mut int b = 2;
+  return PairView(a, b).mutate_argument(b);  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_later_method_argument_secondary_mutation {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int change(mut int& value) {
+  value = 9; return value;
+}
+int entry() {
+  int a = 1; mut int b = 2;
+  return PairView(a, b).sum_with(change(b));  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_later_method_operand_secondary_mutation {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int change(mut int& value) {
+  value = 9; return value;
+}
+int entry() {
+  int a = 1; mut int b = 2;
+  return PairView(a, b).sum() + change(b);  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_path_dependent_return_dependency {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+PairView bad(int& a, int& b, bool choose) {  //~ ERROR GTI-S2017
+  if (choose) { return PairView(a, b); }
+  return PairView(a, a);
+}
+int entry() {
+  mut int a = 1; mut int b = 2;
+  auto view = bad(a, b, false); b = 3; return view.sum();
+}
+}
+
+int main() { return 0; }

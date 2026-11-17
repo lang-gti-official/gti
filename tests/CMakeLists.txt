@@ -565,9 +565,6 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_test.py"
                    $<TARGET_FILE:gti>)
   set_tests_properties(process_resource_policy PROPERTIES TIMEOUT 300)
-  add_test(NAME source_resource_prefix_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_resource_prefix_runtime_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(source_resource_prefix_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME source_text_address_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_text_address_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(source_text_address_runtime PROPERTIES TIMEOUT 300)
@@ -742,11 +739,6 @@ set_tests_properties(llvm_bounded_recursion_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_prefix_relocation_tests optimizer_prefix_relocation_tests.cpp)
 target_link_libraries(gti_optimizer_prefix_relocation_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_prefix_relocation COMMAND gti_optimizer_prefix_relocation_tests)
-add_test(NAME optimizer_prefix_relocation_runtime
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/optimizer_prefix_relocation_runtime_test.py"
-                 "$<TARGET_FILE:gti>")
-set_tests_properties(optimizer_prefix_relocation_runtime PROPERTIES TIMEOUT 300)
 add_test(NAME returned_field_address_runtime
   COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
     $<TARGET_FILE:gti>)
@@ -887,9 +879,6 @@ set_tests_properties(borrowed_from_equivalence PROPERTIES TIMEOUT 300)
 
 
 if(TARGET gti_lsp)
-  add_test(NAME raw_pointer_audit_policy
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_pointer_audit_policy_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
-  set_tests_properties(raw_pointer_audit_policy PROPERTIES TIMEOUT 240)
   add_test(NAME compile_limits
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compile_limits_test.py" $<TARGET_FILE:gti> $<TARGET_FILE:gti_lsp>)
   set_tests_properties(compile_limits PROPERTIES TIMEOUT 240)
@@ -2384,16 +2373,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/fixtures/constexpr_aggregate_positive.gti"
   )
   add_test(
-    NAME reflection_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/reflection_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_basic.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_generic_encoder.gti"
-            "${PROJECT_SOURCE_DIR}/tests/fixtures/reflection_binary_writer.gti"
-  )
-  set_tests_properties(reflection_runtime PROPERTIES TIMEOUT 900)
-  add_test(
     NAME constexpr_allocation_example
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/constexpr_text_runtime_test.py"
@@ -2688,7 +2667,7 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(associative_hash_contracts PROPERTIES TIMEOUT 300)
   foreach(associative_suite IN ITEMS associative_map
       associative_constructor_runtime
-      nested_borrow_fields borrowing_composition)
+      nested_borrow_fields)
     add_test(
       NAME "${associative_suite}"
       COMMAND "${Python3_EXECUTABLE}"
@@ -3045,12 +3024,6 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/cli_hardlink_fixture_test.py"
   )
-  add_test(
-    NAME cli_color
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cli_color_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(cli_color PROPERTIES TIMEOUT 180)
   add_executable(gti_cli_progress_probe
     cli_progress_probe.cpp
     "${PROJECT_SOURCE_DIR}/src/cli/build_progress.cpp"

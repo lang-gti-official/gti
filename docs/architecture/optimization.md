@@ -1339,7 +1339,7 @@ justified scalar facts. Live, conditionally moved and reinitialized cleanup
 retain their ordinary effects; native counter controls observe those cases.
 
 The focused `optimizer_prefix_relocation` and
-`optimizer_prefix_relocation_runtime` controls use an application-owned
+`tests/ui/optimizer/prefix_relocation/` (and its O3 copies in `tests/slow`) controls use an application-owned
 carrier, overwritten values, retired sources, vacant capacity and failed
 transfers. Owning assertions select the exact downstream multiplication in
 reference-return getter cases; unrelated arithmetic is not evidence. Scalar
