@@ -3800,6 +3800,21 @@ text field of its receiver. That result holds the owner's text and borrows
 nothing of the temporary, so `ephemeralBorrowResultSupported` does not apply
 to it.
 
+`receiverClassRegionRelay` is the general form for any borrowed state. It
+admits a read-only method whose result (a reference, or a carrier holding
+borrowed state) is written in one of its class's lifetime regions and whose
+summary maps exactly one stored receiver field, or, for a generic member
+resolved before its instance maps fields, whose signature names a class binder
+the class stores. Such a result is what the receiver stores in that region,
+so a fresh temporary receiver may supply it beyond its full expression. The
+signature-level region check is shared by fields and methods:
+`validateReturnedCallRegion` resolves a returned field or method result of a
+carrier parameter to the region the parameter's type supplies for the
+written binder. Anything else read from the carrier itself, a value field or
+a `this`-region result, lives in the carrier's own storage: the reference's
+region for a carrier reference (GTI-S2127 unless it outlives the result),
+and, for a by-value parameter, storage that MIR reports escaping.
+
 A function may return a fresh value that holds one of its by-value text
 formals in a direct text field (phase 2a). Its `publishedTextFields` lists
 each such (formal, field) relay; it is a callee fact, not a return-borrow
