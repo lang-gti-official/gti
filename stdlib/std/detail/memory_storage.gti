@@ -814,13 +814,19 @@ public:
   constexpr expected<void, alloc_errc> try_allocate(uint64_t count) mut {
     return this.data.try_allocate(count);
   }
-  // AArch64 macOS benefits from keeping allocator state out of the append
-  // loop. Linux x64 retains inlining; its measured register/call tradeoff differs.
+  // Keep each target declaration complete: GTI conditionals select declarations,
+  // not token fragments. Both wrappers use the same storage policy below.
 #if target.os == "macos" && target.arch == "arm64"
   [[noinline]] constexpr bool grow_bytes_if_supported(uint64_t count) mut {
+    return this.grow_bytes(count);
+  }
 #else
   constexpr bool grow_bytes_if_supported(uint64_t count) mut {
+    return this.grow_bytes(count);
+  }
 #endif
+private:
+  constexpr bool grow_bytes(uint64_t count) mut {
     if constexpr (std::bitwise_relocatable<T> && !std::meta::is_text<T>()) {
       if (count <= this.data.capacity()) { return true; }
       if (!this.data.buffer.lease.supports_byte_growth()) { return false; }
@@ -837,6 +843,7 @@ public:
       return false;
     }
   }
+public:
   constexpr uint64_t capacity() { return this.data.capacity(); }
   constexpr uint64_t length() { return this.data.length(); }
   unsafe constexpr void set_initialized_length_unchecked(uint64_t count) mut {
