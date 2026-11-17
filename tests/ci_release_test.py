@@ -696,7 +696,13 @@ def gti_test_tiers_contract(root):
     darwin = json.loads((root / "tests/ci_darwin_tests.json").read_text())["tests"]
     assert {"gti_test_ui", "gti_test_examples", "gti_unit_tests"} | shard_names <= set(darwin)
     assert not {"gti_test_slow", "gti_test_isolate"} & set(darwin)
-    durations = json.loads((root / "tests/ci_test_durations.json").read_text())["seconds"]
+    # The committed seeds, not the working file: full validation overwrites the
+    # working table with the newest refreshed artifact, which predates any entry
+    # this change adds and never gains the slow-tier names.
+    seeded = subprocess.run(["git", "show", "HEAD:tests/ci_test_durations.json"], cwd=root,
+                            capture_output=True, text=True, timeout=30, check=False)
+    durations = json.loads(seeded.stdout if seeded.returncode == 0 else
+                           (root / "tests/ci_test_durations.json").read_text())["seconds"]
     for name in ("gti_test_ui", "gti_test_examples", "gti_unit_tests", "gti_test_slow", "gti_test_isolate",
                  *sorted(shard_names)):
         assert name in durations, f"{name} has no shard-balancing duration"
