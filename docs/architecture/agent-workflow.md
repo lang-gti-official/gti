@@ -676,7 +676,12 @@ passes; it removes a failing PR and rebuilds the entries behind it. The
 complete suite runs after integration on each main head
 (`full-validation.yml`); a red main is reported in the `main-broken` issue and
 is fixed forward or reverted, and no channel selects a main commit full
-validation has not passed. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
+validation has not passed. A run red only because required jobs never got a
+hosted runner (cancelled with zero steps executed) is not reported:
+`validation-retry.yml` re-runs those jobs once when it is the newest run of
+main, and the re-run attempt's own verdict and report decide. A job that
+executed any step is never retried; a superseded or second starved attempt is
+reported like any failure. The last handoff record stays `rollup`, `awaiting-ci` or `queued` until refreshed;
 GitHub owns the transition and failures/conflicts still need repair. Once GitHub reports
 the merge, and `sync` (or a repeated `finish`) then advances local main. Do not force a merge
 or bypass a server rule. Release workflows run after integration and need not
@@ -909,7 +914,7 @@ advisory-CI policy. `.github/workflows/ci.yml` reports one required check,
 
 | Event | Mode | Jobs the gate requires |
 | --- | --- | --- |
-| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast`, the `gti-test` entries and the PR's declared T0/T1 tests on both) |
+| `pull_request` (ready) | full | lint (formatting, release version, Tree-sitter), workflow regressions, and `fast` on macOS arm64 and Linux x64 (`feedback-fast` on both; every `gti-test` entry on Linux, and on macOS `gti_test_ui`, `gti_unit_tests` and one `tests/ui` shard rotating with the commit; then the PR's declared T0/T1 tests the gate did not just run, on macOS only those in the `darwin` set) |
 | `pull_request` (draft) | draft | lint and workflow regressions only; a draft cannot enter the queue |
 | `merge_group` | full | the same as a ready pull request: lint, workflow regressions and system-LLVM `fast` checks on the exact candidate (a bounded gate, as rustc and LLVM gate merges) |
 | `workflow_dispatch` on main | full | the same bounded gate, for recovery |

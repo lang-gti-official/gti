@@ -27,20 +27,38 @@ python3 scripts/agent_workflow.py protection
 - On a pull request: lint (formatting, release version, the old-suite test
   freeze `scripts/check_test_freeze.py`, Tree-sitter), the
   workflow regression tests, and a macOS arm64 and Linux x64 build running
-  `feedback-fast` and the `gti-test` entries `gti_test_ui` with its `tests/ui`
-  shards `gti_test_ui_<i>`, `gti_test_examples` and `gti_unit_tests` (each
-  matrix row's `gate` list, the same on both platforms), with
-  per-case JUnit reports uploaded as `gti-test-<platform>-<attempt>`. On Linux,
+  `feedback-fast` and the `gti-test` entries, with per-case JUnit reports
+  uploaded as `gti-test-<platform>-<attempt>`. Linux runs `gti_test_ui`, every
+  `tests/ui` shard `gti_test_ui_<i>`, `gti_test_examples` and
+  `gti_unit_tests`. macOS, whose hosted runners are scarce, runs what differs
+  on the platform: `gti_test_ui` (runner self-test, tidy, `tests/project`,
+  `tests/lsp`), `gti_unit_tests` and one `tests/ui` shard chosen from the
+  commit's hash, so successive candidates rotate through every shard
+  (`validation_checks.py gate-tests`, the matrix row's `gate` and `rotate`);
+  full validation runs every shard and `gti_test_examples` on macOS after
+  integration. The PR's declared T0/T1 tests are then re-run, except those
+  the gate step just ran, and on macOS only those in the `darwin` set
+  (`tests/ci_darwin_tests.json`). On Linux,
   `gti-test --changed HEAD^1` then fails a case the pull request adds or
   changes when it uses more than half its CPU limit. The daily slow tier runs
   `tests/slow` and an `--isolate` run; the daily sanitizers run the `gti_test_ui`
   entries' cases with instrumented programs. See
   [verification](../docs/architecture/verification.md). Drafts run lint only.
+  A merge-queue candidate the queue has discarded stops before its build.
 - On every push to main, full validation's `tip` job republishes that run's
   production archives as the rolling `tip` prerelease once both platforms pass
   their installed-toolchain checks, before the integration shards finish. It
   builds nothing, never affects the run's verdict, and nightly still publishes
   only a commit that passed the complete suite.
+- When full validation of main is red only because required jobs never got
+  a hosted runner (cancelled having executed zero steps; GitHub drops
+  long-queued macOS jobs), `workflows/validation-retry.yml` re-runs those
+  jobs, with the verdict and report, once, and only for the newest run of
+  main; that run's report leaves `main-broken` alone. A job that executed any
+  step is never retried. When only the failed jobs re-run, nightly takes the
+  packages from the attempt that built them, after checking the latest
+  attempt lists those very executions as green
+  (`release_artifacts.py package_attempt`).
 - On manual dispatch from main: full integration and production packaging,
   without PR-body declarations, for release commissioning or artifact recovery.
 - In the merge queue: system-LLVM fast checks plus production packaging and

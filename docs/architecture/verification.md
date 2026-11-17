@@ -9926,7 +9926,8 @@ into the tiers of the redesign's §7:
 
 | Tier | Entries | How |
 | --- | --- | --- |
-| Pull request and merge queue (`ci.yml` fast checks, Linux and macOS) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_8` (`gti-test --shard i/8`), `gti_test_examples`, `gti_unit_tests` | one `ctest -R` over the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
+| Pull request and merge queue (`ci.yml` fast checks, Linux) | `gti_test_ui` (self-test, tidy, `tests/project`, `tests/lsp`) and its `tests/ui` shards `gti_test_ui_1`…`gti_test_ui_8` (`gti-test --shard i/8`), `gti_test_examples`, `gti_unit_tests` | one `ctest -R` over the pattern `validation_checks.py gate-tests` builds from the matrix row's `gate` list, at `-O0`; `--output-on-failure` prints each `FAIL <path>` block; `-DGTI_TEST_REPORT_DIRECTORY` makes every entry also write a per-case JUnit report, uploaded as `gti-test-<platform>-<attempt>` |
+| Pull request and merge queue (`ci.yml` fast checks, macOS) | `gti_test_ui`, `gti_unit_tests` and one `tests/ui` shard: `gti_test_ui_<1 + (the first 12 hex digits of the commit mod 8)>` (`rotate: 1`) | the same step and reports. Hosted macOS runners are scarce (five at once on the free plan, shared with full validation, which lost runs to jobs GitHub never started), and the PR gate measured 34–39 minutes of serial gti-test time per macOS job on 2026-11-17. The platform entries run on every candidate; the shard rotates with each PR and queue candidate's commit; every shard and `gti_test_examples` run on macOS in full validation's `darwin` set after integration, which reports a macOS-only `tests/ui` or example failure in `main-broken` |
 | Pull request budget (Linux, advisory) | cases the PR adds or changes | `scripts/gti_test_budget.py` runs `gti-test --changed HEAD^1` with `GTI_TEST_TIME_SCALE=2`; a case whose warm CPU time exceeds half its scaled limit becomes a warning annotation and a job-summary row, not a failure, until the rule is calibrated (below); other failures of changed cases still fail |
 | Per-commit full validation | the same entries | Linux runs every registered non-`slow` entry; macOS runs them through `tests/ci_darwin_tests.json`; their durations are in `tests/ci_test_durations.json` and refresh from each run |
 | Daily slow tier (`slow.yml`) | `gti_test_slow` (`tests/slow`), `gti_test_isolate` (`tests/ui`, each case in a fresh `gti` process) | labelled `slow`, so they run in the Linux `slow` shards and `merge-shards` proves them like any other slow test; per-case JUnit is uploaded with the shard evidence |
@@ -10019,7 +10020,10 @@ Hosted CI provisions checksum-pinned Neovim 0.11.5 before CMake configuration
 through `configure_ci_editor.py`, so editor tests are registered on both supported
 platforms. T0/T1 declarations name checks available on both platforms; record
 platform-specific checks such as `macos_installed_runtime` separately in the PR
-evidence. A declared test that runs and fails fails the job; a malformed
+evidence. Each fast-checks job re-runs the declared tests its gti-test step did
+not already run; the macOS job re-runs only those in the `darwin` set
+(`tests/ci_darwin_tests.json`), and Linux proves the rest, as in full
+validation. A declared test that runs and fails fails the job; a malformed
 `Validation:` block and a declared name that is missing or disabled are
 advisory warnings (see "Advisory checks" above).
 
