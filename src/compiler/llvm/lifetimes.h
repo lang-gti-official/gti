@@ -70,7 +70,8 @@ public:
                              MirInstructionId instruction);
   void retireProgramStorage(llvm::IRBuilder<> &ir);
   [[nodiscard]] llvm::Value *cleanupProgramStorage(llvm::IRBuilder<> &ir,
-                                                   llvm::Value *failure);
+                                                   llvm::Value *failure,
+                                                   bool unwinding);
   void generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
                       const MirBody &body, const MirInstruction &instruction,
                       const MirConstructorInstance *constructor = nullptr);

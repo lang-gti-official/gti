@@ -2410,7 +2410,8 @@ private:
                            term.invokeInstruction == instruction.id;
       auto *channel =
           checked ? channels.at(term.failureRecord) : scratchChannel();
-      auto *status = lifetimes.cleanupProgramStorage(ir, channel);
+      auto *status = lifetimes.cleanupProgramStorage(
+          ir, channel, current->activeFailure != 0);
       auto *done = llvm::BasicBlock::Create(session.context(),
                                             "program.cleanup.done", &function);
       auto *bad = llvm::BasicBlock::Create(session.context(),

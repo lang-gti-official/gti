@@ -400,7 +400,9 @@ void Lifetimes::prepareProgramStorage(
   if (!sourceProgramStorage.empty()) {
     programCleanup = llvm::Function::Create(
         llvm::FunctionType::get(llvm::Type::getInt1Ty(session.context()),
-                                {session.layouts().pointer()}, false),
+                                {session.layouts().pointer(),
+                                 llvm::Type::getInt1Ty(session.context())},
+                                false),
         llvm::GlobalValue::InternalLinkage, "__gti_program_cleanup_source",
         session.module());
     llvm::IRBuilder<> ir(
@@ -426,9 +428,9 @@ void Lifetimes::prepareProgramStorage(
       // Disarm before entering user code. A failed drop must never be retried;
       // the hosted failure continuation resumes at the remaining live roots.
       ir.CreateStore(ir.getFalse(), item->live);
-      auto *ok = ir.CreateCall(
-          cleanup(item->recipe),
-          {item->storage, programCleanup->getArg(0), ir.getFalse()});
+      auto *ok = ir.CreateCall(cleanup(item->recipe),
+                               {item->storage, programCleanup->getArg(0),
+                                programCleanup->getArg(1)});
       Failures::branchOnSuccess(ir, ok, next, failed);
       ir.SetInsertPoint(next);
     }
@@ -507,10 +509,11 @@ void Lifetimes::publishProgramStorage(llvm::IRBuilder<> &ir,
 }
 
 llvm::Value *Lifetimes::cleanupProgramStorage(llvm::IRBuilder<> &ir,
-                                              llvm::Value *failure) {
+                                              llvm::Value *failure,
+                                              bool unwinding) {
   if (!programCleanup)
     throw std::logic_error("LLVM source cleanup has no sealed process storage");
-  return ir.CreateCall(programCleanup, {failure});
+  return ir.CreateCall(programCleanup, {failure, ir.getInt1(unwinding)});
 }
 
 void Lifetimes::retireProgramStorage(llvm::IRBuilder<> &ir) {
