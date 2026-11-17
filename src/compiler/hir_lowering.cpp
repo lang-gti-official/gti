@@ -469,6 +469,12 @@ private:
     if (declaration == nullptr || declaration->declaration == nullptr) {
       return std::nullopt;
     }
+    // Syntax capabilities are request-local compile-time values, not dormant
+    // runtime layouts. Full declaration discovery must not publish them merely
+    // because an imported library exports a procedural macro.
+    if (!constantClosure &&
+        declaration->syntaxKind != CompileTimeSyntaxKind::None)
+      return std::nullopt;
     // These trusted declarations establish primitive identities in semantics;
     // they have no nominal class representation or executable lifecycle.
     if (declaration->compilerCapability ==
@@ -614,7 +620,9 @@ private:
       return owner && owner->syntaxKind != CompileTimeSyntaxKind::None;
     };
     if (!constantClosure &&
-        (declaration.proceduralOnly || syntaxIntrinsic(declaration.intrinsic) ||
+        ((declaration.declaration &&
+          declaration.declaration->isProceduralMacro()) ||
+         declaration.proceduralOnly || syntaxIntrinsic(declaration.intrinsic) ||
          syntaxType(declaration.returnType) ||
          std::any_of(declaration.parameterTypes.begin(),
                      declaration.parameterTypes.end(), syntaxType)))
@@ -4099,6 +4107,8 @@ private:
         range.ownsRangeTemporary = resolved->ownsRangeTemporary;
         range.nonBorrowingEndpoint = resolved->nonBorrowingEndpoint;
         range.materializesElementValue = resolved->materializesElementValue;
+        range.elementBorrowsCursorRegions =
+            resolved->elementBorrowsCursorRegions;
       }
       range.owner = bindingFor(rangeFor->ownerBinding());
       range.rangeCarrier = bindingFor(rangeFor->rangeBinding());

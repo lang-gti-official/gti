@@ -24280,6 +24280,45 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
                           "mutable take declaration"});
         continue;
       }
+      // A cursor-region yield's selected declaration returns the element
+      // value with its borrow supplied by the receiver's stored fields only.
+      const auto cursorRegionDeclaration = [&](const MirInstruction *producer) {
+        const auto *selected =
+            producer && producer->functionTarget
+                ? program.findFunctionInstance(*producer->functionTarget)
+                : nullptr;
+        return selected &&
+               selected->declaration == iteration.dereferenceFunction &&
+               selected->overloadedOperator ==
+                   OverloadedOperator::Dereference &&
+               selected->receiverMutability == ReceiverMutability::ReadOnly &&
+               selected->parameterTypes.empty() &&
+               selected->returnType == iteration.elementType &&
+               selected->returnType.kind != SemanticType::Reference &&
+               selected->returnBorrowOrigin == BorrowOriginKind::Receiver &&
+               !selected->returnBorrowFields.empty() &&
+               selected->returnBorrowParameters.empty() &&
+               !selected->returnBorrowPlace && !selected->dependentTextReturn;
+      };
+      if (!iteration.materializesElementValue &&
+          iteration.elementBorrowsCursorRegions) {
+        const auto *element = body->findLoan(iteration.elementLoan);
+        const MirInstruction *producer = nullptr;
+        if (element)
+          for (const auto &block : body->blocks)
+            for (const auto &instruction : block.instructions)
+              if (instruction.kind == MirInstructionKind::Call &&
+                  instruction.loan == element->id)
+                producer = &instruction;
+        if (!cursorRegionDeclaration(producer))
+          result.errors.push_back(
+              {.bodyKind = address.kind,
+               .owner = address.owner,
+               .instruction = producer == nullptr ? 0 : producer->id,
+               .message = "cursor-region iteration value has no exact "
+                          "readonly stored-region dereference declaration"});
+        continue;
+      }
       if (!iteration.materializesElementValue) {
         const auto *element = body->findLoan(iteration.elementLoan);
         if (iteration.strategy != RangeIterationStrategy::Structural ||
@@ -24335,12 +24374,17 @@ MirVerificationResult verifyMirProgram(const MirProgram &program,
           producer && producer->functionTarget
               ? program.findFunctionInstance(*producer->functionTarget)
               : nullptr;
-      if (!selected || selected->declaration != iteration.dereferenceFunction ||
-          selected->overloadedOperator != OverloadedOperator::Dereference ||
-          selected->receiverMutability != ReceiverMutability::ReadOnly ||
-          !selected->parameterTypes.empty() ||
-          selected->returnType != iteration.elementType ||
-          selected->returnBorrowOrigin != BorrowOriginKind::None)
+      if (iteration.elementBorrowsCursorRegions
+              ? !cursorRegionDeclaration(producer)
+              : !selected ||
+                    selected->declaration != iteration.dereferenceFunction ||
+                    selected->overloadedOperator !=
+                        OverloadedOperator::Dereference ||
+                    selected->receiverMutability !=
+                        ReceiverMutability::ReadOnly ||
+                    !selected->parameterTypes.empty() ||
+                    selected->returnType != iteration.elementType ||
+                    selected->returnBorrowOrigin != BorrowOriginKind::None)
         result.errors.push_back(
             {.bodyKind = address.kind,
              .owner = address.owner,

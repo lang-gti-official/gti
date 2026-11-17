@@ -19118,6 +19118,7 @@ private:
          .arrayLength = sourceRange.arrayLength,
          .ownsRangeTemporary = sourceRange.ownsRangeTemporary,
          .materializesElementValue = sourceRange.materializesElementValue,
+         .elementBorrowsCursorRegions = sourceRange.elementBorrowsCursorRegions,
          .endpointParking =
              rangeEndpointParking.contains(statement.id)
                  ? std::optional{rangeEndpointParking.at(statement.id)}

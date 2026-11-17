@@ -146,6 +146,11 @@ struct ResolvedRangeIterationInfo {
   // fresh hidden mutable cursor while evaluating that exact endpoint.
   bool nonBorrowingEndpoint = false;
   bool materializesElementValue = false;
+  // The selected read-only operator* yields a copyable value whose borrowed
+  // state its signature writes only in the cursor class's own lifetime
+  // parameters (or `static`): the element borrows what the cursor stores,
+  // never the cursor or the range shell, so it survives advancement.
+  bool elementBorrowsCursorRegions = false;
 };
 
 enum class StructuredBindingProjectionKind {

@@ -1957,3 +1957,25 @@ Example `090-generic-algorithms.gti` demonstrates all four free operations.
 The `removal_algorithms` check covers stable prefixes, all keep/remove patterns,
 move-only and immovable cleanup, collisions, node reuse, exact predicate counts,
 allocation-free vector filtering, and invalid borrow/callback contracts.
+
+### Compile-time literal concatenation
+
+`import std.string;` exports the source-defined procedural macro
+`std::concat!({"first", "second"})`. It emits one ordinary static string
+literal, usable as a `std::string_view`, a constexpr initializer, or a function
+result without an owner allocation at runtime. Empty input produces `""` and
+one trailing comma is allowed. Commas are mandatory: adjacent literals, names,
+expressions, numeric/character literals and nested macro invocations are rejected
+at the offending token. Comments and whitespace between tokens are permitted.
+
+Literal escape spellings retain their ordinary meaning, including embedded NUL,
+Unicode escapes and fixed-width hexadecimal escapes. For example
+`std::concat!({"\x41", "B", "\0", "7"})` yields four bytes: `A`, `B`, NUL,
+`7`. The macro joins the validated literal bodies and asks `std::syntax::literal`
+to lex the result; it does not implement a second escape decoder. This relies
+on GTI's fixed-width escapes. Any future literal spelling must preserve this
+property or update the source macro alongside the lexer.
+
+The macro executes under the normal procedural syntax and constexpr resource
+budgets. It accepts literal tokens rather than arbitrary constant expressions.
+See [`procedural-macros.gti`](../../examples/procedural-macros.gti).

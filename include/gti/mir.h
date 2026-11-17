@@ -1098,6 +1098,9 @@ struct MirRangeIteration {
   std::uint64_t arrayLength = 0;
   bool ownsRangeTemporary = false;
   bool materializesElementValue = false;
+  // Semantic fact: the element value retains Stored loans on external owners
+  // the cursor protects, not a loan of the cursor or range shell.
+  bool elementBorrowsCursorRegions = false;
   std::optional<MirRangeEndpointParking> endpointParking;
 
   friend bool operator==(const MirRangeIteration &,

@@ -5718,6 +5718,20 @@ program verification independently checks its selected dereference declaration
 and nominal traits against the concrete class catalog. Rewiring a physical
 cursor and falsifying the producer traits cannot manufacture the abstract
 profile or shorten the proxy's lifetime.
+A cursor-region value yield (`elementBorrowsCursorRegions`, published by
+semantics and preserved by HIR) is a copyable borrow carrier whose
+`operator*` signature writes only the iterator class's own lifetime
+parameters. Its element retains a read-only, non-escaping Stored loan produced
+by that dereference call; the loan's sources must be protected by a Stored loan
+the iterator binding carries and must not lie in the iterator place. By value,
+the element binding carries it directly; under `auto&`, the hidden
+materialized owner carries it, the element reference's loan names it as its
+stored dependency, and the owner's lexical drop starts at the direct
+initialization from the nonfailing call. Program verification binds the
+producer to a read-only zero-parameter `operator*` whose receiver result is
+supplied by stored fields. Clearing the fact, borrowing the cursor, escaping,
+detaching the cursor's protecting loan or erasing the supplier fields fails
+verification.
 Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows

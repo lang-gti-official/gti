@@ -3032,7 +3032,9 @@ verifyHirProgramPlans(const SemanticModel &semantics,
            (genericSemantic ||
             range->nonBorrowingEndpoint == semantic->nonBorrowingEndpoint) &&
            (genericSemantic || range->materializesElementValue ==
-                                   semantic->materializesElementValue));
+                                   semantic->materializesElementValue) &&
+           (genericSemantic || range->elementBorrowsCursorRegions ==
+                                   semantic->elementBorrowsCursorRegions));
       const bool exactStructure =
           source != nullptr && range != nullptr && statement.body &&
           body.findStatement(*statement.body) != nullptr &&
@@ -3092,10 +3094,16 @@ verifyHirProgramPlans(const SemanticModel &semantics,
                                 elementAccessValue->info.type.kind !=
                                     SemanticType::CString &&
                                 elementAccessValue->info.traits.copyable &&
-                                !elementAccessValue->info.traits
-                                     .containsBorrowedState &&
-                                elementAccessValue->borrowOrigin ==
-                                    BorrowOriginKind::None &&
+                                // A cursor-region yield carries the borrows
+                                // its operator* writes in the cursor's
+                                // stored regions; any other is independent.
+                                (range->elementBorrowsCursorRegions
+                                     ? elementAccessValue->info.traits
+                                           .containsBorrowedState
+                                     : !elementAccessValue->info.traits
+                                               .containsBorrowedState &&
+                                           elementAccessValue->borrowOrigin ==
+                                               BorrowOriginKind::None) &&
                                 elementOwner->info.type ==
                                     elementAccessValue->info.type &&
                                 range->elementAccess == AccessMode::ReadOnly

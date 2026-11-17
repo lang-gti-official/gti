@@ -91,7 +91,8 @@ struct Holder {
   Holder(std::string_view text) : value(text) {}
 };
 Holder observe<Args...>(std::string_view text, Args&... args) { return Holder(text); }
-int main() { std::string text = "owner"; int n = 1; auto holder = observe(text.view(), n); return 0; }
+Holder escape() { std::string text = "owner"; int n = 1; return observe(text.view(), n); }
+int main() { auto holder = escape(); return 0; }
 """, "GTI-S2045"),
         "forwarding_reference": ("""
 void observe<Args...>(Args&&... args) {}

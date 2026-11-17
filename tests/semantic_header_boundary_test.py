@@ -52,6 +52,15 @@ def main() -> None:
         "src/compiler/semantic_analyzer_impl.h",
         "tests/semantic_analyzer_header_smoke.cpp",
         "tests/compiler_test_fixture.h",
+        # Direct analyzer/library API probes extracted from the old compiler
+        # suites: staged evaluation, raw diagnostics, verifier construction,
+        # query records and repeated-request state cannot all be observed
+        # through independent Frontend snapshots.
+        "tests/unit/constant_evaluation_api_tests.cpp",
+        "tests/unit/diagnostics_api_tests.cpp",
+        "tests/unit/ir_verifier_forgery_tests.cpp",
+        "tests/unit/language_queries_tests.cpp",
+        "tests/unit/semantic_request_reuse_tests.cpp",
         # Rechecks parsed syntax without a SourceManager to verify source-text
         # queries reject missing owning buffers; Frontend always supplies one.
         "tests/expression_text_tests.cpp",
