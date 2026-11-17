@@ -1,0 +1,30 @@
+// Class reference base arguments: class reference base arguments verify.
+//@ check-pass
+class Point {
+public:
+  int x;
+  int y;
+  Point(int x, int y) : x(x), y(y) {}
+};
+class Counter {
+public:
+  mut int count;
+  Counter() : count(0) {}
+};
+class Base {
+public:
+  int sum;
+  Base(Point& point, mut Counter& counter) : sum(point.x + point.y) {
+    counter.count += 1;
+  }
+};
+class Derived : public Base {
+public:
+  Derived(Point& point, mut Counter& counter) : Base(point, counter) {}
+};
+int main() {
+  Point point{3, 4};
+  mut Counter counter{};
+  Derived value{point, counter};
+  return value.sum + counter.count - 8;
+}

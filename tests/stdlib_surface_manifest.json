@@ -3673,7 +3673,7 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_exchange_tests.cpp",
+        "tests/ui/stdlib/utility/restoring_exchange",
         "examples/104-move-only-ordering.gti"
       ]
     },
@@ -6822,7 +6822,7 @@
       ],
       "evidence": [
         "tests/fixtures/structural_relocation.gti",
-        "tests/structural_relocation_tests.cpp",
+        "tests/ui/memory/structural_relocation",
         "examples/033-source-concepts.gti",
         "stdlib/prelude.gti"
       ]
@@ -8407,7 +8407,7 @@
       "evidence": [
         "examples/103-resource-exchange.gti",
         "tests/fixtures/restoring_exchange_shapes.gti",
-        "tests/restoring_exchange_tests.cpp"
+        "tests/ui/stdlib/utility/restoring_exchange"
       ]
     },
     {
@@ -8583,7 +8583,7 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_exchange_tests.cpp"
+        "tests/ui/stdlib/utility/restoring_exchange"
       ]
     },
     {

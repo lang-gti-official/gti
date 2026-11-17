@@ -1,0 +1,18 @@
+// Selected generated base schedule: source and generated derived constructors select a generated base body.
+//@ check-pass
+class Base {
+public:
+  int state = 7;
+public:
+  Base() = default;
+};
+class ExplicitDerived : public Base {
+public:
+  ExplicitDerived() : Base() {}
+};
+class GeneratedDerived : public Base { int tag = 9;  public: GeneratedDerived() = default; };
+int main() {
+  ExplicitDerived explicit_value{};
+  GeneratedDerived generated_value{};
+  return explicit_value.state == 7 && generated_value.state == 7 ? 0 : 1;
+}

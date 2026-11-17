@@ -1,0 +1,3 @@
+// Restoring_exchange: deleted movement and arbitrary reference consumption remain forbidden.
+import std.utility;
+int take(mut int& value) { return std::move(value); } int main() { mut int x = 1; return take(x); }  //~ ERROR GTI-S2018
