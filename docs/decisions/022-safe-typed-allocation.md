@@ -663,7 +663,10 @@ with an old extent large enough for that pointer. It does not pass a
 `posix_memalign` allocation to `realloc`, and it does not shrink. The checked
 size calculation still precedes the native call. A null result leaves the old
 region untouched and follows the existing infallible exhaustion abort policy.
-No region metadata is published until success.
+No region metadata is published until success. `reserve` snapshots its initialized
+length before either capacity transition and republishes it after success. This
+keeps the size-preservation postcondition explicit across opaque native provider
+effects, without weakening the allocator effects or arithmetic checks.
 
 Over-aligned or small aligned allocations, non-bitwise elements, text,
 compile-time evaluation and Windows use allocation followed by witnessed
