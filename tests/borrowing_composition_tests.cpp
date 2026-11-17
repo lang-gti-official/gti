@@ -1283,6 +1283,90 @@ int main() {
          "operator-derived borrow keeps its exact owner protected");
 }
 
+// RFC 0004: a stored class region's contract is the union of the receiver's
+// fields stored in it and the parameter lanes written in it. MIR must reject
+// a contract that drops or forges a named lane, and a return or call result
+// that loses the lane's owner.
+void checkStoredRegionParameterUnion() {
+  const auto frontend = lang::Frontend().analyze("stored-region-union.gti", R"(
+struct Table {
+  int values[2];
+  Table() : values({3, 4}) {}
+  bool has(uint64_t key) { return key < uint64_t(2); }
+  int& at(uint64_t key) { return this.values[key]; }
+};
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  View(Table&<a> table) : table(table) {}
+  int&<a> get_or(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+};
+int main() {
+  Table table{};
+  int fallback = 7;
+  View view = View(table);
+  int& found = view.get_or(uint64_t(1), fallback);
+  int& missing = view.get_or(uint64_t(5), fallback);
+  return found + missing - 11;
+}
+)");
+  expect(frontend.canGenerateCode(),
+         "a stored-region result may also be supplied by a parameter lane");
+  if (!frontend.canGenerateCode()) {
+    for (const auto &diagnostic : frontend.diagnostics)
+      std::cerr << diagnostic.code << ": " << diagnostic.message << '\n';
+    return;
+  }
+  expect(lang::verifyMirProgram(frontend.mir).valid(),
+         "the union contract must verify");
+  const lang::MirFunctionInstance *getOr = nullptr;
+  for (const auto &function : frontend.mir.functionInstances())
+    if (function.returnBorrowOrigin == lang::BorrowOriginKind::Receiver &&
+        function.returnBorrowParameters == std::vector<std::size_t>{1})
+      getOr = &function;
+  expect(getOr != nullptr && getOr->completeReturnBorrow &&
+             getOr->completeReturnBorrow->dependencies.size() == 2,
+         "the contract names the receiver's stored field and the fallback");
+  if (getOr == nullptr)
+    return;
+  const auto forged = [&](auto change, const char *message) {
+    auto malformed = frontend.mir;
+    auto *instance = const_cast<lang::MirFunctionInstance *>(
+        malformed.findFunctionInstance(getOr->id));
+    change(*instance);
+    expect(!lang::verifyMirProgram(malformed).valid(), message);
+  };
+  forged(
+      [](lang::MirFunctionInstance &instance) {
+        instance.returnBorrowParameters.clear();
+      },
+      "MIR must reject a returned lane the contract no longer names");
+  forged(
+      [](lang::MirFunctionInstance &instance) {
+        instance.returnBorrowParameters = {0};
+      },
+      "MIR must reject a contract naming a parameter outside the region");
+  bool callInspected = false;
+  for (const auto &function : frontend.mir.functionInstances())
+    for (const auto &loan : function.body.loans) {
+      if (loan.kind != lang::MirLoanKind::CallResult ||
+          loan.additionalDependencies.empty())
+        continue;
+      callInspected = true;
+      auto malformed = frontend.mir;
+      auto *instance = const_cast<lang::MirFunctionInstance *>(
+          malformed.findFunctionInstance(function.id));
+      instance->body.loans[loan.id - 1].additionalDependencies.clear();
+      expect(!lang::verifyMirProgram(malformed).valid(),
+             "MIR must reject a call result that drops its argument lane");
+    }
+  expect(callInspected,
+         "each call keeps its argument lane as an additional dependency");
+}
+
 constexpr NamedTest kTests[] = {
     {"nested_constructor_arguments", checkNestedConstructorArguments},
     {"nested_resource_construction", checkNestedResourceConstruction},
@@ -1300,6 +1384,7 @@ constexpr NamedTest kTests[] = {
     {"compact_input_composition", checkCompactInputComposition},
     {"mixed_operator_origins", checkMixedOperatorOrigins},
     {"getter_owned_dependencies", checkGetterWithOwnedDependencies},
+    {"stored_region_parameter_union", checkStoredRegionParameterUnion},
 };
 
 } // namespace
