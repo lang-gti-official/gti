@@ -853,6 +853,10 @@ auto SemanticVisitor::Impl::programConstructor(ConstructorId id) const
     return nullptr;
   }
   for (const ClassInfo &owner : classes) {
+    if (owner.copyConstructor && owner.copyConstructor->id == id)
+      return &*owner.copyConstructor;
+    if (owner.moveConstructor && owner.moveConstructor->id == id)
+      return &*owner.moveConstructor;
     if (owner.designatedConstructor && owner.designatedConstructor->id == id) {
       return &*owner.designatedConstructor;
     }
@@ -963,8 +967,9 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
     const SourceSpan &span, const std::vector<SemanticType> &types,
     const std::vector<CompileTimeValue> &values) -> void {
   if (constructor == nullptr || constructor->declaration == nullptr) {
-    addUnknownProgramEffect(
-        span, "a selected GTI constructor has no exact declaration");
+    addUnknownProgramEffect(span, "a selected GTI constructor for " +
+                                      typeSpelling(constructedType) +
+                                      " has no exact declaration");
     return;
   }
   if (constructor->declaration->body() != nullptr) {
@@ -980,6 +985,12 @@ auto SemanticVisitor::Impl::recordProgramSelectedConstructorEffect(
   if (constructor->declaration->specifier() &&
       constructor->declaration->specifier()->kind ==
           SpecialMemberSpecifierKind::Defaulted) {
+    // Defaulted copy/move policies structurally transfer the existing fields
+    // and base. They do not run their default initializers. Custom copy/move
+    // bodies are rejected by declaration analysis.
+    if (constructor->kind == ConstructorKind::Copy ||
+        constructor->kind == ConstructorKind::Move)
+      return;
     const ClassInfo &owner = classInfo(constructedType.classId);
     if (const ClassBaseTypeInfo *base = concreteBase(owner)) {
       recordProgramDefaultConstructionEffects(
@@ -1168,7 +1179,14 @@ auto SemanticVisitor::Impl::recordProgramConstructionEffects(
                                   "program-storage effect summary");
     return true;
   }
-  if (construction.generatedDefault || construction.constructor == 0) {
+  if (construction.kind == ConstructorKind::Copy ||
+      construction.kind == ConstructorKind::Move) {
+    if (construction.constructor != 0)
+      recordProgramSelectedConstructorEffect(
+          programConstructor(construction.constructor),
+          construction.constructedType, span, construction.typeArguments,
+          construction.valueArguments);
+  } else if (construction.generatedDefault || construction.constructor == 0) {
     recordProgramDefaultConstructionEffects(construction.constructedType, span);
   } else {
     const ProgramEffectOwner fields{

@@ -1,0 +1,18 @@
+// Global initialization resolves an explicitly defaulted move constructor.
+//@ run-pass
+//@ stdout: 7
+class Item {
+  int value;
+public:
+  Item(int value) : value(value) {}
+  Item(Item& other) = delete;
+  Item(Item&& other) = default;
+  int read() const { return value; }
+  ~Item() {}
+};
+Item make() {
+  Item local{7};
+  return Item(std::move(local));
+}
+Item global = make();
+int main() { std::println(global.read()); return 0; }
