@@ -386,7 +386,8 @@ int tidy(const fs::path &root) {
       const TestFile owner = parseTestFile(testPath, display);
       if (!hasSnapshot(owner, kind) ||
           (kind == Snapshot::Mir && !owner.checks.empty() &&
-           !hasSnapshot(owner, Snapshot::LlvmIr)))
+           !hasSnapshot(owner, Snapshot::LlvmIr) &&
+           !hasSnapshot(owner, Snapshot::OptimizationReport)))
         problems.push_back(display + ": expected file without `//@ snapshot: " +
                            snapshotName(kind) + "` in its test");
       const std::optional<std::string> text = readFile(file);
@@ -416,9 +417,7 @@ int tidy(const fs::path &root) {
       if (!text || text->rfind("// ", 0) != 0)
         problems.push_back(display + ": the first line must be a `// ` comment "
                                      "saying what the transcript checks");
-      std::vector<std::string> errors;
-      (void)parseProjectTranscript(text.value_or(""), errors);
-      for (const std::string &error : errors)
+      for (const std::string &error : parseTestFile(file, display).errors)
         problems.push_back(display + ": " + error);
       continue;
     }
@@ -450,8 +449,10 @@ int tidy(const fs::path &root) {
       problems.push_back(display + ": runner-fault is not allowed in tests");
     for (const Snapshot kind : test.snapshots) {
       const bool patterns = kind == Snapshot::LlvmIr ||
+                            kind == Snapshot::OptimizationReport ||
                             (kind == Snapshot::Mir && !test.checks.empty() &&
-                             !hasSnapshot(test, Snapshot::LlvmIr));
+                             !hasSnapshot(test, Snapshot::LlvmIr) &&
+                             !hasSnapshot(test, Snapshot::OptimizationReport));
       if (!patterns && !fs::exists(snapshotPath(test, kind)))
         problems.push_back(display + ": no " +
                            snapshotPath(test, kind).filename().string() +

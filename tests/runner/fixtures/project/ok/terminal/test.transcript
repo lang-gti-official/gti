@@ -1,0 +1,10 @@
+// `$ tty:` runs a command with stdout and stderr on one pseudo-terminal;
+// `\e` in an expectation is the escape character.
+$ tty: sh -c "test -t 1 && test -t 2 && echo on a terminal"
+stdout: on a terminal
+$ tty: sh -c "printf '\\033[1mbold\\033[0m\\n'; echo to stderr >&2"
+stdout: \e[1mbold\e[0m
+stdout: to stderr
+!stdout: \e[31m
+$ sh -c "test -t 1 || echo not a terminal"
+stdout: not a terminal

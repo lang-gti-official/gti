@@ -90,6 +90,8 @@ struct LspResult {
   bool timedOut = false;
   // The server exited during the test.
   bool crashed = false;
+  // CPU the server spent on the test, when it could be read.
+  std::optional<double> serverCpu;
 };
 
 // Writes the test's file sections into `directory`, opens each `.gti` one

@@ -12,6 +12,7 @@
 #include "gti/frontend_cache.h"
 #include "gti/lexer.h"
 #include "gti/lowered_program.h"
+#include "gti/optimization/report.h"
 #include "gti/parser.h"
 #include "gti/semantic_preamble.h"
 #include "gti/standard_library.h"
@@ -186,7 +187,8 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
                       const std::optional<std::string> &input, double cpuLimit,
                       double wallLimit, const fs::path &directory,
                       const Environment &environment = {},
-                      const std::optional<fs::path> &inputFile = std::nullopt) {
+                      const std::optional<fs::path> &inputFile = std::nullopt,
+                      bool closedStdout = false) {
   const fs::path in = inputFile ? *inputFile : directory / ".stdin";
   const fs::path out = directory / ".stdout";
   const fs::path err = directory / ".stderr";
@@ -197,6 +199,13 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
     arguments.push_back(const_cast<char *>(argument.c_str()));
   arguments.push_back(nullptr);
   ProcessRun run;
+  // `//@ stdout-closed`: a pipe whose only reader is gone before launch.
+  int closedPipe[2] = {-1, -1};
+  if (closedStdout) {
+    if (pipe(closedPipe) != 0)
+      return run;
+    close(closedPipe[0]);
+  }
   const pid_t pid = fork();
   if (pid == 0) {
     rlimit core{0, 0};
@@ -206,8 +215,13 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
       rlimit cpu{seconds, seconds + 1};
       setrlimit(RLIMIT_CPU, &cpu);
     }
+    // The worker ignores SIGPIPE; a program starts with the default, as
+    // from a shell.
+    signal(SIGPIPE, SIG_DFL);
     const int inFd = open(in.c_str(), O_RDONLY);
-    const int outFd = open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const int outFd =
+        closedStdout ? closedPipe[1]
+                     : open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     const int errFd = open(err.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (inFd < 0 || outFd < 0 || errFd < 0 || chdir(directory.c_str()) != 0)
       _exit(127);
@@ -219,6 +233,8 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
     execv(arguments[0], arguments.data());
     _exit(127);
   }
+  if (closedStdout)
+    close(closedPipe[1]);
   if (pid < 0)
     return run;
   run.started = true;
@@ -245,7 +261,7 @@ ProcessRun runProcess(const std::vector<std::string> &argv,
     if (run.signal == SIGXCPU)
       run.timedOut = true;
   }
-  run.out = readFile(out).value_or("");
+  run.out = closedStdout ? "" : readFile(out).value_or("");
   run.err = readFile(err).value_or("");
   return run;
 }
@@ -300,6 +316,16 @@ bool matches(const Annotation &annotation,
          diagnostic.message.find(annotation.substring) != std::string::npos;
 }
 
+// Errors and warnings are always annotated; information and hints (LSP) only
+// in a test that annotates one of that severity.
+bool annotatesSeverity(const TestFile &test, Severity severity) {
+  return severity == Severity::Error || severity == Severity::Warning ||
+         std::any_of(test.annotations.begin(), test.annotations.end(),
+                     [&](const Annotation &annotation) {
+                       return annotation.severity == severity;
+                     });
+}
+
 // Every annotation must match a distinct diagnostic and every error or
 // warning must be annotated. Returns the mismatch lines.
 std::vector<std::string>
@@ -342,8 +368,10 @@ compareDiagnostics(const TestFile &test,
     }
   }
   for (std::size_t index = 0; index < diagnostics.size(); ++index)
-    if (!used[index] && !(test.allowWarnings &&
-                          diagnostics[index].severity == Severity::Warning))
+    if (!used[index] &&
+        !(test.allowWarnings &&
+          diagnostics[index].severity == Severity::Warning) &&
+        annotatesSeverity(test, diagnostics[index].severity))
       problems.push_back("actual:   " + describe(test, diagnostics[index]));
   return problems;
 }
@@ -414,9 +442,11 @@ Outcome Engine::runProject(const TestFile &test) {
   return outcome;
 }
 
-// LSP tests are measured in wall time: the work happens in the server
-// process. A worker's first LSP test (or any transcript, which starts its own
-// server) may also spend the cold allowance analysing the standard library.
+// LSP tests are measured in the server's CPU time while the test runs (the
+// work happens there), so a loaded or slower machine's waiting does not
+// count; wall time is only a backstop, three times the limit. A worker's
+// first LSP test (or any transcript, which starts its own server) may also
+// spend the cold allowance analysing the standard library.
 Outcome Engine::runLsp(const TestFile &test) {
   Outcome outcome;
   const EngineOptions &options = state->options;
@@ -429,9 +459,9 @@ Outcome Engine::runLsp(const TestFile &test) {
   bool cold = test.mode == Mode::LspTranscript;
   LspResult result;
   if (test.mode == Mode::LspTranscript) {
-    result =
-        runLspTranscript(options.lsp, test, directory,
-                         start + limit + options.limits.coldAllowance, limit);
+    result = runLspTranscript(options.lsp, test, directory,
+                              start + 3 * limit + options.limits.coldAllowance,
+                              limit);
   } else {
     std::string key;
     for (const std::string &argument : test.serverArguments)
@@ -455,12 +485,17 @@ Outcome Engine::runLsp(const TestFile &test) {
       }
     }
     cold = !server->warm;
+    const double cpuBefore = server->cpuSeconds();
     result = runLspTest(
         *server, test, directory, state->toolchain.standardLibrary.root,
-        start + limit + (cold ? options.limits.coldAllowance : 0.0));
+        start + 3 * limit + (cold ? options.limits.coldAllowance : 0.0));
+    const double cpuAfter = server->cpuSeconds();
+    if (cpuBefore >= 0 && cpuAfter >= cpuBefore)
+      result.serverCpu = cpuAfter - cpuBefore;
   }
   outcome.wall = lspClock() - start;
-  outcome.cpu = outcome.wall;
+  // Wall time when the server's CPU could not be read (it exited).
+  outcome.cpu = result.serverCpu.value_or(outcome.wall);
   outcome.cold = cold;
   if (result.crashed || result.timedOut) {
     outcome.status = result.crashed ? Status::Crash : Status::Timeout;
@@ -472,7 +507,11 @@ Outcome Engine::runLsp(const TestFile &test) {
     const std::vector<std::string> problems =
         compareDiagnostics(test, result.diagnostics);
     if (!problems.empty() && options.bless) {
-      writeFile(test.path, blessAnnotations(test, result.diagnostics));
+      std::vector<LocatedDiagnostic> annotated;
+      for (const LocatedDiagnostic &diagnostic : result.diagnostics)
+        if (annotatesSeverity(test, diagnostic.severity))
+          annotated.push_back(diagnostic);
+      writeFile(test.path, blessAnnotations(test, annotated));
       outcome.blessed.push_back(test.display);
     } else {
       for (const std::string &problem : problems)
@@ -482,10 +521,11 @@ Outcome Engine::runLsp(const TestFile &test) {
   if (!detail.empty()) {
     outcome.status = Status::Fail;
     outcome.detail = detail;
-  } else if (!cold && outcome.wall > limit) {
+  } else if (!cold && outcome.cpu > limit) {
     outcome.status = Status::Timeout;
-    outcome.detail = "over the time limit: " + std::to_string(outcome.wall) +
-                     " s > " + std::to_string(limit) + " s\n";
+    outcome.detail = "over the limit: gti_lsp used " +
+                     std::to_string(outcome.cpu) + " s of CPU > " +
+                     std::to_string(limit) + " s\n";
   }
   return outcome;
 }
@@ -727,21 +767,30 @@ void collectRendered(Compiled &compiled, const Materialized &files,
 // after them.
 void parseOnly(Compiled &compiled, const Materialized &files,
                const TestFile &test) {
+  lang::CompileLimitOverrides overrides;
+  for (const auto &[name, value] : test.compileLimits)
+    overrides.set(*lang::findCompileLimit(name), value);
+  const std::size_t errorLimit =
+      lang::resolveCompileLimits({}, overrides).errorLimit;
   std::vector<lang::Diagnostic> diagnostics;
   for (const Section &section : test.sections) {
     if (!section.name.ends_with(".gti"))
       continue;
     lang::Lexer lexer;
+    lexer.setErrorLimit(errorLimit);
     std::vector<lang::Token> tokens = lexer.scan(
         section.text,
         (files.entry.parent_path() / section.name).lexically_normal().string());
     diagnostics.insert(diagnostics.end(), lexer.errors().begin(),
                        lexer.errors().end());
     lang::Parser parser(std::move(tokens), section.text);
+    parser.setErrorLimit(errorLimit);
     (void)parser.parse();
     diagnostics.insert(diagnostics.end(), parser.errors().begin(),
                        parser.errors().end());
   }
+  // As the driver: the limit's last error, then GTI-D0002.
+  (void)lang::applyErrorLimit(diagnostics, errorLimit);
   collect(compiled, files, diagnostics);
   compiled.succeeded = std::none_of(
       compiled.diagnostics.begin(), compiled.diagnostics.end(),
@@ -811,7 +860,17 @@ void Engine::checkFormatting(const TestFile &test, Outcome &outcome) {
   }
 }
 
-Outcome Engine::run(const TestFile &test) {
+Outcome Engine::run(const TestFile &given) {
+  // --bless seeds a fail-mode test that has no `//~ ERROR` yet.
+  TestFile seeded;
+  if (state->options.bless && given.unannotatedFailMode) {
+    seeded = given;
+    std::erase_if(seeded.errors, [](const std::string &error) {
+      return error.find("has no `//~ ERROR` expectation") != std::string::npos;
+    });
+  }
+  const TestFile &test =
+      state->options.bless && given.unannotatedFailMode ? seeded : given;
   Outcome outcome;
   if (!test.errors.empty()) {
     outcome.status = Status::Fail;
@@ -839,7 +898,8 @@ Outcome Engine::run(const TestFile &test) {
           : lang::driver::FrontendReuse{
                 .parses = std::make_shared<lang::FrontendCache>(),
                 .preambles = std::make_shared<lang::SemanticPreambleCache>()};
-  const auto requestFor = [&](const TestFile &file, const Materialized &files) {
+  const auto requestFor = [&](const TestFile &file, const Materialized &files,
+                              bool optimizationReport = false) {
     const lang::TargetInfo target =
         file.defines.empty() && file.target.empty()
             ? (file.concurrent ? state->concurrentTarget : state->target)
@@ -861,7 +921,10 @@ Outcome Engine::run(const TestFile &test) {
             target,
             file.optimize ? lang::OptimizationLevel::O3
                           : lang::OptimizationLevel::O0,
-            lang::CppStandard::Cpp23, {}, file.defines, {}, {}, false, {},
+            lang::CppStandard::Cpp23, {}, file.defines,
+            lang::driver::OptimizationOutputRequest{.captureReport =
+                                                        optimizationReport},
+            {}, false, {},
             lang::parseRawPointerAuditMode(file.rawPointerAudit)
                 .value_or(lang::RawPointerAuditMode::Off),
             {}, {}, file.rawPointerAuditLibraryFindings)
@@ -903,8 +966,9 @@ Outcome Engine::run(const TestFile &test) {
     std::string problems;
     const auto compare = [&](Snapshot kind, const std::string &actual) {
       if (!test.checks.empty() &&
-          (kind == Snapshot::LlvmIr ||
-           (kind == Snapshot::Mir && !hasSnapshot(test, Snapshot::LlvmIr)))) {
+          (kind == Snapshot::LlvmIr || kind == Snapshot::OptimizationReport ||
+           (kind == Snapshot::Mir && !hasSnapshot(test, Snapshot::LlvmIr) &&
+            !hasSnapshot(test, Snapshot::OptimizationReport)))) {
         for (const std::string &problem : matchChecks(test.checks, actual))
           problems += problem + "\n";
         return;
@@ -980,6 +1044,21 @@ Outcome Engine::run(const TestFile &test) {
           problems += "snapshot mir: " + error;
         else
           compare(kind, selected);
+      } else if (kind == Snapshot::OptimizationReport) {
+        // The optimizer's remarks (`gti --optimization-remarks`), the text
+        // form of the --optimization-report data.
+        CheckBackend backend;
+        const lang::driver::CompilationResult compiled =
+            lang::driver::compileWithBackend(requestFor(test, files, true),
+                                             backend);
+        if (compiled.status != lang::driver::CompilationStatus::Success ||
+            !compiled.optimizationReport)
+          problems += "snapshot optimization-report: the program did not "
+                      "reach the optimizer\n";
+        else
+          compare(kind,
+                  lang::formatOptimizationRemarks(*compiled.optimizationReport,
+                                                  test.optimize ? "O3" : "O0"));
       } else if (kind == Snapshot::LlvmIr) {
         std::string ir;
         if (options.isolate) {
@@ -1084,7 +1163,10 @@ Outcome Engine::run(const TestFile &test) {
         frontend.preambleCache = request.frontendReuse().preambles;
         const lang::StandardLibraryLayout &library = request.standardLibrary();
         const lang::FrontendResult analysis = lang::Frontend(frontend).analyze(
-            files.entry, std::nullopt, {library.prelude}, {}, {library.root});
+            files.entry, std::nullopt,
+            test.noPrelude ? std::vector<fs::path>{}
+                           : std::vector<fs::path>{library.prelude},
+            {}, {library.root});
         collect(compiled, files, analysis.diagnostics);
         compiled.succeeded = analysis.sourceValid && analysis.syntaxValid &&
                              analysis.semanticValid;
@@ -1288,9 +1370,9 @@ Outcome Engine::run(const TestFile &test) {
               std::max(0.5, limit - (totalCpu() - cpuStart));
           std::vector<std::string> argv{compiled.executable.string()};
           argv.insert(argv.end(), run.args.begin(), run.args.end());
-          const ProcessRun program =
-              runProcess(argv, run.stdinText, remaining, 4 * limit,
-                         state->caseDirectory, run.env, run.stdinFile);
+          const ProcessRun program = runProcess(
+              argv, run.stdinText, remaining, 4 * limit, state->caseDirectory,
+              run.env, run.stdinFile, run.stdoutClosed);
           std::string expectedOut;
           if (run.stdoutFile)
             expectedOut = readFile(*run.stdoutFile).value_or("");
@@ -1449,6 +1531,7 @@ Outcome Engine::run(const TestFile &test) {
       options.isolate &&
       (modeParses(test.mode) || modeAnalyzes(test.mode) ||
        !test.target.empty() || hasSnapshot(test, Snapshot::Mir) ||
+       hasSnapshot(test, Snapshot::OptimizationReport) ||
        std::any_of(test.sections.begin(), test.sections.end(),
                    [](const Section &section) {
                      return nativeKind(section.name) == NativeKind::C;
