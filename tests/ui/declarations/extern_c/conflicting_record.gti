@@ -1,0 +1,10 @@
+// Equal-layout nominal records cannot silently become interchangeable at a native boundary.
+namespace first {
+[[c_abi]] struct Record { mut c_int value; };
+extern "C" { Record exchange(Record value); }
+}
+namespace second {
+[[c_abi]] struct Record { mut c_int value; };
+extern "C" { Record exchange(Record value); }  //~ ERROR GTI-S2054 conflicting function signatures
+}
+int main() { return 0; }
