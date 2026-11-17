@@ -224,7 +224,8 @@ occur at most once, and may be stacked with `[[c_array(count)]]`. C symbols are
 program-global. Compatible bodyless function declarations may bind the same
 selected symbol across packages, namespaces, or repeated declarations in one
 scope. Their resolved parameter and return types must match exactly, including
-nominal record/callback identity, target C scalar identity and pointer access.
+nominal record identity, exact callback signatures, target C scalar identity
+and pointer access.
 Aliases of the same type are accepted; equal byte sizes alone are insufficient.
 Resolved safety and return-borrow contracts and `c_array` metadata must also
 agree. Existing restrictions on native declarations still apply: `unsafe` and
