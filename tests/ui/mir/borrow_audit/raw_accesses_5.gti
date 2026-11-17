@@ -1,0 +1,12 @@
+// Raw accesses: pointer arithmetic widens an element origin to the array.
+//@ check-pass
+//@ raw-pointer-audit: warn
+int main() {
+  mut int values[2] = {1, 2};
+  unsafe {
+    auto pointer = &values[0];
+    int& loan = values[1];
+    *(pointer + 1) = 9;  //~ WARN GTI-S2102
+    return loan;
+  }
+}

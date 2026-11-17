@@ -1,0 +1,2 @@
+// Analyze: lambda aliasing cannot invalidate, upgrade or retain a temporary environment.
+int main() { auto& alias = []() -> int { return 1; }; return alias(); }  //~ ERROR GTI-S2017

@@ -1,0 +1,9 @@
+// Payload enum diagnostics: payload case bindings should be unique within an alternative.
+enum class Pair { values(int32_t left, int32_t right) };
+int main() {
+  Pair pair = Pair::values(1, 2);
+  switch (pair) {
+  case Pair::values(twice_bound, twice_bound):  //~ ERROR GTI-S2067
+    return twice_bound;  //~ ERROR GTI-S2001
+  }
+}

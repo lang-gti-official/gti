@@ -1,0 +1,16 @@
+// Execution: procedural program reaches verified ordinary MIR.
+//@ check-pass
+// --- main.gti
+import "library.gti"; int main(){auto value=quoted!({word}); return value == "word" ? 0 : 1;}
+// --- library.gti
+
+export module library;
+import std.syntax;
+constexpr std::string_view inspected(std::syntax::tokens input) {
+  return std::syntax::text(input);
+}
+export #macro(proc) std::syntax::expr quoted(std::syntax::tokens input) {
+  auto token = std::syntax::slice(input, uint64_t(1), uint64_t(2));
+  return std::syntax::parse(std::syntax::string_literal(inspected(token),
+      std::syntax::location(input, uint64_t(1), uint64_t(2))));
+}

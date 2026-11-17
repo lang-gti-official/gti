@@ -1,0 +1,22 @@
+// Failure free constructor publication: unrelated atomic-field constructors retain verified failure publication.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.atomic;
+struct Gate {
+  std::atomic<int32_t> first;
+  std::atomic<int32_t> second;
+  Gate() : first(std::atomic<int32_t>(3)), second(std::atomic<int32_t>(7)) {}
+};
+struct Tag { public: Tag() = default; };
+struct Tagged {
+  std::atomic<int32_t> value;
+  Tagged(Tag tag) : value(std::atomic<int32_t>(11)) {}
+};
+Gate global{};
+Tagged tagged_global{Tag()};
+int main() {
+  Gate local{};
+  Tagged tagged_local{Tag()};
+  return global.first.load() + local.second.load() == 10 &&
+         tagged_global.value.load() + tagged_local.value.load() == 22 ? 0 : 1;
+}

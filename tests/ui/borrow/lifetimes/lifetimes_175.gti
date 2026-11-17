@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+void inner<T, lifetime a, lifetime b>(T input)
+  requires outlives<T, a> || outlives<T, b> {}
+void outer<T, lifetime a, lifetime b>(T input)
+  requires outlives<T, a> || outlives<T, b> { inner<T, a, b>(input); }
+int main() { outer<int>(7); return 0; }

@@ -1,0 +1,6 @@
+// Unsafe and pointer diagnostics: const raw pointer memory should be read-only.
+int main() {
+  const int32_t* pointer = nullptr;
+  unsafe { *pointer = 1; }  //~ ERROR GTI-S2002
+  return 0;
+}

@@ -1,0 +1,5 @@
+// Importing std.mutex without using it builds natively under the concurrent profile.
+//@ build-pass
+//@ execution-profile: concurrent
+import std.mutex;
+int main() { return 0; }

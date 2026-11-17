@@ -1,0 +1,11 @@
+// Class assertions: complete: an invalid type argument is rejected by the class assertion's own message, as the instance's only error.
+import std.meta;
+class Box<T> {
+  static_assert(!std::meta::type<T>().is_void(), "no void");  //~ ERROR GTI-S2079
+  mut T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+int unwrap(Box<void> &box) { box.get(); return 0; }
+int main() { return 0; }

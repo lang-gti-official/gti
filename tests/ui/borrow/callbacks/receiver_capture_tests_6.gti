@@ -1,0 +1,4 @@
+// Receiver capture tests: rejected with GTI-S2027.
+class C { public: static int run() {
+        auto f = [&this]() -> int { return 1; }; return f(); }  //~ ERROR GTI-S2027
+      }; int main() { return C::run(); }

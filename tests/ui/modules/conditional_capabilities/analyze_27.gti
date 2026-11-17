@@ -1,0 +1,16 @@
+// Analyze: both capabilities require the conjunction, not matching-axis propagation.
+concept CrossThread<T> = std::transferable<T> && std::shareable<T>;
+[[unsafe_transfer(CrossThread<T> && std::transferable<D>),
+  unsafe_share(std::shareable<T> && std::transferable<T> && std::transferable<D>)]]
+class SharedResource<T, D> {
+  T* address = nullptr;
+public:
+  SharedResource() {}
+  ~SharedResource() {}
+};
+[[no_transfer]] struct ReadOnly { int value = 0; };
+[[no_share]] struct ExclusiveOnly { int value = 0; };
+[[no_transfer, no_share]] struct Neither { int value = 0; };
+void send<std::transferable T>(T value) {}
+void read<std::shareable T>(T& value) {}
+int main() { send(SharedResource<Neither, int>()); return 0; }  //~ ERROR GTI-S2029

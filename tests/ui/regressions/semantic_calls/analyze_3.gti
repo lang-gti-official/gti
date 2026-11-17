@@ -1,0 +1,41 @@
+// Analyze: text alias return cannot escape an unproved or local owner.
+import std.memory;
+class ByteOwner {
+  uint8_t& byte;
+public:
+  ByteOwner(uint8_t& byte) : byte(byte) {}
+  uint8_t& get() { return this.byte; }
+  std::string_view text() {
+    unsafe {
+      const char* first = std::typed_address<char>(std::erase_address(&this.byte));
+      auto alias = std::assume_string_view(first, std::size_t(1), this);
+      return alias;
+    }
+  }
+  c_string ctext() {
+    unsafe {
+      const char* first = std::typed_address<char>(std::erase_address(&this.byte));
+      auto alias = std::assume_c_string(first, this);
+      return alias;
+    }
+  }
+};
+std::string_view view(ByteOwner& owner) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
+    auto text = std::assume_string_view(first, std::size_t(1), owner);
+    auto second = text;
+    return second;
+  }
+}
+c_string ctext(ByteOwner& owner) {
+  unsafe {
+    const char* first = std::typed_address<char>(std::erase_address(&owner.get()));
+    auto text = std::assume_c_string(first, owner);
+    return text;
+  }
+}
+std::string_view bad(ByteOwner& left, ByteOwner& right) {
+  mut auto text = view(left); text = view(right); return text;  //~ ERROR GTI-S2045 //~ ERROR GTI-S2045
+}
+int main() { return 0; }

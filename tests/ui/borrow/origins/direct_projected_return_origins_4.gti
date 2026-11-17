@@ -1,0 +1,39 @@
+// Direct projected return origins: direct projected aliases retain escape and readonly restrictions.
+enum class lookup_errc { missing };
+
+struct Record {
+  mut int32_t sentinel = 71;
+  mut int32_t selected = 29;
+public:
+  Record() = default;
+};
+
+struct Table {
+  mut int32_t sentinel = 83;
+  mut Record record{};
+public:
+  Table() = default;
+};
+
+int32_t& plain(Table& table) {
+  int32_t& other = table.record.sentinel;
+  if (other != 71) { return other; }
+  int32_t& selected = table.record.selected;
+  int32_t& alias = selected;
+  return alias;
+}
+
+expected<int32_t&, lookup_errc> fallible(Table& table, bool present) {
+  if (!present) { return unexpected(lookup_errc::missing); }
+  int32_t& selected = table.record.selected;
+  int32_t& alias = selected;
+  return alias;
+}
+
+int32_t& through_record(Table& table) {
+  Record& record = table.record;
+  int32_t& selected = record.selected;
+  return selected;
+}
+
+mut int32_t& bad(mut Table& table) { mut Table local{}; mut Record& record = local.record; mut int32_t& selected = record.selected; return selected; } int main() { return 0; }  //~ ERROR GTI-S2017

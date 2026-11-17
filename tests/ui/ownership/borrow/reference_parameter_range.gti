@@ -1,0 +1,147 @@
+// Range-for over a reference parameter executes with exact ownership and cleanup.
+//@ run-pass
+import std.vector;
+
+class DispatchBase {
+public:
+  DispatchBase() {}
+  virtual int32_t value() {
+    return 1;
+  }
+};
+
+class DispatchDerived : public DispatchBase {
+public:
+  DispatchDerived() {}
+  int32_t value() override {
+    return 3;
+  }
+};
+
+interface Shape {
+  int32_t area();
+};
+
+class Square : public Shape {
+public:
+  Square() {}
+  int32_t area() override {
+    return 5;
+  }
+  int32_t plain() {
+    return 2;
+  }
+};
+
+mut Square global_square = Square();
+
+class Holder {
+public:
+  Holder() {}
+  int32_t read() {
+    return this.item.area();
+  }
+
+private:
+  Square item = Square();
+};
+
+class GenericSquare<T> : public Shape {
+public:
+  GenericSquare() {}
+  int32_t area() override {
+    return 6;
+  }
+};
+
+interface Measure {
+  int32_t measure();
+};
+
+class StableMeasure : public Measure {
+public:
+  StableMeasure() {}
+  int32_t measure() override {
+    return 8;
+  }
+};
+
+class CheckedMeasure : public StableMeasure {
+public:
+  CheckedMeasure() : StableMeasure() {}
+  int32_t measure() override {
+    return this.value + 1;
+  }
+
+private:
+  int32_t value = 8;
+};
+
+Square make_square() {
+  return Square();
+}
+
+int32_t read_base(DispatchBase& value) {
+  return value.value();
+}
+
+int32_t read_bound(mut DispatchDerived& value) {
+  mut DispatchBase& bound = value;
+  return bound.value();
+}
+
+int32_t read_shape(Shape& value) {
+  return value.area();
+}
+
+int32_t read_global() {
+  return global_square.area();
+}
+
+int32_t read_concrete(StableMeasure& value) {
+  return value.measure();
+}
+
+int32_t sum(std::vector<int32_t>& values) {
+  mut int32_t total = 0;
+  for (int32_t value : values) {
+    total += value;
+  }
+  return total;
+}
+
+int32_t nested_sum(std::vector<int32_t>& values) {
+  mut int32_t pair_total = 0;
+  for (int32_t left : values) {
+    for (int32_t right : values) {
+      pair_total += left + right;
+    }
+  }
+
+  mut int32_t triple_count = 0;
+  for (int32_t first : values) {
+    for (int32_t second : values) {
+      for (int32_t third : values) { triple_count += 1; }
+    }
+  }
+  return pair_total - 28 + triple_count - 8;
+}
+
+int32_t main() {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  values.push_back(3);
+  values.push_back(4);
+  mut DispatchDerived derived = DispatchDerived();
+  mut Square square = Square();  //~ WARN GTI-S2096
+  mut Holder holder = Holder();  //~ WARN GTI-S2096
+  mut GenericSquare<int32_t> generic = GenericSquare<int32_t>();  //~ WARN GTI-S2096
+  mut Square returned = make_square();  //~ WARN GTI-S2096
+  mut StableMeasure stable = StableMeasure();  //~ WARN GTI-S2096
+  mut CheckedMeasure checked = CheckedMeasure();  //~ WARN GTI-S2096
+  return sum(values) - 7 + nested_sum(values) + read_bound(derived) - 3 +
+         read_base(derived) - 3 + read_shape(square) - 5 +
+         square.area() - 5 + read_global() - 5 + holder.read() - 5 +
+         generic.area() - 6 + returned.area() - 5 + derived.value() - 3 +
+         square.plain() - 2 + read_concrete(stable) - 8 +
+         read_concrete(checked) - 9;
+}

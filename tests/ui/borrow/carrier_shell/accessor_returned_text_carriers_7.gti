@@ -1,0 +1,25 @@
+// Accessor returned text carriers: an unrelated user carrier accepts an accessor's returned referent.
+//@ check-pass
+class Gauge {
+public:
+  int value;
+  Gauge(int value) : value(value) {}
+  int read() { return this.value; }
+};
+class Panel {
+  Gauge gauge;
+public:
+  Panel(Gauge gauge) : gauge(gauge) {}
+  Gauge& current() { return this.gauge; }
+};
+class Dial {
+  Gauge& gauge;
+public:
+  Dial(Gauge& gauge) : gauge(gauge) {}
+  int read() { return this.gauge.read(); }
+};
+int main() {
+  Panel panel = Panel(Gauge(7));
+  Dial dial = Dial(panel.current());
+  return dial.read() - 7;
+}

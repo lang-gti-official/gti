@@ -1,0 +1,17 @@
+// Reference payloads: rejected with GTI-S2067.
+//@ analyze-fail
+enum Reading { empty, value(mut int& owner) };
+enum Outer { empty, wrapped(Reading reading) };
+int update(mut int& owner) {
+  mut auto result = Outer::wrapped(Reading::value(owner));
+  switch (std::move(result)) {
+    case Outer::empty: return 1;
+    case Outer::wrapped(inner): {
+      switch (std::move(inner)) {
+        case Reading::empty: return 2;
+        case Reading::value(value): { value = 19; return 0; }  //~ ERROR GTI-S2067
+      }
+    }
+  }
+}
+int main() { mut int owner = 3; return update(owner); }

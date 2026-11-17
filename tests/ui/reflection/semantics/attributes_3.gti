@@ -1,0 +1,9 @@
+// Attributes: a payload enumerator has no integral value.
+import std.meta;
+enum class data { empty, boxed(int32_t item) };
+int main() {
+  constexpr for (auto alt : std::meta::alternatives_of<data>()) {
+    data d = alt.value();  //~ ERROR GTI-S2117 //~ ERROR GTI-S2117
+  }
+  return 0;
+}

@@ -1,0 +1,16 @@
+// Exclusive reborrow loan graph: nested borrow-origin wrappers should preserve a mutable producer's full-expression access.
+class Box {
+  mut int value = 0;
+
+public:
+  int& read() { return this.value; }
+  int& expose() mut { return this.value; }
+public:
+  Box() = default;
+};
+int& observe(int& value) { return value; }
+int sum(int& left, int& right) { return left + right; }
+int main() {
+  mut Box parent = Box();
+  return sum(parent.read(), observe(parent.expose()));  //~ ERROR GTI-S2017 Call creates overlapping reference accesses
+}

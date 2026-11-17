@@ -1,0 +1,6 @@
+// Native identity: rejected with GTI-S2003.
+struct Buffer {
+  int capacity;
+  Buffer(int size) : capacity(size) {}
+};
+int main() { Buffer buffer = 64; return buffer.capacity; }  //~ ERROR GTI-S2003

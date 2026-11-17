@@ -1,0 +1,3 @@
+// Reference substitutions and empty alternatives: an input-free reference-bearing result is implicitly 'static'.
+//@ check-pass
+enum Event<T> { idle, item(T value), pair(T first, T second) }; Event<int&> unknown(); int main() { auto value = unknown(); return 0; }

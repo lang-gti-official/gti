@@ -1,0 +1,8 @@
+// Semantic boundaries: scalar atomics do not require a host thread runtime in either profile.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.atomic;
+int main() {
+  std::atomic<int32_t> value{1};
+  return value.load();
+}

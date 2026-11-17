@@ -1,0 +1,20 @@
+// A conditional class expression (second branch) as a consumer that relays it through a by-value function publishes one object.
+//@ run-pass
+import std.vector;
+class Value {
+  int number;
+public:
+  Value(int value) : number(value) {}
+  int get() { return this.number; }
+  Value twin() { return Value(this.number); }
+  Value operator+(Value& other) { return Value(this.number + other.number); }
+};
+int consume(Value value) { return value.get(); }
+Value relay(Value value) { return value; }
+
+int main() {
+Value named = Value(5);
+mut std::vector<Value> bag{};  //~ WARN GTI-S2096
+bool flag = false;
+return consume(relay((flag ? Value(3) : Value(7)))) == 7 ? 0 : 1;
+}

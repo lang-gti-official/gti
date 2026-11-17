@@ -1,0 +1,13 @@
+// Global borrow returns: the concurrent profile should reject unsynchronized mutable global/static accessor storage.
+//@ execution-profile: concurrent
+class Application {
+public:
+  static mut Application& Get() {
+    unsafe { return *Application::app; }
+  }
+private:
+  static mut Application* app = nullptr;  //~ ERROR GTI-S2060
+public:
+  Application() = default;
+};
+int main() { return 0; }

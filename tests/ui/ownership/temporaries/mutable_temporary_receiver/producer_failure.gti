@@ -1,0 +1,27 @@
+// A failing mutable temporary receiver preserves activation and cleanup (producer-failure).
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0001
+class FailureTracker {
+public:
+  FailureTracker() {}
+
+  ~FailureTracker() {
+    mut int32_t cleanup = 2147483647;
+    cleanup += 1;
+  }
+
+  int32_t observe() mut {
+    return 0;
+  }
+};
+
+FailureTracker fail_before_production() {
+  mut int32_t value = 2147483647;  //~ WARN GTI-S2096
+  mut int32_t checked = value + 1;  //~ WARN GTI-S2096
+  return FailureTracker();
+}
+
+int main() {
+  return fail_before_production().observe();
+}

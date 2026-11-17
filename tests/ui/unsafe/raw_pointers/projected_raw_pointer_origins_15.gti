@@ -1,0 +1,15 @@
+// Projected raw pointer origins: raw projection transport must preserve an expired origin: raw-dynamic-array-replacement.
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { mut Address first{}; mut Address second{};  public: Pair() = default; };
+
+int read(int index) {
+  int live = 9;
+  mut const int* pointers[2] = {nullptr, nullptr};
+  unsafe {
+    { int gone = 5; pointers[index] = &gone; }
+    pointers[index] = &live;
+    return *pointers[0];  //~ ERROR GTI-S2102
+  }
+}
+int main() { return read(1); }

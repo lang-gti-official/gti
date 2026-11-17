@@ -1,0 +1,6 @@
+// Borrowing captures: shared-capture-mutation is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int value = 0;
+  auto callback = [&value]() -> int { value += 1; return value; };  //~ ERROR GTI-S2002
+  return callback();
+}

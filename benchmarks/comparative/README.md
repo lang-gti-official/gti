@@ -520,7 +520,7 @@ The local scan/reduction unit and native tests pass. macOS passes 30 selected
 compiler/optimizer/native groups, O0/O3 smoke, and separate sorting,
 comparator-failure and adversarial-sort fixtures. Linux passes 28 of the 30
 groups; `compiler_pipeline` reaches its 1,500-second limit, and the C++ sanitizer
-compilation in `string_index_range_runtime` reaches its 120-second subprocess
+compilation in `tests/ui/stdlib/string/index_range.gti` reaches its 120-second subprocess
 limit. Other compiler processes were active, but contention is not yet proved
 to be the cause. An isolated serial rerun retains the original limits and
 completes the remaining smoke/sort checks. It is pending at this checkpoint.

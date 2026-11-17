@@ -1,0 +1,41 @@
+// Accessor subject relays: an accessor subject relays its payload text like the field does.
+//@ check-pass
+//@ slow
+import std.panic;
+import std.string;
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+  std::string_view& viaPlace() {
+    switch (this.word) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view& viaCall() {
+    switch (this.wordRef()) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view firstCall() {
+    switch (this.wordRef()) {
+    case Word::text(v): return v;
+    case Word::none: return "";
+    }
+  }
+};
+
+int main() {
+  std::string input{"relayed"};
+  Line line = Line(input.view());
+  std::println(line.viaCall());
+  std::string_view v = line.viaCall();
+  Line fixed = Line("static");
+  kept = fixed.firstCall();
+  return v.size() == line.viaPlace().size() ? 0 : 1;
+}

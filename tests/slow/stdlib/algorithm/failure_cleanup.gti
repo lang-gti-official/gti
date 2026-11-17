@@ -1,0 +1,61 @@
+// A runtime failure inside each generic algorithm runs the caller's cleanup (and a moved comparator's) and exits 70.
+//@ run-fail
+//@ slow
+//@ revisions: none one two three four five
+//@[one] args: fail
+//@[two] args: fail fail
+//@[three] args: fail fail fail
+//@[four] args: fail fail fail fail
+//@[five] args: fail fail fail fail fail
+//@[five] stdout: 77
+//@[five] stdout: 99
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R
+//@ stdout: 99
+import std.algorithm;
+import std.vector;
+import std.string;
+import std.list;
+import std.array;
+
+class witness { public: ~witness() { std::println(99); }  public: witness() = default; };
+class failing_predicate {
+public:
+  bool operator()(int& n) { int zero = 0; return n / zero == 1; }
+public:
+  failing_predicate() = default;
+};
+class failing_order {
+public:
+  failing_order() = default;
+  failing_order(failing_order& other) = delete;
+  failing_order(failing_order&& other) = default;
+  ~failing_order() { std::println(77); }
+  bool operator()(int& left, int& right) mut {
+    int zero = 0;
+    return left / zero < right;
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  witness cleanup{};
+  std::vector<int> input = {1, 2};
+  mut std::vector<int> output = {0};
+  if (argc == 1) { std::copy_n(input.begin(), std::size_t(2), output.begin_mut()); }
+  if (argc == 2) { [[discard]] std::is_partitioned(input, failing_predicate()); }
+  if (argc == 3) {
+    std::list<int> empty{};
+    auto absent = std::min_element(empty.begin(), empty.end());
+    std::println(*absent);
+  }
+  if (argc == 4) {
+    std::array<int, 0> empty{};
+    auto absent = std::min_element(empty.begin(), empty.end());
+    std::println(*absent);
+  }
+  if (argc == 5) { std::copy(input.begin(), input.end(), output.begin_mut()); }
+  if (argc == 6) {
+    auto greatest = std::max_element(input.begin(), input.end(), failing_order());
+    std::println(*greatest);
+  }
+  return 1;
+}

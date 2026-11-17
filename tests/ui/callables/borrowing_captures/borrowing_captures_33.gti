@@ -1,0 +1,8 @@
+// Borrowing captures: shared-reference-value-carrier-return.
+//@ check-pass
+struct Reader {
+  int& value;
+  Reader(int& value) : value(value) {}
+};
+Reader borrow(int& value) { Reader local{value}; return local; }
+int main() { int value = 3; auto reader = borrow(value); return reader.value - 3; }

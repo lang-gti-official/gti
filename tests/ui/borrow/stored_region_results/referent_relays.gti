@@ -1,0 +1,101 @@
+// A result in a stored class region may borrow what a stored reference reaches.
+//@ run-pass
+//@ exit-code: 0
+import std.memory;
+
+// `int&<owner>` in `Cursor<lifetime owner>` names the referents of the
+// receiver's fields stored in `owner`. A return that reaches such a
+// referent through a call result and a field projection, or through an
+// argument bound to a reference parameter written in a region, borrows no
+// storage the receiver owns.
+struct Node {
+  mut int value;
+  Node(int v) : value(v) {}
+};
+class Nodes {
+  mut Node items[2];
+public:
+  Nodes() : items({Node(1), Node(2)}) {}
+  Node& at(uint64_t i) { return this.items[i]; }
+  int& value_at(uint64_t i) { return this.at(i).value; }
+};
+int&<a> pass<lifetime a>(Node&<a> node) { return node.value; }
+mut int&<a> pass_mut<lifetime a>(mut Node&<a> node) { return node.value; }
+Node&<a> first_of<lifetime a>(Nodes&<a> nodes) { return nodes.at(uint64_t(0)); }
+int&<a> relay<lifetime a, Args...>(Args&<a>... values) { return pass(values...); }
+
+class Cursor<lifetime owner> {
+  Nodes&<owner> nodes;
+  Node&<owner> node;
+  mut Node&<owner> slot;
+  mut const Node* current = nullptr;
+public:
+  Cursor(Nodes&<owner> nodes, Node&<owner> node, mut Node&<owner> slot)
+      : nodes(nodes), node(node), slot(slot) {
+    this.current = &node;
+  }
+  // A field of a method result reached through a stored reference.
+  int&<owner> projected() { return this.nodes.at(uint64_t(0)).value; }
+  int&<owner> grouped() { return (this.nodes.at(uint64_t(1))).value; }
+  // The same borrow through a helper was already accepted.
+  int&<owner> helper() { return this.nodes.value_at(uint64_t(1)); }
+  // A stored reference passed to a reference parameter in the result's region.
+  int&<owner> via_arg() { return pass(this.node); }
+  int&<owner> nested_arg() { return pass(this.nodes.at(uint64_t(1))); }
+  int&<owner> arg_then_field() { return first_of(this.nodes).value; }
+  int&<owner> pack_lane() { return relay(this.node); }
+  int&<owner> assumed() {
+    unsafe { return std::assume_ref(&this.current->value, this.node); }
+  }
+  mut int&<owner> mutable_slot() mut { return pass_mut(this.slot); }
+  // The result outlives a consumed receiver.
+  int&<owner> consumed() && { return pass(this.node); }
+};
+
+// The same relays in a generic class, checked for each instance.
+struct Cell<T> {
+  T value;
+  Cell(T v) : value(v) {}
+};
+class Slots<T> {
+  mut Cell<T> items[2];
+public:
+  Slots(T first, T second) : items({Cell<T>(first), Cell<T>(second)}) {}
+  Cell<T>& at(uint64_t i) { return this.items[i]; }
+};
+T&<a> unwrap<T, lifetime a>(Cell<T>&<a> cell) { return cell.value; }
+class SlotCursor<T, lifetime owner> {
+  Slots<T>&<owner> slots;
+public:
+  SlotCursor(Slots<T>&<owner> slots) : slots(slots) {}
+  T&<owner> projected() { return this.slots.at(uint64_t(0)).value; }
+  T&<owner> via_arg() { return unwrap(this.slots.at(uint64_t(1))); }
+};
+
+int main() {
+  Nodes nodes{};
+  Node node{7};
+  mut Node slot{9};
+  mut Cursor cursor = Cursor(nodes, node, slot);
+  if (cursor.projected() != 1 || cursor.grouped() != 2 ||
+      cursor.helper() != 2) {
+    return 1;
+  }
+  if (cursor.via_arg() != 7 || cursor.nested_arg() != 2 ||
+      cursor.arg_then_field() != 1 || cursor.pack_lane() != 7 ||
+      cursor.assumed() != 7) {
+    return 2;
+  }
+  mut int& written = cursor.mutable_slot();
+  written = 11;
+  if (slot.value != 11) {
+    return 3;
+  }
+  int& kept = Cursor(nodes, node, slot).consumed();
+  if (kept != 7) {
+    return 4;
+  }
+  Slots<int> slots{3, 4};
+  SlotCursor<int, _> generic = SlotCursor<int, _>(slots);
+  return generic.projected() + generic.via_arg() == 7 ? 0 : 5;
+}

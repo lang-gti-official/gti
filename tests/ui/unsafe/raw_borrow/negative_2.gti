@@ -1,0 +1,8 @@
+// Negative: bridge still requires unsafe.
+import std.memory;
+int main() {
+  int owner = 42;
+  const int* address = nullptr;
+  int& value = std::assume_ref(address, owner);  //~ ERROR GTI-S2055
+  return value;
+}

@@ -1,0 +1,8 @@
+// Array element text rejections: a view of a local owner still cannot be returned.
+import std.string;
+std::string_view leak() {
+  std::string owner{"local"};
+  std::string_view names[1] = {"static"};
+  return owner.view();  //~ ERROR GTI-S2045
+}
+int main() { return leak().empty() ? 1 : 0; }

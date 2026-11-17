@@ -1,0 +1,10 @@
+// Projected raw pointer origins: unknown raw destinations retain the caller's unsafe proof boundary.
+//@ check-pass
+//@ raw-pointer-audit: strict
+struct Address { mut const int* pointer = nullptr;  public: Address() = default; };
+struct Pair { mut Address first{}; mut Address second{};  public: Pair() = default; };
+
+unsafe void set(Address* destination, const int* value) {
+  unsafe { destination->pointer = value; }
+}
+int main() { return 0; }

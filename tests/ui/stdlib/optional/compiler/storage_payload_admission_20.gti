@@ -1,0 +1,9 @@
+// Storage payload admission: moving a text borrow into a local binding retains the original owner loan and remains valid within that owner's lifetime.
+//@ check-pass
+import std.string;
+int main() {
+  std::string owner{"owned"};
+  std::string_view view = owner.view();
+  std::string_view moved = std::move(view);
+  return moved.size() == std::size_t(5) ? 0 : 1;
+}

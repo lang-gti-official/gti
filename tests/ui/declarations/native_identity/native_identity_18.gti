@@ -1,0 +1,5 @@
+// Native identity: rejected with GTI-S2003.
+struct Middle { implicit Middle(int value) {}  public: Middle() = default; };
+struct End { implicit End(Middle value) {}  public: End() = default; };
+End make() { return 1; }  //~ ERROR GTI-S2003
+int main() { return 0; }

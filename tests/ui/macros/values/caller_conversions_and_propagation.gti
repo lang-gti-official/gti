@@ -1,0 +1,49 @@
+// Caller conversions and propagation: value macros preserve caller-selected conversions, caller propagation and caller-location defaults.
+//@ check-pass
+import std.source_location;
+mut int cleaned = 0;
+struct Guard { ~Guard() { cleaned += 1; }  public: Guard() = default; };
+struct Box {
+  int value;
+  implicit Box(int value) : value(value) {}
+};
+struct Flag {
+  operator bool() { return true; }
+  implicit operator int() { return 19; }
+public:
+  Flag() = default;
+};
+#macro Flag flag() { return Flag(); }
+#macro int scalar(int value) { return value; }
+#macro int guarded(int expression) { Guard local{}; return expression; }
+#macro std::source_location here(
+    std::source_location location = std::source_location::current()) {
+  return location;
+}
+expected<int, int> fallible(bool fail) {
+  if (fail) { return unexpected(13); }
+  return 31;
+}
+#macro expected<int, int> result(bool fail) { return fallible(fail); }
+expected<int, int> forwarded(bool fail) {
+  Guard caller{};
+  return guarded!(?result!(fail));
+}
+expected<int, int> continued(bool fail) {
+  Guard caller{};
+  int result = guarded!(?fallible(fail));
+  return result + 1;
+}
+Box converted_return() { return scalar!(17); }
+int main() {
+  Box initialized = scalar!(11);
+  Box returned = converted_return();
+  mut int converted = flag!();
+  if (flag!()) { converted += 1; }
+  auto success = forwarded(false);
+  auto failure = forwarded(true);
+  auto continued_success = continued(false);
+  auto continued_failure = continued(true);
+  std::source_location location = here!();
+  return 0;
+}

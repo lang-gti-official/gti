@@ -1,0 +1,15 @@
+// Source raw writes: conditional constructor initializers cannot erase a known expired write.
+//@ raw-pointer-audit: strict
+import std.memory;
+int witness = 7;
+mut const int* pointer = &witness;
+
+struct Factory {
+  Factory(int unused) { int gone = 1; pointer = &gone; }
+  Factory(bool unused) { pointer = &witness; }
+public:
+  Factory() = default;
+};
+struct Outer { Factory field;
+  Outer(bool choose) : field(choose ? Factory(0) : Factory(true)) {} };
+int main() { Outer value{true}; unsafe { return std::assume_ref(pointer, witness); } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102

@@ -1,0 +1,21 @@
+// Parameter payload reference returns: a payload of a temporary subject is not a stable place.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+wrap copy(wrap& value) { return value; }
+int32_t& inner(wrap& value) {
+  switch (copy(value)) {
+  case wrap::one(auto& item): return item;  //~ ERROR GTI-S2067 //~ ERROR GTI-S2017
+  case wrap::two(auto& item): return item;  //~ ERROR GTI-S2067 //~ ERROR GTI-S2017
+  }
+}
+int main() { wrap w = wrap::one(3); return inner(w) - 3; }

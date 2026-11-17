@@ -1,0 +1,9 @@
+// Class payload enums: owning enum cleanup needs a verified active-field recipe.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class data { one(resource first, resource second), none };
+int main() { data value = data::one(resource(), resource()); return 0; }

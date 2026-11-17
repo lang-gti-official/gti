@@ -1,0 +1,5 @@
+// Shape witnesses: ordinary numeric Convert does not borrow the object-address witness.
+//@ build-pass
+//@ slow
+int widen(int8_t value) { return int(value); }
+int main() { return widen(int8_t(0)); }

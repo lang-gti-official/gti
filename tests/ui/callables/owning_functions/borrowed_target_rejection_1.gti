@@ -1,0 +1,4 @@
+// Borrowed target rejection: fresh borrowing target is rejected semantically before MIR allocation.
+import std.functional;
+import std.memory;
+int main() { int value = 7; std::function<int()> f{[&value]() -> int { return value; }}; return 0; }  //~ ERROR GTI-S2018

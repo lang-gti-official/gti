@@ -1,0 +1,13 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+class View<lifetime a> {
+  int&<a> value;
+public:
+  View(int&<a> input) : value(input) {}
+  int&<a> get() { return this.value; }
+};
+int&<a> use<lifetime a>(int&<a> input) {
+  View<a> view{input};
+  return view.get();
+}
+int main() { int value = 7; return use(value) - 7; }

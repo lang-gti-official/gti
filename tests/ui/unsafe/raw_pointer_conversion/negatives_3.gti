@@ -1,0 +1,3 @@
+// Negatives: cannot convert integer to pointer.
+using P = int*;
+int main() { P q = P(42); return 0; }  //~ ERROR GTI-S2014

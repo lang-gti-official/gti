@@ -1,0 +1,13 @@
+// Raw access: rejected with GTI-S2102.
+//@ raw-pointer-audit: strict
+struct Address {
+  mut const int* pointer = nullptr;
+  int operator+(int other) { unsafe { return *this.pointer + other; } }
+public:
+  Address() = default;
+};
+int main() {
+  mut Address address{};
+  { int dead = 7; address.pointer = &dead; }
+  return address + 0;  //~ ERROR GTI-S2102
+}

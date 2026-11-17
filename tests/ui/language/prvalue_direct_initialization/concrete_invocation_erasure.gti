@@ -1,0 +1,27 @@
+// Concrete invocation erasure: concrete provenance preserves nominal calls and dependent branches.
+//@ check-pass
+class Point {
+public:
+  int value;
+  Point(int value) : value(value) {}
+};
+Point make() { return Point(4); }
+Point adjust(Point source) { return Point(source.value + 1); }
+class Factory {
+public:
+  Factory() {}
+  Point operator()(Point source) { return Point(source.value + 1); }
+};
+Point choose<uint64_t N>() {
+  if constexpr (N == 1) { return adjust(make()); }
+  else { return Point(make()); }
+}
+int main() {
+  Point proof = Point(make());
+  Factory factory{};
+  Point called = factory(make());
+  Point selected = choose<1>();
+  Point direct = choose<2>();
+  return proof.value == 4 && called.value == 5 && selected.value == 5 &&
+      direct.value == 4 ? 0 : 1;
+}

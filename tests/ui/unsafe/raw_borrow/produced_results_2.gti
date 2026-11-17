@@ -1,0 +1,9 @@
+// Produced results: raw-output argument pack does not erase unresolved source facts.
+//@ raw-pointer-audit: strict
+import std.memory;
+T forward_exact<T, Args...>(Args... args) { return T(args...); }
+int main() { mut int value = 7;
+  void* erased = std::erase_address(&value);
+  void* forwarded = forward_exact<void*>(erased);
+  unsafe { auto wrong = std::typed_address<double>(forwarded); return int(*wrong); }  //~ ERROR GTI-S2103
+}

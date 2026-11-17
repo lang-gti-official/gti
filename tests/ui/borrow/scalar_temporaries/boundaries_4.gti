@@ -1,0 +1,2 @@
+// Boundaries: declaration-only target.
+int read(int& value); int main() { return read(42); }  //~ ERROR GTI-S2017

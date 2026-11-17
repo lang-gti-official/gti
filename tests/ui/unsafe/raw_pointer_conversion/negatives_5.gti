@@ -1,0 +1,3 @@
+// Negatives: no implicit erasure.
+int main() {
+mut int value = 0; void* p = &value; return 0; }  //~ ERROR GTI-S2003

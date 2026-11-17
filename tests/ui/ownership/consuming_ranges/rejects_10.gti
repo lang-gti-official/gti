@@ -1,0 +1,4 @@
+// Rejects: legacy text handles do not prove independent ownership.
+class Source { public: Source() {} bool has_next() { return true; }
+    std::string_view take_next() mut { return "text"; } };
+    int main() { for (auto v : Source()) {} return 0; }  //~ ERROR GTI-S2083

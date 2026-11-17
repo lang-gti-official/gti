@@ -1,0 +1,13 @@
+// Payload admission: an owning string field makes a model's cleanup active.
+import std.polymorphic;
+import std.string;
+interface meter { int read(); };
+
+class labelled : public meter {
+  std::string label;
+public:
+  labelled(std::string label) : label(std::move(label)) {}
+  int read() override { return 1; }
+};
+int need<M>() requires std::inline_polymorphic_payload<M, meter> { return 0; }
+int main() { return need<labelled>(); }  //~ ERROR GTI-S2029

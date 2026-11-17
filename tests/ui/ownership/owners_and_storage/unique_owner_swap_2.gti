@@ -1,0 +1,11 @@
+// Unique owner swap: unique_ptr::swap should reject owners with different pointee types before MIR.
+import std.memory;
+
+struct Left { public: Left() = default; };
+struct Right { public: Right() = default; };
+int main() {
+  mut std::unique_ptr<Left> left = std::make_unique<Left>();
+  mut std::unique_ptr<Right> right = std::make_unique<Right>();
+  left.swap(right);  //~ ERROR GTI-S2003
+  return 0;
+}

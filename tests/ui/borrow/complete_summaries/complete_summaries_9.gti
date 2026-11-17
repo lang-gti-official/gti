@@ -1,0 +1,15 @@
+// Complete borrow summaries: rejected with GTI-S2017.
+import std.panic;
+enum View { empty, ready(int& owner) };
+int choose(bool condition) {
+  mut int owner = 42;
+  mut View view = View::ready(owner);  //~ WARN GTI-S2096
+  if (condition) {}
+  else { auto consumed = std::move(view); return 0; }
+owner = 7;  //~ ERROR GTI-S2017
+  switch (view) {
+  case View::empty: return 0;
+  case View::ready(auto& value): return value;
+  }
+}
+int main() { return choose(true); }

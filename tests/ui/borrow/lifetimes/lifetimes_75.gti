@@ -1,0 +1,10 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+int&<a> inner<lifetime a, lifetime b>(int&<a> input)
+  requires outlives<a, b> || outlives<b, a> { return input; }
+int&<a> outer<lifetime a, lifetime b>(int&<a> input)
+  requires outlives<a, b> || outlives<b, a> {
+  return inner<a, b>(input);
+}
+int main() { int value = 7; return outer(value) - 7; }

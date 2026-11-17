@@ -1,0 +1,3 @@
+// Storage payload admission: unsupported optional payload shapes must fail at source instead of reaching the MIR/backend contract.
+import std.optional;
+int main() { std::optional<int&> item{}; return 0; }  //~ ERROR GTI-S2045

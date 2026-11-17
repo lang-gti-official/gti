@@ -1,0 +1,42 @@
+// General requires: source policy composes independent cleanup and public-base facts.
+//@ check-pass
+import std.meta;
+import std.polymorphic;
+import std.string;
+struct PayloadProbe<Model, Base> {
+  bool matches() requires std::inline_polymorphic_payload<Model, Base> { return true; }
+};
+interface Measure { int read(); };
+class Point : public Measure {
+public:
+  Point() {}
+  int read() override { return 7; }
+};
+class Noisy : public Measure {
+public:
+  Noisy() {}
+  ~Noisy() {}
+  int read() override { return 8; }
+};
+struct Owning { std::string text;  public: Owning() = default; };
+int main() {
+  static_assert(std::meta::is_polymorphic<Measure>());
+  static_assert(std::meta::type<Point>().is_polymorphic());
+  static_assert(!std::meta::is_polymorphic<int>());
+  static_assert(std::meta::is_public_base_of<Measure, Point>());
+  static_assert(std::meta::type<Point>().has_public_base<Measure>());
+  static_assert(!std::meta::is_public_base_of<Point, Measure>());
+  static_assert(!std::meta::is_public_base_of<Point, Point>());
+  static_assert(!std::meta::is_public_base_of<int, Point>());
+  static_assert(!std::meta::has_active_cleanup<Point>());
+  static_assert(!std::meta::has_active_cleanup<int>());
+  static_assert(std::meta::has_active_cleanup<Noisy>());
+  static_assert(std::meta::type<Owning>().has_active_cleanup());
+  static_assert(requires(PayloadProbe<Point, Measure>& p) {
+    { p.matches() } -> bool;
+  });
+  static_assert(!(requires(PayloadProbe<Noisy, Measure>& p) {
+    { p.matches() } -> bool;
+  }));
+  return 0;
+}

@@ -1,0 +1,77 @@
+// Cleanup-bound source guards retain resources through normal/failure cleanup.
+//@ run-pass
+//@ revisions: default primary primary-cleanup cleanup-only-normal
+//@[default] stdout: 77
+//@[default] stdout: 7
+//@[default] stdout: 41
+//@[default] stdout: 55
+//@[default] stdout: 99
+//@[primary] run-fail
+//@[primary] args: primary
+//@[primary] exit-code: 70
+//@[primary] stdout: 7
+//@[primary] stdout: 41
+//@[primary] stdout: 55
+//@[primary] stdout: 99
+//@[primary] stderr-contains: cleanup_bound_destructor_receiver.gti:43: runtime error[GTI-R0017]: panic: "primary failed"
+//@[primary-cleanup] run-fail
+//@[primary-cleanup] args: primary cleanup
+//@[primary-cleanup] exit-code: 70
+//@[primary-cleanup] stdout: 7
+//@[primary-cleanup] stderr-contains: cleanup_bound_destructor_receiver.gti:36: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0017] at cleanup_bound_destructor_receiver.gti:43 message="primary failed"; secondary [GTI-R0017] message="destructor failed"
+//@[cleanup-only-normal] run-fail
+//@[cleanup-only-normal] args: cleanup only normal
+//@[cleanup-only-normal] exit-code: 70
+//@[cleanup-only-normal] stdout: 77
+//@[cleanup-only-normal] stdout: 7
+//@[cleanup-only-normal] stdout: 41
+//@[cleanup-only-normal] stdout: 55
+//@[cleanup-only-normal] stdout: 99
+//@[cleanup-only-normal] stderr-contains: cleanup_bound_destructor_receiver.gti:36: runtime error[GTI-R0017]: panic: "destructor failed"
+// --- cleanup_bound_destructor_receiver.gti
+import std.string;
+import std.vector;
+import std.panic;
+
+class Resource {
+public:
+  int value = 7;
+  ~Resource() { std::println(99); }
+public:
+  Resource() = default;
+};
+class Cell<T> {
+  Resource& resource;
+  T tag;
+public:
+  Cell(Resource& resource, T tag) : resource(resource), tag(tag) {}
+  int read() { return this.resource.value; }
+  ~Cell() { std::println(55); }
+};
+class Trace {
+public:
+  ~Trace() { std::println(41); }
+public:
+  Trace() = default;
+};
+class Observer<T> {
+  Cell<T>& owner;
+  bool fail;
+  Trace trace{};
+public:
+  Observer(Cell<T>& owner, bool fail) : owner(owner), fail(fail) {}
+  Cell<T>& get() { return this.owner; }
+  ~Observer() {
+    // The returned Cell<T>& retains its shell and its own borrowed resource.
+    std::println(this.get().read());
+    if (this.fail) { std::panic("destructor failed"); }
+  }
+};
+int main(int argc, std::vector<std::string> argv) {
+  Resource resource{};
+  Cell<int> cell{resource, 1};
+  Observer<int> observer{cell, argc > 2};
+  if (argc == 2 or argc == 3) { std::panic("primary failed"); }
+  std::println(77);
+  return 0;
+}

@@ -1,0 +1,16 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct Base<lifetime a> {
+  int&<a> value;
+  Base(int&<a> input) : value(input) {}
+};
+struct Pair<lifetime a, lifetime b> : public Base<a> {
+  int&<b> other;
+  Pair(int&<a> first, int&<b> second) : Base<a>(first), other(second) {}
+};
+int&<a> external<lifetime a>(int&<a> input) {
+  int local = 9;
+  Pair pair{input, local};
+  return pair.value;
+}
+int main() { int value = 7; return external(value) - 7; }

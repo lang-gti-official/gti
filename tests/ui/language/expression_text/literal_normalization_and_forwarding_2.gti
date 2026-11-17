@@ -1,0 +1,5 @@
+// Literal normalization and forwarding: expression metadata must never remain an executable intrinsic.
+//@ check-pass
+import std.source_location;
+int main() { std::string_view text = std::expression_text!((1 /* λ */ +
+ 2)); return int32_t(text.size()); }

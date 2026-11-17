@@ -1,0 +1,17 @@
+// Raw accesses: a method's write through a receiver-held raw pointer is a caller finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+struct Cursor {
+  mut int* target = nullptr;
+public:
+  Cursor() = default;
+  void write() { unsafe { *this.target = 9; } }
+};
+int main() {
+  mut int owner = 7;
+  mut Cursor cursor{};
+  unsafe { cursor.target = &owner; }  //~ WARN GTI-S2100
+  int& held = owner;
+  cursor.write();  //~ WARN GTI-S2102
+  return held;
+}

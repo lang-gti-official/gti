@@ -1,0 +1,47 @@
+// A failure while building a nested pinned array cleans up exactly the completed elements in place.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R0017]: panic: "array element failure"
+// --- main.gti
+import std.panic;
+
+mut int constructed = 0;
+mut int destroyed = 0;
+class Pinned {
+  mut Pinned* constructed_at = nullptr;
+  int id;
+public:
+  Pinned(int id) : id(id) {
+    this.constructed_at = &this;
+    constructed = constructed * 10 + id;
+  }
+  Pinned(Pinned&) = delete;
+  Pinned(Pinned&&) = delete;
+  ~Pinned() {
+    if (this.constructed_at != &this) { std::panic("relocated pinned object"); }
+    destroyed = destroyed * 10 + this.id;
+  }
+  bool stable() { return this.constructed_at == &this; }
+};
+Pinned make(int id) { return Pinned(id); }
+Pinned relay(int id) { return make(id); }
+
+class Guard {
+public:
+  Guard() {}
+  ~Guard() {
+    if (constructed != 12 || destroyed != 21) {
+      std::panic("incorrect partial array cleanup");
+    }
+  }
+};
+Pinned checked(int id) {
+  if (id == 3) { std::panic("array element failure"); }
+  return Pinned(id);
+}
+
+int main() {
+  Guard guard{};
+  Pinned values[2][2] = {{checked(1), checked(2)}, {checked(3), checked(4)}};
+  return 0;
+}

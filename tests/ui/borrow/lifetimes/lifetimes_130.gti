@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct Slots { int count; Slots(int input) : count(input) {} };
+using borrow<lifetime a> = Slots&<a>;
+borrow<a> access<lifetime a>(Slots&<a> input) { return input; }
+int main() { Slots slots{4}; return access(slots).count - 4; }

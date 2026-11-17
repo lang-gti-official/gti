@@ -1,0 +1,5 @@
+// Negatives: known expired origin survives round trip.
+//@ raw-pointer-audit: strict
+using E = const void*; using P = const int*;
+int main() { mut E e = nullptr; { int local = 42; e = E(&local); }
+P p = P(e); unsafe { return *p; } }  //~ ERROR GTI-S2101

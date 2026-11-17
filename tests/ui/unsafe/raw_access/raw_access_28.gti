@@ -1,0 +1,18 @@
+// Raw access: the program is accepted.
+//@ check-pass
+//@ raw-pointer-audit: strict
+interface Channel<T> { T inspect(T value); };
+class Model<T> : public Channel<T> {
+public:
+  T inspect(T value) override { return value; }
+public:
+  Model() = default;
+};
+
+int main() {
+  mut const int* pointer = nullptr;
+  { int dead = 7; pointer = &dead; }
+  Model<const int*> model{};
+  Channel<const int*>& base = model;
+  return base.inspect(pointer) != nullptr ? 0 : 1;
+}

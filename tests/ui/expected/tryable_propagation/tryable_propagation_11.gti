@@ -1,0 +1,4 @@
+// Tryable propagation: rejected with GTI-S2045, GTI-S2064.
+[[c_abi]] struct InvalidNative { int& owner; };  //~ ERROR GTI-S2064 //~ ERROR GTI-S2045
+enum InvalidEvent { value(InvalidNative native), empty };
+int main() { return 0; }

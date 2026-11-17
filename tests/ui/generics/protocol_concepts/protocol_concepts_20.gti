@@ -1,0 +1,11 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept observed<T> {
+  int&<a> get<lifetime a>(T&<a> source, T& other);
+};
+struct Reading { int value; };
+for concept observed<Reading> {
+  int&<a> get<lifetime a>(Reading& source, Reading&<a> other) {  //~ ERROR GTI-S2123
+    return other.value;
+  }
+};
+int main() { return 0; }

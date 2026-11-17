@@ -1,0 +1,5 @@
+// Audit dependency severity: the program is accepted.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+int main() { return 0; }

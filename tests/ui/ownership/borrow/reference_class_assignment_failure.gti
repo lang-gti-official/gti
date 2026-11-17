@@ -1,0 +1,74 @@
+// Whole-value replacement through checked mutable references preserves owners.
+//@ run-pass
+//@ revisions: run1 run2 run3 run4 run5
+//@[run1] stdout: 1
+//@[run1] stdout: 99
+//@[run1] stdout: 2
+//@[run1] stdout: 9
+//@[run2] run-fail
+//@[run2] args: rhs
+//@[run2] exit-code: 70
+//@[run2] stdout: 1
+//@[run2] stdout: 9
+//@[run2] stderr-contains: reference_class_assignment_failure.gti:10: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run3] run-fail
+//@[run3] args: old cleanup
+//@[run3] exit-code: 70
+//@[run3] stdout: 1
+//@[run3] stdout: 2
+//@[run3] stdout: 9
+//@[run3] stderr-contains: reference_class_assignment_failure.gti:14: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run4] run-fail
+//@[run4] args: after commit failure
+//@[run4] exit-code: 70
+//@[run4] stdout: 1
+//@[run4] stdout: 2
+//@[run4] stdout: 9
+//@[run4] stderr-contains: reference_class_assignment_failure.gti:38: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[run5] run-fail
+//@[run5] args: double failure during cleanup
+//@[run5] exit-code: 70
+//@[run5] stdout: 1
+//@[run5] stderr-contains: reference_class_assignment_failure.gti:14: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at reference_class_assignment_failure.gti:10; secondary [GTI-R0002]
+// --- reference_class_assignment_failure.gti
+import std.string;
+import std.vector;
+
+class Tracked {
+  int32_t tag;
+  int32_t cleanup_divisor;
+public:
+  Tracked(int32_t tag, int32_t divisor, int32_t cleanup_divisor)
+      : tag(tag), cleanup_divisor(cleanup_divisor) {
+    int32_t checked = 12 / divisor;
+  }
+  ~Tracked() {
+    std::println(this.tag);
+    int32_t checked = 12 / this.cleanup_divisor;
+  }
+};
+class Guard {
+public:
+  Guard() {}
+  ~Guard() { std::println(9); }
+};
+class Cursor {
+  mut Tracked& target;
+public:
+  Cursor(mut Tracked& target) : target(target) {}
+  mut Tracked& operator*() mut { return this.target; }
+};
+Tracked make_tracked(int32_t divisor) { return Tracked(2, divisor, 1); }
+void replace(mut Tracked& target, int32_t divisor) {
+  mut Cursor cursor{target};
+  *cursor = make_tracked(divisor);
+}
+int main(int argc, std::vector<std::string> argv) {
+  Guard guard{};
+  mut Tracked target{1, 1, argc == 3 || argc == 5 ? 0 : 1};
+  replace(target, argc == 2 || argc == 5 ? 0 : 1);
+  int32_t divisor = argc == 4 ? 0 : 1;
+  int32_t checked = 12 / divisor;
+  std::println(99);
+  return 0;
+}

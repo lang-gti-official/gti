@@ -1,0 +1,13 @@
+// Negative: invalid access and retained overlap are diagnosed by semantics.
+import std.iterator;
+class End{ public: End(){} End(End& other)=delete; End(End&& other)=default; };
+class Cursor {
+  mut int32_t current = 0;
+public:
+  int32_t& operator*() { return this.current; }
+  void operator++() mut { this.current++; }
+  bool operator!=(End end) { return true; }
+public:
+  Cursor() = default;
+};
+int main(){return int32_t(std::distance(Cursor(), End()));}  //~ ERROR GTI-S2029

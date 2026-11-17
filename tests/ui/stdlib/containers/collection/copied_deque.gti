@@ -1,0 +1,9 @@
+// A std::deque brace list copies no owning element: a named std::string must be moved in.
+//@ check-fail
+import std.deque;
+import std.string;
+int main() {
+  std::string named{"owned"};
+  std::deque<std::string> values = {named};  //~ ERROR GTI-S2092
+  return int(values.size());
+}

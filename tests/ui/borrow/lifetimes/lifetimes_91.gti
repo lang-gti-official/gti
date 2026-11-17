@@ -1,0 +1,6 @@
+// Lifetimes: rejected with GTI-S2009, GTI-S2017.
+int observe<T, lifetime a>(T&<a> value) requires outlives<T, a> { return 7; }
+T&<a> bad<T, lifetime a>(T value, T&<a> outside) {
+  observe(value);  //~ ERROR GTI-S2009
+  return value;  //~ ERROR GTI-S2017
+}

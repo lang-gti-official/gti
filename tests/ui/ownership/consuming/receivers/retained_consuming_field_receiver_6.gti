@@ -1,0 +1,15 @@
+// Retained consuming field receiver: read/mutable fallback must reject borrowed results before MIR, even when the caller immediately copies the referent.
+class Borrower { int value = 1; public: Borrower() {} int& operator()()  { return this.value; } };
+class BorrowOwner {
+  mut Borrower field;
+public:
+  BorrowOwner(Borrower field) : field(std::move(field)) {}
+  int operator()() && {
+  int& view = std::move(this.field)(); return view;  //~ ERROR GTI-S2022 //~ ERROR GTI-S2017
+  }
+};
+int main() {
+  Borrower field{};
+  BorrowOwner owner{std::move(field)};
+  return std::move(owner)();
+}

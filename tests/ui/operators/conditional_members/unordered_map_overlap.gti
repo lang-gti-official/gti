@@ -1,0 +1,4 @@
+// A std::unordered_map subscript reference keeps the map borrowed across clear().
+//@ check-fail
+import std.unordered_map;
+int main() { mut std::unordered_map<int, int> values{}; mut int& entry = values[1]; values.clear(); return entry; }  //~ ERROR GTI-S2017 borrow

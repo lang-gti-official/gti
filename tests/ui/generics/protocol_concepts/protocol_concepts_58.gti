@@ -1,0 +1,33 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept sized<T> {
+  typename count_type;
+  count_type count(T& value);
+};
+enum class Slot<T> {
+  empty,
+  full(T value),
+};
+for <T> concept sized<Slot<T>> {
+  using count_type = int;
+  int count(Slot<T>& value) {
+    switch (value) {
+    case Slot<T>::full:
+      return 1;
+    case Slot<T>::empty:
+      return 0;
+    }
+  }
+};
+
+sized<Slot<int>>::count_type total(Slot<int>& value) {
+  return sized<Slot<int>>::count(value);
+}
+sized<T>::count_type counted<T>(T& value) requires sized<T> {
+  return sized<T>::count(value);
+}
+int main() {
+  Slot<int> full = Slot<int>::full(3);
+  Slot<bool> empty = Slot<bool>::empty;
+  return total(full) + counted(empty) - 1;
+}

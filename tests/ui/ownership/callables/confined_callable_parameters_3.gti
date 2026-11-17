@@ -1,0 +1,8 @@
+// Confined callable parameters: implicit owned callable transfers remain rejected.
+Operation escape<Operation>(Operation operation) { return operation; }
+
+int main() {
+  auto operation = [](int value) -> void {};
+  auto escaped = escape(operation);  //~ ERROR GTI-S2046
+  return 0;
+}

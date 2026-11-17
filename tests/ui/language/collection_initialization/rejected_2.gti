@@ -1,0 +1,12 @@
+// Rejected: invalid collection must stop compilation.
+class Numbers {
+public:
+  mut int total = 0;
+  Numbers() {}
+  static Numbers collection_init(uint64_t count) { return Numbers(); }
+  static Numbers collection_insert(mut Numbers values, int value) {
+    values.total += value;
+    return std::move(values);
+  }
+};
+int main(){ int64_t wide = 1; Numbers n = {wide}; return 0; }  //~ ERROR GTI-S2092

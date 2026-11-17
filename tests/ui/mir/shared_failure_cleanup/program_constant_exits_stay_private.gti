@@ -1,0 +1,18 @@
+// Program constant exits stay private: the program-constant exit fixture lowers.
+//@ check-pass
+constexpr int32_t limit = 7;
+class Guard {
+  int32_t divisor;
+public:
+  Guard(int32_t divisor) : divisor(divisor) {}
+  ~Guard() { int32_t checked = 100 / this.divisor; }
+};
+int32_t clamp(int32_t p) {
+  Guard a = Guard(1);
+  if (p > limit) { return limit; }
+  if (p < 0) { return 0; }
+  Guard b = Guard(2);
+  if (p == limit) { return limit; }
+  return p;
+}
+int main() { return clamp(3) - 3; }

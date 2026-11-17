@@ -1,0 +1,20 @@
+// Hierarchy capture plan: a by-copy hierarchy capture and a closure copy are generated copies.
+//@ build-pass
+//@ slow
+class Root {
+public:
+  int seed;
+  Root(int seed) : seed(seed) {}
+  virtual int value() { return this.seed; }
+};
+class Leaf : public Root {
+public:
+  Leaf(int seed) : Root(seed) {}
+  int value() override { return this.seed + 1; }
+};
+int main() {
+  Leaf leaf = Leaf(4);
+  auto reader = [leaf]() -> int { return leaf.value(); };
+  auto again = reader;
+  return again() - 5;
+}

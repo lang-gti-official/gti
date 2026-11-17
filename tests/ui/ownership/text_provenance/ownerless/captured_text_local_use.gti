@@ -1,0 +1,81 @@
+// Captured text local use: a lambda's captured text may be used locally.
+//@ check-pass
+import std.string;
+struct Note {
+  std::string_view text;
+  int line;
+};
+class Token {
+public:
+  std::string_view text;
+  int n;
+  Token(std::string_view text, int n) : text(text), n(n) {}
+};
+Token shown(std::string_view text, std::string_view label) {
+  std::println(label);
+  return Token(text, 1);
+}
+class Printer {
+public:
+  mut int printed;
+  Printer() : printed(0) {}
+  void show<F>(F view) mut {
+    std::string_view shown = view();
+    std::println(shown);
+    this.printed += 1;
+  }
+};
+uint64_t measure(std::string_view text) { return text.size(); }
+std::string_view same(std::string_view text) { return text; }
+T echo<T>(T value) {
+  auto copy = [value]() -> T { return value; };
+  T local = copy();
+  return value;
+}
+std::string_view keepLocal(std::string_view text) {
+  auto keep = [text]() -> std::string_view { return text; };
+  std::string_view held = keep();
+  std::println(held);
+  return "kept";
+}
+mut std::string_view kept = "";
+int main() {
+  mut std::string owner{"dynamic"};
+  std::string_view view = owner.view();
+  auto captured = [view]() -> std::string_view { return view; };
+  std::println(captured());
+  std::string_view bound = captured();
+  std::string_view copied = bound;
+  std::string_view relayed = same(captured());
+  auto again = captured;
+  auto nested = [again]() -> std::string_view { return again(); };
+  std::string_view inner = [view]() -> std::string_view {
+    std::string_view local = view;
+    return local;
+  }();
+  mut Printer printer{};
+  printer.show(nested);
+  Token token = shown("literal", captured());
+  bool used = measure(bound) == measure(copied) && relayed == inner &&
+              printer.printed == token.n;
+  owner.append("!");
+  std::string_view fixedText = "fixed";
+  auto fixed = [fixedText]() -> std::string_view { return fixedText; };
+  mut std::string_view reassigned = "";
+  reassigned = fixed();
+  mut std::string text = std::string("native");  //~ WARN GTI-S2096
+  c_string name = text.c_string();
+  auto native = [name]() -> c_string { return name; };
+  c_string got = native();
+  Note note{.text = "noted", .line = 1};
+  auto noted = [note]() -> std::string_view { return note.text; };
+  kept = noted();
+  auto literal = []() -> std::string_view { return "literal"; };
+  std::string_view shelf[1] = {literal()};
+  return used && reassigned == "fixed" && got != nullptr &&
+                 shelf[0] == "literal" &&
+                 keepLocal(owner.view()) == "kept" &&
+                 echo(owner.view()) == "dynamic!"
+             ? 0
+             : 1;
+}

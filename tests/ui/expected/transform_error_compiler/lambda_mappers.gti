@@ -1,0 +1,19 @@
+// Lambda mappers: literal and named capturing lambda mappers lower.
+//@ check-pass
+enum class Error { bad = 7 };
+expected<int, Error> read(bool fail) {
+  if (fail) { return unexpected(Error::bad); }
+  return 42;
+}
+expected<int, int> mapped(bool fail) {
+  return read(fail).transform_error(([](Error error) -> int { return error == Error::bad ? 7 : 0; }));
+}
+int main() {
+  int offset = 3;
+  auto mapper = [offset](Error error) -> int { return (error == Error::bad ? 7 : 0) + offset; };
+  auto first = read(true).transform_error(mapper);
+  auto second = read(false).transform_error([owned = std::move(offset)](Error error) -> int {
+    return (error == Error::bad ? 7 : 0) + owned;
+  });
+  return first.error() + second.value() - 52;
+}

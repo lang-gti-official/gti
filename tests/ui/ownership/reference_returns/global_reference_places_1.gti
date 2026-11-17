@@ -1,0 +1,29 @@
+// Global reference places: references to unqualified, namespace-qualified, internal, static member, and projected global storage should lower through valid MIR places.
+//@ check-pass
+constexpr int direct_value = 7;
+static constexpr int internal_value = 8;
+
+namespace values {
+constexpr int qualified_value = 9;
+}
+
+class Constants {
+public:
+  static constexpr int member_value = 10;
+public:
+  Constants() = default;
+};
+
+mut int slots[2] = {1, 2};
+
+int main() {
+  int& direct = direct_value;
+  int& internal = internal_value;
+  int& qualified = values::qualified_value;
+  int& member = Constants::member_value;
+  mut int& first = slots[0];
+  mut int& second = slots[1];
+  first += 1;
+  second += 1;
+  return direct + internal + qualified + member + first + second - 39;
+}

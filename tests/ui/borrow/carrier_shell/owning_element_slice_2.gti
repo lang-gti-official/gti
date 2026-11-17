@@ -1,0 +1,22 @@
+// Owning element slice: owning-element slice forbids owner invalidation: records.clear();.
+import std.vector;
+import std.string;
+struct Record {
+  mut std::string name;
+  Record(std::string text) : name(std::move(text)) {}
+};
+int main() {
+  mut std::vector<Record> records{};
+  records.push_back(Record(std::string("a")));
+  records.push_back(Record(std::string("b")));
+  {
+    mut auto slice = records.as_mutable_span();
+    mut Record& first = slice.front();
+    records.clear();  //~ ERROR GTI-S2017
+    first.name.append("!");
+  }
+  if (records[std::size_t(0)].name != "a!" || records[std::size_t(1)].name != "b") {
+    return 1;
+  }
+  return 0;
+}

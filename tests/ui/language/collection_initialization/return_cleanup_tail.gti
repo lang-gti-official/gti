@@ -1,0 +1,23 @@
+// Return cleanup tail: owning protocol return cleanup verifies.
+//@ check-pass
+class Item {
+public:
+  int value;
+  Item(int n) : value(n) {}
+  ~Item() { int check = 1 / this.value; }
+};
+void consume(Item item) {}
+class Bag {
+  Item held;
+public:
+  Bag() : held(Item(9)) {}
+  static Bag collection_init(uint64_t count) { return Bag(); }
+  static Bag collection_insert(Bag bag, Item item) {
+    // The unmoved witness's fallible cleanup splits the return tail; the
+    // moved-from parameter shells retire after it without destructors.
+    Item witness{3};
+    consume(std::move(item));
+    return std::move(bag);
+  }
+};
+int main() { Bag values = {Item(1), Item(2)}; return 0; }

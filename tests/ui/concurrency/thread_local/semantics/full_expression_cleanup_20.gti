@@ -1,0 +1,3 @@
+// Full expression cleanup: destructive transfer cannot invalidate persistent TLS availability across calls.
+//@ execution-profile: concurrent
+class Resource { public: Resource() {} Resource(Resource&) = delete; Resource(Resource&&) = default; ~Resource() {} }; Resource take() { thread_local mut Resource saved{}; return saved; } int main() { return 0; }  //~ ERROR GTI-S2018

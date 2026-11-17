@@ -1,0 +1,63 @@
+// Under the strict audit, reading a pointer whose referent's scope has ended
+// is S2101 at the dereference, an incomplete dereference recovers, and a raw
+// dereference under an address-of is S2055; each repair is clean.
+// (raw_pointer_provenance_lsp_test.py, first part; related locations are
+// not asserted.)
+//@ raw-pointer-audit: strict
+int main() {
+  mut const int* pointer = nullptr;
+  unsafe {
+    int value = 42; pointer = &value;
+    /*😀*/ return *pointer;
+  }
+}
+// --- step 2
+int main() {
+  mut const int* pointer = nullptr;
+  unsafe {
+    { int value = 42; pointer = &value; }
+    /*😀*/ return *pointer;  //~ ERROR GTI-S2101 scope has ended
+  }
+}
+// --- step 3
+int main() {
+  mut const int* pointer = nullptr;
+  unsafe {
+    int value = 42; pointer = &value;
+    /*😀*/ return *pointer;
+  }
+}
+// --- step 4
+int main() {
+  mut const int* pointer = nullptr;
+  unsafe {  //~ WARN GTI-S2100
+    { int value = 42; pointer = &value; }
+    /*😀*/ return *;  //~ ERROR GTI-P0001
+  }
+}
+// --- step 5
+int main() {
+  mut const int* pointer = nullptr;
+  unsafe {
+    int value = 42; pointer = &value;
+    /*😀*/ return *pointer;
+  }
+}
+// --- step 6
+int main() {
+  int value = 42;
+  const int* pointer = &value;
+  return pointer == nullptr ? 1 : 0;
+}
+// --- step 7
+int main() {
+  int value = 42;
+  const int* pointer = &*(&value);  //~ ERROR GTI-S2055
+  return pointer == nullptr ? 1 : 0;
+}
+// --- step 8
+int main() {
+  int value = 42;
+  const int* pointer = &value;
+  return pointer == nullptr ? 1 : 0;
+}

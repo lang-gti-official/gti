@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+concept Wrapped<T> { typename Item; };
+for<T, lifetime a> concept Wrapped<View<T, a>> { using Item = View<T, a>; };
+int main() { return 0; }

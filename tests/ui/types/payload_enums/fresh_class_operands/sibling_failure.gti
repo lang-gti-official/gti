@@ -1,0 +1,32 @@
+// A failing fresh sibling operand unwinds the operands already built.
+//@ run-pass
+//@ revisions: ok overflow
+//@[overflow] run-fail
+//@[overflow] args: overflow
+//@[overflow] exit-code: 70
+//@[overflow] stderr-contains: runtime error[GTI-R0001]: integer_overflow in multiplication
+//@ stdout: 0
+import std.string;
+import std.vector;
+mut int32_t live = 0;
+class Guard {
+public:
+  Guard() { live += 1; }
+  Guard(Guard& other) = delete;
+  Guard(Guard&& other) = default;
+  ~Guard() { live -= 1; std::println(live); }
+};
+class Plain {
+public:
+  int32_t value;
+  Plain(int32_t value) : value(value * 1000000) {}
+};
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+int32_t make(int32_t scale) {
+  Guard guard = Guard();
+  Pair<Plain> pair = Pair<Plain>::items(Plain(1), Plain(scale));
+  return 0;
+}
+int main(int argc, std::vector<std::string> argv) {
+  return make(argc > 1 ? 5000 : 2);
+}

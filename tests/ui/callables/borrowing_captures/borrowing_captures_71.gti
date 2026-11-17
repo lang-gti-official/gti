@@ -1,0 +1,14 @@
+// Borrowing captures: captured-mutable-range-clear is rejected with a user diagnostic, not an ICE.
+import std.vector;
+int main() {
+  mut std::vector<int> values{};
+  values.push_back(4);
+  mut auto clear = [mut &values]() -> void {
+    for (mut auto& value : values) {
+      value += 1;
+      values.clear();  //~ ERROR GTI-S2017
+    }
+  };
+  clear();
+  return 0;
+}

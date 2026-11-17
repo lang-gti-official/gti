@@ -1,0 +1,9 @@
+// Include removal: removed syntax never reaches code generation.
+// --- main.gti
+// #include is only text here
+/* 😀 */ #include <std/vector>  //~ ERROR GTI-I0014
+int main() {}
+// --- api.gti
+export module api;
+export int answer() { return 42; }
+int hidden() { return 1; }

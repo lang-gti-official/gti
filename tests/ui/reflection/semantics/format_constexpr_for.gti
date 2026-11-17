@@ -1,0 +1,11 @@
+// Formatter: constexpr for formats as written, idempotently.
+//@ parse-pass
+//@ snapshot: format
+import std.meta;
+
+int main() {
+  constexpr for (auto field : std::meta::fields_of<int>()) {
+    return 1;
+  }
+  return 0;
+}

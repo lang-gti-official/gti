@@ -1,0 +1,9 @@
+// Negative: open nominal receiver does not bypass access, effect or result checks.
+import std.resource;
+import std.memory;
+
+concept number_source<T> = requires(T& value) { { value.number() } -> int; };
+class Adapter<T> { public: unsafe int number() { return 42; } };
+int read<T>(T& value) requires number_source<T> { return value.number(); }
+int relay<T>(Adapter<T>& value) { return read(value); }  //~ ERROR GTI-S2029
+int main() { return 0; }

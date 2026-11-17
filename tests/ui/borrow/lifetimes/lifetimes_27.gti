@@ -1,0 +1,11 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+void needs_static<T>(T* pointer) requires outlives<T*, static> {}
+void relay<T>(T* pointer) { needs_static(pointer); }
+struct Borrowed<lifetime a> { int&<a> value; Borrowed(int&<a> source) : value(source) {} };
+void exercise<lifetime a>(int&<a> value) {
+  Borrowed<a>* pointer = nullptr;
+  relay(pointer);
+}
+int main() { int value = 7; exercise(value); return 0; }

@@ -1,0 +1,8 @@
+// General requires: a simple iteration guarantee cannot prove an additional body check diagnostic.
+concept iterable<R> = requires(R& range) { for (auto& element : range) {} };
+concept impossible<R> = requires(R& range) {
+  for (auto& element : range) { static_assert(false); }
+};
+void needs<R>() requires impossible<R> {}
+void bad<R>() requires iterable<R> { needs<R>(); }  //~ ERROR GTI-S2029
+int main() { return 0; }

@@ -1,0 +1,19 @@
+// Accessor returned text carriers: an accessor text carrier keeps its text owner borrowed.
+import std.string;
+import std.optional;
+class Box {
+public:
+  mut std::string_view text;
+  Box(std::string_view text) : text(text) {}
+  std::string_view& get() { return this.text; }
+};
+class Cursor {
+  std::string_view& view;
+public:
+  Cursor(std::string_view& view) : view(view) {}
+  std::size_t size() { return this.view.size(); }
+};
+int main() {
+  mut std::string owner = std::string("owned");
+Box b = Box(owner.view()); auto it = b.get().begin(); owner.push_back('x'); return *it == 'o' ? 0 : 1;  //~ ERROR GTI-S2017
+}

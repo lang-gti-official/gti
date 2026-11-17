@@ -1,0 +1,12 @@
+// std::copy's returned cursor conflicts with a second mutable cursor.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { std::vector<int> source = {1}; mut std::vector<int> destination = {0, 0}; mut auto next = std::copy(source.begin(), source.end(), destination.begin_mut()); mut auto other = destination.begin_mut(); *other = 3; *next = 2; return 0; }  //~ ERROR GTI-S2017

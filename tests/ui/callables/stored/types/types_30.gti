@@ -1,0 +1,10 @@
+// Stored callables: source-owned string capture remains valid ordinary owned transport.
+//@ check-pass
+import std.string;
+void retain<T>(T callback) {}
+int main() {
+  std::string text{"owned"};
+  auto callback = [text = std::move(text)]() -> int { return int(text.size()); };
+  retain(std::move(callback));
+  return 0;
+}

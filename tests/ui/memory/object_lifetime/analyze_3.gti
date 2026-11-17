@@ -1,0 +1,9 @@
+// Analyze: private destruction rejects readonly and incomplete pointees.
+//@ stdlib-overlay: std/trusted_analyze_3.gti
+// --- main.gti
+import std.trusted_analyze_3;
+int main() { return trusted_case_main(); }
+// --- std/trusted_analyze_3.gti
+export module trusted_analyze_3;
+import "detail/memory_capabilities.gti"; import std.memory;
+export int trusted_case_main() { const int* p = nullptr; unsafe { gti_internal::object_destroy(p); } return 0; }  //~ ERROR GTI-S2019

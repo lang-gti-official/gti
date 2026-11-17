@@ -1,0 +1,3 @@
+// Negatives: wrong arity diagnosed.
+using E = void*;
+int main() { E e = E(); return 0; }  //~ ERROR GTI-S2014

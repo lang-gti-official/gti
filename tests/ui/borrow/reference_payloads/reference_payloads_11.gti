@@ -1,0 +1,13 @@
+// Reference payloads: rejected with GTI-S2017.
+enum Reading { empty, item(mut int& value) };
+int consume(mut Reading input) {
+  switch (std::move(input)) {
+  case Reading::item(value): {
+    auto& shared = value;
+    value = 9;  //~ ERROR GTI-S2017
+    return shared;
+  }
+  case Reading::empty: return 0;
+  }
+}
+int main() { return 0; }

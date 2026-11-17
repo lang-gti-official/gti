@@ -1,0 +1,56 @@
+// Stored text reads, projected writes and deferred generic field publication.
+//@ run-pass
+//@ revisions: default before after-failure
+//@[default] stdout: 3
+//@[default] stdout: 2
+//@[default] stdout: 1
+//@[before] run-fail
+//@[before] args: before
+//@[before] exit-code: 70
+//@[before] stdout: 2
+//@[before] stderr-contains: deferred_owned_cleanup.gti:14: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[after-failure] run-fail
+//@[after-failure] args: after failure
+//@[after-failure] exit-code: 70
+//@[after-failure] stdout: 2
+//@[after-failure] stdout: 1
+//@[after-failure] stderr-contains: deferred_owned_cleanup.gti:14: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- deferred_owned_cleanup.gti
+import std.utility;
+import std.vector;
+import std.memory;
+import std.string;
+class Tracked {
+  int id;
+public:
+  Tracked(int id) : id(id) {}
+  ~Tracked() { std::println(this.id); }
+};
+class Stage {
+  int id;
+public:
+  Stage(int id, int divisor) : id(id + 0 / divisor) {} // construction failure
+  ~Stage() { std::println(this.id); }
+};
+class Reader {
+public:
+  int& source;
+  mut std::vector<int> buffer;
+  std::unique_ptr<Tracked> token;
+  Reader(int& source) : source(source), buffer(std::vector<int>()), token(std::make_unique<Tracked>(2)) {
+    this.buffer.push_back(17);
+  }
+};
+class Outer {
+public:
+  Stage before;
+  Reader reader;
+  Stage after;
+  Outer(Reader reader, int before, int after) : before(Stage(1, before)), reader(std::move(reader)), after(Stage(3, after)) {}
+};
+int main(int argc, std::vector<std::string> argv) {
+  int number = 23;
+  Outer value = Outer(Reader(number), argc == 2 ? 0 : 1, argc == 3 ? 0 : 1);
+  Outer moved = std::move(value);
+  return moved.reader.source == 23 ? 0 : 1;
+}

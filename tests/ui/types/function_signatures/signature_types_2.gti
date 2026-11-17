@@ -1,0 +1,31 @@
+// Signature types: formatting signatures should be idempotent and preserve meaning.
+//@ check-pass
+using Action = void();
+using Predicate = bool(int);
+using Borrowing = int & (int&);
+class SignatureTag<S> {
+public:
+  using signature = S;
+  int value() {
+    return 7;
+  }
+public:
+  SignatureTag() = default;
+};
+class Description<T> {
+public:
+  using signature = T(T&);
+public:
+  Description() = default;
+};
+int identify<S>(SignatureTag<S>& value) {
+  return value.value();
+}
+int main() {
+  SignatureTag<void()> first{};
+  SignatureTag<Action> second{};
+  SignatureTag<Predicate> third{};
+  SignatureTag < int & (int&) > fourth{};
+  Description<int> descriptor{};
+  return identify(first) + identify(second) + identify(third) + identify(fourth) - 28;
+}

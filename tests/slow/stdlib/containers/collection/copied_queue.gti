@@ -1,0 +1,10 @@
+// A std::queue brace list copies no owning element: a named std::string must be moved in.
+//@ check-fail
+//@ slow
+import std.queue;
+import std.string;
+int main() {
+  std::string named{"owned"};
+  std::queue<std::string> values = {named};  //~ ERROR GTI-S2092
+  return int(values.size());
+}

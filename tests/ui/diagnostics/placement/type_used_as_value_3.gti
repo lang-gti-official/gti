@@ -1,0 +1,4 @@
+// Type used as value: #322 argument-class names the type as not a value.
+struct Point { int x; };
+int use(Point p) { return p.x; }
+int main() { return use(Point); }  //~ ERROR GTI-S2003

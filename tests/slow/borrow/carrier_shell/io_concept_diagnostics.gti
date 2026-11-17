@@ -1,0 +1,29 @@
+// Io concept diagnostics: an invalid I/O protocol (wrong read result, read-only output, missing flush) is diagnosed before MIR at each std::io call.
+//@ slow
+import std.io;
+class WrongResult {
+public:
+  int read_some(mut std::mutable_span<uint8_t>& output) mut { return 0; }  //~ ERROR GTI-S2024
+public:
+  WrongResult() = default;
+};
+class ReadonlyOutput {
+public:
+  expected<std::size_t, std::io_errc> read_some(std::span<uint8_t>& output) mut {  //~ ERROR GTI-S2024 //~ ERROR GTI-S2024
+    return std::size_t(0);
+  }
+public:
+  ReadonlyOutput() = default;
+};
+class MissingFlush {
+public:
+  expected<std::size_t, std::io_errc> write_some(std::span<uint8_t>& input) mut {  //~ ERROR GTI-S2024 //~ ERROR GTI-S2024
+    return input.size();
+  }
+public:
+  MissingFlush() = default;
+};
+int use1() { mut WrongResult source{}; mut std::byte_buffer bytes{std::size_t(1)}; mut auto output = bytes.as_mutable_span(); auto result = std::io::read_exact(source, output); return 0; }  //~ ERROR GTI-S2029
+int use2() { mut ReadonlyOutput source{}; mut std::byte_buffer bytes{std::size_t(1)}; mut auto output = bytes.as_mutable_span(); auto result = std::io::read_exact(source, output); return 0; }  //~ ERROR GTI-S2029
+int use3() { mut MissingFlush sink{}; std::byte_buffer bytes{std::size_t(1)}; auto input = bytes.as_span(); auto result = std::io::write_all(sink, input); return 0; }  //~ ERROR GTI-S2029
+int main() { return use1() + use2() + use3(); }

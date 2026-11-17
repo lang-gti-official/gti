@@ -1,0 +1,24 @@
+// Multi dependency relay identity: generic relay preserves distinct multi-dependency endpoints.
+//@ check-pass
+import std.utility;
+class Owners {
+int& first;
+  mut int& second;
+public:
+  Owners(int& first, mut int& second)
+      : first(first), second(second) {}
+  void advance() mut { this.second += this.first; }
+};
+T relay<T>(T owners) { return std::move(owners); }
+int main() {
+  mut int left = 3;  //~ WARN GTI-S2096
+  mut int right = 0;
+  {
+    Owners input{left, right};
+    mut auto result = relay(std::move(input));
+    result.advance();
+    mut auto final = relay(std::move(result));
+    final.advance();
+  }
+  return left + right - 9;
+}

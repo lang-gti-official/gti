@@ -1,0 +1,5 @@
+// Temporary owner borrow: an empty generated owner preserves targetless temporary receivers.
+//@ check-pass
+class Owner { public: int get() { return 3; }  public: Owner() = default; };
+Owner produce() { return Owner(); }
+int main() { return produce().get() + Owner().get() - 6; }

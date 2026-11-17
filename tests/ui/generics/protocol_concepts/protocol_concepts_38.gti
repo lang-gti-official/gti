@@ -1,0 +1,15 @@
+// Protocol concepts: rejected with GTI-S2024.
+// --- main.gti
+import "middle.gti";
+struct Rope {};
+for concept measurable<Rope> {  //~ ERROR GTI-S2024
+int measure(Rope& item) { return 1; }
+bool is_empty(Rope& item) { return false; }
+};
+int main() { return 0; }
+// --- measure.gti
+export module measure;
+export concept measurable<T> { int measure(T& item); bool is_empty(T& item); };
+// --- middle.gti
+export module middle;
+import "measure.gti";

@@ -1,0 +1,22 @@
+// Stored receiver publication: nested stored receiver paths preserve exact lifetime ancestry.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+class Holder {
+public:
+  std::mutex<int32_t>& owner;
+  Holder(std::mutex<int32_t>& owner) : owner(owner) {}
+};
+class User {
+  Holder& holder;
+public:
+  User(Holder& holder) : holder(holder) {}
+  void use() { auto guard = this.holder.owner.lock(); }
+};
+int main() {
+  std::mutex<int32_t> owner{7};
+  Holder holder{owner};
+  User user{holder};
+  user.use();
+  return 0;
+}

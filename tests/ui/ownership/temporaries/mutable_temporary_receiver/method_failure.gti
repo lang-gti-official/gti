@@ -1,0 +1,24 @@
+// A failing mutable temporary receiver preserves activation and cleanup (method-failure).
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: GTI-R0001
+//@ stderr-contains: GTI-R0014
+//@ stderr-contains: failure_during_cleanup
+class FailureTracker {
+public:
+  FailureTracker() {}
+
+  ~FailureTracker() {
+    mut int32_t cleanup = 2147483647;
+    cleanup += 1;
+  }
+
+  int32_t fail() mut {
+    mut int32_t value = 2147483647;  //~ WARN GTI-S2096
+    return value + 1;
+  }
+};
+
+int main() {
+  return FailureTracker().fail();
+}

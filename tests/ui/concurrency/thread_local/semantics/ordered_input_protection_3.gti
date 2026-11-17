@@ -1,0 +1,3 @@
+// Ordered input protection: stabilized constructor, borrowed-value and exclusive inputs obey the same ordered protection rule.
+//@ execution-profile: concurrent
+thread_local mut int value = 1; int modify() { value = 2; return 3; } struct View { int& item; View(int& source) : item(source) {} }; int read(View view, int copied) { return view.item + copied; } int main() { return read(View(value), modify()); }  //~ ERROR GTI-S2045

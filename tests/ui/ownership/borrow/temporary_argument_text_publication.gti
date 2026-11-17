@@ -1,0 +1,52 @@
+// Scalar and operator temporaries retain ordered evaluation and cleanup.
+//@ run-pass
+//@ revisions: default producer later-fails body-now-fails
+//@[default] stdout: pattern
+//@[default] stdout: match
+//@[default] stdout: 7
+//@[default] stdout: hello
+//@[producer] run-fail
+//@[producer] args: producer
+//@[producer] exit-code: 70
+//@[producer] stderr-contains: temporary_argument_text_publication.gti:6: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[later-fails] run-fail
+//@[later-fails] args: later fails
+//@[later-fails] exit-code: 70
+//@[later-fails] stdout: pattern
+//@[later-fails] stdout: 7
+//@[later-fails] stderr-contains: temporary_argument_text_publication.gti:15: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[body-now-fails] run-fail
+//@[body-now-fails] args: body now fails
+//@[body-now-fails] exit-code: 70
+//@[body-now-fails] stdout: pattern
+//@[body-now-fails] stdout: match
+//@[body-now-fails] stdout: 7
+//@[body-now-fails] stderr-contains: temporary_argument_text_publication.gti:18: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- temporary_argument_text_publication.gti
+import std.string;
+import std.vector;
+class Pattern {
+  int marker;
+public:
+  Pattern(int divisor) : marker(7 / divisor) { std::println("pattern"); } // producer-failure
+  ~Pattern() { std::println(this.marker); }
+};
+class Result {
+  std::string_view text;
+public:
+  Result(std::string_view text) : text(text) {}
+  std::string_view view() { return this.text; }
+};
+int later(int divisor) { return 0 / divisor; } // later-failure
+Result match(std::string_view text, Pattern& pattern, int unused, int divisor) {
+  std::println("match");
+  int checked = 1 / divisor; // body-failure
+  return Result(text);
+}
+int main(int argc, std::vector<std::string> argv) {
+  std::string owner{"hello"};
+  Result result = match(owner.view(), Pattern(argc == 2 ? 0 : 1),
+                        later(argc == 3 ? 0 : 1), argc == 4 ? 0 : 1);
+  std::println(result.view());
+  return 0;
+}

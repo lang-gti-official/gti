@@ -1,0 +1,9 @@
+// Nested query symbols: nested source queries preserve repeated and inherited symbol identities.
+//@ raw-pointer-audit: strict
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+int main() { mut Holder out{}; outer(out);
+  unsafe { return std::assume_ref(out.pointer, out); } }  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+void outer(mut Holder& out) { middle(out); middle(out); }
+void middle(mut Holder& out) { last<int>(out, 1); last<int>(out, 2); }
+void last<T>(mut Holder& out, T unused) { int gone = 1; out.pointer = &gone; }

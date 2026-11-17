@@ -1,0 +1,2 @@
+// Signature deduction: void remains invalid in object positions after substitution: void empty() {} void parameter<T>(T value) {} int main() { parameter<void>(empty()); return 0; }.
+void empty() {} void parameter<T>(T value) {} int main() { parameter<void>(empty()); return 0; }  //~ ERROR GTI-S2018

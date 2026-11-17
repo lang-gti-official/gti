@@ -1,0 +1,4 @@
+// Temporary argument borrows: a mutable reference should remain unable to bind a temporary.
+class Report { public: Report() {} };
+void update(mut Report& report) {}
+int main() { update(Report()); return 0; }  //~ ERROR GTI-S2017

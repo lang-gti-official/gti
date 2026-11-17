@@ -1,0 +1,14 @@
+// Passive mutex shell recipe: a passive payload still owns a native shell retirement endpoint.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+class Cell {
+  std::mutex<int32_t> value;
+public:
+  Cell(int32_t value) : value(std::mutex<int32_t>(value)) {}
+};
+int main() {
+  Cell first{7};
+  Cell second = std::move(first);
+  return 0;
+}

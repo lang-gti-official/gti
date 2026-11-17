@@ -1,0 +1,10 @@
+// Semantic rejections: nontransfer-thread-capture.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+[[no_transfer, no_share]] class local_only { int32_t value = 0;  public: local_only() = default; };
+int main() {
+  local_only state = local_only();
+  auto task = [state]() -> void {};
+  auto started = std::thread::start(std::move(task));  //~ ERROR GTI-S2084
+  return 0;
+}

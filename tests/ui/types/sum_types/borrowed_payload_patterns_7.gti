@@ -1,0 +1,19 @@
+// Borrowed payload patterns: plain patterns continue to copy and reject move-only payloads.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class data { empty, some(resource item) };
+
+int main() {
+  data value = data::some(resource());
+  switch (value) {
+    case data::some(item): return item.read();  //~ ERROR GTI-S2067 //~ ERROR GTI-S2001
+    case data::empty: return 0;
+  }
+}

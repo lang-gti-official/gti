@@ -1,6 +1,6 @@
 // Under the concurrent profile a C-thread call needs unsafe; inside it the
 // call hovers as unsafe and navigates into std/cthread.gti.
-// (cthread_lsp_test.py, concurrent thrd_join.)
+// (cthread_lsp_test.py, concurrent thrd_join, mtx_lock, cnd_wait and call_once.)
 //@ execution-profile: concurrent
 import std.cthread;
 int main() { std::thrd_t handle = 0; mut int32_t result = 0; return std::thrd_join(handle, result); }  //~ ERROR GTI-S2055
@@ -10,3 +10,32 @@ int main() { std::thrd_t handle = 0; mut int32_t result = 0; return std::thrd_jo
 //@ definition @join: @std:std/cthread.gti#thrd_join
 import std.cthread;
 int main() { std::thrd_t handle = 0; mut int32_t result = 0; unsafe { return std::/*@join*/thrd_join(handle, result); } }
+// --- step 3
+import std.cthread;
+int main() { std::thrd_t handle = 0; return std::mtx_lock(handle); }  //~ ERROR GTI-S2055
+// --- step 4
+//@ hover @mtx_lock: unsafe
+//@ hover @mtx_lock: mtx_lock
+//@ definition @mtx_lock: @std:std/cthread.gti#mtx_lock
+import std.cthread;
+int main() { std::thrd_t handle = 0; unsafe { return std::mt/*^mtx_lock*/x_lock(handle); } }
+// --- step 5
+import std.cthread;
+int main() { std::thrd_t handle = 0; return std::cnd_wait(handle, handle); }  //~ ERROR GTI-S2055
+// --- step 6
+//@ hover @cnd_wait: unsafe
+//@ hover @cnd_wait: cnd_wait
+//@ definition @cnd_wait: @std:std/cthread.gti#cnd_wait
+import std.cthread;
+int main() { std::thrd_t handle = 0; unsafe { return std::cn/*^cnd_wait*/d_wait(handle, handle); } }
+// --- step 7
+import std.cthread;
+void initialize() {}
+int main() { std::once_flag flag{}; std::call_once(flag, initialize); return 0; }  //~ ERROR GTI-S2055
+// --- step 8
+//@ hover @call_once: unsafe
+//@ hover @call_once: call_once
+//@ definition @call_once: @std:std/cthread.gti#call_once
+import std.cthread;
+void initialize() {}
+int main() { std::once_flag flag{}; unsafe { std::ca/*^call_once*/ll_once(flag, initialize); return 0; } }

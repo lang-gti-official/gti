@@ -1,0 +1,3 @@
+// Boundaries: lambda bodies do not inherit permission.
+unsafe int raw() { return 7; }
+int main() { auto f = unsafe { []() -> int { return raw(); } }; return f(); }  //~ ERROR GTI-S2055

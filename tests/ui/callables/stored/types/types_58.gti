@@ -1,0 +1,9 @@
+// Stored callables: inexact stored result names the field and links its declaration without a guessed fix.
+class Owner<T> {
+  T value;
+public:
+  Owner(T value) : value(std::move(value)) {}
+  int call(int argument) { return this.value(argument); }  //~ ERROR GTI-S2046
+};
+Owner<T> own<T>(T value) { return Owner<T>(std::move(value)); }
+int main() { auto op = [](int value) -> bool { return true; }; auto owner = own(std::move(op)); return owner.call(1); }

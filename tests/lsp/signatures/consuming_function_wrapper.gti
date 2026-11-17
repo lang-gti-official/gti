@@ -1,0 +1,21 @@
+// A consuming function wrapper is called by moving it; calling it as an
+// lvalue or twice is reported. (From function_signature_lsp_test.py.)
+//@ hover @callback: function
+//@ hover @callback: &&
+import std.functional;
+int main() {
+  std::function<int(int) &&> /*@callback*/callback{[](int value) -> int { return value; }};
+  return std::move(callback)(3);
+}
+// --- step 2
+import std.functional;
+int main() {
+  std::function<int(int) &&> callback{[](int value) -> int { return value; }};
+  return callback(3);  //~ ERROR GTI-S2022 consuming
+}
+// --- step 3
+import std.functional;
+int main() {
+  std::function<int(int) &&> callback{[](int value) -> int { return value; }};
+  int first = std::move(callback)(3); return std::move(callback)(4);  //~ ERROR GTI-S2018 moved
+}

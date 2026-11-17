@@ -1,0 +1,21 @@
+// Constrained hooks: both hook constraints apply to empty braces.
+class Batch<T> {
+public:
+  mut int count = 0;
+  Batch(int seed) : count(seed) {}
+  static Batch<T> collection_init(uint64_t count)
+      requires std::default_initializable<T> { return Batch<T>(0); }
+  static Batch<T> collection_insert(mut Batch<T> batch, T element)
+      requires std::integral<T> {
+    batch.count++;
+    return std::move(batch);
+  }
+public:
+  Batch() = default;
+};
+class NoDefault { public: NoDefault(int value) {}  public: NoDefault() = default; };
+Batch<T> wrap<std::integral T>(T element) {
+  Batch<T> result = {element};
+  return result;
+}
+int main() { Batch<NoDefault> values = {}; return 0; }  //~ ERROR GTI-S2029

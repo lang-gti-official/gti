@@ -1,0 +1,28 @@
+// Checked reference capture environments preserve identity without allocations.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 1
+//@ stdout: 2
+//@ stderr-contains: checked_callable_erasure_failure.gti:13: runtime error[GTI-R0017]: panic: "callback failed"
+// --- checked_callable_erasure_failure.gti
+import std.functional;
+import std.io;
+import std.panic;
+
+class Token {
+  int value;
+public:
+  Token(int value) : value(value) {}
+  ~Token() { std::println(this.value); }
+};
+
+int fail(Token input) {
+  std::panic("callback failed");
+}
+
+int main() {
+  Token caller{2};
+  std::function_ptr<int(Token)> callback{fail};
+  Token input{1};
+  return callback(std::move(input));
+}

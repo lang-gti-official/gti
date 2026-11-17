@@ -1,0 +1,2 @@
+// Rejections: must reject: extern "C" { mut c_int counter; } int main() { unsafe { c_int& ref = counter; return int(ref); } }.
+extern "C" { mut c_int counter; } int main() { unsafe { c_int& ref = counter; return int(ref); } }  //~ ERROR GTI-S2054

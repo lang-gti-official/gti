@@ -1,0 +1,18 @@
+// Consuming callable operators: two reachable once-confined forwardings should fail through the ordinary path-sensitive move state before HIR.
+class Once {
+public:
+  int operator()() && { return 1; }
+public:
+  Once() = default;
+};
+
+int invoke_once<Operation>(Operation operation) {
+  return std::move(operation)();
+}
+
+int forward_twice<Operation>(Operation operation) {
+  int first = invoke_once(std::move(operation));
+  return first + invoke_once(std::move(operation));  //~ ERROR GTI-S2018 //~ ERROR GTI-S2023 //~ ERROR GTI-S2046
+}
+
+int main() { return forward_twice(Once()); }

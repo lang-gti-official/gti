@@ -1,0 +1,18 @@
+// std::inline_polymorphic rejects a non-power-of-two alignment.
+//@ check-fail
+import std.polymorphic;
+import std.string;
+
+interface shape { int area(); };
+
+class square : public shape {
+  int side;
+public:
+  square(int side) : side(side) {}
+  int area() override { return this.side * this.side; }
+};
+
+int main() {
+  std::inline_polymorphic<shape, 32, 3> value{};  //~ ERROR GTI-S2019
+  return 0;
+}

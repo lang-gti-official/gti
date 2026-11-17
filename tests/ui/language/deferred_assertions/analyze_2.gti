@@ -1,0 +1,4 @@
+// Analyze: fresh callable expressions are valid macro arguments.
+//@ check-pass
+#macro execute<F>(F callback) { callback(); }
+int main() { execute!([]() -> void {}); return 0; }
