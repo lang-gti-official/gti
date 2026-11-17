@@ -479,7 +479,13 @@ never borrows storage the receiver owns (GTI-S2127): the receiver's own
 fields stay owned when reached through a method call, an argument, or a
 mutable or consuming receiver. A consuming method may therefore return it,
 by reference or as a carrier like `View<a> take() &&`: it outlives the
-consumed receiver, as Rust's `fn take(self) -> View<'a>` does.
+consumed receiver, as Rust's `fn take(self) -> View<'a>` does. A read-only
+result may come from an exclusive stored reference (`mut Box&<a>`): the
+caller's owner then stays exclusively borrowed while the result is live, so
+writing or re-borrowing it mutably is GTI-S2017. A class whose cleanup uses
+its stored references cannot lend an exclusive one this way, since that
+cleanup runs after the result exists (GTI-S2022); Rust likewise forbids moving
+a field out of a `Drop` type.
 
 A reference parameter pack follows the same rule lane by lane. In
 `int&<a> relay<lifetime a, Args...>(Args&<a>... values)` every lane of
