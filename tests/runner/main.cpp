@@ -528,6 +528,11 @@ Outcome decode(const std::string &payload) {
   return outcome;
 }
 
+#ifdef GTI_SOURCE_COVERAGE
+// The profile runtime writes at exit, which _exit skips.
+extern "C" int __llvm_profile_write_file(void);
+#endif
+
 [[noreturn]] void workerMain(int input, int output,
                              const EngineOptions &options,
                              const std::vector<TestFile> &tests) {
@@ -545,6 +550,9 @@ Outcome decode(const std::string &payload) {
       if (count <= 0) {
         if (count < 0 && errno == EINTR)
           continue;
+#ifdef GTI_SOURCE_COVERAGE
+        __llvm_profile_write_file();
+#endif
         _exit(0);
       }
       buffer.append(chunk, static_cast<std::size_t>(count));

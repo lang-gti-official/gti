@@ -11555,8 +11555,8 @@ Dispatch, then download, as below; `measure` is `coverage`, `seeded-bugs` or
 ```sh
 gh workflow run suite-measures.yml --repo lang-gti-official/gti -f measure=both
 gh run download <run-id> --repo lang-gti-official/gti -n suite-coverage -n seeded-bugs
-python3 scripts/coverage_compare.py baseline/coverage.json candidate/coverage.json \
-  --allow coverage-allow.txt
+python3 scripts/coverage_compare.py tests/coverage_baseline.json suite-coverage/coverage.json \
+  --allow tests/coverage_allow.txt
 ```
 
 `suite-coverage` holds `coverage.json` (schema 1: `commit`, `totals`,
@@ -11564,11 +11564,29 @@ python3 scripts/coverage_compare.py baseline/coverage.json candidate/coverage.js
 and `"branches": [covered, total]`), the merged `coverage.lcov.gz` for
 line-level comparison, and each shard's test-set status; `seeded-bugs` holds
 `seeded-bugs.json` (`results` per mutant, `summary.kill_rate`, per-directory
-and per-operator rates). Artifacts are kept 90 days. The phase-1 baseline run
-is recorded in the
-[test-suite redesign campaign](../plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16);
-a conversion phase compares its own run against it, and copies the baseline
-JSON into the repository before it would expire.
+and per-operator rates). Artifacts are kept 90 days.
+
+The coverage baseline is committed as `tests/coverage_baseline.json`: the
+`coverage.json` of run 43944418682 on `8d4ed461` (89.29% lines, 75.54%
+branches), the old suite before the conversion. The first comparison was run
+44144459133 on `83ae53f6` (88.56%, 74.36%; 18 files over the budget). The
+workflow's summary job compares every run with the committed baseline and
+`tests/coverage_allow.txt` (one `<path-or-glob> <reason>` per line), writes
+`compare.txt` into `suite-coverage` and its step summary, and never fails. A
+file that loses more than 2 points needs a restored test or a specific reason
+there; the compare reports an entry that no longer excuses anything as
+`UNUSED`, and the entry is then removed. To refresh the baseline (only at a
+deliberate new reference point, such as the end of the campaign), dispatch
+`measure=coverage` on that commit, copy its `coverage.json` over
+`tests/coverage_baseline.json`, record the run and commit here and in the
+campaign, and clear allow entries the new baseline makes moot.
+
+`gti-test` runs cases in forked workers that end with `_exit`, which skips
+the profile runtime's exit-time writer; under `GTI_ENABLE_SOURCE_COVERAGE`
+the workers write their profile first. Before that, only cases that run a
+separate `gti` or `gti_lsp` counted (`gti_test_isolate`, transcripts, LSP),
+so in-process kinds (parse and analyze modes, MIR snapshots, `//@ target`,
+`format-stable`) were missing from runs up to 44144459133.
 
 ## Development And Completion Cadence
 
