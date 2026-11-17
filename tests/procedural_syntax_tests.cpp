@@ -204,9 +204,11 @@ void diagnostic(const lang::FrontendResult &result, std::string_view message) {
       });
   check(!result.canGenerateCode() && found,
         "expected procedural diagnostic before code generation");
-  if (!found)
+  if (!found) {
+    std::cerr << "Expected diagnostic containing: " << message << '\n';
     for (const auto &d : result.diagnostics)
       std::cerr << d.code << ": " << d.message << '\n';
+  }
 }
 const lang::Diagnostic *locatedDiagnostic(const lang::FrontendResult &result,
                                           std::string_view code,
@@ -513,7 +515,7 @@ export #macro(proc) std::syntax::expr quoted(std::syntax::tokens input) {
                      "Ref(int& v):value(v){}}; Ref bad(int& input){int local=7;"
                      "return identity!({Ref(local)});}int main(){return 0;}",
                      library),
-             "must derive");
+             "depends on storage the function owns");
   diagnostic(analyze("import \"library.gti\"; mut int& bad(int& value){"
                      "return identity!({value});}int main(){return 0;}",
                      library),
