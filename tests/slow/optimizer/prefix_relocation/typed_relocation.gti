@@ -1,4 +1,5 @@
 // Typed prefix relocation keeps successful transfers, changed values, retired sources and vacant capacity, and fails without a cleanup failure.
+//@ slow
 //@ stdlib-overlay: std/detail/memory_storage.gti
 //@ run-pass
 //@ stdout: 99
