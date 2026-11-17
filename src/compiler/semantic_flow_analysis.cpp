@@ -1,5 +1,7 @@
 #include "semantic_analyzer_impl.h"
 
+#include <array>
+
 namespace lang {
 namespace {
 // A known-length concrete pack is not the same as the primary's empty
@@ -6578,6 +6580,84 @@ auto SemanticVisitor::Impl::resolveGeneratedTestReference(
       return &found->second;
   }
   return nullptr;
+}
+
+// A spelling repair is advisory: ordinary lookup still fails and the program
+// stays invalid until the user chooses an edit. Do not instantiate candidates.
+auto SemanticVisitor::Impl::suggestVisibleLocalName(
+    const Token &name, Diagnostic &diagnostic) const -> void {
+  constexpr std::size_t maximumLength = 64;
+  constexpr std::size_t maximumBindings = 512;
+  if (name.generated || macroContext(name) != nullptr ||
+      name.lexeme.size() < 3 || name.lexeme.size() > maximumLength)
+    return;
+  const std::size_t threshold = name.lexeme.size() < 6 ? 1 : 2;
+  const auto distance = [&](std::string_view candidate) {
+    // Optimal-string-alignment distance includes adjacent transpositions.
+    std::array<std::size_t, maximumLength + 1> previous{}, beforePrevious{},
+        row{};
+    for (std::size_t j = 0; j <= candidate.size(); ++j)
+      previous[j] = j;
+    for (std::size_t i = 1; i <= name.lexeme.size(); ++i) {
+      row[0] = i;
+      for (std::size_t j = 1; j <= candidate.size(); ++j) {
+        row[j] = std::min(
+            {previous[j] + 1, row[j - 1] + 1,
+             previous[j - 1] + (name.lexeme[i - 1] != candidate[j - 1])});
+        if (i > 1 && j > 1 && name.lexeme[i - 1] == candidate[j - 2] &&
+            name.lexeme[i - 2] == candidate[j - 1])
+          row[j] = std::min(row[j], beforePrevious[j - 2] + 1);
+      }
+      beforePrevious = previous;
+      previous = row;
+    }
+    return previous[candidate.size()];
+  };
+  const Symbol *best = nullptr;
+  std::size_t bestDistance = threshold + 1;
+  bool ambiguous = false;
+  std::size_t visited = 0;
+  for (const auto &scope : scopes) {
+    for (const auto &[key, symbol] : scope) {
+      // Refuse partial unordered-map searches, so a work cap cannot select an
+      // arbitrary winner or hide an equally close spelling.
+      if (++visited > maximumBindings)
+        return;
+      if (symbol.bindingKind != SemanticBindingKind::LocalVariable &&
+          symbol.bindingKind != SemanticBindingKind::Parameter &&
+          symbol.bindingKind != SemanticBindingKind::LambdaCapture)
+        continue;
+      const auto &spelling = symbol.declaration.lexeme;
+      if (symbol.declaration.generated || key != spelling ||
+          spelling.size() > maximumLength ||
+          spelling.size() + threshold < name.lexeme.size() ||
+          name.lexeme.size() + threshold < spelling.size())
+        continue;
+      Token candidate = name;
+      candidate.lexeme = spelling;
+      // Use the actual lexical/hygienic resolver, including shadowing. Captures
+      // not admitted into this lambda's environment are never candidates.
+      if (resolve(candidate) != &symbol)
+        continue;
+      const auto score = distance(spelling);
+      if (score < bestDistance) {
+        best = &symbol;
+        bestDistance = score;
+        ambiguous = false;
+      } else if (score == bestDistance) {
+        ambiguous = true;
+      }
+    }
+  }
+  if (best == nullptr || ambiguous)
+    return;
+  const std::string &spelling = best->declaration.lexeme;
+  diagnostic.hints.push_back("Did you mean '" + spelling + "'?");
+  diagnostic.related.push_back(
+      {tokenSpan(best->declaration), "Similar visible binding declared here."});
+  diagnostic.fixes.push_back({tokenSpan(name), spelling,
+                              "Replace with '" + spelling + "'", false,
+                              RepairApplicability::RequiresReview});
 }
 
 auto SemanticVisitor::Impl::resolve(const Token &name) const -> const Symbol * {

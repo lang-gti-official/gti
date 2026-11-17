@@ -13141,6 +13141,13 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
       SemanticType referent = rangeType.arguments.front();
       rangeType = std::move(referent);
     }
+    if (rangeType == SemanticType::Unknown && rangeSymbol != nullptr &&
+        rangeSymbol->recoveryCause) {
+      requestSession.recoveryCauses.insert_or_assign(
+          &expr, rangeSymbol->recoveryCause);
+      currentType = SemanticType::Unknown;
+      return;
+    }
     if (rangeType.kind == SemanticType::Array) {
       (void)analyzeProjectionBase(expr.rangeObject());
       const SemanticType indexType = analyze(expr.right());
@@ -13299,6 +13306,14 @@ auto SemanticVisitor::Impl::visitUnaryExpr(const Unary &expr) -> void {
   }
 
   if (expr.oper().kind == TokenKind::STAR) {
+    if (rightType == SemanticType::Unknown) {
+      const auto cause = requestSession.recoveryCauses.find(expr.right().get());
+      if (cause != requestSession.recoveryCauses.end()) {
+        requestSession.recoveryCauses.insert_or_assign(&expr, cause->second);
+        currentType = SemanticType::Unknown;
+        return;
+      }
+    }
     if (rightType.kind == SemanticType::RawPointer) {
       if (rejectCOpaquePointeeOperation(rightType, expr.oper(),
                                         "raw-pointer dereference")) {
@@ -13486,6 +13501,7 @@ auto SemanticVisitor::Impl::visitVariableExpr(const Variable &expr) -> void {
         report(expr.name(), "Undefined name '" + expr.name().lexeme + "'.",
                "GTI-S2001");
         diagnostics.back().missingIncludeName = expr.name().lexeme;
+        suggestVisibleLocalName(expr.name(), diagnostics.back());
       }
     }
     requestSession.recoveryCauses.insert_or_assign(

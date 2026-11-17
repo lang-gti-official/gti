@@ -747,6 +747,20 @@ in either operand remain reportable. The original lookup error continues to
 prevent code generation. This is not a migration of every Unknown-producing
 operation: generalized call, constraint and parser recovery remain planned.
 
+Failed dereference and lowered range dereference also propagate an existing
+lookup recovery identity instead of reporting a dependent `operator*` mismatch.
+Known invalid operands and independent loop-body errors remain diagnosed.
+
+`GTI-S2001` may suggest a unique closest visible local, parameter or lambda
+capture. Ordinary lookup verifies each candidate, retaining lexical visibility,
+shadowing and capture rules. The bounded edit-distance search accepts adjacent
+transpositions; it considers names of 3–64 bytes, allows one edit below six
+bytes and two otherwise, and abandons searches exceeding 512 scope bindings.
+Equal best candidates, generated identifiers and macro contexts receive no
+suggestion. Namespace, member and type spellings are not searched. Suggestions
+include a declaration note and a `RequiresReview` replacement for CLI/LSP;
+they never resolve the original expression or make compilation succeed.
+
 For invalid payload-pattern bindings, known variant names still inform
 recovery-only return-flow coverage. These facts never become a valid exhaustive
 switch in the semantic model or enable code generation. All-returning arms
