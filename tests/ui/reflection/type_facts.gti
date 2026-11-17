@@ -24,15 +24,15 @@ class SharedBorrowCarrier {
 public:
   SharedBorrowCarrier(int32_t& source) : value(source) {}
 };
-// Cleanup-observing carriers retain construction but cannot be replaced.
-class CopyConstructionOnly {
+// Cleanup-observing carriers cannot be implicitly copied or replaced.
+class CleanupBorrowCarrier {
   int32_t& value;
 public:
-  CopyConstructionOnly(int32_t& source) : value(source) {}
-  ~CopyConstructionOnly() { [[discard]] this.value; }
+  CleanupBorrowCarrier(int32_t& source) : value(source) {}
+  ~CleanupBorrowCarrier() { int32_t observed = this.value; }
 };
-static_assert(std::meta::is_copy_constructible<CopyConstructionOnly>());
-static_assert(!std::meta::is_copyable<CopyConstructionOnly>());
+static_assert(!std::meta::is_copy_constructible<CleanupBorrowCarrier>());
+static_assert(!std::meta::is_copyable<CleanupBorrowCarrier>());
 struct RawAddress { int32_t* value = nullptr;  public: RawAddress() = default; };
 [[no_transfer, no_share]] struct ThreadAffine { int32_t value = 0;  public: ThreadAffine() = default; };
 enum class Code : uint16_t { none = 0, failed = 1 };

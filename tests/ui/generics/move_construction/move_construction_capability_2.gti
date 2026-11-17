@@ -8,7 +8,7 @@ class Cursor {
   int& source;
 public:
   Cursor(int& value) : source(value) {}
-  ~Cursor() { [[discard]] this.source; }
+  ~Cursor() { int observed = this.source; }
 };
 bool constructible<T>(T& value) requires std::move_constructible<T> { return true; }
 bool assignable<T>(T& value) requires std::movable<T> { return true; }
