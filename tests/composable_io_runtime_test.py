@@ -54,7 +54,7 @@ if __name__ == "__main__":
                 ((), bounds(mutable_at)),
                 (("offset",), bounds(span_check("mutable_span", "void validate_subspan"))),
                 (("empty", "back"), bounds(mutable_at)),
-                (("read", "cursor", "end"), bounds(span_check("span_iterator", "T& operator*()"))),
+                (("read", "cursor", "end"), bounds(span_check("span_iterator", "T&<owner> operator*()"))),
                 (("mutable", "cursor", "past", "end"), bounds(span_check("mutable_span_iterator", "mut T& operator*() mut"))),
                 (("valid", "end", "empty", "subspan", "now"), (0, "", "")),
             ],
