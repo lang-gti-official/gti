@@ -12,7 +12,7 @@ class Owner {
   Field member;
   int divisor;
 public:
-  Owner(int divisor) : member(), divisor(divisor) {}
+  Owner(int divisor) : member(Field()), divisor(divisor) {}
   ~Owner() {
     std::println(2);
     int checked = 12 / divisor;

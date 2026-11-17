@@ -18,7 +18,7 @@ public:
 class Derived : public Base {
   Marker member;
 public:
-  Derived() : Base(), member(3) {}
+  Derived() : Base(), member(Marker(3)) {}
   ~Derived() { std::println(4); }
 };
 Marker earlier{1};

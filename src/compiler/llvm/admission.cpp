@@ -4024,8 +4024,9 @@ public:
   bool sourceProgramCleanup(const MirHostedStartupOperation &operation) const {
     const auto &plan = program.hostedStartupPlan();
     if (!plan ||
-        operation.kind !=
-            MirHostedStartupOperationKind::CleanupProgramStorage ||
+        (operation.kind !=
+             MirHostedStartupOperationKind::CleanupProgramStorage &&
+         operation.kind != MirHostedStartupOperationKind::DrainThreadLocals) ||
         operation.terminator || operation.place || operation.value ||
         operation.dropObligation || operation.failureRecord ||
         operation.cleanupBoundary)
@@ -4040,7 +4041,11 @@ public:
         [&](const auto &stage) {
           return stage.id == operation.instruction &&
                  stage.hostedStartupOperation == operation.id &&
-                 stage.kind == MirInstructionKind::CleanupProgramStorage;
+                 stage.kind ==
+                     (operation.kind ==
+                              MirHostedStartupOperationKind::DrainThreadLocals
+                          ? MirInstructionKind::DrainThreadLocals
+                          : MirInstructionKind::CleanupProgramStorage);
         });
     if (found == owner->instructions.end())
       return false;
@@ -5534,7 +5539,8 @@ public:
                 operation.block == block && operation.instruction == stage.id &&
                 nativeRetirement(operation))
               storageShape = Shape::NativeProgramRetirement;
-        if (stage.kind == MirInstructionKind::CleanupProgramStorage &&
+        if ((stage.kind == MirInstructionKind::CleanupProgramStorage ||
+             stage.kind == MirInstructionKind::DrainThreadLocals) &&
             body->kind == MirBodyKind::HostedStartup &&
             program.hostedStartupPlan())
           for (const auto &operation : program.hostedStartupPlan()->operations)
