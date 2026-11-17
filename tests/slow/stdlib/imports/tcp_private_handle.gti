@@ -1,0 +1,8 @@
+// Applications cannot name the private socket descriptor type.
+//@ slow
+import std.tcp;
+int main() {
+  auto forged = std::make_unique<std::tcp::stream>(  //~ ERROR GTI-S2024
+      gti_internal::tcp_socket_handle(1));  //~ ERROR GTI-S2058
+  return 0;
+}

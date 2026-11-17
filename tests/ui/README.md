@@ -189,6 +189,9 @@ directive on a normal program cannot honestly stand for).
 with the runner's deterministic `--shard I/4` selection. Run the family with
 `ctest -R '^gti_test_ui(_shard_[1-4])?$'`. No case or per-case limit is changed by
 sharding, and each gate retains the 600-second aggregate timeout. Selected
-borrowed-storage and construction-cleanup slow regressions remain in this
-inventory. Per-case JSON and failed-case records are retained under the build's
+slow regressions, including borrowed storage and construction cleanup, remain
+in this inventory. Measured cases that exceed the nominal fast CPU budgets
+move to `tests/slow/` with `//@ slow`; cases retained for integration stay
+explicitly listed in `suite_roots` and the ownership map, together with their
+output companions. This classification does not remove their execution gate. Per-case JSON and failed-case records are retained under the build's
 `Testing/` directory, separately for each shard.
