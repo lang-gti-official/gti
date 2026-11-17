@@ -14,6 +14,7 @@
 #include <mutex>
 #include <set>
 #include <system_error>
+#include <tuple>
 
 namespace lang {
 
@@ -737,6 +738,11 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   trialOptions.requireEntryPoint = false;
   trialOptions.toolingOccurrences = true;
   trialOptions.workMetrics = nullptr;
+  // A proposed import changes the source graph, so the original snapshot's
+  // preamble normally cannot match. Do not build a new complete preamble for
+  // a throwaway trial; reuse an existing matching one or take the normal
+  // analysis path. Its deferred build is never scheduled by discovery.
+  trialOptions.deferPreambleBuild = true;
   trialOptions.completionOffset.reset();
   // Reuse the bounded parsed-unit cache, never semantic identities.
   if (!trialOptions.cache)
@@ -838,10 +844,16 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   // Prefer direct public APIs and smaller facades. Once a precise import is
   // proved, loading an aggregate facade adds visibility and expensive trials
   // without repairing anything else at that occurrence.
+  const auto rank = [&](const auto &entry) {
+    // File spelling is only a priority hint, never evidence of an export.
+    // This makes a focused module likely to receive the bounded proof budget
+    // before unrelated surfaces with common member names such as set/value.
+    const bool named = requested.contains(entry.second.path.stem().string());
+    return std::tuple{entry.first != 0, !named, entry.first, entry.second.path};
+  };
   std::sort(prepared.begin(), prepared.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.first, left.second.path) <
-                     std::tie(right.first, right.second.path);
+            [&](const auto &left, const auto &right) {
+              return rank(left) < rank(right);
             });
   for (const auto &[reexports, candidate] : prepared) {
     if (stopped())
@@ -922,13 +934,15 @@ IncludeSuggestionResult discoverIncludeSuggestions(
                                      ? FrontendPhase::Hir
                                      : options.stopAfter;
         FrontendWorkMetrics work;
-        trialOptions.workMetrics = &work;
+        trialOptions.workMetrics =
+            options.includeDiscoveryLimits.collectTimings ? &work : nullptr;
         const auto trialStarted = std::chrono::steady_clock::now();
         auto trial =
             Frontend(trialOptions)
                 .analyze(entryPath, std::nullopt, preludePaths, modified,
                          standardLibraryRoots, packageSourceRoots);
         trialOptions.workMetrics = nullptr;
+        trial.deferredPreambleBuild.reset();
         rows.recordTrial(
             work, static_cast<std::size_t>(
                       std::chrono::duration_cast<std::chrono::microseconds>(

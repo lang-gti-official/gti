@@ -157,6 +157,52 @@ void boundedDiscovery() {
          "zero time budget starts no speculative work");
 }
 
+void trialsDoNotBuildPreambles() {
+  Fixture f;
+  f.write("stdlib/prelude.gti", "namespace std {}\n");
+  f.write("stdlib/std/cmath.gti", "export module cmath; namespace std { export "
+                                  "int discovered() { return 7; } }\n");
+  f.options.suggestIncludes = false;
+  f.options.includeSearchRoots.clear();
+  f.options.includeDiscoveryCache =
+      std::make_shared<lang::IncludeDiscoveryCache>();
+  const auto base = lang::Frontend(f.options).analyze(
+      f.root / "main.gti", "int main() { return std::discovered(); }\n",
+      {f.root / "stdlib/prelude.gti"}, {}, {f.root / "stdlib"});
+  f.options.preambleCache = std::make_shared<lang::SemanticPreambleCache>();
+  const auto advice = lang::discoverIncludeSuggestions(
+      base, f.options, f.root / "main.gti", {f.root / "stdlib/prelude.gti"}, {},
+      {f.root / "stdlib"}, {});
+  expect(std::any_of(advice.diagnostics.begin(), advice.diagnostics.end(),
+                     [](const auto &d) { return !d.fixes.empty(); }),
+         "a cold preamble is not needed to prove an import");
+  expect(f.options.includeDiscoveryCache->stats().trials == 1 &&
+             f.options.preambleCache->stats().entries == 0,
+         "speculation never populates the caller's preamble cache on a miss");
+}
+
+void namedModulePriority() {
+  Fixture f;
+  f.options.includeDiscoveryLimits.maximumTrials = 1;
+  f.options.includeDiscoveryCache =
+      std::make_shared<lang::IncludeDiscoveryCache>();
+  f.write("a_unrelated.gti", "export module a_unrelated; namespace other { "
+                             "export int chosen() { return 1; } }\n");
+  f.write("chosen.gti",
+          "export module chosen; export int chosen() { return 2; }\n");
+  const auto result = f.analyze("int main() { return chosen(); }\n");
+  const auto suggestions = fixes(result);
+  expect(std::any_of(suggestions.begin(), suggestions.end(),
+                     [](const auto &fix) {
+                       return fix.replacement.find("import \"chosen.gti\";") !=
+                              std::string::npos;
+                     }),
+         "a matching module receives the proof budget before an unrelated "
+         "namespace");
+  expect(f.options.includeDiscoveryCache->stats().trials == 1,
+         "prioritizing a module does not bypass semantic confirmation");
+}
+
 void projectDeclarations() {
   Fixture f;
   f.write("api.gti", R"(export module api;
@@ -645,11 +691,14 @@ void moduleMapChangesInvalidateScans() {
 }
 // Opt-in performance probe; no wall-clock threshold makes ordinary tests flaky.
 // Supply the repository root and optionally "preamble" to compare reuse costs.
-int profile(const std::filesystem::path &root, bool preamble) {
+int profile(const std::filesystem::path &root, bool preamble, bool bounded) {
   for (const auto &name : {"set", "queue", "unordered_set", "value"}) {
     Fixture f;
     f.options.includeSearchRoots.clear();
     f.options.includeDiscoveryLimits.maximumTrials = 1000;
+    if (bounded)
+      f.options.includeDiscoveryLimits = {};
+    f.options.includeDiscoveryLimits.collectTimings = true;
     f.options.includeDiscoveryCache =
         std::make_shared<lang::IncludeDiscoveryCache>();
     if (preamble)
@@ -665,7 +714,7 @@ int profile(const std::filesystem::path &root, bool preamble) {
           {root / "stdlib/prelude.gti"}, {}, {root / "stdlib"});
       const auto stats = f.options.includeDiscoveryCache->stats();
       std::cout << name << " preamble=" << preamble << " pass=" << pass
-                << " total_us="
+                << " bounded=" << bounded << " total_us="
                 << std::chrono::duration_cast<std::chrono::microseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count()
@@ -687,8 +736,12 @@ int profile(const std::filesystem::path &root, bool preamble) {
 
 int main(int argc, char **argv) {
   if (argc >= 3 && std::string(argv[1]) == "--profile")
-    return profile(std::filesystem::canonical(argv[2]), argc > 3);
+    return profile(std::filesystem::canonical(argv[2]),
+                   argc > 3 && std::string(argv[3]) == "preamble",
+                   argc > 4 && std::string(argv[4]) == "bounded");
   boundedDiscovery();
+  namedModulePriority();
+  trialsDoNotBuildPreambles();
   discoveryReusesCandidateScans();
   moduleMapChangesInvalidateScans();
   internalTrialsDoNotReportProgress();

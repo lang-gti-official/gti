@@ -33,6 +33,8 @@ struct IncludeSearchRoot {
 struct IncludeDiscoveryLimits {
   std::size_t maximumTrials = 8;
   std::chrono::milliseconds timeBudget{250};
+  // Detailed frontend accounting is opt-in to keep ordinary enrichment cheap.
+  bool collectTimings = false;
 };
 
 struct IncludeDiscoveryCacheLimits {

@@ -1320,6 +1320,23 @@ whose bodies live in registered implementations. Candidate discovery remains a
 syntax filter; a speculative compile validates the selected canonical exported
 symbol and the actual requesting program before offering an edit.
 
+Optional discovery has a per-invocation allowance of eight speculative analyses
+and a 250 ms cooperative time budget, configurable through
+`FrontendOptions::includeDiscoveryLimits`. The budget is checked between
+operations; an in-flight load, parse, or analysis can exceed it. Exhaustion
+preserves ordinary diagnostics and finalizes already-proved fixes; it does not
+cancel or invalidate the original snapshot. This bounds repeated speculation,
+not the latency of one analysis. Direct modules take precedence over facades,
+and a filename matching a requested name gets priority within that ordering;
+this is a search heuristic, never semantic evidence.
+
+Trials reuse matching cached preambles but defer construction on a miss, since
+an inserted import changes the graph used in the preamble key. Discovery never
+schedules these throwaway deferred builds. Candidate-cache statistics expose
+trial wall time, semantic/HIR time, and preamble build/adoption time. The owning
+test executable accepts `--profile <repository-root> [preamble]` to compare cold
+and repeated discovery without the optional-work time limit.
+
 `include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
 existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`
 stops the canonical frontend before semantic analysis; it is not another
