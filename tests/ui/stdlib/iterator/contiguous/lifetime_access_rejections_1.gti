@@ -1,0 +1,64 @@
+// Contiguous cursors reject owner invalidation, exclusive copies, competing access and read-only writes.
+//@ check-fail
+import std.resource;
+import std.resource_vector;
+import std.span;
+import std.string;
+import std.vector;
+
+namespace case_vector_snapshot_exclusive_copy {
+int entry() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.rbegin_mut();
+  auto copy = cursor; return *copy;  //~ ERROR GTI-S2003
+}
+}
+
+namespace case_string_readonly {
+int entry() {
+  std::string text{"abc"}; mut auto cursor = text.begin(); *cursor = 'x'; return 0;  //~ ERROR GTI-S2002
+}
+}
+
+namespace case_mutable_span_copy {
+int entry() {
+  mut std::vector<int> values = {1, 2}; mut auto view = values.as_mutable_span();
+  auto cursor = view.begin_mut(); auto other = cursor; return *other;  //~ ERROR GTI-S2003
+}
+}
+
+namespace case_string_reverse_readonly {
+int entry() {
+  std::string text{"abc"}; mut auto cursor = text.rbegin(); *cursor = 'x'; return 0;  //~ ERROR GTI-S2002
+}
+}
+
+namespace case_readonly_span_arrow {
+struct Cell {
+  mut int number = 0;
+  void set(int value) mut { this.number = value; }
+public:
+  Cell() = default;
+};
+int entry() {
+  std::vector<Cell> values = {Cell()}; auto view = values.as_span();
+  auto cursor = view.rbegin(); cursor->set(3); return 0;  //~ ERROR GTI-S2000
+}
+}
+
+namespace case_readonly_resource_arrow {
+struct Cell {
+  mut int number = 0;
+  void set(int value) mut { this.number = value; }
+public:
+  Cell() = default;
+};
+int entry() {
+  std::process_resource process{}; unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<Cell, std::process_resource> values{resource}; values.emplace_back();
+    auto cursor = values.begin(); cursor->set(3); return 0;  //~ ERROR GTI-S2000
+  }
+}
+}
+
+int main() { return 0; }

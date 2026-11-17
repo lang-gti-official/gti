@@ -5870,8 +5870,8 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
       `inherited_unique_allocation_runtime` and
       `existing_value_allocation_failure`;
     - `make_shared`: `shared_ownership_failure`;
-    - vector and string growth: `source_prefix_owner_runtime` and
-      `source_prefix_string_runtime`;
+    - vector and string growth: `tests/ui/memory/vector_allocation_exhaustion.gti` and
+      `tests/ui/stdlib/string/source_prefix/provider_failure.gti`;
     - the resource vector's plain operations: `source_resource_prefix_runtime`;
     - owning callables and boxed payloads: `owning_function_policy_failure` and
       `inline_polymorphic_runtime`.

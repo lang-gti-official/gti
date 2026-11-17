@@ -1,0 +1,124 @@
+// Contiguous cursors reject owner invalidation, exclusive copies, competing access and read-only writes.
+//@ check-fail
+import std.resource;
+import std.resource_vector;
+import std.span;
+import std.string;
+import std.vector;
+
+namespace case_vector_snapshot_invalidation {
+int entry() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.begin();
+  values.clear(); return *cursor;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_vector_snapshot_exclusive_growth {
+int entry() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.begin_mut();
+  values.push_back(3); return *cursor;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_vector_snapshot_owner_transfer {
+int entry() {
+  mut std::vector<int> values = {1, 2}; auto cursor = values.begin();  //~ WARN GTI-S2096
+  auto moved = std::move(values); return *cursor;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_vector_snapshot_step_after_clear {
+int entry() {
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin();
+  values.clear(); ++cursor; return 0;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_vector_snapshot_step_after_transfer {
+int entry() {
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();
+  auto moved = std::move(values); ++cursor; return 0;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_resource_snapshot_step_after_clear {
+int entry() {
+  std::process_resource process{}; unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1);
+    mut auto cursor = values.begin(); values.clear(); ++cursor; return 0;  //~ ERROR GTI-S2017
+  }
+}
+}
+
+namespace case_resource_snapshot_step_after_transfer {
+int entry() {
+  std::process_resource process{}; unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1);
+    mut auto cursor = values.begin_mut(); auto moved = std::move(values); ++cursor; return 0;  //~ ERROR GTI-S2017
+  }
+}
+}
+
+namespace case_vector_snapshot_child_step {
+int entry() {
+  mut std::vector<int> values = {1, 2}; mut auto cursor = values.begin_mut();
+  mut int& child = *cursor; ++cursor; return child;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_string_invalidation {
+int entry() {
+  mut std::string text{"abc"}; auto cursor = text.begin(); text.clear(); return *cursor == 'a' ? 0 : 1;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_mutable_span_competing {
+int entry() {
+  mut std::vector<int> values = {1, 2}; mut auto view = values.as_mutable_span();
+  auto cursor = view.begin_mut(); view[std::size_t(0)] = 3; return *cursor;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_mutable_span_child {
+int entry() {
+  mut std::vector<int> values = {1, 2}; mut auto view = values.as_mutable_span();
+  mut auto cursor = view.begin_mut(); mut int& child = *cursor; ++cursor; return child;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_string_mutable_competing {
+int entry() {
+  mut std::string text{"abc"}; auto cursor = text.begin_mut(); text.clear(); return *cursor == 'a' ? 0 : 1;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_reverse_span_child {
+int entry() {
+  mut std::vector<int> values = {1, 2}; mut auto view = values.as_mutable_span();
+  mut auto cursor = view.rbegin_mut(); mut int& child = *cursor; ++cursor; return child;  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_resource_invalidation {
+int entry() {
+  std::process_resource process{}; unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1);
+    auto cursor = values.begin(); values.clear(); return *cursor;  //~ ERROR GTI-S2017
+  }
+}
+}
+
+namespace case_resource_mutable_competing {
+int entry() {
+  std::process_resource process{}; unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> values{resource}; values.push_back(1);
+    auto cursor = values.begin_mut(); values.push_back(2); return *cursor;  //~ ERROR GTI-S2017
+  }
+}
+}
+
+int main() { return 0; }

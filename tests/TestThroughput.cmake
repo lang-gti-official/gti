@@ -79,7 +79,6 @@ if(Python3_Interpreter_FOUND)
     owner_chain_runtime borrowing_composition
     complete_containers
     constructor_null_native_runtime
-    contiguous_iterator_completion container_iterator_movement
     paired_span_iterator_completion cursor_carrier_publication
     range_endpoint_parking_runtime user_dual_range_lifetime
     user_owning_reference_replacement
@@ -92,11 +91,10 @@ if(Python3_Interpreter_FOUND)
     nested_borrow_fields
     programmable_allocators_runtime
     scoped_parallel_threads
-    source_prefix_owner_runtime source_resource_prefix_runtime
-    source_text_address_runtime source_prefix_string_runtime
+    source_resource_prefix_runtime
+    source_text_address_runtime
     optimizer_object_context_runtime
     cleanup_context_scope_runtime
-    unordered_map
     stdlib_modules
     stdlib_surface
   )

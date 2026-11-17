@@ -1,0 +1,59 @@
+// Text views and their cursors reject private names, owner invalidation, escapes, read-only writes and invalid value cursors.
+//@ check-fail
+import std.algorithm;
+import std.string;
+import std.string_view;
+
+namespace case_private_iterator_name {
+std::detail::text_view_iterator<0> cursor(std::string_view& view) { return view.begin(); } int entry() { return 0; }  //~ ERROR GTI-S2024
+}
+
+namespace case_private_sentinel_name {
+std::detail::text_view_sentinel finish(std::string_view& view) { return view.end(); } int entry() { return 0; }  //~ ERROR GTI-S2024
+}
+
+namespace case_readonly_element {
+int entry() { std::string_view view = "abc"; mut auto cursor = view.begin(); *cursor = 'z'; return 0; }  //~ ERROR GTI-S2002
+}
+
+namespace case_escaped_view_shell {
+std::string_view_iterator escape(std::string& owner) { std::string_view view = owner.view(); return view.begin(); } int entry() { return 0; }  //~ ERROR GTI-S2045
+}
+
+namespace case_subview_escapes_local_owner {
+std::string_view leak() { std::string owner{"abc"}; return owner.view().substr(std::size_t(1), std::size_t(1)); } int entry() { return 0; }  //~ ERROR GTI-S2045
+}
+
+namespace case_subview_outlives_owner {
+int entry() { mut std::string_view kept = ""; { std::string owner{"abc"}; std::string_view part = owner.view().substr(std::size_t(1)); kept = part; } return int(kept.size()); }  //~ ERROR GTI-S2045
+}
+
+namespace case_shrink_readonly_view {
+int entry() { std::string_view view = "abc"; view.remove_prefix(std::size_t(1)); return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_shrink_temporary_view {
+int entry() { std::string owner{"abc"}; owner.view().remove_suffix(std::size_t(1)); return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_subview_arity {
+int entry() { std::string_view view = "abc"; auto part = view.substr(std::size_t(1), std::size_t(1), std::size_t(1)); return 0; }  //~ ERROR GTI-S2035
+}
+
+namespace case_private_narrowing_primitive {
+int entry() { mut std::string_view view = "abc"; unsafe { gti_internal::narrow_text_view(view, std::size_t(1), std::size_t(1)); } return 0; }  //~ ERROR GTI-S2058
+}
+
+namespace case_temporary_view_shell {
+int entry() { auto cursor = "abc".begin(); return int(*cursor); }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2022
+}
+
+namespace case_ordinary_value_temporary_reference {
+int entry() { std::string_view view = "abc"; auto cursor = view.begin(); char& character = *cursor; return int(character); }  //~ ERROR GTI-S2017 //~ ERROR GTI-S2014
+}
+
+namespace case_value_iterator_mutable_callback {
+class RefCounter { public: void operator()(mut char& value) mut {}  public: RefCounter() = default; }; int entry() { std::string_view view = "abc"; auto visits = std::for_each(view.begin(), view.end(), RefCounter()); return 0; }  //~ ERROR GTI-S2029
+}
+
+int main() { return 0; }

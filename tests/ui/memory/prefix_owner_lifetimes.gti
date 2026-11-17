@@ -3,6 +3,9 @@
 // source_prefix_owner_runtime_test; std.detail.memory_storage is exposed
 // through a private standard-library copy as the old harness did.)
 //@ run-pass
+//@ snapshot: mir
+//@ mir-function: relocate_at
+// CHECK: intrinsic=object-relocate{{$| }}
 //@ stdlib-overlay: std/detail/memory_storage.gti
 //@ stdout: 2
 //@ stdout: 1

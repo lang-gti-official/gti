@@ -12,7 +12,6 @@ import unittest
 from unittest.mock import patch
 
 from native_fixture_build import build_fixture
-import container_iterator_movement_test as movement
 from iterator_sanitizer_support import (gcc_sanitizer_arguments,
                                         native_driver_is_gcc,
                                         partition_main,
@@ -140,16 +139,6 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         return regions
 
-    def test_movement_exact_regions_retain_common_relays_and_assertions(self):
-        self.check_exact_partition("container_iterator_movement", movement.sanitizer_partitions,
-                                   ("vector-array", "deque-list", "map-set", "unordered"))
-        parts = movement.sanitizer_partitions(
-            (self.fixtures / "container_iterator_movement.gti").read_bytes())
-        for contents in parts.values():
-            self.assertIn(b"class OwnerPair {", contents)
-            self.assertIn(b"void exclusive_random<I>", contents)
-            self.assertIn(b"void exclusive_bidirectional<I>", contents)
-
     def test_partition_rejects_missing_duplicate_reordered_or_changed_cuts(self):
         source = b"// common\nint main() {\n  first();\n  second();\n  third();\n  return 0;\n}\n"
         names = ("first", "second", "third")
@@ -173,42 +162,6 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
         added = source.replace(b"  third();", b"  check_new_state();\n  third();")
         parts = partition_main(added, names, cuts)
         self.assertEqual(sum(value.count(b"check_new_state();") for value in parts.values()), 1)
-
-    def test_movement_preserves_original_modes_budgets_and_non_sanitized_source(self):
-        built = []
-        plans = []
-
-        def process(command, **options):
-            binary = Path(command[command.index("-o") + 1])
-            binary.with_suffix(".gti.cpp").write_text("// GTI verified-MIR body:\n")
-            built.append((command, options))
-            return subprocess.CompletedProcess(command, 0, "", "")
-
-        def run_plan(plan, build, jobs, observe):
-            plans.append([(name, case[:4], case[4].read_bytes(), case[5])
-                          for name, case in plan] if len(plans) == 0 else list(plan))
-            if len(plans) == 1:
-                for _, case in plan:
-                    build(case)
-
-        with patch.object(sys, "argv", ["movement", "fake-gti", "--jobs", "1"]), \
-                patch.object(movement, "run_cases", run_plan), \
-                patch.object(movement.subprocess, "run", process):
-            movement.main()
-        self.assertEqual(len(plans), 2)
-        # Three positive fixtures in every mode the policy selects.
-        self.assertEqual(len(plans[0]), 3 * len(movement.MODES))
-        self.assertTrue(plans[1], "failure/cleanup cases must still be scheduled")
-        for _, (fixture, label, flags, native), contents, region in plans[0]:
-            if not region:
-                self.assertEqual(contents, (self.fixtures / f"{fixture}.gti").read_bytes())
-            else:
-                self.assertEqual((fixture, label), ("container_iterator_movement", "sanitized"))
-            self.assertIn((label, flags, native), movement.MODES)
-        for _, options in built:
-            self.assertEqual(options["timeout"], 180)
-            self.assertEqual(options["env"]["ASAN_OPTIONS"], "halt_on_error=1")
-            self.assertEqual(options["env"]["UBSAN_OPTIONS"], "halt_on_error=1:print_stacktrace=1")
 
     def test_gcc_selection_uses_native_driver_macros_not_compatible_name_or_host(self):
         environment = {"GTI_CXX": "/native path/c++", "CXX": "/other/g++"}

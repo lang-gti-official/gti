@@ -568,18 +568,12 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/process_resource_policy_test.py"
                    $<TARGET_FILE:gti>)
   set_tests_properties(process_resource_policy PROPERTIES TIMEOUT 300)
-  add_test(NAME source_prefix_owner_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_prefix_owner_runtime_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(source_prefix_owner_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME source_resource_prefix_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_resource_prefix_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(source_resource_prefix_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME source_text_address_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_text_address_runtime_test.py" $<TARGET_FILE:gti>)
   set_tests_properties(source_text_address_runtime PROPERTIES TIMEOUT 300)
-  add_test(NAME source_prefix_string_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/source_prefix_string_runtime_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(source_prefix_string_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME cleanup_context_scope_runtime
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/cleanup_context_scope_runtime_test.py"
       $<TARGET_FILE:gti> "${CMAKE_CXX_COMPILER}" $<TARGET_FILE:gti_runtime>
@@ -2008,14 +2002,11 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(string_c_string_runtime PROPERTIES TIMEOUT 300)
   foreach(iterator_gate IN ITEMS
       forward_list_iterator_runtime
-      contiguous_iterator_completion
       paired_span_iterator_completion
       cursor_carrier_publication
       user_dual_range_lifetime
       user_owning_reference_replacement
-      range_endpoint_parking_runtime
-      text_view_iterator_runtime
-      container_iterator_movement)
+      range_endpoint_parking_runtime)
     add_test(
       NAME ${iterator_gate}
       COMMAND "${Python3_EXECUTABLE}"
@@ -2356,18 +2347,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}"
   )
   set_tests_properties(stdlib_modules PROPERTIES TIMEOUT 600)
-  add_test(
-    NAME generic_algorithm_cluster
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/generic_algorithm_cluster_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(
-    generic_algorithm_cluster
-    PROPERTIES TIMEOUT 600
-               ENVIRONMENT
-                 "GTI_STDLIB_PATH=${PROJECT_SOURCE_DIR}/stdlib;GTI_RUNTIME_INCLUDE=${PROJECT_SOURCE_DIR}/runtime/include;GTI_RUNTIME_LIBRARY=$<TARGET_FILE:gti_runtime>"
-  )
     add_test(
       NAME stdlib_surface
       COMMAND "${Python3_EXECUTABLE}"
@@ -2716,7 +2695,7 @@ if(Python3_Interpreter_FOUND)
             "$<TARGET_FILE:gti>"
   )
   set_tests_properties(associative_hash_contracts PROPERTIES TIMEOUT 300)
-  foreach(associative_suite IN ITEMS associative_map unordered_map
+  foreach(associative_suite IN ITEMS associative_map
       associative_constructor_runtime
       nested_borrow_fields borrowing_composition)
     add_test(

@@ -609,7 +609,7 @@ in MIR: `text_view_iterator_completion.gti` line 169,
 `select_text(view, events).iterator_at(...)`, sources one iterator loan at the
 returned referent instead of the `view` reference binding. Its parent and
 stored dependency are unchanged, its C++ is byte-identical, and
-`tests/ui/stdlib/text/view_iterators/` and `text_view_iterator_runtime` pass.
+`tests/ui/stdlib/text/view_iterators/` passes.
 
 0.468.0's nested relay check (`dependentDesignationPath`) read an accessor
 result's owner path for a `string_view&` argument, so the owner-backed optional
@@ -3465,7 +3465,7 @@ admission repair. The exact assessment and raw costs are retained under
 `/private/tmp/gti-iterator-final-performance-current.oUE5Ix/`.
 
 The counted-text allocation/asymptotic control is explicitly run with
-`text_view_iterator_runtime_test.py <Release-gti> --semantic-only --cost` at
+`text_view_iterator_runtime_test.py <Release-gti> --semantic-only --cost` (since removed) at
 `a814a538`; default CTest does not enable its optional cost branch. Twelve source
 negatives, complete checksums and zero traversal allocations pass. Doubling
 extent from 128 to 256 gives a median time ratio of 1.948; this is a scheduling-
@@ -8522,7 +8522,7 @@ Move-only searchable elements are observed without cloning. The owning suite
 also tests explicit move and fresh-owner assignment through a nominal cursor.
 `tests/ui/stdlib/algorithm/` rejects type, predicate, implicit-copy, owner-loan,
 and escaping-local-owner cases, then checks failure propagation and cleanup at
-O0/O3. These tests supplement `generic_algorithm_cluster`, container tests,
+O0/O3. These tests supplement `tests/ui/stdlib/algorithm/generic_cluster/`, container tests,
 and the reviewed standard-library surface matrix.
 
 The 0.356.0 completion run passed all 337 registered Release CTest gates on
@@ -9594,7 +9594,7 @@ aggregate counts live in `tests/CMakeLists.txt` and the checked-in manifests.
 | `tests/ui/ownership/borrow/reference_parameter_range.gti` | single, nested, and triple read-only traversal through a class reference parameter use shared MIR referent carriers; public-derived arguments bind to base/interface references; direct concrete virtual calls cover local, global, field, generic, returned-bound, and ordinary-base receivers; failure-capable descendants retain the status ABI; and the matrix runs at O0/O3 under C++20/C++23 |
 | `tests/ui/borrow/carrier_shell/` / `tests/ui/ownership/borrow/shared_accessor_range.gti` | borrowed-success carrier to reference accessor to read-only element traversal, reduced from Tea's JSON decoder and repeated with an unrelated application owner and noncopyable elements; exact retained call-result identity, nested iteration, continue/break/return and failure cleanup; forged local/access metadata and premature range retirement rejected; owner invalidation and escaping-local negatives; C++20/C++23 O0/O1/O3, disabled elision and ASan/UBSan |
 | `compiler_pipeline` / `tests/ui/borrow/mutable_range_for.gti` / `cli_workflow` / `lsp_protocol` range coverage | L-RANGE-01 read-only and L-RANGE-02 mutable fixed-array/`std::vector`/owned-temporary plans; exact exclusive parent and iteration child loans; nested/empty/break/continue/return flow; invalidation, overlap, escape, immutable-owner, and missing-`begin_mut()` rejection; exact normal/failure cleanup; C++20/C++23 O0/O3 runtime parity; `GTI-S2083` publication/clearing; and incomplete-source recovery |
-| `compiler_ownership` / `generic_algorithm_cluster` complete-range coverage | L-RANGE-04 exact `input_range`, `range_of`, `mutable_range_of`, `sized_range`, range predicate/operation relationships; application-defined nominal and fixed-array instantiation; concrete HIR protocol/strategy replacement; checked fixed-array index arithmetic after symbolic-operator suppression; missing endpoints, wrong referent, missing mutable endpoint, wrong size result, and callable mismatch rejection; C++20/C++23 O0/O3 runtime parity |
+| `compiler_ownership` / `tests/ui/stdlib/algorithm/generic_cluster/complete_range.gti` coverage | L-RANGE-04 exact `input_range`, `range_of`, `mutable_range_of`, `sized_range`, range predicate/operation relationships; application-defined nominal and fixed-array instantiation; concrete HIR protocol/strategy replacement; checked fixed-array index arithmetic after symbolic-operator suppression; missing endpoints, wrong referent, missing mutable endpoint, wrong size result, and callable mismatch rejection; C++20/C++23 O0/O3 runtime parity |
 | `compiler_pipeline` / `tests/ui/borrow/mutable_stored_dependency.gti` / `nested_borrow_fields` / `tests/lsp/borrows/nested_borrow_fields.gti` / `lsp_protocol` stored-carrier coverage | read-only copy construction with shared owner dependency and independent shells; mutable one-origin construction, conditional return, move relay, exclusive child reborrow, early cleanup, and owner reactivation; exact nominal nesting and separately mapped aggregate dependencies; assignment, mutable-copy, global borrowed storage, and unproven-origin rejection; exact carrier/stored-referent relay; `GTI-S2045`/`GTI-S2085` publication; and direct MIR mutations of ancestry, field paths, double retirement, return provenance, entry dependency, payload type, and runtime referent place |
 | `evaluation_order_runtime` | effectful call arguments emit as ordered MIR statements and run left to right at O0/O3 under C++20/C++23 |
 | `tests/ui/stdlib/string/owned_output.gti` | named owning strings retain read-only `string&` output selection, while fresh `std::to_string` and `filesystem::path::string()` results transfer into the exact by-value `print`/`println` overloads at O0/O3 under C++20/C++23 |

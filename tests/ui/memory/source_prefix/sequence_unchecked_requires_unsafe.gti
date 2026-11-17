@@ -1,0 +1,8 @@
+// Unchecked sequence access requires an unsafe block.
+//@ check-fail
+import std.vector;
+
+int main() {
+  mut std::vector<int> values = std::vector<int>({1, 2});
+  return values.get_unchecked(std::size_t(0));  //~ ERROR GTI-S2055
+}

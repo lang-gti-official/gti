@@ -1,0 +1,19 @@
+// unordered_map rejects key writes, live loans across mutation, container copies, mutable or missing hashers and borrowed values.
+//@ check-fail
+import std.functional;
+import std.unordered_map;
+
+namespace case_borrowed_value {
+class View {
+  int& source;
+public: View(int& source) : source(source) {}
+};
+int entry() {
+  mut int source = 42;  //~ WARN GTI-S2096
+  mut std::unordered_map<int, View> values{};
+  [[discard]] values.try_emplace(1, source);  //~ ERROR GTI-S2029 //~ ERROR GTI-S2018 //~ ERROR GTI-S2019 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029 //~ ERROR GTI-S2029
+  return 0;
+}
+}
+
+int main() { return 0; }
