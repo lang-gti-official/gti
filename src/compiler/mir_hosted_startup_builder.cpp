@@ -450,9 +450,9 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
   };
   finishNativeFailure = [&](MirBlock &block) {
     drainThreadLocals(block);
-    cleanupProgramStorage(block, true);
     if (cThreadStarted)
       cThreadBoundary(block, false);
+    cleanupProgramStorage(block, true);
     retireProgramStorage(block);
   };
 
@@ -504,10 +504,11 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     plan.entryResult = entryResult;
 
     drainThreadLocals(*startupBlock);
+    cThreadBoundary(*startupBlock, false);
+    cThreadStarted = false;
     const auto programCleanup = cleanupProgramStorage(*startupBlock, false);
     if (programCleanup && programCleanupMayRaise)
       routeOperationFailure(startupBlock, programCleanup, {});
-    cThreadBoundary(*startupBlock, false);
     retireProgramStorage(*startupBlock);
 
     const MirHostedStartupOperationId returnOperation =
@@ -1031,10 +1032,11 @@ bool MirLowerer::lowerHostedStartup(const HirProgram &source,
     plan.entryResult = entryResult;
 
     drainThreadLocals(*finalBlock);
+    cThreadBoundary(*finalBlock, false);
+    cThreadStarted = false;
     const auto programCleanup = cleanupProgramStorage(*finalBlock, false);
     if (programCleanup && programCleanupMayRaise)
       routeOperationFailure(finalBlock, programCleanup, {});
-    cThreadBoundary(*finalBlock, false);
     retireProgramStorage(*finalBlock);
 
     const MirHostedStartupOperationId returnOperation =

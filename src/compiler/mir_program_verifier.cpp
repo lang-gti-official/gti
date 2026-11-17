@@ -12153,9 +12153,9 @@ verifyMirHostedStartup(const MirProgram &program) {
   };
   takeNativeFailureTail = [&](MirBlockId block) {
     takeThreadLocalDrain(block);
-    takeProgramCleanup(block, true);
     if (cThreadStarted)
       takeCThreadBoundary(block, false);
+    takeProgramCleanup(block, true);
     takeNativeRetirement(block);
   };
 
@@ -12209,10 +12209,11 @@ verifyMirHostedStartup(const MirProgram &program) {
           takeFailureRoute(currentBlock, callEntry.expected.instruction, {});
     }
     takeThreadLocalDrain(currentBlock);
+    takeCThreadBoundary(currentBlock, false);
+    cThreadStarted = false;
     const auto programCleanup = takeProgramCleanup(currentBlock, false);
     if (programCleanup && programCleanupMayRaise)
       currentBlock = takeFailureRoute(currentBlock, programCleanup, {});
-    takeCThreadBoundary(currentBlock, false);
     takeNativeRetirement(currentBlock);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,
@@ -12764,10 +12765,11 @@ verifyMirHostedStartup(const MirProgram &program) {
           takeFailureRoute(finalBlock, callEntry.expected.instruction, {});
     }
     takeThreadLocalDrain(finalBlock);
+    takeCThreadBoundary(finalBlock, false);
+    cThreadStarted = false;
     const auto programCleanup = takeProgramCleanup(finalBlock, false);
     if (programCleanup && programCleanupMayRaise)
       finalBlock = takeFailureRoute(finalBlock, programCleanup, {});
-    takeCThreadBoundary(finalBlock, false);
     takeNativeRetirement(finalBlock);
     const TakenOperation returnEntry =
         take(MirHostedStartupOperationKind::ReturnEntry,

@@ -9655,6 +9655,9 @@ verifyMirHostedStartupBodyStructure(const MirBody &body, std::size_t owner) {
            (producer->kind == MirInstructionKind::CallBody &&
             producer->definedFailure.propagation ==
                 FailurePropagationKind::BodyCall) ||
+           (producer->kind == MirInstructionKind::CleanupProgramStorage &&
+            producer->definedFailure.propagation ==
+                FailurePropagationKind::Destructor) ||
            (block.activeFailure != 0 &&
             producer->kind == MirInstructionKind::Drop &&
             producer->definedFailure.propagation ==
