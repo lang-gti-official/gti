@@ -1,0 +1,9 @@
+// Sparse final address constructor: emplaced references cannot escape or survive owner mutation.
+import std.memory;
+int main() {
+  std::allocator allocator{};
+  mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocation");
+  mut int& value = slots.emplace(std::size_t(0), 7);
+  slots.destroy(std::size_t(0));  //~ ERROR GTI-S2017
+  return value;
+}

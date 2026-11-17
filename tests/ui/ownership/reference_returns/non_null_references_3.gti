@@ -1,0 +1,30 @@
+// Non null references: escaping, temporary, and invalid mutable references should fail.
+import std.memory;
+
+int& escape(mut int& value) { return value; }  //~ ERROR GTI-S2017
+int global_value = 1;
+int& global_reference = global_value;  //~ ERROR GTI-S2017 //~ ERROR GTI-S2045
+
+struct InvalidStorage {
+  int& field;  //~ ERROR GTI-S2045
+};
+
+void inspect(int& value) {}
+void modify(mut int& value) {}
+
+int main() {
+  int immutable = 1;
+  mut int mutable_value = 2;
+  int& temporary_binding = 3;  //~ ERROR GTI-S2017
+  modify(immutable);  //~ ERROR GTI-S2017
+  mut int& invalid_mutable = immutable;  //~ ERROR GTI-S2017
+  int& missing;  //~ ERROR GTI-S2017
+  int values[2] = {1, 2};
+  int[2]& array_reference = values;
+  expected<int&, int> inner = immutable;
+  expected<expected<int&, int>, int> nested = inner;  //~ ERROR GTI-S2045
+  Counter& dangling_owner = *std::make_unique<Counter>();  //~ ERROR GTI-S2000 //~ ERROR GTI-S2000 //~ ERROR GTI-S2022 //~ ERROR GTI-S2017
+  int& dangling_member = Counter().value;  //~ ERROR GTI-S2001 //~ ERROR GTI-S2017
+  inspect(mutable_value);
+  return 0;
+}

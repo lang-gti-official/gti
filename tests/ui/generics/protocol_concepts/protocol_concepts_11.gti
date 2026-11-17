@@ -1,0 +1,19 @@
+// Protocol concepts: rejected with GTI-S2012, GTI-S2029.
+concept selecting<T> {
+  typename element;
+  element<a> choose<lifetime a>(element<a> source, element other);
+};
+struct Marker<T> { int tag; };
+for <T> concept selecting<Marker<T>> {
+  using element = T;
+  T choose(T source, T other) { return source; }
+};
+
+concept inspected<T> { int inspect(T& value); };
+for <T> concept inspected<Marker<T>> requires selecting<Marker<T>> {
+  int inspect(Marker<T>& value) { return 0; }
+};
+int main() {
+  Marker<int&> value{0};  //~ ERROR GTI-S2012
+  return inspected<Marker<int&>>::inspect(value);  //~ ERROR GTI-S2029
+}

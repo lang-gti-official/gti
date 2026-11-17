@@ -1,0 +1,4 @@
+// Diagnostics: a void mapper result reports its two assertions only.
+expected<int, int> read() { return unexpected(1); }
+int main() { auto map = [](int error) -> void {};
+  [[discard]] read().transform_error(map); return 0; }  //~ ERROR GTI-S2079 //~ ERROR GTI-S2079

@@ -1,0 +1,16 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept selecting<T> {
+  typename element;
+  element<a> choose<lifetime a>(element<a> source, element other);
+};
+struct Marker<T> { int tag; };
+for <T> concept selecting<Marker<T>> {
+  using element = T;
+  T<a> choose<lifetime a>(T source, T<a> other) { return source; }
+};
+
+int main() {
+  int first = 7;
+  int second = 3;
+  return selecting<Marker<int&>>::choose(first, second) - 7;  //~ ERROR GTI-S2123
+}

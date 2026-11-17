@@ -1,0 +1,31 @@
+// Fixtures: a demanded callee's diagnostic is not attributed to the caller's constexpr for expansion.
+import std.iterator;
+import std.list;
+
+import std.meta;
+int main() {
+  std::list<int> priorities = {2, 4, 4, 9};
+  int urgent = 9;
+  mut int hits = 0;
+  constexpr for (auto element : std::meta::list<int32_t, bool>()) {
+    auto found = my_find(priorities.begin(), priorities.end(), urgent);
+    if (found != priorities.end()) { hits = hits + 1; }
+  }
+  return hits == 2 ? 0 : 1;
+}
+
+Iterator my_find<Iterator, Sentinel, T>(mut Iterator first, Sentinel last,
+                                        T& value)
+  requires std::input_iterator<Iterator> &&
+           std::sentinel_for<Sentinel, Iterator> &&
+           std::dereferences_to<Iterator, T> &&
+           std::equality_comparable<T> {
+  while (first != last) {
+    if (*first == value) {
+      break;
+    }
+    ++first;
+  }
+  int oops = missing_in_callee;  //~ ERROR GTI-S2001
+  return std::move(first);
+}

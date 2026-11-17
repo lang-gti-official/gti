@@ -1,0 +1,21 @@
+// Reference valued pack inputs: unrelated scalar/class reference packs and readonly carriers of mutable references preserve ordinary forwarding.
+//@ check-pass
+class Record { public: int value; Record(int value) : value(value) {} };
+void consume<Values...>(Values... values) {}
+void forward<Args...>(int tag, Args... args) { consume(args...); }
+class Relay<R(Args...)> {
+public:
+  void forward(Args... args) { consume(args...); }
+public:
+  Relay() = default;
+};
+int main() {
+  int value = 3;
+  Record record{4};
+  forward<int&>(0, value);
+  forward<Record&>(0, record);
+  mut int changed = 5;
+  Relay<void(mut int&)> relay{};
+  relay.forward(changed);
+  return 0;
+}

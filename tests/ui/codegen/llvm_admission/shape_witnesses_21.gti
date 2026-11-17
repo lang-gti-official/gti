@@ -1,0 +1,4 @@
+// Shape witnesses: ABI declarations are distinguished from source definitions.
+//@ check-pass
+extern "C" { int foreign_call(int value); }
+int main() { return foreign_call(0); }

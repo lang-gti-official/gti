@@ -1,0 +1,9 @@
+// Lifetimes: rejected with GTI-S2017.
+int&<a> first<lifetime a>(int&<a> left, int&<a> right) { return left; }
+int main() {
+  int left = 3;
+  mut int right = 8;
+  int& result = first(left, right);
+  right = 9;  //~ ERROR GTI-S2017
+  return result;
+}

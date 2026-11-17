@@ -1,0 +1,11 @@
+// A symbolic alias `int(S)` that is valid is revalidated per instance:
+// `int(void)` is invalid in the editor too. (From function_signature_lsp_test.py.)
+using Action = void();
+class Tag<S = void> { using Bad = int(S);  public: Tag() = default; };  //~ ERROR GTI-S2093
+int describe<R>(Tag<R()>& tag) { return 0; }
+int main() { Tag<Action> tag{}; Tag<void> metadata{}; return describe(tag); }
+// --- step 2
+using Action = void();
+class Tag<S = void> { public: Tag() = default; };
+int describe<R>(Tag<R()>& tag) { return 0; }
+int main() { Tag<Action> tag{}; Tag<void> metadata{}; return describe(tag); }

@@ -1,0 +1,2 @@
+// Analyze: missing aliases highlight the member name rather than its owner.
+struct Box<T> { public: Box() = default; }; using Bad = Box<int>::missing;  //~ ERROR GTI-S2030 //~ ERROR GTI-S2030

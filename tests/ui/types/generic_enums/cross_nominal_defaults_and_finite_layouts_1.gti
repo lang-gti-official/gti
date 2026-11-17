@@ -1,0 +1,3 @@
+// Cross nominal defaults and finite layouts: class and enum default dependencies use the complete nominal inventory, independently of declaration order.
+//@ check-pass
+enum Event<T, U = Later> { item(T value, U detail) }; struct Early<W = Event<int>> { public: Early() = default; }; struct Later { public: Later() = default; }; using Selected = Early<>; int main() { return 0; }

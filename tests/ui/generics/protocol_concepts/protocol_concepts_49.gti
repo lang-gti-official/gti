@@ -1,0 +1,58 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept adds_to<Left, Right> {
+  typename sum_type;
+  sum_type add(Left& left, Right& right);
+};
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+struct Centimeters {
+  int value;
+  Centimeters(int amount) : value(amount) {}
+};
+class Tally<T> {
+public:
+  int count;
+  Tally(int amount) : count(amount) {}
+};
+class Pair<A, B> {
+public:
+  A first;
+  B second;
+  Pair(A one, B two) : first(one), second(two) {}
+};
+for concept adds_to<Meters, Centimeters> {
+  using sum_type = Centimeters;
+  Centimeters add(Meters& left, Centimeters& right) {
+    return Centimeters(left.value * 100 + right.value);
+  }
+};
+for <T> concept adds_to<Tally<T>, Tally<T>> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, Tally<T>& right) {
+    adds_to<Tally<T>, Tally<T>>::sum_type sum = Tally<T>(left.count);
+    return Tally<T>(sum.count + right.count);
+  }
+};
+for <T> concept adds_to<Tally<T>, int> {
+  using sum_type = Tally<T>;
+  Tally<T> add(Tally<T>& left, int& right) {
+    return Tally<T>(left.count + right);
+  }
+};
+for <V, std::numeric K> concept adds_to<Pair<K, V>, Pair<K, K>> {
+  using sum_type = K;
+  K add(Pair<K, V>& left, Pair<K, K>& right) {
+    return left.first + right.first + right.second;
+  }
+};
+
+struct Apples { public: Apples() = default; };
+struct Pears { public: Pears() = default; };
+int main() {
+  Tally<Apples> apples{1};
+  Tally<Pears> pears{2};
+  adds_to<Tally<Apples>, Tally<Pears>>::add(apples, pears);  //~ ERROR GTI-S2123
+  return 0;
+}

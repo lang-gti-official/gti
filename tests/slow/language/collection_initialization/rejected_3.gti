@@ -1,0 +1,5 @@
+// Rejected: invalid collection must stop compilation.
+//@ slow
+import std.vector;
+import std.string;
+int main(){ std::string value{"owned"}; std::vector<std::string> values = {value}; return 0; }  //~ ERROR GTI-S2092

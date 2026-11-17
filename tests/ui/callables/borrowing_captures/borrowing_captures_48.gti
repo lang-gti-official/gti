@@ -1,0 +1,8 @@
+// Borrowing captures: invocation-pointer-ambiguous-origin.
+//@ check-pass
+import std.functional;
+int&<r> first<lifetime r>(int&<r> a, int& b) { return a; }
+int main() {
+  std::function_ptr<int&(int&, int&)> pointer{first};
+  return 0;
+}

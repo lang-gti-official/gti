@@ -1,0 +1,13 @@
+// An overflowing atomic fetch_add reports a checked overflow.
+//@ run-fail
+//@ execution-profile: concurrent
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R0001]: integer_overflow in addition
+import std.atomic;
+
+std::atomic<int32_t> value{2147483647};
+
+int main() {
+  [[discard]] value.fetch_add(1);
+  return 1;
+}

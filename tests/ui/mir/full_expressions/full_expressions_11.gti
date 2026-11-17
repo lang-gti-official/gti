@@ -1,0 +1,29 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+struct Feet {
+  int value;
+  Feet(int amount) : value(amount) {}
+  Meters to_meters() { return Meters(this.value / 3); }
+};
+class Track {
+  Meters lap = Feet(30).to_meters();
+public:
+  Track() {}
+  Track(int feet) : lap(Feet(feet).to_meters()) {}
+  int total() { return this.lap.value; }
+};
+struct Split {
+  Meters lap = Feet(12).to_meters();
+public:
+  Split() = default;
+};
+int main() {
+  Track declared{};
+  Track explicit_lap = Track(60);
+  Split generated{};
+  return declared.total() + explicit_lap.total() + generated.lap.value - 34;
+}

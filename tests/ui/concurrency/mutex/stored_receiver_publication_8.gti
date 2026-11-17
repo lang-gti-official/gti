@@ -1,0 +1,17 @@
+// Stored receiver publication: exclusive external permission does not freeze a disjoint stored field.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.mutex;
+void see(std::mutex<int32_t>& value) {}
+class User {
+  std::mutex<int32_t>& left;
+  std::mutex<int32_t>& right;
+public:
+  User(std::mutex<int32_t>& left, std::mutex<int32_t>& right)
+      : left(left), right(right) {}
+  void use() {
+    auto guard = this.left.lock();
+    see(this.right);
+  }
+};
+int main() { return 0; }

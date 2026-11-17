@@ -1,0 +1,2 @@
+// Protocol concepts: rejected with GTI-S2123.
+using Alias<T> = T;  //~ ERROR GTI-S2123

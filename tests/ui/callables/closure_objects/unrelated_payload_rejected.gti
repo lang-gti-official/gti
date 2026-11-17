@@ -1,0 +1,21 @@
+// A class not implementing the interface is not an inline polymorphic payload.
+//@ check-fail
+import std.polymorphic;
+import std.string;
+
+interface shape { int area(); };
+
+class square : public shape {
+  int side;
+public:
+  square(int side) : side(side) {}
+  int area() override { return this.side * this.side; }
+};
+
+class lone {
+public:
+  lone() {}
+  int area() { return 1; }
+};
+int need<M>() requires std::inline_polymorphic_payload<M, shape> { return 1; }
+int main() { return need<lone>(); }  //~ ERROR GTI-S2029

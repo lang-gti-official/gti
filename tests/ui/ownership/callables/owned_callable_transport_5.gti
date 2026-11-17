@@ -1,0 +1,10 @@
+// Owned callable transport: raw pointers in a callable signature should not be mistaken for captured raw-pointer state.
+//@ check-pass
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  auto operation = [](int* pointer) -> int {
+    return pointer == nullptr ? 0 : 1;
+  };
+  auto returned = relay(std::move(operation));
+  return 0;
+}

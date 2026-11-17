@@ -1,0 +1,3 @@
+// Explicit invocation: legacy macro calls get a migration diagnostic.
+#macro T identity<T>(T value) { return value; }
+int main() { return identity(7); }  //~ ERROR GTI-S2124

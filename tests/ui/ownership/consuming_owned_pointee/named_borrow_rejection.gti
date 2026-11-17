@@ -1,0 +1,14 @@
+// Named borrow rejection: named retained invocation rejects even immediately copied borrowed results.
+class Ticket {
+  int value = 42;
+public:
+  Ticket() = default;
+  int& view() { return this.value; }
+};
+class Envelope {
+  mut Ticket ticket{};
+public:
+  Envelope() = default;
+  int finish() && { return std::move(this.ticket).view(); }  //~ ERROR GTI-S2022
+};
+int main() { Envelope value{}; return std::move(value).finish(); }

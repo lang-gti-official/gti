@@ -1,0 +1,6 @@
+// Lifetimes: rejected with GTI-S2022.
+struct View {
+  int local = 7;
+  int&<this> take() && { unsafe { return *(&this.local); } }  //~ ERROR GTI-S2022
+};
+int main() { return 0; }

@@ -1,0 +1,17 @@
+// Converting owning assignment transfers out: converting owning assignment should lower to verified MIR.
+//@ check-pass
+class noisy {
+public:
+  int32_t id;
+  noisy(int32_t id) : id(id) {}
+  ~noisy() {}
+};
+expected<noisy, int32_t> make(bool ok) {
+  if (ok) { return noisy(1); }
+  return unexpected(2);
+}
+int main() {
+  mut expected<noisy, int32_t> current = make(true);
+  current = noisy(8);
+  return current ? 0 : 1;
+}

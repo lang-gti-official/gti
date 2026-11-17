@@ -1,0 +1,11 @@
+// Passing a string by value to a generic pack is a deleted-copy error at the
+// argument; passing a view clears it. (From semantic_call_regressions_lsp_test.py.)
+import std.string;
+void consume<Args...>(int tag, Args... args) {}
+void consume(char tag) {}
+int main() { std::string text{"hello"}; consume(1, text); return 0; }  //~ ERROR GTI-S2018 deleted copy constructor
+// --- step 2
+import std.string;
+void consume<Args...>(int tag, Args... args) {}
+void consume(char tag) {}
+int main() { std::string text{"hello"}; consume(1, text.view()); return 0; }

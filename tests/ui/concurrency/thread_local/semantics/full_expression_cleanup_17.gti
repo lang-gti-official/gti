@@ -1,0 +1,3 @@
+// Full expression cleanup: destructive transfer cannot invalidate persistent TLS availability across calls.
+//@ execution-profile: concurrent
+thread_local mut int value = 1; int main() { int taken = std::move(value); return taken; }  //~ ERROR GTI-S2018

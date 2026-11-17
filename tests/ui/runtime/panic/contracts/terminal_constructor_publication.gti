@@ -1,0 +1,16 @@
+// Terminal constructor publication: terminal constructors retain initialized-field rollback authority.
+//@ check-pass
+import std.panic;
+struct Guard {
+  int value;
+  Guard(int input) : value(input) {}
+  ~Guard() { if (value == 2) { std::panic("secondary"); } }
+};
+struct Partial {
+  Guard field;
+  Partial() : field(Guard(1)) {
+    Guard local{2};
+    std::panic("primary");
+  }
+};
+int main() { Partial value{}; return 0; }

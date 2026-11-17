@@ -1,0 +1,19 @@
+// Nested borrowed fields: a scalar compound store must invoke the selected nested arrow projection.
+//@ check-pass
+struct Record { mut int value = 7;  public: Record() = default; };
+class Cursor {
+  mut Record& record;
+public:
+  Cursor(mut Record& record) : record(record) {}
+  mut Record& operator->() mut { return this.record; }
+};
+class Wrapper<T> {
+public:
+  mut T cursor;
+  Wrapper(T cursor) : cursor(std::move(cursor)) {}
+};
+int main() {
+  mut Record record{};
+  { mut Wrapper<Cursor> wrapper{Cursor(record)}; wrapper.cursor->value += 2; }
+  return record.value - 9;
+}

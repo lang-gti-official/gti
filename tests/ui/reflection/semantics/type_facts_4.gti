@@ -1,0 +1,14 @@
+// Type facts: proof of a different type cannot be rebound to a wrapper's generic parameter by matching its position or spelling.
+constexpr bool copyable_int<T>() {
+  return std::meta::is_copy_constructible<int32_t>();  //~ ERROR GTI-S2024
+}
+concept claimed<T> = copyable_int<T>();
+void needs_copy<std::copy_constructible T>() {}
+void relay<T>() requires claimed<T> { needs_copy<T>(); }  //~ ERROR GTI-S2029
+class MoveOnly {
+public:
+  MoveOnly() {}
+  MoveOnly(MoveOnly& other) = delete;
+  MoveOnly(MoveOnly&& other) = default;
+};
+int main() { relay<MoveOnly>(); return 0; }  //~ ERROR GTI-S2029

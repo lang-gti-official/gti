@@ -1,0 +1,39 @@
+// Native callback pipeline: exact named native callbacks should complete frontend analysis.
+//@ check-pass
+[[c_opaque]] struct NativeHandle;
+
+using Unary = (int32_t) -> int32_t;
+using Notify = (NativeHandle*, c_string) -> void;
+using Factory = () -> Unary;
+using Resolver = (void*, c_string) -> Unary;
+
+[[c_abi]] struct CallbackTable {
+  Unary unary;
+  Notify notify;
+  void* user;
+};
+
+extern "C" {
+  Unary set_callback(Unary callback);
+  Factory set_factory(Factory factory);
+  Resolver set_resolver(Resolver resolver);
+  void install_callbacks(const CallbackTable* callbacks);
+}
+
+int32_t add_one(int32_t value) { return value + 1; }
+int32_t checked_divide(int32_t value) { return 100 / value; }
+Unary make_callback() { return add_one; }
+Unary resolve_callback(void* instance, c_string name) { return nullptr; }
+
+int main() {
+  mut Unary current = nullptr;
+  current = add_one;
+  unsafe {
+    current = set_callback(add_one);
+    [[discard]] set_callback(checked_divide);
+    [[discard]] set_callback(nullptr);
+    [[discard]] set_factory(make_callback);
+    [[discard]] set_resolver(resolve_callback);
+  }
+  return current == nullptr ? 0 : 0;
+}

@@ -1,0 +1,7 @@
+// Optional compiler contract: an optional source should become unavailable after move construction.
+import std.optional;
+int main() {
+  std::optional<int32_t> source{int32_t(1)};
+  std::optional<int32_t> destination{std::move(source)};
+  return source.has_value();  //~ ERROR GTI-S2018 //~ ERROR GTI-S2003
+}

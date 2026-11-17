@@ -1,0 +1,2 @@
+// Invalid: invalid discard contract must reject.
+int value() { return 1; } int main() { value(); return 0; }  //~ ERROR GTI-S2009

@@ -1,0 +1,37 @@
+// Implicit return moves: implicit return movement should exclude fields, structured-binding projections, and immovable values rather than weakening their diagnostics.
+class Owner {
+public:
+  Owner() {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+};
+
+class Holder {
+  Owner value;
+public:
+  Holder() : value(Owner()) {}
+  Owner take() mut { return this.value; }  //~ ERROR GTI-S2003 Returning this value would copy move-only type
+};
+
+struct Pair {
+  Owner value;
+  int marker;
+
+  Pair(Owner input) : value(std::move(input)), marker(0) {}
+};
+
+Owner return_binding() {
+  auto [value, marker] = Pair(Owner());
+  return value;  //~ ERROR GTI-S2018 cannot partially move structured binding
+}
+
+class Pinned {
+public:
+  Pinned() {}
+  Pinned(Pinned& other) = delete;
+  Pinned(Pinned&& other) = delete;
+};
+
+Pinned return_immovable(Pinned value) { return value; }  //~ ERROR GTI-S2003 Cannot return a value of type 'Pinned'
+int main() { return 0; }

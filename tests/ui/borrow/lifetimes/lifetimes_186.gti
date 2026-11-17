@@ -1,0 +1,15 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct View<lifetime a> {
+  int&<a> first; int&<a> second;
+  View(int&<a> left, int&<a> right) : first(left), second(right) {}
+};
+int&<a> choose<lifetime a>(View<a> view, bool first) {
+  if (first) { return view.first; }
+  return view.second;
+}
+int main() {
+  int left = 3; int right = 7;
+  View view{left, right};
+  return choose(view, false) - 7;
+}

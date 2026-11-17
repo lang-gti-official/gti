@@ -1,0 +1,11 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+import std.string;
+enum Reading { ready(int& value), failed(std::string error) };
+bool has_value(Reading& result) {
+  switch (result) {
+    case Reading::ready: return true;
+    case Reading::failed: return false;
+  }
+}
+int main() { return 0; }

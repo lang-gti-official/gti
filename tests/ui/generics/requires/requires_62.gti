@@ -1,0 +1,7 @@
+// General requires: borrow origin must resolve in its query (recovered HIR is not executable) (the C++ analysis continued past the syntax error with recovered-program analysis and also reported its semantic follow-on codes; the check stops at the parse error).
+int main() {
+  static_assert(requires(int& value) {
+    { value } -> int&<other>;  //~ ERROR GTI-P0001
+  });  //~ ERROR GTI-P0001
+  return 0;  //~ ERROR GTI-P0001
+}  //~ ERROR GTI-P0001

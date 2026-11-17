@@ -1,0 +1,7 @@
+// Erasure boundary: lambda-readonly-reborrow-erasure.gti.
+import std.functional;
+int main() {
+  auto observe = [](mut int& source) -> int& { return source; };
+  std::function_ptr<int&(mut int&)> erased{observe};  //~ ERROR GTI-S2093
+  return 0;
+}

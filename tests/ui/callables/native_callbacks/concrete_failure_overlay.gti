@@ -1,0 +1,5 @@
+// Concrete failure overlay: ordinary GTI callable specialization must retain its selected function failure contract beside native specialization.
+//@ check-pass
+int32_t identity(int32_t value) { return value; }
+int32_t invoke<F>(F callback, int32_t value) { return callback(value); }
+int main() { return invoke(identity, 0); }

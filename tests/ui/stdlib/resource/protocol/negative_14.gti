@@ -1,0 +1,10 @@
+// Negative: applications cannot forge the source-defined resource seal.
+import std.resource;
+import std.memory;
+
+int main() {
+  std::process_resource resource{};
+  std::resource_ref<std::process_resource> bound{
+    gti_internal::resource_binding::trusted, resource};  //~ ERROR GTI-S2058
+  return 0;
+}

@@ -1,0 +1,75 @@
+// Optimizer raw context: ordinary raw context fixture must lower.
+//@ check-pass
+mut int global = 4;
+
+int before_raw(mut int& destination, int input) {
+  int result = input + 1;
+  unsafe { mut int* address = &destination; *address = 2147483647; }  //~ WARN GTI-S2096
+  return result;
+}
+
+int after_raw(mut int& destination) {
+  unsafe { mut int* address = &destination; *address = 2147483647; }  //~ WARN GTI-S2096
+  return destination + 1;
+}
+
+int stable_after_raw(mut int& destination, int input) {
+  int copy = input;
+  unsafe { int* address = &destination; *address = 2147483647; }
+  return input + copy;
+}
+
+class Token {
+public:
+  int value;
+  Token(int value) : value(value) {}
+};
+int consume(Token token) { return token.value + 1; }
+int after_owning_argument(int input) {
+  Token token{7};
+  [[discard]] consume(token);
+  return input + 1;
+}
+
+unsafe int declared_step(int input) { return input + 1; }
+unsafe int declared_raw_step(mut int& destination, int input) {
+  unsafe { mut int* address = &destination; *address = 2147483647; }  //~ WARN GTI-S2096
+  return input + 1;
+}
+int through_declared(mut int& destination, int input) {
+  unsafe {
+    if (declared_step(input) != 8) return 2;
+    return declared_raw_step(destination, input);
+  }
+}
+
+int conflicting(mut int& destination, int input) {
+  int result = input + 1;
+  unsafe { mut int* address = &destination; *address = 0; }  //~ WARN GTI-S2096
+  return result;
+}
+
+int unreached(mut int& destination, int input) {
+  int result = input + 1;
+  unsafe { mut int* address = &destination; *address = 0; }  //~ WARN GTI-S2096
+  return result;
+}
+
+int after_call() {
+  global = 4;
+  int result = before_raw(global, 7);
+  return global + result;
+}
+
+int main() {
+  mut int local = 4;
+  int result = before_raw(local, 7);
+  if (result != 8) return 1;
+  if (stable_after_raw(local, 7) != 14) return 2;
+  if (after_owning_argument(7) != 8) return 3;
+  if (through_declared(local, 7) != 8) return 4;
+  int first = conflicting(local, 7);
+  int second = conflicting(local, 2147483647);
+  int changed = after_raw(local);
+  return after_call() + changed + first + second;
+}

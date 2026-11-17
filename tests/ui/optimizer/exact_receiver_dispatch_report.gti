@@ -1,0 +1,33 @@
+// At O3 an interface call on a local of known class is dispatched directly,
+// and a call through a parameter that receives two classes is not. (From
+// optimizer_devirtualization_tests.cpp, testLocalReceiver.)
+//@ snapshot: optimization-report
+//@ opt: O3
+//@ reason: exact-receiver dispatch belongs to the optimizing pipeline
+// CHECK: applied [exact-receiver-dispatch/exact-receiver]
+// CHECK-NOT: applied [exact-receiver-dispatch
+// CHECK: gti-opt: safety operations
+interface Operation { int run(int value); };
+class Increment : public Operation {
+public:
+  Increment() {}
+  int run(int value) override { return value + this.bias; }
+private:
+  int bias = 1;
+};
+class Decrement : public Operation {
+public:
+  Decrement() {}
+  int run(int value) override { return value - 1; }
+};
+int apply(int value) {
+  Increment concrete{};
+  Operation& selected = concrete;
+  return selected.run(value);
+}
+int forward(Operation& operation, int value) { return operation.run(value); }
+int main() {
+  Increment up{};
+  Decrement down{};
+  return apply(40) - 41 + forward(down, 1) + forward(up, -1);
+}

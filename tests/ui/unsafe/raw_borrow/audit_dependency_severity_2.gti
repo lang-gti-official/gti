@@ -1,0 +1,5 @@
+// Audit dependency severity: audit findings inside compiler-trusted library units are not reported to an application by default.
+//@ check-pass
+//@ raw-pointer-audit: strict
+import std.memory;
+int main() { return 0; }

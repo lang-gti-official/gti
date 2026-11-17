@@ -1,0 +1,11 @@
+// Owned callable transport: owned callable transport should reject raw-pointer capture state before HIR and MIR.
+T relay<T>(T value) { return std::move(value); }
+int main() {
+  int value = 1;
+  unsafe {
+    int* raw = &value;  //~ ERROR GTI-S2003
+    auto operation = [raw]() -> int { return 1; };
+    auto escaped = relay(std::move(operation));  //~ ERROR GTI-S2046
+  }
+  return 0;
+}

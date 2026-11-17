@@ -1,0 +1,19 @@
+// General requires: satisfying the nested protocol preserves normal query success.
+//@ check-pass
+[[unsatisfied("Provide an application::registered conformance before dispatch.")]]
+concept registered<T> { int read(T& value); };
+struct Relay<T> {
+  int operator()(T& value) requires registered<T> { return 0; }
+public: Relay() = default;
+};
+
+constexpr bool admission<T>() requires registered<T> { return true; }
+concept dispatchable<T> = admission<T>();
+
+int dispatch<T>(T& value) requires dispatchable<T> { return 0; }
+struct Item { public: Item() = default; };
+
+for concept registered<Item> {
+  int read(Item& value) { return 7; }
+};
+int main() { Item value{}; return dispatch(value); }

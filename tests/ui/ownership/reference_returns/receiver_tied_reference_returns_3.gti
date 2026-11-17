@@ -1,0 +1,27 @@
+// Receiver tied reference returns: reference returns must not escape locals, parameters, or temporary receivers.
+int& escape(int& value) { return value; }
+
+class InvalidReferences {
+  int value = 1;
+
+public:
+  int& local() {
+    int value = 2;
+    return value;  //~ ERROR GTI-S2017
+  }
+
+  int& parameter(int& value) {
+    return value;  //~ ERROR GTI-S2017
+  }
+
+  int& literal() {
+    return 3;  //~ ERROR GTI-S2017
+  }
+public:
+  InvalidReferences() = default;
+};
+
+int main() {
+  int& dangling = InvalidReferences().local();  //~ ERROR GTI-S2017
+  return dangling;
+}

@@ -1,0 +1,24 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept observed<T> {
+  typename element;
+  element<a> get<lifetime a>(T<a> source);
+};
+class Reading {
+public:
+  int& external;
+  Reading(int& owner) : external(owner) {}
+};
+for concept observed<Reading> {
+  using element = int&;
+  int&<a> get<lifetime a>(Reading<a> value) {
+    return value.external;
+  }
+};
+
+int main() {
+  int owner = 7;
+  Reading view{owner};
+  int& result = observed<Reading>::get(view);
+  return result - 7;
+}

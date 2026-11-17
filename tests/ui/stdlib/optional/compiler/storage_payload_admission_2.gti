@@ -1,0 +1,9 @@
+// Storage payload admission: a source wrapper cannot invent its field's retained reference contract.
+import std.optional;
+import std.vector;
+class View {
+  int& source;
+public:
+  View(int& value) : source(value) {}
+};
+int main() { int source = 7; std::optional<View> item{View(source)}; return 0; }  //~ ERROR GTI-S2045

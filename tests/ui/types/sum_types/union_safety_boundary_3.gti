@@ -1,0 +1,6 @@
+// Union safety boundary: native unions should not acquire class behavior or hidden lifecycle.
+union Bad {
+  int value;
+  int read() { unsafe { return this.value; } }  //~ ERROR GTI-S2066
+};
+int main() { return 0; }

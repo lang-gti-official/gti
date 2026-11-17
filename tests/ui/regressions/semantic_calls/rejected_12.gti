@@ -1,0 +1,3 @@
+// Rejected: one causal error without follow-on diagnostics.
+consteval int divide(int value) { return 1 / value; }
+int main() { return divide(0); }  //~ ERROR GTI-S2057

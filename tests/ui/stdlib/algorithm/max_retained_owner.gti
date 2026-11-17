@@ -1,0 +1,12 @@
+// A max_element cursor keeps the vector borrowed across clear().
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { mut std::vector<int> x = {1, 2}; auto best = std::max_element(x.begin(), x.end(), [](int& a, int& b) -> bool { return a < b; }); x.clear(); return *best; }  //~ ERROR GTI-S2017

@@ -1,0 +1,4 @@
+// Diagnostics: invalid transform must fail in semantics before code generation.
+expected<int, int> read() { return unexpected(1); }
+int main() { auto map = [](bool error) -> int { return 1; };
+  /* 😀 */ [[discard]] read().transform_error(map); return 0; }  //~ ERROR GTI-S2003

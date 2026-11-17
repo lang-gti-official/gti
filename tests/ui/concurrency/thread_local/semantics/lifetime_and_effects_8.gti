@@ -1,0 +1,3 @@
+// Lifetime and effects: captured loans retain exact process/TLS origins through hidden same-thread callback effects.
+//@ execution-profile: concurrent
+thread_local mut int value = 1; thread_local mut int other = 2; void modify() { value = 3; } int main() { int& input = value; auto callback = [&input]() -> int { modify(); return input; }; return callback(); }  //~ ERROR GTI-S2045

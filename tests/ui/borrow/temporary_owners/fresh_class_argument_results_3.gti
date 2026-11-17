@@ -1,0 +1,12 @@
+// Fresh class argument results: a fresh assignment result cannot acquire a mutable or escaping reference.
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+int32_t read(Point& value) { return value.digits(); }
+int32_t pair(Point& first, Point& second) {
+  return first.digits() * 100 + second.digits();
+}
+int main() { mut Point target = Point(1, 2); Point next = Point(3, 4); Point& escaped = target = next; return 0; }  //~ ERROR GTI-S2017

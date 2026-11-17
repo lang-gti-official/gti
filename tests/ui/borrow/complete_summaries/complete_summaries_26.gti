@@ -1,0 +1,14 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+
+int read(mut Token& input, mut int& other) {
+  auto& otherRef = other;
+  mut int result = 0;
+  switch (input) {
+  case Token::item(auto& item): result = otherRef; result = item; break;
+  case Token::empty: result = otherRef; break;
+  }
+  return result + other;
+}
+int main() { mut Token value = Token::item(7); mut int other = 1; return read(value, other); }

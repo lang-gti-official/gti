@@ -1,0 +1,4 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: earlier-body.
+//@ raw-pointer-audit: strict
+const int* dangling() { int local = 1; return &local; }
+int main() { auto pointer = dangling(); unsafe { return *pointer; } }  //~ ERROR GTI-S2102

@@ -1,0 +1,44 @@
+// Raw query budget: rejected with GTI-S2103.
+//@ analyze-fail
+//@ raw-pointer-audit: strict
+const T* relay39<T>(const T* pointer) { return pointer; }
+const T* relay38<T>(const T* pointer) { return relay39<T>(pointer); }
+const T* relay37<T>(const T* pointer) { return relay38<T>(pointer); }
+const T* relay36<T>(const T* pointer) { return relay37<T>(pointer); }
+const T* relay35<T>(const T* pointer) { return relay36<T>(pointer); }
+const T* relay34<T>(const T* pointer) { return relay35<T>(pointer); }
+const T* relay33<T>(const T* pointer) { return relay34<T>(pointer); }
+const T* relay32<T>(const T* pointer) { return relay33<T>(pointer); }
+const T* relay31<T>(const T* pointer) { return relay32<T>(pointer); }
+const T* relay30<T>(const T* pointer) { return relay31<T>(pointer); }
+const T* relay29<T>(const T* pointer) { return relay30<T>(pointer); }
+const T* relay28<T>(const T* pointer) { return relay29<T>(pointer); }
+const T* relay27<T>(const T* pointer) { return relay28<T>(pointer); }
+const T* relay26<T>(const T* pointer) { return relay27<T>(pointer); }
+const T* relay25<T>(const T* pointer) { return relay26<T>(pointer); }
+const T* relay24<T>(const T* pointer) { return relay25<T>(pointer); }
+const T* relay23<T>(const T* pointer) { return relay24<T>(pointer); }
+const T* relay22<T>(const T* pointer) { return relay23<T>(pointer); }
+const T* relay21<T>(const T* pointer) { return relay22<T>(pointer); }
+const T* relay20<T>(const T* pointer) { return relay21<T>(pointer); }
+const T* relay19<T>(const T* pointer) { return relay20<T>(pointer); }
+const T* relay18<T>(const T* pointer) { return relay19<T>(pointer); }
+const T* relay17<T>(const T* pointer) { return relay18<T>(pointer); }
+const T* relay16<T>(const T* pointer) { return relay17<T>(pointer); }
+const T* relay15<T>(const T* pointer) { return relay16<T>(pointer); }
+const T* relay14<T>(const T* pointer) { return relay15<T>(pointer); }
+const T* relay13<T>(const T* pointer) { return relay14<T>(pointer); }
+const T* relay12<T>(const T* pointer) { return relay13<T>(pointer); }
+const T* relay11<T>(const T* pointer) { return relay12<T>(pointer); }
+const T* relay10<T>(const T* pointer) { return relay11<T>(pointer); }
+const T* relay9<T>(const T* pointer) { return relay10<T>(pointer); }
+const T* relay8<T>(const T* pointer) { return relay9<T>(pointer); }
+const T* relay7<T>(const T* pointer) { return relay8<T>(pointer); }
+const T* relay6<T>(const T* pointer) { return relay7<T>(pointer); }
+const T* relay5<T>(const T* pointer) { return relay6<T>(pointer); }
+const T* relay4<T>(const T* pointer) { return relay5<T>(pointer); }
+const T* relay3<T>(const T* pointer) { return relay4<T>(pointer); }
+const T* relay2<T>(const T* pointer) { return relay3<T>(pointer); }
+const T* relay1<T>(const T* pointer) { return relay2<T>(pointer); }
+const T* relay0<T>(const T* pointer) { return relay1<T>(pointer); }
+int main() { int value = 7; const int* pointer = relay0<int>(&value); unsafe { return *pointer - 7; } }  //~ ERROR GTI-S2103

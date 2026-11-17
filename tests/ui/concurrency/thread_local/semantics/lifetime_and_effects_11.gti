@@ -1,0 +1,4 @@
+// Lifetime and effects: a proved shared last-use endpoint precedes a hidden storage mutation.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1; void modify() { value = 2; } int main() { int& borrowed = value; int copied = borrowed; modify(); return copied; }

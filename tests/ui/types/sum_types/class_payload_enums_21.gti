@@ -1,0 +1,12 @@
+// Class payload enums: an owning payload enum is an ordinary success alternative of the source result class.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int main() {
+  expected<holder, int32_t> result = holder::none;
+  return 0;
+}

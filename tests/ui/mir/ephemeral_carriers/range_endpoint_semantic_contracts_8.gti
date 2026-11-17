@@ -1,0 +1,19 @@
+// Range endpoint semantic contracts: ordinary readonly scalar ranges preserve default, virtual and borrowed-reference endpoints.
+//@ check-pass
+class Endpoint { public: Endpoint() {} };
+class ReadCursor {
+  int& number;
+  mut int position = 0;
+public:
+  ReadCursor(int& number) : number(number) {}
+  int& operator*() { return this.number; }
+  bool operator!=(Endpoint endpoint) { return this.position < 1; }
+  void operator++() mut { this.position++; }
+};
+class ReadRange {
+  int number = 1;
+  Endpoint terminal{};
+public:
+  ReadRange() {}
+  ReadCursor begin() { return ReadCursor(this.number); }
+Endpoint end(int ignored = 0) { return Endpoint(); }}; int main() { ReadRange source{}; mut int total = 0; for (auto& number : source) { total += number; } return total - 1; }

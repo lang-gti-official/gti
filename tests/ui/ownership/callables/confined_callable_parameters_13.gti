@@ -1,0 +1,9 @@
+// Confined callable parameters: ordinary owned forwarding must not silently consume its source.
+void discard<Operation>(Operation operation) {}
+void outer<Operation>(Operation operation) { discard(operation); }
+
+int main() {
+  auto operation = [](int value) -> void {};
+  outer(operation);  //~ ERROR GTI-S2046
+  return 0;
+}

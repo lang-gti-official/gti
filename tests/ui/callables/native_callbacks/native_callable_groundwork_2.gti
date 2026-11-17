@@ -1,0 +1,7 @@
+// Native callable groundwork: foreign-local-invoke.gti must retain a verified native indirect invocation.
+//@ check-pass
+using Transform = (int32_t) -> int32_t;
+int main() {
+  Transform callback = nullptr;
+  unsafe { return callback(7); }
+}

@@ -1,0 +1,2 @@
+// Recursive payload composition: inline enum cycles reject with source diagnostics before ownership queries or executable lowering.
+enum First { item(Second value) }; enum Second { item(First value) }; int main() { return 0; }  //~ ERROR GTI-S2067 //~ ERROR GTI-S2067

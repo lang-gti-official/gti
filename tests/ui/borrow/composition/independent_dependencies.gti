@@ -1,0 +1,18 @@
+// Independent dependencies: user-defined two-owner carrier should pass complete MIR lowering.
+//@ check-pass
+struct View {
+  int& first;
+  int& second;
+  View(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+};
+View relay(View value) { return value; }
+View<a> factory<lifetime a>(int&<a> first, int&<a> second) { return View(first, second); }
+View<a> same_owner<lifetime a>(int&<a> first, int& unused) { return View(first, first); }
+int main() {
+  int a = 20; int b = 22;
+  View view{a, b};
+  auto copy = view;
+  auto repeated = same_owner(a, b);
+  return copy.sum() + repeated.sum() - 82;
+}

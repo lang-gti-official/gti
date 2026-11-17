@@ -1,0 +1,5 @@
+// Lifetimes: rejected with GTI-S2127.
+enum Link<lifetime a> { value(int&<a> item) };
+int&<static> select<lifetime a>(Link<a>& link) {
+  switch (link) { case Link<a>::value(auto& payload): return payload; }  //~ ERROR GTI-S2127
+}

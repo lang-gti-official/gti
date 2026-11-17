@@ -1,0 +1,5 @@
+// Conversion operators: rejected with GTI-P0001.
+struct Ordering {
+  constexpr implicit operator int() { return 3; }  //~ ERROR GTI-P0001
+};
+int main() { return 0; }

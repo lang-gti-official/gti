@@ -1,0 +1,10 @@
+// Persistent storage authority: an ended loan admits the persistent-storage access.
+//@ check-pass
+mut int global = 1;
+void bump() { global = global + 1; }
+int main() {
+  int& borrowed = global;
+  int copy = borrowed;
+  bump();
+  return copy;
+}

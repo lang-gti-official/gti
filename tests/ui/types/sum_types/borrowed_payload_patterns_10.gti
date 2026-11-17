@@ -1,0 +1,19 @@
+// Borrowed payload patterns: a payload borrow cannot outlive a local enum.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class data { empty, some(resource item) };
+
+resource& escape() {  //~ ERROR GTI-S2017
+  data value = data::some(resource());
+  switch (value) {
+    case data::some(auto& item): return item;
+    default: while (true) {}
+  }
+}

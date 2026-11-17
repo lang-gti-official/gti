@@ -1,0 +1,21 @@
+// Parameter payload reference returns: a cleanup-free enum payload is returned by reference.
+//@ check-pass
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+enum class paint { coat(wrap shade, int32_t layers) };
+wrap& shade(paint& value) {
+  switch (value) {
+  case paint::coat(auto& inner, auto& layers): return inner;
+  }
+}
+int main() { paint p = paint::coat(wrap::two(5), 1); wrap& s = shade(p); return 0; }

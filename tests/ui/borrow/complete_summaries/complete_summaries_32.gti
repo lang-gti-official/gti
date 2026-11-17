@@ -1,0 +1,4 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Token { empty, item(int value) };
+void replace(mut Token& value) { value = Token::item(9); } Token unknown() { mut auto value = Token::empty; replace(value); return value; } int main() { return 0; }

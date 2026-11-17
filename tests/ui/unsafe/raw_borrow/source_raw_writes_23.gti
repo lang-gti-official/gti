@@ -1,0 +1,10 @@
+// Source raw writes: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+struct Holder { mut const int* pointer = nullptr;  public: Holder() = default; };
+int main() { int witness = 7; mut Holder changed{}; mut Holder untouched{.pointer = &witness};
+  mut auto address = &changed;
+  auto writer = [address]() -> void { int gone = 1; unsafe { address->pointer = &gone; } };
+  address = &untouched; writer();
+  unsafe { return std::assume_ref(untouched.pointer, witness); } }

@@ -42,11 +42,12 @@ enum class Mode {
 [[nodiscard]] bool modeFails(Mode mode);
 
 // Output a test asserts besides diagnostics and run results (`//@ snapshot:`).
-enum class Snapshot { Mir, LlvmIr, Diagnostics, Format };
+enum class Snapshot { Mir, LlvmIr, Diagnostics, Format, OptimizationReport };
 
 [[nodiscard]] const char *snapshotName(Snapshot snapshot);
 // The sibling expected file of a blessed snapshot (`name.mir`, `name.stderr`,
-// `name.formatted`); empty for llvm-ir, which is checked by patterns only.
+// `name.formatted`); empty for llvm-ir and optimization-report, which are
+// checked by patterns only.
 [[nodiscard]] std::string snapshotExtension(Snapshot snapshot);
 
 // One FileCheck-style `// CHECK:` line.
@@ -57,7 +58,8 @@ struct CheckPattern {
   int writtenLine = 0;
 };
 
-enum class Severity { Error, Warning };
+// Information and Hint are LSP publications (`//~ INFO`, `//~ HINT`).
+enum class Severity { Error, Warning, Info, Hint };
 
 [[nodiscard]] const char *severityName(Severity severity);
 
@@ -102,6 +104,8 @@ struct RunSpec {
   std::optional<int> exitSignal;
   // `//@ env: NAME=value`: added to the program's environment.
   std::vector<std::pair<std::string, std::string>> env;
+  // `//@ stdout-closed`: stdout is a pipe whose reader closed before launch.
+  bool stdoutClosed = false;
 };
 
 // The signal number of a `SIGABRT`-style name, or nullopt.
@@ -156,6 +160,7 @@ struct TestFile {
   std::vector<std::string> args;
   std::optional<std::string> stdinText;
   std::vector<std::pair<std::string, std::string>> env;
+  bool stdoutClosed = false;
   bool optimize = false; // `//@ opt: O3`
   // `//@ opt:` was written, so a global `--opt`/GTI_TEST_OPT leaves it.
   bool optPinned = false;
@@ -166,6 +171,11 @@ struct TestFile {
   // (check and analyze modes; nothing is linked).
   std::string target;
   bool slow = false;
+  // `//@ no-prelude` (analyze modes): analyse without the standard prelude.
+  bool noPrelude = false;
+  // The only problem is a fail mode without `//~ ERROR` annotations, which
+  // `--bless` may seed.
+  bool unannotatedFailMode = false;
   // `//@ format-stable`: formatting the test is idempotent and the formatted
   // program also checks (check-pass tests without annotations only).
   bool formatStable = false;
@@ -205,6 +215,10 @@ struct TestFile {
   // `//@ raw-pointer-audit:`, in that order. A worker keeps one server per
   // distinct list.
   std::vector<std::string> serverArguments;
+  // `//@ format-options: tabSize=4 insertSpaces=true`: the FormattingOptions
+  // of `formatting` requests (default tabSize=2 insertSpaces=true); values
+  // are integers, true/false or strings.
+  std::vector<std::pair<std::string, std::string>> formatOptions;
   // `//@ disk-only: lib.gti ...`: sections written beside the test but not
   // opened as documents.
   std::vector<std::string> diskOnly;

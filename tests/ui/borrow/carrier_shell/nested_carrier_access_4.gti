@@ -1,0 +1,42 @@
+// Nested carrier access: adapter retains shell and owner: Device moved = std::move(device);.
+class CellView {
+  mut int& item;
+public:
+  CellView(mut int& source) : item(source) {}
+  mut int& operator[](int index) mut { return this.item; }
+  int read() { return this.item; }
+};
+class Device {
+  mut CellView view;
+  mut int offset = 0;
+  mut int local = 0;
+public:
+  Device(CellView source) : view(std::move(source)) {}
+  void write(int value) mut {
+    mut CellView scratch{this.local};
+    scratch[0] = value;
+    this.view[this.offset] = value;
+  }
+  int read() { return this.view.read(); }
+};
+class Adapter {
+  mut Device& target;
+public:
+  Adapter(mut Device& source) : target(source) {}
+  void write(int value) mut { this.target.write(value); }
+  int read() { return this.target.read(); }
+};
+int main() {
+  mut int value = 1;
+  {
+    mut Device device{CellView(value)};
+    {
+      mut Adapter adapter{device};
+Device moved = std::move(device);
+      adapter.write(7);
+      if (adapter.read() != 7) { return 1; }
+    }
+    device.write(8);  //~ ERROR GTI-S2018
+  }
+  return value == 8 ? 0 : 2;
+}

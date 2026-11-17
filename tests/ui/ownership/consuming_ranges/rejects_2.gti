@@ -1,0 +1,9 @@
+// Rejects: the consumed source cannot be reused.
+class Source {
+  mut int count = 0;
+public:
+  Source() {}
+  bool has_next() { return this.count < 3; }
+  int take_next() mut { this.count++; return this.count; }
+};
+int main() { Source s{}; for (auto v : std::move(s)) {} return s.has_next(); }  //~ ERROR GTI-S2018 //~ ERROR GTI-S2003

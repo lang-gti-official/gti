@@ -1,0 +1,8 @@
+// Audit output parity: the program is accepted.
+//@ check-pass
+extern "C" { int32_t native_read(const int32_t* address); }
+int32_t quotient(int32_t divisor) { return 42 / divisor; }
+int main() {
+  int32_t value = 7;
+  unsafe { return quotient(native_read(&value)); }
+}

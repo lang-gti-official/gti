@@ -1,0 +1,3 @@
+// Local scalar borrow initialization: initially available reference parameter remains borrowable.
+//@ check-pass
+int read(int& value) { int& alias = value; return alias; } int main() { int value = 42; return read(value) - 42; }

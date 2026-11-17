@@ -1,0 +1,28 @@
+// A closed program rejects a missing GTI body (GTI-S2106) before native
+// linking, for a direct build and a project check; a bodyless member of an
+// unused generic, or one a specialization supplies, is not missing. (From
+// missing_definition_test.py; the LSP half is tests/lsp/diagnostics/missing_definition.jsonl.)
+$ gti f7-undefined-user-function.gti --cxx no-native-compiler --progress=never -o f7-undefined-user-function
+? 65
+stderr: GTI-S2106
+stderr: has no definition
+!stderr: GTI-B0001
+!stderr: native C++ compiler
+$ gti declaration-only-owner.gti --cxx no-native-compiler --progress=never -o declaration-only-owner
+? 65
+stderr: GTI-S2106
+stderr: has no definition
+!stderr: GTI-B0001
+!stderr: native C++ compiler
+$ cd project
+$ gti check --progress=never
+? 65
+stderr: GTI-S2106
+$ cp ../variants/unused_mapper.gti src/main.gti
+$ gti check --progress=never
+$ gti src/main.gti --progress=never -o ../unused_mapper
+$ ../unused_mapper
+$ cp ../variants/specialized_mapper.gti src/main.gti
+$ gti check --progress=never
+$ gti src/main.gti --progress=never -o ../specialized_mapper
+$ ../specialized_mapper

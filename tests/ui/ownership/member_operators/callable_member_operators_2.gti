@@ -1,0 +1,28 @@
+// Callable member operators: call operators should enforce access, receiver mutability, and exact argument matching.
+class PrivateCallable {
+  int operator()(int value) { return value; }
+public:
+  PrivateCallable() = default;
+};
+class MutableCallable {
+public:
+  int operator()(int value) mut { return value; }
+public:
+  MutableCallable() = default;
+};
+class ExactCallable {
+public:
+  int operator()(int value) { return value; }
+public:
+  ExactCallable() = default;
+};
+int main() {
+  PrivateCallable hidden = PrivateCallable();
+  MutableCallable fixed = MutableCallable();
+  ExactCallable exact = ExactCallable();
+  int private_value = hidden(1);  //~ ERROR GTI-S2007
+  int mutable_value = fixed(1);  //~ ERROR GTI-S2000
+  int wrong_type = exact(true);  //~ ERROR GTI-S2022
+  int explicit_types = exact<int>(1);  //~ ERROR GTI-S2022
+  return private_value + mutable_value + wrong_type + explicit_types;
+}

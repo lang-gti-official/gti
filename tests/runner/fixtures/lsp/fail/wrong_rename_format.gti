@@ -1,0 +1,12 @@
+// Wrong prepare-rename and quoted formatting expectations are reported.
+//@ prepare-rename @inside: @other
+//@ prepare-rename @inside: none
+//@ prepare-rename @inside: @start wrong
+//@ format-options: tabSize=4
+//@ formatting: "{\n  return value * 2;"
+//@ formatting: "unterminated
+int twice(int value) { return value * 2; }
+int main() {
+  int /*@other*/total = 1;
+  return /*@start*/to/*^inside*/tal + twice(1) - 3;
+}

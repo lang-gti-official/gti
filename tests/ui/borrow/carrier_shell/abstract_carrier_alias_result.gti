@@ -1,0 +1,22 @@
+// Abstract carrier alias result: mapped results through entry carrier aliases preserve external owner.
+//@ check-pass
+class SelectedWindow<lifetime a> {
+  int&<a> selected_value;
+public:
+  SelectedWindow(int&<a> source) : selected_value(source) {}
+  int read() { return this.selected_value; }
+};
+class Window<lifetime a> {
+  int&<a> value;
+public:
+  Window(int&<a> source) : value(source) {}
+  // The signature names the stored region, not the receiver shell.
+  SelectedWindow<a> select() { return SelectedWindow<a>(this.value); }
+  int read() { return this.value; }
+};
+int inspect(Window input) {
+  Window& alias = input;
+  SelectedWindow selected = alias.select();
+  return selected.read();
+}
+int main() { int owner = 7; return inspect(Window(owner)) - 7; }

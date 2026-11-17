@@ -1,0 +1,24 @@
+// Positive: typed macros lower through HIR/MIR.
+//@ check-pass
+import std.assert;
+import std.string;
+struct Value { int number = 7;  public: Value() = default; };
+namespace policy { constexpr bool enabled = false; }
+int impossible() { std::assert!(false); }
+namespace app {
+  void sink(Value& value) { std::assert!(value.number == 7); }
+  #macro conditional(bool enabled, Value value) {
+    if (enabled) { sink(value); }
+  }
+}
+int main() {
+  Value value{};
+  app::conditional!(true, value);
+  std::assert!(true, "{}", std::string("unused"));
+  std::string owner{"owned"};
+  if (policy::enabled) { std::string consumed = std::move(owner); }
+  std::assert!(!owner.empty());
+  std::string_view held = owner.view();
+  std::assert!(held == "owned");
+  return 0;
+}

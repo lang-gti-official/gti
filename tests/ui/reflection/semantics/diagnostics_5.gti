@@ -1,0 +1,3 @@
+// Diagnostics: @compiler_type is rejected outside the trusted unit.
+@compiler_type("meta_list") struct mine<Elements...> {};  //~ ERROR GTI-S2049
+int main() { return 0; }

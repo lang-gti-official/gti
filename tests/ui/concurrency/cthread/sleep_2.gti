@@ -1,0 +1,3 @@
+// Sleep: raw sleep requires the caller's explicit unsafe acknowledgement.
+import std.cthread;
+int main() { std::timespec* pointer = nullptr; return std::thrd_sleep(pointer, pointer); }  //~ ERROR GTI-S2055

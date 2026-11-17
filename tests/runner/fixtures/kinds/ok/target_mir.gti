@@ -1,0 +1,6 @@
+// A mir snapshot of an analysis for another target.
+//@ target: x86_64-pc-windows-msvc
+//@ snapshot: mir
+// CHECK: function main
+// CHECK: operation=sub
+int main() { return 3 - 3; }

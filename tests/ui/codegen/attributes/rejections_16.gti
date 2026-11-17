@@ -1,0 +1,2 @@
+// Rejections: arguments and unsupported annotation placements are rejected.
+[[cold(1)]] int f() { return 0; }  //~ ERROR GTI-P0001

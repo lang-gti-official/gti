@@ -1,0 +1,11 @@
+// Diagnostics: mapper move captures retain ordinary source-availability checks.
+expected<int, int> read() { return unexpected(1); }
+
+struct Owner { ~Owner() {}  public: Owner() = default; };
+int main() {
+  Owner owner{};
+  auto result = read().transform_error(
+      [captured = std::move(owner)](int error) -> int { return error; });
+  auto invalid = [again = std::move(owner)]() -> int { return 1; };  //~ ERROR GTI-S2018
+  return result.error() + invalid();
+}

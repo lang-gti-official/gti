@@ -1,0 +1,1 @@
+Convert eight more Python LSP scripts (code actions, recovery, lifetimes, removed includes, conformance imports) into `gti-test` marker tests and transcripts, including stale quick-fix transcripts, deleting their CTest entries and registry lines.

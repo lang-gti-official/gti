@@ -1,0 +1,19 @@
+// Dispatch per use witnesses: an exact whole-binding Move into its unique fresh local has bounded admission without by-value or replacement support.
+//@ build-pass
+//@ slow
+    mut int destroyed = 0;
+    class P {
+      int value;
+    public:
+      P(int input) : value(input) {}
+      virtual int read() { return this.value; }
+      ~P() { destroyed += 1; }
+    };
+    int main() {
+      {
+        P original{7};
+        P transferred = std::move(original);
+        if (transferred.read() != 7) { return 1; }
+      }
+      return destroyed == 1 ? 0 : 2;
+    }

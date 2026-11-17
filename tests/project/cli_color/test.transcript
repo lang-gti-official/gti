@@ -1,0 +1,38 @@
+// Colour: --color=always styles diagnostics and summaries and changes
+// nothing else; auto colours a terminal unless NO_COLOR is set or TERM is
+// dumb; --color=never wins. (From cli_color_test.py; stdout piped with
+// stderr on a terminal is not expressible here.)
+$ gti warning.gti --emit-mir -o out.mir --progress=never
+stderr: warning[GTI-S2096]
+stdout: Diagnostics: 0 errors, 1 warning
+!stderr: \e
+!stdout: \e
+$ gti warning.gti --emit-mir -o out.mir --progress=never --color=always
+stderr: \e[1;33mwarning[GTI-S2096]\e[0m
+stderr: \e[1;36mhelp:
+stderr: \e[1;33m^
+stdout: \e[1;32mEmitted
+$ gti warning.gti --emit-mir -o out.mir --progress=never --color=always -Wno-unused-mut
+stdout: \e[1;32mDiagnostics: 0 errors, 0 warnings
+$ gti --color=invalid
+? 64
+stderr: --color
+unset NO_COLOR
+env TERM=xterm-256color
+$ tty: gti warning.gti --emit-mir -o out.mir --progress=never
+stdout: \e[1;33mwarning[GTI-S2096]\e[0m
+$ tty: gti warning.gti --emit-mir -o out.mir --progress=never --color=never
+!stdout: \e
+$ gti warning.gti --emit-mir -o out.mir --progress=never
+!stderr: \e
+env NO_COLOR=1
+$ tty: gti warning.gti --emit-mir -o out.mir --progress=never
+!stdout: \e
+env NO_COLOR=
+$ tty: gti warning.gti --emit-mir -o out.mir --progress=never
+stdout: \e[1;33mwarning[GTI-S2096]
+env TERM=dumb
+$ tty: gti warning.gti --emit-mir -o out.mir --progress=never
+!stdout: \e
+$ gti warning.gti --emit-mir -o out.mir --progress=never --color always
+stderr: \e[1;33mwarning[GTI-S2096]

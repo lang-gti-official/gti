@@ -1,0 +1,40 @@
+// Accessor returned text carriers: carriers of accessor-returned views construct verified MIR.
+//@ check-pass
+import std.string;
+import std.optional;
+class Box {
+public:
+  std::string_view text;
+  Box(std::string_view text) : text(text) {}
+  std::string_view& get() { return this.text; }
+};
+class Cursor {
+  std::string_view& view;
+public:
+  Cursor(std::string_view& view) : view(view) {}
+  std::size_t size() { return this.view.size(); }
+};
+Cursor open(std::string_view& view) { return Cursor(view); }
+int main() {
+  std::string owner = std::string("owned");
+  Box owned = Box(owner.view());
+  Box literal = Box("literal");
+  auto first = owned.get().begin();
+  auto second = literal.get().begin();
+  std::string_view& named = literal.get();
+  auto third = named.begin();
+  Cursor cursor = open(owned.get());
+  Cursor directOwned = Cursor(owned.get());
+  Cursor directLiteral = Cursor(literal.get());
+  Cursor directNamed = Cursor(named);
+  std::optional<std::string_view> maybe =
+      std::optional<std::string_view>(owner.view());
+  auto fourth = maybe.value().begin();
+  if (*first != 'o' || *second != 'l' || *third != 'l' ||
+      cursor.size() != std::size_t(5) ||
+      directOwned.size() != std::size_t(5) ||
+      directLiteral.size() != std::size_t(7) ||
+      directNamed.size() != std::size_t(7) || *fourth != 'o')
+    return 1;
+  return 0;
+}

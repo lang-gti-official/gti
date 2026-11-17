@@ -1,0 +1,44 @@
+// Pipeline: all expected ergonomics shapes lower.
+//@ check-pass
+expected<int, int> read(bool fail) {
+  if (fail) { return unexpected(3); }
+  return 7;
+}
+expected<void, int> perform(bool fail) {
+  if (fail) { return unexpected(3); }
+  return;
+}
+int increment(int value) { return value + 1; }
+void observe(int value) {}
+int fresh() { return 11; }
+void finish() {}
+expected<int, int> next(int value) { return value + 2; }
+expected<void, int> done(int value) { return; }
+expected<int, int> start() { return 13; }
+expected<void, int> stop() { return; }
+T required<T, E>(expected<T, E> value) {
+  return std::move(value).expect("required value");
+}
+int main() {
+  auto first = read(false).transform(increment).and_then(next);
+  auto failed = read(true).transform(increment).and_then(next);
+  auto void_output = read(false).transform(observe);
+  auto void_input = perform(false).transform(fresh);
+  auto void_both = perform(false).transform(finish);
+  auto void_chain = read(false).and_then(done);
+  auto from_void = perform(false).and_then(start);
+  auto all_void = perform(false).and_then(stop);
+  auto lambda = read(false).transform([](int value) -> int { return value + 1; });
+  auto chained_lambda = read(false).and_then([](int value) -> expected<int, int> {
+    return value + 2;
+  });
+  std::move(void_output).expect("observe");
+  std::move(void_both).expect("finish");
+  std::move(void_chain).expect("done");
+  std::move(all_void).expect("stop");
+  return required<int, int>(std::move(first)) + failed.error() +
+      std::move(void_input).expect("fresh") +
+      std::move(from_void).expect("start") +
+      std::move(lambda).expect("lambda") +
+      std::move(chained_lambda).expect("chain") - 54;
+}

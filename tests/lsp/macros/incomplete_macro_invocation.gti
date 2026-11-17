@@ -1,0 +1,4 @@
+// An incomplete macro invocation is an unbalanced-group error.
+// (From deferred_assertion_lsp_test.py.)
+import std.assert;
+int main() { /*😀*/ std::assert!(; return 0; }  //~ ERROR GTI-I0016

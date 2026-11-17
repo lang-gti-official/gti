@@ -1,0 +1,16 @@
+// Class payload enums: array copyability must fold the owning enum's move-only payload.
+import std.memory;
+class resource {
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+
+int main() {
+  holder values[2] = {holder::one(resource()), holder::none};
+  auto copied = values;  //~ ERROR GTI-S2003
+  return 0;
+}

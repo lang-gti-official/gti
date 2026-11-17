@@ -1,0 +1,9 @@
+// Temporary argument borrows: an explicitly moved local should bind a read-only parameter as a call-scoped temporary.
+//@ check-pass
+class Report { public: Report() {} };
+void inspect(Report& report) {}
+int main() {
+  mut Report report = Report();  //~ WARN GTI-S2096
+  inspect(std::move(report));
+  return 0;
+}

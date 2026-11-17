@@ -1,0 +1,3 @@
+// Boundaries: permission ends at closing brace.
+unsafe int raw() { return 7; }
+int main() { auto x = unsafe { raw() }; return raw(); }  //~ ERROR GTI-S2055

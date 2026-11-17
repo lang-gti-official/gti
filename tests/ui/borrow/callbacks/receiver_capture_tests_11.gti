@@ -1,0 +1,6 @@
+// Receiver capture tests: rejected with GTI-S2045.
+class C { int n = 0; public: C() = default;
+        int run() { auto f = [&this]() -> int {
+          auto inner = [&this]() -> int { return this.n; }; return inner();  //~ ERROR GTI-S2045
+        }; return f(); }
+      }; int main() { C c{}; return c.run(); }

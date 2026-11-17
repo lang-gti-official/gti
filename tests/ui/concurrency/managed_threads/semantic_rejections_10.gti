@@ -1,0 +1,8 @@
+// Semantic rejections: raw-thread-result.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  mut std::thread_result<int32_t*> worker =  //~ WARN GTI-S2096 //~ ERROR GTI-S2084
+      std::thread_result<int32_t*>();
+  return 0;
+}

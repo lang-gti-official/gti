@@ -1,0 +1,7 @@
+// Native callable groundwork: foreign callback values retain exact shapes through fields and ordinary forwarding without inventing a GTI adapter target.
+//@ check-pass
+using Transform = (int32_t) -> int32_t;
+[[c_abi]] struct DispatchTable { Transform transform; };
+Transform select_transform(DispatchTable table) { return table.transform; }
+Transform forward_transform(Transform value) { return value; }
+int main() { Transform inert = nullptr; return inert == nullptr ? 0 : 1; }

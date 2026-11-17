@@ -1,0 +1,10 @@
+// Storage payload mir admission: the trusted-storage mutation fixture starts as valid MIR.
+//@ check-pass
+import std.optional;
+import std.vector;
+struct Payload { int value = 7;  public: Payload() = default; };
+int main() {
+  std::optional<Payload> optional{};
+  std::vector<Payload> prefix{};
+  return 0;
+}

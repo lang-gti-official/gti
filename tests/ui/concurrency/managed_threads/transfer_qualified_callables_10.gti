@@ -1,0 +1,9 @@
+// Transfer qualified callables: replacement cannot weaken an erased transfer contract.
+//@ execution-profile: concurrent
+import std.functional;
+[[no_transfer]] struct Task { Task() = default; int operator()() mut { return 42; } };
+int main() {
+  mut std::transfer_function<int() mut> callback{};
+  callback.replace(Task());  //~ ERROR GTI-S2029
+  return 0;
+}

@@ -1,0 +1,28 @@
+// Shared child of exclusive carrier: shared child retains exclusive carrier dependency.
+//@ check-pass
+class ReadView {
+  int& value;
+public:
+  ReadView(int& source) : value(source) {}
+  int read() { return this.value; }
+};
+class WriteView {
+  mut int& value;
+public:
+  WriteView(mut int& source) : value(source) {}
+  ReadView inspect() { return ReadView(this.value); }
+  void set(int n) mut { mut int& slot = this.value; slot = n; }
+};
+int main() {
+  mut int owner = 4;
+  {
+    mut WriteView writer{owner};
+    {
+      ReadView reader = writer.inspect();
+      ReadView copy = reader;
+      if (copy.read() != 4 || reader.read() != 4) { return 1; }
+    }
+    writer.set(7);
+  }
+  return owner == 7 ? 0 : 2;
+}

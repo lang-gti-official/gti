@@ -1,0 +1,5 @@
+// General requires: inline source concepts validate the full concrete requirement diagnostic.
+concept reads<T> = requires(T& value) { { value.read() } -> int; };
+struct Wrong { bool read() { return true; }  public: Wrong() = default; };
+int read<reads T>(T& value) { return value.read(); }
+int main() { Wrong value; return read(value); }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2029

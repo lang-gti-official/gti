@@ -1,0 +1,12 @@
+// Raw accesses: a raw write overlapping a live checked loan is a MIR finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+int main() {
+  mut int value = 7;
+  unsafe {
+    auto pointer = &value;
+    int& loan = value;
+    *pointer = 9;  //~ WARN GTI-S2102
+    return loan;
+  }
+}

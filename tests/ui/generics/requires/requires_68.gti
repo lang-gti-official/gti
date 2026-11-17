@@ -1,0 +1,24 @@
+// General requires: owned-result queries cannot erase selected call/operator borrows.
+//@ check-pass
+int&<a> reference<lifetime a>(int&<a> value) { return value; }
+class Borrower {
+  int value = 1;
+public:
+  int&<a> operator()<lifetime a>(int&<a> input) { return input; }
+  int& operator*() { return this.value; }
+  int& operator[](int index) { return this.value; }
+public:
+  Borrower() = default;
+};
+int main() {
+  static_assert(!(requires(int& input) { { reference(input) } -> int; }));
+  static_assert(!(requires(Borrower& f, int& input) { { f(input) } -> int; }));
+  static_assert(!(requires(Borrower& f, int& input) { { (f(input)) } -> int; }));
+  static_assert(!(requires(Borrower& f) { { *f } -> int; }));
+  static_assert(!(requires(Borrower& f, int index) { { f[index] } -> int; }));
+  static_assert(requires(Borrower& f, int&<input> input) {
+    { f(input) } -> int&<input>;
+  });
+  static_assert(requires(Borrower&<f> f) { { *f } -> int&<f>; });
+  return 0;
+}

@@ -1,0 +1,19 @@
+// General requires: declaration queries cannot capture caller locals or generic shadows.
+//@ check-pass
+import std.meta;
+namespace definition {
+  using Chosen = int;
+  int leaf<T>() requires std::integral<T> { return 1; }
+  concept available<T> = requires { { leaf<Chosen>() } -> int; };
+  constexpr bool arbitrary<T>() {
+    return std::meta::is_integral<T>() && (1 + 1 == 2);
+  }
+  concept predicate<T> = arbitrary<Chosen>();
+  int use<T>() requires available<T> && predicate<T> { return 1; }
+}
+int relay<Chosen>() {
+  int leaf = 9;
+  int arbitrary = 3;
+  return definition::use<int>() + leaf + arbitrary - 12;
+}
+int main() { return relay<bool>() - 1; }

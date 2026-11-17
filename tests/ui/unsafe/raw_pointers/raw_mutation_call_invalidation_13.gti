@@ -1,0 +1,12 @@
+// Raw mutation call invalidation: storage lifetime mutation must invalidate raw addresses across source wrappers.
+//@ raw-pointer-audit: strict
+import std.memory;
+int main() {
+  std::allocator allocator{};
+  mut auto slots = allocator.try_storage<int>(std::size_t(1)).expect("allocate");
+  mut auto other = allocator.try_storage<int>(std::size_t(1)).expect("allocate");
+  [[discard]] slots.emplace(std::size_t(0), 7);  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102
+  const int* address = &slots.get(std::size_t(0));  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102 //~ ERROR GTI-S2103 //~ ERROR GTI-S2102
+slots.destroy(std::size_t(0)); [[discard]] slots.emplace(std::size_t(0), 9);  //~ ERROR GTI-S2102 //~ ERROR GTI-S2102 //~ ERROR GTI-S2103 //~ ERROR GTI-S2102 //~ ERROR GTI-S2102 //~ ERROR GTI-S2103 //~ ERROR GTI-S2102
+  unsafe { return *address; }  //~ ERROR GTI-S2102
+}

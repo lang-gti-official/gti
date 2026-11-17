@@ -1,0 +1,15 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+enum Slot { item(int& value), empty };
+int global_value = 19;
+Slot borrow_global(bool present) {
+  if (!present) { return Slot::empty; }
+  return Slot::item(global_value);
+}
+bool occupied(Slot value) {
+  switch (value) {
+  case Slot::item: return true;
+  case Slot::empty: return false;
+  }
+}
+int main() { auto value = borrow_global(true); return occupied(value) ? 0 : 1; }

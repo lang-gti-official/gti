@@ -1,0 +1,10 @@
+// Produced results: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+T forward_exact<T>(T input) { return input; }
+int main() { mut int value = 7;
+  void* erased = std::erase_address(&value);
+  void* forwarded = forward_exact<void*>(erased);
+  unsafe { auto restored = std::typed_address<int>(forwarded); return *restored; }
+}

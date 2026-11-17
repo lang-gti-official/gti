@@ -1,0 +1,4 @@
+// Generics: rejected with GTI-S2012.
+class Inner { int field; public: Inner(int value) : field(value) {} };
+struct Outer { Inner inner; };
+int main() { Outer object{}; return 0; }  //~ ERROR GTI-S2012

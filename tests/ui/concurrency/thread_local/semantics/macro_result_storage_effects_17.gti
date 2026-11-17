@@ -1,0 +1,9 @@
+// Macro result storage effects: ordinary macro statement analysis preserves discardable source contracts for symbolic and concrete calls and legacy void forms.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ require-function-definitions
+[[discardable]] #macro T status<T>(T expression) { return expression; }
+#macro legacy(int expression) { int saved = expression; }
+#macro stop() { return; }
+void caller<T>(T value) { status!(value); }
+int main() { caller(3); status!(4); legacy!(5); stop!(); return 0; }

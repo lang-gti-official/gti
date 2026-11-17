@@ -1,0 +1,2 @@
+// Rejected: invalid construction must stop compilation.
+struct S { uint64_t x = 0;  public: S() = default; }; int main(){ uint32_t n = 9; S s = {.x = n}; return 0; }  //~ ERROR GTI-S2091

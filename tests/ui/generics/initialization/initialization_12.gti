@@ -1,0 +1,5 @@
+// Initialization: rejected with GTI-S2068.
+int first = read<int>();  //~ ERROR GTI-S2068
+constexpr int later = 8;
+int read<T>() { int& bound = later; return bound; }
+int main() { return first; }

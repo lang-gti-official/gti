@@ -1,0 +1,2 @@
+import "api/geometry.gti"; import "api/telemetry.gti";
+int main() { return domain::geometry::secret(); }

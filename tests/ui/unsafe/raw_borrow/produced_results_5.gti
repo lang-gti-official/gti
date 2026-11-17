@@ -1,0 +1,10 @@
+// Produced results: callee-produced global origin requires its actual witness.
+//@ raw-pointer-audit: strict
+import std.memory;
+int global = 1;
+int main() {
+  int witness = 9;
+  const int* pointer = source();
+  unsafe { int& value = std::assume_ref(pointer, witness); return value; }  //~ ERROR GTI-S2102
+}
+const int* source() { return &global; }

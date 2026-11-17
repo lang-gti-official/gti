@@ -1,0 +1,3 @@
+// Conservative class witnesses: ordinary hierarchy field metadata and declaration-only placeholders do not imply object transfer.
+//@ check-pass
+class Poly {public: virtual int read(){return 1;} public: Poly() = default; }; class Outer {public: Poly value; public: Outer() = default; }; void accept(Outer& value){}

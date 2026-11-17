@@ -1,0 +1,14 @@
+// Owning enum packs: owning enum pack elements use ordinary verified parameter transport.
+//@ check-pass
+class Token {
+public:
+  Token() {}
+  Token(Token& other) = delete;
+  Token(Token&& other) = default;
+  ~Token() {}
+};
+enum Event { Empty, Owned(Token token) };
+
+void sink<Args...>(Args... args) {}
+void relay<Args...>(Args... args) { sink(args...); }
+int main() { relay(); relay(1, Event::Owned(Token()), Event::Empty); return 0; }

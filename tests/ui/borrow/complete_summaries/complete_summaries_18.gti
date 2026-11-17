@@ -1,0 +1,17 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+int&<a> selected<lifetime a>(int&<a> value, int& other) {
+  return value;
+}
+int& inferred(int& value) { return value; }
+T&<a> selected_generic<T, lifetime a>(T&<a> value) { return value; }
+T<a> copied_generic<T, lifetime a>(T<a> value) { return value; }
+int main() {
+  int first = 1;
+  int second = 2;
+  int& chosen = selected(first, second);
+  int& automatic = inferred(first);
+  int& concrete = selected_generic<int>(first);
+  int copied = copied_generic<int>(first);
+  return chosen + automatic + concrete + copied - 4;
+}

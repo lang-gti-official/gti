@@ -1,0 +1,30 @@
+// Temporary operator physical storage: physical storage supplied by a reference parameter remains returnable.
+//@ check-pass
+class Cursor {
+  int& owner;
+  int inline_value = 7;
+public:
+  Cursor(int& source) : owner(source) {}
+  // The checked addition keeps a failure edge, so the temporary also has a
+  // failure-cleanup endpoint after its interior result loan.
+  int& operator*() { int checked = this.inline_value + 0; return this.inline_value; }
+  int& ref() { return this.inline_value; }
+
+};
+Cursor cursor(int& source) { return Cursor(source); }
+
+int& relay(Cursor& owner) { return owner.ref(); }
+int& dereference(Cursor& owner) { return *owner; }
+int& plain_alias(int& owner) { int& first = owner; int& second = first; return second; }
+int& alias_relay(Cursor& owner) {
+  int decoy = 11;
+  int& unrelated = decoy;
+  int observed = unrelated;
+  int& selected = owner.ref();
+  return selected;
+}
+int main() {
+  int owner = 3;
+  Cursor local = cursor(owner);
+  return relay(local) + dereference(local) + alias_relay(local) + plain_alias(owner) - 24;
+}

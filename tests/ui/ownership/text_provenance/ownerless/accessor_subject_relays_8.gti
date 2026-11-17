@@ -1,0 +1,19 @@
+// Accessor subject relays: static text through `wordAt()` satisfies the contract MIR derives.
+//@ check-pass
+import std.string;
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  Word spare;
+  Line(std::string_view value) : word(Word::text(value)), spare(Word::none) {}
+  Word& wordAt() { return this.word; }
+  std::string_view first() {
+    switch (wordAt()) {
+    case Word::text(v): return v;
+    case Word::none: return "";
+    }
+  }
+};
+
+int main() { Line line = Line("static"); return line.first().size() == 6 ? 0 : 1; }

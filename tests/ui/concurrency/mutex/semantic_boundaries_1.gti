@@ -1,0 +1,7 @@
+// Semantic boundaries: mutex use should fail before lowering in the single-threaded profile.
+import std.mutex;
+int main() {
+  std::mutex<int32_t> value{1};  //~ ERROR GTI-S2084
+  std::mutex_guard<int32_t> guard = value.lock();  //~ ERROR GTI-S2084
+  return guard.get();  //~ ERROR GTI-S2084
+}

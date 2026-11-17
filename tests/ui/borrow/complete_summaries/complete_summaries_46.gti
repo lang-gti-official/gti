@@ -1,0 +1,6 @@
+// Complete borrow summaries: rejected with GTI-S2045.
+import std.utility;
+enum Slot { ready(int& value), empty };
+enum MaybeRef<T> { some(T value), none };
+class Holder<T> { MaybeRef<T&> state; public: Holder(MaybeRef<T&>& slot) : state(slot) {} };  //~ ERROR GTI-S2045
+int main() { return 0; }

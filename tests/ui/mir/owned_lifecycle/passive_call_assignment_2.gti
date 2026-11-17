@@ -1,0 +1,4 @@
+// Passive call assignment: passive call staging must not permit immutable destinations.
+struct Block { mut float lanes[4] = {};  public: Block() = default; };
+Block make() { Block result{}; return result; }
+int main() { Block value{}; value = make(); return 0; }  //~ ERROR GTI-S2002

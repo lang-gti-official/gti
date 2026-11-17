@@ -1,0 +1,21 @@
+// Owned lambda environment: owning mapper environment lowers.
+//@ check-pass
+class Resource {
+  int value;
+public:
+  Resource(int value) : value(value) {}
+  ~Resource() { std::println(value); }
+  int read() { return value; }
+};
+expected<int, int> read(bool fail) {
+  if (fail) { return unexpected(7); }
+  return 42;
+}
+int main() {
+  auto resource = Resource(8);
+  auto result = read(true).transform_error(
+      [owned = std::move(resource)](int error) -> int {
+        return owned.read() + error;
+      });
+  return result.error() - 15;
+}

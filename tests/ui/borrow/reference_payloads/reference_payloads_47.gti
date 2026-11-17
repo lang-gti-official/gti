@@ -1,0 +1,15 @@
+// Reference payloads: rejected with GTI-S2003.
+//@ analyze-fail
+import std.string;
+enum CopyState<T, E> { ready(T& owner), failed(E error) };
+class CopyView<T, E> {
+  mut CopyState<T, E> state;
+public:
+  CopyView(T& owner) : state(CopyState<T, E>::ready(owner)) {}
+};
+int main() {
+  int owner = 42;
+  auto view = CopyView<int, std::string>(owner);
+  CopyView<int, std::string> copied = view;  //~ ERROR GTI-S2003
+  return 0;
+}

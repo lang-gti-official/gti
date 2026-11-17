@@ -1,0 +1,13 @@
+// Class payload enums: an ordinary free function should transport an owning payload enum by value through verified MIR.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+holder transfer(holder value) { return holder::none; }
+int main() {
+  holder destination = transfer(holder::one(resource()));
+  return 0;
+}

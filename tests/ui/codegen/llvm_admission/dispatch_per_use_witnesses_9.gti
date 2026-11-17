@@ -1,0 +1,6 @@
+// Dispatch per use witnesses: a copied array element keeps an explicit transfer exclusion.
+//@ check-pass
+    class P { public: P() {} virtual int read() { return 1; } };
+ P values[2] = {P(), P()};
+ P value = values[1];
+    int main() { return value.read(); }

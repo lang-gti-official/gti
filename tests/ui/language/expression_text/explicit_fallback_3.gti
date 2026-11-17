@@ -1,0 +1,6 @@
+// Explicit fallback: fallback must not hide a statically invalid operand.
+import std.source_location;
+int main() {
+  std::string_view text = std::expression_text!(missing, "explicit fallback");  //~ ERROR GTI-S2001
+  return 0;
+}

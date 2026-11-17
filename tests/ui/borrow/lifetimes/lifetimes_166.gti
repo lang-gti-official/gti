@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ check-pass
+struct View<T, lifetime a> { T&<a> value; View(T&<a> input) : value(input) {} };
+concept Inspect<T> { int inspect(T& value); };
+for concept Inspect<View<int>> { int inspect(View<int>& value) { return value.value; } };
+for concept Inspect<View<bool>> { int inspect(View<bool>& value) { if (value.value) { return 1; } return 0; } };
+int main() { int value = 7; View<int> view{value}; return Inspect<View<int>>::inspect(view) - 7; }

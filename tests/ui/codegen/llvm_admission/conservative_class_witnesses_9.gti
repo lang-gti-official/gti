@@ -1,0 +1,3 @@
+// Conservative class witnesses: nested payload and union storage retains its exact owning pending requirement and source identity.
+//@ check-pass
+union Payload { int value; bool flag; }; void accept(Payload& value){}
