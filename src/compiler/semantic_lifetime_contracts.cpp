@@ -687,44 +687,137 @@ auto SemanticVisitor::Impl::validateReturnedReceiverRegion(
     diagnostics.emplace_back(std::move(diagnostic));
     return;
   }
-  // Only the receiver's fields written in the result's region supply it. A
-  // place that reaches through a receiver field written only in other
-  // regions borrows what those references keep alive, not the result's.
-  const auto *declaration = classInfo(owner).declaration;
-  if (declaration == nullptr)
-    return;
-  for (const auto &place : places) {
-    if (!place.receiver || place.root != 0 || place.projections.empty() ||
-        place.projections.front().kind != PlaceProjectionKind::Field ||
-        !crossesStoredReference(place))
-      continue;
-    const SymbolRecord *field = fieldRecord(place.projections.front().field);
-    if (field == nullptr)
-      continue;
-    for (const auto &member : declaration->members()) {
-      const auto *stored = stmtAs<VariableDecl>(member.get());
-      if (stored == nullptr || stored->name().lexeme != field->name)
-        continue;
-      std::vector<std::string> names;
-      collectRegionNames(stored->type(), names);
-      if (names.empty() || contains(names, lifetime.region))
-        break;
-      Diagnostic diagnostic = makeDiagnostic(
-          "GTI-S2127", DiagnosticPhase::Semantics, expressionToken(value),
-          "The result declares region '" + lifetime.region +
-              "', but this return borrows through field '" + field->name +
-              "', which holds region '" + names.front() + "'.");
-      diagnostic.related.push_back(
-          {tokenSpan(stored->name()), "Field '" + field->name +
-                                          "' is declared in region '" +
-                                          names.front() + "'."});
-      diagnostic.hints.emplace_back(
-          "Return a reference reached through a field stored in region '" +
-          lifetime.region + "', or declare the result in region '" +
-          names.front() + "'.");
-      diagnostics.emplace_back(std::move(diagnostic));
-      return;
+  // Only the receiver's references stored in the result's region supply it.
+  // A place borrows what the first stored reference it crosses keeps alive,
+  // in that reference's region as the receiver sees it: read through each
+  // carrier field's lifetime arguments and each base class's, so a
+  // `Pair<a, b>` field or a base's field supplies the region it binds there.
+  // A region this walk cannot name (an elided slot, `_`, or a binder it does
+  // not see) is unknown: the general place proof stands for it.
+  using Regions =
+      std::vector<std::pair<std::string, std::optional<std::string>>>;
+  const auto mappedRegion =
+      [](const Regions &map,
+         const std::string &name) -> std::optional<std::string> {
+    for (const auto &[from, to] : map)
+      if (from == name)
+        return to;
+    return std::nullopt;
+  };
+  const auto bindRegions = [&](const ClassDecl &declaration,
+                               const std::vector<TypeRef> &arguments,
+                               const Regions &outer) {
+    Regions bound;
+    const auto binders = declaration.lifetimeParameters();
+    for (std::size_t index = 0; index < binders.size(); ++index) {
+      std::optional<std::string> region;
+      if (index < arguments.size() &&
+          arguments[index].name.segments.size() == 1 &&
+          arguments[index].name.last().lexeme != "_")
+        region = mappedRegion(outer, arguments[index].name.last().lexeme);
+      bound.emplace_back(binders[index].name.lexeme, std::move(region));
     }
+    return bound;
+  };
+  const auto knownClass = [&](ClassId id) {
+    return id != 0 && id <= classes.size() &&
+           classInfo(id).declaration != nullptr;
+  };
+  // The declaration of a field of a class or of one of its bases, with
+  // `map` rebound to the class that declares it.
+  std::function<const VariableDecl *(ClassId, const std::string &, Regions &)>
+      declaredField;
+  declaredField = [&](ClassId id, const std::string &name,
+                      Regions &map) -> const VariableDecl * {
+    if (!knownClass(id))
+      return nullptr;
+    const ClassInfo &info = classInfo(id);
+    for (const auto &member : info.declaration->members())
+      if (const auto *field = stmtAs<VariableDecl>(member.get());
+          field != nullptr && field->name().lexeme == name)
+        return field;
+    for (const auto &base : info.bases) {
+      if (base.syntax == nullptr || base.type.kind != SemanticType::Class ||
+          !knownClass(base.type.classId))
+        continue;
+      Regions baseMap = bindRegions(*classInfo(base.type.classId).declaration,
+                                    base.syntax->type.lifetimeArguments, map);
+      if (const auto *field = declaredField(base.type.classId, name, baseMap)) {
+        map = std::move(baseMap);
+        return field;
+      }
+    }
+    return nullptr;
+  };
+  struct Crossing {
+    std::string field;
+    std::optional<std::string> region;
+    Token declared;
+  };
+  // Nullopt when the place crosses no stored reference this walk resolves.
+  const auto firstCrossing =
+      [&](const SemanticLoanPlace &place) -> std::optional<Crossing> {
+    if (!place.receiver || place.root != 0 || !knownClass(owner))
+      return std::nullopt;
+    ClassId current = owner;
+    Regions map;
+    for (const auto &binder :
+         classInfo(owner).declaration->lifetimeParameters())
+      map.emplace_back(binder.name.lexeme, binder.name.lexeme);
+    // Regions a callable pattern binds name themselves too.
+    std::vector<std::string> patternRegions;
+    for (const auto &pattern :
+         classInfo(owner).declaration->genericArgumentPatterns())
+      collectRegionNames(pattern, patternRegions);
+    for (const auto &region : patternRegions)
+      map.emplace_back(region, region);
+    for (const auto &projection : place.projections) {
+      if (projection.kind == PlaceProjectionKind::ConstantIndex ||
+          projection.kind == PlaceProjectionKind::DynamicIndex)
+        continue;
+      if (projection.kind != PlaceProjectionKind::Field)
+        return std::nullopt;
+      const SymbolRecord *record = fieldRecord(projection.field);
+      if (record == nullptr)
+        return std::nullopt;
+      const VariableDecl *field = declaredField(current, record->name, map);
+      if (field == nullptr)
+        return std::nullopt;
+      const TypeRef &type = field->type();
+      if (type.reference) {
+        std::optional<std::string> region;
+        if (type.referenceLifetime &&
+            type.referenceLifetime->name.kind == TokenKind::IDENTIFIER)
+          region = mappedRegion(map, type.referenceLifetime->name.lexeme);
+        return Crossing{record->name, std::move(region), field->name()};
+      }
+      if (record->type.kind != SemanticType::Class ||
+          !knownClass(record->type.classId))
+        return std::nullopt;
+      map = bindRegions(*classInfo(record->type.classId).declaration,
+                        type.lifetimeArguments, map);
+      current = record->type.classId;
+    }
+    return std::nullopt;
+  };
+  for (const auto &place : places) {
+    const auto crossed = firstCrossing(place);
+    if (!crossed || !crossed->region || *crossed->region == lifetime.region)
+      continue;
+    const std::string held = "region '" + *crossed->region + "'";
+    Diagnostic diagnostic = makeDiagnostic(
+        "GTI-S2127", DiagnosticPhase::Semantics, expressionToken(value),
+        "The result declares region '" + lifetime.region +
+            "', but this return borrows through field '" + crossed->field +
+            "', which holds " + held + ".");
+    diagnostic.related.push_back(
+        {tokenSpan(crossed->declared),
+         "Field '" + crossed->field + "' is declared to hold " + held + "."});
+    diagnostic.hints.emplace_back(
+        "Return a reference reached through a field stored in region '" +
+        lifetime.region + "', or declare the result in the region it borrows.");
+    diagnostics.emplace_back(std::move(diagnostic));
+    return;
   }
 }
 
