@@ -1,0 +1,3 @@
+// A nested type and a field of the same name conflict.
+//@ check-fail
+struct C { struct N { int value; }; int N = 0;  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2006 conflicts with a member

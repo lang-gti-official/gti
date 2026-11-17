@@ -1,0 +1,37 @@
+// The aggregate `import std;` keeps hover through a missing-return error and
+// recovers from incomplete source. (From aggregate_std_lsp_test.py.)
+//@ slow
+//@ hover @message: string
+import std;
+int helper() { return 0; }
+int main() {
+  /* 😀 */ std::/*@message*/string message{"hello"};
+  std::println(message.view());
+  return helper();
+}
+// --- step 2
+//@ hover @message: string
+import std;
+int helper() {}  //~ ERROR GTI-S2031
+int main() {
+  /* 😀 */ std::/*@message*/string message{"hello"};
+  std::println(message.view());
+  return helper();
+}
+// --- step 3
+import std;
+int helper() {}  //~ ERROR GTI-S2031
+int main() {
+  /* 😀 */ std::string message{"hello"};
+  std::str
+  return helper();  //~ ERROR GTI-P0001
+}
+// --- step 4
+//@ hover @message: string
+import std;
+int helper() { return 0; }
+int main() {
+  /* 😀 */ std::/*@message*/string message{"hello"};
+  std::println(message.view());
+  return helper();
+}

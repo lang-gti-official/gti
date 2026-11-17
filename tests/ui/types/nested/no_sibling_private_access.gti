@@ -1,0 +1,3 @@
+// A nested type cannot read a sibling nested class's private member.
+//@ check-fail
+struct C { class A { int code = 1;  public: A() = default; }; struct B { int read(A& value) { return value.code; }  public: B() = default; };  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2007 is private

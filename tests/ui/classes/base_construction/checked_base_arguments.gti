@@ -1,0 +1,34 @@
+// Checked arithmetic in base-constructor arguments fails before the base is built.
+//@ run-pass
+//@ revisions: ok overflow
+//@[overflow] run-fail
+//@[overflow] args: overflow
+//@[overflow] exit-code: 70
+//@[overflow] stderr-contains: main.gti:12: runtime error[GTI-R0001]
+//@[ok] stdout: 10
+//@[ok] stdout: 20
+//@[ok] stdout: 10
+// --- main.gti
+import std.string;
+import std.vector;
+
+class Base {
+  int value;
+public:
+  Base(int value) : value(value) { std::println(10); }
+  int get() { return value; }
+};
+class Derived : public Base {
+public:
+  Derived(int value) : Base(value + 1) { std::println(20); }
+};
+class Extreme : public Base {
+public:
+  Extreme(int value) : Base(-2147483648 + value) {}
+};
+int main(int argc, std::vector<std::string> argv) {
+  int initial = argc == 1 ? 49 : 2147483647;
+  Derived value = Derived(initial);
+  Extreme extreme = Extreme(1);
+  return value.get() - 50 + (extreme.get() == -2147483647 ? 0 : 1);
+}

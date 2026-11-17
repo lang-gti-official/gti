@@ -1,0 +1,15 @@
+// A thread_local variable hovers as thread_local and navigates to its
+// declaration; the keyword is a keyword token, and thread_local on a
+// function is a parse error. (From thread_local_lsp_test.py.)
+//@ hover @use: thread_local
+//@ hover @use: counter
+//@ definition @use: @decl
+//@ token @kw: keyword
+/*@kw*/thread_local mut int /*@decl*/counter = 0;
+int main() { /* 😀 */ counter += 1; return /*@use*/counter; }
+// --- step 2
+// 😀
+thread_local int invalid() { return 0; }  //~ ERROR GTI-P0001
+// --- step 3
+thread_local mut int counter = 0;
+int main() { /* 😀 */ counter += 1; return counter; }

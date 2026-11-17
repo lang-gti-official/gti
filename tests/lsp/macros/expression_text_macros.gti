@@ -1,0 +1,20 @@
+// Value macros: hover shows the macro signature and navigates to it, and
+// expression_text! is a macro returning string_view. (From expression_text_lsp_test.py.)
+//@ hover @choose: #macro int32_t choose(bool condition, int32_t value)
+//@ definition @choose: @choose_decl
+//@ hover @text: #macro
+//@ hover @text: string_view
+//@ hover @text: expression_text
+import std.source_location;
+#macro int /*@choose_decl*/choose(bool condition, int value) {
+  if (condition) { return value; } return 0;
+}
+#macro std::string_view quoted<T>(T expression) {
+  return std::expression_text!(expression);
+}
+int main() {
+  mut int counter = 0; int answer = /*@choose*/choose!(true, 7);  //~ WARN GTI-S2095 //~ WARN GTI-S2096
+  /*😀*/ std::string_view text = std::/*@text*/expression_text!(++counter);
+  std::string_view forwarded = quoted!(answer /* λ */ + 1);
+  return answer + counter;
+}

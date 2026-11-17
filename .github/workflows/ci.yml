@@ -176,13 +176,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `gate` is the CTest entries the test phase runs beyond fast
+        # feedback: the gti-test tiers on both platforms, and on Linux the
+        # compiler pipeline, whose platform-independent suites are proven
+        # once per candidate while they drain into tests/ui. Dropping
+        # `|compiler_pipeline` from the Linux row removes it from the gate.
         include:
-          - {os: ubuntu-24.04, platform: linux}
-          - {os: macos-26, platform: darwin}
+          - {os: ubuntu-24.04, platform: linux, gate: 'gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests|compiler_pipeline'}
+          - {os: macos-26, platform: darwin, gate: 'gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests'}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The test merge and its first parent: the budget check below
+          # selects the gti-test cases this pull request adds or changes.
+          fetch-depth: 2
       - name: Configure runner resources
         shell: bash
         env:
@@ -207,9 +216,11 @@ jobs:
           restore-keys: |
             gti-ccache-v2-native-${{ runner.os }}-${{ runner.arch }}-
       - name: Configure
+        # The gti-test entries also write per-case JUnit reports there.
         run: >-
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+          -DGTI_TEST_REPORT_DIRECTORY="${RUNNER_TEMP}/gti-test"
       - name: Build
         # Keep going after a failure so one run reports every compile error.
         run: cmake --build build --parallel "${GTI_JOBS}" -- -k 0
@@ -217,13 +228,32 @@ jobs:
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
-      - name: Run the compiler pipeline
-        # Frontend/MIR unit suites carry no platform dependence: Linux proves
-        # them once per candidate, and the macOS fast job stays with the
-        # feedback set and the declared tests.
-        if: matrix.platform == 'linux'
+      - name: Run the gti-test tiers
+        # tests/ui, tests/project and tests/lsp (with the runner's self-test
+        # and tidy), every single-file example, and the C++ unit tests, at -O0
+        # (docs/plans/test-suite-redesign.md section 7). Each gti-test entry
+        # is silent on pass and prints one `FAIL <path>` block per failing
+        # case, which --output-on-failure shows here; the per-case JUnit
+        # reports are uploaded below.
+        env:
+          GTI_GATE_TESTS: ${{ matrix.gate }}
         run: >-
-          ctest --test-dir build --output-on-failure --no-tests=error -R '^compiler_pipeline$'
+          mkdir -p "${RUNNER_TEMP}/gti-test" &&
+          ctest --test-dir build --output-on-failure --no-tests=error
+          --parallel "${GTI_TEST_JOBS}" --output-junit "${RUNNER_TEMP}/gti-test/ctest.xml"
+          -R "^(${GTI_GATE_TESTS})$"
+      - name: Hold new and modified gti-test cases to half their limit
+        # The runner's over-budget rule: a case this pull request adds or
+        # changes is flagged when its warm CPU time exceeds half its kind's
+        # limit, scaled 2x for hosted runners as in the gti_test_ui* entries.
+        # Advisory until calibrated (docs/architecture/verification.md): the
+        # script prints each over-budget case as a warning annotation and a
+        # job-summary table and fails only on other failures of changed
+        # cases. Linux only: one platform is enough to keep slow cases out.
+        if: github.event_name == 'pull_request' && matrix.platform == 'linux'
+        env:
+          GTI_TEST_TIME_SCALE: "2"
+        run: python3 scripts/gti_test_budget.py build/gti-test HEAD^1 --jobs "${GTI_TEST_JOBS}"
       - name: Re-run the tests this pull request declares
         if: github.event_name == 'pull_request'
         # The body is untrusted: the script validates every name and passes
@@ -245,6 +275,14 @@ jobs:
           ctest --test-dir "${RUNNER_TEMP}/gti-system-library-smoke" -C Release \
             --parallel "${GTI_TEST_JOBS}" --output-on-failure
           python3 tests/process_resource_policy_test.py "${RUNNER_TEMP}/gti-system-stage/bin/gti" --installed
+      - name: Upload gti-test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gti-test-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gti-test/*.xml
+          retention-days: 14
+          if-no-files-found: ignore
       # cache.yml owns the native cache under its content key; PR and queue
       # runs only restore it. Per-SHA saves from queue refs were unreachable by
       # later runs and evicted the reachable entries from the 10 GB cache.

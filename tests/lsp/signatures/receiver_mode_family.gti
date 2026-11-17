@@ -1,0 +1,18 @@
+// Specializations by receiver mode select the `mut` one; a duplicate mode or
+// an unmatched `&&` argument is reported. (From function_signature_lsp_test.py.)
+//@ definition @value: @mut_family
+//@ hover @value: mut
+// 😀
+class Callback<R(Args...)> { public: Callback() = default; int mode() { return 1; } };
+class /*@mut_family*/Callback<R(Args...) mut> { public: Callback() = default; int mode() { return 2; } };
+int main() { /*@value*/Callback<int() mut> value{}; return value.mode(); }
+// --- step 2
+// 😀
+class Callback<R(Args...)> { public: Callback() = default; int mode() { return 1; } };
+class Callback<R(Args...)> { public: Callback() = default; int mode() { return 2; } };  //~ ERROR GTI-S2006
+int main() { Callback<int() mut> value{}; return value.mode(); }  //~ ERROR GTI-S2023
+// --- step 3
+// 😀
+class Callback<R(Args...)> { public: Callback() = default; int mode() { return 1; } };
+class Callback<R(Args...) mut> { public: Callback() = default; int mode() { return 2; } };
+int main() { Callback<int() &&> value{}; return value.mode(); }  //~ ERROR GTI-S2023

@@ -1,0 +1,13 @@
+// A fold over a reference pack cannot touch a thread-local the pack borrows.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+thread_local mut int counter = 3;
+void touch<T>(T& value) { counter++; }
+int total<Args...>(Args&... args) { (touch(args), ...); return 0; }
+int main() { return total(counter); }  //~ ERROR GTI-S2045

@@ -1,0 +1,12 @@
+// std::copy_n of owning strings needs copy assignment, which std::string lacks.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { std::vector<std::string> x = {std::string("a")}; mut std::vector<std::string> y = {std::string("b")}; std::copy_n(x.begin(), std::size_t(1), y.begin_mut()); return 0; }  //~ ERROR GTI-S2003 Cannot copy assign
