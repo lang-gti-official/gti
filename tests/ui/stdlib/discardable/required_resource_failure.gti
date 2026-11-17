@@ -1,0 +1,5 @@
+// A resource allocation failure result is not discardable: ignoring it is rejected.
+//@ check-fail
+import std.resource_vector;
+import std.resource;
+int main() { std::process_resource resource{}; auto binding = unsafe { std::bind_resource(resource) }; mut std::resource_vector<int, std::process_resource> values{binding}; values.try_reserve(std::size_t(1)); return 0; }  //~ ERROR GTI-S2009

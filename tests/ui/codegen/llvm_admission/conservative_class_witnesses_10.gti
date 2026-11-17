@@ -1,0 +1,5 @@
+// Conservative class witnesses: an ordinary containing class cannot bypass nested foreign-layout inventory.
+//@ check-pass
+[[c_abi]] struct Record { int value; };
+class Outer { public: Record value; Outer(Record input) : value(input) {} };
+void accept(Outer& value) {}

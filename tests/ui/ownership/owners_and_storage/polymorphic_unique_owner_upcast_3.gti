@@ -1,0 +1,15 @@
+// Polymorphic unique owner upcast: owner upcasts should remain explicit and must not enter ordinary call overload resolution.
+import std.memory;
+
+interface Layer { void update() mut; };
+class DemoLayer : public Layer {
+public:
+  void update() mut override {}
+public:
+  DemoLayer() = default;
+};
+void consume(std::unique_ptr<Layer> layer) {}
+int main() {
+  consume(std::make_unique<DemoLayer>());  //~ ERROR GTI-S2003
+  return 0;
+}

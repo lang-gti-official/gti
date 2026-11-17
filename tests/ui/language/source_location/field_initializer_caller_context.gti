@@ -1,0 +1,13 @@
+// Field initializer caller context: a constructor call in a field initializer should reach verified MIR even when its owning native layout is not yet backend-admitted.
+//@ check-pass
+import std.source_location;
+class Record {
+public:
+  Record(std::source_location where = std::source_location::current()) {}
+};
+class FieldHolder {
+  Record where;
+public:
+  FieldHolder() : where(Record()) {}
+};
+int main() { FieldHolder value{}; return 0; }

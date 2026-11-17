@@ -1,0 +1,18 @@
+// Ownerless text alias writes: mutable text accessors remain usable with ownerless replacement.
+//@ check-pass
+import std.string;
+import std.utility;
+struct Label {
+  mut std::string_view text;
+  Label() : text("literal") {}
+  mut std::string_view& slot() mut { return this.text; }
+  std::string_view take() && { return this.text; }
+};
+void write(mut std::string_view& output, std::string_view input) { output = input; }
+
+int main() {
+  mut Label label{};
+  label.slot() = "replacement";
+  write(label.slot(), "another");
+  return std::move(label).take() == "another" ? 0 : 1;
+}

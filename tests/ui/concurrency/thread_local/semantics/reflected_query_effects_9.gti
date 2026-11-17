@@ -1,0 +1,25 @@
+// Reflected query effects: staged function/constructor snapshots retain trusted computed reflection type identities for nonempty and empty sequences.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.meta;
+struct Reading { int first = 1; int second = 2;  public: Reading() = default; };
+struct Empty { public: Empty() = default; };
+thread_local mut int guarded = 1;
+thread_local mut int other = 2;
+class Types<Elements...> { public: Types() = default; };
+
+constexpr int count<T>() {
+  mut int result = 0;
+  constexpr for (auto field : std::meta::fields_of<T>()) { result += 1; }
+  return result;
+}
+struct FieldCount<T> {
+  mut int value = 0;
+  constexpr FieldCount() {
+    constexpr for (auto field : std::meta::fields_of<T>()) { this.value += 1; }
+  }
+};
+constexpr int constructed<T>() { FieldCount<T> result{}; return result.value; }
+static_assert(count<Reading>() == 2 && count<Empty>() == 0);
+static_assert(constructed<Reading>() == 2 && constructed<Empty>() == 0);
+int main() { return count<Reading>() - 2; }

@@ -1,0 +1,4 @@
+// Native identity: rejected with GTI-S2076.
+using Native = (int32_t) -> int32_t;
+extern "C" { int32_t native(int32_t); }
+int main() { Native callback = native; return 0; }  //~ ERROR GTI-S2076

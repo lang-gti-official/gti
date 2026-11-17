@@ -1,0 +1,13 @@
+// Folded float destructor keeps failure summary: the folded-float destructor fixture should pass the frontend.
+//@ check-pass
+class FoldedCleanup {
+public:
+  ~FoldedCleanup() {
+    this.value = float(16777217) + 0.5;
+  }
+
+private:
+  mut float value = 0.0;
+public:
+  FoldedCleanup() = default;
+};

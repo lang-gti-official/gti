@@ -1,0 +1,21 @@
+// Audit output parity: raw field lookup does not register later methods is valid in both audit modes.
+//@ check-pass
+//@ raw-pointer-audit: warn
+struct Slot {
+  mut const int* pointer = nullptr;
+  const int* take() mut {
+    const int* previous = this.pointer;
+    this.clear();
+    return previous;
+  }
+  void clear() mut { this.pointer = nullptr; }
+public:
+  Slot() = default;
+};
+int main() {
+  int owner = 7;
+  mut Slot slot{};
+  slot.pointer = &owner;
+  const int* value = slot.take();
+  unsafe { return *value - 7; }
+}

@@ -1,0 +1,73 @@
+// A reference extracted from an expected hovers as its referent and
+// navigates to its binding; a named consuming receiver, writing the owner
+// while the extracted reference (by .expect or ?) is live, and incomplete
+// source are reported and repaired. (From borrowed_expected_extraction_lsp_test.py.)
+//@ hover @use: int32_t
+//@ definition @use: @decl
+expected<int&, int> lookup(int& owner) { return owner; }
+expected<int, int> read(int& owner) {
+  int& propagated = ?lookup(owner);
+  auto carrier = lookup(owner);
+  /*😀*/ int& /*@decl*/demanded = std::move(carrier).expect("required");
+  return propagated + /*@use*/demanded;
+}
+int main() {
+  mut int owner = 7;
+  int& alias = lookup(owner).expect("required");
+  int observed = alias;
+  owner = 8;
+  return observed + owner - 15;
+}
+// --- step 2
+expected<int&, int> lookup(int& owner) { return owner; }
+expected<int, int> read(int& owner) {
+  int& propagated = ?lookup(owner);
+  auto carrier = lookup(owner);
+  /*😀*/ int& demanded = carrier.expect("required");  //~ ERROR GTI-S2022 std::move //~ ERROR GTI-S2017
+  return propagated + demanded;
+}
+int main() {
+  mut int owner = 7;
+  int& alias = lookup(owner).expect("required");
+  int observed = alias;
+  owner = 8;
+  return observed + owner - 15;
+}
+// --- step 3
+expected<int&, int> lookup(int& owner) { return owner; }
+expected<int, int> read(int& owner) {
+  int& propagated = ?lookup(owner);
+  auto carrier = lookup(owner);
+  /*😀*/ int& demanded = std::move(carrier).expect("required");
+  return propagated + demanded;
+}
+int main() {
+  mut int owner = 7;
+  int& alias = lookup(owner).expect("required");
+  /*😀*/ owner = 8;  //~ ERROR GTI-S2017
+  int observed = alias;
+  return observed + owner - 15;
+}
+// --- step 4
+expected<int&, int> lookup(int& owner) { return owner; }
+expected<int, int> read() {
+  mut int owner = 7;
+  int& alias = ?lookup(owner);
+  /*😀*/ owner = 8;  //~ ERROR GTI-S2017
+  return alias;
+}
+// --- step 5
+expected<int&, int> lookup(int& owner) { return owner; }
+expected<int, int> read(int& owner) {
+  int& propagated = ?lookup(owner);
+  auto carrier = lookup(owner);
+  /*😀*/ int& demanded = std::move(carrier).expect(;  //~ ERROR GTI-P0001
+  return propagated + demanded;  //~ ERROR GTI-S2001
+}
+int main() {
+  mut int owner = 7;
+  int& alias = lookup(owner).expect(;  //~ ERROR GTI-P0001
+  int observed = alias;  //~ ERROR GTI-S2001
+  owner = 8;
+  return observed + owner - 15;
+}

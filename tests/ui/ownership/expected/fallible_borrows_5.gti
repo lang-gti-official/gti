@@ -1,0 +1,7 @@
+// Fallible borrows: a local referent must not escape through a fallible borrow.
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> invalid() {
+  int local = 7;
+  return local;  //~ ERROR GTI-S2045
+}
+int main() { return 0; }

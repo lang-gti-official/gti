@@ -1,0 +1,5 @@
+// Native identity: the program is accepted.
+//@ check-pass
+struct Empty { implicit Empty(nullptr_t value) {}  public: Empty() = default; };
+Empty empty() { return nullptr; }
+int main() { Empty value = empty(); return 0; }

@@ -1,0 +1,17 @@
+import "api/processing.gti";
+import "api/inspection.gti";
+int main() {
+    mut processing::Envelope envelope{};
+    if (inspection::sum(envelope.packet.point) != 7) { return 1; }
+    envelope.packet.point.x = 19;
+    envelope.packet.point.y = 23;
+    processing::Envelope copy = processing::echo(envelope);
+    if (inspection::sum(copy.packet.point) != 42) { return 2; }
+    {
+        mut processing::Envelope& loan = processing::edit(envelope);
+        loan.packet.point.x = 20;
+    }
+    if (inspection::sum(envelope.packet.point) != 43) { return 3; }
+    if (inspection::sum(copy.packet.point) != 42) { return 4; }
+    return 0;
+}

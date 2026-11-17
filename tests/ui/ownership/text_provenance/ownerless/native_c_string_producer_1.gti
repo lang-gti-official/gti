@@ -1,0 +1,18 @@
+// Native c string producer: native C-string results can enter an externally managed owner.
+//@ check-pass
+extern "C" {
+  c_string native_text(int32_t kind);
+  void native_release(c_string text);
+}
+class NativeText {
+  c_string text;
+public:
+  unsafe NativeText(c_string input) : text(input) {}
+  NativeText(NativeText&) = delete;
+  NativeText(NativeText&&) = default;
+  ~NativeText() { native_release(this.text); }
+};
+void retain(int32_t kind) {
+  unsafe { auto text = NativeText(native_text(kind)); }
+}
+int main() { retain(0); return 0; }

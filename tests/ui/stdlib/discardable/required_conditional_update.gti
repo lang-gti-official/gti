@@ -1,0 +1,5 @@
+// A conditional atomic update result is not discardable: ignoring it is rejected.
+//@ check-fail
+//@ execution-profile: concurrent
+import std.atomic;
+int main() { std::atomic<int> value{1}; value.compare_exchange_strong(1, 2); return 0; }  //~ ERROR GTI-S2009

@@ -1,0 +1,13 @@
+// Edge sensitive move flow: loop backedges should validate projected field moves as well as whole bindings.
+struct Record { int32_t value = 7;  public: Record() = default; };
+struct Holder { mut Record field = Record();  public: Holder() = default; };
+
+int main() {
+  mut Holder holder = Holder();
+  mut int32_t index = 0;
+  while (index < 2) {  //~ ERROR GTI-S2018
+    Record consumed = std::move(holder.field);
+    index++;
+  }
+  return 0;
+}

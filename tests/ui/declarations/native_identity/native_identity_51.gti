@@ -1,0 +1,3 @@
+// Native identity: the program is accepted.
+//@ check-pass
+class C { public: int32_t f(mut int32_t&); }; int main() { return 0; }

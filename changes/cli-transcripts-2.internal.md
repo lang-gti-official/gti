@@ -1,0 +1,1 @@
+Convert the generic-enum and local-reference-inference LSP scripts into marker tests with edit steps plus `.jsonl` transcripts for overlay close and formatting, deleting their CTest entries and registry lines.

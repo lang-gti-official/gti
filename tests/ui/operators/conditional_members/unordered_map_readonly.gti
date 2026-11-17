@@ -1,0 +1,4 @@
+// std::unordered_map's subscript needs a mutable receiver.
+//@ check-fail
+import std.unordered_map;
+int main() { std::unordered_map<int, int> values{}; return values[1]; }  //~ ERROR GTI-S2000 mutable receiver

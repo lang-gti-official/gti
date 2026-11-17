@@ -1,0 +1,32 @@
+// Captured text escapes: captured text escapes are rejected at source.
+import std.string;
+import std.functional;
+struct Note {
+  std::string_view text;
+  int line;
+};
+class Token {
+public:
+  std::string_view text;
+  int n;
+  Token(std::string_view text, int n) : text(text), n(n) {}
+};
+class Label {
+public:
+  mut std::string_view text;
+  Label() : text("") {}
+  void set(std::string_view text) mut { this.text = text; }
+};
+enum class Message { text(std::string_view value), none };
+mut std::string_view kept = "";
+void keep(std::string_view text) { kept = text; }
+std::string_view same(std::string_view text) { return text; }
+Token make(std::string_view text) { return Token(text, 1); }
+std::string_view call<F>(F view) { return view(); }  //~ ERROR GTI-S2045
+
+int main() {
+  std::string owner{"dynamic"};
+  std::string_view v = owner.view();
+  auto f = [v]() -> std::string_view { return v; };
+  return call(f).size() == uint64_t(7) ? 0 : 1;
+}

@@ -1,0 +1,42 @@
+// Receiver tied reference returns: a wrapper reference return should retain its receiver as the semantic owner while transferring the nested call's exact referent.
+//@ check-pass
+//@ stdlib-overlay: std/detail/memory_storage.gti
+import std.memory;
+import std.detail.memory_storage;
+
+class ElementBuffer {
+  mut std::detail::prefix_owner<int> data;
+
+public:
+  ElementBuffer()
+      : data(std::detail::prefix_owner<int>(uint64_t(1))) {}
+
+  void set(int value) mut {
+    this.data.append_value(std::move(value));
+  }
+
+  int& at() {
+    return this.data.read(uint64_t(0));
+  }
+};
+
+class BufferFacade {
+  mut ElementBuffer buffer;
+
+public:
+  BufferFacade() : buffer(ElementBuffer()) {}
+
+  void set(int value) mut {
+    this.buffer.set(value);
+  }
+
+  int& at() {
+    return this.buffer.at();
+  }
+};
+
+int main() {
+  mut BufferFacade facade = BufferFacade();
+  facade.set(42);
+  return facade.at() - 42;
+}

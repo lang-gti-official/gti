@@ -1,0 +1,7 @@
+// Borrowing captures: shared-capture.
+//@ check-pass
+int main() {
+  int value = 7;
+  auto read = [&value]() -> int { return value; };
+  return read() - 7;
+}

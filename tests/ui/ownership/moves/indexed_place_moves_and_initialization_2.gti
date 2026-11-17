@@ -1,0 +1,64 @@
+// Indexed place moves and initialization: constant fixed-array elements should support disjoint moves, exact restoration, branch joins, loop backedges, field arrays, and partially moved drop boundaries.
+//@ check-pass
+import std.memory;
+
+struct Record {
+  int value;
+public:
+  Record(int initial) : value(initial) {}
+};
+
+struct Holder {
+  mut Record slots[2] = {Record(3), Record(4)};
+
+  int rotate() mut {
+    Record first = std::move(this.slots[0]);
+    Record second = std::move(this.slots[1]);
+    this.slots[0] = std::move(second);
+    this.slots[1] = std::move(first);
+    return this.slots[0].value + this.slots[1].value;
+  }
+public:
+  Holder() = default;
+};
+
+int branch_restore(bool select) {
+  mut Record values[1] = {Record(5)};
+  if (select) {
+    Record consumed = std::move(values[0]);
+    values[0] = std::move(consumed);
+  } else {
+    Record consumed = std::move(values[0]);
+    values[0] = std::move(consumed);
+  }
+  return values[0].value;
+}
+
+int loop_restore() {
+  mut Record values[1] = {Record(6)};
+  for (mut int index = 0; index < 2; index++) {
+    Record consumed = std::move(values[0]);
+    values[0] = std::move(consumed);
+  }
+  return values[0].value;
+}
+
+int partial_drop() {
+  mut std::unique_ptr<Record> owners[2] = {
+      std::make_unique<Record>(7), std::make_unique<Record>(8)};
+  auto first = std::move(owners[0]);
+  return first->value;
+}
+
+int main() {
+  mut Record values[2] = {Record(1), Record(2)};
+  Record first = std::move(values[1 - 1]);
+  Record second = std::move(values[1]);
+  values[0] = std::move(first);
+  values[1] = std::move(second);
+  Record moved[2] = std::move(values);
+
+  mut Holder holder = Holder();
+  return moved[0].value + moved[1].value + holder.rotate() +
+         branch_restore(true) + loop_restore() + partial_drop() - 26;
+}

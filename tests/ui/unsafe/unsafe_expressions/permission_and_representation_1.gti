@@ -1,0 +1,16 @@
+// Permission and representation: generic calls, constructors, arguments and returns.
+//@ check-pass
+unsafe T identity<T>(T value) { return value; }
+T permitted<T>(T value) { return unsafe { identity(value) }; }
+unsafe int read(const int* p) { return unsafe { *p }; }
+struct Item {
+  int value;
+  unsafe Item(int n) : value(n) {}
+};
+int add(int a, int b) { return a + b; }
+int main() {
+  int n = 20;
+  auto item = unsafe { Item(read(&n)) };
+  auto result = add(unsafe { permitted(item.value) }, unsafe { read(&n) });  //~ WARN GTI-S2100
+  return result == 40 ? 0 : 1;
+}

@@ -1,0 +1,3 @@
+// Native layout admission: erased native layout uses retain the backend admission fact.
+//@ check-pass
+struct Box { int value; }; constexpr bool fits<T>() { return sizeof(T) <= uint64_t(16); } concept Small<T> = fits<T>(); int select<T>() requires Small<T> { return 0; } int main() { return select<Box>(); }

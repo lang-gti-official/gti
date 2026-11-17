@@ -1,0 +1,5 @@
+// Raw field witnesses: a raw field read of hierarchy storage uses its exact metadata layout.
+//@ build-pass
+//@ slow
+class Dynamic { public: int value = 7; virtual int read() { return this.value; }  public: Dynamic() = default; };
+int main() { Dynamic object{}; unsafe { const Dynamic* pointer = &object; return pointer->value; } }

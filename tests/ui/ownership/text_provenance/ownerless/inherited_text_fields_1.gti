@@ -1,0 +1,39 @@
+// Inherited text fields: derived methods return inherited view fields as ownerless text.
+//@ check-pass
+import std.string;
+class Base {
+public:
+  std::string_view text;
+  Base(std::string_view text) : text(text) {}
+  virtual std::string_view name() { return "base"; }
+};
+class Derived : public Base {
+public:
+  Derived(std::string_view text) : Base(text) {}
+  std::string_view name() override { return this.text; }
+  std::string_view plain() { return this.text; }
+};
+class Holder<T> {
+public:
+  std::string_view text;
+  T value;
+  Holder(std::string_view text, T value) : text(text), value(value) {}
+  virtual std::string_view name() { return this.text; }
+};
+class Special<T> : public Holder<T> {
+public:
+  Special(T value) : Holder<T>("special", value) {}
+  std::string_view name() override { return this.text; }
+};
+Derived make(std::string_view text) { return Derived(text); }
+
+int main() {
+  Derived derived = make("derived");
+  Base& base = derived;
+  Special<int> special{1};
+  Holder<int>& holder = special;
+  return base.name() == "derived" && derived.plain() == "derived" &&
+                 holder.name() == "special"
+             ? 0
+             : 1;
+}

@@ -1,0 +1,14 @@
+// Exclusive reborrow loan graph: comma operands should not create overlapping full-expression borrows within one outer argument.
+class Box {
+public:
+  mut int value = 2;
+  int& read() { return this.value; }
+  int& expose() mut { return this.value; }
+public:
+  Box() = default;
+};
+int inspect(int& value) { return value; }
+int run(mut Box& parent) {
+  return inspect((parent.read(), parent.expose()));  //~ ERROR GTI-S2017 comma expression creates overlapping transient
+}
+int main() { return 0; }

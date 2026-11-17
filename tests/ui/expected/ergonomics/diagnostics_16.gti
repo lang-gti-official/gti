@@ -1,0 +1,3 @@
+// Diagnostics: expect consumes the complete named expected availability.
+expected<int, int> read() { return 7; }
+int main() { auto result = read(); [[discard]] std::move(result).expect("required"); return result.value(); }  //~ ERROR GTI-S2018

@@ -1,0 +1,26 @@
+// Selected result relays: a static call's selected Record& relays on LLVM.
+//@ build-pass
+//@ slow
+import std.span;
+import std.string;
+import std.vector;
+class Record {
+public:
+  std::string name;
+  Record() : name(std::string("record")) {}
+};
+class Base {
+public:
+  int32_t value;
+  mut std::vector<int32_t> values;
+  Record record;
+  Base() : value(5), record(Record()) {}
+  virtual void poke() {}
+  Record& select() { return this.record; }
+};
+Record& relay(Base& item) { return item.select(); }
+int main() {
+  mut Base owner{};
+  owner.values.push_back(1);
+  return relay(owner).name.size() == std::size_t(6) ? 0 : 1;
+}

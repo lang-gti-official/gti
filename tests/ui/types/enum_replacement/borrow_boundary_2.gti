@@ -1,0 +1,10 @@
+// Borrow boundary: replacement does not grant new borrowed-enum assignment permissions.
+import std.string;
+enum BorrowedEvent { empty, borrowed(int& owner), owned(std::string value) };
+
+int main() {
+  int owner = 3;
+  mut auto value = BorrowedEvent::borrowed(owner);
+  value = BorrowedEvent::owned(std::string("replacement"));  //~ ERROR GTI-S2003
+  return 0;
+}

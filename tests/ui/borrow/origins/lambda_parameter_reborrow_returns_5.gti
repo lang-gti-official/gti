@@ -1,0 +1,12 @@
+// Lambda parameter reborrow returns: caller-parameter-still-suspended is rejected before MIR lowering.
+int invalid(mut int& input) {
+  auto relay = [](mut int& source) -> mut int& {
+    mut int& parent = source;
+    mut int& child = parent;
+    return child;
+  };
+  mut int& result = relay(input);
+  input += 1;  //~ ERROR GTI-S2017
+  return result;
+}
+int main() { return 0; }

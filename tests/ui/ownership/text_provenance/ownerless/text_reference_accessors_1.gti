@@ -1,0 +1,34 @@
+// Text reference accessors: text that ownerless values return by reference may be stored.
+//@ check-pass
+import std.string;
+mut std::string_view kept = "";
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+  int& kindRef() { return this.kind; }
+  int& kindOf() { return this.kindRef(); }
+  std::string_view& alias() { return this.ref(); }
+};
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T& get() { return this.value; }
+};
+void keep(Token& token) { kept = token.ref(); }
+uint64_t width(Token& token) { return token.ref().size(); }
+
+int main() {
+  Token token = Token("token", 1);
+  kept = token.ref();
+  kept = token.alias();
+  keep(token);
+  Box<std::string_view> box = Box<std::string_view>("boxed");
+  kept = box.get();
+  expected<int, std::string_view> failed = unexpected("failure");
+  kept = failed.error();
+  return width(token) == 5 && token.kindOf() == 1 ? 0 : 1;
+}

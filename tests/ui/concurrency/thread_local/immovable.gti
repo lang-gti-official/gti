@@ -1,0 +1,14 @@
+// An immovable thread-local object is retired at thread exit.
+//@ run-pass
+//@ stdout: immovable retired
+import std.format;
+class Resource {
+public:
+  Resource() = default;
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = delete;
+  int32_t read() { return 7; }
+  ~Resource() { std::println("immovable retired"); }
+};
+thread_local mut Resource resource{};
+int main() { return resource.read() - 7; }

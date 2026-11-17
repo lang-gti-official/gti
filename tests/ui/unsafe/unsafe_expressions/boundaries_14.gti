@@ -1,0 +1,3 @@
+// Boundaries: grouping preserves existing constant eligibility.
+//@ check-pass
+constexpr int value() { return unsafe { 40 + 2 }; } static_assert(value() == 42); int main() { return value(); }  //~ WARN GTI-S2100

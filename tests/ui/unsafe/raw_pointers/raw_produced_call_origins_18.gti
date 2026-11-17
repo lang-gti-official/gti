@@ -1,0 +1,6 @@
+// Raw produced call origins: valid callee-produced raw transport: live-global.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int global = 7;
+int main() { auto pointer = source(); unsafe { return *pointer; } }
+const int* source() { return &global; }

@@ -1,0 +1,10 @@
+// General requires: cached primitive proofs never authorize a different type domain diagnostic.
+concept subtractable<T> = requires(T& left, T& right) {
+  { left - right } -> T;
+};
+T difference<subtractable T>(T left, T right) { return left - right; }
+int main() {
+  int good = difference(3, 1);
+  bool bad = difference(true, false);  //~ ERROR GTI-S2029
+  return good;
+}

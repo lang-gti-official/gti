@@ -1,0 +1,4 @@
+// Generics: rejected with GTI-S2012.
+class Abstract { public: Abstract() {} virtual int read() = 0; };
+struct Holder { Abstract value; };
+int main() { Holder owner{}; return 0; }  //~ ERROR GTI-S2012

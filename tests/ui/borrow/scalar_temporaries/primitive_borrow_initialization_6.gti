@@ -1,0 +1,3 @@
+// Primitive borrow initialization: copybool initialized local borrow.
+//@ check-pass
+int main() { mut bool value = true; bool alias = value; return alias ? 0 : 1; }  //~ WARN GTI-S2096

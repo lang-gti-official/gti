@@ -1,0 +1,25 @@
+// General requires: queries neither execute calls nor move caller objects.
+//@ check-pass
+import std.memory;
+mut int calls = 0;
+int never_run() { calls += 1; return 1; }
+int main() {
+  static_assert(requires { { never_run() } -> int; });
+  static_assert(requires(std::unique_ptr<int> input) {
+    { std::move(input) } -> std::unique_ptr<int>;
+  });
+  static_assert(!(requires(std::unique_ptr<int>& input) {
+    { std::move(input) } -> std::unique_ptr<int>;
+  }));
+  static_assert(!(requires(std::unique_ptr<int>& input) {
+    { input } -> int;
+  }));
+  auto owner = std::make_unique<int>(7);
+  static_assert(requires {
+    { std::move(owner) } -> std::unique_ptr<int>;
+  });
+  constexpr bool can_move = requires(std::unique_ptr<int> input) {
+    { std::move(input) } -> std::unique_ptr<int>;
+  };
+  return calls == 0 && can_move && *owner == 7 ? 0 : 1;
+}

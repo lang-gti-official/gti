@@ -1,0 +1,8 @@
+// Errors: move-only error copying stops before MIR/backend generation.
+struct Error {
+  int id;
+  Error(int value) : id(value) {}
+  Error(Error& other) = delete;
+};
+expected<int, Error> failure() { return unexpected(Error(1)); }
+void take(expected<int, Error> result) {} int main() { Error error{1}; take(unexpected(error)); return 0; }  //~ ERROR GTI-S2018

@@ -1,0 +1,3 @@
+// Mutable signature arguments: mutable references reject immutable/rvalue inputs, aliasing and signature mismatch.
+import std.functional;
+void change(mut int& left, int& right) {} int main() { std::function<void(mut int&, int&)> fn{change}; mut int x = 0; fn(x, x); return 0; }  //~ ERROR GTI-S2017

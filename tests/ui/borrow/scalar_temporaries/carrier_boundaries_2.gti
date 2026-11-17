@@ -1,0 +1,6 @@
+// Carrier boundaries: carrier argument protects its owner during later arguments.
+class Cursor { int& source; public: Cursor(int& value) : source(value) {} int read() { return this.source; } };
+Cursor cursor(int& source) { return Cursor(source); }
+int mutate(mut int& owner) { owner = 8; return owner; }
+int observe(Cursor& cursor, int later) { return cursor.read() + later; }
+int main() { mut int owner = 7; return observe(cursor(owner), mutate(owner)); }  //~ ERROR GTI-S2017

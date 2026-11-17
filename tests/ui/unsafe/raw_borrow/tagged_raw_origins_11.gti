@@ -1,0 +1,6 @@
+// Tagged raw origins: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+expected<const int*, int> dangling() { int dead = 7; return &dead; }
+int main() { auto wrapped = dangling(); auto copy = wrapped;
+  return copy.value() == wrapped.value() ? 0 : 1; }

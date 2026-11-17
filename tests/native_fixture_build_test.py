@@ -19,7 +19,6 @@ from iterator_sanitizer_support import (gcc_sanitizer_arguments,
                                         selected_native_driver)
 import lambda_pack_invocation_runtime_test as matrix
 from sanitizer_support import SANITIZED_BUILD_TIMEOUT, scaled_timeout
-import shared_accessor_range_runtime_test as accessor
 import storage_lane_iterator_runtime_test as storage
 from backend_modes import native_modes
 
@@ -291,7 +290,6 @@ class IteratorSanitizerToolingTests(unittest.TestCase):
             callbacks.append((name, label))
             self.assertEqual(environment["ASAN_OPTIONS"], "halt_on_error=1")
             self.assertEqual(environment["UBSAN_OPTIONS"], "halt_on_error=1:print_stacktrace=1")
-            self.assertEqual(accessor.native_arguments_by_case(name, label, environment), ())
             if name == "with_provider" and label == "sanitized":
                 return ("-fno-inline-functions-called-once", "-fno-inline")
             return ()

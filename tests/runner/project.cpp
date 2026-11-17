@@ -1,15 +1,22 @@
 #include "project.h"
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <map>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <thread>
@@ -86,8 +93,29 @@ struct Run {
   std::string err;
 };
 
+// A pseudo-terminal for `$ tty:` commands: the controller's descriptor and
+// the terminal's path, 80 columns by 24 rows, with output post-processing
+// off so a newline stays a newline. -1 on failure.
+int openTerminal(std::string &name) {
+  const int controller = posix_openpt(O_RDWR | O_NOCTTY);
+  if (controller < 0)
+    return -1;
+  const char *path = nullptr;
+  if (grantpt(controller) != 0 || unlockpt(controller) != 0 ||
+      (path = ptsname(controller)) == nullptr) {
+    close(controller);
+    return -1;
+  }
+  name = path;
+  return controller;
+}
+
+// The environment's changes for one command: `unset` removes a variable.
+using Changes = std::vector<std::pair<std::string, std::optional<std::string>>>;
+
 Run runCommand(const std::vector<std::string> &argv, const fs::path &cwd,
-               const fs::path &home, double cpuLimit, double wallLimit) {
+               const fs::path &home, double cpuLimit, double wallLimit,
+               const Changes &changes, bool terminal) {
   const fs::path out = home / ".command-stdout";
   const fs::path err = home / ".command-stderr";
   std::vector<char *> arguments;
@@ -95,6 +123,12 @@ Run runCommand(const std::vector<std::string> &argv, const fs::path &cwd,
     arguments.push_back(const_cast<char *>(argument.c_str()));
   arguments.push_back(nullptr);
   Run run;
+  std::string terminalName;
+  const int controller = terminal ? openTerminal(terminalName) : -1;
+  if (terminal && controller < 0) {
+    run.err = "gti-test: could not open a pseudo-terminal\n";
+    return run;
+  }
   const pid_t pid = fork();
   if (pid == 0) {
     rlimit core{0, 0};
@@ -103,27 +137,79 @@ Run runCommand(const std::vector<std::string> &argv, const fs::path &cwd,
         static_cast<rlim_t>(std::max(1.0, std::ceil(cpuLimit)));
     rlimit cpu{seconds, seconds + 1};
     setrlimit(RLIMIT_CPU, &cpu);
+    signal(SIGPIPE, SIG_DFL);
     setenv("HOME", home.c_str(), 1);
     setenv("XDG_CACHE_HOME", (home / ".cache").c_str(), 1);
     setenv("XDG_CONFIG_HOME", (home / ".config").c_str(), 1);
     setenv("NO_COLOR", "1", 1);
     setenv("TERM", "dumb", 1);
     unsetenv("GTI_TEST_SELF_TEST");
+    for (const auto &[name, value] : changes) {
+      if (value)
+        setenv(name.c_str(), value->c_str(), 1);
+      else
+        unsetenv(name.c_str());
+    }
     const int inFd = open("/dev/null", O_RDONLY);
-    const int outFd = open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    const int errFd = open(err.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int outFd = -1;
+    int errFd = -1;
+    if (terminal) {
+      // A session of its own whose controlling terminal is the pty.
+      close(controller);
+      setsid();
+      outFd = open(terminalName.c_str(), O_RDWR);
+      errFd = outFd;
+#if defined(TIOCSCTTY)
+      if (outFd >= 0)
+        ioctl(outFd, TIOCSCTTY, 0);
+#endif
+      termios mode{};
+      if (outFd >= 0 && tcgetattr(outFd, &mode) == 0) {
+        mode.c_oflag &= ~static_cast<tcflag_t>(OPOST);
+        tcsetattr(outFd, TCSANOW, &mode);
+      }
+      winsize size{};
+      size.ws_row = 24;
+      size.ws_col = 80;
+      if (outFd >= 0)
+        ioctl(outFd, TIOCSWINSZ, &size);
+    } else {
+      outFd = open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+      errFd = open(err.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    }
     if (inFd < 0 || outFd < 0 || errFd < 0 || chdir(cwd.c_str()) != 0)
       _exit(127);
     dup2(inFd, 0);
     dup2(outFd, 1);
     dup2(errFd, 2);
+    if (outFd > 2)
+      close(outFd);
+    if (errFd > 2 && errFd != outFd)
+      close(errFd);
     execvp(arguments[0], arguments.data());
     _exit(127);
   }
-  if (pid < 0)
+  if (pid < 0) {
+    if (controller >= 0)
+      close(controller);
     return run;
+  }
   const double start = wallSeconds();
   int status = 0;
+  // The terminal's output, read as it comes so the program never blocks on
+  // a full buffer; reading fails (EIO) once every writer has gone.
+  std::string screen;
+  const auto readTerminal = [&](int milliseconds) {
+    pollfd fd{controller, POLLIN, 0};
+    while (controller >= 0 && poll(&fd, 1, milliseconds) > 0) {
+      char chunk[4096];
+      const ssize_t count = read(controller, chunk, sizeof chunk);
+      if (count <= 0)
+        break;
+      screen.append(chunk, static_cast<std::size_t>(count));
+      milliseconds = 0;
+    }
+  };
   while (true) {
     const pid_t done = waitpid(pid, &status, WNOHANG);
     if (done == pid)
@@ -136,7 +222,14 @@ Run runCommand(const std::vector<std::string> &argv, const fs::path &cwd,
       run.timedOut = true;
       break;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    if (controller >= 0)
+      readTerminal(2);
+    else
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  if (controller >= 0) {
+    readTerminal(0);
+    close(controller);
   }
   if (WIFEXITED(status))
     run.exitCode = WEXITSTATUS(status);
@@ -144,12 +237,47 @@ Run runCommand(const std::vector<std::string> &argv, const fs::path &cwd,
     run.signal = WTERMSIG(status);
     run.timedOut = run.timedOut || run.signal == SIGXCPU;
   }
-  run.out = readFile(out).value_or("");
-  run.err = readFile(err).value_or("");
+  if (terminal) {
+    run.out = std::move(screen);
+  } else {
+    run.out = readFile(out).value_or("");
+    run.err = readFile(err).value_or("");
+  }
   return run;
 }
 
-std::string excerpt(const std::string &text) {
+// An expectation's text: `\e` is the escape character (ESC, for colour
+// sequences) and `\\` a backslash; anything else is literal.
+std::string unescape(const std::string &text) {
+  std::string result;
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    if (text[index] == '\\' && index + 1 < text.size() &&
+        (text[index + 1] == 'e' || text[index + 1] == '\\')) {
+      result += text[index + 1] == 'e' ? '\x1b' : '\\';
+      ++index;
+    } else {
+      result += text[index];
+    }
+  }
+  return result;
+}
+
+bool variableName(const std::string &name) {
+  return !name.empty() &&
+         !std::isdigit(static_cast<unsigned char>(name.front())) &&
+         std::all_of(name.begin(), name.end(), [](char c) {
+           return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+         });
+}
+
+// Text for a failure message, with the escape character written `\e`.
+std::string visible(std::string text) {
+  replaceAll(text, "\x1b", "\\e");
+  return text;
+}
+
+std::string excerpt(const std::string &raw) {
+  const std::string text = visible(raw);
   std::string result;
   std::istringstream lines(text);
   int count = 0;
@@ -162,10 +290,11 @@ std::string excerpt(const std::string &text) {
 
 } // namespace
 
-std::vector<ProjectCommand>
-parseProjectTranscript(const std::string &text,
-                       std::vector<std::string> &errors) {
-  std::vector<ProjectCommand> commands;
+ProjectTranscript parseProjectTranscript(const std::string &text,
+                                         std::vector<std::string> &errors) {
+  ProjectTranscript transcript;
+  std::vector<ProjectCommand> &commands = transcript.commands;
+  bool runs = false;
   std::istringstream lines(text);
   int number = 0;
   for (std::string raw; std::getline(lines, raw);) {
@@ -176,19 +305,51 @@ parseProjectTranscript(const std::string &text,
     const auto error = [&](const std::string &message) {
       errors.push_back("line " + std::to_string(number) + ": " + message);
     };
+    if (line == "slow") {
+      if (transcript.slow)
+        error("duplicate `slow`");
+      transcript.slow = true;
+      continue;
+    }
+    if (line.rfind("env ", 0) == 0 || line.rfind("unset ", 0) == 0) {
+      ProjectCommand change;
+      change.writtenLine = number;
+      const bool set = line.rfind("env ", 0) == 0;
+      const std::string rest = trim(line.substr(set ? 4 : 6));
+      change.kind =
+          set ? ProjectCommand::Kind::SetEnv : ProjectCommand::Kind::Unset;
+      const std::size_t equals = set ? rest.find('=') : std::string::npos;
+      change.variable = set ? rest.substr(0, equals) : rest;
+      if (set && equals != std::string::npos)
+        change.value = rest.substr(equals + 1);
+      if (!variableName(change.variable) ||
+          (set && equals == std::string::npos))
+        error(set ? "environment lines are `env NAME=value`"
+                  : "`unset NAME` names one variable");
+      commands.push_back(std::move(change));
+      continue;
+    }
     if (line.rfind("$ ", 0) == 0) {
       bool ok = true;
       ProjectCommand command;
-      command.argv = words(line.substr(2), ok);
+      std::string rest = line.substr(2);
+      if (rest.rfind("tty:", 0) == 0) {
+        command.terminal = true;
+        rest = rest.substr(4);
+      }
+      command.argv = words(rest, ok);
       command.writtenLine = number;
       if (!ok || command.argv.empty())
-        error("a command is `$ program arguments...`");
-      else if (command.argv.front() == "cd" && command.argv.size() != 2)
+        error("a command is `$ program arguments...` or `$ tty: program "
+              "arguments...`");
+      else if (command.argv.front() == "cd" &&
+               (command.argv.size() != 2 || command.terminal))
         error("`$ cd` takes one directory");
+      runs = runs || (ok && !command.argv.empty());
       commands.push_back(std::move(command));
       continue;
     }
-    if (commands.empty()) {
+    if (commands.empty() || commands.back().kind != ProjectCommand::Kind::Run) {
       error("expectations follow a `$ command` line");
       continue;
     }
@@ -207,21 +368,25 @@ parseProjectTranscript(const std::string &text,
         error("exit codes are `? N` with N from 0 to 255");
       command.exitCode = static_cast<int>(parsed);
     } else if (line.rfind("stdout:", 0) == 0) {
-      command.stdoutContains.push_back(value(7));
+      command.stdoutContains.push_back(unescape(value(7)));
     } else if (line.rfind("stderr:", 0) == 0) {
-      command.stderrContains.push_back(value(7));
+      if (command.terminal)
+        error("a `$ tty:` command's output is all `stdout:` (one terminal)");
+      command.stderrContains.push_back(unescape(value(7)));
     } else if (line.rfind("!stdout:", 0) == 0) {
-      command.stdoutLacks.push_back(value(8));
+      command.stdoutLacks.push_back(unescape(value(8)));
     } else if (line.rfind("!stderr:", 0) == 0) {
-      command.stderrLacks.push_back(value(8));
+      if (command.terminal)
+        error("a `$ tty:` command's output is all `stdout:` (one terminal)");
+      command.stderrLacks.push_back(unescape(value(8)));
     } else {
-      error("expected `$ command`, `? N`, `stdout:`, `stderr:`, `!stdout:` "
-            "or `!stderr:`");
+      error("expected `$ command`, `? N`, `stdout:`, `stderr:`, `!stdout:`, "
+            "`!stderr:`, `env NAME=value`, `unset NAME` or `slow`");
     }
   }
-  if (commands.empty() && errors.empty())
+  if (!runs && errors.empty())
     errors.push_back("the transcript runs no command");
-  return commands;
+  return transcript;
 }
 
 ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
@@ -230,7 +395,7 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
   std::vector<std::string> errors;
   const std::string transcript = readFile(test.path).value_or("");
   const std::vector<ProjectCommand> commands =
-      parseProjectTranscript(transcript, errors);
+      parseProjectTranscript(transcript, errors).commands;
   // What --bless learns per command line: the exit code and diagnostics.
   struct Observed {
     int exitCode = 0;
@@ -256,9 +421,12 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
     return result;
   }
   const fs::path canonical = fs::canonical(project);
+  const fs::path canonicalHome = fs::canonical(home);
   const auto normalize = [&](std::string text) {
     replaceAll(text, canonical.string(), "$DIR");
     replaceAll(text, project.string(), "$DIR");
+    replaceAll(text, canonicalHome.string(), "$HOME");
+    replaceAll(text, home.string(), "$HOME");
     if (!tools.standardLibrary.empty())
       replaceAll(text, tools.standardLibrary.string(), "$STD");
     replaceAll(text, tools.gti.string(), "gti");
@@ -268,9 +436,34 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
 
   const double cpuStart = childCpu();
   fs::path cwd = canonical;
+  // `env`/`unset` lines, in order; `$PATH` in a value is the PATH later
+  // commands would otherwise see.
+  Changes changes;
+  const auto currentPath = [&]() -> std::string {
+    for (auto it = changes.rbegin(); it != changes.rend(); ++it)
+      if (it->first == "PATH")
+        return it->second.value_or("");
+    const char *inherited = std::getenv("PATH");
+    return inherited == nullptr ? "" : inherited;
+  };
+  const auto expand = [&](std::string text) {
+    replaceAll(text, "$DIR", canonical.string());
+    replaceAll(text, "$HOME", canonicalHome.string());
+    return text;
+  };
   for (const ProjectCommand &command : commands) {
-    const std::string where =
-        "line " + std::to_string(command.writtenLine) + ": $";
+    if (command.kind == ProjectCommand::Kind::SetEnv) {
+      std::string value = command.value;
+      replaceAll(value, "$PATH", currentPath());
+      changes.emplace_back(command.variable, expand(value));
+      continue;
+    }
+    if (command.kind == ProjectCommand::Kind::Unset) {
+      changes.emplace_back(command.variable, std::nullopt);
+      continue;
+    }
+    const std::string where = "line " + std::to_string(command.writtenLine) +
+                              ": $" + (command.terminal ? " tty:" : "");
     std::string shown;
     for (const std::string &word : command.argv)
       shown += " " + word;
@@ -283,10 +476,8 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
       continue;
     }
     std::vector<std::string> argv;
-    for (std::string word : command.argv) {
-      replaceAll(word, "$DIR", canonical.string());
-      argv.push_back(word);
-    }
+    for (const std::string &word : command.argv)
+      argv.push_back(expand(word));
     if (argv.front() == "gti")
       argv.front() = tools.gti.string();
     else if (argv.front() == "gti_lsp")
@@ -297,7 +488,8 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
       result.failure += where + shown + ": the CPU budget is spent\n";
       break;
     }
-    const Run run = runCommand(argv, cwd, home, remaining, 4 * limit);
+    const Run run = runCommand(argv, cwd, canonicalHome, remaining, 4 * limit,
+                               changes, command.terminal);
     if (run.timedOut) {
       result.timedOut = true;
       result.failure += where + shown + ": over the CPU limit (" +
@@ -324,23 +516,26 @@ ProjectResult runProjectTest(const TestFile &test, const ProjectTools &tools,
                          ", expected " + std::to_string(command.exitCode));
     for (const std::string &needle : command.stdoutContains)
       if (out.find(needle) == std::string::npos)
-        problems.push_back("stdout lacks \"" + needle + "\"");
+        problems.push_back("stdout lacks \"" + visible(needle) + "\"");
     for (const std::string &needle : command.stderrContains)
       if (err.find(needle) == std::string::npos)
-        problems.push_back("stderr lacks \"" + needle + "\"");
+        problems.push_back("stderr lacks \"" + visible(needle) + "\"");
     for (const std::string &needle : command.stdoutLacks)
       if (out.find(needle) != std::string::npos)
-        problems.push_back("stdout contains \"" + needle + "\"");
+        problems.push_back("stdout contains \"" + visible(needle) + "\"");
     for (const std::string &needle : command.stderrLacks)
       if (err.find(needle) != std::string::npos)
-        problems.push_back("stderr contains \"" + needle + "\"");
+        problems.push_back("stderr contains \"" + visible(needle) + "\"");
     if (!problems.empty()) {
       std::string &target = bless ? unblessable : result.failure;
       target += where + shown + "\n";
       for (const std::string &problem : problems)
         target += "  " + problem + "\n";
-      target += "  stdout (normalised):\n" + excerpt(out) +
-                "  stderr (normalised):\n" + excerpt(err);
+      if (command.terminal)
+        target += "  terminal (normalised):\n" + excerpt(out);
+      else
+        target += "  stdout (normalised):\n" + excerpt(out) +
+                  "  stderr (normalised):\n" + excerpt(err);
       if (!bless)
         break;
     }

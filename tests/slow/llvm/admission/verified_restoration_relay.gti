@@ -1,0 +1,26 @@
+// Verified restoration relay: unrelated read and mutable source helpers retain one verified finite restoration chain.
+//@ build-pass
+//@ slow
+import std.memory;
+class Cell {
+  mut int& value;
+public:
+  Cell(mut int& value) : value(value) {}
+  int read() { return this.value; }
+  void add(int amount) mut { this.value += amount; }
+};
+unsafe Cell& relay_read(std::erased_object& object) {
+  unsafe { Cell& cell = std::restore_ref<Cell>(object); return cell; }
+}
+unsafe mut Cell& relay_mut(mut std::erased_object& object) {
+  unsafe { mut Cell& cell = std::restore_mut<Cell>(object); return cell; }
+}
+int main() {
+  mut int value = 3;
+  mut Cell cell{value};
+  { std::erased_object& object = std::erase_ref(cell);
+    unsafe { if (relay_read(object).read() != 3) return 1; } }
+  { mut std::erased_object& object = std::erase_mut(cell);
+    unsafe { relay_mut(object).add(2); } }
+  return cell.read() == 5 ? 0 : 2;
+}

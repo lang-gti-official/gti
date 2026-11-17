@@ -1,0 +1,2 @@
+// Signature receiver family: signature definitions must be disjoint, same-kind patterns.
+class C<R(Args...)> { public: C() = default; }; class C<T(Ts...)> {};  //~ ERROR GTI-S2006

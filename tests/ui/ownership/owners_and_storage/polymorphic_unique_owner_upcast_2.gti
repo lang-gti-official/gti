@@ -1,0 +1,38 @@
+// Polymorphic unique owner upcast: unique-owner upcasts should reject unsafe destruction and unrelated or capability-amplifying target types before backend generation.
+import std.memory;
+
+class PlainBase { public: PlainBase() = default; };
+class PlainDerived : public PlainBase { public: PlainDerived() = default; };
+class Unrelated { public: Unrelated() = default; };
+class CapableBase { public: virtual int read() { return 1; }  public: CapableBase() = default; };
+[[no_transfer]] class NonTransferable : public CapableBase {
+public: int read() override { return 2; }
+public:
+  NonTransferable() = default;
+};
+[[no_share]] class NonShareable : public CapableBase {
+public: int read() override { return 3; }
+public:
+  NonShareable() = default;
+};
+class CleanupBound : public CapableBase {
+public:
+  ~CleanupBound() {}
+  int read() override { return 4; }
+public:
+  CleanupBound() = default;
+};
+
+int main() {
+  [[discard]] std::upcast_unique<PlainBase, PlainDerived>(  //~ ERROR GTI-S2018
+      std::make_unique<PlainDerived>());
+  [[discard]] std::upcast_unique<PlainBase, Unrelated>(  //~ ERROR GTI-S2018
+      std::make_unique<Unrelated>());
+  [[discard]] std::upcast_unique<CapableBase, NonTransferable>(  //~ ERROR GTI-S2018
+      std::make_unique<NonTransferable>());
+  [[discard]] std::upcast_unique<CapableBase, NonShareable>(  //~ ERROR GTI-S2018
+      std::make_unique<NonShareable>());
+  [[discard]] std::upcast_unique<CapableBase, CleanupBound>(  //~ ERROR GTI-S2018
+      std::make_unique<CleanupBound>());
+  return 0;
+}

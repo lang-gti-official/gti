@@ -1,0 +1,41 @@
+// A returned value initializes the declared result through an implicit
+// constructor; the operand navigates to its parameter, an explicit
+// constructor makes it S2003, and broken and repaired edits recover.
+// (implicit_return_construction_lsp_test.py)
+//@ definition @use: @param
+struct Result {
+  int value;
+  implicit Result(int input) : value(input) {}
+};
+Result /*@make*/make(int /*@param*/value) { /* 😀 */ return /*@use*/value; }
+int main() { return make(7).value; }
+// --- step 2
+struct Result {
+  int value;
+  Result(int input) : value(input) {}
+};
+Result make(int value) { /* 😀 */ return value; }  //~ ERROR GTI-S2003
+int main() { return make(7).value; }
+// --- step 3
+struct Result {
+  int value;
+  implicit Result(int input) : value(input) {}
+};
+Result make(int value) { /* 😀 */ return value; }
+int main() { return make(7).value; }
+// --- step 4
+struct Result {
+  int value;
+  implicit Result(int input) : value(input {}  //~ ERROR GTI-P0001
+};
+Result make(int value) { /* 😀 */ return value; }  //~ ERROR GTI-S2003
+int main() { return make(7).value; }
+// --- step 5
+//@ hover @make: Result
+//@ hover @make: make
+struct Result {
+  int value;
+  implicit Result(int input) : value(input) {}
+};
+Result /*@make*/make(int /*@param*/value) { /* 😀 */ return /*@use*/value; }
+int main() { return make(7).value; }

@@ -1,0 +1,17 @@
+// Known raw pointer origins: selected mutable raw receiver calls must respect checked borrows.
+//@ raw-pointer-audit: strict
+struct Value {
+  mut int count = 0;
+  void change() mut { this.count = 1; }
+public:
+  Value() = default;
+};
+int main() {
+  mut Value value{};
+  unsafe {
+    auto pointer = &value;
+    Value& loan = value;
+    pointer->change();  //~ ERROR GTI-S2102
+    return loan.count;
+  }
+}

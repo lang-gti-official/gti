@@ -1,0 +1,11 @@
+// Class assertions: complete: a reflected class assertion holds for an instance whose class and constructor both reanalyse it.
+//@ check-pass
+import std.meta;
+class Box<T> {
+  static_assert(!std::meta::type<T>().is_void(), "no void");
+  mut T value;
+public:
+  Box(T value) : value(value) {}
+  T get() { return this.value; }
+};
+int main() { Box<int32_t> b = Box<int32_t>(1); return 0; }

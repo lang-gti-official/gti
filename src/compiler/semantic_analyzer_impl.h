@@ -3145,8 +3145,9 @@ private:
   // as long as the shortest; each must outlive the declared result region.
   bool validateReturnedCallRegion(const FunctionDecl &syntax,
                                   const ExprPtr &value);
-  // A result in a region the class stores is supplied by references the
-  // receiver stores, never by storage the receiver owns (GTI-S2127).
+  // A result in a region the class stores is supplied by the references the
+  // receiver stores in that region, never by storage the receiver owns or a
+  // reference stored in another region (GTI-S2127).
   void validateReturnedReceiverRegion(const FunctionDecl &syntax, ClassId owner,
                                       const ExprPtr &value);
   // `requires outlives<T, r>` on a callee: the type bound to T must outlive
@@ -6411,6 +6412,7 @@ private:
                                bool mutableReceiver);
 
   [[nodiscard]] const Symbol *resolve(const Token &name) const;
+  void suggestVisibleLocalName(const Token &name, Diagnostic &diagnostic) const;
   [[nodiscard]] const Symbol *
   resolveGeneratedTestReference(const NamePath &path) const;
 
@@ -6975,6 +6977,18 @@ private:
   contextualIntegerLiteral(const Expr *expression, bool allowSign = true);
 
   [[nodiscard]] static bool isContextualIntegerLiteral(const Expr *expression);
+
+  // A written integer literal with a numeric suffix (`10u8`), optionally
+  // parenthesized and optionally carrying one sign. Its type is the suffix
+  // type; it never adopts a contextual type.
+  [[nodiscard]] static const LiteralExpr *
+  suffixedIntegerLiteral(const Expr *expression, bool allowSign = true);
+
+  [[nodiscard]] static SemanticType integerSuffixType(NumericSuffix suffix);
+
+  // Reports a suffixed literal whose signed value is outside its suffix type.
+  void checkSuffixedIntegerLiteralRange(const Expr &expression,
+                                        const LiteralExpr &literal);
 
   SemanticType analyzeContextualIntegerOperand(const ExprPtr &expression,
                                                SemanticType target);
@@ -7637,6 +7651,8 @@ private:
     // The value of the return statement whose declared type it initializes.
     const Expr *contextualReturnValue = nullptr;
     std::optional<SemanticType> contextualOperatorIntegerType;
+    // The suffixed literal whose range its enclosing sign already checked.
+    const LiteralExpr *signedSuffixedIntegerLiteral = nullptr;
     std::optional<ContextualCallableResult> contextualCallableResult;
     std::optional<ResultUse> contextualResultUse;
     ReceiverMutability currentReceiverMutability = ReceiverMutability::ReadOnly;
@@ -8247,6 +8263,8 @@ private:
   const Expr *&contextualReturnValue = requestSession.contextualReturnValue;
   std::optional<SemanticType> &contextualOperatorIntegerType =
       requestSession.contextualOperatorIntegerType;
+  const LiteralExpr *&signedSuffixedIntegerLiteral =
+      requestSession.signedSuffixedIntegerLiteral;
   std::optional<ContextualCallableResult> &contextualCallableResult =
       requestSession.contextualCallableResult;
   std::optional<ResultUse> &contextualResultUse =

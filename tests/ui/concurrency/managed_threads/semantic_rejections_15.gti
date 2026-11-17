@@ -1,0 +1,6 @@
+// Semantic rejections: application source should not be able to name the private handle.
+//@ execution-profile: concurrent
+int main() {
+  gti_internal::thread_handle handle;  //~ ERROR GTI-S2058 //~ ERROR GTI-S2000
+  return 0;
+}

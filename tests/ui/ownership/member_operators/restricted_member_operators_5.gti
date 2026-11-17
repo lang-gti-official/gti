@@ -1,0 +1,12 @@
+// Restricted member operators: operator resolution should not reverse operands or search a right-hand class for a member operator.
+class RightHandOnly {
+public:
+  RightHandOnly operator+(int other) { return RightHandOnly(); }
+public:
+  RightHandOnly() = default;
+};
+int main() {
+  RightHandOnly value = RightHandOnly();
+  RightHandOnly result = 1 + value;  //~ ERROR GTI-S2004
+  return 0;
+}

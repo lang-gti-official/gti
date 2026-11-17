@@ -1,0 +1,12 @@
+// Transfer qualified callables: ordinary read, mutable and consuming erased wrappers retain non-transferable local targets and replacement.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.functional;
+[[no_transfer]] struct Task { Task() = default; int operator()() mut { return 42; } };
+int main() {
+  mut std::function<int() mut> first{Task()};
+  mut std::move_only_function<int() mut> second{Task()};
+  first.replace(Task());
+  second.replace(Task());
+  return first() + second() - 84;
+}

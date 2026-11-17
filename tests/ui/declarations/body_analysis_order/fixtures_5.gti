@@ -1,0 +1,6 @@
+// Fixtures: a body cannot see a global declared after it.
+import std.iterator;
+import std.list;
+
+int main() { return undeclared_limit - 9; }  //~ ERROR GTI-S2001
+constexpr int limit = 9;

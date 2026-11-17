@@ -1,0 +1,8 @@
+// S: one lexical lambda retains distinct enclosing concrete generic types.
+//@ check-pass
+#macro invoke<F>(F callback) { callback(); }
+void observe<T>(T value) {}
+void generic<T>(T value) {
+  invoke!([value]() -> void { observe(value); });
+}
+int main() { generic(1); generic(true); return 0; }

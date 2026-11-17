@@ -1,0 +1,13 @@
+// Subviews: sub-views and in-place shrinking verify.
+//@ check-pass
+import std.string;
+std::string_view inner(std::string_view text) {
+  return text.substr(std::size_t(1), text.size() - std::size_t(2));
+}
+int main() {
+  std::string owner{"[abc]"};
+  std::string_view part = inner(owner.view());
+  mut std::string_view rest = owner.view().substr(std::size_t(1));
+  rest.remove_suffix(std::size_t(1));
+  return part.size() == rest.size() ? 0 : 1;
+}

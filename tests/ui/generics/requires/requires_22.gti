@@ -1,0 +1,7 @@
+// General requires: overload filtering retains ordinary source-predicate failures diagnostic.
+constexpr bool available<T>() { return false; }
+[[unsatisfied("Use a type accepted by the source policy.")]]
+concept admitted<T> = available<T>();
+int pick<T>(T value) requires admitted<T> { return 1; }
+int pick<T>(T value, int extra) { return extra; }
+int main() { return pick(3); }  //~ ERROR GTI-S2029

@@ -1,0 +1,40 @@
+// An argument reference forwarded through another call may be returned.
+//@ run-pass
+class Box {
+  mut int32_t value;
+
+public:
+  Box(int32_t initial) : value(initial) {}
+  mut int32_t& write() mut { return this.value; }
+  int32_t& observe() { return this.value; }
+  int32_t read() { return this.value; }
+  void store(int32_t next) mut { this.value = next; }
+};
+
+class Boxes {
+public:
+  Boxes() = default;
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+};
+
+class Pair {
+public:
+  Pair() {}
+  mut int32_t first = 3;
+  mut int32_t second = 4;
+};
+
+int32_t& pick(int32_t& candidate) { return candidate; }
+
+int32_t& forward(int32_t& candidate) { return pick(candidate); }
+
+int main() {
+  mut int32_t v = 0;
+  v = 5;
+  int32_t& chosen = forward(v);
+  if (chosen != 5) {
+    return 1;
+  }
+  return 0;
+}

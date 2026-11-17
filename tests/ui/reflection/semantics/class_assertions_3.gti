@@ -1,0 +1,40 @@
+// Class assertions: complete: an assertion may reflect on its own class instance or on one that reflects back.
+//@ check-pass
+import std.meta;
+class Node<T> {
+  static_assert(std::meta::type<Node<T>>().field_count() == uint64_t(1),
+                "one field");
+  T value;
+public:
+  Node(T value) : value(value) {}
+};
+class Left<T> {
+  static_assert(std::meta::type<Right<T>>().field_count() == uint64_t(1),
+                "right has one field");
+  T value;
+public:
+  Left(T value) : value(value) {}
+};
+class Right<T> {
+  static_assert(std::meta::type<Left<T>>().field_count() == uint64_t(1),
+                "left has one field");
+  T value;
+public:
+  Right(T value) : value(value) {}
+};
+class Guard<T> {
+  T value;
+public:
+  Guard(T value) : value(value) {}
+  ~Guard() {
+    static_assert(std::meta::type<Guard<T>>().field_count() == uint64_t(1),
+                  "guard has one field");
+  }
+};
+int main() {
+  Node<int32_t> node = Node<int32_t>(1);
+  Left<int32_t> left = Left<int32_t>(2);
+  Right<int32_t> right = Right<int32_t>(3);
+  Guard<int32_t> guard = Guard<int32_t>(4);
+  return 0;
+}

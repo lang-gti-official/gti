@@ -1,0 +1,24 @@
+// Edge sensitive move flow: while, do-while, and for should reject values consumed before a reachable backedge.
+struct Record { int32_t value = 7;  public: Record() = default; };
+
+int main() {
+  mut Record while_value = Record();
+  mut int32_t while_index = 0;
+  while (while_index < 2) {  //~ ERROR GTI-S2018
+    Record consumed = std::move(while_value);
+    while_index++;
+  }
+
+  mut Record do_value = Record();
+  mut int32_t do_index = 0;
+  do {
+    Record consumed = std::move(do_value);
+    do_index++;
+  } while (do_index < 2);  //~ ERROR GTI-S2018
+
+  mut Record for_value = Record();
+  for (mut int32_t index = 0; index < 2; index++) {  //~ ERROR GTI-S2018
+    Record consumed = std::move(for_value);
+  }
+  return 0;
+}

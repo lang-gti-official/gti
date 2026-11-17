@@ -1,0 +1,9 @@
+// Protocol concepts: rejected with GTI-S2123.
+for <T, E> concept std::tryable<expected<T, E>> {  //~ ERROR GTI-S2123
+  using value_type = T;
+  using residual_type = expected<T, E>;
+  bool has_value(expected<T, E>& value) { return value.has_value(); }
+  T take_value(expected<T, E> value) { return std::move(value).value(); }
+  expected<T, E> take_residual(expected<T, E> value) { return value; }
+};
+int main() { return 0; }

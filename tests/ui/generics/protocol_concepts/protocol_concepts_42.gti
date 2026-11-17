@@ -1,0 +1,30 @@
+// Protocol concepts: rejected with GTI-S2123.
+concept measurable<T> {
+  typename unit_type;
+  unit_type measure(T& item);
+  bool is_empty(T& item);
+};
+struct Meters {
+  int value;
+  Meters(int amount) : value(amount) {}
+};
+class Rope {
+public:
+  int length;
+  Rope(int amount) : length(amount) {}
+};
+class Crate<T> {
+public:
+  T item;
+  int count;
+  Crate(T stored, int amount) : item(stored), count(amount) {}
+};
+
+for concept measurable<Crate<int>> {
+  using unit_type = int;
+  int measure(Crate<int>& item) { return item.count; }
+  bool is_empty(Crate<int>& item) { return item.count == 0; }
+};
+measurable<Crate<T>>::unit_type unsupported<T>(Crate<T>& item) {  //~ ERROR GTI-S2123
+  return measurable<Crate<T>>::measure(item);  //~ ERROR GTI-S2123
+}

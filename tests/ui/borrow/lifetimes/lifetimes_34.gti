@@ -1,0 +1,7 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+enum Cell<T> { empty, value(T item) };
+void need<T>() requires outlives<T, static> {}
+void relay<T>(Cell<T>&<static> input) { need<T>(); }
+int main() { return 0; }

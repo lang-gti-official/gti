@@ -1,0 +1,17 @@
+// Clean: the program is accepted.
+//@ analyze-pass
+//@ raw-pointer-audit: strict
+//@ no-prelude
+struct Handle {
+  const int* pointer = nullptr;
+  implicit Handle(const int* input) : pointer(input) {}
+public:
+  Handle() = default;
+};
+Handle handle(const int* pointer) { return pointer; }
+int inspect() {
+  int local = 7;
+  Handle result = handle(&local);
+  unsafe { return *result.pointer; }
+}
+int main() { return 0; }

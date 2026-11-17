@@ -1,0 +1,10 @@
+// Contextual diagnostics and boundaries: a callee body later in source order should reject the item at its selection, exactly as when the callee comes first.
+void selected(bool value) {}
+void run();
+int main() {
+  run();
+  return 0;
+}
+void run() { forward(selected); }  //~ ERROR GTI-S2090
+void forward<Function>(Function function) { invoke(function); }
+void invoke<Function>(Function function) { function(1); }

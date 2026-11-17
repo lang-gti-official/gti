@@ -1,0 +1,6 @@
+// Confined callable results: generic callable result inference should remain closed until the result type has an exact context.
+void infer<Operation>(int value, Operation operation) {
+  auto result = operation(value);  //~ ERROR GTI-S2046
+}
+
+int main() { return 0; }

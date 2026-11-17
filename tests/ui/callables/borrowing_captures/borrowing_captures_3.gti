@@ -1,0 +1,14 @@
+// Borrowing captures: disjoint-captures.
+//@ check-pass
+struct State { mut int left = 2; mut int right = 3;  public: State() = default; };
+int main() {
+  mut State state{};
+  mut auto& left = state.left;
+  mut auto& right = state.right;
+  mut auto update = [mut &left, mut &right]() -> int {
+    left += 1;
+    right += 2;
+    return left + right;
+  };
+  return update() - 8;
+}

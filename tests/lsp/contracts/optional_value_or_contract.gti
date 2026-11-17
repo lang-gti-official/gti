@@ -1,0 +1,39 @@
+// `value_or` on an optional of a move-only type is a copy_constructible
+// contract error at the call; member completion still works on the broken
+// receiver, and a valid call clears it. (From optional_contract_lsp_test.py.)
+import std.optional;
+struct Resource {
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+};
+int main() {
+  std::optional<Resource> value{};
+  /*😀*/ auto result = value.value_or(Resource());  //~ ERROR GTI-S2029 std::copy_constructible
+  return 0;
+}
+// --- step 2
+//@ completion @dot: has_value
+import std.optional;
+struct Resource {
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+};
+int main() {
+  std::optional<Resource> value{};
+  /*😀*/ auto result = value./*@dot*/;  //~ ERROR GTI-P0001
+  return 0;
+}
+// --- step 3
+import std.optional;
+struct Resource {
+  Resource() {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+};
+int main() {
+  std::optional<Resource> value{};
+  /*😀*/ bool result = value.has_value();
+  return 0;
+}

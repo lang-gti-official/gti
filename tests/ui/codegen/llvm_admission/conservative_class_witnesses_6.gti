@@ -1,0 +1,3 @@
+// Conservative class witnesses: exact interface and state-base metadata has bounded public representation witnesses.
+//@ check-pass
+class Base {public: Base(){}}; class Derived:public Base {public: Derived():Base(){}}; void accept(Derived& value){}

@@ -1,0 +1,18 @@
+// A `mut` signature alias matches a `mut` pattern; dropping or doubling the
+// qualifier is reported. (From function_signature_lsp_test.py.)
+//@ hover @mutable: int32_t(int32_t) mut
+using Mutable = int(int) mut;
+class Tag<R(Args...) mut> { public: Tag() = default; };
+int main() { Tag</*@mutable*/Mutable> value{}; return 0; }
+// --- step 2
+using Mutable = int(int);
+class Tag<R(Args...) mut> { public: Tag() = default; };
+int main() { Tag<Mutable> value{}; return 0; }  //~ ERROR GTI-S2023
+// --- step 3
+using Mutable = int(int) mut mut;  //~ ERROR GTI-P0001
+class Tag<R(Args...) mut> { public: Tag() = default; };
+int main() { Tag<Mutable> value{}; return 0; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2023
+// --- step 4
+using Mutable = int(int) mut;
+class Tag<R(Args...) mut> { public: Tag() = default; };
+int main() { Tag<Mutable> value{}; return 0; }

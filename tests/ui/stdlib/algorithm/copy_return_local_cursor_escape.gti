@@ -1,0 +1,16 @@
+// std::copy's cursor into a local cannot be returned.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+std::vector<int>::iterator dangling() {  //~ ERROR GTI-S2045 borrowed return
+  std::vector<int> source = {1}; mut std::vector<int> destination = {0, 0};
+  return std::copy(source.begin(), source.end(), destination.begin_mut());
+}
+int main() { return 0; }

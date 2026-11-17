@@ -1,0 +1,8 @@
+// Optional compiler contract: reset should reject while an element reference remains live.
+import std.optional;
+int main() {
+  mut std::optional<int32_t> value{int32_t(7)};
+  mut int32_t& borrowed = value.value();
+  value.reset();  //~ ERROR GTI-S2017
+  return borrowed;
+}

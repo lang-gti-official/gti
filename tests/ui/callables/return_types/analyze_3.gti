@@ -1,0 +1,10 @@
+// Analyze: projection mutation fixture is valid.
+//@ check-pass
+import std.meta;
+std::meta::callable_return_type<F> apply<F>(F& fn, int value) {
+  return fn(value);
+}
+int main() {
+  auto mapper = [](int value) -> int { return value; };
+  return apply(mapper, 0);
+}

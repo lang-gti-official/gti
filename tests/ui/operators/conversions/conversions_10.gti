@@ -1,0 +1,10 @@
+// Conversion operators: rejected with GTI-S2122.
+struct End {
+  End(int value) {}
+  implicit End(Source& value) {}
+public:
+  End() = default;
+};
+struct Source { implicit operator End() { return End(7); }  public: Source() = default; };
+End make(Source& value) { return value; }  //~ ERROR GTI-S2122
+int main() { return 0; }

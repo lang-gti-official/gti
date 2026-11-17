@@ -1,0 +1,22 @@
+// Initializer local dependencies: an enclosing function parameter cannot acquire initializer-local ownership through a macro's copied expression context.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+#macro int local_value(int expression) {
+  mut int saved = expression;
+  saved += 1;
+  return saved;
+}
+#macro int nested_value(int expression) {
+  int saved = expression;
+  return local_value!(saved);
+}
+#macro int local_callback<F>(F action) {
+  int saved = action();
+  return saved;
+}
+
+int read(int caller) {
+  thread_local int state = nested_value!(caller);  //~ ERROR GTI-S2124
+  return state;
+}
+int main() { return read(4); }

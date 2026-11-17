@@ -1,0 +1,15 @@
+// Borrowed target rejection: unique allocation still accepts a class containing owned state.
+//@ check-pass
+import std.functional;
+import std.memory;
+
+class Reading {
+  int value;
+public:
+  Reading(int source) : value(source) {}
+  int get() { return this.value; }
+};
+int main() {
+  auto reader = std::make_unique<Reading>(7);
+  return reader->get() - 7;
+}

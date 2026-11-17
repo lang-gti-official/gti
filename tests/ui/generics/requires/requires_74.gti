@@ -1,0 +1,13 @@
+// General requires: direct queries keep ordinary private self-access.
+//@ check-pass
+class Vault {
+  int secret() { return 7; }
+public:
+  int probe() {
+    static_assert(requires(Vault& other) { { (other.secret()) } -> int; });
+    return this.secret();
+  }
+public:
+  Vault() = default;
+};
+int main() { Vault value{}; return value.probe() - 7; }

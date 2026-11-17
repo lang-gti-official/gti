@@ -1,0 +1,13 @@
+// Independent text publication: unrelated temporary cannot allow the text owner to escape.
+import std.string;
+class Pattern { public: Pattern() = default; };
+class Result {
+  std::string_view text;
+public:
+  Result(std::string_view text) : text(text) {}
+  bool matched() { return this.text.size() != std::size_t(0); }
+};
+Result match(std::string_view text, Pattern& pattern) { return Result(text); }
+
+Result escape() { std::string owner{"hello"}; return match(owner.view(), Pattern()); }  //~ ERROR GTI-S2045
+int main() { return 0; }

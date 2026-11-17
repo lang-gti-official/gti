@@ -1,0 +1,21 @@
+// Parameter payload reference returns: the diagnostic names a mutable source parameter's access.
+class resource {
+  mut int32_t count = 3;
+public:
+  resource() {}
+  resource(resource& other) = delete;
+  resource(resource&& other) = default;
+  void add() mut { this.count++; }
+  int32_t read() { return this.count; }
+};
+enum class wrap { one(int32_t inner), two(int32_t inner) };
+enum class data { some(resource item) };
+
+mut int32_t& slot(mut wrap& value) {
+  mut wrap copy = value;
+  switch (copy) {
+  case wrap::one(mut auto& item): return item;  //~ ERROR GTI-S2017
+  case wrap::two(mut auto& item): return item;  //~ ERROR GTI-S2017
+  }
+}
+int main() { mut wrap w = wrap::one(3); slot(w) = 4; return 0; }

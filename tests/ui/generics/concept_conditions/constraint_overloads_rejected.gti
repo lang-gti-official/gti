@@ -1,0 +1,4 @@
+// Overloads differing only in concept constraints are duplicates.
+//@ check-fail
+concept sized<T> = requires(T& v) { { v.size() } -> uint64_t; };
+T pick<std::integral T>(T a) { return a; } T pick<std::floating_point T>(T a) { return a; }  //~ ERROR GTI-S2011 Duplicate overload signature

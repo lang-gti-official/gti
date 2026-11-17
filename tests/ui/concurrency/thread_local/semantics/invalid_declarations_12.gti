@@ -1,0 +1,3 @@
+// Invalid declarations: the legacy constexpr fallback cannot reinterpret thread-local storage as an automatic constant variable.
+//@ execution-profile: concurrent
+constexpr int read() { thread_local int state = 1; return state; } static_assert(read() == 1); int main() { return 0; }  //~ ERROR GTI-S2057

@@ -1,0 +1,20 @@
+// Positive: allocation, growth and cleanup are safe after one unsafe binding.
+//@ check-pass
+import std.resource;
+import std.memory;
+
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_storage<int, std::process_resource> slots{resource};
+  auto allocated = slots.try_allocate(std::size_t(2), std::alignment(std::size_t(64)));
+  if (!allocated) { return 1; }
+  slots.emplace(std::size_t(0), 42);
+  auto grown = slots.try_reserve_prefix(std::size_t(8), std::size_t(1));
+  if (!grown) { return 2; }
+  if (slots.get(std::size_t(0)) != 42) { return 3; }
+  slots.release();
+  return 0;
+}
+int main() {
+  std::process_resource resource{};
+  unsafe { return use(std::bind_resource(resource)); }
+}

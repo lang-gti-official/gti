@@ -1,0 +1,4 @@
+// Rejections: unavailable-source fixture should retain valid loaded syntax.
+//@ parse-pass
+import std.source_location;
+int main() { std::string_view text = std::expression_text!(2); return 0; }

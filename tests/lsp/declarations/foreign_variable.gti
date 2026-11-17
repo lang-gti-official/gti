@@ -1,0 +1,41 @@
+// Foreign storage hovers with its C linkage, link name and mutability,
+// navigates and is a variable token; reading it outside unsafe is an error
+// at the use, and an edited link name shows in hover.
+// (foreign_variable_lsp_test.py)
+//@ hover @use: extern "C"
+//@ hover @use: mut int32_t counter
+//@ hover @use: native_counter
+//@ hover @use: unsafe
+//@ hover @limit: limit
+//@ hover @limit: !mut
+//@ definition @use: @decl
+//@ token @use: variable
+// Foreign storage 😀
+extern "C" {
+  [[link_name("native_counter")]] mut c_int /*@decl*/counter;
+  c_int /*@limit*/limit;
+}
+c_int read() { unsafe { return /*@use*/counter; } }
+// --- step 2
+// Foreign storage 😀
+extern "C" {
+  [[link_name("native_counter")]] mut c_int counter;
+  c_int limit;
+}
+c_int read() { /* 😀 */ return counter; }  //~ ERROR GTI-S2055
+// --- step 3
+// Foreign storage 😀
+extern "C" {
+  [[link_name("native_counter")]] mut c_int counter;
+  c_int limit;
+}
+c_int read() { unsafe { return counter; } }
+// --- step 4
+//@ hover @use: renamed_counter
+//@ hover @use: !native_counter
+// Foreign storage 😀
+extern "C" {
+  [[link_name("renamed_counter")]] mut c_int counter;
+  c_int limit;
+}
+c_int read() { unsafe { return /*@use*/counter; } }

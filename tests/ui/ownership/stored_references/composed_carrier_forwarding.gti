@@ -1,0 +1,30 @@
+// Composed carrier function transfer: generic forwarding transfers a complete mixed carrier (one shared, two exclusive dependencies) through ordinary by-value calls and releases both exclusive owners.
+//@ check-pass
+struct Cell { mut int value = 0;  public: Cell() = default; };
+struct Context {
+  int& step;
+  mut Cell& left;
+  mut Cell& right;
+  Context(int& step, mut Cell& left, mut Cell& right)
+      : step(step), left(left), right(right) {}
+  void update() mut {
+    this.left.value += this.step;
+    this.right.value += this.step;
+  }
+};
+T forward_context<T>(T context) { return std::move(context); }
+
+int main() {
+  int step = 2;
+  mut Cell left{};
+  mut Cell right{};
+  mut Context initial{step, left, right};  //~ WARN GTI-S2096
+
+  Context intermediate = forward_context<Context>(std::move(initial));
+  mut Context active = forward_context<Context>(std::move(intermediate));
+
+  active.update();
+  active.update();
+  left.value += 1;
+  return left.value + right.value - 9;
+}

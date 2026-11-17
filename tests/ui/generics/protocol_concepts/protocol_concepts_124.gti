@@ -1,0 +1,13 @@
+// Protocol concepts: the program is accepted.
+//@ check-pass
+concept factory<P> { typename box<T>; box<int> make(int value); };
+struct Policy {};
+struct Box<T> { T value; Box(T item) : value(std::move(item)) {} };
+for concept factory<Policy> {
+  using box<X> = Box<X>;
+  box<int> make(int value) { box<int> result{value}; return result; }
+};
+factory<P>::box<int> produce<P>(int value) requires factory<P> {
+  return factory<P>::make(value);
+}
+int main() { Box<int> result = produce<Policy>(42); return result.value - 42; }

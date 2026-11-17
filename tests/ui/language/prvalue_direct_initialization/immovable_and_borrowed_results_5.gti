@@ -1,0 +1,4 @@
+// Immovable and borrowed results: fresh initialization does not bypass a deleted real move or escape loan.
+class Lens { int& value; public: Lens(int& value) : value(value) {} };
+               Lens bad() { int local = 4; return Lens(Lens(local)); }  //~ ERROR GTI-S2127
+               int main() { return 0; }

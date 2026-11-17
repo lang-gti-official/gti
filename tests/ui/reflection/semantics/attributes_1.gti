@@ -1,0 +1,35 @@
+// Attributes: attribute applications are accepted.
+//@ check-pass
+import std.meta;
+namespace tags {
+[[attribute]] struct key { std::string_view name = "";  public: key() = default; };
+[[attribute]] struct skip { public: skip() = default; };
+[[attribute]] struct width { uint64_t bytes; };
+struct plain { int x = 0;  public: plain() = default; };
+}
+
+[[tags::key("player")]]
+struct Player {
+  [[tags::key("display"), tags::skip]]
+  std::string_view name = "";
+  [[tags::width(.bytes = 2)]]
+  uint32_t health = 100;
+public:
+  Player() = default;
+};
+int main() {
+  static_assert(std::meta::type_of<Player>().has_attribute<tags::key>());
+  static_assert(std::meta::type_of<Player>().attribute<tags::key>().name == "player");
+  mut uint64_t total = 0;
+  constexpr for (auto field : std::meta::fields_of<Player>()) {
+    total = total + field.attribute_count();
+    if constexpr (field.has_attribute<tags::width>()) {
+      total = total + field.attribute<tags::width>().bytes;
+    }
+    if constexpr (field.has_attribute<tags::skip>()) {
+      std::string_view key = field.attribute<tags::key>().name;
+      if (key != "display") { return 1; }
+    }
+  }
+  return total == 5 ? 0 : 2;
+}

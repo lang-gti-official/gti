@@ -1,0 +1,51 @@
+// transform_error takes an ordinary function item: it navigates, a
+// mismatched mapper or a named receiver is reported, and completion on a
+// moved expected offers its consuming members. (From expected_transform_error_lsp_test.py.)
+//@ hover @map: map
+//@ hover @map: Error
+//@ definition @map: @decl
+enum class Error { failed };
+Error /*@decl*/map(int error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = std::move(source).transform_error(/*@map*/map);
+  return mapped.has_value() ? 1 : 0;
+}
+// --- step 2
+enum class Error { failed };
+Error map(bool error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = std::move(source).transform_error(map);  //~ ERROR GTI-S2090 non-generic namespace-scope GTI function
+  return mapped.has_value() ? 1 : 0;
+}
+// --- step 3
+enum class Error { failed };
+Error map(int error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = source.transform_error(map);  //~ ERROR GTI-S2022 std::move
+  return mapped.has_value() ? 1 : 0;
+}
+// --- step 4
+//@ completion @dot: transform_error transform and_then expect
+enum class Error { failed };
+Error map(int error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = std::move(source)./*@dot*/;  //~ ERROR GTI-P0001
+  return mapped.has_value() ? 1 : 0;  //~ ERROR GTI-S2001
+}
+// --- step 5
+enum class Error { failed };
+Error map(int error) { return Error::failed; }
+expected<int, int> read() { return unexpected(1); }
+int main() {
+  auto source = read();
+  /*😀*/ auto mapped = std::move(source).transform_error(map);
+  return mapped.has_value() ? 1 : 0;
+}

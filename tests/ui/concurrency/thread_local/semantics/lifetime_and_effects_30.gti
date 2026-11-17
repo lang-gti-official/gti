@@ -1,0 +1,6 @@
+// Lifetime and effects: completed earlier cleanup does not conflict with a later returned borrow.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int value = 1;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; }; int& current() { { Cleanup cleanup{}; } return value; } int main() { return current(); }

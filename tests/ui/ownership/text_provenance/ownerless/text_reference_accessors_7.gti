@@ -1,0 +1,26 @@
+// Text reference accessors: a temporary receiver of a text reference accessor is diagnosed at source.
+import std.string;
+mut std::string_view kept = "";
+class Token {
+public:
+  std::string_view text;
+  int kind;
+  Token(std::string_view text, int kind) : text(text), kind(kind) {}
+  std::string_view& ref() { return this.text; }
+  int& kindRef() { return this.kind; }
+  int& kindOf() { return this.kindRef(); }
+  std::string_view& alias() { return this.ref(); }
+};
+class Box<T> {
+public:
+  T value;
+  Box(T value) : value(value) {}
+  T& get() { return this.value; }
+};
+void keep(Token& token) { kept = token.ref(); }
+uint64_t width(Token& token) { return token.ref().size(); }
+
+int main() {
+  kept = Token("literal", 1).ref();  //~ ERROR GTI-S2081
+  return kept.size() == 7 ? 0 : 1;
+}

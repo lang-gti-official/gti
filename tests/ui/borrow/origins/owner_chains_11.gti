@@ -1,0 +1,19 @@
+// Owner chains: value-owner-escape is rejected by ownership checking.
+import std.memory;
+struct Node {
+  mut int value;
+  mut std::unique_ptr<Node> next;
+  Node(int value, std::unique_ptr<Node> next)
+      : value(value), next(std::move(next)) {}
+};
+int& element(Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element(*node.next, position - 1);
+}
+mut int& element_mut(mut Node& node, int position) {
+  if (position == 0) { return node.value; }
+  return element_mut(*node.next, position - 1);
+}
+
+int& dangling(std::unique_ptr<Node> root) { return element(*root, 1); }  //~ ERROR GTI-S2017
+int main() { return 0; }

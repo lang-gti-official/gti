@@ -10139,43 +10139,52 @@
     },
     "integer_literal": {
       "type": "PATTERN",
-      "value": "0[xX][0-9a-fA-F]+|0[bB][01]+|[0-9]+"
+      "value": "(0[xX][0-9a-fA-F_]+|0[bB][01_]+|[0-9][0-9_]*)([iu](8|16|32|64))?"
     },
     "float_literal": {
       "type": "PATTERN",
-      "value": "[0-9]+\\.[0-9]+[dD]?"
+      "value": "[0-9][0-9_]*\\.[0-9_]+([dD]|f32|f64)?|[0-9][0-9_]*f(32|64)"
     },
     "string_literal": {
-      "type": "TOKEN",
-      "content": {
-        "type": "SEQ",
-        "members": [
-          {
-            "type": "STRING",
-            "value": "\""
-          },
-          {
-            "type": "REPEAT",
-            "content": {
-              "type": "CHOICE",
-              "members": [
-                {
-                  "type": "PATTERN",
-                  "value": "[^\"\\\\\\r\\n]"
-                },
-                {
-                  "type": "PATTERN",
-                  "value": "\\\\[^\\r\\n]"
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "TOKEN",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "\""
+              },
+              {
+                "type": "REPEAT",
+                "content": {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "PATTERN",
+                      "value": "[^\"\\\\\\r\\n]"
+                    },
+                    {
+                      "type": "PATTERN",
+                      "value": "\\\\[^\\r\\n]"
+                    }
+                  ]
                 }
-              ]
-            }
-          },
-          {
-            "type": "STRING",
-            "value": "\""
+              },
+              {
+                "type": "STRING",
+                "value": "\""
+              }
+            ]
           }
-        ]
-      }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_raw_string_literal"
+        }
+      ]
     },
     "character_literal": {
       "type": "TOKEN",
@@ -10661,7 +10670,12 @@
     ]
   ],
   "precedences": [],
-  "externals": [],
+  "externals": [
+    {
+      "type": "SYMBOL",
+      "name": "_raw_string_literal"
+    }
+  ],
   "inline": [],
   "supertypes": [
     "declaration",

@@ -1,0 +1,29 @@
+// Native process retirement: unrelated wrappers and static fields admit only native retirement.
+//@ check-pass
+//@ execution-profile: concurrent
+//@ slow
+import std.mutex;
+import std.cthread;
+import std.panic;
+class Box {
+  std::mutex<int> value;
+public:
+  Box() : value(std::mutex<int>(7)) {}
+  int read() {
+    std::mutex_guard<int> guard = this.value.lock();
+    return guard.get();
+  }
+};
+Box global{};
+class Registry {
+public:
+  static Box item{};
+public:
+  Registry() = default;
+};
+thread_local mut int touched = 0;
+int main() {
+  touched = global.read();
+  if (touched != 7) { std::panic("global value"); }
+  return Registry::item.read() == 7 ? 0 : 1;
+}

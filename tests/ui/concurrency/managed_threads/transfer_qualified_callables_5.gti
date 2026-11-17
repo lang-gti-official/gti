@@ -1,0 +1,15 @@
+// Transfer qualified callables: transfer-qualified erased targets must enter owned workers.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.functional;
+import std.thread;
+
+struct Task { Task() = default; int operator()() && { return 42; } };
+int main() {
+  std::transfer_function<int() &&> callback{Task()};
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(std::move(callback));
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}

@@ -1,0 +1,36 @@
+// Explicit value moves: move diagnostics should reject unavailable values and unsupported or immutable storage.
+int global_value = 1;
+
+struct Box {
+  int field = 1;
+  int take() mut { return std::move(this.field); }  //~ ERROR GTI-S2018
+public:
+  Box() = default;
+};
+
+int main() {
+  int used = 1;
+  int once = std::move(used);
+  int twice = used;  //~ ERROR GTI-S2018
+
+  mut int conditional = 2;
+  if (once == 1) {
+    int branch = std::move(conditional);
+  }
+  int maybe_moved = conditional;  //~ ERROR GTI-S2018
+
+  [[discard]] std::move(1);  //~ ERROR GTI-S2018
+  [[discard]] std::move(global_value);  //~ ERROR GTI-S2018
+  int values[1] = {1};
+  [[discard]] std::move(values[0]);  //~ ERROR GTI-S2018
+  mut int referenced = 3;
+  int& alias = referenced;
+  [[discard]] std::move(alias);  //~ ERROR GTI-S2018
+
+  mut int self_move = 5;
+  self_move = std::move(self_move);  //~ ERROR GTI-S2018
+
+  int captured = 4;
+  auto closure = [captured]() -> int { return std::move(captured); };  //~ ERROR GTI-S2018
+  return twice + maybe_moved + closure();
+}

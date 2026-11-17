@@ -1,0 +1,7 @@
+// Tagged raw origins: positive raw-audit fixture has no application finding.
+//@ check-pass
+//@ raw-pointer-audit: warn
+import std.memory;
+expected<const int*, int> address_of(int& owner) { return &owner; }
+int main() { int live = 7; auto wrapped = address_of(live); if (!wrapped) { return 1; }
+  unsafe { return std::assume_ref(wrapped.value(), live); } }

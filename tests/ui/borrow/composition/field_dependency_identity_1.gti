@@ -1,0 +1,10 @@
+// Field dependency identity: one shared constructor parameter may initialize distinct stored fields.
+//@ check-pass
+struct Repeated {
+  int& first;
+  int& second;
+  int& third;
+  Repeated(int& value) : first(value), second(value), third(value) {}
+  int sum() { return first + second + third; }
+};
+int main() { int value = 14; Repeated view{value}; return view.sum() - 42; }

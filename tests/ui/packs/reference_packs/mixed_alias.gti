@@ -1,0 +1,11 @@
+// A reference parameter and a mutable reference pack cannot alias one object.
+//@ check-fail
+//@ execution-profile: concurrent
+class Ticket {
+public:
+  Ticket() = default;
+  Ticket(Ticket& other) = delete;
+  Ticket(Ticket&& other) = default;
+};
+void touch<Args...>(Ticket& first, mut Args&... args) {}
+int main() { mut Ticket value{}; touch(value, value); return 0; }  //~ ERROR GTI-S2017

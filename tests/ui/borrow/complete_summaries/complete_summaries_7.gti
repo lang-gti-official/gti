@@ -1,0 +1,16 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+import std.panic;
+enum View { empty, ready(int& owner) };
+int choose(bool condition) {
+  mut int owner = 42;  //~ WARN GTI-S2096
+  mut View view = View::ready(owner);  //~ WARN GTI-S2096
+  if (condition) {}
+  else { auto consumed = std::move(view); return 0; }
+
+  switch (view) {
+  case View::empty: return 0;
+  case View::ready(auto& value): return value;
+  }
+}
+int main() { return choose(true); }

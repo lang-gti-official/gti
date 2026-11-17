@@ -1,0 +1,11 @@
+// Mixed argument loan order: later reference argument cannot precede temporary-input failure ends.
+//@ check-pass
+struct Holder {
+  int value;
+  Holder(int value) : value(value) {}
+  int& get() { return this.value; }
+};
+int divide(int& left, int& right) { return left / right; }
+int combine(int& a, int& b, int& c, int& d) { return a / b + c / d; }
+
+int main() { Holder h{2}; return divide(42, h.get()); }

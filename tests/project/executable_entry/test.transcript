@@ -1,0 +1,42 @@
+// An executable needs a global main: a namespaced or imported function named
+// main is not an entry (GTI-S2094) for direct builds, project check, test
+// targets and builds, rejected before any native compiler runs, while
+// emit-only output stays valid for library code. (From
+// executable_entry_test.py; the LSP half is tests/lsp/diagnostics/executable_entry*.)
+$ gti project/src/main.gti --cxx no-native-compiler
+? 65
+stderr: GTI-S2094
+stderr: global 'main'
+stderr: tea::main
+!stderr: native C++ compiler
+$ gti standalone.gti --emit-mir -o library.mir
+$ cd project
+$ gti check
+? 65
+stderr: $DIR/project/src/main.gti:3:36: error[GTI-S2094]: Executable requires a global 'main' definition in its entry source unit.
+$ gti check checks
+? 65
+stderr: $DIR/project/src/checks.gti:3:36: error[GTI-S2094]: Test target requires an annotated test function or a global main definition.
+$ gti build --no-cache
+? 65
+stderr: $DIR/project/src/main.gti:3:36: error[GTI-S2094]: Executable requires a global 'main' definition in its entry source unit.
+$ gti build --emit-mir
+$ cp ../variants/no_main.gti src/main.gti
+$ gti check
+? 65
+stderr: $DIR/project/src/main.gti:1:1: error[GTI-S2094]: Executable requires a global 'main' definition in its entry source unit.
+$ cp ../variants/global_main.gti src/main.gti
+$ gti check
+$ gti build --no-cache
+$ gti build
+$ gti build
+$ cp ../variants/source.gti src/main.gti
+$ gti build
+? 65
+stderr: $DIR/project/src/main.gti:3:36: error[GTI-S2094]: Executable requires a global 'main' definition in its entry source unit.
+$ cp ../variants/included_main.gti src/main.gti
+$ gti check
+$ cp ../variants/included_only.gti src/main.gti
+$ gti check
+? 65
+stderr: $DIR/project/src/main.gti:1:1: error[GTI-S2094]: Executable requires a global 'main' definition in its entry source unit.

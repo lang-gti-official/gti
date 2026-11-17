@@ -1,0 +1,4 @@
+// Persistent transfer is independently rejected: persistent observation fixture is valid.
+//@ check-pass
+thread_local mut int32_t value = 1;
+int main() { return value; }

@@ -1,0 +1,12 @@
+// Reference payloads: rejected with GTI-S2054.
+struct Point { mut int x; mut int y; Point(int a, int b) : x(a), y(b) {} };
+enum Reading { empty, item(Point& value) };
+int inspect(Reading input) {
+  switch (input) {
+  case Reading::item(value): {
+int& x = value.x; return x;  //~ ERROR GTI-S2054
+  }
+  case Reading::empty: return 0;
+  }
+}
+int main() { Point p = Point(1, 2); return inspect(Reading::item(p)); }

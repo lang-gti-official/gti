@@ -1,0 +1,7 @@
+// Borrows: borrowed nested arrays preserve reference projection.
+//@ check-pass
+struct Grid { mut int cells[2] = {};  public: Grid() = default; }; struct Frame { mut Grid grid{};  public: Frame() = default; };
+
+int read(Frame& frame, uint64_t index) { return frame.grid.cells[index]; }
+void write(mut Frame& frame, uint64_t index) { frame.grid.cells[index] = 3; }
+int main() { mut Frame frame{}; write(frame, uint64_t(1)); return read(frame, uint64_t(1)); }

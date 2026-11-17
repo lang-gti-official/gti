@@ -1,0 +1,5 @@
+// Native callable groundwork: foreign-result-invoke.gti must retain a verified native indirect invocation.
+//@ check-pass
+using Transform = (int32_t) -> int32_t;
+extern "C" { Transform obtain_transform(); }
+int main() { unsafe { return obtain_transform()(7); } }

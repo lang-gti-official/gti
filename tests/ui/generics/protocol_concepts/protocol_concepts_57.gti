@@ -1,0 +1,10 @@
+// Protocol concepts: rejected with GTI-S2005.
+concept scaled<From, To> {
+  typename factor_type;
+  To scale(From& value, factor_type factor);
+};
+int apply<A, B>(A& value) requires scaled<A, B> {
+  scaled<A, B>::scale(value, 5);  //~ ERROR GTI-S2005
+  return 0;
+}
+int main() { return 0; }

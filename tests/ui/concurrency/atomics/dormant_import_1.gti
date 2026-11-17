@@ -1,0 +1,5 @@
+// Dormant import: an unused atomic import should remain valid in both execution profiles.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.atomic;
+int main() { return 0; }

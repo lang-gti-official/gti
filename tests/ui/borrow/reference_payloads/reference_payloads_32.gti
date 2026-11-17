@@ -1,0 +1,7 @@
+// Reference payloads: the program is accepted.
+//@ check-pass
+enum Reading { empty, value(int& owner, int sequence) };
+Reading<a> make<lifetime a>(int&<a> owner) {
+  return Reading::value(owner, 7);
+}
+int main() { return 0; }

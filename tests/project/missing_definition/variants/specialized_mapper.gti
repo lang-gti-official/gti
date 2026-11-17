@@ -1,0 +1,24 @@
+namespace traits {
+class Mapper<T> {
+public:
+  int decode(T& input);
+  int inspect();
+public:
+  Mapper() = default;
+};
+}
+int decode<T>(T& input) {
+  traits::Mapper<T> mapping{};
+  return mapping.decode(input);
+}
+int inspect<T>() {
+  traits::Mapper<T> mapping{};
+  return mapping.inspect();
+}
+class traits::Mapper<int> {
+public:
+  Mapper() = default;
+  int decode(int& input) { return input; }
+  int inspect() { return 3; }
+};
+int main() { int input = 7; return decode<int>(input) + inspect<int>() - 10; }

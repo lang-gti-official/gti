@@ -1,0 +1,5 @@
+// Shape witnesses: native class arrays have explicit lifecycle admission.
+//@ build-pass
+//@ slow
+class Owner { public: Owner() {} ~Owner() {} };
+int main() { Owner values[2] = {Owner(), Owner()}; return 0; }

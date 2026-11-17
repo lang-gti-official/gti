@@ -1,0 +1,7 @@
+// Semantic rejections: nonvoid-thread-task.gti should fail at the managed-thread semantic boundary.
+//@ execution-profile: concurrent
+import std.thread;
+int main() {
+  auto started = std::thread::start([]() -> int32_t { return 1; });  //~ ERROR GTI-S2084
+  return 0;
+}

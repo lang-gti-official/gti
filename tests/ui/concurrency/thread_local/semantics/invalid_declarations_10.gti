@@ -1,0 +1,4 @@
+// Invalid declarations: declaration/tooling analysis does not require an artifact's hosted entry.
+//@ check-pass
+//@ execution-profile: concurrent
+int initialize() { return 1; } thread_local int state = initialize(); int read() { return state; }

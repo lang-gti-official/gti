@@ -1,0 +1,28 @@
+// Readonly local cleanup guard: cleanup guard retains an ordinary or iteration-local readonly reference through its exact checked parent.
+//@ check-pass
+import std.panic;
+
+class Guard {
+  char& value;
+public:
+  Guard(char& source) : value(source) {}
+  ~Guard() { if (this.value != 'a') std::panic("bad referent"); }
+};
+class Finish { public: Finish() = default; };
+class Cursor {
+public:
+  Cursor() = default;
+  char operator*() { return 'a'; }
+  void operator++() mut {}
+  bool operator!=(Finish finish) { return true; }
+};
+class Sequence {
+public:
+  Sequence() = default;
+  Cursor begin() { return Cursor(); }
+  Finish end() { return Finish(); }
+};
+int main() {
+  char unrelated = 'b';
+  char& decoy = unrelated;
+Sequence sequence{}; for (char& value : sequence) { Guard guard{value}; break; } return 0;}

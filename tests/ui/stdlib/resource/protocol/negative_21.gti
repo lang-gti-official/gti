@@ -1,0 +1,13 @@
+// Negative: a live element borrow prevents invalidation: auto moved = std::move(slots);.
+import std.resource;
+import std.memory;
+
+int use(std::resource_ref<std::process_resource> resource) {
+  mut std::resource_storage<int,std::process_resource> slots{resource};
+  slots.try_allocate(std::size_t(1)).value();
+  slots.emplace(std::size_t(0),42);
+  int& element = slots.get(std::size_t(0));
+auto moved = std::move(slots);  //~ ERROR GTI-S2017
+  return element;
+}
+int main() { return 0; }

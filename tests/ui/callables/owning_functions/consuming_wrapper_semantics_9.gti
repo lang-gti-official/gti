@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: call argument types remain exact.
+import std.functional;
+import std.memory;
+int main() { std::function<int(int) &&> callback{[](int value) -> int { return value; }}; int value = std::move(callback)(true); return 0; }  //~ ERROR GTI-S2022

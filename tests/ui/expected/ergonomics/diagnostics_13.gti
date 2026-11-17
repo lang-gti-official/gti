@@ -1,0 +1,10 @@
+// Diagnostics: the failure is one error, without consequences.
+int main() {
+  mut expected<expected<int&, int>, int> nested = unexpected(1);
+  {
+    int local = 5;
+    expected<int&, int> inner = local;
+    nested = std::move(inner);  //~ ERROR GTI-S2067
+  }
+  return 0;
+}

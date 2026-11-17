@@ -1,0 +1,16 @@
+// Unique owner swap: unique_ptr::swap should preserve two matching mutable owners.
+//@ check-pass
+import std.memory;
+
+struct Value {
+  int32_t number;
+  Value(int32_t initial) : number(initial) {}
+  int32_t read() { return this.number; }
+};
+
+int main() {
+  mut std::unique_ptr<Value> first = std::make_unique<Value>(1);
+  mut std::unique_ptr<Value> second = std::make_unique<Value>(2);
+  first.swap(second);
+  return first->read() == 2 and second->read() == 1 ? 0 : 1;
+}

@@ -1,0 +1,18 @@
+// Audit output parity: nested constructor fields declared after the caller is valid in both audit modes.
+//@ check-pass
+//@ raw-pointer-audit: warn
+int main() {
+  int live = 7;
+  Wrapper wrapper{&live};
+  unsafe { return *wrapper.inner.pointer - 7; }
+}
+struct Wrapper {
+  Holder inner;
+  Wrapper(const int* input) : inner(Holder(input)) {}
+};
+struct Holder {
+  const int* pointer = nullptr;
+  Holder(const int* input) : pointer(input) {}
+public:
+  Holder() = default;
+};

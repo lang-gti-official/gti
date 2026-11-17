@@ -1,0 +1,4 @@
+// Native identity: rejected with GTI-S2003.
+struct Plain { Plain(int value) {}  public: Plain() = default; };
+Plain make() { return 1; }  //~ ERROR GTI-S2003
+int main() { return 0; }

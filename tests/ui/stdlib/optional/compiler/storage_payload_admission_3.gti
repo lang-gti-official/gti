@@ -1,0 +1,9 @@
+// Storage payload admission: source-defined owning storage rejects borrowed payloads through its declared element constraint, without a private handle rule.
+import std.optional;
+import std.vector;
+class View {
+  int& source;
+public:
+  View(int& value) : source(value) {}
+};
+int main() { int source = 7; std::vector<View> item{}; return 0; }  //~ ERROR GTI-S2029

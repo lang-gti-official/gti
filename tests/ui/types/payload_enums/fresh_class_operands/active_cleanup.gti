@@ -1,0 +1,25 @@
+// Fresh class operands with active cleanup in payload construction drop once.
+//@ run-pass
+mut int32_t live = 0;
+enum Event<T> { item(T value) };
+class Inner {
+public:
+  Event<int32_t> data;
+  Inner(Event<int32_t> data) : data(data) { live += 1; }
+  Inner(Inner& other) = delete;
+  Inner(Inner&& other) = default;
+  ~Inner() { live -= 1; }
+};
+enum Pair<T> { items(T first, T second), other(T first, T second) };
+int32_t run() {
+  Pair<Inner> pair = Pair<Inner>::items(Inner(Event<int32_t>::item(1)), Inner(Event<int32_t>::item(2)));
+  switch (pair) {
+    case Pair<Inner>::items(auto& first, auto& second):
+      switch (second.data) { case Event<int32_t>::item(value): return value + live; }
+    case Pair<Inner>::other: return 9;
+  }
+}
+int main() {
+  int32_t observed = run();
+  return observed == 4 && live == 0 ? 0 : 1;
+}
