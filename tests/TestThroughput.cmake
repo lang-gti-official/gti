@@ -75,7 +75,7 @@ endforeach()
 if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     consuming_range_runtime
-    associative_constructor_runtime associative_hash_contracts 
+    associative_constructor_runtime associative_hash_contracts
     owner_chain_runtime
     constructor_null_native_runtime
     cursor_carrier_publication
