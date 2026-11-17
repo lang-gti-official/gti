@@ -1,0 +1,75 @@
+// One raw-pointer audit policy across direct and project builds: off, warn
+// (GTI-S2101 warning) and strict (error); library-located findings are hidden
+// unless opted in, and strict then promotes them; malformed flags and
+// manifest values are rejected; a strict build stops and metadata reports the
+// profile. (From raw_pointer_audit_policy_test.py; its LSP half is
+// tests/lsp/audit/dangling_policy_*.gti.)
+slow
+$ gti main.gti --emit-mir -o out.mir
+!stderr: GTI-S2101
+$ gti main.gti --emit-mir -o out.mir --raw-pointer-audit=off
+!stderr: GTI-S2101
+$ gti main.gti --emit-mir -o out.mir --raw-pointer-audit=warn
+stderr: warning[GTI-S2101]
+$ gti main.gti --emit-mir -o out.mir --raw-pointer-audit=strict
+? 65
+stderr: error[GTI-S2101]
+$ gti library.gti --emit-mir -o library.mir --raw-pointer-audit=warn
+!stderr: GTI-S210
+$ gti library.gti --emit-mir -o library.mir --raw-pointer-audit=warn --raw-pointer-audit-library-findings
+stderr: warning[GTI-S210
+$ gti library.gti --emit-mir -o library.mir --raw-pointer-audit=strict --raw-pointer-audit-library-findings
+? 65
+stderr: error[GTI-S210
+$ gti library.gti --emit-mir -o library.mir --raw-pointer-audit=strict
+!stderr: GTI-S210
+$ gti library.gti --emit-mir -o library.mir --raw-pointer-audit-library-findings --no-raw-pointer-audit-library-findings
+? 64
+$ gti main.gti --emit-mir --raw-pointer-audit=strict -Wno-raw-pointer-violation
+? 65
+$ gti main.gti --raw-pointer-audit=bad
+? 64
+$ gti main.gti --raw-pointer-audit
+? 64
+$ gti main.gti --raw-pointer-audit=off --raw-pointer-audit=warn
+? 64
+$ cp manifests/off.toml gti.toml
+$ gti check audit
+!stderr: GTI-S2101
+$ cp manifests/warn.toml gti.toml
+$ gti check audit
+stderr: GTI-S2101
+$ cp manifests/strict.toml gti.toml
+$ gti check audit
+? 65
+stderr: GTI-S2101
+$ cp manifests/lib-default-warn.toml library-project/gti.toml
+$ cd library-project
+$ gti check audit
+!stderr: GTI-S210
+$ cp ../manifests/lib-no-strict.toml gti.toml
+$ gti check audit
+!stderr: GTI-S210
+$ cp ../manifests/lib-yes-warn.toml gti.toml
+$ gti check audit
+stderr: GTI-S210
+$ gti check audit --no-raw-pointer-audit-library-findings
+!stderr: GTI-S210
+$ cp ../manifests/lib-yes-strict.toml gti.toml
+$ gti check audit
+? 65
+stderr: GTI-S210
+$ cp ../manifests/lib-malformed.toml gti.toml
+$ gti check audit
+? 65
+stderr: GTI-B1004
+$ cd ..
+$ gti check audit --raw-pointer-audit=off
+$ cp manifests/off.toml gti.toml
+$ gti build --all --jobs 2 --raw-pointer-audit=strict
+? 65
+$ gti run audit --no-build --raw-pointer-audit=off
+? 64
+$ cp manifests/warn.toml gti.toml
+$ gti metadata --format json
+stdout: "rawPointerAudit": "warn"

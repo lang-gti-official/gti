@@ -76,7 +76,7 @@ if(Python3_Interpreter_FOUND)
   set(gti_parallel_case_suites
     consuming_range_runtime
     associative_constructor_runtime associative_hash_contracts associative_map
-    owner_chain_runtime borrowing_composition
+    owner_chain_runtime
     complete_containers
     constructor_null_native_runtime
     paired_span_iterator_completion cursor_carrier_publication
@@ -91,7 +91,6 @@ if(Python3_Interpreter_FOUND)
     nested_borrow_fields
     programmable_allocators_runtime
     scoped_parallel_threads
-    source_resource_prefix_runtime
     source_text_address_runtime
     optimizer_object_context_runtime
     cleanup_context_scope_runtime

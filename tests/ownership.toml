@@ -44,7 +44,6 @@ tests = [
   "lsp_scalability_benchmark_smoke",
   "module_map_lsp",
   "module_navigation_lsp",
-  "raw_pointer_audit_policy",
   "source_modules_lsp",
   "module_discovery_lsp",
 
@@ -1304,7 +1303,6 @@ owners = [
   "gti_test_ui",
   "cli_workflow",
   "project_cli_workflow",
-  "cli_color",
   "cli_progress",
   "cli_install",
   "cli_hardlink_fixture",
@@ -1367,7 +1365,6 @@ owners = [
   "^(lsp_.*|.*_lsp)$",
   "frontend_cache_invalidation",
   "diagnostic_explanations",
-  "raw_pointer_audit_policy",
 ]
 consumers = [
   "neovim_lsp_configuration",

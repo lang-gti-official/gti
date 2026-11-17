@@ -1,0 +1,4 @@
+import std.string;
+int main() {
+  std::println("failure-program-output"); return 7;
+}

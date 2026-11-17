@@ -3673,7 +3673,7 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_exchange_tests.cpp",
+        "tests/ui/stdlib/utility/restoring_exchange",
         "examples/104-move-only-ordering.gti"
       ]
     },
@@ -4333,7 +4333,7 @@
         "resource-programmable"
       ],
       "evidence": [
-        "tests/source_resource_prefix_runtime_test.py",
+        "tests/ui/memory/resource_prefix",
         "tests/stdlib_module_boundaries_test.py"
       ]
     },
@@ -5326,7 +5326,7 @@
         "tests/fixtures/stdlib_owned_error_pipelines.gti",
         "tests/fixtures/stdlib_surface_json.gti",
         "tests/slow/stdlib/json/dynamic",
-        "tests/reflection_runtime_test.py"
+        "tests/ui/reflection/runtime"
       ]
     },
     {
@@ -6287,7 +6287,7 @@
       "evidence": [
         "tests/fixtures/stdlib_surface_meta.gti",
         "tests/fixtures/reflection_type_facts.gti",
-        "tests/reflection_runtime_test.py",
+        "tests/ui/reflection/runtime",
         "tests/ui/reflection/semantics",
         "stdlib/std/meta.gti",
         "tests/slow/reflection/attributes.gti",
@@ -6822,7 +6822,7 @@
       ],
       "evidence": [
         "tests/fixtures/structural_relocation.gti",
-        "tests/structural_relocation_tests.cpp",
+        "tests/ui/memory/structural_relocation",
         "examples/033-source-concepts.gti",
         "stdlib/prelude.gti"
       ]
@@ -8407,7 +8407,7 @@
       "evidence": [
         "examples/103-resource-exchange.gti",
         "tests/fixtures/restoring_exchange_shapes.gti",
-        "tests/restoring_exchange_tests.cpp"
+        "tests/ui/stdlib/utility/restoring_exchange"
       ]
     },
     {
@@ -8583,7 +8583,7 @@
       "evidence": [
         "tests/fixtures/restoring_indexed_swap.gti",
         "tests/fixtures/restoring_algorithm_order.gti",
-        "tests/restoring_exchange_tests.cpp"
+        "tests/ui/stdlib/utility/restoring_exchange"
       ]
     },
     {

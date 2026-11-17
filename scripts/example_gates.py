@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 # The corpus owns all numbered top-level programs; the remaining established
 # harnesses own nested projects and local HTTP/native prerequisites.
-TESTS = {"owner_chain_runtime", "compiled_type_forwarding", "compiled_dependency_project", "compiled_primitive_library", "compiled_libraries_project", "compiled_library_project", "compiled_scalar_library", "mir_cutover_corpus_oracle", "practical_examples",
+TESTS = {"owner_chain_runtime", "compiled_dependency_project", "compiled_primitive_library", "compiled_libraries_project", "compiled_library_project", "compiled_scalar_library", "mir_cutover_corpus_oracle", "practical_examples",
          "project_cli_workflow", "gti_test_ui", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
          "process_resource_policy", "llvm_embedding_project",

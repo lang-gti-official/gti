@@ -2257,7 +2257,7 @@ rejected. `tests/ui/constexpr/static_assertions/` adds class and function assert
 a constexpr helper declared after them; class and function instances, reached
 from a constant evaluation and from global initializers, that read a namespace
 constant, call a constexpr helper and select an `if constexpr` arm; and a
-function whose assertion evaluates its own instance. `reflection_runtime`
+function whose assertion evaluates its own instance. `tests/ui/reflection/runtime/`
 compiles and runs `reflection_class_assertions.gti` at O0/O1/O3 in C++20/C++23.
 Main `6d502f02` crashes the reflection test (SIGBUS) and fails all four
 `static_assertions` additions; a genuine `if constexpr` cycle still reports
@@ -2723,7 +2723,7 @@ overlay, and rejects a moved Load, a noncopyable or borrowing value, active
 field cleanup, a lost initializer record, and a captured class without a
 generated copy. It also requires the owned move after a closure copy to keep
 its native binding, and rejects it once the copy's Load and boundary are
-reordered. Under the real closure overlays, `base_constructor_stage` admits a
+reordered. Under the real closure overlays, `tests/ui/classes/base_construction/` admits a
 lambda-typed class that copies its closure beside a literal base argument.
 A lambda-typed class that computes its base argument keeps its MIR preparation
 but receives no carrier, because its `concreteGenericClass` fact is clear.
@@ -2735,7 +2735,7 @@ concrete instances of a generic derived class compute their generic base's
 arguments through a checked call and a temporary receiver. In C++20/C++23 at
 O0/O1/O3, no-elide and ASan/UBSan it checks the temporary's drop after each
 base, and an argument, base-constructor or body failure ending each value
-exactly once. `base_constructor_stage` requires a preparation for both
+exactly once. `tests/ui/classes/base_construction/` requires a preparation for both
 instances. It rejects the carrier and the gate when the `concreteGenericClass`
 representation fact of either the derived or the base class is cleared.
 
@@ -2821,7 +2821,7 @@ a destructor-bearing base built from a temporary receiver, a reference argument
 and field reads of a returned and a constructed value. In C++20/C++23 at
 O0/O1/O3, no-elide and ASan/UBSan it checks that both probes end in reverse
 order right after the base, and that a failure in an argument, the base
-constructor or the derived body ends each exactly once. `base_constructor_stage`
+constructor or the derived body ends each exactly once. `tests/ui/classes/base_construction/`
 requires two carrier slots for that fixture and rejects a forged initially
 active obligation, a post-base drop of another obligation, a borrow stage from
 another call site and an edge re-entering the preparation.
@@ -7204,14 +7204,13 @@ Linux/Windows execution or completion of asynchronous Gitea release jobs.
 
 ## Restoring exchange and move-only ordering
 
-`restoring_exchange` verifies the sealed restoring-transfer contracts using an
+`tests/ui/stdlib/utility/restoring_exchange/` (with the shape, array and
+exchange cases beside it) verifies the sealed restoring-transfer contracts using an
 unrelated noncopyable resource, passive values, owner alternatives and lexical
 fixed arrays. Negative programs retain the restrictions on self-aliasing,
 immutable places, outstanding loans, owner-dependent view escape and arbitrary
-consumption through references or indexed elements. Independent MIR mutations
-remove or forge access, result publication, consuming transfer, bounds outcomes
-and pending-return cleanup; production representation checks also reject the
-array publication and transfer mutations.
+consumption through references or indexed elements. (The MIR-mutation checks
+of the retired C++ test were dropped when it became `tests/ui` cases.)
 
 The three runtime gates cover 176 outcomes across C++20/C++23 at O0/O1/O3,
 disabled elision and ASan/UBSan. They check replacement preparation, discarded
@@ -7914,7 +7913,7 @@ optimized build tree supplied the combined evidence.
 factory construction, read-only and mutable methods, sequential owner reuse,
 named equivalents, and global owners. Negative cases retain temporary-owner,
 mutable/cleanup-owning multi-origin, borrowed-result, overlapping-access and
-owner-move rejection. `borrowing_composition` preserves the existing passive
+owner-move rejection. `tests/ui/ownership/borrowing_composition/` preserves the existing passive
 read-only multi-owner value-receiver rule, including forwarding from by-value
 and reference parameters. Its 14 negative cases include conflicting access to
 the secondary owner as a method argument or later operand; these must receive
@@ -8117,7 +8116,7 @@ corpus checks passed before this refresh; this is not a combined completion clai
 
 ## Structural relocation
 
-`structural_relocation` checks the public constraints and checked storage API
+`tests/ui/memory/structural_relocation/` checks the public constraints and checked storage API
 with unrelated passive, deleted-copy, deleted-move, borrowed, and
 cleanup-owning classes. Concrete arrays include zero-length storage. Semantic
 eligibility must survive HIR and verified MIR; forged traits, movement policy,

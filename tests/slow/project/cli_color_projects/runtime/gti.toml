@@ -1,0 +1,13 @@
+manifest-version = 1
+[package]
+name = "runtime-colours"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "panic.gti"
+[targets.bounds]
+kind = "test"
+root = "bounds.gti"
+[targets.panic]
+kind = "test"
+root = "panic.gti"

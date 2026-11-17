@@ -5872,7 +5872,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
     - `make_shared`: `shared_ownership_failure`;
     - vector and string growth: `tests/ui/memory/vector_allocation_exhaustion.gti` and
       `tests/ui/stdlib/string/source_prefix/provider_failure.gti`;
-    - the resource vector's plain operations: `source_resource_prefix_runtime`;
+    - the resource vector's plain operations: `tests/ui/memory/resource_prefix/exhaustion.gti`;
     - owning callables and boxed payloads: `owning_function_policy_failure` and
       `inline_polymorphic_runtime`.
   - Fallible families keep their exact `expected` results in

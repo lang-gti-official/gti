@@ -1,0 +1,39 @@
+// A panic in the later argument step of a borrowed-dependency owner runs exactly the live cleanup.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 2
+//@ stdout: 1
+//@ stderr-contains: main.gti:33: runtime error[GTI-R0017]: panic: "later argument failed"
+import std.panic;
+import std.memory;
+import std.string;
+class Guard {
+  std::unique_ptr<int> token;
+public:
+  Guard(int id) : token(std::make_unique<int>(id)) {}
+  ~Guard() { if (this.token != nullptr) std::println(*this.token); }
+};
+struct Services {
+  int& input;
+  mut int& output;
+  mut int& total;
+  Guard member;
+  Services(int& a, mut int& b, mut int& c, bool fail)
+      : input(a), output(b), total(c), member(Guard(2)) {
+    if (fail) { std::panic("constructor failed"); }
+  }
+  int inspect(int unused) { return input; }
+  void fail() mut { std::panic("receiver failed"); }
+};
+Services relay(Services value, bool fail) {
+  Guard local{3};
+  if (fail) { std::panic("relay failed"); }
+  return std::move(value);
+}
+int later() { std::panic("later argument failed"); }
+int inspect(Services value, int unused) { return value.input; }
+int main() {
+  Guard outer{1};
+  int a = 40; mut int b = 0; mut int c = 2;
+Services value{a, b, c, false}; return inspect(std::move(value), later());
+}
