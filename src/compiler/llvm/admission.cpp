@@ -624,15 +624,18 @@ public:
     }
   }
   // A hierarchy object in program storage that its program initialization
-  // step constructs in place: a complete object, never thread-local and, by
-  // the program-storage rules, without source or owning cleanup.
+  // step constructs in place: a complete object, never thread-local. Owning
+  // roots carry the exact cleanup recipe admitted separately by cleanup().
   bool programStep(const MirProgramInitializationStep &step) const {
     const MirBodyAddress module{MirBodyKind::Module, 0};
     const auto *body = findMirBody(program, module);
     const auto *place = body ? body->findPlace(step.storagePlace) : nullptr;
     if (!place || place->type.kind != SemanticType::Class ||
-        step.requiresActiveCleanup || step.nativeRetirement ||
-        step.sourceCleanup || program.findThreadLocalStorage(step.symbol) ||
+        step.nativeRetirement ||
+        step.requiresActiveCleanup != step.sourceCleanup.has_value() ||
+        (step.sourceCleanup &&
+         mirUniqueCleanupType(program, place->type) != step.sourceCleanup) ||
+        program.findThreadLocalStorage(step.symbol) ||
         step.role != ProgramInitializationStepRole::Initializer)
       return false;
     native_llvm::Placement placement(*body);

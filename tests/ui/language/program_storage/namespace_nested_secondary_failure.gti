@@ -21,6 +21,6 @@ public:
 };
 Owner global{0};
 int main() {
-  mut int zero = 0;
+  mut int zero = 0; //~ WARN GTI-S2096 never used mutably
   return 1 / zero;
 }
