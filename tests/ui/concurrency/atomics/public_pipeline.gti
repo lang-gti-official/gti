@@ -1,0 +1,22 @@
+// Public pipeline: public scalar atomics and namespace-global initialization should complete semantics, HIR, and MIR verification.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.atomic;
+
+std::atomic<int32_t> program_count{0};
+
+int main() {
+  std::atomic<int32_t> value{1};
+  if (value.load() != 1) { return 1; }
+  value.store(2);
+  if (value.exchange(3) != 2) { return 2; }
+  auto exchanged = value.compare_exchange_strong(3, 4);
+  if (!exchanged.exchanged() || exchanged.observed() != 3) { return 3; }
+  auto rejected = value.compare_exchange_strong(3, 5);
+  if (rejected.exchanged() || rejected.observed() != 4) { return 4; }
+
+  program_count.store(value.load());
+  std::atomic<bool> flag{false};
+  flag.store(true);
+  return flag.load() && program_count.load() == 4 ? 0 : 5;
+}

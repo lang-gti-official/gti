@@ -1,0 +1,4 @@
+// Temporary owner borrow: escaping or mutable temporary-owner views remain source errors.
+import std.string;
+std::string produce() { return std::string("hello"); }
+int main() { auto view = produce().view(); return int(view.size()); }  //~ ERROR GTI-S2045

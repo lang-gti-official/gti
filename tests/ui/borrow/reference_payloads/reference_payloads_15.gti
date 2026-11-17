@@ -1,0 +1,7 @@
+// Reference payloads: the program is accepted.
+//@ analyze-pass
+enum Reading { empty, value(mut int& owner) };
+Reading<a> read<lifetime a>(mut int&<a> owner) {
+  return Reading::value(owner);
+}
+int main() { mut int owner = 3; auto result = read(owner); return 0; }

@@ -1,0 +1,33 @@
+// Generated declaration context: expected procedural diagnostic before code generation.
+// --- main.gti
+import "library.gti"; int main(){library_detail::State hidden{};return 0;}  //~ ERROR GTI-S2024
+// --- library.gti
+
+export module library;
+import std.syntax;
+namespace library_detail {
+struct State { int answer; State() : answer(42) {} };
+export #macro(proc) std::syntax::expr state(std::syntax::tokens input) {
+  auto origin = std::syntax::location(input, uint64_t(0), uint64_t(1));
+  auto binding = std::syntax::reference(std::syntax::fresh("saved", origin));
+  mut auto result = std::syntax::punctuation("[", origin);
+result=std::syntax::join(result,std::syntax::punctuation("]",origin));
+result=std::syntax::join(result,std::syntax::punctuation("(",origin));
+result=std::syntax::join(result,std::syntax::punctuation(")",origin));
+result=std::syntax::join(result,std::syntax::punctuation("->",origin));
+result=std::syntax::join(result,std::syntax::keyword("int",origin));
+result=std::syntax::join(result,std::syntax::punctuation("{",origin));
+result=std::syntax::join(result,std::syntax::identifier("State",origin));
+result=std::syntax::join(result,binding);
+result=std::syntax::join(result,std::syntax::punctuation("{",origin));
+result=std::syntax::join(result,std::syntax::punctuation("}",origin));
+result=std::syntax::join(result,std::syntax::punctuation(";",origin));
+result=std::syntax::join(result,std::syntax::keyword("return",origin));
+result=std::syntax::join(result,binding);
+result=std::syntax::join(result,std::syntax::punctuation(".",origin));
+result=std::syntax::join(result,std::syntax::identifier("answer",origin));
+result=std::syntax::join(result,std::syntax::punctuation(";",origin));
+result=std::syntax::join(result,std::syntax::punctuation("}",origin));
+result=std::syntax::join(result,std::syntax::punctuation("(",origin));
+result=std::syntax::join(result,std::syntax::punctuation(")",origin));
+return std::syntax::parse(result); } }

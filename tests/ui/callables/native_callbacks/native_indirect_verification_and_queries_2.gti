@@ -1,0 +1,3 @@
+// Native indirect verification and queries: scalar-only indirect native calls still require lexical unsafe.
+using Unary = (int32_t) -> int32_t;
+int main() { Unary callback = nullptr; return callback(7); }  //~ ERROR GTI-S2055

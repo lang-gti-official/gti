@@ -1,0 +1,11 @@
+// Lifetimes: rejected with GTI-S2045, GTI-S2127.
+enum Reading<lifetime a> { empty, value(int&<a> item) };
+struct Default<int&<source>> {
+  Reading<source> reading = Reading<source>::empty;
+  Default(int&<source> item) : reading(Reading<source>::value(item)) {}
+};
+Default<int&<static>> invalid() {
+  int value = 7;
+  Default<int&<static>> escaped{value};  //~ ERROR GTI-S2127
+  return escaped;  //~ ERROR GTI-S2045
+}

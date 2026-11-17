@@ -1,0 +1,5 @@
+// Protocol concepts: rejected with GTI-S2029.
+concept C<P> { typename result<std::integral T>; };
+struct Policy {};
+for concept C<Policy> { using result<std::integral U> = U; };
+using Invalid = C<Policy>::result<double>;  //~ ERROR GTI-S2029

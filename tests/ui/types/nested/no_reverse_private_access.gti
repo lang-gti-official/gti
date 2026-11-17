@@ -1,0 +1,3 @@
+// An enclosing class cannot read its nested class's private member.
+//@ check-fail
+struct C { class N { int code = 1;  public: N() = default; }; int read(N& value) { return value.code; }  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2007 is private

@@ -1,0 +1,3 @@
+// Negative: complete expression statement.
+#macro helper(bool value) {}
+int main() { return (helper!(true), 0); }  //~ ERROR GTI-S2124

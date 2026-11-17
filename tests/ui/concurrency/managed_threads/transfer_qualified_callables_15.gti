@@ -1,0 +1,22 @@
+// Transfer qualified callables: unrelated interface erasure must retain its transfer requirement.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.memory;
+import std.thread;
+[[transfer]] interface Job { int perform(); };
+class Work : public Job { public: int perform() override { return 42; }  public: Work() = default; };
+class Runner {
+  std::unique_ptr<Job> job;
+public:
+  Runner(std::unique_ptr<Job> job) : job(std::move(job)) {}
+  int operator()() { return this.job->perform(); }
+};
+int main() {
+  auto concrete = std::make_unique<Work>();
+  auto erased = std::upcast_unique<Job, Work>(std::move(concrete));
+  mut std::thread_result<int> worker{};
+  auto started = worker.start(Runner(std::move(erased)));
+  if (!started) return 1;
+  auto result = worker.join();
+  return result && result.value() == 42 ? 0 : 2;
+}

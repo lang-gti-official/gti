@@ -1,0 +1,6 @@
+// Lifetimes: rejected with GTI-S2123.
+struct View<lifetime a> { int&<a> value; View(int&<a> input) : value(input) {} };
+concept Marker<T> { int value(); };
+for<lifetime a> concept Marker<View<a>> {
+  int value() requires outlives<a, static> { return 1; }  //~ ERROR GTI-S2123
+};

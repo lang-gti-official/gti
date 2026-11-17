@@ -1,0 +1,20 @@
+// Class payload enums: an owning payload enum should cross a read-only checked-reference parameter boundary without transferring its cleanup identity.
+//@ check-pass
+class resource {
+public:
+  resource() {}
+  ~resource() {}
+};
+enum class holder { one(resource value), none };
+int32_t occupied(holder& value) {
+  switch (value) {
+  case holder::one:
+    return 1;
+  case holder::none:
+    return 0;
+  }
+}
+int main() {
+  holder value = holder::one(resource());
+  return occupied(value) == 1 ? 0 : 1;
+}

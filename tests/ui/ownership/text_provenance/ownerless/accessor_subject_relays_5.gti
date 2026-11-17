@@ -1,0 +1,36 @@
+// Accessor subject relays: a by-value payload of a local owner cannot escape as ownerless.
+import std.panic;
+import std.string;
+mut std::string_view kept = "";
+enum Word { text(std::string_view value), none };
+class Line {
+public:
+  Word word;
+  Line(std::string_view value) : word(Word::text(value)) {}
+  Word& wordRef() { return this.word; }
+  std::string_view& viaPlace() {
+    switch (this.word) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view& viaCall() {
+    switch (this.wordRef()) {
+    case Word::text(auto& v): return v;
+    case Word::none: std::panic("none");
+    }
+  }
+  std::string_view firstCall() {
+    switch (this.wordRef()) {
+    case Word::text(v): return v;
+    case Word::none: return "";
+    }
+  }
+};
+
+std::string_view leak() {
+  std::string input{"freed"};
+  Line line = Line(input.view());
+  return line.firstCall();  //~ ERROR GTI-S2045
+}
+int main() { return leak().size() == 5 ? 0 : 1; }

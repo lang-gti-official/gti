@@ -1,0 +1,220 @@
+// Composed payload enums construct, move and drop nested owners once, per phase.
+//@ run-pass
+//@ revisions: phase0 phase1 phase2 phase3 phase4 phase5 phase6
+//@[phase0] stdout: 1
+//@[phase0] stdout: -1
+//@[phase0] stdout: 2
+//@[phase0] stdout: 3
+//@[phase0] stdout: -2
+//@[phase0] stdout: -3
+//@[phase0] stdout: 4
+//@[phase0] stdout: 5
+//@[phase0] stdout: -5
+//@[phase0] stdout: -4
+//@[phase0] stdout: 6
+//@[phase0] stdout: -6
+//@[phase0] stdout: 7
+//@[phase0] stdout: -7
+//@[phase0] stdout: 8
+//@[phase0] stdout: -8
+//@[phase0] stdout: 9
+//@[phase0] stdout: 10
+//@[phase0] stdout: 11
+//@[phase0] stdout: -11
+//@[phase0] stdout: -10
+//@[phase0] stdout: -9
+//@[phase1] run-fail
+//@[phase1] exit-code: 70
+//@[phase1] args: phase
+//@[phase1] stdout: 20
+//@[phase1] stdout: -20
+//@[phase1] stderr-contains: composed_payloads.gti:55: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase2] run-fail
+//@[phase2] exit-code: 70
+//@[phase2] args: phase phase
+//@[phase2] stdout: 30
+//@[phase2] stdout: 31
+//@[phase2] stdout: -31
+//@[phase2] stdout: -30
+//@[phase2] stderr-contains: composed_payloads.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase3] run-fail
+//@[phase3] exit-code: 70
+//@[phase3] args: phase phase phase
+//@[phase3] stdout: 40
+//@[phase3] stdout: 41
+//@[phase3] stdout: -41
+//@[phase3] stdout: -40
+//@[phase3] stderr-contains: composed_payloads.gti:19: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at composed_payloads.gti:19; secondary [GTI-R0002]
+//@[phase4] run-fail
+//@[phase4] exit-code: 70
+//@[phase4] args: phase phase phase phase
+//@[phase4] stdout: 50
+//@[phase4] stdout: -50
+//@[phase4] stderr-contains: composed_payloads.gti:19: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at composed_payloads.gti:72; secondary [GTI-R0002]
+//@[phase5] run-fail
+//@[phase5] exit-code: 70
+//@[phase5] args: phase phase phase phase phase
+//@[phase5] stdout: 60
+//@[phase5] stdout: -60
+//@[phase5] stderr-contains: composed_payloads.gti:19: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[phase6] run-fail
+//@[phase6] exit-code: 70
+//@[phase6] args: phase phase phase phase phase phase
+//@[phase6] stdout: 70
+//@[phase6] stdout: -70
+//@[phase6] stderr-contains: composed_payloads.gti:19: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at composed_payloads.gti:81; secondary [GTI-R0002]
+// --- composed_payloads.gti
+import std.experimental.optional;
+import std.memory;
+import std.string;
+import std.vector;
+
+mut int zero = 0;
+
+class Resource {
+  int id;
+  int divisor;
+public:
+  Resource(int value, int by = 1) : id(value), divisor(by) {
+    std::println(value);
+  }
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    std::println(0 - this.id);
+    int checked = 1 / this.divisor;
+  }
+  int read() { return this.id; }
+};
+
+enum Packet<T> { empty, item(T value) };
+enum Pair<T, U> { empty, items(T first, U second) };
+enum SingleChoice { empty, left(Resource value), right(Resource value) };
+
+// Neither this wrapper nor its enum child adds a source destructor. Each
+// schedule has at most one active action, including when that action fails.
+class SingleWrapper {
+  Packet<Resource> child;
+public:
+  SingleWrapper(int id, int by = 1)
+      : child(Packet<Resource>::item(Resource(id, by))) {}
+};
+
+std::experimental::optional<Packet<Resource>> find(int id) {
+  return std::experimental::optional<Packet<Resource>>(
+      Packet<Resource>::item(Resource(id)));
+}
+
+std::experimental::optional<int> consume_optional() {
+  Packet<Resource> packet = ?find(1);
+  switch (std::move(packet)) {
+  case Packet<Resource>::empty:
+    return std::experimental::optional<int>();
+  case Packet<Resource>::item(resource):
+    return std::experimental::optional<int>(resource.read());
+  }
+}
+
+int run(int phase) {
+  if (phase == 1) {
+    auto never = Pair<Packet<Resource>, int>::items(
+        Packet<Resource>::item(Resource(20)), 1 / zero);
+    return 1;
+  }
+  if (phase == 2) {
+    auto owner = Pair<Packet<Resource>, Packet<Resource>>::items(
+        Packet<Resource>::item(Resource(30)),
+        Packet<Resource>::item(Resource(31, zero)));
+    return 0;
+  }
+  if (phase == 3) {
+    auto owner = Pair<Packet<Resource>, Packet<Resource>>::items(
+        Packet<Resource>::item(Resource(40, zero)),
+        Packet<Resource>::item(Resource(41, zero)));
+    return 0;
+  }
+  if (phase == 4) {
+    auto never = Pair<Packet<Resource>, int>::items(
+        Packet<Resource>::item(Resource(50, zero)), 1 / zero);
+    return 1;
+  }
+  if (phase == 5) {
+    auto wrapper = SingleWrapper(60, zero);
+    return 0;
+  }
+  if (phase == 6) {
+    auto wrapper = SingleWrapper(70, zero);
+    return 1 / zero;
+  }
+  {
+    auto result = consume_optional();
+    if (!result || result.value() != 1) { return 1; }
+  }
+  {
+    mut auto owner = Packet<Packet<Resource>>::item(
+        Packet<Resource>::item(Resource(2)));
+    owner = Packet<Packet<Resource>>::item(Packet<Resource>::item(Resource(3)));
+    switch (std::move(owner)) {
+    case Packet<Packet<Resource>>::empty: return 2;
+    case Packet<Packet<Resource>>::item(inner):
+      switch (std::move(inner)) {
+      case Packet<Resource>::empty: return 3;
+      case Packet<Resource>::item(value):
+        if (value.read() != 3) { return 4; }
+        break;
+      }
+      break;
+    }
+  }
+  {
+    Resource[2] items = {Resource(4), Resource(5)};
+    auto owner = Packet<Resource[2]>::item(std::move(items));
+    switch (std::move(owner)) {
+    case Packet<Resource[2]>::empty: return 5;
+    case Packet<Resource[2]>::item(values):
+      if (values[0].read() != 4 || values[1].read() != 5) { return 6; }
+      break;
+    }
+  }
+  {
+    expected<Resource, int> value = Resource(6);
+    auto owner = Packet<expected<Resource, int>>::item(std::move(value));
+    switch (std::move(owner)) {
+    case Packet<expected<Resource, int>>::empty: return 7;
+    case Packet<expected<Resource, int>>::item(result):
+      if (!result || result.value().read() != 6) { return 8; }
+      break;
+    }
+  }
+  {
+    expected<int, Resource> error = unexpected(Resource(7));
+    auto owner = Packet<expected<int, Resource>>::item(std::move(error));
+    switch (std::move(owner)) {
+    case Packet<expected<int, Resource>>::empty: return 9;
+    case Packet<expected<int, Resource>>::item(result):
+      if (result || result.error().read() != 7) { return 12; }
+      break;
+    }
+  }
+  {
+    auto value = std::make_unique<Resource>(8);
+    auto owner = Packet<std::unique_ptr<Resource>>::item(std::move(value));
+    switch (std::move(owner)) {
+    case Packet<std::unique_ptr<Resource>>::empty: return 10;
+    case Packet<std::unique_ptr<Resource>>::item(pointer):
+      if (pointer->read() != 8) { return 11; }
+      break;
+    }
+  }
+  {
+    auto wrapper = SingleWrapper(9);
+    auto empty = SingleChoice::empty;
+    auto left = SingleChoice::left(Resource(10));
+    auto right = SingleChoice::right(Resource(11));
+  }
+  return 0;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  return run(argc - 1);
+}

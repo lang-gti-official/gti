@@ -1,0 +1,6 @@
+// Borrowing captures: exclusive-capture-readonly-call is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int value = 0;
+  auto callback = [mut &value]() -> int { value += 1; return value; };
+  return callback();  //~ ERROR GTI-S2046
+}

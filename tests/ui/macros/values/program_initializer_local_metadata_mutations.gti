@@ -1,0 +1,20 @@
+// Program initializer local metadata mutations: namespace/static initialization retains ordinary user-type locals.
+//@ check-pass
+struct Count {
+  int number;
+  Count(int value) : number(value) {}
+};
+#macro Count local_count(int expression) {
+  Count saved{expression};
+  Count& alias = saved;
+  int copied = saved.number;
+  auto [unused_number] = saved;
+  auto [read_number] = saved;
+  int projected = read_number;
+  int32_t[2] elements = {1, 2};
+  auto [unused_first, unused_second] = elements;
+  return saved;
+}
+Count first = local_count!(7);
+struct Registry { static Count second = local_count!(9);  public: Registry() = default; };
+int main() { return first.number + Registry::second.number - 16; }

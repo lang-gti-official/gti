@@ -1,0 +1,11 @@
+// Known raw pointer origins: raw writes cannot bypass a known live checked borrow.
+//@ raw-pointer-audit: strict
+int main() {
+  mut int value = 7;
+  unsafe {
+    auto pointer = &value;
+    int& loan = value;
+    *pointer = 9;  //~ ERROR GTI-S2102
+    return loan;
+  }
+}

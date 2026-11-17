@@ -1,0 +1,30 @@
+// Mixed return origins: mixed factories and accessors preserve their exact returned field origins.
+//@ check-pass
+struct Services {
+  int& first;
+  mut int& second;
+  mut int& third;
+  Services(int& a, mut int& b, mut int& c) : first(a), second(b), third(c) {}
+  int& read() { return this.first; }
+  mut int& write() mut { return this.second; }
+};
+class Owner {
+public:
+  mut int a = 40;
+  mut int b = 0;
+  mut int c = 2;
+  Owner() {}
+  Services factory() mut { return Services(this.a, this.b, this.c); }
+};
+
+int main() {
+  mut Owner owner{};
+  {
+    mut auto services = owner.factory();
+    mut int& target = services.write();
+    target = 40;
+    int first = services.read();
+    if (first != 40) { return 1; }
+  }
+  return owner.a + owner.b + owner.c - 82;
+}

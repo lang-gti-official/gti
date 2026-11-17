@@ -1,0 +1,10 @@
+// Raw produced call origins: source result must preserve callee-produced expired origins: generic-constructor-local.
+//@ raw-pointer-audit: strict
+class Address<T> {
+public:
+  mut const T* pointer = nullptr;
+  Address(T input) { this.pointer = &input; }
+public:
+  Address() = default;
+};
+int main() { Address<int> address{1}; unsafe { return *address.pointer; } }  //~ ERROR GTI-S2102

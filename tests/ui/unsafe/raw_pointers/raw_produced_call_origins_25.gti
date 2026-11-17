@@ -1,0 +1,5 @@
+// Raw produced call origins: valid callee-produced raw transport: lambda-inert-copy.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() { auto source = []() -> const int* { int gone = 1; return &gone; };
+  auto first = source(); auto second = first; return first == second ? 0 : 1; }

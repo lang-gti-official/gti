@@ -1,0 +1,8 @@
+// Class payload enums: unused concrete generic class alternatives must still discover their exact lifecycle representation.
+//@ check-pass
+class shell<T> {
+public:
+  shell() {}
+};
+enum class holder { one(shell<int32_t> value), none };
+int main() { return 0; }

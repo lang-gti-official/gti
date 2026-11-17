@@ -1,0 +1,9 @@
+// Generated default has exact empty targets: generated default construction does not invent unrelated persistent writes while exact destructor effects remain disjoint.
+//@ check-pass
+thread_local mut int32_t first = 1;
+thread_local mut int32_t second = 2;
+
+struct Cleanup { ~Cleanup() { second = 9; }  public: Cleanup() = default; };
+void inspect(Cleanup& input) {}
+void execute() { inspect(Cleanup()); }
+int main() { int32_t& borrowed = first; execute(); return borrowed; }

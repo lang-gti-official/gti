@@ -1,0 +1,11 @@
+// Native identity: rejected with GTI-S2045.
+class Holder {
+  int32_t& value;
+public:
+  Holder(int32_t& source) : value(source) {}
+};
+Holder build(int32_t&) {
+  int32_t local = 2;
+  return Holder(local);  //~ ERROR GTI-S2045
+}
+int main() { return 0; }

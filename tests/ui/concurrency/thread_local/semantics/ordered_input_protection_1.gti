@@ -1,0 +1,3 @@
+// Ordered input protection: a stabilized reference input is protected at the exact later mutating argument span.
+//@ execution-profile: concurrent
+thread_local mut int value = 1; int modify() { value = 2; return 3; } int read(int& input, int copied) { return input + copied; } int main() { return read(value, modify()); }  //~ ERROR GTI-S2045

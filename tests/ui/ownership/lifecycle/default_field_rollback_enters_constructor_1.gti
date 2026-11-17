@@ -1,0 +1,22 @@
+// Default field rollback enters constructor: a constructor with an owning default field should pass the frontend.
+//@ check-pass
+class Resource {
+public:
+  int32_t value;
+  Resource(int32_t seed) : value(seed) {}
+  ~Resource() {}
+};
+
+class Bundle {
+public:
+  Resource held = Resource(5);
+  int32_t checked = 0;
+  Bundle(int32_t seed) : checked(seed + seed) {}
+public:
+  Bundle() = default;
+};
+
+int main() {
+  Bundle bundle = Bundle(4);
+  return bundle.held.value + bundle.checked - 13;
+}

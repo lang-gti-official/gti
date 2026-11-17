@@ -1,0 +1,20 @@
+// General requires: a reference to a carrier needs the checked reference form.
+//@ check-pass
+class Slice {
+  int32_t& first;
+public:
+  Slice(int32_t& first) : first(first) {}
+};
+class Keeper {
+  Slice kept;
+public:
+  Keeper(Slice kept) : kept(kept) {}
+  Slice& slice_ref() { return this.kept; }
+};
+int main() {
+  static_assert(!(requires(Keeper&<k> k) { { k.slice_ref() } -> auto<k>; }));
+  static_assert(!(requires(Keeper&<k> k) { { k.slice_ref() } -> Slice<k>; }));
+  static_assert(requires(Keeper&<k> k) { { k.slice_ref() } -> Slice&<k>; });
+  static_assert(!(requires(Slice&<s> s) { { s } -> Slice<s>; }));
+  return 0;
+}

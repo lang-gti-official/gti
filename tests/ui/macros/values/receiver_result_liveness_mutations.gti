@@ -1,0 +1,46 @@
+// Receiver result liveness mutations: all normal result edges initialize owning and passive receivers and ordinary user reference arguments.
+//@ check-pass
+class Owner {
+  int number;
+public:
+  Owner(int value) : number(value) {}
+  Owner(Owner& other) = delete;
+  Owner(Owner&& other) = default;
+  ~Owner() {}
+  int read() { return this.number; }
+};
+struct Passive {
+  int number;
+  Passive(int value) : number(value) {}
+  int read() { return this.number; }
+};
+#macro Owner choose_owner(bool enabled, Owner first, Owner second) {
+  Owner guard{99};
+  if (enabled) { return first; }
+  return second;
+}
+#macro Passive choose_passive(bool enabled, Passive first, Passive second) {
+  if (enabled) { return first; }
+  return second;
+}
+int inspect_owner(Owner& owner) { return owner.read(); }
+int inspect_passive(Passive& value) { return value.read(); }
+int exercise_owned(bool enabled) {
+  Owner sibling{91};
+  int observed = choose_owner!(enabled, Owner(7), Owner(9)).read();
+  return observed + sibling.read();
+}
+int exercise_argument(bool enabled) {
+  Owner sibling{91};
+  int observed = inspect_owner(choose_owner!(enabled, Owner(7), Owner(9)));
+  return observed + sibling.read();
+}
+int exercise_passive(bool enabled) {
+  int observed = choose_passive!(enabled, Passive(3), Passive(5)).read();
+  return observed + inspect_passive(choose_passive!(enabled, Passive(3), Passive(5)));
+}
+int main() {
+  return exercise_owned(true) + exercise_owned(false) +
+         exercise_argument(true) + exercise_argument(false) +
+         exercise_passive(true) + exercise_passive(false) - 412;
+}

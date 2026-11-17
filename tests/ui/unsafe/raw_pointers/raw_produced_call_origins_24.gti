@@ -1,0 +1,5 @@
+// Raw produced call origins: valid callee-produced raw transport: recursive-inert-copy.
+//@ check-pass
+//@ raw-pointer-audit: strict
+int main() { auto first = recursive(false); auto second = first; return first == second ? 0 : 1; }
+const int* recursive(bool again) { if (again) { return recursive(false); } int local = 1; return &local; }

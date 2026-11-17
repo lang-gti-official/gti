@@ -1,0 +1,2 @@
+// Invalid class type packs: invalid class pack must be rejected by semantics: class Bad<T = int, Args...> { public: Bad() = default; };.
+class Bad<T = int, Args...> { public: Bad() = default; };  //~ ERROR GTI-S2023

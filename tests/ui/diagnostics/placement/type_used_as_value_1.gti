@@ -1,0 +1,4 @@
+// Type used as value: #322 return-class names the type as not a value.
+import std.string;
+std::string make() { return std::string; }  //~ ERROR GTI-S2003
+int main() { return 0; }

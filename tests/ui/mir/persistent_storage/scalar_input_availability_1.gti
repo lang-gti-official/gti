@@ -1,0 +1,8 @@
+// Scalar input availability: an ordinary initialized scalar accepts a checked reference input.
+//@ check-pass
+void observe(int32_t& value) {}
+int main() {
+  mut int32_t first = 1; first += 1;
+  observe(first);
+  mut int32_t later = 2; later += 1; return later;
+}

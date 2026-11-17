@@ -1,0 +1,7 @@
+// Limits: a finite chain at the 64-level discovery boundary remains valid.
+//@ check-pass
+int bounded<uint64_t N>() {
+  if constexpr (N == 0) { return 0; }
+  else { return 1 + bounded<N - 1>(); }
+}
+int main() { return bounded<62>() - 62; }

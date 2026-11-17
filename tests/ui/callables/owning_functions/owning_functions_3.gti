@@ -1,0 +1,30 @@
+// Owning functions: callback cloning does not bypass the language restriction on custom copy constructor bodies.
+import std.functional;
+import std.string;
+
+mut int copy_divisor = 1;
+
+class Caller {
+public:
+  ~Caller() { std::println(9); }
+public:
+  Caller() = default;
+};
+
+class Target {
+  int identity;
+public:
+  Target(int identity) : identity(identity) {}
+  Target(Target& other) : identity(other.identity) {  //~ ERROR GTI-S2020 //~ ERROR GTI-S2020
+    int checked = 12 / copy_divisor;
+  }
+  int operator()() { return this.identity; }
+};
+
+int main() {
+  Caller caller{};
+  std::function<int()> callback{Target(7)};
+  copy_divisor = 0;
+  auto copy = callback.clone();
+  return copy();
+}

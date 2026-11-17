@@ -1,0 +1,15 @@
+// Full expressions: the program is accepted.
+//@ check-pass
+import std.utility;
+mut int drops = 0;
+class Item {
+public:
+  int value;
+  Item(int value) : value(value) {}
+  ~Item() { drops++; }
+};
+int select(bool choice, mut Item target, Item first, Item second) {
+  choice ? (target = std::move(first)) : (target = std::move(second));
+  return target.value;
+}
+int main() { return select(true, Item(1), Item(2), Item(3)); }

@@ -1,0 +1,12 @@
+// General requires: macro probes retain computed reflection declaration identities.
+//@ check-pass
+struct Key {
+  bool operator==(Key& other) { return true; }
+  bool operator!=(Key& other) { return false; }
+public:
+  Key() = default;
+};
+#macro inspect<T>(T value) requires std::equality_comparable<T> {
+  if (value == value) {}
+}
+int main() { Key key{}; inspect!(key); return 0; }

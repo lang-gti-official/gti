@@ -1,0 +1,22 @@
+// General requires: private access, receiver mutability and explicit unsafe obligations.
+//@ check-pass
+class Hidden {
+  Hidden() {}
+  int secret() { return 1; }
+};
+class Mutable {
+public:
+  int read() mut { return 1; }
+  unsafe int raw() { return 2; }
+public:
+  Mutable() = default;
+};
+int main() {
+  static_assert(!(requires { { Hidden() } -> Hidden; }));
+  static_assert(!(requires(Hidden& input) { { input.secret() } -> int; }));
+  static_assert(!(requires(Mutable& input) { { input.read() } -> int; }));
+  static_assert(requires(mut Mutable& input) { { input.read() } -> int; });
+  static_assert(!(requires(Mutable& input) { { input.raw() } -> int; }));
+  static_assert(requires(Mutable& input) { unsafe { input.raw() } -> int; });
+  return 0;
+}

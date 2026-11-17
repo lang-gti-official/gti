@@ -1,0 +1,5 @@
+// Raw produced call origins: an unresolved recursive source result must not become a foreign assertion.
+//@ raw-pointer-audit: strict
+int global = 7;
+int main() { auto pointer = recursive(false); unsafe { return *pointer; } }  //~ ERROR GTI-S2103
+const int* recursive(bool again) { if (again) { return recursive(false); } return &global; }

@@ -1,0 +1,25 @@
+// Consuming payload patterns: an explicitly moved subject cannot supply a mutable payload borrow.
+class resource {
+  int32_t id;
+public:
+  resource(int32_t value) : id(value) {}
+  ~resource() {}
+  int32_t read() { return this.id; }
+};
+enum class data {
+  empty,
+  some(resource item),
+  pair(resource left, resource right),
+  mixed(resource item, int32_t code),
+};
+data make(int32_t id) { return data::some(resource(id)); }
+
+int main() {
+  mut data value = make(1);
+  switch (std::move(value)) {
+  case data::some(mut auto& item):  //~ ERROR GTI-S2067
+    return item.read();
+  default:
+    return 0;
+  }
+}

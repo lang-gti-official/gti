@@ -1,0 +1,4 @@
+// Rejects: has_next must be read-only.
+class Source { public: Source() {} bool has_next() mut { return true; }
+    int take_next() mut { return 2; } };
+    int main() { for (auto v : Source()) {} return 0; }  //~ ERROR GTI-S2083

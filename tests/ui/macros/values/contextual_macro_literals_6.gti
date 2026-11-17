@@ -1,0 +1,3 @@
+// Contextual macro literals: invalid result macro must stop before emission.
+#macro accept(float value) {}
+int main() { accept!(33); return 0; }  //~ ERROR GTI-S2003

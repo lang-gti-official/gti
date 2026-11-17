@@ -1,0 +1,19 @@
+// Requirement probe isolation: an unevaluated requirement cannot suppress later real cleanup in either concrete query order.
+//@ execution-profile: concurrent
+//@ require-function-definitions
+thread_local mut int value = 1;
+thread_local mut int other = 2;
+void modify() { value = 2; }
+struct Cleanup { ~Cleanup() { modify(); }  public: Cleanup() = default; };
+bool inspect(Cleanup& input) { return true; }
+bool with_flag(Cleanup& input, bool flag) { return flag; }
+
+int selected<uint64_t Mode>() {
+  if constexpr (Mode == 0) {
+    int first = 0;
+    int second = 1;
+    int third = 2;
+    bool checked = requires { { inspect(Cleanup()) } -> bool; };
+    return checked ? first + second + third : 0;
+  } else {
+bool checked = requires { { inspect(Cleanup()) } -> bool; }; bool seen = inspect(Cleanup()); return checked && seen ? 1 : 0; } }int main() { int& borrowed = value; int first = selected<1>(); int second = selected<0>(); return borrowed + first + second; }  //~ ERROR GTI-S2045

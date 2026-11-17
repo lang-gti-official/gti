@@ -1,0 +1,6 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+struct View<lifetime a> { int&<a> external; int local = 7; View(int&<a> input) : external(input) {} };
+int&<owner> read<lifetime a, lifetime owner>(View<a>&<owner> view) { return view.local; }
+int main() { int value = 3; View view{value}; return read(view) - 7; }

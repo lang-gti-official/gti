@@ -1,0 +1,36 @@
+// Analyze: source storage preserves independent payload transfer/share capabilities and resource storage remains usable locally.
+//@ check-pass
+import std.memory;
+import std.resource;
+
+[[unsafe_owned, unsafe_transfer(T), unsafe_share(T)]] class Reviewed<T> {
+  T* pointer = nullptr;
+public:
+  Reviewed() {}
+  ~Reviewed() {}
+};
+[[no_transfer]] struct Affine { int id = 0;  public: Affine() = default; };
+[[no_share]] struct Exclusive { int id = 0;  public: Exclusive() = default; };
+enum Packet<T> { item(T value) };
+enum Metadata<T> { item(int value) };
+void consume<std::transferable T>(T value) {}
+void observe<std::shareable T>(T& value) {}
+void relay<std::transferable T>(T value) { consume(Reviewed<T>()); }
+
+int main() {
+  std::allocator allocator{};
+  auto values = allocator.try_storage<int>(std::size_t(1)).expect("allocate");
+  observe(values);
+  consume(std::move(values));
+  auto shared = allocator.try_storage<Affine>(std::size_t(1)).expect("allocate");
+  observe(shared);
+  auto transferred = allocator.try_storage<Exclusive>(std::size_t(1)).expect("allocate");
+  consume(std::move(transferred));
+  std::process_resource provider{};
+  unsafe {
+    auto binding = std::bind_resource(provider);
+    std::resource_storage<int, std::process_resource> local{binding};
+    if (local.capacity() != std::size_t(0)) { return 1; }
+  }
+  return 0;
+}

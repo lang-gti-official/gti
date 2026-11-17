@@ -1,0 +1,4 @@
+// Consuming wrapper semantics: wrapper copy must be explicit clone.
+import std.functional;
+import std.memory;
+int main() { std::function<int() &&> callback{[]() -> int { return 3; }}; auto copy = callback; return 0; }  //~ ERROR GTI-S2003

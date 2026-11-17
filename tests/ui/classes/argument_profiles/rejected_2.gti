@@ -1,0 +1,4 @@
+// Rejected: invalid profile or borrow has no code generation.
+class Hidden { implicit Hidden() {} };
+Hidden finish() { return; }  //~ ERROR GTI-S2007
+int main() { return 0; }

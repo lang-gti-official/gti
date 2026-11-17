@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual mutex lifetime, contention, timing, synchronization, and GTI clients."""
+"""Native mutex runtime unit checks; the GTI clients are tests/ui/concurrency/cthread."""
 
 import os
 import pathlib
@@ -48,28 +48,6 @@ def main():
                  root / "tests/unit/runtime_cthread_mutex_tests.cpp", "-o", native])
             run([native])
             run([native, "destroy-locked"], 86)
-            for fixture in ("cthread_mutex", "cthread_mutex_concurrent", "cthread_mutex_destroy"):
-                binary = output / f"{fixture}-{mode}"
-                command = [compiler, fixtures / f"{fixture}.gti", "--progress=never", *flags, *keep_cpp(flags), "--execution-profile", "concurrent", "-o", binary]
-                extra = [*sanitizers]
-                if fixture.endswith(("concurrent", "destroy")):
-                    extra += [fixtures / "cthread_mutex_context.cpp"]
-                if extra:
-                    command += ["--", *extra]
-                run(command)
-                run([binary], 86 if fixture.endswith("destroy") else 0)
-                if is_cpp_mode(flags):
-                    generated = binary.with_suffix(".gti.cpp").read_text()
-                # The terminal fixture intentionally never unlocks its mutex.
-                # Reachable-only lowering must retain its actual native calls,
-                # not an unrelated unlock wrapper from the included library.
-                operations = (("init", "lock", "destroy") if fixture.endswith("destroy")
-                              else ("lock", "unlock", "destroy"))
-                if is_cpp_mode(flags):
-                    if ("// GTI verified-MIR body:" not in generated or
-                            any(f"::{native_spelling(generated, 'gti_rt_mtx_' + op + '_v1')}("
-                                not in generated for op in operations)):
-                        raise AssertionError(f"{fixture} lost its MIR/native-call witness")
             print(f"C-thread mutex: {mode} passed", flush=True)
 
 

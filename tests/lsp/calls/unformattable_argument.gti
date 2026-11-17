@@ -1,0 +1,9 @@
+// An unformattable argument is reported at its line and names the type.
+// (From semantic_call_regressions_lsp_test.py.)
+import std.format;
+struct Opaque { public: Opaque() = default; };
+int main() {
+  Opaque opaque{};
+  std::println("{} {} {}", 1, 2, opaque);  //~ ERROR GTI-S2029 Opaque
+  return 0;
+}

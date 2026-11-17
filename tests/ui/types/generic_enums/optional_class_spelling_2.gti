@@ -1,0 +1,19 @@
+// Optional class spelling: formatter preserves either spelling and reanalysis is equivalent.
+//@ check-pass
+enum State : uint8_t {
+  idle,
+  ready = 4
+};
+enum Message {
+  empty,
+  item(int value)
+};
+int main() {
+  Message message = Message::item(7);
+  switch (message) {
+  case Message::empty:
+    return 1;
+  case Message::item(value):
+    return value == 7 ? 0 : 2;
+  }
+}

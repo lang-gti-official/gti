@@ -1,0 +1,2 @@
+// Analyze: API-visible, missing or rvalue inference is rejected.
+int main() { auto& alias = {1, 2}; return 0; }  //~ ERROR GTI-S2015

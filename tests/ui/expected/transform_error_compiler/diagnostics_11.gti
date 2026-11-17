@@ -1,0 +1,3 @@
+// Diagnostics: wrong mapper arity reports the call's arity rather than cascades.
+expected<int, int> read() { return unexpected(1); }
+int main() { [[discard]] read().transform_error(); return 0; }  //~ ERROR GTI-S2023 //~ ERROR GTI-S2005

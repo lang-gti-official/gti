@@ -1,0 +1,4 @@
+// Storage payload admission: a directly literal-backed text payload needs no external owner loan.
+//@ check-pass
+enum Text { empty, value(std::string_view text) };
+int main() { auto text = Text::value("static"); return 0; }

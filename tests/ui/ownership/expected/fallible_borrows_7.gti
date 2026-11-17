@@ -1,0 +1,12 @@
+// Fallible borrows: fallible borrows should not escape through fields, globals, or lambdas.
+enum class lookup_errc { missing };
+expected<int&, lookup_errc> global_result;  //~ ERROR GTI-S2045
+class Holder { expected<int&, lookup_errc> result; };  //~ ERROR GTI-S2045 //~ ERROR GTI-S2045 //~ ERROR GTI-S2000
+void inspect(expected<int&, lookup_errc> result) {}
+int main() {
+  int local = 1;
+  auto lambda = [](int& value) -> expected<int&, lookup_errc> {  //~ ERROR GTI-S2027
+    return value;  //~ ERROR GTI-S2045
+  };
+  return 0;
+}

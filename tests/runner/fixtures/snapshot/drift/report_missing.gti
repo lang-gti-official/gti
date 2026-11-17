@@ -1,0 +1,4 @@
+// An optimization-report pattern that is not in the remarks fails.
+//@ snapshot: optimization-report
+// CHECK: applied [exact-receiver-dispatch
+int main() { return 0; }

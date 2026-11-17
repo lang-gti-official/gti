@@ -1,0 +1,12 @@
+// Restricted member operators: arithmetic operator resolution should reject implicit operand conversions and list the exact candidates.
+class ExactArithmetic {
+public:
+  ExactArithmetic operator+(int64_t other) { return ExactArithmetic(); }
+public:
+  ExactArithmetic() = default;
+};
+int main() {
+  ExactArithmetic value = ExactArithmetic();
+  ExactArithmetic result = value + int32_t(1);  //~ ERROR GTI-S2022
+  return 0;
+}

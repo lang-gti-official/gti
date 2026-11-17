@@ -1,0 +1,13 @@
+// Optional reset cleanup: fallible payload reset must have independently verified MIR.
+//@ check-pass
+import std.optional;
+class Resource {
+  int divisor;
+public:
+  Resource(int divisor) : divisor(divisor) {}
+  ~Resource() { int checked = 12 / this.divisor; }
+};
+void destroy(int divisor) {
+  mut std::optional<Resource> slot{Resource(divisor)};
+  slot.reset();
+}

@@ -1,0 +1,17 @@
+// Borrowing captures: stored-generic-capture.
+//@ check-pass
+class Handler<F> {
+  mut F callback;
+public:
+  Handler(F callback) : callback(std::move(callback)) {}
+  int run() mut { return this.callback(); }
+};
+Handler<F> store<F>(F callback) {
+  return Handler<F>(std::move(callback));
+}
+int main() {
+  mut int value = 3;
+  mut auto update = [mut &value]() -> int { value += 2; return value; };
+  mut auto handler = store(std::move(update));
+  return handler.run() - 5;
+}

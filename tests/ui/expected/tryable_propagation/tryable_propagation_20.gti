@@ -1,0 +1,64 @@
+// Tryable propagation: the program is accepted.
+//@ check-pass
+struct Rejected {
+  int code;
+  Rejected(int value) : code(value) {}
+};
+class Checked<T> {
+public:
+  T value;
+  int code;
+  Checked(T payload, int failure) : value(payload), code(failure) {}
+  Checked(Checked<T>& other) = delete;
+  Checked(Checked<T>&& other) = default;
+};
+for <std::copyable T> concept std::tryable<Checked<T>> {
+  using value_type = T;
+  using residual_type = Rejected;
+  bool has_value(Checked<T>& result) { return result.code == 0; }
+  T<a> take_value<lifetime a>(Checked<T, a> result) { return result.value; }
+  Rejected take_residual(Checked<T> result) { return Rejected(result.code); }
+};
+class Status {
+public:
+  int code;
+  Status(int value) : code(value) {}
+  implicit Status(Rejected rejected) : code(rejected.code) {}
+};
+Checked<int> make(int value, int failure) {
+  return Checked<int>(value, failure);
+}
+
+enum class Parse {
+  ok(int value),
+  failed(int code),
+};
+for concept std::tryable<Parse> {
+  using value_type = int;
+  using residual_type = Rejected;
+  bool has_value(Parse& parse) {
+    switch (parse) {
+      case Parse::ok: return true;
+      case Parse::failed: return false;
+    }
+  }
+  int take_value(Parse parse) {
+    switch (parse) {
+      case Parse::ok(value): return value;
+      case Parse::failed: return 0;
+    }
+  }
+  Rejected take_residual(Parse parse) {
+    switch (parse) {
+      case Parse::ok: return Rejected(0);
+      case Parse::failed(code): return Rejected(code);
+    }
+  }
+};
+Parse parse(int text) { return Parse::ok(text); }
+Status enumerated(int text) {
+  Parse held = parse(text);
+  int value = ?Parse::ok(1) + ?parse(text) + ?held + ?std::move(held);
+  return Status(value);
+}
+int main() { return enumerated(2).code - 7; }

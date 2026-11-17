@@ -1,0 +1,23 @@
+// Aliases: namespace and member aliases validate completed class facts.
+//@ check-pass
+class Key {
+  int value;
+public:
+  Key(int value) : value(value) {}
+  bool operator==(Key& other) { return this.value == other.value; }
+  bool operator!=(Key& other) { return this.value != other.value; }
+};
+class Policy<std::equality_comparable T> {
+public:
+  Policy() {}
+};
+
+using Alias = Policy<Key>;
+class Holder {
+public:
+  using Member = Policy<Key>;
+  Member item{};
+public:
+  Holder() = default;
+};
+int main() { Alias a{}; Holder h{}; return 0; }

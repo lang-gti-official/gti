@@ -1,0 +1,5 @@
+// Negatives: foreign typed parameter retains known type remains unchecked with audit Off.
+//@ check-pass
+using E = void*; using P = uint64_t*;
+void test(int* address) { E e = E(address); P p = P(e); }
+int main() { return 0; }

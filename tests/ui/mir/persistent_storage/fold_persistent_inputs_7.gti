@@ -1,0 +1,13 @@
+// Fold persistent inputs: unrelated user fold has exact compact source-call targets.
+//@ check-pass
+ mut int32_t first = 1;
+ mut int32_t second = 2;
+void hidden() { int32_t observed = second; }
+void touch<T>(mut int32_t& prefix, T& element) { hidden(); }
+void folded<Args...>(Args... args) {
+  int32_t seeded = first;
+  mut int32_t prefix = seeded;
+  (touch(prefix, args), ...);
+  mut int32_t later = seeded; later += 1;
+}
+int main() { folded(1, 2); return 0; }

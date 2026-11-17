@@ -1,0 +1,58 @@
+// An empty return constructing the result type unwinds a failing member or argument in order.
+//@ run-pass
+//@ revisions: c0 c1 c2
+//@[c0] stdout: 2
+//@[c0] stdout: 3
+//@[c0] stdout: 9
+//@[c1] args: fail
+//@[c1] stdout: 3
+//@[c1] stdout: 2
+//@[c1] stdout: 9
+//@[c1] run-fail
+//@[c1] exit-code: 70
+//@[c1] stderr-contains: main.gti:24: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[c2] args: fail fail
+//@[c2] stdout: 2
+//@[c2] stdout: 9
+//@[c2] run-fail
+//@[c2] exit-code: 70
+//@[c2] stderr-contains: main.gti:15: runtime error[GTI-R0002]: division_by_zero in integer_division
+// --- main.gti
+import std.string;
+import std.vector;
+
+mut int construction_divisor = 1;
+mut int argument_divisor = 1;
+
+class Trace {
+  int identity;
+public:
+  Trace(int identity) : identity(identity) {}
+  ~Trace() { std::println(this.identity); }
+};
+
+Trace default_ticket() {
+  int argument_failure = 1 / argument_divisor;
+  return Trace(3);
+}
+
+class Completion {
+  Trace ticket;
+  int value;
+public:
+  implicit Completion(Trace ticket = default_ticket(), int divisor = construction_divisor)
+      : ticket(std::move(ticket)), value(10 / divisor) {}
+};
+
+Completion finish() {
+  Trace local{2};
+  return;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  Trace caller{9};
+  construction_divisor = argc == 2 ? 0 : 1;
+  argument_divisor = argc == 3 ? 0 : 1;
+  auto completed = finish();
+  return 0;
+}

@@ -1,0 +1,2 @@
+// Rejections: unsupported or contradictory annotations get a function-contract diagnostic.
+[[cold, cold]] int f() { return 0; } int main() { return f(); }  //~ ERROR GTI-S2099

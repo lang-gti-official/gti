@@ -1,0 +1,17 @@
+// Edge sensitive move flow: unknown logical left operands should merge the skipped and evaluated RHS move states.
+struct Record { int32_t value = 7;  public: Record() = default; };
+bool consume(Record value) { return value.value == 7; }
+
+int test_and(bool gate) {
+  mut Record value = Record();
+  bool result = gate && (consume(std::move(value)), true);
+  return value.value;  //~ ERROR GTI-S2018
+}
+
+int test_or(bool gate) {
+  mut Record value = Record();
+  bool result = gate || (consume(std::move(value)), false);
+  return value.value;  //~ ERROR GTI-S2018
+}
+
+int main() { return test_and(false) + test_or(true); }

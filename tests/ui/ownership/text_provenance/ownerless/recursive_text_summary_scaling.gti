@@ -1,0 +1,164 @@
+// Recursive text summary scaling: a deep call chain and a set of mutually recursive functions that all call each other return ownerless text.
+//@ check-pass
+std::string_view c18(std::string_view s, int n) { return "leaf"; }
+std::string_view c17(std::string_view s, int n) {
+  if (n == 0) { return c18(s, n); }
+  return c18(s, n - 1);
+}
+std::string_view c16(std::string_view s, int n) {
+  if (n == 0) { return c17(s, n); }
+  return c17(s, n - 1);
+}
+std::string_view c15(std::string_view s, int n) {
+  if (n == 0) { return c16(s, n); }
+  return c16(s, n - 1);
+}
+std::string_view c14(std::string_view s, int n) {
+  if (n == 0) { return c15(s, n); }
+  return c15(s, n - 1);
+}
+std::string_view c13(std::string_view s, int n) {
+  if (n == 0) { return c14(s, n); }
+  return c14(s, n - 1);
+}
+std::string_view c12(std::string_view s, int n) {
+  if (n == 0) { return c13(s, n); }
+  return c13(s, n - 1);
+}
+std::string_view c11(std::string_view s, int n) {
+  if (n == 0) { return c12(s, n); }
+  return c12(s, n - 1);
+}
+std::string_view c10(std::string_view s, int n) {
+  if (n == 0) { return c11(s, n); }
+  return c11(s, n - 1);
+}
+std::string_view c9(std::string_view s, int n) {
+  if (n == 0) { return c10(s, n); }
+  return c10(s, n - 1);
+}
+std::string_view c8(std::string_view s, int n) {
+  if (n == 0) { return c9(s, n); }
+  return c9(s, n - 1);
+}
+std::string_view c7(std::string_view s, int n) {
+  if (n == 0) { return c8(s, n); }
+  return c8(s, n - 1);
+}
+std::string_view c6(std::string_view s, int n) {
+  if (n == 0) { return c7(s, n); }
+  return c7(s, n - 1);
+}
+std::string_view c5(std::string_view s, int n) {
+  if (n == 0) { return c6(s, n); }
+  return c6(s, n - 1);
+}
+std::string_view c4(std::string_view s, int n) {
+  if (n == 0) { return c5(s, n); }
+  return c5(s, n - 1);
+}
+std::string_view c3(std::string_view s, int n) {
+  if (n == 0) { return c4(s, n); }
+  return c4(s, n - 1);
+}
+std::string_view c2(std::string_view s, int n) {
+  if (n == 0) { return c3(s, n); }
+  return c3(s, n - 1);
+}
+std::string_view c1(std::string_view s, int n) {
+  if (n == 0) { return c2(s, n); }
+  return c2(s, n - 1);
+}
+std::string_view c0(std::string_view s, int n) {
+  if (n == 0) { return c1(s, n); }
+  return c1(s, n - 1);
+}
+std::string_view d0(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 2) { return d1(s, n - 1); }
+  if (n == 3) { return d2(s, n - 1); }
+  if (n == 4) { return d3(s, n - 1); }
+  if (n == 5) { return d4(s, n - 1); }
+  if (n == 6) { return d5(s, n - 1); }
+  if (n == 7) { return d6(s, n - 1); }
+  if (n == 8) { return d7(s, n - 1); }
+  return d1(s, n - 1);
+}
+std::string_view d1(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 1) { return d0(s, n - 1); }
+  if (n == 3) { return d2(s, n - 1); }
+  if (n == 4) { return d3(s, n - 1); }
+  if (n == 5) { return d4(s, n - 1); }
+  if (n == 6) { return d5(s, n - 1); }
+  if (n == 7) { return d6(s, n - 1); }
+  if (n == 8) { return d7(s, n - 1); }
+  return d2(s, n - 1);
+}
+std::string_view d2(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 1) { return d0(s, n - 1); }
+  if (n == 2) { return d1(s, n - 1); }
+  if (n == 4) { return d3(s, n - 1); }
+  if (n == 5) { return d4(s, n - 1); }
+  if (n == 6) { return d5(s, n - 1); }
+  if (n == 7) { return d6(s, n - 1); }
+  if (n == 8) { return d7(s, n - 1); }
+  return d3(s, n - 1);
+}
+std::string_view d3(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 1) { return d0(s, n - 1); }
+  if (n == 2) { return d1(s, n - 1); }
+  if (n == 3) { return d2(s, n - 1); }
+  if (n == 5) { return d4(s, n - 1); }
+  if (n == 6) { return d5(s, n - 1); }
+  if (n == 7) { return d6(s, n - 1); }
+  if (n == 8) { return d7(s, n - 1); }
+  return d4(s, n - 1);
+}
+std::string_view d4(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 1) { return d0(s, n - 1); }
+  if (n == 2) { return d1(s, n - 1); }
+  if (n == 3) { return d2(s, n - 1); }
+  if (n == 4) { return d3(s, n - 1); }
+  if (n == 6) { return d5(s, n - 1); }
+  if (n == 7) { return d6(s, n - 1); }
+  if (n == 8) { return d7(s, n - 1); }
+  return d5(s, n - 1);
+}
+std::string_view d5(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 1) { return d0(s, n - 1); }
+  if (n == 2) { return d1(s, n - 1); }
+  if (n == 3) { return d2(s, n - 1); }
+  if (n == 4) { return d3(s, n - 1); }
+  if (n == 5) { return d4(s, n - 1); }
+  if (n == 7) { return d6(s, n - 1); }
+  if (n == 8) { return d7(s, n - 1); }
+  return d6(s, n - 1);
+}
+std::string_view d6(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 1) { return d0(s, n - 1); }
+  if (n == 2) { return d1(s, n - 1); }
+  if (n == 3) { return d2(s, n - 1); }
+  if (n == 4) { return d3(s, n - 1); }
+  if (n == 5) { return d4(s, n - 1); }
+  if (n == 6) { return d5(s, n - 1); }
+  if (n == 8) { return d7(s, n - 1); }
+  return d7(s, n - 1);
+}
+std::string_view d7(std::string_view s, int n) {
+  if (n == 0) { return "d"; }
+  if (n == 1) { return d0(s, n - 1); }
+  if (n == 2) { return d1(s, n - 1); }
+  if (n == 3) { return d2(s, n - 1); }
+  if (n == 4) { return d3(s, n - 1); }
+  if (n == 5) { return d4(s, n - 1); }
+  if (n == 6) { return d5(s, n - 1); }
+  if (n == 7) { return d6(s, n - 1); }
+  return d0(s, n - 1);
+}
+int main() { return c0("x", 1).size() + d0("x", 3).size() == 5 ? 0 : 1; }

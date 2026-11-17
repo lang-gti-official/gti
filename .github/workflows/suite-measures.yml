@@ -208,7 +208,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     env:
-      GTI_MUTATION_LABELS: '^(feedback-fast|compiler-suite)$'
+      GTI_MUTATION_LABELS: '^(feedback-fast|gti-test-ui)$'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

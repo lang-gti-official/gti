@@ -1,0 +1,6 @@
+// Unsafe and pointer diagnostics: compound arithmetic on a raw-pointer array element should require unsafe.
+int main() {
+  mut int32_t* pointers[1] = {};
+  pointers[0] -= 1;  //~ ERROR GTI-S2055
+  return 0;
+}

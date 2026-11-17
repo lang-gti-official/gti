@@ -1,0 +1,14 @@
+// S: repeated and nested forcing shares its written lambda, while another lambda and named callable remain distinct.
+//@ check-pass
+mut int total = 0;
+#macro twice<F>(F callback) { callback(); callback(); }
+#macro invoke<F>(F callback) { callback(); }
+#macro nested<F>(F callback) { invoke!(callback); }
+int main() {
+  int value = 7;
+  twice!([value]() -> void { total += value; });
+  nested!([]() -> void { total += 1; });
+  auto named = []() -> void { total += 2; };
+  invoke!(named);
+  return total == 17 ? 0 : 1;
+}

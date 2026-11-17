@@ -1,0 +1,4 @@
+// An optional access result is not discardable: ignoring it is rejected.
+//@ check-fail
+import std.optional;
+int main() { std::optional<int> slot{1}; slot.value(); return 0; }  //~ ERROR GTI-S2009

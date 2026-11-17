@@ -1,0 +1,10 @@
+// Accepted: valid generic call composition reaches MIR.
+//@ check-pass
+void retain<F>(F callback) {}
+F relay<F>(F callback) { return std::move(callback); }
+int main() {
+  int value = 42;
+  auto callback = [&value]() -> int { return value; };
+  auto result = relay(std::move(callback));
+  return result();
+}

@@ -1,0 +1,11 @@
+// Raw audit certainty: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+extern "C" { const int* foreign(); }
+
+int inspect(bool choice) {
+  int live = 1;
+  mut const int* pointer = nullptr;
+  { int dead = 2; pointer = &dead; }
+unsafe { const int* selected = choice ? pointer : foreign(); return *selected; }}
+int main() { return 0; }

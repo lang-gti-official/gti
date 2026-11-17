@@ -1,0 +1,12 @@
+// Borrowing captures: erased-reference-round-trip.
+//@ check-pass
+import std.memory;
+int main() {
+  mut int owner = 3;
+  mut std::erased_object& erased = std::erase_mut(owner);
+  unsafe {
+    mut int& restored = std::restore_mut<int>(erased);
+    restored += 2;
+  }
+  return owner - 5;
+}

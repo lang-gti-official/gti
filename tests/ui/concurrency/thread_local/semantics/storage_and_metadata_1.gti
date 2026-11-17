@@ -1,0 +1,16 @@
+// Storage and metadata: TLS mutable namespace, static and block storage is valid concurrently.
+//@ check-pass
+//@ execution-profile: concurrent
+thread_local mut int counter = 0;
+class Registry {
+public:
+  static thread_local mut int value = 1;
+public:
+  Registry() = default;
+};
+int next() {
+  thread_local mut int local = 3;
+  local += 1;
+  return local;
+}
+int main() { counter += 1; Registry::value += 1; return next(); }

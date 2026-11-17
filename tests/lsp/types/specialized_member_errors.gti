@@ -1,0 +1,31 @@
+// A missing member alias, an incomplete path and a private owner are
+// reported and repaired; public stdlib iterator aliases resolve. (From qualified_type_member_lsp_test.py.)
+// UTF-16 provenance: 😀
+struct Box<T> { using value_type = T; };
+struct Outer<T> { using inner = Box<T>; };
+using Value = Outer<int>::inner::missing;  //~ ERROR GTI-S2030 no direct type alias //~ ERROR GTI-S2030
+int main() { Value item = 7; return item - 7; }
+// --- step 2
+// UTF-16 provenance: 😀
+struct Box<T> { using value_type = T; };
+struct Outer<T> { using inner = Box<T>; };
+using Value = Outer<int>::inner::;  //~ ERROR GTI-P0001
+int main() { Value item = 7; return item - 7; }  //~ ERROR GTI-S2000
+// --- step 3
+// UTF-16 provenance: 😀
+class Box<T> { using value_type = T; };
+struct Outer<T> { using inner = Box<T>; };
+using Value = Outer<int>::inner::value_type;  //~ ERROR GTI-S2007
+int main() { Value item = 7; return item - 7; }
+// --- step 4
+// UTF-16 provenance: 😀
+struct Box<T> { using value_type = T; };
+struct Outer<T> { using inner = Box<T>; };
+using Value = Outer<int>::inner::value_type;
+int main() { Value item = 7; return item - 7; }
+// --- step 5
+import std.vector;
+using Cursor = std::vector<int>::const_iterator;
+using Writable = std::vector<int>::iterator;
+using End = std::vector<int>::sentinel;
+int main() { return 0; }

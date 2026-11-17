@@ -1,0 +1,3 @@
+// Shared parent call arguments: mutable parent call after child endpoint.
+//@ check-pass
+int read(int& value) { return value; } void keep(int& value) {} void write(mut int& value) { value += 1; } int main() { mut int owner = 1; mut int& parent = owner; mut int& child = parent; keep(child); write(parent); return owner - 2; }

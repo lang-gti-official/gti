@@ -1,0 +1,4 @@
+// Rejects: a producer cannot masquerade a borrow as an owned value.
+class Source { int value = 2; public: Source() {}
+    bool has_next() { return true; } int& take_next() mut { return this.value; } };
+    int main() { for (auto v : Source()) {} return 0; }  //~ ERROR GTI-S2083

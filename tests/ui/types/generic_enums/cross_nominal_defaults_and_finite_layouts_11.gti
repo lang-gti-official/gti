@@ -1,0 +1,2 @@
+// Cross nominal defaults and finite layouts: cycles through different instances of one enum or class family reject in semantics before executable lowering.
+enum Event<T> { item(T value) }; struct A { Event<B> value; }; struct B { Event<C> value; }; struct C { A value; }; int main() { return 0; }  //~ ERROR GTI-S2082 //~ ERROR GTI-S2067 //~ ERROR GTI-S2067

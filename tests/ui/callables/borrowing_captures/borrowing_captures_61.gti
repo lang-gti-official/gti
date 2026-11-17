@@ -1,0 +1,10 @@
+// Borrowing captures: capture-write-while-alias-live is rejected with a user diagnostic, not an ICE.
+int main() {
+  mut int count = 4;
+  mut auto step = [mut &count]() -> int {
+    int& seen = count;
+    count += 1;  //~ ERROR GTI-S2017
+    return seen;
+  };
+  return step();
+}

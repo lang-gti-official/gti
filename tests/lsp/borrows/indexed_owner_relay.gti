@@ -1,0 +1,45 @@
+// An indexed owner relay keeps hover at the call while mutating the owner
+// with a returned view live is a borrow conflict. (From operator_relay_lsp_test.py.)
+//@ hover @at: string_view
+import std.string;
+import std.vector;
+
+class Record {
+  std::string text_;
+public:
+  Record(std::string_view text) : text_(std::string(text)) {}
+  std::string_view text() { return this.text_.view(); }
+};
+class Records {
+  mut std::vector<Record> records_{};
+public:
+  Records() {
+    this.records_.push_back(Record("alpha"));
+    this.records_.push_back(Record("beta"));
+  }
+  Record& operator[](std::size_t index) { return this.records_[index]; }
+  void add() mut { this.records_.push_back(Record("extra")); }
+  std::string_view at(std::size_t index) { return this.records_[index].text(); }
+};
+class FixedRecords {
+  Record records_[2] = {Record("gamma"), Record("delta")};
+public:
+  FixedRecords() {}
+  Record& operator[](std::size_t index) { return this.records_[index]; }
+  std::string_view at(std::size_t index) { return this.records_[index].text(); }
+};
+
+std::string_view relay(Records& records, std::size_t index) {
+  return records[index].text();
+}
+std::string_view relay(FixedRecords& records, std::size_t index) {
+  return records[index].text();
+}
+
+int main() {
+  mut Records records{};
+  std::string_view held = records./*@at*/at(std::size_t(0));
+  /*😀*/ records.add();  //~ ERROR GTI-S2017
+  std::println(held);
+  return 0;
+}

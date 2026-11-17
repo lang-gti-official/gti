@@ -1,0 +1,18 @@
+// Raw mutation call invalidation: scalar mutation, fresh reacquisition and inert stale copies stay valid.
+//@ check-pass
+//@ raw-pointer-audit: strict
+struct Owner { mut int value = 1;  public: Owner() = default; };
+void replace(mut Owner& owner) { owner = Owner(); }
+void increment(mut int& value) { value++; }
+int main() {
+  mut int scalar = 1;
+  const int* scalar_address = &scalar;
+  increment(scalar);
+  mut Owner owner{};
+  const int* old = &owner.value;
+  replace(owner);
+  auto inert = old;
+  bool equal = inert == old;
+  const int* fresh = &owner.value;
+  unsafe { return equal ? *fresh + *scalar_address : 0; }
+}

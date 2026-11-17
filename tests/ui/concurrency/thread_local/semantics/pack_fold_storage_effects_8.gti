@@ -1,0 +1,9 @@
+// Pack fold storage effects: nonempty user fold hidden writes conflict with readonly loans.
+//@ require-function-definitions
+mut int32_t guarded = 1; mut int32_t other = 2;
+void leaf<T>(int32_t& input, T& element) { guarded = 3; }
+void folded<Args...>(Args... args) {
+  mut int32_t input = 0;  //~ WARN GTI-S2096
+  (leaf(input, args), ...);
+}
+int main() { int32_t& held = guarded; folded(1, true); return held; }  //~ ERROR GTI-S2045

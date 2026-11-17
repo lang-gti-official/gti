@@ -1,0 +1,3 @@
+// Cross nominal defaults and finite layouts: finite defaults, explicit self arguments and decreasing concrete nominal containment remain valid.
+//@ check-pass
+enum Event<T> { item(T value) }; struct Box<T> { T value; }; struct A { Event<Box<Box<int>>> value; }; int main() { return 0; }

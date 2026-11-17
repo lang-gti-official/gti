@@ -1,0 +1,35 @@
+// General requires: source cursor policies use general owner-aware reference requirements.
+//@ check-pass
+import std.iterator;
+import std.meta;
+struct Cursor {
+  mut int value = 0;
+  mut int& operator*() mut { return this.value; }
+  mut int& operator[](std::ptrdiff_t offset) mut { return this.value; }
+  int operator()() { return this.value; }
+public:
+  Cursor() = default;
+};
+constexpr bool paired_operator_names() {
+  mut bool index = false;
+  mut bool call = false;
+  constexpr for (auto member : std::meta::operators_of<Cursor>()) {
+    if constexpr (member.name() == "operator[]") { index = true; }
+    if constexpr (member.name() == "operator()") { call = true; }
+  }
+  return index && call;
+}
+void store<I>(mut I& cursor, int value) requires std::writes_to<I, int> {
+  *cursor = value;
+}
+void store_at<I>(mut I& cursor, std::ptrdiff_t offset, int value)
+    requires std::subscripts_to_mut<I, int> {
+  cursor[offset] = value;
+}
+int main() {
+  static_assert(paired_operator_names());
+  mut Cursor cursor{};
+  store(cursor, 9);
+  store_at(cursor, std::ptrdiff_t(0), 11);
+  return cursor.value == 11 ? 0 : 1;
+}

@@ -1,0 +1,13 @@
+// Negative: a mutable provider receiver does not satisfy the shared protocol.
+import std.resource;
+import std.memory;
+
+struct Wrong {
+  unsafe expected<std::raw_allocation,std::alloc_errc> allocate(std::layout request) mut {
+    return unexpected(std::alloc_errc::resource_exhausted);
+  }
+  unsafe void release(std::raw_allocation allocation) {}
+public:
+  Wrong() = default;
+};
+int main() { mut Wrong resource{}; unsafe { auto bound=std::bind_resource(resource); } return 0; }  //~ ERROR GTI-S2029

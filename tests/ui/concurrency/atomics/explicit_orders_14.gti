@@ -1,0 +1,8 @@
+// Explicit orders: cas-release-release should fail in source overload resolution before the backend.
+//@ execution-profile: concurrent
+import std.atomic;
+int main() {
+  std::atomic<int32_t> value{0};
+  value.compare_exchange_strong(0, 1, std::memory_order_release(), std::memory_order_release());  //~ ERROR GTI-S2012
+  return 0;
+}

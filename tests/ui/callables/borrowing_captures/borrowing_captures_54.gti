@@ -1,0 +1,9 @@
+// Borrowing captures: mutable-function-ref-copy is rejected with a user diagnostic, not an ICE.
+import std.functional;
+int main() {
+  mut int value = 3;
+  mut auto callback = [mut &value]() -> int { value += 1; return value; };
+  mut std::function_ref<int() mut> view{callback};
+  mut auto copy = view;  //~ ERROR GTI-S2003
+  return copy();
+}

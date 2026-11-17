@@ -1,0 +1,12 @@
+// Edge sensitive move flow: literal short-circuit operands should analyze a skipped RHS without consuming reachable move state.
+//@ check-pass
+struct Record { int32_t value = 7;  public: Record() = default; };
+bool consume(Record value) { return value.value == 7; }
+
+int main() {
+  mut Record and_value = Record();  //~ WARN GTI-S2096
+  bool and_result = false && consume(std::move(and_value));
+  mut Record or_value = Record();  //~ WARN GTI-S2096
+  bool or_result = true || consume(std::move(or_value));
+  return and_value.value + or_value.value - 14;
+}

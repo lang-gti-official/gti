@@ -1,0 +1,12 @@
+// std::replace_if rejects a predicate that does not return bool.
+//@ check-fail
+import std.algorithm;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.string;
+import std.utility;
+import std.map;
+int main() { mut std::vector<int> x = {1}; int value = 2; std::replace_if(x, [](int& n) -> int { return n; }, value); return 0; }  //~ ERROR GTI-S2029

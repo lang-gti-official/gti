@@ -1,0 +1,2 @@
+// Consuming methods and value operators: invalid consuming-method use fails in the frontend (may have been moved).
+class C { public: int x = 1; int take(bool condition) && { if (condition) { auto c = std::move(this); } return this.x; }  public: C() = default; }; int main() { return 0; }  //~ ERROR GTI-S2018

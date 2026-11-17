@@ -1,0 +1,5 @@
+// General requires: an independent required result does not falsely blame a unary receiver.
+concept reads_as<T, R> = requires(T& receiver) { { (receiver.read()) } -> R; };
+int use<T, R>(T& receiver, R& result) requires reads_as<T, R> { return 0; }
+struct Reader { int read() { return 1; }  public: Reader() = default; };
+int main() { Reader receiver{}; bool result = false; return use(receiver, result); }  //~ ERROR GTI-S2029

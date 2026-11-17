@@ -1,0 +1,66 @@
+// Under the strict audit, lifetime-annotated returns hover with their
+// annotations, a function named borrowed_from stays a function token, the
+// removed [[borrowed_from]] attribute is a parse error, and the borrowed
+// parameter navigates, finds its uses and renames.
+// (raw_pointer_provenance_lsp_test.py, second part)
+//@ raw-pointer-audit: strict
+//@ hover @choose: int32_t&<r> right)
+//@ hover @call: int32_t&<r> right)
+//@ hover @get: &<this>
+//@ hover @call_get: &<this>
+//@ token @function: function
+//@ definition @right: @right
+//@ references @right: @right @returned
+//@ rename @right selected_owner: @right @returned
+/*😀*/ int&<r> c/*^choose*/hoose<lifetime r>(int& left, int&<r> /*@right*/right) { return /*@returned*/right; }
+struct Holder {
+  int value = 7; Holder() = default;
+  int&<this> g/*^get*/et() { return this.value; }
+};
+int borrowed_from(int value) { return value; }
+int main() {
+  int left = 3;
+  int right = 4;
+  Holder holder{};
+  return c/*^call*/hoose(left, right) + holder.g/*^call_get*/et() + /*@function*/borrowed_from(1);
+}
+// --- step 2
+/*😀*/ [[borrowed_from(right)]] int& choose(int& left, int& right) { return right; }  //~ ERROR GTI-P0001 was removed //~ ERROR GTI-S2017
+struct Holder {
+  int value = 7; Holder() = default;
+  int&<this> get() { return this.value; }
+};
+int borrowed_from(int value) { return value; }
+int main() {
+  int left = 3;
+  int right = 4;
+  Holder holder{};
+  return choose(left, right) + holder.get() + borrowed_from(1);
+}
+// --- step 3
+/*😀*/ int&<r> choose<lifetime r>(int& left, int&<r> right) { return right; }
+struct Holder {
+  int value = 7; Holder() = default;
+  int&<this> get() { return this.value; }
+};
+int borrowed_from(int value) { return value; }
+int main() {
+  int left = 3;
+  int right = 4;
+  Holder holder{};
+  return choose(left, right) + holder.get() + borrowed_from(1);
+}
+// --- step 4
+//@ hover @call: int32_t&<r> selected_owner)
+/*😀*/ int&<r> choose<lifetime r>(int& left, int&<r> selected_owner) { return selected_owner; }
+struct Holder {
+  int value = 7; Holder() = default;
+  int&<this> get() { return this.value; }
+};
+int borrowed_from(int value) { return value; }
+int main() {
+  int left = 3;
+  int right = 4;
+  Holder holder{};
+  return c/*^call*/hoose(left, right) + holder.get() + borrowed_from(1);
+}

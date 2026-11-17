@@ -1,0 +1,5 @@
+// Full expression cleanup: the exact restoring exchange contract can update a TLS value without exposing an unavailable persistent slot.
+//@ check-pass
+//@ execution-profile: concurrent
+import std.utility;
+thread_local mut int value = 1; int main() { int previous = std::exchange(value, 2); return previous + value; }

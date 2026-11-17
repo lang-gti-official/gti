@@ -1,0 +1,5 @@
+// Rejected: invalid query/use is rejected before emission.
+import std.meta;
+using Native = (int32_t) -> int32_t;
+std::meta::callable_return_type<Native> invoke(Native fn) { return fn(1); }  //~ ERROR GTI-S2055
+int main() { return 0; }

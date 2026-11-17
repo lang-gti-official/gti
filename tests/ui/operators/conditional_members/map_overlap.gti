@@ -1,0 +1,4 @@
+// A std::map subscript reference keeps the map borrowed across clear().
+//@ check-fail
+import std.map;
+int main() { mut std::map<int, int> values{}; mut int& entry = values[1]; values.clear(); return entry; }  //~ ERROR GTI-S2017 borrow

@@ -1,0 +1,61 @@
+// A family contract's member and an independent input binder keep their
+// editor identities: hover, navigation, references, the cross-file rename
+// guard, tokens, completion detail, arity errors and recovery.
+// (associated_type_families_lsp_test.py)
+//@ hover @use: Cell<int32_t>
+//@ definition @use: @decl
+//@ references @use: @decl @alias @use
+//@ rename @use container: error function-local
+//@ references @item: @binder @item
+//@ token @use: type
+// UTF-16 provenance: 😀
+concept storage<P> { typename /*@decl*/buffer<Element>; };
+struct Heap {};
+struct Cell<T> { T value; };
+for concept storage<Heap> { using /*@alias*/buffer</*@binder*/Item> = Cell</*@item*/Item>; };
+using Numbers = storage<Heap>::/*@use*/buffer<int>;
+int main() { return 0; }
+// --- step 2
+//@ completion-detail @buf buffer: buffer<Element>
+// UTF-16 provenance: 😀
+concept storage<P> { typename buffer<Element>; };
+struct Heap {};
+struct Cell<T> { T value; };
+for concept storage<Heap> { using buffer<Item> = Cell<Item>; };
+using Numbers = storage<Heap>::buf/*^buf*/;  //~ ERROR GTI-S2123
+int main() { return 0; }
+// --- step 3
+// UTF-16 provenance: 😀
+concept storage<P> { typename buffer<Element>; };
+struct Heap {};
+struct Cell<T> { T value; };
+for concept storage<Heap> { using buffer<Item> = Cell<Item>; };
+using Numbers = storage<Heap>::buffer<int, bool>;  //~ ERROR GTI-S2123
+int main() { return 0; }
+// --- step 4
+// UTF-16 provenance: 😀
+concept storage<P> { typename buffer<Element,; };  //~ ERROR GTI-P0001
+struct Heap {};
+struct Cell<T> { T value; };
+for concept storage<Heap> { using buffer<Item> = Cell<Item>; };  //~ ERROR GTI-S2123
+using Numbers = storage<Heap>::buffer<int>;  //~ ERROR GTI-S2123
+int main() { return 0; }
+// --- step 5
+//@ definition @use: @decl
+// UTF-16 provenance: 😀
+concept storage<P> { typename /*@decl*/buffer<Element>; };
+struct Heap {};
+struct Cell<T> { T value; };
+for concept storage<Heap> { using buffer<Item> = Cell<Item>; };
+using Numbers = storage<Heap>::/*@use*/buffer<int>;
+int main() { return 0; }
+// --- step 6
+//@ hover @selected: Cell<int32_t>
+// UTF-16 provenance: 😀
+concept storage<P> { typename buffer<Element>; };
+struct Heap {};
+struct Cell<T> { T value; };
+for concept storage<Heap> { using buffer<Item> = Cell<Item>; };
+using Numbers = storage<Heap>::buffer<int>;
+int main() { return 0; }
+struct Stored { using /*@selected*/Selected = storage<Heap>::buffer<int>; };

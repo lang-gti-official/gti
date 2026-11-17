@@ -1,0 +1,4 @@
+// Native callback rejections: generic-callback.gti should be rejected by the native callback semantic boundary.
+using Callback = (int32_t) -> int32_t;
+T identity<T>(T value) { return value; }
+int main() { Callback callback = identity; return 0; }  //~ ERROR GTI-S2076

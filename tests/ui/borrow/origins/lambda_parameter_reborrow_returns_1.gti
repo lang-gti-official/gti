@@ -1,0 +1,57 @@
+// Lambda parameter reborrow returns: lambda returns relay caller-owned mutable and shared local aliases.
+//@ check-pass
+struct Cell {
+  mut int value;
+  Cell(int value) : value(value) {}
+};
+
+mut int&<a> invoke<F, lifetime a>(F& callback, mut int&<a> input) {
+  return callback(input);
+}
+
+int through_parameter(mut int& input) {
+  auto relay = [](mut int& source) -> mut int& {
+    mut int& parent = source;
+    mut int& child = parent;
+    return child;
+  };
+  mut int& result = relay(input);
+  result += 1;
+  return result;
+}
+
+int main() {
+  auto relay = [](int delta, mut int& input) -> mut int& {
+    mut int& parent = input;
+    mut int& child = parent;
+    child += delta;
+    return child;
+  };
+  auto generic = [](mut int& input) -> mut int& {
+    mut int& parent = input;
+    mut int& child = parent;
+    return child;
+  };
+  auto field = [](mut Cell& input) -> mut int& {
+    mut Cell& parent = input;
+    mut int& child = parent.value;
+    return child;
+  };
+  auto observe = [](mut Cell& input) -> int& {
+    mut Cell& parent = input;
+    mut int& child = parent.value;
+    child += 1;
+    return child;
+  };
+  mut int number = 4;
+  mut int& selected = relay(2, number);
+  selected += 1;
+  mut int& forwarded = invoke(generic, number);
+  forwarded += 1;
+  if (through_parameter(number) != 9) return 1;
+  mut Cell cell{8};
+  mut int& projected = field(cell);
+  projected += 1;
+  int& observed = observe(cell);
+  return number + observed - 19;
+}

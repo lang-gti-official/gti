@@ -1,0 +1,15 @@
+// Audit output parity: scalar receiver mutation with a retained address is valid in both audit modes.
+//@ check-pass
+//@ raw-pointer-audit: warn
+struct Box {
+  mut int value = 7;
+  void bump() mut { this.value += 1; }
+public:
+  Box() = default;
+};
+int main() {
+  mut Box box{};
+  const int* pointer = &box.value;
+  box.bump();
+  unsafe { return *pointer - 8; }  //~ WARN GTI-S2102
+}

@@ -1,0 +1,31 @@
+// Exclusive reborrow loan graph: read-only call results may overlap and mutable call results may remain live across one outer call when their places are disjoint.
+//@ check-pass
+class Box {
+  mut int value;
+
+public:
+  Box(int initial) : value(initial) {}
+  int& read() { return this.value; }
+  mut int& write() mut { return this.value; }
+};
+
+class Boxes {
+public:
+  mut Box left = Box(1);
+  mut Box right = Box(2);
+public:
+  Boxes() = default;
+};
+
+int sum(int& left, int& right) { return left + right; }
+
+int disjoint_writes(mut Boxes& parent) {
+  return sum(parent.left.write(), parent.right.write());
+}
+
+int main() {
+  mut Boxes parent = Boxes();
+  int shared_reads = sum(parent.left.read(), parent.left.read());
+  int disjoint = disjoint_writes(parent);
+  return shared_reads + disjoint - 5;
+}

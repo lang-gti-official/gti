@@ -1,0 +1,5 @@
+// Lifetimes: the program is accepted.
+//@ analyze-pass
+//@ no-prelude
+unsafe T&<a> borrow<T, Owner, lifetime a>(const T* address, Owner&<a> owner) { unsafe { return *address; } }
+struct Box<T> { T extra; int local = 7; int& read() { unsafe { return borrow(&this.local, this); } } }; struct Outer<T> { Box<T> inner; int& read() { return this.inner.read(); } }; int main() { return 0; }

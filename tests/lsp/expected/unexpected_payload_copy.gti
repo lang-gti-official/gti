@@ -1,0 +1,27 @@
+// Copying a move-only error into unexpected() is the general deleted-copy
+// error at the argument; moving the carrier clears it. (From issues_30_33_lsp_test.py.)
+import std.string;
+struct Error {
+  std::string text;
+  Error() : text(std::string("error")) {}
+  Error(Error& other) = delete;
+};
+expected<int, Error> failure() { return unexpected(Error()); }
+expected<int, Error> relay() {
+  auto carrier = failure();
+  /* café 😀 */ return unexpected(carrier.error());  //~ ERROR GTI-S2018 deleted copy constructor of 'Error'
+}
+int main() { auto result = relay(); return result ? 1 : 0; }
+// --- step 2
+import std.string;
+struct Error {
+  std::string text;
+  Error() : text(std::string("error")) {}
+  Error(Error& other) = delete;
+};
+expected<int, Error> failure() { return unexpected(Error()); }
+expected<int, Error> relay() {
+  auto carrier = failure();
+  /* café 😀 */ return unexpected(std::move(carrier).error());
+}
+int main() { auto result = relay(); return result ? 1 : 0; }

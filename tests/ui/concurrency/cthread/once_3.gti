@@ -1,0 +1,5 @@
+// Once: once requires lexical unsafe.
+//@ execution-profile: concurrent
+import std.cthread;
+void initialize() {}
+int main() { std::once_flag flag{}; std::call_once(flag, initialize); return 0; }  //~ ERROR GTI-S2055

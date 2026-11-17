@@ -1,0 +1,7 @@
+// Rejections: unevaluated source inspection must retain ordinary unsafe obligations.
+import std.source_location;
+int main() {
+  int* pointer = nullptr;
+  std::string_view text = std::expression_text!(*pointer);  //~ ERROR GTI-S2055
+  return 0;
+}

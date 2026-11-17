@@ -1,0 +1,8 @@
+// Borrowing captures: invocation-pointer-capturing-target is rejected with a user diagnostic, not an ICE.
+import std.functional;
+int main() {
+  int value = 3;
+  auto callback = [value]() -> int { return value; };
+  std::function_ptr<int()> pointer{callback};  //~ ERROR GTI-S2093
+  return pointer();
+}

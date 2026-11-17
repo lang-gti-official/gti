@@ -1,0 +1,39 @@
+// Search/comparison/output algorithms and cross-container checked traversal.
+//@ run-pass
+//@ slow
+import std.algorithm;
+import std.iterator;
+import std.vector;
+import std.list;
+import std.deque;
+import std.array;
+import std.set;
+import std.unordered_set;
+import std.string;
+
+int main() {
+  int two = 2;
+  int three = 3;
+  int four = 4;
+  int seven = 7;
+  char letter = 'd';
+  std::vector<int> vector = {1, 2, 2, 4, 7};
+  std::list<int> list = {1, 2, 2, 4, 7};
+  std::deque<int> deque = {1, 2, 2, 4, 7};
+  std::array<int, 5> array = std::array<int, 5>({1, 2, 2, 4, 7});
+  if (!std::contains(list, four) || std::count(deque, two) != 2 || !std::contains(array, seven)) { return 5; }
+  int raw[3] = {3, 4, 3};
+  if (!std::contains(raw, four) || std::count(raw, three) != 2) { return 6; }
+  std::set<int> ordered = {4, 1, 7};
+  std::unordered_set<int> hashed = {4, 1, 7};
+  auto low = std::min_element(ordered.begin(), ordered.end());
+  auto high = std::max_element(hashed.begin(), hashed.end());
+  if (*low != 1 || *high != 7 || !ordered.contains(four) || !hashed.contains(seven)) { return 7; }
+  std::string text{"abccdef"};
+  auto repeated = std::adjacent_find(text.begin(), text.end());
+  if (*repeated != 'c' || !std::contains(text, letter)) { return 8; }
+  auto previous = std::prev(std::next(list.begin(), std::size_t(2)));
+  auto jumped = std::next(deque.begin(), std::ptrdiff_t(3));
+  if (*previous != 2 || *jumped != 4) { return 9; }
+  return 0;
+}

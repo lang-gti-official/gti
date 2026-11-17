@@ -1,0 +1,11 @@
+// Optional class spelling: both spellings share integral and payload enum lowering.
+//@ check-pass
+enum class State : uint8_t { idle, ready = 4 };
+enum class Message { empty, item(int value) };
+int main() {
+  Message message = Message::item(7);
+  switch (message) {
+    case Message::empty: return 1;
+    case Message::item(value): return value == 7 ? 0 : 2;
+  }
+}

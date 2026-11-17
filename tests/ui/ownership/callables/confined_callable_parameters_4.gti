@@ -1,0 +1,14 @@
+// Confined callable parameters: invoked nominal callable objects must not escape while their compiler-owned boundary is confined.
+class Action {
+public:
+  void operator()() {}
+public:
+  Action() = default;
+};
+
+Operation invoke_and_return<Operation>(Operation operation) {  //~ ERROR GTI-S2046 cannot escape through the function return value
+  operation();
+  return operation;
+}
+
+int main() { return 0; }

@@ -1,0 +1,4 @@
+// Virtual consuming receiver: virtual consumption does not permit moving an ordinary borrowed reference.
+interface Operation { int operator()() &&; };
+int invoke(mut Operation& operation) { return std::move(operation)(); }  //~ ERROR GTI-S2018
+int main() { return 0; }

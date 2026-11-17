@@ -1,0 +1,61 @@
+// Read only constructor dependencies: read-only adapter preserves shell and external owner (Shared): owner.value = 99;.
+import std.panic;
+
+import std.utility;
+struct Counter { mut int value = 4;  public: Counter() = default; };
+class Shared {
+  Counter& counter;
+  mut int offset = 2;
+public:
+  Shared(Counter& source) : counter(source) {}
+  int read() { return this.counter.value + this.offset; }
+  void advance() mut { this.offset += 1; }
+};
+class Exclusive {
+  mut Counter& counter;
+public:
+  Exclusive(mut Counter& source) : counter(source) {}
+  int read() { return this.counter.value; }
+  void advance() mut { this.counter.value += 1; }
+};
+class SharedPair {
+  Counter& first;
+  Counter& second;
+public:
+  SharedPair(Counter& left, Counter& right) : first(left), second(right) {}
+  int read() { return this.first.value + this.second.value; }
+};
+struct Holder {
+  mut Exclusive stored;
+  Holder(Exclusive value) : stored(std::move(value)) {}
+  mut Exclusive& get() mut { return this.stored; }
+  Exclusive& inspect() { return this.stored; }
+};
+mut Exclusive& relay(mut Exclusive& value) { return value; }
+Exclusive& observe(Exclusive& value) { return value; }
+
+using Carrier = Shared;
+class Marker {
+public:
+  Marker(bool fail) { if (fail) { std::panic("initializer failure"); } }
+  ~Marker() {}
+public:
+  Marker() = default;
+};
+class Adapter {
+  Carrier& target;
+  Marker marker;
+public:
+  Adapter(Carrier& source, bool fail_initialization, bool fail_body)
+      : target(source), marker(Marker(fail_initialization)) {
+    if (fail_body) { std::panic("body failure"); }
+  }
+  int read() { return this.target.read(); }
+};
+int main() {
+  mut Counter owner{};
+  mut Carrier view{owner};  //~ WARN GTI-S2096
+  Adapter adapter{view, false, false};
+owner.value = 99;  //~ ERROR GTI-S2017
+  return adapter.read();
+}

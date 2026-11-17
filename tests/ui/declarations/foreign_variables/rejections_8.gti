@@ -1,0 +1,2 @@
+// Rejections: must reject: extern "C" { mut c_int values[4]; } int main() { return 0; }.
+extern "C" { mut c_int values[4]; } int main() { return 0; }  //~ ERROR GTI-S2054

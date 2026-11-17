@@ -1,0 +1,9 @@
+// Complete borrow summaries: the program is accepted.
+//@ check-pass
+import std.memory;
+import std.panic;
+enum State { empty, number(int64_t value) };
+void consume(State value) {}
+int choose(bool condition) {
+  mut State value = State::empty;
+if (condition) { return 1; } else { value = State::number(200); } consume(std::move(value)); return 0; } int main() { return choose(true); }

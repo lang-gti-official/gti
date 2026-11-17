@@ -1,0 +1,22 @@
+// Read only reborrow: readonly-lambda-record-result.gti.
+//@ check-pass
+class Gauge {
+public:
+  mut int reading;
+  Gauge(int reading) : reading(reading) {}
+};
+int main() {
+  auto observe = [](mut Gauge& source) -> Gauge& {
+    source.reading += 1;
+    return source;
+  };
+  auto reading = [](mut Gauge& source) -> int& {
+    source.reading += 1;
+    return source.reading;
+  };
+  mut Gauge gauge = Gauge(5);
+  Gauge& view = observe(gauge);
+  int first = view.reading;
+  int& second = reading(gauge);
+  return first + second - 13;
+}

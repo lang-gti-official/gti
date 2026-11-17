@@ -1,0 +1,10 @@
+// Lambda parameter reborrow returns: capture-storage is rejected before MIR lowering.
+int main() {
+  mut int captured = 1;
+  mut auto invalid = [mut &captured](mut int& input) -> mut int& {
+    mut int& parent = captured;
+    mut int& child = parent;
+    return child;  //~ ERROR GTI-S2017
+  };
+  return 0;
+}

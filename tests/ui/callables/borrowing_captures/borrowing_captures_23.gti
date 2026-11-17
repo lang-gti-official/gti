@@ -1,0 +1,11 @@
+// Borrowing captures: mutable-function-ref.
+//@ check-pass
+import std.functional;
+int main() {
+  mut int value = 3;
+  mut auto callback = [mut &value](int amount) -> int { value += amount; return value; };
+  mut std::function_ref<int(int) mut> view{callback};
+  int first = view(2);
+  int second = view(3);
+  return first + second - 13;
+}

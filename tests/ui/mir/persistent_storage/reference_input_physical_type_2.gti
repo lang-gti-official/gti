@@ -1,0 +1,9 @@
+// Reference input physical type: ordinary shared and mutable scalar reference inputs verify.
+//@ check-pass
+void observe(mut uint16_t& value) {}
+int main() {
+  mut uint16_t value = uint16_t(2); value += uint16_t(1);
+  uint16_t readonly = uint16_t(3);
+  int8_t different = int8_t(1);
+  observe(value); return int32_t(different) - 1;
+}

@@ -1,0 +1,4 @@
+// Valid: struct Callable { [[discardable]] int operator()() { return 1; }  public: Callable() = default; }; int main() { Callable fn{}; fn(); return 0; }.
+//@ check-pass
+struct Callable { [[discardable]] int operator()() { return 1; }  public: Callable() = default; };
+int main() { Callable fn{}; fn(); return 0; }

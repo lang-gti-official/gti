@@ -1,0 +1,25 @@
+// An empty fold never touches a thread-local prefix; a non-empty one initialises it once.
+//@ run-pass
+//@ stdout: empty complete
+//@ stdout: initialize prefix
+//@ stdout: invoke
+//@ stdout: invoke
+//@ stdout: nonempty complete
+import std.format;
+import std.panic;
+int32_t initialize_prefix() { std::println("initialize prefix"); return 7; }
+thread_local mut int32_t fold_prefix = initialize_prefix();
+void observe_prefix<T>(int32_t& prefix, T& element) {
+  if (prefix != 7) std::panic("wrong prefix");
+  std::println("invoke");
+}
+void folded_prefix<Args...>(Args... args) {
+  (observe_prefix(fold_prefix, args), ...);
+}
+int main() {
+  folded_prefix();
+  std::println("empty complete");
+  folded_prefix(1, 2);
+  std::println("nonempty complete");
+  return 0;
+}

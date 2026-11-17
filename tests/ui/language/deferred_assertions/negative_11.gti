@@ -1,0 +1,3 @@
+// Negative: not callable values.
+#macro helper(bool value) {}
+int main() { auto callback = helper; return 0; }  //~ ERROR GTI-S2124

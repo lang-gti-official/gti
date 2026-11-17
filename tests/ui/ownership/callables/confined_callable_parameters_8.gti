@@ -1,0 +1,17 @@
+// Confined callable parameters: a nominal callable object that is never invoked through a generic parameter should retain ordinary value transport semantics.
+//@ check-pass
+Operation relay<Operation>(Operation operation) { return operation; }
+
+class Action {
+public:
+  void operator()() {}
+public:
+  Action() = default;
+};
+
+int main() {
+  Action action = Action();
+  Action relayed = relay(action);
+  relayed();
+  return 0;
+}

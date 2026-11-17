@@ -1,0 +1,23 @@
+// Fresh class argument results: built-in assignment and conditional class values supply exact call-scoped read borrows.
+//@ check-pass
+struct Point {
+  int32_t x;
+  int32_t y;
+  Point(int32_t x, int32_t y) : x(x), y(y) {}
+  int32_t digits() { return this.x * 10 + this.y; }
+};
+int32_t read(Point& value) { return value.digits(); }
+int32_t pair(Point& first, Point& second) {
+  return first.digits() * 100 + second.digits();
+}
+
+int main() {
+  mut Point target = Point(1, 2);
+  Point next = Point(3, 4);
+  Point last = Point(5, 6);
+  int32_t assigned = read(target = next);
+  int32_t joined = read(true ? next : last);
+  int32_t ordered = pair(target = next, target = last);
+  int32_t paired_join = pair(target = next, true ? last : target);
+  return assigned + joined + ordered + paired_join + target.digits() - 7014;
+}

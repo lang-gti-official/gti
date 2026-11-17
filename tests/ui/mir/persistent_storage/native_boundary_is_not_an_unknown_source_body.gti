@@ -1,0 +1,6 @@
+// Native boundary is not an unknown source body: declared native inputs retain their foreign-boundary obligations.
+//@ check-pass
+extern "C" { int32_t number(); }
+thread_local mut int32_t value = 1;
+void write(mut int32_t& target, int32_t copied) { target = copied; }
+int main() { write(value, number()); return value; }

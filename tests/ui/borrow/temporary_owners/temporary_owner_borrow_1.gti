@@ -1,0 +1,6 @@
+// Temporary owner borrow: returned and constructed passive owners supply exact temporary receiver borrows.
+//@ check-pass
+class Owner { int value = 3; public: int& get() { return this.value; }  public: Owner() = default; };
+Owner produce() { return Owner(); }
+int read(int& value) { return value; }
+int main() { return read(produce().get()) + read(Owner().get()) - 6; }

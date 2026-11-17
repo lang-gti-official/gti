@@ -1,0 +1,11 @@
+// Integral enums preserve exact numeric meaning through ordinary formatters.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: integral_enum_formatting_panic.gti:4: runtime error[GTI-R0017]: panic: "Formatting failed: invalid format"
+// --- integral_enum_formatting_panic.gti
+import std.format;
+enum class Status { failed = 9 };
+int main() {
+  std::runtime_println("{:s}", Status::failed);
+  return 0;
+}
