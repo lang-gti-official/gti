@@ -7341,6 +7341,19 @@ private:
     }
     if (const ResolvedOperatorInfo *resolved = resolvedValueOperator;
         resolved != nullptr && resolved->function != 0) {
+      if (resolved->operandArguments) {
+        // Both operands of a primitive adapter use ordinary ordered call
+        // staging, including call-scoped readonly temporary borrows.
+        value.kind = kind = HirValueKind::Call;
+        if (auto arguments = orderedArguments(
+                value.operands, resolved->parameterTypes, body,
+                value.operands.size(), resolved->ephemeralBorrowArguments)) {
+          value.callPlan = HirCallPlan{.receiver = std::nullopt,
+                                       .arguments = std::move(*arguments)};
+        } else {
+          lifecycleValid = false;
+        }
+      }
       value.parameterTypes = resolved->parameterTypes;
       value.dispatch = resolved->dispatch;
       value.dispatchOwner = resolved->dispatchOwner;
@@ -7403,10 +7416,12 @@ private:
           }
         }
         const std::vector<SemanticType> ownerArguments =
-            receiverType.kind == SemanticType::Class ? receiverType.arguments
-                                                     : classArguments;
+            resolved->operandArguments ? std::vector<SemanticType>{}
+            : receiverType.kind == SemanticType::Class ? receiverType.arguments
+                                                       : classArguments;
         const std::vector<CompileTimeValue> ownerValueArguments =
-            receiverType.kind == SemanticType::Class
+            resolved->operandArguments ? std::vector<CompileTimeValue>{}
+            : receiverType.kind == SemanticType::Class
                 ? receiverType.valueArguments
                 : classValueArguments;
         value.functionTarget =

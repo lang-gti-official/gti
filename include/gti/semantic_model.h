@@ -1668,6 +1668,9 @@ struct DeferredCallableCallInfo {
 };
 
 struct ResolvedOperatorInfo {
+  // A trusted primitive adapter passes both binary operands as ordinary
+  // arguments to a source function, with no implicit class receiver.
+  bool operandArguments = false;
   FunctionId function = 0;
   const FunctionDecl *declaration = nullptr;
   CallDispatch dispatch = CallDispatch::Static;

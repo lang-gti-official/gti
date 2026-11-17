@@ -999,6 +999,39 @@ namespace std {
       unsafe { this.data.append(value); }
     }
 
+    /// Concatenation owns its result and never consumes a named left operand.
+    string operator+(string_view suffix) {
+      mut string result{};
+      gti_internal::require_container_argument(suffix.size() <= string::npos - this.size());
+      result.reserve(this.size() + suffix.size());
+      result.append(this.view());
+      result.append(suffix);
+      return std::move(result);
+    }
+
+    string operator+(string& suffix) {
+      return this + suffix.view();
+    }
+
+    /// A chain reuses the owned intermediate with amortized linear growth.
+    string operator+(string_view suffix) && {
+      this.append(suffix);
+      return std::move(this);
+    }
+
+    string operator+(string& suffix) && {
+      this.append(suffix.view());
+      return std::move(this);
+    }
+
+    void operator+=(string_view suffix) mut {
+      this.append(suffix);
+    }
+
+    void operator+=(string& suffix) mut {
+      this.append(suffix.view());
+    }
+
     /// Replaces the contents with a copy of `value`, retaining capacity.
     /// Ordinary exclusive-receiver rules forbid a view of this string.
     void operator=(string_view value) mut {
@@ -1545,4 +1578,21 @@ export #macro(proc) std::syntax::expr concat(std::syntax::tokens input) {
   spelling.push_back('"');
   return std::syntax::parse(std::syntax::literal(spelling.view(), origin));
 }
+}
+
+// A counted text view has no source class body. Semantic analysis binds its
+// addition operator to these source functions by trusted declaration identity.
+namespace gti_internal {
+  export std::string text_view_concat(std::string_view left, std::string_view right) {
+    mut std::string result{};
+    require_container_argument(right.size() <= std::string::npos - left.size());
+    result.reserve(left.size() + right.size());
+    result.append(left);
+    result.append(right);
+    return std::move(result);
+  }
+
+  export std::string text_view_concat(std::string_view left, std::string& right) {
+    return text_view_concat(left, right.view());
+  }
 }

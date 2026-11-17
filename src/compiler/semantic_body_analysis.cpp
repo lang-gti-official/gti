@@ -7806,6 +7806,10 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   }
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
+  if (expr.oper().kind == TokenKind::PLUS &&
+      leftType == SemanticType::StringView &&
+      analyzeStringViewAddition(expr, rightType))
+    return;
 
   // An existence-only requirement can establish an operand operation without
   // knowing its result yet. Do not turn a dependent comparison into a bool

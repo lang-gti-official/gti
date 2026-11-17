@@ -1,0 +1,10 @@
+// A borrowed left view remains protected while evaluating the right operand.
+import std.string;
+std::string_view change(mut std::string& value) { value.clear(); return "suffix"; }
+int main() {
+  mut std::string value = "abc";
+  auto result = value.view() + change(value); //~ ERROR GTI-S2017
+  //~| ERROR GTI-S2017
+  std::println(result);
+  return 0;
+}

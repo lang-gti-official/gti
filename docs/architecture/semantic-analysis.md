@@ -730,6 +730,25 @@ incomplete optional auditing until their dispatch-family observations are
 represented. Source-produced output facts use the bounded queries above;
 this does not imply complete campaign or release acceptance.
 
+## Primitive text concatenation
+
+A counted `StringView` has no source class body. Binary `+` selects the
+`gti_internal::text_view_concat` adapters only from the trusted `std/string`
+source unit. Semantic selection validates their source bodies, exact signatures,
+non-borrowing owned result and ordinary argument compatibility, including the
+existing call-scoped temporary-reference proof. Public alias names and
+lookalike user functions do not establish the capability.
+
+`ResolvedOperatorInfo::operandArguments` distinguishes these receiverless
+source calls from member operators. Both operands are parameters in program
+storage effects and temporary-consumption accounting. HIR lowers the selection
+to an ordinary `Call` with an ordered argument plan, including temporary borrow
+materialization. MIR and LLVM need no string-specific concatenation operation.
+The source functions own reserve/copy policy; `std::string`'s member operators
+own append and consuming-receiver reuse. Result ownership is independent of
+input view lifetimes, while views of the result retain their ordinary owner
+requirements.
+
 ## Exact structural member signatures
 
 Source member requirements carry a typed receiver, exact parameter types/access,

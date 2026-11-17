@@ -4506,6 +4506,9 @@ private:
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren);
 
+  bool analyzeStringViewAddition(const Binary &expression,
+                                 const SemanticType &rightType);
+
   void
   analyzeStringViewMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,

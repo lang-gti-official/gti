@@ -1,0 +1,7 @@
+// Appending a string to itself must not overlap a mutable receiver and a borrowed argument.
+import std.string;
+int main() {
+  mut std::string value = "abc";
+  value += value; //~ ERROR GTI-S2017
+  return 0;
+}

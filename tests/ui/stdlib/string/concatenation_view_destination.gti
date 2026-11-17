@@ -1,0 +1,7 @@
+// Nonowning views cannot grow by appending text.
+import std.string;
+int main() {
+  mut std::string_view view = "abc";
+  view += "x"; //~ ERROR GTI-S2004
+  return 0;
+}

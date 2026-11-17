@@ -1,0 +1,1 @@
+Add owned string concatenation with `+` across strings, string views, and literals, and `+=` on mutable strings. Chained concatenation reuses temporary buffers with amortized linear growth while retaining borrow and lifetime checks.

@@ -3362,6 +3362,65 @@ auto SemanticVisitor::Impl::textViewMemberFactory(
   return selected;
 }
 
+auto SemanticVisitor::Impl::analyzeStringViewAddition(
+    const Binary &expression, const SemanticType &rightType) -> bool {
+  // Primitive views have no source class body. Bind only adapters owned by
+  // std/string; public alias spellings cannot establish this capability.
+  // Allocation and copying remain ordinary source functions.
+  const auto &symbols = activeNamespaceSymbols();
+  const auto found = symbols.find("gti_internal::text_view_concat");
+  if (sourceGraph == nullptr || found == symbols.end())
+    return false;
+  std::optional<CallableCandidate> selected;
+  std::vector<std::size_t> ephemeral;
+  for (const auto &candidate : found->second.overloads) {
+    const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
+    if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
+        unit->standardLibraryName != "std/string" ||
+        candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+        candidate.bodyDeclaration()->body() == nullptr ||
+        candidate.record().intrinsic != IntrinsicKind::None ||
+        candidate.record().requiresUnsafe || candidate.parameterPack ||
+        !candidate.record().genericParameters.empty() ||
+        candidate.parameterTypes.size() != 2 ||
+        candidate.parameterTypes.front() != SemanticType::StringView ||
+        candidate.returnType.kind != SemanticType::Class ||
+        typeTraits(candidate.returnType).containsBorrowedState ||
+        (candidate.parameterTypes[1] != SemanticType::StringView &&
+         candidate.parameterTypes[1] !=
+             SemanticType::referenceTo(candidate.returnType,
+                                       AccessMode::ReadOnly)))
+      continue;
+    const auto match = functionCallArgumentMatch(candidate, 1, rightType,
+                                                 expression.right(), false);
+    if (match != CallArgumentMatchKind::Exact &&
+        match != CallArgumentMatchKind::EphemeralReadBorrow)
+      continue;
+    if (selected)
+      return false;
+    selected = candidate;
+    if (match == CallArgumentMatchKind::EphemeralReadBorrow)
+      ephemeral.push_back(1);
+  }
+  if (!selected)
+    return false;
+  requireFunctionDefinition(*selected, expression.oper());
+  std::vector<const ExprPtr *> inputs{&expression.left(), &expression.right()};
+  validateCallPlaceExclusivityImpl(selected->parameterTypes, inputs,
+                                   expression.oper());
+  semanticModel.recordOperator(
+      expression,
+      ResolvedOperatorInfo{.operandArguments = true,
+                           .function = selected->id,
+                           .declaration = selected->declaration,
+                           .kind = OverloadedOperator::Plus,
+                           .returnType = selected->returnType,
+                           .parameterTypes = selected->parameterTypes,
+                           .ephemeralBorrowArguments = std::move(ephemeral)});
+  currentType = selected->returnType;
+  return true;
+}
+
 auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
     const Call &call, const Get &member,
     const std::vector<SemanticType> &argumentTypes, const Token &paren)

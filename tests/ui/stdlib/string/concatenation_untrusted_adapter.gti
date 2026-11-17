@@ -1,0 +1,9 @@
+// A user function with an adapter spelling cannot add operators to primitive views.
+struct Fake { Fake() {} };
+namespace gti_internal { //~ ERROR GTI-S2058
+  Fake text_view_concat(std::string_view left, std::string_view right) { return Fake(); }
+}
+int main() {
+  auto result = "a" + "b"; //~ ERROR GTI-S2004
+  return 0;
+}

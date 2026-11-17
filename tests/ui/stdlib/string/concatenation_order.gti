@@ -1,0 +1,13 @@
+// Primitive concatenation evaluates each operand exactly once, left to right.
+//@ run-pass
+//@ stdout: left
+//@ stdout: right
+//@ stdout: suffix
+//@ stdout: leftrightsuffix
+import std.string;
+std::string_view part(std::string_view text) { std::println(text); return text; }
+int main() {
+  auto result = part("left") + part("right") + part("suffix");
+  std::println(result);
+  return 0;
+}
