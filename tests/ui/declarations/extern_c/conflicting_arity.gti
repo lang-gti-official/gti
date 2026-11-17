@@ -1,0 +1,4 @@
+// Native bindings with conflicting arity contracts are rejected across namespaces.
+namespace first { extern "C" { c_int target(c_int value); } }
+namespace second { extern "C" { c_int target(); } }  //~ ERROR GTI-S2054 conflicting function signatures
+int main() { return 0; }

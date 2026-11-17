@@ -1,0 +1,10 @@
+// Independent dependencies and their consumer can bind the same native C function without adopting each other's source names.
+$ cd app
+$ gti check
+stdout: Diagnostics: 0 errors, 0 warnings
+$ gti run
+stderr: Diagnostics: 0 errors, 0 warnings
+$ cp variants/conflict.gti src/main.gti
+$ gti check
+? 65
+stderr: C symbol 'abs' has conflicting function signatures.
