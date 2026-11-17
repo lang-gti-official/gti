@@ -88,9 +88,9 @@ class SourceStdlibCI(unittest.TestCase):
             validation.admission('full', rows, 'merge_group')
 
     def test_owners_consumers_and_regressions_are_mandatory(self):
-        names = source.test_entries(['stdlib/std/algorithm.gti', 'tests/generic_algorithm_cluster_test.py'])
+        names = source.test_entries(['stdlib/std/algorithm.gti', 'tests/associative_hash_contracts_test.py'])
         for name in ['^gti_test_ui(_[0-9]+)?$', 'stdlib_surface', 'stdlib_surface_manifest',
-                     'generic_algorithm_cluster', 'practical_examples']:
+                     'associative_hash_contracts', 'practical_examples']:
             self.assertIn(name, names)
         with patch.object(source, 'git', return_value='examples/unregistered/new.gti\0'), self.assertRaisesRegex(ValueError, 'nested example coverage'):
             source.test_entries(['stdlib/std/algorithm.gti', 'examples/unregistered/new.gti'])

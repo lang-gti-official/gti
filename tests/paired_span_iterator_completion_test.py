@@ -8,7 +8,9 @@ import subprocess
 import tempfile
 
 from case_jobs import configured_jobs, positive_jobs, run_cases
-from contiguous_iterator_completion_test import MODES
+from backend_modes import native_modes
+
+MODES = native_modes()
 from native_fixture_build import build_fixture
 from backend_modes import is_cpp_mode, keep_cpp
 

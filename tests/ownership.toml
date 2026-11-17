@@ -1008,20 +1008,16 @@ paths = [
 ]
 owners = [
   "complete_containers",
-  "container_iterator_movement",
-  "contiguous_iterator_completion",
   "paired_span_iterator_completion",
   "forward_list_iterator_runtime",
   "associative_map",
   "associative_hash_contracts",
   "associative_constructor_runtime",
-  "unordered_map",
   "mir_associative_determinism",
   "vector_construction_only_runtime",
   "vector_prepared_constructor_runtime",
   "vector_scalar_constructor_runtime",
   "^gti_test_ui(_[0-9]+)?$",
-  "generic_algorithm_cluster",
 ]
 consumers = [
   "collection_initialization_runtime",
@@ -1041,7 +1037,6 @@ paths = [
 ]
 owners = [
   "string_c_string_runtime",
-  "text_view_iterator_runtime",
   "encoding_runtime",
   "^gti_test_ui(_[0-9]+)?$",
 ]

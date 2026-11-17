@@ -1,0 +1,15 @@
+// An unchecked text reference blocks mutating its string, with the raw-pointer audit on.
+//@ slow
+//@ check-fail
+//@ raw-pointer-audit: warn
+import std.string;
+
+int main() {
+  mut std::string text{"loan"};  //~ WARN GTI-S2103 //~ WARN GTI-S2103
+  unsafe {
+    mut char& first = text.get_unchecked_mut(std::size_t(0));  //~ WARN GTI-S2102 //~ WARN GTI-S2103 //~ WARN GTI-S2103 //~ WARN GTI-S2102
+    text.clear();  //~ WARN GTI-S2102 //~ WARN GTI-S2103 //~ WARN GTI-S2103 //~ ERROR GTI-S2017
+    first = 'L';
+  }
+  return 0;
+}
