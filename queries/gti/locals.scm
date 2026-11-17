@@ -83,9 +83,9 @@
 (for_statement) @local.scope
 ; An init statement's names are scoped to the whole if or switch.
 (if_statement
-  initializer: (_)) @local.scope
+  initializer: [(variable_declaration) (structured_binding_declaration) (expression_statement)]) @local.scope
 (switch_statement
-  initializer: (_)) @local.scope
+  initializer: [(variable_declaration) (structured_binding_declaration) (expression_statement)]) @local.scope
 (switch_body) @local.scope
 
 (parameter
