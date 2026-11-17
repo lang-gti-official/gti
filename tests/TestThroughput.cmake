@@ -216,7 +216,6 @@ set(gti_fast_feedback_tests
   optimizer_foundation optimizer_analyses optimizer_conformance
   native_record_pipeline bindgen_pipeline
   source_text_pipeline source_unit_services
- 
   parser_conditional_recovery
 )
 foreach(suite IN LISTS gti_fast_feedback_tests)
