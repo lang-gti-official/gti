@@ -823,6 +823,8 @@ public:
   void visitForStmt(const ForStmt &stmt) override;
 
   void visitRangeForStmt(const RangeForStmt &stmt) override;
+  void analyzeRangeForStatement(const RangeForStmt &stmt);
+  void analyzeInitStatement(const StmtPtr &initializer, bool constantBranch);
 
   void visitFunctionDecl(const FunctionDecl &stmt) override;
   void
@@ -838,6 +840,7 @@ public:
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
+  void analyzeIfStatement(const IfStmt &stmt);
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override;
 
@@ -850,6 +853,7 @@ public:
   void visitReturnStmt(const ReturnStmt &stmt) override;
 
   void visitSwitchStmt(const SwitchStmt &stmt) override;
+  void analyzeSwitchStatement(const SwitchStmt &stmt);
 
   void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override;
 
@@ -2154,6 +2158,9 @@ private:
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
     std::vector<ConstantValue> receivers;
+    // The if or switch whose header init statement just executed in its own
+    // scope; that statement's next execution runs the rest of the header.
+    const Stmt *initializedHeader = nullptr;
   };
 
   enum class ConstexprControlFlow {
@@ -4506,6 +4513,10 @@ private:
   void analyzeArrayMemberCall(const Call &call, const Get &member,
                               const std::vector<SemanticType> &argumentTypes,
                               const Token &paren);
+
+  bool analyzeStringViewAddition(const Binary &expression,
+                                 const SemanticType &rightType);
+  void recordLiteralTextConcatenation(const Binary &expression);
 
   void
   analyzeStringViewMemberCall(const Call &call, const Get &member,

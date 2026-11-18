@@ -1,0 +1,15 @@
+// A consumed carrier whose cleanup uses its exclusive stored reference cannot lend it.
+// Cleanup runs after the result is published and could write the referent
+// while that shared result is live (Rust forbids moving out of a Drop type).
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Cleaner<lifetime owner> {
+  mut Box&<owner> direct;
+public:
+  Cleaner(mut Box&<owner> direct) : direct(direct) {}
+  ~Cleaner() { this.direct.value = 0; }
+  int&<owner> consumed() && { return this.direct.value; }  //~ ERROR GTI-S2022 cleanup still holds the exclusive reference 'direct'
+};
+int main() { return 0; }

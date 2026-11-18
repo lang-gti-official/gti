@@ -3165,6 +3165,18 @@ auto SemanticVisitor::Impl::visitForStmt(const ForStmt &stmt) -> void {
 
 auto SemanticVisitor::Impl::visitRangeForStmt(const RangeForStmt &stmt)
     -> void {
+  if (!stmt.initializer()) {
+    analyzeRangeForStatement(stmt);
+    return;
+  }
+  beginScope();
+  analyzeInitStatement(stmt.initializer(), false);
+  analyzeRangeForStatement(stmt);
+  endScope();
+}
+
+auto SemanticVisitor::Impl::analyzeRangeForStatement(const RangeForStmt &stmt)
+    -> void {
   const auto *syntax = stmtAs<BlockStmt>(stmt.lowered().get());
   if (syntax == nullptr || syntax->statements().empty())
     return;
@@ -4090,6 +4102,36 @@ auto SemanticVisitor::Impl::visitFunctionDecl(const FunctionDecl &stmt)
              "GTI-S2022");
     }
   }
+  // A consumed receiver's cleanup runs after its result is published. When
+  // that cleanup uses the receiver's stored references (a lifecycle-bound
+  // carrier), an exclusive one cannot also lend its referent to the result:
+  // the cleanup could write it while the shared result is live. Rust
+  // likewise forbids moving a field out of a `Drop` type.
+  if (stmt.receiverMutability() == ReceiverMutability::Consuming &&
+      functionInfo != nullptr && functionInfo->ownerClass != 0 &&
+      lifecycleBoundBorrowCarrierFor(openClassType(functionInfo->ownerClass)))
+    if (const auto lifetime = explicitLifetimeResult(
+            stmt, functionInfo->parameterTypes, functionInfo->ownerClass);
+        lifetime.classBinder)
+      if (const auto *owner = classInfo(functionInfo->ownerClass).declaration)
+        for (const auto &member : owner->members()) {
+          const auto *field = stmtAs<VariableDecl>(member.get());
+          if (field == nullptr || !field->type().reference ||
+              typeOf(field->type(), field->mutability()).referenceAccess !=
+                  AccessMode::Mutable ||
+              !field->type().referenceLifetime ||
+              field->type().referenceLifetime->name.lexeme != lifetime.region)
+            continue;
+          report(stmt.name(),
+                 "A consuming method of a class whose cleanup uses its "
+                 "stored references cannot return a borrow in region '" +
+                     lifetime.region +
+                     "': cleanup still holds the exclusive "
+                     "reference '" +
+                     field->name().lexeme + "' while the result is live.",
+                 "GTI-S2022");
+          break;
+        }
   if (!stmt.body() || !requirementsValid ||
       (stmt.isMacro() && !stmt.isProceduralMacro())) {
     // A typed macro is a statement template, not a callable value.
@@ -5371,7 +5413,42 @@ auto SemanticVisitor::Impl::finalizeLateDemand(
   lateFinalization = nullptr;
 }
 
+// C++17/C++20 init statements: `if (init; c)`, `switch (init; s)` and
+// `for (init; binding : range)` mean exactly a block whose first statement is
+// the init. Its names reach the condition and every branch, and its objects
+// end with the whole statement.
+auto SemanticVisitor::Impl::analyzeInitStatement(const StmtPtr &initializer,
+                                                 bool constantBranch) -> void {
+  if (constantBranch && !stmtAs<EmptyStmt>(initializer.get())) {
+    const auto *variable = stmtAs<VariableDecl>(initializer.get());
+    if ((variable == nullptr || !variable->constexprKeyword()) &&
+        initializer->extent()) {
+      Diagnostic diagnostic = makeDiagnostic(
+          "GTI-S2057", DiagnosticPhase::Semantics, *initializer->extent(),
+          "The init statement of 'if constexpr' must declare a constexpr "
+          "variable.");
+      diagnostic.hints.emplace_back(
+          "The branch is selected at compile time; declare the init variable "
+          "'constexpr', or move a runtime init statement into a block around "
+          "the 'if constexpr'.");
+      diagnostics.emplace_back(std::move(diagnostic));
+    }
+  }
+  analyze(initializer);
+}
+
 auto SemanticVisitor::Impl::visitIfStmt(const IfStmt &stmt) -> void {
+  if (!stmt.initializer()) {
+    analyzeIfStatement(stmt);
+    return;
+  }
+  beginScope();
+  analyzeInitStatement(stmt.initializer(), stmt.isConstexpr());
+  analyzeIfStatement(stmt);
+  endScope();
+}
+
+auto SemanticVisitor::Impl::analyzeIfStatement(const IfStmt &stmt) -> void {
   if (!stmt.isConstexpr()) {
     semanticModel.recordFullExpression(stmt, stmt.condition());
   }
@@ -5737,6 +5814,18 @@ auto SemanticVisitor::Impl::reportMoveOnlyReturnCopy(
 }
 
 auto SemanticVisitor::Impl::visitSwitchStmt(const SwitchStmt &stmt) -> void {
+  if (!stmt.initializer()) {
+    analyzeSwitchStatement(stmt);
+    return;
+  }
+  beginScope();
+  analyzeInitStatement(stmt.initializer(), false);
+  analyzeSwitchStatement(stmt);
+  endScope();
+}
+
+auto SemanticVisitor::Impl::analyzeSwitchStatement(const SwitchStmt &stmt)
+    -> void {
   semanticModel.recordFullExpression(stmt, stmt.expression());
   // A payload-enum field subject is observed in place, not copied out.
   const Expr *subject = stmt.expression().get();
@@ -7842,6 +7931,12 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   }
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
+  if (expr.oper().kind == TokenKind::PLUS &&
+      leftType == SemanticType::StringView &&
+      analyzeStringViewAddition(expr, rightType)) {
+    recordLiteralTextConcatenation(expr);
+    return;
+  }
 
   // An existence-only requirement can establish an operand operation without
   // knowing its result yet. Do not turn a dependent comparison into a bool
@@ -7953,6 +8048,8 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
     }
     currentType = selected ? callExpressionType(selected->returnType)
                            : SemanticType::Unknown;
+    if (selected && *sourceOperator == OverloadedOperator::Plus)
+      recordLiteralTextConcatenation(expr);
     return;
   }
 
@@ -8976,7 +9073,35 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
               candidateArguments.types, expr.arguments(), resolved,
               resolvedTypeArguments, resolvedValueArguments, &constraintFailure,
               allowChecked)) {
-        if (hasConstraintFailure(constraintFailure)) {
+        // A constraint explains the call only for a candidate whose
+        // non-generic parameters accept their arguments; otherwise the call
+        // never meant that overload (a leading `output_target&` cannot take a
+        // string literal), and its unmet constraint would hide the one that
+        // matters.
+        const auto dependent = [](const auto &self,
+                                  const SemanticType &type) -> bool {
+          return type.kind == SemanticType::TypeParameter ||
+                 type.kind == SemanticType::TypePack ||
+                 std::any_of(type.arguments.begin(), type.arguments.end(),
+                             [&](const SemanticType &argument) {
+                               return self(self, argument);
+                             });
+        };
+        bool concreteMismatch = false;
+        for (std::size_t index = 0;
+             !concreteMismatch && index < candidateArguments.types.size() &&
+             index < candidate.parameterTypes.size();
+             ++index) {
+          if (candidateArguments.deferred[index] ||
+              dependent(dependent, candidate.parameterTypes[index]))
+            continue;
+          concreteMismatch =
+              functionCallArgumentMatch(candidate, index,
+                                        candidateArguments.types[index],
+                                        expr.arguments()[index], false) ==
+              CallArgumentMatchKind::Mismatch;
+        }
+        if (hasConstraintFailure(constraintFailure) && !concreteMismatch) {
           constraintFailures.emplace_back(std::move(constraintFailure));
         }
         continue;
@@ -15786,6 +15911,22 @@ auto SemanticVisitor::Impl::executeConstexprStatement(
     return constexprStatementFailure(
         constexprFailure({}, ConstantEvaluationFailure::ResourceLimit));
   }
+  // A header init statement runs exactly like the first statement of a block
+  // enclosing the whole statement.
+  const bool headerInitialized =
+      std::exchange(context.initializedHeader, nullptr) == statement;
+  if (const StmtPtr *initializer = headerInitializer(statement);
+      initializer != nullptr && !headerInitialized) {
+    context.scopes.emplace_back();
+    ConstexprStatementEvaluation evaluated =
+        executeConstexprStatement(initializer->get(), context);
+    if (evaluated.control == ConstexprControlFlow::Next) {
+      context.initializedHeader = statement;
+      evaluated = executeConstexprStatement(statement, context);
+    }
+    context.scopes.pop_back();
+    return evaluated;
+  }
   if (const auto *block = stmtAs<BlockStmt>(statement)) {
     context.scopes.emplace_back();
     ConstexprStatementEvaluation evaluated =
@@ -16483,6 +16624,12 @@ auto SemanticVisitor::Impl::summarizeFlow(
   if (statement == nullptr) {
     return {};
   }
+  if (const StmtPtr *initializer = headerInitializer(statement)) {
+    const FlowSummary flow =
+        summarizeFlow(initializer->get(), normalReturns, structural);
+    if (!flow.canFallThrough)
+      return flow;
+  }
   if (const auto *returned = stmtAs<ReturnStmt>(statement)) {
     const bool returns = !expressionNeverReturns(returned->value().get());
     if (returns && normalReturns)
@@ -16673,6 +16820,11 @@ auto SemanticVisitor::Impl::summarizeLoanFlow(const Stmt *statement) const
     -> FlowSummary {
   if (statement == nullptr) {
     return {};
+  }
+  if (const StmtPtr *initializer = headerInitializer(statement)) {
+    const FlowSummary flow = summarizeLoanFlow(initializer->get());
+    if (!flow.canFallThrough)
+      return flow;
   }
   if (const auto *block = stmtAs<BlockStmt>(statement)) {
     return summarizeLoanFlow(block->statements());

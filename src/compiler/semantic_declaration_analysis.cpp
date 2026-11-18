@@ -702,9 +702,24 @@ auto SemanticVisitor::Impl::publishNamespaceSymbol(const std::string &name,
             symbols.addAlternative(name, published);
           return;
         }
-        existing->second.overloads.insert(existing->second.overloads.end(),
-                                          published.overloads.begin(),
-                                          published.overloads.end());
+        for (const CallableCandidate &candidate : published.overloads) {
+          // Visibility is filtered before coalescing: each package can use its
+          // own declaration without importing another binding's source API.
+          // The external-symbol catalog still validates every declaration's
+          // signature and safety contract before code generation.
+          const bool sameNativeBinding =
+              candidate.record().linkage == LanguageLinkage::C &&
+              std::any_of(existing->second.overloads.begin(),
+                          existing->second.overloads.end(),
+                          [&](const CallableCandidate &previous) {
+                            return previous.record().linkage ==
+                                       LanguageLinkage::C &&
+                                   previous.record().externalSymbol ==
+                                       candidate.record().externalSymbol;
+                          });
+          if (!sameNativeBinding)
+            existing->second.overloads.push_back(candidate);
+        }
         existing->second.compilerPrivate =
             !existing->second.overloads.empty() &&
             std::all_of(existing->second.overloads.begin(),
@@ -8111,6 +8126,8 @@ auto SemanticVisitor::Impl::collectBorrowReturnExpressions(
     }
     return;
   }
+  if (const StmtPtr *initializer = headerInitializer(statement))
+    collectBorrowReturnExpressions(initializer->get(), returns, locals);
   if (const auto *branch = stmtAs<IfStmt>(statement)) {
     collectBorrowReturnExpressions(branch->thenBranch().get(), returns, locals);
     collectBorrowReturnExpressions(branch->elseBranch().get(), returns, locals);
@@ -9001,25 +9018,33 @@ auto SemanticVisitor::Impl::dynamicTextReturnBorrowSummary(
           for (const auto &nested : *branch)
             self(self, nested.get(), depth + 1);
       } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+        const auto outer = textBorrowAliases;
+        self(self, branch->initializer().get(), depth + 1);
         const auto enclosing = textBorrowAliases;
         self(self, branch->thenBranch().get(), depth + 1);
         textBorrowAliases = enclosing;
         self(self, branch->elseBranch().get(), depth + 1);
-        textBorrowAliases = enclosing;
+        textBorrowAliases = outer;
       } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+        const auto outer = textBorrowAliases;
+        self(self, selection->initializer().get(), depth + 1);
         const auto enclosing = textBorrowAliases;
         for (const auto &arm : selection->arms()) {
           for (const auto &nested : arm.statements)
             self(self, nested.get(), depth + 1);
           textBorrowAliases = enclosing;
         }
+        textBorrowAliases = outer;
       } else if (const auto *loop = stmtAs<ForStmt>(statement)) {
         const auto enclosing = textBorrowAliases;
         self(self, loop->initializer().get(), depth + 1);
         self(self, loop->body().get(), depth + 1);
         textBorrowAliases = enclosing;
       } else if (const auto *loop = stmtAs<RangeForStmt>(statement)) {
+        const auto enclosing = textBorrowAliases;
+        self(self, loop->initializer().get(), depth + 1);
         self(self, loop->lowered().get(), depth + 1);
+        textBorrowAliases = enclosing;
       } else if (const auto *loop = stmtAs<ConstexprForStmt>(statement)) {
         if (const auto *expansion =
                 semanticModel.findConstexprForExpansion(*loop)) {
@@ -9133,9 +9158,11 @@ auto SemanticVisitor::Impl::textReferenceReturnSummary(
       for (const StmtPtr &nested : block->statements())
         self(self, nested.get());
     } else if (const auto *branch = stmtAs<IfStmt>(statement)) {
+      self(self, branch->initializer().get());
       self(self, branch->thenBranch().get());
       self(self, branch->elseBranch().get());
     } else if (const auto *selection = stmtAs<SwitchStmt>(statement)) {
+      self(self, selection->initializer().get());
       for (const SwitchArm &arm : selection->arms()) {
         if (const auto relay = payloadReferenceRelayArm(
                 *selection, arm, function, ownerType, conditional))
@@ -9359,7 +9386,8 @@ auto SemanticVisitor::Impl::accessorReceiverFields(
           block->statements().begin(), block->statements().end(),
           [&](const StmtPtr &nested) { return self(self, nested.get()); });
     if (const auto *branch = stmtAs<IfStmt>(statement))
-      return self(self, branch->thenBranch().get()) &&
+      return self(self, branch->initializer().get()) &&
+             self(self, branch->thenBranch().get()) &&
              self(self, branch->elseBranch().get());
     return false;
   };
@@ -10065,7 +10093,8 @@ auto SemanticVisitor::Impl::recordClassLifecycles() -> void {
       if (!body || body->statements().size() != 1)
         return std::nullopt;
       const auto *branch = stmtAs<IfStmt>(body->statements().front().get());
-      if (!branch || branch->isConstexpr() || branch->elseBranch())
+      if (!branch || branch->isConstexpr() || branch->elseBranch() ||
+          branch->initializer())
         return std::nullopt;
       const auto *condition = exprAs<Binary>(branch->condition().get());
       if (!condition || condition->oper().kind != TokenKind::BANG_EQUAL)

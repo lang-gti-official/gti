@@ -1,0 +1,15 @@
+// Literal folding preserves decoded counted bytes, empty inputs and owned-result lifetime.
+//@ run-pass
+import std.string;
+
+std::string grouped<T>(T value) {
+  return ("\x41" + "B") + ("\0" + "7") + ("" + "\u03bb");
+}
+int main() {
+  auto result = grouped(1);
+  if (result != "AB\0" + "7\u03bb" || result.size() != 6) { return 1; }
+  if (result[2] != '\0' || result[3] != '7') { return 2; }
+  auto empty = "" + ("" + "");
+  if (!empty.empty()) { return 3; }
+  return 0;
+}

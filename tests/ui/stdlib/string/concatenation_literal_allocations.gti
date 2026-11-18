@@ -1,0 +1,70 @@
+// Literal-only addition folds every grouping into one owned allocation and releases it.
+//@ run-pass
+// --- main.gti
+import std.string;
+extern "C" {
+  void concat_begin();
+  uint64_t concat_allocations();
+  uint64_t concat_live();
+}
+std::string folded() {
+  return (("ab" + "cd") + ("ef" + "gh")) + "ij";
+}
+int main() {
+  concat_begin();
+  {
+    mut auto value = folded();
+    if (value != "abcdefghij" || concat_allocations() != 1) { return 1; }
+    // It is still an independent mutable owner, not a static view.
+    value[0] = 'z';
+    if (value != "zbcdefghij") { return 2; }
+  }
+  if (concat_live() != 0) { return 3; }
+  concat_begin();
+  {
+    auto value = "a" + ("b" + ("c" + ("d" + "e")));
+    if (value != "abcde" || concat_allocations() != 1) { return 4; }
+  }
+  if (concat_live() != 0) { return 5; }
+  return 0;
+}
+// --- counts.cpp
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <limits>
+
+// Inject the actual process allocation boundary used by source-owned storage.
+// The GTI program is compiled by LLVM; this companion only observes allocation.
+namespace {
+std::uint64_t allocations = 0;
+std::uint64_t live = 0;
+std::uint64_t baseline = 0;
+void *remember(void *value) {
+  if (value) { ++allocations; ++live; }
+  return value;
+}
+}
+extern "C" void concat_begin() { allocations = 0; baseline = live; }
+extern "C" std::uint64_t concat_allocations() { return allocations; }
+extern "C" std::uint64_t concat_live() { return live - baseline; }
+extern "C" std::uint64_t gti_rt_native_size_max_v1() {
+  return (std::numeric_limits<std::size_t>::max)();
+}
+extern "C" std::int32_t gti_rt_address_is_aligned_v1(const void *p, std::uint64_t a) {
+  return p && a && !(a & (a - 1)) && reinterpret_cast<std::uintptr_t>(p) % a == 0;
+}
+extern "C" std::uint64_t gti_rt_posix_pointer_size_v1() { return sizeof(void *); }
+extern "C" std::int32_t gti_rt_posix_enomem_v1() { return ENOMEM; }
+extern "C" std::int32_t gti_rt_posix_einval_v1() { return EINVAL; }
+extern "C" void *gti_rt_malloc_v1(std::uint64_t n) { return remember(std::malloc(n)); }
+extern "C" void *gti_rt_posix_memalign_v1(std::uint64_t n, std::uint64_t a, std::int32_t *status) {
+  void *p = nullptr;
+  *status = posix_memalign(&p, a, n);
+  return remember(p);
+}
+extern "C" void gti_rt_posix_free_v1(void *p) {
+  if (p) { if (!live) { std::abort(); } --live; }
+  std::free(p);
+}

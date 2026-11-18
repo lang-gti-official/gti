@@ -1,0 +1,11 @@
+// Same-spelled enums in different namespaces select distinct reference overloads.
+//@ run-pass
+namespace a { enum errc { failed }; }
+namespace b { enum errc { failed }; }
+int code(a::errc& value) { return 1; }
+int code(b::errc& value) { return 2; }
+int main() {
+  auto x = a::errc::failed;
+  auto y = b::errc::failed;
+  return code(x) + code(y) - 3;
+}

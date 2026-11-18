@@ -1,6 +1,33 @@
 #include "semantic_analyzer_impl.h"
 
 namespace lang {
+namespace {
+// Compare resolved language contracts, not lowered LLVM types: pointer access,
+// nominal records/callbacks and target C scalar identity must survive here.
+// Source names, parameter names and optimization hints are not C identity.
+bool compatibleExternCFunctions(const FunctionInfo &left,
+                                const FunctionInfo &right) {
+  return left.returnType == right.returnType &&
+         left.parameterTypes == right.parameterTypes &&
+         left.requiresUnsafe == right.requiresUnsafe &&
+         left.neverReturns == right.neverReturns &&
+         left.tracksCaller == right.tracksCaller &&
+         left.cArrayCountParameter == right.cArrayCountParameter &&
+         left.threadConfinedCallback == right.threadConfinedCallback &&
+         left.cThreadOperation == right.cThreadOperation &&
+         left.processMemoryOperation == right.processMemoryOperation &&
+         left.intrinsic == right.intrinsic &&
+         left.returnBorrowOrigin == right.returnBorrowOrigin &&
+         left.returnBorrowParameter == right.returnBorrowParameter &&
+         left.returnBorrowAccess == right.returnBorrowAccess &&
+         left.returnBorrowParameters == right.returnBorrowParameters &&
+         left.returnBorrowFields == right.returnBorrowFields &&
+         left.completeReturnBorrow == right.completeReturnBorrow &&
+         left.returnBorrowPlace == right.returnBorrowPlace &&
+         left.rawBorrowContracts == right.rawBorrowContracts &&
+         left.ownerlessTextParameters == right.ownerlessTextParameters;
+}
+} // namespace
 
 auto SemanticVisitor::Impl::isContextualArrayArgument(
     const ExprPtr &expression) const -> bool {
@@ -3374,6 +3401,121 @@ auto SemanticVisitor::Impl::textViewMemberFactory(
       selected = candidate;
   }
   return selected;
+}
+
+auto SemanticVisitor::Impl::analyzeStringViewAddition(
+    const Binary &expression, const SemanticType &rightType) -> bool {
+  // Primitive views have no source class body. Bind only adapters owned by
+  // std/string; public alias spellings cannot establish this capability.
+  // Allocation and copying remain ordinary source functions.
+  const auto &symbols = activeNamespaceSymbols();
+  const auto found = symbols.find("gti_internal::text_view_concat");
+  if (sourceGraph == nullptr || found == symbols.end())
+    return false;
+  std::optional<CallableCandidate> selected;
+  std::vector<std::size_t> ephemeral;
+  for (const auto &candidate : found->second.overloads) {
+    const auto *unit = sourceGraph->findUnit(candidate.record().sourceUnit);
+    if (unit == nullptr || unit->role != SourceUnitRole::StandardLibrary ||
+        unit->standardLibraryName != "std/string" ||
+        candidate.ownerClass != 0 || candidate.declaration == nullptr ||
+        candidate.bodyDeclaration()->body() == nullptr ||
+        candidate.record().intrinsic != IntrinsicKind::None ||
+        candidate.record().requiresUnsafe || candidate.parameterPack ||
+        !candidate.record().genericParameters.empty() ||
+        candidate.parameterTypes.size() != 2 ||
+        candidate.parameterTypes.front() != SemanticType::StringView ||
+        candidate.returnType.kind != SemanticType::Class ||
+        typeTraits(candidate.returnType).containsBorrowedState ||
+        (candidate.parameterTypes[1] != SemanticType::StringView &&
+         candidate.parameterTypes[1] !=
+             SemanticType::referenceTo(candidate.returnType,
+                                       AccessMode::ReadOnly)))
+      continue;
+    const auto match = functionCallArgumentMatch(candidate, 1, rightType,
+                                                 expression.right(), false);
+    if (match != CallArgumentMatchKind::Exact &&
+        match != CallArgumentMatchKind::EphemeralReadBorrow)
+      continue;
+    if (selected)
+      return false;
+    selected = candidate;
+    if (match == CallArgumentMatchKind::EphemeralReadBorrow)
+      ephemeral.push_back(1);
+  }
+  if (!selected)
+    return false;
+  requireFunctionDefinition(*selected, expression.oper());
+  std::vector<const ExprPtr *> inputs{&expression.left(), &expression.right()};
+  validateCallPlaceExclusivityImpl(selected->parameterTypes, inputs,
+                                   expression.oper());
+  semanticModel.recordOperator(
+      expression,
+      ResolvedOperatorInfo{.operandArguments = true,
+                           .function = selected->id,
+                           .declaration = selected->declaration,
+                           .kind = OverloadedOperator::Plus,
+                           .returnType = selected->returnType,
+                           .parameterTypes = selected->parameterTypes,
+                           .ephemeralBorrowArguments = std::move(ephemeral)});
+  currentType = selected->returnType;
+  return true;
+}
+
+auto SemanticVisitor::Impl::recordLiteralTextConcatenation(
+    const Binary &expression) -> void {
+  const auto *operation = semanticModel.findOperator(expression);
+  if (!operation || !sourceGraph)
+    return;
+  const auto *function = semanticModel.findFunction(operation->function);
+  const auto *unit =
+      function ? sourceGraph->findUnit(function->sourceUnit) : nullptr;
+  if (!unit || unit->role != SourceUnitRole::StandardLibrary ||
+      unit->standardLibraryName != "std/string")
+    return;
+  const auto operand =
+      [&](const Expr *expr) -> std::optional<LiteralTextConcatenation> {
+    while (const auto *group = exprAs<Grouping>(expr))
+      expr = group->expression().get();
+    if (const auto *literal = exprAs<LiteralExpr>(expr)) {
+      if (const auto *text = std::get_if<std::string>(&literal->value()))
+        return LiteralTextConcatenation{.size = text->size()};
+    }
+    const auto *nested = expr ? semanticModel.findOperator(*expr) : nullptr;
+    return nested ? nested->literalText : std::nullopt;
+  };
+  const auto left = operand(expression.left().get());
+  const auto right = operand(expression.right().get());
+  if (!left || !right || right->size > std::string{}.max_size() - left->size)
+    return;
+  FunctionId factory = left->factory ? left->factory : right->factory;
+  if (left->factory && right->factory && left->factory != right->factory)
+    return;
+  if (!factory && operation->operandArguments &&
+      operation->parameterTypes ==
+          std::vector<SemanticType>{SemanticType::StringView,
+                                    SemanticType::StringView})
+    factory = operation->function;
+  const auto *producer = semanticModel.findFunction(factory);
+  if (!producer || producer->returnType != operation->returnType ||
+      producer->parameterTypes !=
+          std::vector<SemanticType>{SemanticType::StringView,
+                                    SemanticType::StringView})
+    return;
+  // Only the selected library operations participate. User operators and
+  // arbitrary constant-valued expressions retain their calls and effects.
+  if (!operation->operandArguments &&
+      (function->ownerClass != producer->returnType.classId ||
+       operation->parameterTypes.size() != 1 ||
+       (operation->parameterTypes.front() != SemanticType::StringView &&
+        operation->parameterTypes.front() !=
+            SemanticType::referenceTo(producer->returnType,
+                                      AccessMode::ReadOnly))))
+    return;
+  auto folded = *operation;
+  folded.literalText = LiteralTextConcatenation{
+      .factory = factory, .size = left->size + right->size};
+  semanticModel.recordOperator(expression, std::move(folded));
 }
 
 auto SemanticVisitor::Impl::analyzeStringViewMemberCall(
@@ -9114,12 +9256,20 @@ auto SemanticVisitor::Impl::validateExternCFunction(
   }
   const auto [previous, inserted] =
       externCSymbols.emplace(std::string(externalSymbol), &function);
-  if (!inserted && previous->second != &function) {
+  const FunctionInfo *previousInfo =
+      inserted ? nullptr : semanticModel.findFunction(*previous->second);
+  if (!inserted && previous->second != &function &&
+      (functionInfo == nullptr || previousInfo == nullptr ||
+       !compatibleExternCFunctions(*previousInfo, *functionInfo))) {
+    const bool signatureConflict =
+        previousInfo == nullptr || functionInfo == nullptr ||
+        previousInfo->returnType != functionInfo->returnType ||
+        previousInfo->parameterTypes != functionInfo->parameterTypes;
     Diagnostic diagnostic = makeDiagnostic(
         "GTI-S2054", DiagnosticPhase::Semantics, externalLocation,
         "C symbol '" + std::string(externalSymbol) +
-            "' is declared more than once; extern \"C\" functions "
-            "cannot be overloaded or redeclared.");
+            (signatureConflict ? "' has conflicting function signatures."
+                               : "' has conflicting safety contracts."));
     const Token &previousLocation =
         previous->second->nativeLinkName()
             ? previous->second->nativeLinkName()->symbol

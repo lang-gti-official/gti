@@ -1,0 +1,50 @@
+// The container stays borrowed while its owner-region range cursor is live.
+struct Slots {
+  mut int items[3];
+  Slots() : items({1, 2, 3}) {}
+  int& at(uint64_t i) { return this.items[i]; }
+};
+class End {
+public:
+  End() {}
+};
+class Cursor<lifetime owner> {
+  Slots&<owner> slots;
+  mut uint64_t position;
+public:
+  Cursor(Slots&<owner> slots) : slots(slots), position(uint64_t(0)) {}
+  int&<owner> operator*() { return this.slots.at(this.position); }
+  void operator++() mut { this.position = this.position + uint64_t(1); }
+  bool operator!=(End end) { return this.position != uint64_t(3); }
+};
+struct Resource {
+  int id;
+  Resource(int id) : id(id) {}
+};
+class Bag<lifetime r> {
+  mut Slots slots;
+  Resource&<r> resource;
+public:
+  Bag(Resource&<r> resource) : slots(Slots()), resource(resource) {}
+  Cursor<this> begin() { return Cursor(this.slots); }
+  End end() { return End(); }
+  void reset() mut { this.slots = Slots(); }
+};
+
+int before_use<lifetime r>(mut Bag<r>& bag) {
+  mut int total = 0;
+  for (auto& value : bag) {
+    bag.reset();  //~ ERROR GTI-S2017
+    total += value;
+  }
+  return total;
+}
+int after_use<lifetime r>(mut Bag<r>& bag) {
+  mut int total = 0;
+  for (auto& value : bag) {
+    total += value;
+    bag.reset();  //~ ERROR GTI-S2017
+  }
+  return total;
+}
+int main() { return 0; }

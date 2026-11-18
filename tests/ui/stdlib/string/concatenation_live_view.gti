@@ -1,0 +1,9 @@
+// Appending cannot mutate a string while its retained view is still used.
+import std.string;
+int main() {
+  mut std::string value = "abc";
+  auto view = value.view();
+  value += "x"; //~ ERROR GTI-S2017
+  std::println(view);
+  return 0;
+}

@@ -1,0 +1,4 @@
+// Native bindings with conflicting pointer access contracts are rejected across namespaces.
+namespace first { extern "C" { void target(const c_int* value); } }
+namespace second { extern "C" { void target(c_int* value); } }  //~ ERROR GTI-S2054 conflicting function signatures
+int main() { return 0; }

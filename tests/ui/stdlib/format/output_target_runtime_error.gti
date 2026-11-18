@@ -1,0 +1,8 @@
+// A malformed dynamic pattern returns its format error without writing a partial line.
+//@ run-pass
+import std.format;
+int main() {
+  auto invalid = std::try_runtime_println(std::cout, "{");
+  if (invalid || invalid.error() != std::print_errc::invalid_format) { return 1; }
+  return 0;
+}

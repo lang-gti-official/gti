@@ -1,0 +1,13 @@
+// Literal chains reach verified MIR as one static byte sequence and one owning call.
+//@ snapshot: mir
+//@ mir-function: folded
+// CHECK: function folded
+// CHECK-NOT: {{i[0-9]+}} call{{ }}
+// CHECK: operation=literal literal=string:6:616263646566
+// CHECK-NOT: {{i[0-9]+}} call{{ }}
+// CHECK: {{i[0-9]+}} call{{ }}
+// CHECK-NOT: {{i[0-9]+}} call{{ }}
+// CHECK: end-body
+import std.string;
+std::string folded() { return "ab" + ("cd" + "ef"); }
+int main() { return folded().size() == 6 ? 0 : 1; }

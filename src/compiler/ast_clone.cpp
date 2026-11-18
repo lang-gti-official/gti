@@ -549,6 +549,10 @@ private:
     }
     case StmtKind::IfStmt: {
       const auto &node = static_cast<const IfStmt &>(statement);
+      StmtPtr initializer = stmt(node.initializer());
+      if (node.initializer() && !initializer) {
+        return nullptr;
+      }
       StmtPtr thenBranch = stmt(node.thenBranch());
       if (node.thenBranch() && !thenBranch) {
         return nullptr;
@@ -559,7 +563,7 @@ private:
       }
       return std::make_shared<IfStmt>(
           expr(node.condition()), std::move(thenBranch), std::move(elseBranch),
-          tok(node.constexprKeyword()));
+          tok(node.constexprKeyword()), std::move(initializer));
     }
     case StmtKind::LoopControlStmt: {
       const auto &node = static_cast<const LoopControlStmt &>(statement);
@@ -567,6 +571,10 @@ private:
     }
     case StmtKind::RangeForStmt: {
       const auto &node = static_cast<const RangeForStmt &>(statement);
+      StmtPtr initializer = stmt(node.initializer());
+      if (node.initializer() && !initializer) {
+        return nullptr;
+      }
       StmtPtr lowered = stmt(node.lowered());
       if (!lowered) {
         return nullptr;
@@ -578,7 +586,7 @@ private:
           mapped(node.rangeBinding()), mapped(node.iteratorBinding()),
           mapped(node.sentinelBinding()), mapped(node.elementBinding()),
           mapped(node.coreLoop()), mapped(node.elementOwnerBinding()),
-          mapped(node.sourceBody()));
+          mapped(node.sourceBody()), std::move(initializer));
     }
     case StmtKind::ReturnStmt: {
       const auto &node = static_cast<const ReturnStmt &>(statement);
@@ -595,6 +603,10 @@ private:
     }
     case StmtKind::SwitchStmt: {
       const auto &node = static_cast<const SwitchStmt &>(statement);
+      StmtPtr initializer = stmt(node.initializer());
+      if (node.initializer() && !initializer) {
+        return nullptr;
+      }
       std::vector<SwitchArm> arms;
       arms.reserve(node.arms().size());
       for (const SwitchArm &arm : node.arms()) {
@@ -611,7 +623,7 @@ private:
       }
       return std::make_shared<SwitchStmt>(
           tok(node.keyword()), expr(node.expression()), std::move(arms),
-          tok(node.closingBrace()));
+          tok(node.closingBrace()), std::move(initializer));
     }
     case StmtKind::StructuredBindingDecl: {
       const auto &node = static_cast<const StructuredBindingDecl &>(statement);

@@ -1,0 +1,10 @@
+// A view into a temporary concatenation cannot escape its owner.
+import std.string;
+std::string_view bad(std::string& left) {
+  return (left + "x").view(); //~ ERROR GTI-S2045
+}
+int main() {
+  std::string value = "a";
+  std::println(bad(value));
+  return 0;
+}

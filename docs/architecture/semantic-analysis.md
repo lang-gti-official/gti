@@ -207,6 +207,32 @@ tracking identifies each region by its keyword; expression warnings omit the
 statement-only keyword-removal edit. Constant evaluation reuses existing
 grouping and staged MIR execution rather than gaining a second operation rule.
 
+## Header init statements
+
+`IfStmt`, `SwitchStmt` and `RangeForStmt` keep a written C++17/C++20 init
+statement as `initializer()`, with the parser-recorded extent of the written
+init; `headerInitializer()` in `ast.h` returns it for any of the three. Range
+for keeps it outside `lowered()`. Nothing in the parser wraps the statement in
+a block, so the formatter, Tree-sitter and LSP see the source form.
+
+Semantics owns the scope: `visitIfStmt`, `visitSwitchStmt` and
+`visitRangeForStmt` open one scope, analyze the init in the enclosing
+statement's loan-flow position and then analyze the unchanged statement inside
+it, exactly as a block whose first statement is the init. The AST-walking
+helpers that collect locals, borrows, text aliases or macro scopes visit the
+init first under the same scope. `if constexpr` requires a `constexpr`
+variable init (`GTI-S2057`). The compatibility constexpr interpreter runs the
+init in its own scope before the statement, the same rule it applies to a
+block.
+
+HIR publishes that scope rather than rediscovering it: a statement with an
+init lowers to an ordinary `Block` whose source is the statement and whose two
+children are the init and the statement itself. The block shares the
+statement's source but owns none of its full expressions, so the statement
+keeps them. Verified MIR lowers the block with its normal scope exit, so the
+init is dropped after the taken branch and on every `break`, `continue`,
+`return` and propagation exit, and its loans end with the block.
+
 ## Local reference inference
 
 `analyzeInferredVariable` resolves written `auto&`/`mut auto&` from the analyzed
@@ -252,7 +278,10 @@ generic binders before resolving defaults and payloads. Demand-resolved class
 and enum defaults share recursion detection and avoid declaration-order-dependent
 type acceptance. Value defaults retain the existing earlier-visible constant
 rule. A concrete enum type retains its
-primary identity and complete canonical arguments; existing substitution
+primary identity and complete canonical arguments. Overload signature equality
+compares that nominal enum identity recursively, including reference parameters
+and enum arguments inside generic wrappers; aliases of one enum still denote
+the same signature. Existing substitution
 produces its exact alternative types. Payload admissibility is revalidated
 through aliases after field facts are available. Ownership, cleanup and
 concurrency traits fold actual substituted fields, not generic metadata.
@@ -729,6 +758,41 @@ resolve their external referents. Polymorphic raw-assertion bodies report
 incomplete optional auditing until their dispatch-family observations are
 represented. Source-produced output facts use the bounded queries above;
 this does not imply complete campaign or release acceptance.
+
+## Primitive text concatenation
+
+A counted `StringView` has no source class body. Binary `+` selects the
+`gti_internal::text_view_concat` adapters only from the trusted `std/string`
+source unit. Semantic selection validates their source bodies, exact signatures,
+non-borrowing owned result and ordinary argument compatibility, including the
+existing call-scoped temporary-reference proof. Public alias names and
+lookalike user functions do not establish the capability.
+
+`ResolvedOperatorInfo::operandArguments` distinguishes these receiverless
+source calls from member operators. Both operands are parameters in program
+storage effects and temporary-consumption accounting. HIR lowers the selection
+to an ordinary `Call` with an ordered argument plan, including temporary borrow
+materialization. MIR and LLVM need no string-specific concatenation operation.
+The source functions own reserve/copy policy; `std::string`'s member operators
+own append and consuming-receiver reuse. Result ownership is independent of
+input view lifetimes, while views of the result retain their ordinary owner
+requirements.
+
+After ordinary operator and borrow checking, literal-only text-addition trees
+carry `LiteralTextConcatenation` facts: the trusted two-view source factory and
+the combined byte count. Leaves must be string literals (possibly grouped),
+and joins must select the trusted `std/string` operations with the factory's
+exact owned result. Variables, calls, conversions and user overloads do not
+qualify. This is executable folding, not a new constant-expression eligibility
+rule. Semantic records retain the original selected overloads for tooling.
+
+HIR flattens each maximal eligible tree once, using decoded literal bytes,
+then calls the existing factory with the combined static view and an empty
+view. It retains the owned result and normal MIR call/cleanup path, but omits
+intermediate owner allocations. Per-node metadata stores sizes and identities,
+not copied prefixes, so compile-time storage does not grow quadratically.
+The source factory still owns allocation, overflow checks and copying into the
+final owner. No backend-specific folding or runtime ABI is introduced.
 
 ## Exact structural member signatures
 
@@ -1975,8 +2039,14 @@ recursive unsafe-call classification when a record contains a raw pointer.
 An `extern "C"` function retains two identities when it uses
 `[[link_name("symbol")]]`: namespace lookup and tooling use the declared GTI
 name, while `CallableDeclaration::externalSymbol` stores the validated portable
-C identifier. Program-global duplicate-symbol, reserved-`main`, generated
-header, and root-storage collision checks use the external symbol. HIR and MIR
+C identifier. Program-global native-symbol compatibility, reserved-`main`, generated
+header, and root-storage collision checks use the external symbol. Repeated C
+function bindings compare resolved signatures and safety contracts in semantics,
+including pointer access, target scalar/nominal identity, unsafe/noreturn,
+return-borrow facts and the resolved counted-array parameter index. Compatible
+bindings preserve separate declaration/tooling identities; same-scope repeats
+retain one lookup candidate. LLVM reuses the exact native function declaration,
+without reconstructing compatibility from lowered machine types. HIR and MIR
 copy that resolved fact; they do not reparse the attribute or derive the symbol
 from the source name.
 

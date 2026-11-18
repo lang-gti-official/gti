@@ -1,0 +1,179 @@
+// C++17/C++20 init statements in if, switch and range for: the init's names
+// reach the condition and every branch, else and else-if included.
+//@ run-pass
+//@ stdout: if 7
+//@ stdout: else 2
+//@ stdout: else-if 4
+//@ stdout: circle 12
+//@ stdout: square 9
+//@ stdout: empty 0
+//@ stdout: range 6
+//@ stdout: structured 6
+//@ stdout: constexpr 4
+//@ stdout: expression 2
+//@ stdout: shadow 10
+//@ stdout: generic 9 1 2
+//@ stdout: lambda 11
+import std.string;
+import std.vector;
+import std.meta;
+
+enum class Shape {
+  circle(int radius),
+  square(int side),
+  empty,
+};
+
+Shape shape_for(int value) {
+  if (value == 0) {
+    return Shape::empty;
+  }
+  return value > 5 ? Shape::circle(value) : Shape::square(value);
+}
+
+std::vector<int> numbers() {
+  mut std::vector<int> values = std::vector<int>();
+  values.push_back(1);
+  values.push_back(2);
+  values.push_back(3);
+  return values;
+}
+
+struct Pair {
+  int first;
+  int second;
+  Pair(int first, int second) : first(first), second(second) {}
+};
+
+constexpr int limit() { return 4; }
+
+// Constant evaluation runs an init exactly like a block's first statement.
+struct Split {
+  mut int high;
+  mut int low;
+  constexpr Split(int value) : high(0), low(0) {
+    if (int doubled = value * 2; doubled > 4) {
+      this.high = doubled;
+    } else {
+      this.low = doubled;
+    }
+  }
+};
+
+constexpr Split large = Split(3);
+constexpr Split small = Split(1);
+static_assert(large.high == 6 && large.low == 0 && small.low == 2);
+
+// Concrete reanalysis of a generic body keeps the init's scope.
+T first_or<std::vector_element T>(std::vector<T>& values, T fallback) {
+  if (auto count = values.size(); count > 0) {
+    return values[0];
+  }
+  return fallback;
+}
+
+int kind<T>(T value) {
+  if constexpr (constexpr int width = 4;
+                std::meta::type_of<T>().is_integral() && width > 2) {
+    return 1;
+  } else {
+    return 2;
+  }
+}
+
+void branches(int input) {
+  if (int doubled = input * 2; doubled > 10) {
+    std::print("if ");
+    std::println(doubled / 2);
+  } else if (int tripled = doubled + input; tripled > 8) {
+    // An else-if chain sees every enclosing init.
+    std::print("else-if ");
+    std::println(tripled - doubled);
+  } else {
+    std::print("else ");
+    std::println(doubled - input);
+  }
+}
+
+int area(int value) {
+  switch (Shape shape = shape_for(value); shape) {
+  case Shape::circle(auto& radius):
+    return radius + 5;
+  case Shape::square(auto& side):
+    return side * side;
+  case Shape::empty:
+    return 0;
+  }
+}
+
+int constant() {
+  if constexpr (constexpr int bound = limit(); bound > 3) {
+    return bound;
+  } else {
+    return 0;
+  }
+}
+
+int main() {
+  branches(7);
+  branches(2);
+  branches(4);
+  std::print("circle ");
+  std::println(area(7));
+  std::print("square ");
+  std::println(area(3));
+  std::print("empty ");
+  std::println(area(0));
+
+  // The range borrows the init's owner, which outlives the whole loop.
+  mut int sum = 0;
+  for (std::vector<int> values = numbers(); auto& value : values) {
+    sum += value;
+  }
+  std::print("range ");
+  std::println(sum);
+
+  mut int pairs = 0;
+  for (auto [first, second] = Pair(2, 4); int step : numbers()) {
+    pairs = first + second;
+  }
+  std::print("structured ");
+  std::println(pairs);
+  std::print("constexpr ");
+  std::println(constant());
+
+  mut int counter = 0;
+  if (counter += 2; counter == 2) {
+    std::print("expression ");
+    std::println(counter);
+  }
+
+  // An init declaration shadows an outer name like a nested block's would,
+  // and the outer name returns after the statement.
+  int value = 10;
+  if (int value = 1; value == 1) {
+    int value = 2;
+  }
+  std::print("shadow ");
+  std::println(value);
+
+  mut std::vector<int> nine = std::vector<int>();
+  nine.push_back(9);
+  std::print("generic ");
+  std::print(first_or(nine, 3));
+  std::print(" ");
+  std::print(kind(1));
+  std::print(" ");
+  std::println(kind(1.5));
+  auto pick = [](int input) -> int {
+    switch (int doubled = input * 2; doubled) {
+    case 4:
+      return 1;
+    default:
+      return doubled;
+    }
+  };
+  std::print("lambda ");
+  std::println(pick(2) + pick(5));
+  return 0;
+}

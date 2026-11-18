@@ -283,7 +283,15 @@ formatter—decides whether it is the exact permitted move capture.
 Statement boundaries inside a lambda body are relative to that body's opening
 delimiter, so a lambda used as a call argument receives ordinary one-statement-
 per-line layout even though the surrounding call still has an open parenthesis.
-Semicolons in nested `for` headers remain inline.
+Semicolons in nested `for` headers remain inline. Closing call parentheses and
+subscript brackets stay beside the body's closing brace, including empty and
+nested lambda bodies; intervening comments keep their normal placement.
+
+Procedural macro syntax captures retain their exact interior text, including
+whitespace and comments, because that text belongs to the macro's grammar.
+The surrounding delimiters use compact spacing: `name!({ ... });`. Lexical
+boundary checks treat the brace-delimited capture as opaque even when the
+small lookbehind window does not include the preceding `!(`.
 
 ## Constructor initializer layout
 

@@ -1,0 +1,10 @@
+// LSP formatting uses compact macro and lambda call closing delimiters.
+//@ formatting: std::concat!({"hello"});
+//@ formatting: });
+import std.string;
+int invoke<F>(F action) { return action(); }
+int main() {
+  constexpr std::string_view text = std::concat!(  {"hello"}  );
+  return invoke([]() -> int { return 0; }
+  );
+}

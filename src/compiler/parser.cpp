@@ -3649,6 +3649,7 @@ private:
       constexprKeyword = previous();
     }
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'if'.");
+    StmtPtr initializer = hasInitStatement() ? initStatement(true) : StmtPtr{};
     ExprPtr condition = expression();
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after if condition.");
     StmtPtr thenBranch = statement();
@@ -3656,9 +3657,66 @@ private:
     if (match({TokenKind::ELSE})) {
       elseBranch = statement();
     }
-    return std::make_shared<IfStmt>(std::move(condition), std::move(thenBranch),
-                                    std::move(elseBranch),
-                                    std::move(constexprKeyword));
+    return std::make_shared<IfStmt>(
+        std::move(condition), std::move(thenBranch), std::move(elseBranch),
+        std::move(constexprKeyword), std::move(initializer));
+  }
+
+  // `if`, `switch` and range `for` accept a C++17/C++20 init statement before
+  // their condition: a `;` at parenthesis depth zero inside the header.
+  [[nodiscard]] bool hasInitStatement() const {
+    std::size_t depth = 0;
+    for (std::size_t offset = 0;; ++offset) {
+      switch (peekAt(offset).kind) {
+      case TokenKind::END_OF_FILE:
+        return false;
+      case TokenKind::LEFT_PAREN:
+      case TokenKind::LEFT_BRACKET:
+      case TokenKind::LEFT_BRACE:
+        ++depth;
+        break;
+      case TokenKind::RIGHT_PAREN:
+      case TokenKind::RIGHT_BRACKET:
+      case TokenKind::RIGHT_BRACE:
+        if (depth == 0)
+          return false;
+        --depth;
+        break;
+      case TokenKind::SEMICOLON:
+        if (depth == 0)
+          return true;
+        break;
+      default:
+        break;
+      }
+    }
+  }
+
+  // One init statement, through its terminating ';': a variable or
+  // structured-binding declaration, an expression statement, or nothing.
+  StmtPtr initStatement(bool recordExtent) {
+    const Token start = peek();
+    StmtPtr result;
+    if (match({TokenKind::SEMICOLON})) {
+      result = std::make_shared<EmptyStmt>(previous());
+    } else if (isStructuredBindingPrefix()) {
+      if (check(TokenKind::MUT)) {
+        throw error(peek(), "Structured bindings are immutable; remove 'mut'.");
+      }
+      if (peekAt(1).kind == TokenKind::AMPERSAND) {
+        throw error(peekAt(1),
+                    "Reference structured bindings are not supported; the "
+                    "binding owns one initialized value.");
+      }
+      result = structuredBindingDeclaration();
+    } else if (isTypedDeclaration()) {
+      result = typedDeclaration(false, std::nullopt, false, false, false);
+    } else {
+      result = expressionStatement();
+    }
+    if (recordExtent)
+      stampExtent(result, start);
+    return result;
   }
 
   StmtPtr whileStatement() {
@@ -3721,7 +3779,49 @@ private:
     const Token keyword = previous();
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'for'.");
 
-    if (isStructuredBindingPrefix()) {
+    if (StmtPtr range = rangeForTail(keyword, nullptr))
+      return range;
+
+    const Token initializerStart = peek();
+    StmtPtr initializer = initStatement(false);
+    const Token initializerEnd = previous();
+    // C++20 `for (init; binding : range)`. A classic loop's condition never
+    // begins with a declaration followed by ':'. Only the range form records
+    // the init's written extent; a classic loop keeps its existing shape.
+    if (StmtPtr range = rangeForTail(keyword, initializer)) {
+      if (initializer != nullptr &&
+          initializerEnd.source == initializerStart.source &&
+          initializerEnd.position + initializerEnd.lexeme.size() >
+              initializerStart.position)
+        initializer->setExtent(SourceSpan{.source = initializerStart.source,
+                                          .start = initializerStart.position,
+                                          .end = initializerEnd.position +
+                                                 initializerEnd.lexeme.size(),
+                                          .line = initializerStart.line});
+      return range;
+    }
+
+    ExprPtr condition;
+    if (!check(TokenKind::SEMICOLON)) {
+      condition = expression();
+    }
+    consume(TokenKind::SEMICOLON, "Expect ';' after loop condition.");
+
+    ExprPtr increment;
+    if (!check(TokenKind::RIGHT_PAREN)) {
+      increment = expression();
+    }
+    consume(TokenKind::RIGHT_PAREN, "Expect ')' after for clauses.");
+
+    return std::make_shared<ForStmt>(std::move(initializer),
+                                     std::move(condition), std::move(increment),
+                                     statement());
+  }
+
+  // The `binding : range ) body` tail of a range for, or null with the
+  // position unchanged when the header is not a range for.
+  StmtPtr rangeForTail(const Token &keyword, StmtPtr initializer) {
+    if (isStructuredBindingPrefix() && !isStructuredBindingDeclaration()) {
       std::optional<Token> mutKeyword;
       if (match({TokenKind::MUT}))
         mutKeyword = previous();
@@ -3762,7 +3862,7 @@ private:
       return makeRangeForStatement(
           keyword, mutability, std::move(bindingType), std::move(element),
           std::move(colon), std::move(range),
-          std::make_shared<BlockStmt>(std::move(body)));
+          std::make_shared<BlockStmt>(std::move(body)), std::move(initializer));
     }
 
     if (isTypedDeclaration() && !check(TokenKind::STATIC) &&
@@ -3782,35 +3882,12 @@ private:
         StmtPtr body = statement();
         return makeRangeForStatement(keyword, mutability, std::move(type),
                                      std::move(name), std::move(colon),
-                                     std::move(range), std::move(body));
+                                     std::move(range), std::move(body),
+                                     std::move(initializer));
       }
       current = declarationStart;
     }
-
-    StmtPtr initializer;
-    if (match({TokenKind::SEMICOLON})) {
-      initializer = std::make_shared<EmptyStmt>(previous());
-    } else if (isTypedDeclaration()) {
-      initializer = typedDeclaration(false, std::nullopt, false, false, false);
-    } else {
-      initializer = expressionStatement();
-    }
-
-    ExprPtr condition;
-    if (!check(TokenKind::SEMICOLON)) {
-      condition = expression();
-    }
-    consume(TokenKind::SEMICOLON, "Expect ';' after loop condition.");
-
-    ExprPtr increment;
-    if (!check(TokenKind::RIGHT_PAREN)) {
-      increment = expression();
-    }
-    consume(TokenKind::RIGHT_PAREN, "Expect ')' after for clauses.");
-
-    return std::make_shared<ForStmt>(std::move(initializer),
-                                     std::move(condition), std::move(increment),
-                                     statement());
+    return nullptr;
   }
 
   [[nodiscard]] Token generatedToken(TokenKind kind, std::string lexeme,
@@ -3838,7 +3915,8 @@ private:
 
   StmtPtr makeRangeForStatement(Token keyword, Mutability bindingMutability,
                                 TypeRef bindingType, Token bindingName,
-                                Token colon, ExprPtr range, StmtPtr body) {
+                                Token colon, ExprPtr range, StmtPtr body,
+                                StmtPtr initializer = nullptr) {
     const Stmt *sourceBody = body.get();
     const bool mutableElementLoan =
         bindingMutability == Mutability::Mutable && bindingType.reference;
@@ -3929,12 +4007,13 @@ private:
         std::make_unique<BlockStmt>(std::move(lowered)), ownerBindingPointer,
         rangeBindingPointer, iteratorBindingPointer, sentinelBindingPointer,
         elementBindingPointer, coreLoopPointer, elementOwnerBindingPointer,
-        sourceBody);
+        sourceBody, std::move(initializer));
   }
 
   StmtPtr switchStatement() {
     Token keyword = previous();
     consume(TokenKind::LEFT_PAREN, "Expect '(' after 'switch'.");
+    StmtPtr initializer = hasInitStatement() ? initStatement(true) : StmtPtr{};
     ExprPtr value = expression();
     consume(TokenKind::RIGHT_PAREN, "Expect ')' after switch expression.");
     consume(TokenKind::LEFT_BRACE, "Expect '{' before switch arms.");
@@ -3978,9 +4057,9 @@ private:
 
     Token closingBrace =
         consume(TokenKind::RIGHT_BRACE, "Expect '}' after switch arms.");
-    return std::make_shared<SwitchStmt>(std::move(keyword), std::move(value),
-                                        std::move(arms),
-                                        std::move(closingBrace));
+    return std::make_shared<SwitchStmt>(
+        std::move(keyword), std::move(value), std::move(arms),
+        std::move(closingBrace), std::move(initializer));
   }
 
   StmtPtr returnStatement() {
@@ -4968,6 +5047,25 @@ private:
       }
     }
     return true;
+  }
+
+  // A structured binding prefix followed by '=': a declaration, such as a
+  // range-for init statement, rather than a range-for binding.
+  [[nodiscard]] bool isStructuredBindingDeclaration() const {
+    std::size_t offset = 0;
+    while (peekAt(offset).kind != TokenKind::LEFT_BRACKET &&
+           peekAt(offset).kind != TokenKind::END_OF_FILE)
+      ++offset;
+    std::size_t depth = 0;
+    for (; peekAt(offset).kind != TokenKind::END_OF_FILE; ++offset) {
+      if (peekAt(offset).kind == TokenKind::LEFT_BRACKET) {
+        ++depth;
+      } else if (peekAt(offset).kind == TokenKind::RIGHT_BRACKET &&
+                 --depth == 0) {
+        return peekAt(offset + 1).kind == TokenKind::EQUAL;
+      }
+    }
+    return false;
   }
 
   [[nodiscard]] static bool isNumericTypeToken(TokenKind kind) {

@@ -4564,6 +4564,8 @@
       "source": "stdlib/std/format.gti",
       "status": "executable",
       "operations": [
+        "std::cerr",
+        "std::cout",
         "std::format",
         "std::format_pattern<Args...>",
         "std::format_spec",
@@ -4573,8 +4575,10 @@
         "std::formatter<T>::validate(format_spec&)",
         "std::formatting<T>",
         "std::formatting<T>::format",
+        "std::output_target",
         "std::print(pattern,Args...)",
         "std::println(pattern,Args...)",
+        "std::println(target,text)",
         "std::runtime_format",
         "std::runtime_format_to",
         "std::runtime_print",
@@ -4583,6 +4587,7 @@
         "std::try_format_to",
         "std::try_print",
         "std::try_println",
+        "std::try_println(target,pattern,Args...)",
         "std::try_runtime_format",
         "std::try_runtime_format_to",
         "std::try_runtime_print",
@@ -4620,7 +4625,9 @@
         "tests/ui/packs/reference_packs/function_text_escape.gti",
         "tests/ui/constexpr/consteval",
         "tests/fixtures/checked_literal_arguments.gti",
-        "tests/ui/stdlib/contracts"
+        "tests/ui/stdlib/contracts",
+        "tests/ui/stdlib/format/output_targets.gti",
+        "tests/ui/stdlib/format/output_target_error.gti"
       ]
     },
     {
@@ -7704,6 +7711,8 @@
         "std::string::get_unchecked",
         "std::string::get_unchecked_mut",
         "std::string::operator comparisons",
+        "std::string::operator+",
+        "std::string::operator+=",
         "std::string::operator[]",
         "std::string::pop_back",
         "std::string::push_back",
