@@ -438,6 +438,27 @@ auto SemanticVisitor::Impl::expressionRequirementFact(
       fact.memberName = "$construct";
       fact.arguments = {arguments[query.parameters().size()],
                         arguments[query.parameters().size()]};
+    } else if (const auto *target = exprAs<Variable>(call->callee().get());
+               target && !requiresUnsafe && !query.inferredResult() &&
+               !query.borrowedFrom() && !macroContext(target->name()) &&
+               !query.parameters().empty() &&
+               call->arguments().size() == query.parameters().size() &&
+               arguments.size() == query.parameters().size() + 1) {
+      // This slice proves a direct call on its written read-only bindings, in
+      // declaration order. Other expression shapes remain validity queries.
+      for (std::size_t index = 0; index < call->arguments().size(); ++index) {
+        if (parameter(call->arguments()[index].get()) != index ||
+            arguments[index].kind != SemanticType::Reference ||
+            arguments[index].referenceAccess != AccessMode::ReadOnly)
+          return std::nullopt;
+      }
+      if (arguments.back().kind == SemanticType::Reference)
+        return std::nullopt;
+      fact.kind = StructuralConstraintKind::FreeCall;
+      fact.memberName = target->name().lexeme;
+      fact.arguments.assign(arguments.begin(), arguments.end());
+      fact.freeCallQuery = &query;
+      return fact;
     } else {
       return std::nullopt;
     }
@@ -542,10 +563,13 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfied(
     const MemberRequirement &query,
     std::span<const SemanticType> inputArguments, std::string *reason,
     const std::vector<std::string> *lookupScope,
-    SemanticConstraintGuidance *guidance) const -> bool {
+    SemanticConstraintGuidance *guidance, FunctionId *selectedFreeCall) const
+    -> bool {
   return constraintQueryAttempts(reason, guidance, [&] {
-    return expressionRequirementSatisfiedOnce(query, inputArguments, reason,
-                                              lookupScope, guidance);
+    if (selectedFreeCall)
+      *selectedFreeCall = 0;
+    return expressionRequirementSatisfiedOnce(
+        query, inputArguments, reason, lookupScope, guidance, selectedFreeCall);
   });
 }
 
@@ -553,7 +577,8 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
     const MemberRequirement &query,
     std::span<const SemanticType> inputArguments, std::string *reason,
     const std::vector<std::string> *lookupScope,
-    SemanticConstraintGuidance *guidance) const -> bool {
+    SemanticConstraintGuidance *guidance, FunctionId *selectedFreeCall) const
+    -> bool {
   if (!chargeRequirementQueryTypes(inputArguments)) {
     if (reason)
       *reason = "Expression requirements exceed the 16384-node type-expansion "
@@ -591,8 +616,8 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
     return reject(
         "The required expression has incomplete explicit type arguments.");
   const bool cacheable =
-      !query.inferredResult() && !query.borrowedFrom() && !query.iteration() &&
-      !macroContext(query.keyword()) &&
+      !selectedFreeCall && !query.inferredResult() && !query.borrowedFrom() &&
+      !query.iteration() && !macroContext(query.keyword()) &&
       std::all_of(arguments.begin(), arguments.end(), closedPrimitive) &&
       primitiveQueryExpression(query.expression().get(), query);
   if (cacheable) {
@@ -613,6 +638,9 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
     if (wanted && (!body || body->statements().empty()))
       for (const auto &active : activeStructuralRequirements())
         if (active.kind == wanted->kind &&
+            (wanted->kind != StructuralConstraintKind::FreeCall ||
+             (active.freeCallQuery == &query && lookupScope &&
+              active.freeCallScope == *lookupScope)) &&
             active.arguments == wanted->arguments &&
             active.memberName == wanted->memberName &&
             active.mutableReceiver == wanted->mutableReceiver &&
@@ -820,6 +848,20 @@ auto SemanticVisitor::Impl::expressionRequirementSatisfiedOnce(
     return reject("An unannotated result must be owned and non-borrowed; name "
                   "a borrow-carrying result's origin with a region, as in "
                   "'-> int&<parameter>'.");
+  if (selectedFreeCall) {
+    const auto *call = exprAs<Call>(resultExpression);
+    const auto *selected =
+        call ? worker->semanticModel.findCall(*call) : nullptr;
+    if (selected && selected->declaration && selected->function != 0 &&
+        selected->intrinsic == IntrinsicKind::None &&
+        selected->declaration->genericParameters().empty() &&
+        selected->declaration->parameters().size() ==
+            call->arguments().size() &&
+        std::ranges::equal(selected->parameterTypes,
+                           arguments.first(query.parameters().size()))) {
+      *selectedFreeCall = selected->function;
+    }
+  }
   if (cacheable && primitiveRequirementProofCount < 1024) {
     primitiveRequirementProofs[&query].emplace_back(arguments.begin(),
                                                     arguments.end());
