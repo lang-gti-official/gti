@@ -2660,6 +2660,10 @@ Benchmarking reports what happened. Compiler telemetry should explain why.
 ### Phase timing
 
 Frontend `--time-trace` and CLI live progress already observe coarse phases.
+[RFC 0006](https://github.com/lang-gti-official/rfcs/pull/7) stage A adds
+LLVM admission, lowering, module transforms, optimization and machine-code
+regions. The structural snapshot records the region durations from a native
+build. Nested regions overlap their parents and should not be added together.
 Complete global/pass timing remains proposed: extend observational
 compiler/driver sinks without treating terminal elapsed rendering as a complete
 profiler. The sink should be caller-owned, synchronous, non-owning and unable

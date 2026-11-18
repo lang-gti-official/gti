@@ -2,6 +2,7 @@
 #include "gti/optimization/coverage.h"
 
 #include "llvm/ADT/GraphTraits.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/GenericDomTree.h"
 #include "llvm/Support/GenericDomTreeConstruction.h"
 #include "llvm/Support/raw_ostream.h"
@@ -180,19 +181,10 @@ bool MirDominanceInfo::dominates(MirBlockId dominator, MirBlockId block) const {
   if (!isReachable(dominator) || !isReachable(block)) {
     return false;
   }
-  if (dominator == block) {
-    return true;
-  }
-
-  MirBlockId current = immediateDominator(block);
-  for (std::size_t depth = 0;
-       current != 0 && depth < immediateDominators.size(); ++depth) {
-    if (current == dominator) {
-      return true;
-    }
-    current = immediateDominator(current);
-  }
-  return false;
+  const auto &ancestor = blocks[dominator - 1];
+  const auto &descendant = blocks[block - 1];
+  return ancestor.entry <= descendant.entry &&
+         descendant.entry <= ancestor.exit;
 }
 
 namespace {
@@ -310,18 +302,29 @@ std::optional<MirDominanceInfo> computeMirDominance(const MirBody &body) {
   tree.recalculate(*snapshot);
 
   MirDominanceInfo result;
-  result.immediateDominators.assign(body.blocks.size(), 0);
-  result.reachableBlocks.assign(body.blocks.size(), false);
-  for (CfgNode &node : snapshot->nodes) {
-    const llvm::DomTreeNodeBase<CfgNode> *treeNode = tree.getNode(&node);
-    if (treeNode == nullptr) {
+  result.blocks.resize(body.blocks.size());
+  using TreeNode = llvm::DomTreeNodeBase<CfgNode>;
+  struct Frame {
+    const TreeNode *node;
+    TreeNode::const_iterator nextChild;
+  };
+  const TreeNode *root = tree.getRootNode();
+  unsigned preorder = 1;
+  result.blocks[root->getBlock()->id - 1].entry = preorder;
+  llvm::SmallVector<Frame, 32> stack{{root, root->begin()}};
+  while (!stack.empty()) {
+    Frame &frame = stack.back();
+    const MirBlockId id = frame.node->getBlock()->id;
+    if (frame.nextChild == frame.node->end()) {
+      result.blocks[id - 1].exit = preorder;
+      stack.pop_back();
       continue;
     }
-    result.reachableBlocks[node.id - 1] = true;
-    const llvm::DomTreeNodeBase<CfgNode> *immediate = treeNode->getIDom();
-    if (immediate != nullptr && immediate->getBlock() != nullptr) {
-      result.immediateDominators[node.id - 1] = immediate->getBlock()->id;
-    }
+    const auto *child = *frame.nextChild++;
+    auto &facts = result.blocks[child->getBlock()->id - 1];
+    facts.parent = id;
+    facts.entry = ++preorder;
+    stack.push_back({child, child->begin()});
   }
   return result;
 }

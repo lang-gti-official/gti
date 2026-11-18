@@ -93,6 +93,13 @@ enum {
   GTI_PROCESS_TERMINATION_SIGNALED_V1 = 1,
 };
 
+// Replaces the current process by exact path, inheriting the environment.
+// Success never returns. Failure returns an error and snapshots errno in
+// native_code (zero for invalid transport or unsupported platform). Argument
+// bytes are borrowed only for this call and argv[0] is the executable path.
+gti_process_error_v1 gti_rt_process_exec_v1(gti_c_string_view arguments,
+                                            int32_t *native_code);
+
 gti_process_error_v1 gti_rt_process_run_v1(gti_c_string_view arguments,
                                            int32_t *termination_kind,
                                            int32_t *termination_value,

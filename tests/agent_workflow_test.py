@@ -351,6 +351,8 @@ class Lifecycle(unittest.TestCase):
         for name in list(os.environ):
             if name.startswith(module.build_window.ENV_PREFIX):
                 del os.environ[name]
+        # Default branch names follow the running agent client; tests pick it.
+        os.environ.pop("CLAUDECODE", None)
         self.flow = module.Workflow(self.primary, self.api, enforce_origin=False)
         self.flow.lock_wait = 0
         self.flow.window.poll = 0.05
@@ -776,6 +778,27 @@ class Lifecycle(unittest.TestCase):
         self.assertEqual(state["phase"], "active")
         self.assertTrue((self.flow.state_dir / "evidence/old/legacy-record.json").is_file())
         self.assertTrue(git(self.primary, "ls-remote", "origin", "refs/heads/codex/old"))
+
+    def test_task_branches_use_the_client_prefix(self):
+        prefix = module.Workflow.branch_prefix
+        self.assertEqual(prefix({"CLAUDECODE": "1"}), "claude/")
+        self.assertEqual(prefix({}), "codex/")
+        self.assertEqual(prefix({"CLAUDECODE": "0"}), "codex/")
+        os.environ["CLAUDECODE"] = "1"
+        claude = self.flow.start("claude-task", "Claude task", self.root / "claude-task")
+        self.assertRegex(claude["branch"], r"\Aclaude/claude-task-[0-9a-f]{8}\Z")
+        self.assertTrue(git(self.primary, "ls-remote", "origin", "refs/heads/" + claude["branch"]))
+        del os.environ["CLAUDECODE"]
+        codex = self.flow.start("codex-task", "Codex task", self.root / "codex-task")
+        self.assertRegex(codex["branch"], r"\Acodex/codex-task-[0-9a-f]{8}\Z")
+        # Either client may name the other's prefix explicitly, so a task
+        # started by one client stays resumable by the other.
+        explicit = self.flow.start("explicit", "Explicit", self.root / "explicit", "claude/explicit")
+        self.assertEqual(explicit["branch"], "claude/explicit")
+        with self.assertRaisesRegex(Error, "claude/ or codex/"):
+            self.flow.start("other", "Other", self.root / "other", "feature/other")
+        with self.assertRaisesRegex(Error, "claude/ or codex/"):
+            self.flow.start("other", "Other", self.root / "other", "claude/bad..name")
 
     def test_lock_ownership_and_scope_guards(self):
         with self.flow.lock():
