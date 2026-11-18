@@ -1389,10 +1389,17 @@ auto SemanticVisitor::Impl::recordProgramCallEffects(const Expr &expression)
       consumeReceiver(call->callee(), operation->receiverMode);
       consumeArguments(call->arguments(), operation->parameterTypes);
     } else if (const auto *binary = exprAs<Binary>(&expression)) {
-      consumeReceiver(binary->left(), operation->receiverMode);
-      if (!operation->parameterTypes.empty() &&
-          operation->parameterTypes.front().kind != SemanticType::Reference)
-        consumeProgramTemporary(binary->right());
+      if (operation->operandArguments) {
+        if (operation->parameterTypes[0].kind != SemanticType::Reference)
+          consumeProgramTemporary(binary->left());
+        if (operation->parameterTypes[1].kind != SemanticType::Reference)
+          consumeProgramTemporary(binary->right());
+      } else {
+        consumeReceiver(binary->left(), operation->receiverMode);
+        if (!operation->parameterTypes.empty() &&
+            operation->parameterTypes.front().kind != SemanticType::Reference)
+          consumeProgramTemporary(binary->right());
+      }
     } else if (const auto *index = exprAs<Index>(&expression)) {
       consumeReceiver(index->object(), operation->receiverMode);
       if (!operation->parameterTypes.empty() &&
@@ -1818,8 +1825,15 @@ auto SemanticVisitor::Impl::recordProgramCallEffectTargets(
                                            call->arguments());
     } else if (const auto *binary = exprAs<Binary>(&expression);
                binary != nullptr && !operation->parameterTypes.empty()) {
-      if (operation->parameterTypes.front().kind == SemanticType::Reference ||
-          operation->parameterTypes.front().kind == SemanticType::RawPointer) {
+      const std::size_t rightIndex = operation->operandArguments ? 1 : 0;
+      if (operation->operandArguments &&
+          (operation->parameterTypes[0].kind == SemanticType::Reference ||
+           operation->parameterTypes[0].kind == SemanticType::RawPointer))
+        forceProgramStorageBoundaryAccess(binary->left());
+      if (operation->parameterTypes[rightIndex].kind ==
+              SemanticType::Reference ||
+          operation->parameterTypes[rightIndex].kind ==
+              SemanticType::RawPointer) {
         forceProgramStorageBoundaryAccess(binary->right());
       }
     } else if (const auto *index = exprAs<Index>(&expression);

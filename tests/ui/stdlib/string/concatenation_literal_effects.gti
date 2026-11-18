@@ -1,0 +1,14 @@
+// Folding literal subtrees never skips or reorders surrounding runtime producers.
+//@ run-pass
+//@ stdout: left
+//@ stdout: right
+import std.string;
+std::string_view produce(std::string_view value) {
+  std::println(value);
+  return value;
+}
+int main() {
+  auto result = ("a" + "b") + produce("left") + ("c" + "d") + produce("right");
+  if (result != "ableftcdright") { return 1; }
+  return 0;
+}

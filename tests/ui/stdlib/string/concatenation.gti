@@ -1,0 +1,30 @@
+// Mixed strings, views and literals concatenate into independent owned strings.
+//@ run-pass
+import std.string;
+
+std::string join<L, R>(L& left, R& right)
+    requires requires(L& a, R& b) { { a + b } -> std::string; } {
+  return left + right;
+}
+
+int main() {
+  std::string left = "left";
+  std::string right = "right";
+  std::string_view view = "view";
+  if ((left.view() + left) != "leftleft") { return 14; }
+  if ((left + right) != "leftright") { return 1; }
+  if ((left + view) != "leftview") { return 2; }
+  if ((view + right) != "viewright") { return 3; }
+  if ((view + view) != "viewview") { return 4; }
+  if (("a" + "b") != "ab") { return 5; }
+  if ((left + "-" + right + view + "!") != "left-rightview!") { return 6; }
+  if (("(" + left + "/" + right + ")") != "(left/right)") { return 7; }
+  if (("" + std::string("temporary")) != "temporary") { return 8; }
+  if ((std::string("x") + std::string("y")) != "xy") { return 9; }
+  if (join(view, right) != "viewright") { return 10; }
+  if (join(left, right) != "leftright") { return 11; }
+  if (left != "left" || right != "right") { return 12; }
+  auto nul = "a\0" + "b";
+  if (nul.size() != 3 || nul[1] != '\0' || nul[2] != 'b') { return 13; }
+  return 0;
+}

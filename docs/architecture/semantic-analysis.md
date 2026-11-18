@@ -730,6 +730,41 @@ incomplete optional auditing until their dispatch-family observations are
 represented. Source-produced output facts use the bounded queries above;
 this does not imply complete campaign or release acceptance.
 
+## Primitive text concatenation
+
+A counted `StringView` has no source class body. Binary `+` selects the
+`gti_internal::text_view_concat` adapters only from the trusted `std/string`
+source unit. Semantic selection validates their source bodies, exact signatures,
+non-borrowing owned result and ordinary argument compatibility, including the
+existing call-scoped temporary-reference proof. Public alias names and
+lookalike user functions do not establish the capability.
+
+`ResolvedOperatorInfo::operandArguments` distinguishes these receiverless
+source calls from member operators. Both operands are parameters in program
+storage effects and temporary-consumption accounting. HIR lowers the selection
+to an ordinary `Call` with an ordered argument plan, including temporary borrow
+materialization. MIR and LLVM need no string-specific concatenation operation.
+The source functions own reserve/copy policy; `std::string`'s member operators
+own append and consuming-receiver reuse. Result ownership is independent of
+input view lifetimes, while views of the result retain their ordinary owner
+requirements.
+
+After ordinary operator and borrow checking, literal-only text-addition trees
+carry `LiteralTextConcatenation` facts: the trusted two-view source factory and
+the combined byte count. Leaves must be string literals (possibly grouped),
+and joins must select the trusted `std/string` operations with the factory's
+exact owned result. Variables, calls, conversions and user overloads do not
+qualify. This is executable folding, not a new constant-expression eligibility
+rule. Semantic records retain the original selected overloads for tooling.
+
+HIR flattens each maximal eligible tree once, using decoded literal bytes,
+then calls the existing factory with the combined static view and an empty
+view. It retains the owned result and normal MIR call/cleanup path, but omits
+intermediate owner allocations. Per-node metadata stores sizes and identities,
+not copied prefixes, so compile-time storage does not grow quadratically.
+The source factory still owns allocation, overflow checks and copying into the
+final owner. No backend-specific folding or runtime ABI is introduced.
+
 ## Exact structural member signatures
 
 Source member requirements carry a typed receiver, exact parameter types/access,

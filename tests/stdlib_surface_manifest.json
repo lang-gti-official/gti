@@ -7704,6 +7704,8 @@
         "std::string::get_unchecked",
         "std::string::get_unchecked_mut",
         "std::string::operator comparisons",
+        "std::string::operator+",
+        "std::string::operator+=",
         "std::string::operator[]",
         "std::string::pop_back",
         "std::string::push_back",

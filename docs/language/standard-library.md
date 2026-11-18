@@ -361,7 +361,25 @@ The current implemented foundation includes:
   the source into another owner. Slice/erase/replace lengths clamp to the available remainder;
   positions beyond `size()` raise `GTI-R0007`. The view constructor is
   `implicit`, so `std::string text = "Sampling...";` constructs a string, and
-  assignment from a counted view (`text = "Done";`) replaces the contents. Mutation retains capacity when
+  assignment from a counted view (`text = "Done";`) replaces the contents.
+  With `import std.string;`, `+` accepts any pairing of strings, counted views,
+  and literals and returns an independent owning `std::string`. For example,
+  `" (GTI " + before + " -> " + after + ")"` does not consume named inputs.
+  A fresh or explicitly moved left string reuses its storage; left-associated
+  chains therefore take amortized linear copying and geometric allocation
+  growth, rather than cloning every accumulated prefix. The first pair of
+  borrowed inputs reserves their combined size once. Literal-only `+` trees,
+  including parenthesized groups, combine their decoded bytes at compile time
+  and construct one owned result at runtime, without intermediate strings.
+  This optimization preserves the `std::string` result type; it does not make
+  the expression a static view or a constexpr owning allocation.
+  `text += suffix` accepts
+  a string, view, literal, or temporary string and requires a mutable owning
+  destination. A view cannot grow with `+=`. Both operators copy counted bytes,
+  including embedded NULs. They preserve ordinary borrow rules: self-append,
+  an aliased source view, mutation while a destination view remains live, and
+  escaping a view into a temporary result remain rejected.
+  Mutation retains capacity when
   sufficient and excludes any live view into the destination, including a
   replacement argument that aliases it. When `append`, `push_back`, `insert`,
   or `replace` must grow, capacity at least doubles, so a sequence of appends
