@@ -3363,6 +3363,22 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+A method result in a region its class stores has a union contract: origin
+`Receiver` for the receiver's fields stored in that region plus the named
+parameter lanes written in it, carried in `returnBorrowParameters` (empty for
+a receiver-only result) and stated exactly by `completeReturnBorrow`. The
+program verifier admits an `Argument` mapping in such a contract only for a
+named lane, checks each return's source and every additional source against
+`this` or a named lane, and lets a consumed temporary receiver relay a named
+lane, never the temporary itself. At a call, the result loan keeps the
+receiver's stored dependency as its parent and each named lane's argument as
+an additional dependency, an owned local argument under its ordinary
+ownership, so a reference binding retains that call-result loan rather than
+the receiver's owner loan alone. A named lane has no entry loan in such a
+body, so a returned call that relays a local reference alias of one
+(`int& local = fallback; return pick(local);`) walks through the alias's
+`Local` loan, as it does through an alias of receiver storage.
+
 A consumed temporary receiver whose stored group is exclusive may hand its
 read-only class-region result to the group's suspended parent authority only
 when that group is not lifecycle-bound and retires within the full
@@ -3371,7 +3387,24 @@ result's own publication (a return borrow or a reference binding) and drops.
 Verification checks that exact sequence. A further stored path of the same
 carrier is another field's owner and never the relayed one; and the referent
 of a read-only reference formal may be an additional source of a stored
-group without a loan of the body's own, as an owned local input may.
+group without a loan of the body's own, as an owned local input may. A
+shared stored group taken from an exclusive authority (`Reader(mine)` with
+`mut Box&<a> mine`) suspends that authority; its read-only result may join
+the group's readers while every live child of the authority reads. A union
+result relays the same way: its receiver mapping names the group, and each
+named argument lane is a further read-only dependency, which for a call
+result, as for a stored group, may be a read-only reference formal's
+referent, or a field or element of it, without a loan of the body's own.
+
+Those exemptions hold only inside the body. A loan that leaves it never
+depends on an object the body owns: a local, or a by-value formal other
+than a borrow carrier, whose dependency stands for the caller-owned
+referents it stores (rejected as a borrow escape at its return); and a returned loan under a
+one-formal contract publishes only that formal (or static storage): each
+argument that the producing call, and any call nested in its arguments,
+borrows must be that formal, and, unless a receiver's stored group relays
+the result, so must each further dependency of the returned loan. The
+program verifier checks this independently of semantics.
 
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly

@@ -1,0 +1,19 @@
+// A returned borrow cannot depend on a by-value formal or a local stored in a consumed temporary: both die with the function.
+class Two<lifetime o> {
+  int&<o> x;
+  int&<o> y;
+public:
+  Two(int&<o> x, int&<o> y) : x(x), y(y) {}
+  int&<o> pick(bool first) && {
+    if (first) { return this.x; }
+    return this.y;
+  }
+};
+int&<a> by_value<lifetime a>(int&<a> keep, int value) {  //~ ERROR GTI-S2017
+  return Two(keep, value).pick(false);
+}
+int&<a> local<lifetime a>(int&<a> keep) {  //~ ERROR GTI-S2017
+  int value = 42;
+  return Two(keep, value).pick(false);
+}
+int main() { return 0; }
