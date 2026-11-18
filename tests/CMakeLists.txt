@@ -2351,12 +2351,6 @@ if(Python3_Interpreter_FOUND)
   # Its GCC sanitized build may take minutes under a parallel suite;
   # see SANITIZED_BUILD_TIMEOUT in tests/sanitizer_support.py.
   add_test(
-    NAME expected_payload_range_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/expected_payload_range_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  add_test(
     NAME evaluation_order_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/evaluation_order_runtime_test.py"

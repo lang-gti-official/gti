@@ -1,0 +1,16 @@
+// Range-for over an expected holding an error fails with invalid_expected_access before the loop.
+//@ run-fail
+//@ exit-code: 70
+//@ stderr-contains: runtime error[GTI-R0009]
+//@ stderr-contains: value_on_error
+import std.string;
+
+expected<std::string, int32_t> make_error() {
+  return unexpected(int32_t(7));
+}
+
+int main() {
+  mut auto text = make_error();
+  for (auto& byte : text.value()) { return 1; }
+  return 2;
+}

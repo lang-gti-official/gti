@@ -1,0 +1,72 @@
+// Range-for over an expected's success payload (owned string, user range, parameter) iterates, continues, breaks and returns.
+//@ run-pass
+import std.string;
+
+expected<std::string, int32_t> make_text() {
+  return std::string("ab");
+}
+
+interface CounterIteratorContract {
+  int32_t& operator*();
+  void operator++() mut;
+};
+
+class CounterIterator : public CounterIteratorContract {
+  mut int32_t current;
+public:
+  CounterIterator(int32_t value) : current(value) {}
+  int32_t& operator*() override { return this.current; }
+  void operator++() mut override { this.current += 1; }
+  bool operator!=(CounterIterator& other) {
+    return this.current != other.current;
+  }
+};
+
+class CounterRange {
+  int32_t first;
+  int32_t last;
+public:
+  CounterRange(int32_t first, int32_t last) : first(first), last(last) {}
+  CounterIterator begin() { return CounterIterator(this.first); }
+  CounterIterator end() { return CounterIterator(this.last); }
+};
+
+expected<CounterRange, int32_t> make_range(int32_t first, int32_t last) {
+  return CounterRange(first, last);
+}
+
+int count_parameter(expected<std::string, int32_t> text) {
+  mut int32_t count = 0;
+  for (auto& outer : text.value()) {
+    for (auto& inner : text.value()) {
+      count += 1;
+      if (count == 1) { continue; }
+    }
+    if (count == 4) { break; }
+  }
+  return count;
+}
+
+int return_from_loop(expected<std::string, int32_t> text) {
+  for (auto& byte : text.value()) { return 2; }
+  return 1;
+}
+
+int nominal_ranges() {
+  mut auto values = make_range(1, 4);
+  mut int32_t total = 0;
+  for (auto& value : values.value()) { total += value; }
+  mut auto empty = make_range(0, 0);
+  for (auto& value : empty.value()) { return 1; }
+  return total - 6;
+}
+
+int main() {
+  mut auto first = make_text();
+  mut int32_t count = 0;
+  for (auto& byte : first.value()) { count += 1; }
+  mut auto second = make_text();
+  mut auto third = make_text();
+  return count + count_parameter(std::move(second)) +
+         return_from_loop(std::move(third)) + nominal_ranges() - 8;
+}
