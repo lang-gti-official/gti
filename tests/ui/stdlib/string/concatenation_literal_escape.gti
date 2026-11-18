@@ -1,0 +1,6 @@
+// Folding literal bytes does not let a view outlive the runtime owning result.
+import std.string;
+std::string_view bad() {
+  return ("a" + "b" + "c").view(); //~ ERROR GTI-S2045
+}
+int main() { return 0; }

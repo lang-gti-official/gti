@@ -1,0 +1,105 @@
+// A failing default constructor while growing a vector destroys what was built, in order; a second failure stops cleanup.
+//@ run-pass
+//@ revisions: r0 r1 r2 r3 r4 r5
+//@[r0] stdout: 1
+//@[r0] stdout: 2
+//@[r0] stdout: 3
+//@[r0] stdout: 300
+//@[r0] stdout: 12
+//@[r0] stdout: 200
+//@[r0] stdout: 11
+//@[r0] stdout: 100
+//@[r0] stdout: 10
+//@[r0] stdout: 90
+//@[r1] args: fail
+//@[r1] stdout: 1
+//@[r1] stdout: 2
+//@[r1] stdout: 11
+//@[r1] stdout: 100
+//@[r1] stdout: 10
+//@[r1] stdout: 90
+//@[r1] run-fail
+//@[r1] exit-code: 70
+//@[r1] stderr-contains: main.gti:86: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[r2] args: fail fail
+//@[r2] stdout: 1
+//@[r2] stdout: 2
+//@[r2] stdout: 11
+//@[r2] stdout: 100
+//@[r2] run-fail
+//@[r2] exit-code: 70
+//@[r2] stderr-contains: main.gti:91: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:86; secondary [GTI-R0002]
+//@[r3] args: fail fail fail
+//@[r3] stdout: 1
+//@[r3] stdout: 2
+//@[r3] stdout: 3
+//@[r3] stdout: 300
+//@[r3] stdout: 12
+//@[r3] stdout: 200
+//@[r3] stdout: 11
+//@[r3] stdout: 100
+//@[r3] stdout: 10
+//@[r3] stdout: 90
+//@[r4] args: fail fail fail fail
+//@[r4] stdout: 1
+//@[r4] stdout: 2
+//@[r4] stdout: 11
+//@[r4] stdout: 100
+//@[r4] stdout: 10
+//@[r4] stdout: 90
+//@[r4] run-fail
+//@[r4] exit-code: 70
+//@[r4] stderr-contains: main.gti:86: runtime error[GTI-R0002]: division_by_zero in integer_division
+//@[r5] args: fail fail fail fail fail
+//@[r5] stdout: 1
+//@[r5] stdout: 2
+//@[r5] stdout: 11
+//@[r5] stdout: 100
+//@[r5] run-fail
+//@[r5] exit-code: 70
+//@[r5] stderr-contains: main.gti:91: runtime error[GTI-R0014]: failure_during_cleanup; primary [GTI-R0002] at main.gti:86; secondary [GTI-R0002]
+import std.optional;
+import std.string;
+import std.vector;
+
+mut int next_number = 0;
+mut bool fail_construction = false;
+mut bool fail_cleanup = false;
+
+class Marker {
+  int number;
+public:
+  Marker(int value) : number(value) {}
+  ~Marker() { std::println(this.number); }
+};
+
+class Entry {
+  Marker marker;
+  std::optional<std::string> text;
+  int number;
+public:
+  Entry() : marker(Marker(next_number + 10)),
+            text(std::optional<std::string>(std::string("owned"))),
+            number(++next_number) {
+    std::println(this.number);
+    int divisor = fail_construction && this.number == 2 ? 0 : 1;
+    int result = 1 / divisor;
+  }
+  ~Entry() {
+    std::println(this.number * 100);
+    int divisor = fail_cleanup && this.number == 1 ? 0 : 1;
+    int result = 1 / divisor;
+  }
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  fail_construction = argc == 2 || argc == 3 || argc == 5 || argc == 6;
+  fail_cleanup = argc == 3 || argc == 6;
+  Marker caller = Marker(90);
+  bool resizing = argc >= 4;
+  mut std::vector<Entry> entries{std::size_t(resizing ? 1 : 3)};
+  if (resizing) {
+    entries.resize(std::size_t(3));
+  }
+  return 0;
+}

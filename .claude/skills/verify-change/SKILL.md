@@ -22,6 +22,15 @@ Use the canonical planner to avoid a stale client-specific selection policy:
 python3 .codex/skills/verify-change/scripts/plan_checks.py
 ```
 
+A change that deletes, adds or renames a test file, script or fixture also
+runs the `tree-consistency` label (meta-tests that cross-reference the tree;
+the CI gate runs it too) from a configure-only tree:
+
+```sh
+cmake -S . -B build-consistency -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_DIR="$(python3 scripts/llvm_pin.py --cmake-dir)"
+ctest --test-dir build-consistency -j 8 --output-on-failure -L '^tree-consistency$'
+```
+
 Preserve this client's separate task-worktree handling from
 [agent-workflow](../agent-workflow/SKILL.md). Do not claim a skipped or failing
 gate passed, and report the complete suite as deferred to post-integration full

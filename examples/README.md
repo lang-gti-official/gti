@@ -1,5 +1,10 @@
 # GTI examples
 
+[`compatible_extern_c.gti`](compatible_extern_c.gti) demonstrates two independent
+namespace APIs binding the same C function, with exact signature and safety
+contract checking. Compile it with `gti examples/compatible_extern_c.gti -o
+/tmp/compatible-extern-c` and run `/tmp/compatible-extern-c`; success exits zero.
+
 [`llvm/codegen-attributes.gti`](llvm/codegen-attributes.gti) demonstrates advisory
 `[[inline]]`, `[[noinline]]` call boundaries and a returning `[[cold]]` function,
 including generic/member functions, constructors, destructors and deterministic cleanup. Run it with
@@ -922,7 +927,7 @@ loan checking. `tests/project/compiled_borrowing` owns its positive and negative
 [`compiled-dependencies/`](compiled-dependencies/README.md) demonstrates automatic
 library builds through a diamond dependency graph, a shared private counter and
 class static constant, exact dependency receipts and reuse of unchanged libraries.
-`compiled_dependency_project` owns its execution,
+The `tests/slow/project/compiled_dependencies` transcript (a copy of the example) owns its execution,
 failure, freshness and source-free distribution checks.
 
 The [compiled namespace example](compiled-namespaces/README.md) composes distinct

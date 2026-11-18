@@ -1,0 +1,5 @@
+import std.panic;
+int main() {
+  std::println("before-panic");
+  std::panic("colour test panic");
+}

@@ -1,0 +1,6 @@
+import std.string;
+import std.panic;
+int main() {
+  std::println("legacy-stdout");
+  std::panic("legacy-stderr");
+}

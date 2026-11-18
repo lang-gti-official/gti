@@ -1,0 +1,12 @@
+// Generic enum instances: all default arguments.
+//@ run-pass
+enum DefaultEvent<T = int32_t, uint64_t Channel = 3> { idle, item(T value) };
+using Selected = DefaultEvent<>;
+int main() {
+  Selected first = DefaultEvent<>::item(7);
+  DefaultEvent<int32_t, 3> second = first;
+  switch (second) {
+    case Selected::idle: return 1;
+    case Selected::item(value): return value == 7 ? 0 : 2;
+  }
+}

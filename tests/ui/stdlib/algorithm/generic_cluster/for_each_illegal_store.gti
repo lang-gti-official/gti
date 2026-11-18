@@ -1,0 +1,20 @@
+// An exact-return callable parameter cannot be used as an ordinary value.
+//@ check-fail
+Function illegal_store<Function>(mut Function function) {
+  function();
+  Function copied = function;  //~ ERROR GTI-S2046 Exact-return callable parameter 'function' cannot be used as an ordinary value
+  return std::move(function);
+}
+
+class operation {
+public:
+  void operator()() {}
+public:
+  operation() = default;
+};
+
+int main() {
+  operation callable = operation();
+  [[discard]] illegal_store(std::move(callable));
+  return 0;
+}

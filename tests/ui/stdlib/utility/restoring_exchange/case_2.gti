@@ -1,0 +1,13 @@
+// Restoring_exchange: swapping view bindings must not erase or misattribute owner loans.
+import std.utility;
+import std.string;
+int main() {
+  std::string left = std::string("left");
+  mut std::string right = std::string("right");
+  mut std::string_view a = left.view();
+  mut std::string_view b = right.view();
+  std::swap(a, b);  //~ ERROR GTI-S2045
+  right.clear();
+  std::println(a);
+  return 0;
+}

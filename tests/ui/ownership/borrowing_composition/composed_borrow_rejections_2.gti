@@ -1,0 +1,66 @@
+// Composed borrows keep every owner borrowed: owner writes, temporary owners, reseats and aliases are rejected.
+//@ check-fail
+
+namespace case_first_owner_write {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  mut int a = 1; mut int b = 2;  //~ WARN GTI-S2096
+  PairView view{a, b}; a = 3; return view.sum();  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_second_owner_write {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  mut int a = 1; mut int b = 2;  //~ WARN GTI-S2096
+  PairView view{a, b}; b = 3; return view.sum();  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_copied_second_owner_write {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  mut int a = 1; mut int b = 2;  //~ WARN GTI-S2096
+  PairView view{a, b}; auto copy = view;
+  b = 3; return copy.sum();  //~ ERROR GTI-S2017
+}
+}
+
+namespace case_projected_reference_keeps_group {
+struct PairView {
+  int& first;
+  int& second;
+  PairView(int& a, int& b) : first(a), second(b) {}
+  int sum() { return first + second; }
+  int sum_with(int other) { return first + second + other; }
+  int mutate_argument(mut int& other) { other = 9; return first + second; }
+};
+int entry() {
+  mut int a = 1; mut int b = 2;  //~ WARN GTI-S2096
+  PairView view{a, b}; int& first = view.first;
+  b = 3; return first;  //~ ERROR GTI-S2017
+}
+}
+
+int main() { return 0; }

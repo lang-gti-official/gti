@@ -1,0 +1,54 @@
+// Structured bindings decompose fixed arrays of owning classes with exact cleanup.
+//@ run-pass
+// --- owning_class_array_decomposition.gti
+import std.string;
+import std.utility;
+
+extern "C" {
+  void mark_constructor();
+  int32_t constructed_count();
+}
+
+class Text {
+public:
+  std::string text;
+  Text(std::string input) : text(std::move(input)) { mark_constructor(); }
+};
+
+int inspect() {
+  Text values[2] = {Text(std::string("one")), Text(std::string("two"))};
+  auto [first, second] = std::move(values);
+  return first.text.view() == "one" && second.text.view() == "two" ? 0 : 1;
+}
+
+int main() {
+  if (inspect() != 0) { return 1; }
+  // No ordinary/default construction is introduced by the whole-array move.
+  return constructed_count() == 2 ? 0 : 2;
+}
+// --- projection_records.c
+#include <stddef.h>
+#include <stdint.h>
+
+struct Samples {
+  int32_t values[4];
+  int32_t count;
+};
+
+_Static_assert(sizeof(struct Samples) == 20, "Samples C ABI size");
+_Static_assert(offsetof(struct Samples, count) == 16,
+               "Samples C ABI field offset");
+_Static_assert(_Generic(((struct Samples *)0)->values[0],
+                   int32_t: 1,
+                   default: 0),
+               "Samples element is a C int32_t");
+
+struct Samples *native_samples(void) {
+  static struct Samples samples = {{4, 0, 7, 8}, 4};
+  return &samples;
+}
+
+static int32_t constructor_count;
+
+void mark_constructor(void) { ++constructor_count; }
+int32_t constructed_count(void) { return constructor_count; }

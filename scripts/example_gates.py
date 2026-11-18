@@ -10,11 +10,11 @@ import xml.etree.ElementTree as ET
 
 # The corpus owns all numbered top-level programs; the remaining established
 # harnesses own nested projects and local HTTP/native prerequisites.
-TESTS = {"owner_chain_runtime", "compiled_type_forwarding", "compiled_dependency_project", "compiled_primitive_library", "compiled_libraries_project", "compiled_library_project", "compiled_scalar_library", "mir_cutover_corpus_oracle", "practical_examples",
+TESTS = {"owner_chain_runtime", "compiled_primitive_library", "compiled_libraries_project", "compiled_library_project", "compiled_scalar_library", "mir_cutover_corpus_oracle", "practical_examples",
          "project_cli_workflow", "gti_test_ui", "native_enum_bindgen",
          "native_typedef_bindgen", "native_union_bindgen", "native_variable_bindgen",
          "process_resource_policy", "llvm_embedding_project",
-         "annotated_test_suites", "out_of_class_runtime", "module_system_runtime", "module_discovery_runtime", "typed_differential_smoke",
+         "out_of_class_runtime", "module_system_runtime", "module_discovery_runtime", "typed_differential_smoke",
          "llvm_scalar_execution", "llvm_place_execution", "llvm_class_execution",
          "llvm_payload_execution", "llvm_dispatch_execution",
          "llvm_native_c_indirect_execution", "llvm_native_c_aggregate_execution",

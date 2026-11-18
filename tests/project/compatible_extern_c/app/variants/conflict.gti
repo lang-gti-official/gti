@@ -1,0 +1,4 @@
+import first.native;
+import second.native;
+extern "C" { c_long abs(c_int value); }
+int main() { return 0; }

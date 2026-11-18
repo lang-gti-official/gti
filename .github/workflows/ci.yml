@@ -1,8 +1,10 @@
 name: CI
 
 # One required check, "CI gate". A pull request proves lint and fast checks
-# before it may enter the merge queue; the queue proves the same build and
-# fast checks on the exact candidate that becomes main. The complete suite
+# on Linux and macOS before it may enter the merge queue; the queue proves the
+# same build and fast checks on Linux (and on macOS when vars.GTI_QUEUE_MACOS
+# is `true`) on the exact candidate that becomes main (its source-stdlib and
+# LSP lanes still package both platforms). The complete suite
 # (production packaging, every integration shard) runs after integration on
 # each main head in full-validation.yml, and the sanitizers daily on the
 # nightly commit in sanitizers.yml, the way
@@ -32,10 +34,40 @@ jobs:
     outputs:
       mode: ${{ steps.plan.outputs.mode }}
       reuse: ${{ steps.plan.outputs.reuse }}
+      fast_matrix: ${{ steps.fast.outputs.matrix }}
+      queue_macos: ${{ steps.fast.outputs.queue_macos }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - name: Choose the fast-checks platforms for this event
+        # The `fast` job's rows. `gate` is the CTest entries its test phase
+        # runs beyond fast feedback, and `rotate` how many tests/ui shards
+        # gti_test_ui_<i> are added to it, chosen from the commit
+        # (validation_checks.py gate-tests). Linux runs every gti-test tier.
+        # macOS, whose hosted runners are scarce (five at once on this plan,
+        # shared with full validation), runs what differs on the platform:
+        # gti_test_ui (the runner's self-test, tidy, tests/project and
+        # tests/lsp) and gti_unit_tests, plus one tests/ui shard that rotates
+        # with the commit. A pull request runs both rows, and its CI gate
+        # (both rows green) is what lets it enter the merge queue. A queue
+        # candidate runs the Linux row only, so concurrent candidates take no
+        # macOS runner, unless the repository variable GTI_QUEUE_MACOS is
+        # `true` (for a plan with ample macOS runners; unset means Linux
+        # only). A manual main dispatch runs both (validation_checks.py
+        # fast_platforms). Post-integration full validation runs every shard
+        # and gti_test_examples on macOS (tests/ci_darwin_tests.json).
+        id: fast
+        env:
+          GTI_QUEUE_MACOS: ${{ vars.GTI_QUEUE_MACOS }}
+          GTI_FAST_ROWS: >-
+            [{"os": "ubuntu-24.04", "platform": "linux", "rotate": 0,
+              "gate": "gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests"},
+             {"os": "macos-26", "platform": "darwin", "rotate": 1,
+              "gate": "gti_test_ui|gti_unit_tests"}]
+        run: >-
+          python3 scripts/validation_checks.py fast-matrix --event "${GITHUB_EVENT_NAME}"
+          --rows "${GTI_FAST_ROWS}" --queue-macos "${GTI_QUEUE_MACOS}" --output "${GITHUB_OUTPUT}"
       - name: Classify candidate without weakening its merge gate
         id: plan
         env:
@@ -67,34 +99,37 @@ jobs:
         run: python3 scripts/validation_checks.py declared --event "${GTI_EVENT_PATH}"
 
   automation-tests:
+    # The tree-consistency tests: every registered entry that checks the
+    # repository against itself without a built compiler (harness imports and
+    # lists, allowlists, registration and ownership maps, manifests, these
+    # workflows' contracts), including the workflow and release regression
+    # harnesses. They run on every PR, draft and merge-queue candidate from a
+    # configure-only tree, so a file one of them cross-references cannot be
+    # deleted or added unnoticed until post-merge full validation. Membership
+    # is a rule over the CTest inventory (tests/TestThroughput.cmake,
+    # scripts/tree_consistency.py). Nothing is built here: a labelled test
+    # that comes to need a binary fails, and one that skips fails the check
+    # after the run.
     name: Workflow regression tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install workflow test prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake make
-      - name: Verify workflow, batch, preservation and resource rules
+      - name: Install the reviewed compiler, Ninja and LLVM for configuring
+        env:
+          GTI_CI_CONFIGURE_ONLY: "1"
+        run: bash scripts/configure_ci_toolchain.sh
+      - name: Configure without building
+        run: >-
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DGTI_ENABLE_THREAD_SANITIZER_TESTS=OFF
+      - name: Run the tree-consistency tests
         run: |
           git config --global user.name "GTI CI"
           git config --global user.email "ci@example.invalid"
-          python3 tests/agent_workflow_test.py
-          python3 tests/rollup_test.py
-          python3 tests/build_window_test.py
-          python3 tests/bounded_log_test.py
-          python3 tests/release_version_test.py scripts/check_release_version.py
-          python3 tests/stdlib_surface_review_test.py scripts/check_stdlib_surface_review.py
-          python3 tests/cut_release_test.py
-          python3 tests/release_train_test.py
-          python3 tests/ci_release_test.py .
-          python3 tests/ci_resources_test.py scripts/configure_ci_resources.sh
-          python3 tests/repository_hosting_test.py .
-          python3 tests/ownership_map_test.py
-          python3 tests/plan_checks_test.py
-          python3 tests/named_test_shards_test.py
-          python3 tests/source_stdlib_ci_test.py
-          python3 tests/lsp_release_test.py
+          ctest --test-dir build --output-on-failure --no-tests=error --parallel "$(nproc)" \
+            -L '^tree-consistency$' --output-junit "${RUNNER_TEMP}/tree-consistency.xml"
+          python3 scripts/tree_consistency.py run --build build --junit "${RUNNER_TEMP}/tree-consistency.xml"
 
   formatting:
     name: Formatting
@@ -136,10 +171,10 @@ jobs:
           GTI_HEAD_SHA: ${{ github.sha }}
         run: python3 scripts/check_release_version.py "${GTI_FORK_SHA}" "${GTI_HEAD_SHA}"
       - name: Keep the old test suite frozen
-        # No new tests/*_test.py, tests/*_tests.cpp or add_test( registration:
-        # the old suite is being drained into one runner
-        # (docs/plans/test-suite-redesign.md). tests/ui/, tests/unit/,
-        # tests/runner/ and tests/gti_test.cmake are the new runner's.
+        # No new tests/*_test.py, tests/*_tests.cpp or add_test( registration,
+        # a standing rule (docs/plans/test-suite-redesign.md). tests/ui/,
+        # tests/slow/, tests/lsp/, tests/project/, tests/unit/, tests/runner/
+        # and tests/gti_test.cmake are the runner's.
         env:
           GTI_FORK_SHA: ${{ steps.range.outputs.base }}
           GTI_HEAD_SHA: ${{ github.sha }}
@@ -175,15 +210,30 @@ jobs:
     needs: [plan, automation-tests, formatting, release-version, tree-sitter]
     strategy:
       fail-fast: false
-      matrix:
-        # `gate` is the CTest entries the test phase runs beyond fast
-        # feedback: the gti-test tiers, the same on both platforms.
-        include:
-          - {os: ubuntu-24.04, platform: linux, gate: 'gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests'}
-          - {os: macos-26, platform: darwin, gate: 'gti_test_ui(_[0-9]+)?|gti_test_examples|gti_unit_tests'}
+      # The plan's rows for this event (its "Choose the fast-checks platforms"
+      # step): Linux and macOS for a pull request or main dispatch; Linux only
+      # for a merge-queue candidate unless vars.GTI_QUEUE_MACOS is `true`, then
+      # both. A job-level `if` cannot read `matrix`, and
+      # a row whose steps all skip still holds a runner, so the matrix itself
+      # depends on the event.
+      matrix: ${{ fromJSON(needs.plan.outputs.fast_matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     steps:
+      - name: Skip a merge group the queue has already discarded
+        # A candidate whose queue entry was removed (a failure ahead of it, a
+        # dequeue) loses its gh-readonly-queue branch, but its run continues.
+        # Stop before the build rather than hold a runner (a scarce macOS one,
+        # often after a long wait) for a result nothing reads. The failure
+        # claims nothing about the change.
+        if: github.event_name == 'merge_group'
+        env:
+          GTI_SERVER: ${{ github.server_url }}
+        run: |
+          if ! git ls-remote --exit-code "${GTI_SERVER}/${GITHUB_REPOSITORY}.git" "${GITHUB_REF}" >/dev/null; then
+            echo "::error::${GITHUB_REF} no longer exists: the merge queue discarded this candidate"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The test merge and its first parent: the budget check below
@@ -225,15 +275,24 @@ jobs:
         run: >-
           ctest --test-dir build --output-on-failure --no-tests=error
           --parallel "${GTI_TEST_JOBS}" -L feedback-fast
+      - name: Select this commit's gti-test entries
+        id: tiers
+        env:
+          GTI_GATE: ${{ matrix.gate }}
+          GTI_ROTATE: ${{ matrix.rotate }}
+        run: >-
+          python3 scripts/validation_checks.py gate-tests --build build
+          --gate "${GTI_GATE}" --rotate "${GTI_ROTATE}" --sha "${GITHUB_SHA}" --output "${GITHUB_OUTPUT}"
       - name: Run the gti-test tiers
-        # tests/ui, tests/project and tests/lsp (with the runner's self-test
-        # and tidy), every single-file example, and the C++ unit tests, at -O0
+        # On Linux: tests/ui, tests/project and tests/lsp (with the runner's
+        # self-test and tidy), every single-file example, and the C++ unit
+        # tests; on macOS the subset selected above. All at -O0
         # (docs/plans/test-suite-redesign.md section 7). Each gti-test entry
         # is silent on pass and prints one `FAIL <path>` block per failing
         # case, which --output-on-failure shows here; the per-case JUnit
         # reports are uploaded below.
         env:
-          GTI_GATE_TESTS: ${{ matrix.gate }}
+          GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}
         run: >-
           mkdir -p "${RUNNER_TEMP}/gti-test" &&
           ctest --test-dir build --output-on-failure --no-tests=error
@@ -256,12 +315,17 @@ jobs:
         # The body is untrusted: the script validates every name and passes
         # them to CTest as an escaped, anchored pattern, never through a shell.
         # Block-format and unregistered-name findings are warnings; a declared
-        # test that runs and fails still fails the job.
+        # test that runs and fails still fails the job. Names the gti-test
+        # step just ran are not repeated, and macOS re-runs only declared
+        # tests in the darwin set (tests/ci_darwin_tests.json), as full
+        # validation does; Linux re-runs the rest.
         env:
           GTI_EVENT_PATH: ${{ github.event_path }}
+          GTI_PLATFORM: ${{ matrix.platform }}
+          GTI_GATE_TESTS: ${{ steps.tiers.outputs.pattern }}
         run: >-
           python3 scripts/validation_checks.py declared --event "${GTI_EVENT_PATH}"
-          --build build --jobs "${GTI_TEST_JOBS}"
+          --build build --jobs "${GTI_TEST_JOBS}" --platform "${GTI_PLATFORM}" --ran "${GTI_GATE_TESTS}"
       - name: Test the installed toolchain against system LLVM
         if: matrix.platform == 'linux'
         run: |
@@ -474,9 +538,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Decide integration acceptance
+        # In full mode the fast job must have passed on exactly the platforms
+        # its event requires, as the plan scheduled them (validation_checks.py
+        # fast_platforms): Linux and macOS for a pull request, whose gate
+        # admits it to the queue; Linux for a queue candidate, plus macOS when
+        # the plan read GTI_QUEUE_MACOS as `true`; both for a main dispatch.
         env:
           GTI_VALIDATION_MODE: ${{ needs.plan.outputs.mode }}
           GTI_VALIDATION_RESULTS: ${{ toJSON(needs) }}
+          GTI_FAST_MATRIX: ${{ needs.plan.outputs.fast_matrix }}
+          GTI_QUEUE_MACOS: ${{ needs.plan.outputs.queue_macos }}
           GTI_EVENT_NAME: ${{ github.event_name }}
         run: |
           event="${GTI_EVENT_NAME}"
@@ -484,4 +555,5 @@ jobs:
             event="merge_group"
           fi
           python3 scripts/validation_checks.py ci-gate --mode "${GTI_VALIDATION_MODE}" \
-            --results "${GTI_VALIDATION_RESULTS}" --event "${event}"
+            --results "${GTI_VALIDATION_RESULTS}" --event "${event}" \
+            --fast-matrix "${GTI_FAST_MATRIX}" --trigger "${GTI_EVENT_NAME}" --queue-macos "${GTI_QUEUE_MACOS}"

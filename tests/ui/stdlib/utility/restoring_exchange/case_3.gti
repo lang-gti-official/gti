@@ -1,0 +1,3 @@
+// Restoring_exchange: deleted movement and arbitrary reference consumption remain forbidden.
+import std.utility;
+class Fixed { public: Fixed() {} Fixed(Fixed&& other) = delete; }; int main() { mut Fixed a{}; mut Fixed b{}; std::swap(a,b); return 0; }  //~ ERROR GTI-S2029

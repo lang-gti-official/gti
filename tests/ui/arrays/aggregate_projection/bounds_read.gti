@@ -1,0 +1,13 @@
+// An out-of-bounds fixed-array index (read) fails before the access and drops the guard.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: guard dropped
+//@ stderr-contains: index_out_of_bounds
+class Guard{
+public:Guard(){}~Guard(){std::println("guard dropped");}};
+struct Frame{mut int slots[2]={1,2};
+Frame() = default;};
+int outside(){return 2;}int main() {
+  Guard guard{};
+mut Frame frame{};
+Frame* pointer=&frame;unsafe{return pointer->slots[outside()];}}

@@ -1,0 +1,81 @@
+// A stored-region result may relay what an owned carrier stores in that region.
+//@ run-pass
+//@ exit-code: 0
+
+// `this.cursor.get()` returns what `cursor` stores in `Cursor`'s region
+// `o`, and `through(this.view)` what `view` stores in `View`'s region `v`.
+// When the owned field binds that region to the result's, the result
+// borrows no storage the receiver owns.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Cursor<lifetime o> {
+  mut Box&<o> box;
+public:
+  Cursor(mut Box&<o> box) : box(box) {}
+  int&<o> get() { return this.box.value; }
+  mut int&<o> get_mut() mut { return this.box.value; }
+};
+class Reader<lifetime o> {
+  Box&<o> box;
+public:
+  Reader(Box&<o> box) : box(box) {}
+  int&<o> get() { return this.box.value; }
+};
+struct View<lifetime v> {
+  Box&<v> box;
+  View(Box&<v> box) : box(box) {}
+};
+Box&<r> through<lifetime r>(View<r> view) { return view.box; }
+
+class Outer<lifetime owner, lifetime other> {
+  mut Cursor<owner> cursor;
+  Reader<owner> reader;
+  View<owner> view;
+  View<other> second;
+public:
+  Outer(mut Box&<owner> mine, Box&<owner> shared, Box&<other> elsewhere)
+      : cursor(Cursor<owner>(mine)), reader(Reader<owner>(shared)),
+        view(View<owner>(shared)),
+        second(View<other>(elsewhere)) {}
+  int&<owner> owned_cursor() { return this.cursor.get(); }
+  mut int&<owner> owned_cursor_mut() mut { return this.cursor.get_mut(); }
+  int&<owner> carrier_arg() { return through(this.view).value; }
+  int&<other> other_carrier() { return through(this.second).value; }
+};
+// A consumed receiver's carrier still relays what it stores.
+class Relay<lifetime owner, lifetime other> {
+  Reader<owner> reader;
+  Box&<other> elsewhere;
+public:
+  Relay(Box&<owner> kept, Box&<other> elsewhere)
+      : reader(Reader<owner>(kept)), elsewhere(elsewhere) {}
+  int&<owner> consumed() && { return this.reader.get(); }
+};
+
+int&<a> kept<lifetime a, lifetime b>(Box&<a> shared, Box&<b> dropped) {
+  return Relay(shared, dropped).consumed();
+}
+
+int main() {
+  mut Box mine{3};
+  Box shared{4};
+  Box elsewhere{5};
+  mut Outer outer = Outer(mine, shared, elsewhere);
+  if (outer.owned_cursor() != 3 || outer.carrier_arg() != 4 ||
+      outer.other_carrier() != 5) {
+    return 1;
+  }
+  mut int& written = outer.owned_cursor_mut();
+  written = 7;
+  if (mine.value != 7) {
+    return 2;
+  }
+  mut int total = 0;
+  {
+    Box dropped{1};
+    total = kept(shared, dropped);
+  }
+  return total == 4 ? 0 : 3;
+}

@@ -1,0 +1,36 @@
+// An owned carrier relays only the region its field binds for the callee's region.
+// A carrier field that binds the callee's region to another region supplies
+// that region, and a method result borrowed from the carrier itself is
+// storage the receiver owns.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+class Cursor<lifetime o> {
+  Box&<o> box;
+  Box local;
+public:
+  Cursor(Box&<o> box) : box(box), local(Box(2)) {}
+  int&<o> get() { return this.box.value; }
+  int& peek() { return this.local.value; }
+};
+struct View<lifetime v> {
+  Box&<v> box;
+  View(Box&<v> box) : box(box) {}
+};
+Box&<r> through<lifetime r>(View<r> view) { return view.box; }
+
+class Outer<lifetime owner, lifetime other> {
+  Cursor<owner> cursor;
+  Cursor<other> second;
+  View<other> view;
+public:
+  Outer(Box&<owner> mine, Box&<other> elsewhere)
+      : cursor(Cursor<owner>(mine)), second(Cursor<other>(elsewhere)),
+        view(View<other>(elsewhere)) {}
+  int&<owner> other_cursor() && { return this.second.get(); }  //~ ERROR GTI-S2127 borrows through field 'second', which holds region 'other'
+  int&<owner> other_carrier() && { return through(this.view).value; }  //~ ERROR GTI-S2127 borrows through field 'view', which holds region 'other'
+  int&<owner> carrier_storage() { return this.cursor.peek(); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+};
+
+int main() { return 0; }

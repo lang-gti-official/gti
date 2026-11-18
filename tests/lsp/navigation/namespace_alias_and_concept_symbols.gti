@@ -1,0 +1,7 @@
+// A namespace alias hovers as a namespace under its own name, and namespace aliases and concepts appear in the document outline.
+//@ hover @use: namespace shapes
+//@ symbols: geometry shapes positive
+namespace geometry { int area(int side) { return side * side; } }
+namespace shapes = geometry;
+concept positive<T> = std::movable<T>;
+int main() { return /*@use*/shapes::area(0); }

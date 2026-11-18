@@ -1,0 +1,9 @@
+// A borrowed left view cannot be invalidated by moving its owner on the right.
+import std.string;
+int main() {
+  mut std::string value = "abc";
+  auto result = value.view() + std::move(value); //~ ERROR GTI-S2017
+  //~| ERROR GTI-S2017
+  std::println(result);
+  return 0;
+}

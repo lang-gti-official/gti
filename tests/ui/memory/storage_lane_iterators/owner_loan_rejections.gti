@@ -1,0 +1,111 @@
+// A live storage, arena, pool, resource or SIMD cursor blocks mutating or moving its owner.
+import std.memory;
+import std.resource;
+import std.simd;
+
+int storage_clear() {
+  std::allocator allocator{};
+  mut auto result = allocator.try_storage<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  values.construct(std::size_t(1), 42);
+  auto cursor = values.begin(); values.clear(); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int storage_release() {
+  std::allocator allocator{};
+  mut auto result = allocator.try_storage<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  values.construct(std::size_t(1), 42);
+  auto cursor = values.begin(); values.release(); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int storage_destroy() {
+  std::allocator allocator{};
+  mut auto result = allocator.try_storage<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  values.construct(std::size_t(1), 42);
+  auto cursor = values.begin(); values.destroy(std::size_t(1)); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int arena_reset() {
+  mut auto result = std::try_make_arena<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  [[discard]] values.try_insert(42);
+  auto cursor = values.begin(); values.reset(); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int arena_insert() {
+  mut auto result = std::try_make_arena<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  [[discard]] values.try_insert(42);
+  auto cursor = values.begin(); [[discard]] values.try_insert(7); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int pool_erase() {
+  mut auto result = std::try_make_pool<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  [[discard]] values.try_insert(42);
+  auto cursor = values.begin(); values.erase(std::size_t(0)); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int pool_clear() {
+  mut auto result = std::try_make_pool<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  [[discard]] values.try_insert(42);
+  auto cursor = values.begin(); values.clear(); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int resource_release() {
+  std::process_resource process{};
+  unsafe {
+    auto binding = std::bind_resource(process);
+    mut std::resource_storage<int, std::process_resource> values{binding};
+    if (!values.try_allocate(std::size_t(3))) { return 1; }
+    values.emplace(std::size_t(1), 42);
+  auto cursor = values.begin(); values.release(); return *cursor; }  //~ ERROR GTI-S2017
+}
+
+int resource_destroy() {
+  std::process_resource process{};
+  unsafe {
+    auto binding = std::bind_resource(process);
+    mut std::resource_storage<int, std::process_resource> values{binding};
+    if (!values.try_allocate(std::size_t(3))) { return 1; }
+    values.emplace(std::size_t(1), 42);
+  auto cursor = values.begin(); values.destroy(std::size_t(1)); return *cursor; }  //~ ERROR GTI-S2017
+}
+
+int resource_reverse_release() {
+  std::process_resource process{};
+  unsafe {
+    auto binding = std::bind_resource(process);
+    mut std::resource_storage<int, std::process_resource> values{binding};
+    if (!values.try_allocate(std::size_t(3))) { return 1; }
+    values.emplace(std::size_t(1), 42);
+  auto cursor = values.rbegin(); values.release(); return *cursor; }  //~ ERROR GTI-S2017
+}
+
+int arena_reverse_reset() {
+  mut auto result = std::try_make_arena<int>(std::size_t(3));
+  if (!result) { return 1; }
+  mut auto values = std::move(result).value();
+  [[discard]] values.try_insert(42);
+  auto cursor = values.rbegin_mut(); values.reset(); return *cursor;  //~ ERROR GTI-S2017
+}
+
+int simd_owner_move() {
+  mut std::simd<float, 4> values{2.0}; auto cursor = values.begin(); auto moved = std::move(values); return int(*cursor);  //~ WARN GTI-S2096 //~ ERROR GTI-S2017
+}
+
+int simd_overlap() {
+  mut std::simd<float, 4> values{2.0}; auto cursor = values.begin_mut(); [[discard]] values.reduce(); return int(*cursor);  //~ ERROR GTI-S2017
+}
+
+int main() { return 0; }

@@ -1,0 +1,113 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (pointer field contents); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_changed bad_native bad_retarget bad_global bad_borrowed bad_lifetime
+//@[bad_changed] args: case
+//@[bad_changed] run-fail
+//@[bad_changed] exit-code: 70
+//@[bad_changed] stderr-contains: pointer_field_contents.gti:22: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_native] args: case case
+//@[bad_native] run-fail
+//@[bad_native] exit-code: 70
+//@[bad_native] stderr-contains: pointer_field_contents.gti:28: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_retarget] args: case case case
+//@[bad_retarget] run-fail
+//@[bad_retarget] exit-code: 70
+//@[bad_retarget] stderr-contains: pointer_field_contents.gti:33: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_global] args: case case case case
+//@[bad_global] run-fail
+//@[bad_global] exit-code: 70
+//@[bad_global] stderr-contains: pointer_field_contents.gti:39: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_borrowed] args: case case case case case
+//@[bad_borrowed] run-fail
+//@[bad_borrowed] exit-code: 70
+//@[bad_borrowed] stderr-contains: pointer_field_contents.gti:46: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_lifetime] args: case case case case case case
+//@[bad_lifetime] run-fail
+//@[bad_lifetime] exit-code: 70
+//@[bad_lifetime] stderr-contains: pointer_field_contents.gti:53: runtime error[GTI-R0001]: integer_overflow in addition
+// --- pointer_field_contents.gti
+import std.string;
+import std.vector;
+import std.memory;
+extern "C" {
+  void opaque_pointer_effect(int* pointer);
+  void retain_cell_pointer(int* pointer);
+  void overwrite_retained_cell();
+}
+
+class Cell {
+  mut int* address = nullptr;
+public:
+  Cell(int* destination) : address(destination) {
+    unsafe { std::construct_at(destination, 7); }
+  }
+  unsafe int observe() {
+    unsafe { return *this.address + 1; }
+  }
+  unsafe int bad_changed() mut {
+    unsafe {
+      *this.address = 2147483647;
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_native() mut {
+    unsafe {
+      opaque_pointer_effect(this.address);
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_retarget(int* other) mut {
+    this.address = other;
+    unsafe { return *this.address + 1; }
+  }
+  unsafe int bad_global() mut {
+    unsafe {
+      retain_cell_pointer(this.address);
+      overwrite_retained_cell();
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_borrowed() mut {
+    unsafe {
+      mut int& alias = std::assume_mut(this.address, this);
+      alias = 2147483647;
+      return *this.address + 1;
+    }
+  }
+  unsafe int bad_lifetime() mut {
+    unsafe {
+      std::destroy_at(this.address);
+      std::construct_at(this.address, 2147483647);
+      return *this.address + 1;
+    }
+  }
+public:
+  Cell() = default;
+};
+
+int main(int argc, std::vector<std::string> argv) {
+  mut int other = 2147483647;
+  mut std::uninitialized<int> storage{};
+  mut Cell cell{storage.data()};
+  unsafe {
+    if (argc == 2) return cell.bad_changed();
+    if (argc == 3) return cell.bad_native();
+    if (argc == 4) return cell.bad_retarget(&other);
+    if (argc == 5) return cell.bad_global();
+    if (argc == 6) return cell.bad_borrowed();
+    if (argc == 7) return cell.bad_lifetime();
+    return cell.observe() == 8 ? 0 : 1;
+  }
+}
+// --- optimizer_pointer_field_contents_native.cpp
+#include <climits>
+
+namespace {
+int *retained = nullptr;
+}
+extern "C" void opaque_pointer_effect(int *pointer) { *pointer = INT_MAX; }
+extern "C" void retain_cell_pointer(int *pointer) { retained = pointer; }
+extern "C" void overwrite_retained_cell() { *retained = INT_MAX; }

@@ -1,0 +1,15 @@
+// Iterating ownerless text elements keeps the array alive without inventing external owners.
+//@ run-pass
+import std.array;
+import std.string_view;
+
+int main() {
+  mut std::array<std::string_view, 2> tools{};
+  tools[std::size_t(0)] = "gti";
+  tools[std::size_t(1)] = "gti_lsp";
+  mut std::size_t length = 0;
+  for (auto& name : tools) {
+    length += name.size();
+  }
+  return length == std::size_t(10) ? 0 : 1;
+}

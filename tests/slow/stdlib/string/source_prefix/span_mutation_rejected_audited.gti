@@ -1,0 +1,11 @@
+// A live span of a string's bytes blocks growing it, with the raw-pointer audit on.
+//@ slow
+//@ check-fail
+//@ raw-pointer-audit: warn
+import std.string;
+int main() {
+  mut std::string text{"abc"};  //~ WARN GTI-S2103 //~ WARN GTI-S2103
+  auto characters = text.as_span();  //~ WARN GTI-S2102 //~ WARN GTI-S2103 //~ WARN GTI-S2103
+  text.reserve(uint64_t(20));  //~ WARN GTI-S2102 //~ WARN GTI-S2103 //~ WARN GTI-S2103 //~ ERROR GTI-S2017
+  return characters.size() == uint64_t(3) ? 0 : 1;
+}

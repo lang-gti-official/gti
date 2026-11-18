@@ -7806,6 +7806,12 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
   }
   const auto [leftType, rightType] = analyzeBinaryOperands(expr);
   validateSequencedTransientLoans(expr.left(), expr.right(), expr.oper());
+  if (expr.oper().kind == TokenKind::PLUS &&
+      leftType == SemanticType::StringView &&
+      analyzeStringViewAddition(expr, rightType)) {
+    recordLiteralTextConcatenation(expr);
+    return;
+  }
 
   // An existence-only requirement can establish an operand operation without
   // knowing its result yet. Do not turn a dependent comparison into a bool
@@ -7917,6 +7923,8 @@ auto SemanticVisitor::Impl::visitBinaryExpr(const Binary &expr) -> void {
     }
     currentType = selected ? callExpressionType(selected->returnType)
                            : SemanticType::Unknown;
+    if (selected && *sourceOperator == OverloadedOperator::Plus)
+      recordLiteralTextConcatenation(expr);
     return;
   }
 
@@ -8940,7 +8948,35 @@ auto SemanticVisitor::Impl::visitCallExpr(const Call &expr) -> void {
               candidateArguments.types, expr.arguments(), resolved,
               resolvedTypeArguments, resolvedValueArguments, &constraintFailure,
               allowChecked)) {
-        if (hasConstraintFailure(constraintFailure)) {
+        // A constraint explains the call only for a candidate whose
+        // non-generic parameters accept their arguments; otherwise the call
+        // never meant that overload (a leading `output_target&` cannot take a
+        // string literal), and its unmet constraint would hide the one that
+        // matters.
+        const auto dependent = [](const auto &self,
+                                  const SemanticType &type) -> bool {
+          return type.kind == SemanticType::TypeParameter ||
+                 type.kind == SemanticType::TypePack ||
+                 std::any_of(type.arguments.begin(), type.arguments.end(),
+                             [&](const SemanticType &argument) {
+                               return self(self, argument);
+                             });
+        };
+        bool concreteMismatch = false;
+        for (std::size_t index = 0;
+             !concreteMismatch && index < candidateArguments.types.size() &&
+             index < candidate.parameterTypes.size();
+             ++index) {
+          if (candidateArguments.deferred[index] ||
+              dependent(dependent, candidate.parameterTypes[index]))
+            continue;
+          concreteMismatch =
+              functionCallArgumentMatch(candidate, index,
+                                        candidateArguments.types[index],
+                                        expr.arguments()[index], false) ==
+              CallArgumentMatchKind::Mismatch;
+        }
+        if (hasConstraintFailure(constraintFailure) && !concreteMismatch) {
           constraintFailures.emplace_back(std::move(constraintFailure));
         }
         continue;

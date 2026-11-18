@@ -1,0 +1,56 @@
+// unordered_map rejects key writes, live loans across mutation, container copies, mutable or missing hashers and borrowed values.
+//@ check-fail
+import std.functional;
+import std.unordered_map;
+
+namespace case_immutable_key {
+int entry() {
+  mut std::unordered_map<int, int> values{};
+  [[discard]] values.insert(1, 2);
+  for (mut auto& entry : values) { entry.first = 9; }  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+  return 0;
+}
+}
+
+namespace case_copy_container {
+int entry() {
+  std::unordered_map<int, int> values{};
+  auto copy = values;  //~ ERROR GTI-S2003
+  return int(copy.size());
+}
+}
+
+namespace case_copy_insertion_result {
+int entry() {
+  mut std::unordered_map<int, int> values{};
+  auto result = values.insert(1, 2);
+  auto copied = result;  //~ ERROR GTI-S2003
+  return copied.first->second;
+}
+}
+
+namespace case_immutable_result_key {
+int entry() {
+  mut std::unordered_map<int, int> values{};
+  mut auto result = values.insert(1, 2);
+  result.first->first = 3;  //~ ERROR GTI-S2000 //~ ERROR GTI-S2003
+  return 0;
+}
+}
+
+namespace case_mutable_hasher {
+class Hash {
+public: std::size_t operator()(int& key) mut { return 0; }
+public:
+  Hash() = default;
+};
+int entry() { std::unordered_map<int, int, Hash> values{}; return 0; }  //~ ERROR GTI-S2029
+}
+
+namespace case_missing_hasher {
+class Key { public: Key() = default; };
+class Equal { public: bool operator()(Key& left, Key& right) { return true; }  public: Equal() = default; };
+int entry() { std::unordered_map<Key, int, std::hash<Key>, Equal> values{}; return 0; }  //~ ERROR GTI-S2029
+}
+
+int main() { return 0; }

@@ -1,0 +1,7 @@
+// Generic enum instances: finite distinct enum nesting layout.
+//@ run-pass
+enum Event<T> { item(T value) };
+struct Leaf { int32_t value; };
+struct B { Event<Leaf> value; };
+struct A { Event<B> value; };
+int main() { return 0; }

@@ -1,0 +1,24 @@
+// Generic enum instances: receiver pattern loans.
+//@ run-pass
+import std.vector;
+enum Buffer<std::vector_element T> { data(std::vector<T> values) };
+class Inbox<std::vector_element T> {
+  mut Buffer<T> message = Buffer<T>::data(std::vector<T>());
+public:
+  Inbox() {}
+  std::vector<T>& values() {
+    switch (this.message) {
+      case Buffer<T>::data(auto& values): return values;
+    }
+  }
+  mut std::vector<T>& values() mut {
+    switch (this.message) {
+      case Buffer<T>::data(mut auto& values): return values;
+    }
+  }
+};
+int main() {
+  mut Inbox<int32_t> inbox{};
+  inbox.values().push_back(9);
+  return inbox.values()[std::size_t(0)] == 9 ? 0 : 1;
+}

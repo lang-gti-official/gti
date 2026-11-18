@@ -1,0 +1,9 @@
+// Restoring_exchange: restoring exchange cannot erase a returned text view's owner dependency.
+import std.utility;
+import std.string;
+std::string_view bad() {
+  std::string owner = std::string("local");
+  mut std::string_view view = owner.view();
+  return std::exchange(view, "literal");
+}
+int main() { std::println(bad()); return 0; }  //~ ERROR GTI-S2045

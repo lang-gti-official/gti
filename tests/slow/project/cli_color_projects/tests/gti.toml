@@ -1,0 +1,10 @@
+manifest-version = 1
+[package]
+name = "color-tests"
+version = "0.1.0"
+[targets.a_failure]
+kind = "test"
+root = "failure.gti"
+[targets.b_success]
+kind = "test"
+root = "success.gti"

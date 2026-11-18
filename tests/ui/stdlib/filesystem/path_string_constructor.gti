@@ -1,0 +1,22 @@
+// Constructing a path from a string copies its bytes and does not retain its owner.
+//@ run-pass
+import std.filesystem;
+import std.string;
+std::filesystem::path from_local() {
+  std::string source = "local/path";
+  return std::filesystem::path(source);
+}
+int main() {
+  mut std::string source = "some/path";
+  auto path = std::filesystem::path(source);
+  if (source != "some/path") { return 1; }
+  source.clear();
+  source.append("changed");
+  if (path != "some/path" || source != "changed") { return 2; }
+  auto local = from_local();
+  if (local != "local/path") { return 3; }
+  std::string empty = "";
+  auto empty_path = std::filesystem::path(empty);
+  if (!empty_path.empty()) { return 4; }
+  return 0;
+}

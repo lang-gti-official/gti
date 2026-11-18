@@ -1,0 +1,123 @@
+// Contiguous cursors read or moved outside their view fail with the bounds or argument report.
+//@ run-fail
+//@ exit-code: 70
+//@ revisions: a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11
+//@[a0] stderr-contains: runtime error[GTI-R0016]
+//@[a1] args: argument
+//@[a1] stderr-contains: runtime error[GTI-R0016]
+//@[a2] args: argument argument
+//@[a2] stderr-contains: runtime error[GTI-R0007]
+//@[a3] args: argument argument argument
+//@[a3] stderr-contains: runtime error[GTI-R0007]
+//@[a4] args: argument argument argument argument
+//@[a4] stderr-contains: runtime error[GTI-R0016]
+//@[a5] args: argument argument argument argument argument
+//@[a5] stderr-contains: runtime error[GTI-R0016]
+//@[a6] args: argument argument argument argument argument argument
+//@[a6] stderr-contains: runtime error[GTI-R0016]
+//@[a7] args: argument argument argument argument argument argument argument
+//@[a7] stderr-contains: runtime error[GTI-R0016]
+//@[a8] args: argument argument argument argument argument argument argument argument
+//@[a8] stderr-contains: runtime error[GTI-R0016]
+//@[a9] args: argument argument argument argument argument argument argument argument argument
+//@[a9] stderr-contains: runtime error[GTI-R0016]
+//@[a10] args: argument argument argument argument argument argument argument argument argument argument
+//@[a10] stderr-contains: runtime error[GTI-R0016]
+//@[a11] args: argument argument argument argument argument argument argument argument argument argument argument
+//@[a11] stderr-contains: runtime error[GTI-R0016]
+import std.string;
+import std.vector;
+import std.span;
+import std.resource_vector;
+import std.resource;
+
+int main(int argc, std::vector<std::string> argv) {
+  mut std::vector<int> values = {1, 2, 3, 4};
+  if (argc == 1) {
+    auto whole = values.as_span();
+    auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+    mut auto current = middle.begin();
+    --current;
+    return *current;
+  }
+  if (argc == 2) {
+    auto whole = values.as_span();
+    auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+    mut auto current = middle.begin();
+    current += std::ptrdiff_t(3);
+    return 0;
+  }
+  if (argc == 3) {
+    auto whole = values.as_span();
+    auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+    mut auto current = middle.begin();
+    current += std::ptrdiff_t(2);
+    return *current;
+  }
+  if (argc == 4) {
+    std::string text{"abc"};
+    mut auto current = text.begin();
+    current += std::ptrdiff_t(3);
+    char selected = *current;
+    return selected == 'a' ? 0 : 1;
+  }
+  if (argc == 5) {
+    mut auto whole = values.as_mutable_span();
+    mut auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+    mut auto current = middle.begin_mut();
+    current[std::ptrdiff_t(-1)] = 99;
+    return 0;
+  }
+  if (argc == 6) {
+    std::string text{"abc"};
+    mut auto current = text.begin();
+    current -= std::ptrdiff_t(-9223372036854775807) - std::ptrdiff_t(1);
+    return 0;
+  }
+  if (argc == 7) {
+    std::process_resource process{};
+    unsafe {
+      auto resource = std::bind_resource(process);
+      mut std::resource_vector<int, std::process_resource> owned{resource};
+      owned.push_back(1);
+      mut auto current = owned.begin();
+      ++current;
+      ++current;
+    }
+  }
+  if (argc == 8) {
+    std::string text{"abc"};
+    mut auto current = text.rbegin();
+    current += std::ptrdiff_t(3);
+    char selected = *current;
+    return selected == 'a' ? 0 : 1;
+  }
+  if (argc == 9) {
+    auto whole = values.as_span();
+    auto empty = whole.subspan(std::size_t(2), std::size_t(0));
+    auto current = empty.rbegin();
+    return *current;
+  }
+  if (argc == 10) {
+    mut auto whole = values.as_mutable_span();
+    mut auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+    mut auto current = middle.rbegin_mut();
+    current += std::ptrdiff_t(3);
+    return 0;
+  }
+  if (argc == 11) {
+    auto whole = values.as_span();
+    auto middle = whole.subspan(std::size_t(1), std::size_t(2));
+    mut auto current = middle.rbegin();
+    current += std::ptrdiff_t(2);
+    ++current;
+    return 0;
+  }
+  if (argc == 12) {
+    mut std::string text{"abc"};
+    mut auto current = text.rbegin_mut();
+    current[std::ptrdiff_t(-1)] = 'x';
+    return 0;
+  }
+  return 0;
+}

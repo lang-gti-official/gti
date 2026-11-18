@@ -1,0 +1,226 @@
+// Checked, saturating and ordinary arithmetic on int32_t, int64_t match exact math at every boundary pair (a hash of each sweep's results, from an exact oracle). Optimized.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not fold or reorder checked arithmetic on unknown operands
+//@ run-pass
+//@ revisions: sweep_int32 sweep_int64 ops_int32 ops_int64 overflow_int32_1 overflow_int32_2 overflow_int32_3 overflow_int32_4 overflow_int32_5 overflow_int32_6 overflow_int32_7 overflow_int32_8 overflow_int64_1 overflow_int64_2 overflow_int64_3 overflow_int64_4 overflow_int64_5 overflow_int64_6 overflow_int64_7 overflow_int64_8
+//@[sweep_int32] args: int32 sweep -2147483648 -2147483647 -1073741825 -1073741824 -32769 -32768 -32767 -3 -2 -1 0 1 2 3 32767 32768 32769 1073741823 1073741824 2147483646 2147483647
+//@[sweep_int32] stdout: 2646
+//@[sweep_int32] stdout: 8332000312728193757
+//@[overflow_int32_1] args: int32 add 2147483647 1
+//@[overflow_int32_1] run-fail
+//@[overflow_int32_1] exit-code: 70
+//@[overflow_int32_1] stderr-contains: integer_overflow in addition
+//@[overflow_int32_2] args: int32 sub -2147483648 1
+//@[overflow_int32_2] run-fail
+//@[overflow_int32_2] exit-code: 70
+//@[overflow_int32_2] stderr-contains: integer_overflow in subtraction
+//@[overflow_int32_3] args: int32 mul 2147483647 2
+//@[overflow_int32_3] run-fail
+//@[overflow_int32_3] exit-code: 70
+//@[overflow_int32_3] stderr-contains: integer_overflow in multiplication
+//@[overflow_int32_4] args: int32 add -2147483648 -1
+//@[overflow_int32_4] run-fail
+//@[overflow_int32_4] exit-code: 70
+//@[overflow_int32_4] stderr-contains: integer_overflow in addition
+//@[overflow_int32_5] args: int32 sub 2147483647 -1
+//@[overflow_int32_5] run-fail
+//@[overflow_int32_5] exit-code: 70
+//@[overflow_int32_5] stderr-contains: integer_overflow in subtraction
+//@[overflow_int32_6] args: int32 mul -2147483648 -1
+//@[overflow_int32_6] run-fail
+//@[overflow_int32_6] exit-code: 70
+//@[overflow_int32_6] stderr-contains: integer_overflow in multiplication
+//@[overflow_int32_7] args: int32 mul -1 -2147483648
+//@[overflow_int32_7] run-fail
+//@[overflow_int32_7] exit-code: 70
+//@[overflow_int32_7] stderr-contains: integer_overflow in multiplication
+//@[overflow_int32_8] args: int32 add-assign 2147483647 1
+//@[overflow_int32_8] run-fail
+//@[overflow_int32_8] exit-code: 70
+//@[overflow_int32_8] stderr-contains: integer_overflow in addition
+//@[ops_int32] args: int32 add 2147483646 1 add 2147483647 0 sub -2147483647 1 sub 0 0 mul 32767 32767 mul 32768 32768 mul 2147483647 1 mul 0 2147483647 mul -2147483648 1 mul -32768 32768 add-assign 2147483646 1
+//@[ops_int32] stdout: 2147483647
+//@[ops_int32] stdout: 2147483647
+//@[ops_int32] stdout: -2147483648
+//@[ops_int32] stdout: 0
+//@[ops_int32] stdout: 1073676289
+//@[ops_int32] stdout: 1073741824
+//@[ops_int32] stdout: 2147483647
+//@[ops_int32] stdout: 0
+//@[ops_int32] stdout: -2147483648
+//@[ops_int32] stdout: -1073741824
+//@[ops_int32] stdout: 2147483647
+//@[sweep_int64] args: int64 sweep -9223372036854775808 -9223372036854775807 -4611686018427387905 -4611686018427387904 -2147483649 -2147483648 -2147483647 -3 -2 -1 0 1 2 3 2147483647 2147483648 2147483649 4611686018427387903 4611686018427387904 9223372036854775806 9223372036854775807
+//@[sweep_int64] stdout: 2646
+//@[sweep_int64] stdout: 1987747911204702941
+//@[overflow_int64_1] args: int64 add 9223372036854775807 1
+//@[overflow_int64_1] run-fail
+//@[overflow_int64_1] exit-code: 70
+//@[overflow_int64_1] stderr-contains: integer_overflow in addition
+//@[overflow_int64_2] args: int64 sub -9223372036854775808 1
+//@[overflow_int64_2] run-fail
+//@[overflow_int64_2] exit-code: 70
+//@[overflow_int64_2] stderr-contains: integer_overflow in subtraction
+//@[overflow_int64_3] args: int64 mul 9223372036854775807 2
+//@[overflow_int64_3] run-fail
+//@[overflow_int64_3] exit-code: 70
+//@[overflow_int64_3] stderr-contains: integer_overflow in multiplication
+//@[overflow_int64_4] args: int64 add -9223372036854775808 -1
+//@[overflow_int64_4] run-fail
+//@[overflow_int64_4] exit-code: 70
+//@[overflow_int64_4] stderr-contains: integer_overflow in addition
+//@[overflow_int64_5] args: int64 sub 9223372036854775807 -1
+//@[overflow_int64_5] run-fail
+//@[overflow_int64_5] exit-code: 70
+//@[overflow_int64_5] stderr-contains: integer_overflow in subtraction
+//@[overflow_int64_6] args: int64 mul -9223372036854775808 -1
+//@[overflow_int64_6] run-fail
+//@[overflow_int64_6] exit-code: 70
+//@[overflow_int64_6] stderr-contains: integer_overflow in multiplication
+//@[overflow_int64_7] args: int64 mul -1 -9223372036854775808
+//@[overflow_int64_7] run-fail
+//@[overflow_int64_7] exit-code: 70
+//@[overflow_int64_7] stderr-contains: integer_overflow in multiplication
+//@[overflow_int64_8] args: int64 add-assign 9223372036854775807 1
+//@[overflow_int64_8] run-fail
+//@[overflow_int64_8] exit-code: 70
+//@[overflow_int64_8] stderr-contains: integer_overflow in addition
+//@[ops_int64] args: int64 add 9223372036854775806 1 add 9223372036854775807 0 sub -9223372036854775807 1 sub 0 0 mul 2147483647 2147483647 mul 2147483648 2147483648 mul 9223372036854775807 1 mul 0 9223372036854775807 mul -9223372036854775808 1 mul -2147483648 2147483648 add-assign 9223372036854775806 1
+//@[ops_int64] stdout: 9223372036854775807
+//@[ops_int64] stdout: 9223372036854775807
+//@[ops_int64] stdout: -9223372036854775808
+//@[ops_int64] stdout: 0
+//@[ops_int64] stdout: 4611686014132420609
+//@[ops_int64] stdout: 4611686018427387904
+//@[ops_int64] stdout: 9223372036854775807
+//@[ops_int64] stdout: 0
+//@[ops_int64] stdout: -9223372036854775808
+//@[ops_int64] stdout: -4611686018427387904
+//@[ops_int64] stdout: 9223372036854775807
+import std.charconv;
+import std.numeric;
+import std.panic;
+import std.string;
+import std.vector;
+
+int32_t parse_int32(std::string& text) {
+  mut int32_t value = int32_t(0);
+  auto parsed = std::from_chars(text.view(), value);
+  if (parsed.ec != std::parse_errc::none || parsed.position != text.size()) {
+    std::panic("unparsable operand");
+  }
+  return value;
+}
+int64_t mix_int32(int64_t hash, int64_t value) {
+  return std::wrapping_add(std::wrapping_mul(hash, int64_t(1099511628211)), value);
+}
+int64_t mix_checked_int32(int64_t hash, expected<int32_t, std::arithmetic_errc> result) {
+  if (result.has_value()) { return mix_int32(mix_int32(hash, int64_t(1)), int64_t(result.value())); }
+  return mix_int32(hash, int64_t(2));
+}
+void sweep_int32(std::vector<std::string>& argv) {
+  mut std::vector<int32_t> values = std::vector<int32_t>();
+  for (mut std::size_t index = std::size_t(3); index < argv.size(); index++) {
+    values.push_back(parse_int32(argv[index]));
+  }
+  mut int64_t hash = int64_t(0);
+  mut int32_t count = 0;
+  for (auto& left : values) {
+    for (auto& right : values) {
+      hash = mix_checked_int32(hash, std::checked_add(left, right));
+      hash = mix_checked_int32(hash, std::checked_sub(left, right));
+      hash = mix_checked_int32(hash, std::checked_mul(left, right));
+      hash = mix_int32(hash, int64_t(std::saturating_add(left, right)));
+      hash = mix_int32(hash, int64_t(std::saturating_sub(left, right)));
+      hash = mix_int32(hash, int64_t(std::saturating_mul(left, right)));
+      count += 6;
+    }
+  }
+  std::println(count);
+  std::println(hash);
+}
+void operate_int32(std::vector<std::string>& argv) {
+  for (mut std::size_t index = std::size_t(2); index + std::size_t(2) < argv.size(); index += std::size_t(3)) {
+    std::string& operation = argv[index];
+    int32_t left = parse_int32(argv[index + std::size_t(1)]);
+    int32_t right = parse_int32(argv[index + std::size_t(2)]);
+    if (operation == "add") { std::println(left + right); }
+    else if (operation == "sub") { std::println(left - right); }
+    else if (operation == "mul") { std::println(left * right); }
+    else if (operation == "add-assign") {
+      mut auto target = left;
+      target += right;
+      std::println(target);
+    }
+    else { std::panic("unknown operation"); }
+  }
+}
+
+int64_t parse_int64(std::string& text) {
+  mut int64_t value = int64_t(0);
+  auto parsed = std::from_chars(text.view(), value);
+  if (parsed.ec != std::parse_errc::none || parsed.position != text.size()) {
+    std::panic("unparsable operand");
+  }
+  return value;
+}
+int64_t mix_int64(int64_t hash, int64_t value) {
+  return std::wrapping_add(std::wrapping_mul(hash, int64_t(1099511628211)), value);
+}
+int64_t mix_checked_int64(int64_t hash, expected<int64_t, std::arithmetic_errc> result) {
+  if (result.has_value()) { return mix_int64(mix_int64(hash, int64_t(1)), int64_t(result.value())); }
+  return mix_int64(hash, int64_t(2));
+}
+void sweep_int64(std::vector<std::string>& argv) {
+  mut std::vector<int64_t> values = std::vector<int64_t>();
+  for (mut std::size_t index = std::size_t(3); index < argv.size(); index++) {
+    values.push_back(parse_int64(argv[index]));
+  }
+  mut int64_t hash = int64_t(0);
+  mut int32_t count = 0;
+  for (auto& left : values) {
+    for (auto& right : values) {
+      hash = mix_checked_int64(hash, std::checked_add(left, right));
+      hash = mix_checked_int64(hash, std::checked_sub(left, right));
+      hash = mix_checked_int64(hash, std::checked_mul(left, right));
+      hash = mix_int64(hash, int64_t(std::saturating_add(left, right)));
+      hash = mix_int64(hash, int64_t(std::saturating_sub(left, right)));
+      hash = mix_int64(hash, int64_t(std::saturating_mul(left, right)));
+      count += 6;
+    }
+  }
+  std::println(count);
+  std::println(hash);
+}
+void operate_int64(std::vector<std::string>& argv) {
+  for (mut std::size_t index = std::size_t(2); index + std::size_t(2) < argv.size(); index += std::size_t(3)) {
+    std::string& operation = argv[index];
+    int64_t left = parse_int64(argv[index + std::size_t(1)]);
+    int64_t right = parse_int64(argv[index + std::size_t(2)]);
+    if (operation == "add") { std::println(left + right); }
+    else if (operation == "sub") { std::println(left - right); }
+    else if (operation == "mul") { std::println(left * right); }
+    else if (operation == "add-assign") {
+      mut auto target = left;
+      target += right;
+      std::println(target);
+    }
+    else { std::panic("unknown operation"); }
+  }
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc < 3) { return 2; }
+  std::string& type = argv[std::size_t(1)];
+  bool sweep = argv[std::size_t(2)] == "sweep";
+  if (type == "int32") {
+    if (sweep) { sweep_int32(argv); } else { operate_int32(argv); }
+    return 0;
+  }
+  if (type == "int64") {
+    if (sweep) { sweep_int64(argv); } else { operate_int64(argv); }
+    return 0;
+  }
+  return 3;
+}
