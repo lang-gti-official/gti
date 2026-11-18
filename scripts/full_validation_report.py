@@ -35,6 +35,53 @@ def gh(*arguments: str, stdin: str | None = None) -> str:
     return result.stdout.strip()
 
 
+WORKFLOW = ".github/workflows/full-validation.yml"
+VERDICT_JOB = "Full validation verdict"
+TRIGGERS = ("push", "workflow_dispatch")
+
+
+def git_is_ancestor(older: str, newer: str) -> bool | None:
+    """Whether older is an ancestor of newer in this checkout; None when unknown."""
+    result = subprocess.run(["git", "merge-base", "--is-ancestor", older, newer],
+                            capture_output=True, timeout=60, check=False)
+    return {0: True, 1: False}.get(result.returncode)
+
+
+def gh_api(path: str):
+    return json.loads(gh("api", path) or "{}")
+
+
+def newer_verdict(sha: str, repository: str, request=gh_api, is_ancestor=git_is_ancestor) -> dict | None:
+    """The run of a newer main commit whose full validation already has a verdict.
+
+    Full validation runs for several main commits at once and they finish in
+    any order, so a report is about a commit, not about "the latest run". A
+    commit's result is stale once a descendant of it on main has its own
+    verdict (passed or failed): that newer result already describes main.
+    Applying the stale one would reopen main-broken after a newer pass, or
+    close an issue a newer failure opened. Only a verdict job that completed
+    with success or failure counts; a run still in progress, cancelled, or
+    re-running its jobs has said nothing yet. Commits the checkout cannot
+    compare count as unrelated, so any doubt still reports.
+    """
+    listing = request(f"repos/{repository}/actions/workflows/full-validation.yml/runs"
+                      "?branch=main&per_page=50")
+    for run in listing.get("workflow_runs", []):
+        other = run.get("head_sha")
+        if (run.get("path") != WORKFLOW or run.get("head_branch") != "main"
+                or run.get("event") not in TRIGGERS or type(run.get("id")) is not int
+                or not isinstance(other, str) or SHA.fullmatch(other) is None or other == sha
+                or ((run.get("repository") or {}).get("full_name") or "").lower() != repository.lower()
+                or is_ancestor(sha, other) is not True):
+            continue
+        jobs = request(f"repos/{repository}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100")
+        verdicts = [job for job in jobs.get("jobs", []) if job.get("name") == VERDICT_JOB]
+        if (len(verdicts) == 1 and verdicts[0].get("status") == "completed"
+                and verdicts[0].get("conclusion") in ("success", "failure")):
+            return {"id": run["id"], "sha": other, "conclusion": verdicts[0]["conclusion"]}
+    return None
+
+
 def open_issue(label: str, title: str) -> dict | None:
     rows = json.loads(gh("issue", "list", "--label", label, "--state", "open",
                          "--json", "number,title", "--limit", "5") or "[]")
@@ -95,6 +142,8 @@ def main() -> int:
     parser.add_argument("--status", choices=("failed", "passed"), default="failed")
     parser.add_argument("--label", default=DEFAULT_LABEL)
     parser.add_argument("--title", default=DEFAULT_TITLE)
+    parser.add_argument("--repository", default="",
+                        help="order this full-validation result against newer main commits' verdicts")
     arguments = parser.parse_args()
     if not re.fullmatch(r"[a-z][a-z0-9-]{1,40}", arguments.label) or len(arguments.title) > 120:
         print("the label must be a short lowercase slug and the title short", file=sys.stderr)
@@ -105,6 +154,21 @@ def main() -> int:
     if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/actions/runs/[0-9]+", arguments.run_url):
         print("the run URL must be a GitHub Actions run", file=sys.stderr)
         return 1
+    if arguments.repository:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", arguments.repository) or \
+                (arguments.label, arguments.title) != (DEFAULT_LABEL, DEFAULT_TITLE):
+            print("ordering applies only to the full-validation issue of one repository", file=sys.stderr)
+            return 1
+        try:
+            newer = newer_verdict(arguments.sha, arguments.repository)
+        except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+            print(f"could not read newer verdicts ({error}); reporting", file=sys.stderr)
+            newer = None
+        if newer:
+            print(f"Not reporting {arguments.status} at {arguments.sha}: newer main commit {newer['sha']} "
+                  f"already {'passed' if newer['conclusion'] == 'success' else 'failed'} full validation "
+                  f"(run {newer['id']}), and its result stands")
+            return 0
     text = body(arguments.run_url, arguments.before, arguments.sha, arguments.status, arguments.label,
                 arguments.title)
     existing = open_issue(arguments.label, arguments.title)

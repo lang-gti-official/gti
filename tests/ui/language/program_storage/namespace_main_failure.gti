@@ -1,0 +1,20 @@
+// A failure in main cleans completed globals after main's local owners.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: 3
+//@ stdout: 2
+//@ stdout: 1
+//@ stderr-contains: division_by_zero
+class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) {}
+  ~Marker() { std::println(value); }
+};
+Marker first{1};
+Marker second{2};
+int divide(int divisor) { return 12 / divisor; }
+int main() {
+  Marker local{3};
+  return divide(0);
+}

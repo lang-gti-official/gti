@@ -95,6 +95,7 @@ constexpr auto instructionEffects = std::to_array<MirEffectTraits>({
                     .invokesRuntime = true,
                     .mayTrap = true,
                     .dropsValue = true}, // RetireProgramStorage is native-only.
+    unknownEffects(), // CleanupProgramStorage invokes exact source cleanup.
 });
 
 constexpr auto operationEffects = std::to_array<MirEffectTraits>({
@@ -567,6 +568,7 @@ constexpr auto instructionNames = std::to_array<std::string_view>({
     "drain-thread-locals",
     "begin-thread-locals",
     "retire-program-storage",
+    "cleanup-program-storage",
 });
 
 constexpr auto operationNames = std::to_array<std::string_view>({

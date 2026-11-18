@@ -39,6 +39,13 @@ void gti_rt_thread_locals_begin_v1(void);
 void gti_rt_thread_locals_drain_v2(
     const gti_failure_record_v2 *primary,
     const gti_failure_artifact_descriptor_v1 *primary_artifact);
+/* Hosted shutdown with source globals must propagate the first TLS cleanup
+ * failure so the generated failure continuation can destroy those globals.
+ * Zero returns an owned copy of the record and its borrowed artifact pointer;
+ * one leaves outputs untouched. A second cleanup failure remains terminal. */
+uint32_t gti_rt_thread_locals_drain_checked_v3(
+    gti_failure_record_v2 *failure,
+    const gti_failure_artifact_descriptor_v1 **artifact);
 uint32_t gti_rt_thread_locals_attached_v1(void);
 uint32_t gti_rt_thread_locals_closing_v1(void);
 void gti_rt_thread_locals_register_v1(gti_thread_local_cleanup_entry_v1 *entry);

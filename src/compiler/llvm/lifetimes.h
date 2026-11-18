@@ -69,6 +69,9 @@ public:
   void publishProgramStorage(llvm::IRBuilder<> &ir,
                              MirInstructionId instruction);
   void retireProgramStorage(llvm::IRBuilder<> &ir);
+  [[nodiscard]] llvm::Value *cleanupProgramStorage(llvm::IRBuilder<> &ir,
+                                                   llvm::Value *failure,
+                                                   bool unwinding);
   void generatedEmpty(llvm::IRBuilder<> &ir, llvm::Value *address,
                       const MirBody &body, const MirInstruction &instruction,
                       const MirConstructorInstance *constructor = nullptr);
@@ -99,6 +102,8 @@ private:
   };
   std::vector<ProgramStorage> programStorage;
   llvm::Function *programRetirement = nullptr;
+  std::vector<ProgramStorage> sourceProgramStorage;
+  llvm::Function *programCleanup = nullptr;
   [[nodiscard]] bool containsMutex(const SemanticType &type) const;
   [[nodiscard]] llvm::Function *mutexTransfer(const SemanticType &type);
   std::vector<std::pair<SemanticType, llvm::Function *>> relocations;

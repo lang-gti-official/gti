@@ -1,0 +1,11 @@
+// A destructor can use an earlier namespace object throughout shutdown.
+//@ run-pass
+//@ stdout: 7
+mut int earlier = 7;
+class Probe {
+public:
+  Probe() {}
+  ~Probe() { std::println(earlier); }
+};
+Probe object{};
+int main() { return 0; }

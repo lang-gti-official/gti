@@ -162,6 +162,10 @@ void Failures::publishOrdinary(llvm::IRBuilder<> &ir, llvm::Value *channel) {
 llvm::Value *Failures::record(llvm::IRBuilder<> &ir, llvm::Value *channel) {
   return ir.CreateStructGEP(session.abi().failureChannel(), channel, 0);
 }
+llvm::Value *Failures::originAddress(llvm::IRBuilder<> &ir,
+                                     llvm::Value *channel) {
+  return ir.CreateStructGEP(session.abi().failureChannel(), channel, 1);
+}
 llvm::Value *Failures::origin(llvm::IRBuilder<> &ir, llvm::Value *channel) {
   return ir.CreateLoad(
       session.layouts().pointer(),
