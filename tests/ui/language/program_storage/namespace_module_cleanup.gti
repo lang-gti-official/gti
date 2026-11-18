@@ -1,0 +1,33 @@
+// Imported global owners initialize once and outlive their importing roots.
+//@ run-pass
+//@ stdout: 1
+//@ stdout: 2
+//@ stdout: 3
+//@ stdout: 4
+//@ stdout: 4
+//@ stdout: 3
+//@ stdout: 2
+//@ stdout: 1
+// --- main.gti
+import "shared.gti";
+import "left.gti";
+import "right.gti";
+Marker main_root{4};
+int main() { return 0; }
+// --- shared.gti
+export module storage_shared;
+export class Marker {
+  int value;
+public:
+  Marker(int value) : value(value) { std::println(value); }
+  ~Marker() { std::println(value); }
+};
+Marker shared_root{1};
+// --- left.gti
+export module storage_left;
+import "shared.gti";
+Marker left_root{2};
+// --- right.gti
+export module storage_right;
+import "shared.gti";
+Marker right_root{3};

@@ -158,6 +158,9 @@ Reachability reachableProgram(const LoweredProgram &program) {
     if (function.linkage == LanguageLinkage::C &&
         function.definitionKind == MirDefinitionKind::Source)
       body({MirBodyKind::Function, function.id});
+  for (const auto &step : mir.programInitializationPlan().steps)
+    if (step.sourceCleanup)
+      cleanup(*step.sourceCleanup);
   for (const auto &storage : mir.threadLocalStorage()) {
     body({MirBodyKind::ThreadLocalInitializer, storage.symbol});
     cleanup(storage.cleanup);

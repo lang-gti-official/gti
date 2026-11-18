@@ -49,11 +49,18 @@ python3 scripts/agent_workflow.py protection
   entries' cases with instrumented programs. See
   [verification](../docs/architecture/verification.md). Drafts run lint only.
   A merge-queue candidate the queue has discarded stops before its build.
-- On every push to main, full validation's `tip` job republishes that run's
+- On every push to main, full validation starts at once in a concurrency
+  group of its own commit (`full-validation-<sha>`): a later push never
+  cancels or replaces it, and only a repeated dispatch of the same commit
+  waits. Runs of several commits overlap and finish in any order, so tip
+  admission, nightly selection and the `main-broken` report decide by commit
+  ancestry on main (a result is reported only while no newer commit has its
+  own verdict). Each run's `tip` job republishes that run's
   production archives as the rolling `tip` prerelease once both platforms pass
   their installed-toolchain checks, before the integration shards finish. It
-  builds nothing, never affects the run's verdict, and nightly still publishes
-  only a commit that passed the complete suite.
+  builds nothing, never affects the run's verdict, never moves the tag back to
+  an older commit, and nightly still publishes only a commit that passed the
+  complete suite.
 - When full validation of main is red only because required jobs never got
   a hosted runner (cancelled having executed zero steps; GitHub drops
   long-queued macOS jobs), `workflows/validation-retry.yml` re-runs those
@@ -300,12 +307,36 @@ Because the App has no Workflows permission, a PR whose commits touch
 validate alone anyway. Rotate the private key by generating a new one, replacing the
 secret and deleting the old key.
 
+## Automatic revert
+
+`workflows/auto-revert.yml` runs `scripts/auto_revert.py` when a full
+validation of main completes. When a test step failed on a merge that is the
+only change since a green main, it opens a `codex/revert-<pr>-<sha10>` PR
+labelled `auto-revert`, registers merge-when-ready for it and comments on the
+original PR; when the failure cannot be pinned on one merge, or the caps (one
+open, one per 24 hours) are reached, it comments on the `main-broken` issue
+instead; a later green run containing the merge closes its revert. Rules:
+"Automatic revert of a red main" in `docs/architecture/agent-workflow.md`.
+
+It ships switched off. Until the owner sets the repository variable
+`GTI_AUTO_REVERT` to `true` (Settings, Secrets and variables, Actions,
+Variables), each run only writes its decision to the job summary and notes a
+`revert` or `track` decision on the `main-broken` issue with `GITHUB_TOKEN`.
+Dispatch the workflow with a full-validation run id to see the decision for
+that run (summary only). Switched on, it writes with the rollup App's token
+(section "Rollup bot"; no new permission: contents, pull requests, merge
+queues and issues) and `GITHUB_TOKEN` only reads. Because the App has no
+Workflows permission, a merge that changed workflow files is never reverted
+automatically; it is tracked. The `auto-revert` label is created on first use.
+Delete the variable, or set it to anything else, to switch the bot off again.
+
 ## Workflow policy
 
 Actions are pinned to full commit SHAs. Workflows run with a read-only token.
 Only these jobs write: nightly publication, beta publication, stable promotion
-and rollback, with `GITHUB_TOKEN`; and the rollup bot and the release cut, with
-the rollup App's token. No other workflow uses a secret.
+and rollback, with `GITHUB_TOKEN`; and the rollup bot, the release cut and the
+automatic revert's `act` job, with the rollup App's token. No other workflow
+uses a secret.
 Set positive `GTI_JOBS` and `GTI_TEST_JOBS` repository variables to override
 the CPU/memory-based budgets. Compiler-object caches are separate for native, sanitizer and bundled-release
 profiles; cache errors never skip builds or validation.

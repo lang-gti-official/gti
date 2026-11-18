@@ -3349,6 +3349,16 @@ loan's end points from its own CFG; generic bodies are checked per concrete
 instance. Semantics and MIR are compared at signature-contract level, and a
 disagreement there remains an internal compiler error.
 
+A consumed temporary receiver whose stored group is exclusive may hand its
+read-only class-region result to the group's suspended parent authority only
+when that group is not lifecycle-bound and retires within the full
+expression with nothing between the call and its end but other ends, the
+result's own publication (a return borrow or a reference binding) and drops.
+Verification checks that exact sequence. A further stored path of the same
+carrier is another field's owner and never the relayed one; and the referent
+of a read-only reference formal may be an additional source of a stored
+group without a loan of the body's own, as an owned local input may.
+
 Loan liveness is a MIR analysis, after rustc's NLL and Polonius: loans are
 facts, and a loan stays live while any binding or value carrying it (directly
 or through a child loan) is still used. Lowering a body takes two passes. The
@@ -5121,6 +5131,14 @@ producer to a read-only zero-parameter `operator*` whose receiver result is
 supplied by stored fields. Clearing the fact, borrowing the cursor, escaping,
 detaching the cursor's protecting loan or erasing the supplier fields fails
 verification.
+A read-only reference yield in the cursor's stored region (`T&<owner>` from
+an `operator*` of `Cursor<lifetime owner>`) over a borrowed-state formal keeps
+no proxy: the element binding is carried by the cursor's own Stored loan, a
+direct child of the range loan, and the selected dereference's CallResult on
+the iterator is that loan's child. Verification admits that shape only for a
+read-only structural range with one unambiguous, non-entry, non-escaping
+cursor loan and exactly one dereference call on the iterator place; a mutable
+element, a second cursor loan or a result parented elsewhere still fails.
 Lowering ends descendants child-first before
 increment and on `continue`, `break`, `return`, normal cleanup, and failure
 cleanup. An escaping owned temporary is impossible because its drop follows

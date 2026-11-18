@@ -362,10 +362,26 @@ llvm::Function *Lifetimes::cleanupObservation(const MirDropType &recipe) {
 
 void Lifetimes::prepareProgramStorage(
     const std::map<SymbolId, llvm::GlobalVariable *> &globals) {
-  if (programRetirement || !programStorage.empty())
+  if (programRetirement || programCleanup || !programStorage.empty() ||
+      !sourceProgramStorage.empty())
     throw std::logic_error("LLVM program retirement prepared twice");
   for (const auto &step :
        session.program().mir().programInitializationPlan().steps) {
+    if (step.sourceCleanup) {
+      if (step.nativeRetirement ||
+          mirUniqueCleanupType(session.program().mir(),
+                               step.sourceCleanup->type) != step.sourceCleanup)
+        throw std::logic_error(
+            "LLVM program cleanup lost its exact source recipe");
+      auto *live = new llvm::GlobalVariable(
+          session.module(), llvm::Type::getInt1Ty(session.context()), false,
+          llvm::GlobalValue::InternalLinkage,
+          llvm::ConstantInt::getFalse(session.context()),
+          "__gti_program_source_live_" + std::to_string(step.id));
+      sourceProgramStorage.push_back({step.storageInitialization,
+                                      globals.at(step.symbol), live,
+                                      *step.sourceCleanup});
+    }
     if (!step.nativeRetirement)
       continue;
     if (!mirDropIsNativeRetirement(session.program().mir(),
@@ -380,6 +396,49 @@ void Lifetimes::prepareProgramStorage(
     programStorage.push_back({step.storageInitialization,
                               globals.at(step.symbol), live,
                               *step.nativeRetirement});
+  }
+  if (!sourceProgramStorage.empty()) {
+    programCleanup = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getInt1Ty(session.context()),
+                                {session.layouts().pointer(),
+                                 llvm::Type::getInt1Ty(session.context())},
+                                false),
+        llvm::GlobalValue::InternalLinkage, "__gti_program_cleanup_source",
+        session.module());
+    llvm::IRBuilder<> ir(
+        llvm::BasicBlock::Create(session.context(), "entry", programCleanup));
+    auto *run =
+        llvm::BasicBlock::Create(session.context(), "ready", programCleanup);
+    auto *done =
+        llvm::BasicBlock::Create(session.context(), "done", programCleanup);
+    auto *failed =
+        llvm::BasicBlock::Create(session.context(), "failed", programCleanup);
+    auto *ready = ir.CreateCall(declareRuntimeService(
+        session, RuntimeService::ProgramStorageRetirementReady));
+    ir.CreateCondBr(ir.CreateICmpNE(ready, ir.getInt32(0)), run, done);
+    ir.SetInsertPoint(run);
+    for (auto item = sourceProgramStorage.rbegin();
+         item != sourceProgramStorage.rend(); ++item) {
+      auto *drop =
+          llvm::BasicBlock::Create(session.context(), "drop", programCleanup);
+      auto *next =
+          llvm::BasicBlock::Create(session.context(), "next", programCleanup);
+      ir.CreateCondBr(ir.CreateLoad(ir.getInt1Ty(), item->live), drop, next);
+      ir.SetInsertPoint(drop);
+      // Disarm before entering user code. A failed drop must never be retried;
+      // the hosted failure continuation resumes at the remaining live roots.
+      ir.CreateStore(ir.getFalse(), item->live);
+      auto *ok = ir.CreateCall(cleanup(item->recipe),
+                               {item->storage, programCleanup->getArg(0),
+                                programCleanup->getArg(1)});
+      Failures::branchOnSuccess(ir, ok, next, failed);
+      ir.SetInsertPoint(next);
+    }
+    ir.CreateBr(done);
+    ir.SetInsertPoint(done);
+    ir.CreateRet(ir.getTrue());
+    ir.SetInsertPoint(failed);
+    ir.CreateRet(ir.getFalse());
   }
   if (programStorage.empty())
     return;
@@ -444,6 +503,17 @@ void Lifetimes::publishProgramStorage(llvm::IRBuilder<> &ir,
   for (const auto &storage : programStorage)
     if (storage.initialization == instruction)
       ir.CreateStore(ir.getTrue(), storage.live);
+  for (const auto &storage : sourceProgramStorage)
+    if (storage.initialization == instruction)
+      ir.CreateStore(ir.getTrue(), storage.live);
+}
+
+llvm::Value *Lifetimes::cleanupProgramStorage(llvm::IRBuilder<> &ir,
+                                              llvm::Value *failure,
+                                              bool unwinding) {
+  if (!programCleanup)
+    throw std::logic_error("LLVM source cleanup has no sealed process storage");
+  return ir.CreateCall(programCleanup, {failure, ir.getInt1(unwinding)});
 }
 
 void Lifetimes::retireProgramStorage(llvm::IRBuilder<> &ir) {

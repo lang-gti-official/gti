@@ -111,6 +111,7 @@ public:
   enum class ProgramEffectOwnerKind {
     None,
     Initializer,
+    ProgramCleanup,
     Function,
     Constructor,
     FunctionDefaultArgument,
@@ -823,6 +824,8 @@ public:
   void visitForStmt(const ForStmt &stmt) override;
 
   void visitRangeForStmt(const RangeForStmt &stmt) override;
+  void analyzeRangeForStatement(const RangeForStmt &stmt);
+  void analyzeInitStatement(const StmtPtr &initializer, bool constantBranch);
 
   void visitFunctionDecl(const FunctionDecl &stmt) override;
   void
@@ -838,6 +841,7 @@ public:
   void analyzeDeferredBodies();
 
   void visitIfStmt(const IfStmt &stmt) override;
+  void analyzeIfStatement(const IfStmt &stmt);
 
   void visitLoopControlStmt(const LoopControlStmt &stmt) override;
 
@@ -850,6 +854,7 @@ public:
   void visitReturnStmt(const ReturnStmt &stmt) override;
 
   void visitSwitchStmt(const SwitchStmt &stmt) override;
+  void analyzeSwitchStatement(const SwitchStmt &stmt);
 
   void visitStructuredBindingDecl(const StructuredBindingDecl &stmt) override;
 
@@ -2154,6 +2159,9 @@ private:
     std::vector<std::unordered_map<SymbolId, ConstexprLocalValue>> scopes;
     std::vector<GenericSubstitution> substitutions;
     std::vector<ConstantValue> receivers;
+    // The if or switch whose header init statement just executed in its own
+    // scope; that statement's next execution runs the rest of the header.
+    const Stmt *initializedHeader = nullptr;
   };
 
   enum class ConstexprControlFlow {
@@ -3817,10 +3825,11 @@ private:
                                    std::string *reason,
                                    const std::vector<std::string> *lookupScope,
                                    SemanticConstraintGuidance *guidance) const;
-  [[nodiscard]] std::optional<PredicateCapability> predicateCapabilityFor(
-      const ConceptApplication &application,
-      const std::vector<SemanticType> &arguments,
-      const std::vector<std::string> *lookupScope = nullptr) const;
+  [[nodiscard]] std::optional<PredicateCapability>
+  predicateCapabilityFor(const ConceptApplication &application,
+                         const std::vector<SemanticType> &arguments,
+                         const std::vector<std::string> *lookupScope = nullptr,
+                         bool admitNegation = false) const;
   mutable std::size_t expressionRequirementDepth = 0;
   mutable std::shared_ptr<std::size_t> requirementQueryWork;
   [[nodiscard]] bool
@@ -3879,6 +3888,23 @@ private:
   [[nodiscard]] bool activeRequirementsImply(
       std::span<const AppliedConceptRequirement> requirements,
       const ConstraintExpression &expression, std::size_t root) const;
+  // Whether `wanted` has the trusted fact `fact` (negated: lacks it) while
+  // `parameter` is assumed to have `assumed` (negated: to lack it). The
+  // ordinary structural evaluator answers under that temporary hypothesis;
+  // a fact it cannot derive from fields yields no proof.
+  [[nodiscard]] bool liftedParameterFact(const SemanticType &parameter,
+                                         GenericConstraintKind assumed,
+                                         const SemanticType &wanted,
+                                         GenericConstraintKind fact,
+                                         bool negated) const;
+  // Case-analysis hypotheses of the active implication proof: a type
+  // parameter assumed to have trusted facts, or to carry borrowed state.
+  struct AssumedParameterFact {
+    GenericParameterId parameter = 0;
+    GenericConstraintSet constraints = 0;
+    bool borrowedState = false;
+  };
+  mutable std::vector<AssumedParameterFact> assumedParameterFacts;
 
   [[nodiscard]] std::optional<ConstraintFailure> firstConceptApplicationFailure(
       const AppliedConceptRequirement &requirement) const;
@@ -5075,7 +5101,8 @@ private:
       const std::vector<ConceptApplication> &requirements);
   [[nodiscard]] std::optional<PredicateCapability>
   constraintPredicateCapability(const Call &call,
-                                const std::vector<SemanticType> &typeArguments);
+                                const std::vector<SemanticType> &typeArguments,
+                                bool admitNegation = false);
 
   [[nodiscard]] GenericConstraintSet resolveConcept(ConceptId id,
                                                     const Token *use);
@@ -5777,6 +5804,7 @@ private:
 
   void
   validateProgramInitializationEffects(const ProgramInitializationPlan &plan);
+  void validateProgramCleanupEffects(const ProgramInitializationPlan &plan);
 
   void finalizeDeferredProgramConstantSubstitutions(
       const ProgramInitializationPlan &plan);

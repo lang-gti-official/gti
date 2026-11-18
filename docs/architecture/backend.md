@@ -1439,6 +1439,12 @@ member's owner class (the temporary's own class or one of its bases) and the
 table selects the override, through the transformed status ABI when the family
 is failure-capable. The emitter allocates no storage for a by-value receiver
 here.
+A temporary of a class with a base that holds borrowed state keeps MIR's
+physical-shell `CallArgument` loan on that slot, with the temporary's Stored
+group as its dependency. LLVM admission accepts that loan for hierarchy types
+exactly as for other classes: the address is the fresh full-expression slot,
+and the dependency is provenance for the external owners, with no
+representation of its own.
 
 For a verified read-only temporary argument input, the body emitter uses the
 same exact materialization, the value-rooted lifetime slot or the CFG-promoted
