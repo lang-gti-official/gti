@@ -55,7 +55,7 @@ byte-for-byte and retained. These comparisons do not execute the programs.
 | Non-throwing outcomes | [575](https://github.com/lang-gti-official/gti/pull/575) | `03d154906d0c8d4356b3c23f3fff6ed665652fa9` | All 1,516 identical to baseline | All 414 identical |
 | Exact-type index | [577](https://github.com/lang-gti-official/gti/pull/577) | `44f44891733872e958630524dcf7659e1c00c05b` | All 1,516 identical to reconciled parent | All 414 identical |
 | Whole-query memo and walk replay | [579](https://github.com/lang-gti-official/gti/pull/579) | `b3e0350bf54ba48276504561363a781ae270e330` | All 1,516 identical to index parent | All 414 identical |
-| Coverage identity keys | [581](https://github.com/lang-gti-official/gti/pull/581) | `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb` | All 1,516 identical to memo parent | Pending |
+| Coverage identity keys | [581](https://github.com/lang-gti-official/gti/pull/581) | `7d1073c6f24e82db667b9bff8ff79b4f8e677ffb` | All 1,516 identical to memo parent | All 414 identical |
 
 The final candidate also matches the original baseline on all 1,516 example,
 registered-coverage and admission captures. The first example baseline was recorded at
