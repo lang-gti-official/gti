@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gti/semantic_core.h"
+#include "gti/mir.h"
 #include <cstddef>
 
 namespace lang::native_llvm {
