@@ -1495,6 +1495,9 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
                 *requirement.syntax->memberRequirement,
                 requirement.arguments)) {
           fact->application = requirement.syntax;
+          if (fact->freeCallQuery)
+            fact->freeCallScope =
+                requirement.lookupScope.value_or(currentNamespace);
           result.push_back(std::move(*fact));
         }
         return result;
@@ -1530,7 +1533,9 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
           .memberName = pattern.memberName,
           .mutableReceiver = pattern.mutableReceiver,
           .requiresUnsafe = pattern.requiresUnsafe,
-          .borrowSource = pattern.borrowSource};
+          .borrowSource = pattern.borrowSource,
+          .freeCallQuery = pattern.freeCallQuery,
+          .freeCallScope = pattern.freeCallScope};
       bool valid = true;
       for (const RegisteredConcept::StructuralPattern::Argument &argument :
            pattern.arguments) {
@@ -1576,7 +1581,9 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
            left.memberName == right.memberName &&
            left.mutableReceiver == right.mutableReceiver &&
            left.borrowSource == right.borrowSource &&
-           left.requiresUnsafe == right.requiresUnsafe;
+           left.requiresUnsafe == right.requiresUnsafe &&
+           left.freeCallQuery == right.freeCallQuery &&
+           left.freeCallScope == right.freeCallScope;
   };
   std::function<std::vector<ExpandedStructuralRequirement>(std::size_t)>
       expandNode = [&](std::size_t nodeIndex) {
@@ -1619,6 +1626,104 @@ auto SemanticVisitor::Impl::expandStructuralRequirements(
         return result;
       };
   return expandNode(expression->root);
+}
+
+auto SemanticVisitor::Impl::applyRequiredFreeCall(
+    const Call &call, std::span<const SemanticType> argumentTypes,
+    Symbol &callee) -> bool {
+  const auto *name = exprAs<Variable>(call.callee().get());
+  if (!name || macroContext(name->name()) || !call.typeArguments().empty() ||
+      argumentTypes.empty() ||
+      std::any_of(callee.overloads.begin(), callee.overloads.end(),
+                  [](const CallableCandidate &candidate) {
+                    return candidate.ownerClass != 0;
+                  }))
+    return false;
+
+  // Most constrained calls do not have a free-call requirement. Avoid
+  // expanding the structural predicates of unrelated stdlib constraints.
+  const auto mayProveCall = [&](const AppliedConceptRequirement &requirement) {
+    if (requirement.syntax && requirement.syntax->memberRequirement) {
+      const auto fact = expressionRequirementFact(
+          *requirement.syntax->memberRequirement, requirement.arguments);
+      return fact && fact->freeCallQuery &&
+             fact->memberName == name->name().lexeme;
+    }
+    return requirement.conceptId != 0 &&
+           requirement.conceptId <= concepts.size() &&
+           std::any_of(
+               concepts[requirement.conceptId - 1]
+                   .structuralConstraints.begin(),
+               concepts[requirement.conceptId - 1].structuralConstraints.end(),
+               [&](const RegisteredConcept::StructuralPattern &pattern) {
+                 return pattern.freeCallQuery &&
+                        pattern.memberName == name->name().lexeme;
+               });
+  };
+  if (std::none_of(requirementScopes.begin(), requirementScopes.end(),
+                   [&](const auto &scope) {
+                     return std::any_of(scope.begin(), scope.end(),
+                                        mayProveCall);
+                   }))
+    return false;
+
+  const auto facts = activeStructuralRequirements();
+  const ExpandedStructuralRequirement *proof = nullptr;
+  const auto reject = [&](std::string message) {
+    report(call.paren(), std::move(message), "GTI-S2029");
+    currentType = SemanticType::Unknown;
+    return true;
+  };
+  for (const auto &fact : facts) {
+    if (!fact.freeCallQuery || fact.memberName != name->name().lexeme ||
+        fact.arguments.size() != argumentTypes.size() + 1)
+      continue;
+    bool exact = true;
+    for (std::size_t index = 0; index < argumentTypes.size(); ++index) {
+      const auto *info = semanticModel.findExpression(*call.arguments()[index]);
+      exact &=
+          exprAs<Variable>(call.arguments()[index].get()) &&
+          fact.arguments[index].arguments.front() == argumentTypes[index] &&
+          info && info->category == ValueCategory::Place;
+    }
+    if (!exact)
+      continue;
+    if (proof && (proof->freeCallQuery != fact.freeCallQuery ||
+                  proof->freeCallScope != fact.freeCallScope ||
+                  proof->arguments != fact.arguments))
+      return reject("Call matches more than one free-function requirement.");
+    proof = &fact;
+  }
+  if (!proof)
+    return false;
+
+  if (std::any_of(proof->arguments.begin(), proof->arguments.end(),
+                  containsOpenTypeParameter)) {
+    // Provisional type information only. The concrete body uses the ordinary
+    // call resolver and records a real target before HIR is constructed.
+    semanticModel.record(
+        call, ResolvedCallInfo{.returnType = proof->arguments.back(),
+                               .parameterTypes = {proof->arguments.begin(),
+                                                  proof->arguments.end() - 1}});
+    currentType = callExpressionType(proof->arguments.back());
+    return true;
+  }
+
+  FunctionId selected = 0;
+  if (!expressionRequirementSatisfied(*proof->freeCallQuery, proof->arguments,
+                                      nullptr, &proof->freeCallScope, nullptr,
+                                      &selected) ||
+      selected == 0)
+    return reject("The requirement does not select an exact read-only "
+                  "free-function overload for this call.");
+  std::erase_if(callee.overloads,
+                [selected](const CallableCandidate &candidate) {
+                  return candidate.id != selected;
+                });
+  if (callee.overloads.empty())
+    return reject("The overload selected by the requirement is not visible "
+                  "at this call.");
+  return false;
 }
 
 auto SemanticVisitor::Impl::activeStructuralRequirements() const
@@ -6359,6 +6464,7 @@ auto SemanticVisitor::Impl::structuralConstraintSatisfied(
            enums[arguments[0].enumId - 1].underlyingType == arguments[1];
   case StructuralConstraintKind::None:
     return true;
+  case StructuralConstraintKind::FreeCall:
   case StructuralConstraintKind::ReadMember:
   case StructuralConstraintKind::Iteration:
     // Exact member requirements also carry a name, and are checked by
@@ -6461,6 +6567,7 @@ auto SemanticVisitor::Impl::symbolicOperatorRequirements(
         }
       }
       break;
+    case StructuralConstraintKind::FreeCall:
     case StructuralConstraintKind::None:
       break;
     }

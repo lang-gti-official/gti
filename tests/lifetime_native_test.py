@@ -14,6 +14,42 @@ from backend_modes import native_modes
 
 
 CASES = {
+    # A class region the class stores is supplied by the receiver's stored
+    # references and by every parameter written in it: their union.
+    "consuming_parameter_region_result": """
+class Consumer<lifetime a> {
+  int&<a> external;
+public:
+  Consumer(int&<a> input) : external(input) {}
+  int&<a> operator()(int&<a> input) && { return input; }
+};
+int main() { int value = 7; int& second = Consumer(value)(value); return second - 7; }
+""",
+    "stored_region_parameter_union": """
+struct Table {
+  mut int values[4];
+  Table() : values({10, 20, 30, 40}) {}
+  bool has(uint64_t key) { return key < uint64_t(4); }
+  int& at(uint64_t key) { return this.values[key]; }
+};
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  View(Table&<a> table) : table(table) {}
+  int&<a> get_or(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+};
+int main() {
+  Table table{};
+  int fallback = 7;
+  View view = View(table);
+  int& found = view.get_or(uint64_t(1), fallback);
+  int& missing = view.get_or(uint64_t(9), fallback);
+  return found + missing == 27 ? 0 : 1;
+}
+""",
     'composed_record_two_owners': r"""
 import std.memory;
 struct Pair<lifetime a, lifetime b> {
@@ -1609,18 +1645,6 @@ int main() {
   return 0;
 }
 """,
-    # A class region the class stores is supplied by the receiver's stored
-    # references; a parameter written in it would also need a mixed
-    # receiver-and-argument contract, which MIR does not represent yet.
-    "consuming_parameter_region_result": """
-class Consumer<lifetime a> {
-  int&<a> external;
-public:
-  Consumer(int&<a> input) : external(input) {}
-  int&<a> operator()(int&<a> input) && { return input; }
-};
-int main() { int value = 7; int& second = Consumer(value)(value); return second - 7; }
-""",
     # A result in a stored class region cannot borrow storage the consumed
     # receiver owns.
     "consuming_owned_field_carrier": """
@@ -1899,7 +1923,6 @@ def main():
     rejection_codes = {
         "ambiguous_lambda_suppliers": {"GTI-S2017"},
         "consuming_static_mapper_results": {"GTI-S2022"},
-        "consuming_parameter_region_result": {"GTI-S2017"},
         "consuming_owned_field_carrier": {"GTI-S2127"},
         "complete_callable_projection": {"GTI-S2017"},
         "unnamed_pack_lane_return": {"GTI-S2017", "GTI-S2127"},

@@ -117,6 +117,7 @@ struct Options {
   bool failed = false;
   std::optional<fs::path> junit;
   bool list = false;
+  bool listEvidence = false;
   bool tidy = false;
   bool bless = false;
   bool isolate = false;
@@ -146,7 +147,10 @@ void usage(std::ostream &out) {
          "                [--shard I/N] [--bless [--bless-directives]]\n"
          "                [--opt O0|O3] [--isolate] [--gti PATH] [--lsp PATH]\n"
          "                [--json FILE] [--junit FILE] [--slowest N]\n"
-         "                [--cpu-budget SECONDS] [--list] [--tidy]\n"
+         "                [--cpu-budget SECONDS] [--list | --list-evidence] "
+         "[--tidy]\n"
+         "       gti-test --llvm-admission-evidence SOURCE NEW_DIRECTORY "
+         "O0|O2\n"
          "Runs every test under tests/ui, tests/project and tests/lsp (or\n"
          "--root DIR). A positional argument that names a file or directory\n"
          "selects it; any other selects tests whose path contains it.\n"
@@ -622,6 +626,16 @@ std::string jsonString(const std::string &text) {
 } // namespace
 
 int main(int argc, char **argv) {
+  if (argc > 1 && std::string_view(argv[1]) == "--llvm-admission-evidence") {
+    if (argc < 5) {
+      std::cerr << "usage: gti-test --llvm-admission-evidence SOURCE "
+                   "NEW_OUTPUT_DIRECTORY O0|O2 [--execution-profile PROFILE] "
+                   "[--library FUNCTION=SYMBOL ...]\n";
+      return 2;
+    }
+    return gti_test::writeAdmissionEvidence(argv[0], argv[2], argv[3], argv[4],
+                                            {argv + 5, argv + argc});
+  }
   Options options;
   for (int index = 1; index < argc; ++index) {
     const std::string argument = argv[index];
@@ -637,6 +651,8 @@ int main(int argc, char **argv) {
       return 0;
     } else if (argument == "--list") {
       options.list = true;
+    } else if (argument == "--list-evidence") {
+      options.listEvidence = true;
     } else if (argument == "--tidy") {
       options.tidy = true;
     } else if (argument == "--bless") {
@@ -853,6 +869,29 @@ int main(int argc, char **argv) {
   if ((changed || previousFailures) && tests.empty()) {
     std::cout << "RESULT ok: no " << (changed ? "changed" : "failed")
               << " tests\n";
+    return 0;
+  }
+  if (options.listEvidence) {
+    // Describe the same parsed, filtered and sharded cases execution uses.
+    // The coverage probe currently accepts only ordinary single-file hosted
+    // programs; reject every configuration it cannot reproduce exactly.
+    for (const TestFile &test : tests) {
+      const bool compatible =
+          modeRuns(test.mode) && test.errors.empty() && hostAdmits(test) &&
+          test.sections.size() == 1 && test.stdlibOverlay.empty() &&
+          test.compileLimits.empty() && test.target.empty() &&
+          !test.noPrelude && !test.optimize && test.defines.empty() &&
+          test.rawPointerAudit == "off" &&
+          !test.rawPointerAuditLibraryFindings && test.nativeArgs.empty() &&
+          test.importDirectories.empty() && test.runnerFault.empty();
+      std::cout << "{\"path\":" << jsonString(test.path.generic_string())
+                << ",\"mode\":" << jsonString(modeName(test.mode))
+                << ",\"probe-compatible\":" << (compatible ? "true" : "false")
+                << ",\"execution-profile\":"
+                << jsonString(test.concurrent ? "concurrent"
+                                              : "single-threaded")
+                << "}\n";
+    }
     return 0;
   }
   if (options.list) {

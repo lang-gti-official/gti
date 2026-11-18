@@ -1,0 +1,19 @@
+// A surviving inherited-field relay prevents mutation of the original referent.
+struct Box { mut int value; Box(int v) : value(v) {} };
+class Base<lifetime a> {
+protected:
+  Box&<a> item;
+public:
+  Base(Box&<a> item) : item(item) {}
+};
+class Derived<lifetime a> : public Base<a> {
+public:
+  Derived(Box&<a> item) : Base<a>(item) {}
+  int&<a> take() && { return this.item.value; }
+};
+int main() {
+  mut Box item{11};
+  int& selected = Derived(item).take();
+  item.value = 1; //~ ERROR GTI-S2017
+  return selected;
+}

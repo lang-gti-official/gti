@@ -1,0 +1,16 @@
+// A consumed inherited shared field reborrows an exclusive caller authority.
+//@ run-pass
+struct Box { mut int value; Box(int v) : value(v) {} };
+class Base<lifetime b> {
+protected:
+  Box&<b> other;
+public:
+  Base(Box&<b> o) : other(o) {}
+};
+class Sub<lifetime b> : public Base<b> {
+public:
+  Sub(Box&<b> o) : Base<b>(o) {}
+  int&<b> right() && { return this.other.value; }
+};
+int&<a> f<lifetime a>(mut Box&<a> mine) { return Sub(mine).right(); }
+int main() { mut Box b{9}; return f(b) == 9 ? 0 : 1; }

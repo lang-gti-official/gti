@@ -96,6 +96,24 @@ int read_in_environment<T, lifetime data>(T&<data> owner, int&<data> value) {
   return read(value);
 }
 
+// A result in a region the class stores may come from the receiver's stored
+// reference or from a parameter written in that region; callers keep both
+// borrowed while it lives.
+struct Readings {
+  int values[2];
+  Readings(int first, int second) : values({first, second}) {}
+  int& at(uint64_t index) { return this.values[index]; }
+};
+class Lookup<lifetime data> {
+  Readings&<data> readings;
+public:
+  Lookup(Readings&<data> readings) : readings(readings) {}
+  int&<data> get_or(uint64_t index, int&<data> fallback) {
+    if (index < uint64_t(2)) { return this.readings.at(index); }
+    return fallback;
+  }
+};
+
 // A method result written in its class's region is what the carrier stores
 // there, never the carrier itself. It can therefore be returned through a
 // carrier parameter or reference, from a local carrier, or taken from a
@@ -151,5 +169,9 @@ int main() {
     front = 5;
     if (tail != 2 || front != 5) { return 16; }
   }
+  Readings readings{5, 6};
+  Lookup lookup = Lookup(readings);
+  if (lookup.get_or(uint64_t(1), right) != 6 ||
+      lookup.get_or(uint64_t(4), right) != 9) { return 17; }
   return identity(left) - 4;
 }

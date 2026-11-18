@@ -122,6 +122,64 @@ const SemanticModel &SemanticVisitor::model() const { return impl->model(); }
 
 SemanticModel SemanticVisitor::takeModel() { return impl->takeModel(); }
 
+void SemanticVisitor::detachBodyQueryContext() {
+  impl->detachFromCaller();
+  impl->analyzedProgram = nullptr;
+}
+
+std::optional<std::vector<Diagnostic>> SemanticVisitor::diagnoseEditedBody(
+    const EditedFunctionBody &input,
+    const std::atomic<bool> *cancellation) const {
+  return impl->diagnoseEditedBody(input, cancellation);
+}
+
+std::optional<std::vector<Diagnostic>>
+SemanticVisitor::Impl::diagnoseEditedBody(
+    const EditedFunctionBody &input,
+    const std::atomic<bool> *cancellation) const {
+  const auto *function = input.model.findFunction(input.declaration);
+  if (!function || function->declaration != &input.declaration ||
+      function->bodyDeclaration() != &input.declaration ||
+      !function->requirements.empty() ||
+      function->returnType.kind == SemanticType::Reference ||
+      function->returnBorrowOrigin != BorrowOriginKind::None ||
+      !function->returnBorrowFields.empty() || function->dependentTextReturn)
+    return std::nullopt;
+  auto worker = unevaluatedExpressionWorker(&input.model);
+  worker->sourceGraph = &input.graph;
+  worker->sources = &input.sources;
+  worker->analyzedProgram = &input.program;
+  worker->cancellation = cancellation;
+  const std::optional<ClassId> owner =
+      function->ownerClass ? std::optional<ClassId>(function->ownerClass)
+                           : std::nullopt;
+  if (owner && !worker->classInfo(*owner).genericParameters.empty())
+    return std::nullopt;
+  worker->enterDeclarationContext(function->namespaceScope,
+                                  function->sourceUnit, owner);
+  Impl::DeclarationOrderScope order(*worker, input.declaration);
+  try {
+    worker->analyzeFunctionBody(input.declaration, function, false, true, false,
+                                &input.body);
+  } catch (const Impl::AnalysisCancelled &) {
+    return std::nullopt;
+  } catch (const Impl::ErrorLimitReached &) {
+    return std::nullopt;
+  }
+  const auto &checked = *input.body.extent();
+  for (const auto &diagnostic : worker->diagnostics) {
+    // Diagnostics about other bodies, contracts or generated inputs belong
+    // to the authoritative whole-snapshot run.
+    if (diagnostic.severity != DiagnosticSeverity::Error ||
+        diagnostic.primary.source != checked.source ||
+        diagnostic.primary.start < checked.start ||
+        diagnostic.primary.end > checked.end || !diagnostic.related.empty() ||
+        !diagnostic.fixes.empty())
+      return std::nullopt;
+  }
+  return worker->diagnostics;
+}
+
 SemanticTypeTraits SemanticVisitor::traitsFor(const SemanticType &type) const {
   return impl->traitsFor(type);
 }

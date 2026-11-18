@@ -1,0 +1,28 @@
+// A union result relayed through a local alias keeps its argument borrowed while it lives.
+struct Table {
+  mut int values[4];
+  Table() : values({10, 20, 30, 40}) {}
+  bool has(uint64_t key) { return key < uint64_t(4); }
+  int& at(uint64_t key) { return this.values[key]; }
+};
+int&<r> pick<lifetime r>(int&<r> only) { return only; }
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  View(Table&<a> table) : table(table) {}
+  int&<a> via_alias(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    int& local = fallback;
+    return pick(local);
+  }
+};
+
+int fallback_written() {
+  Table table{};
+  mut int fallback = 7;
+  View view{table};
+  int& result = view.via_alias(uint64_t(9), fallback);
+  fallback = 8;  //~ ERROR GTI-S2017
+  return result;
+}
+int main() { return 0; }

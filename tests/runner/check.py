@@ -21,6 +21,7 @@ import json
 import os
 from xml.etree import ElementTree
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -66,7 +67,170 @@ def block(output, status, name):
     return match.group(0) if match else ""
 
 
+def admission_evidence_test(runner):
+    """The test-only evidence command preserves bytes and fails closed."""
+    with tempfile.TemporaryDirectory(prefix="gti-admission-self-") as directory:
+        root = Path(directory)
+        (root / "stdlib").symlink_to(ROOT / "stdlib", target_is_directory=True)
+        source = root / "main.gti"
+        source.write_text("int main() { return 0; }\n")
+        inputs = root / "inputs.json"
+        inputs.write_text(json.dumps(["main.gti"]))
+        tool = ROOT / "scripts/llvm_admission_evidence.py"
+        captures = [root / "ordinary", root / "validation"]
+        for index, output in enumerate(captures):
+            argv = [sys.executable, str(tool), "capture", "--root", str(root),
+                    "--runner", str(runner), "--output", str(output),
+                    "--inputs", str(inputs)]
+            if index:
+                argv += ["--validation"]
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+            expect(result.returncode == 0, "admission evidence capture succeeds",
+                   result.stdout + result.stderr)
+        examples = root / "examples"
+        examples.mkdir()
+        (examples / "unnumbered.gti").write_text("int main() { return 0; }\n")
+        default_output = root / "default-corpus"
+        result = subprocess.run(
+            [sys.executable, str(tool), "capture", "--root", str(root),
+             "--runner", str(runner), "--output", str(default_output)],
+            capture_output=True, text=True, timeout=120)
+        expect(result.returncode == 0 and set(json.loads(
+            (default_output / "manifest.json").read_text())["sources"]) ==
+            {"examples/unnumbered.gti"},
+            "default corpus includes examples without numeric prefixes",
+            result.stdout + result.stderr)
+        def compare():
+            return subprocess.run([sys.executable, str(tool), "compare",
+                                   *map(str, captures)], capture_output=True,
+                                  text=True, timeout=30)
+        result = compare()
+        expect(result.returncode == 0, "validation preserves plan/IR/object bytes",
+               result.stdout + result.stderr)
+        manifest_path = captures[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(iter(manifest["cases"].values()))
+        plan = captures[1] / entry["directory"] / "plan.txt"
+        original = plan.read_bytes()
+        plan.write_bytes(original + b"forged occurrence\n")
+        result = compare()
+        expect(result.returncode == 1 and "evidence changed" in result.stdout,
+               "changed admission evidence is rejected", result.stdout)
+        plan.write_bytes(original)
+        manifest["complete"] = False
+        manifest_path.write_text(json.dumps(manifest))
+        result = compare()
+        expect(result.returncode == 1 and "incomplete" in result.stdout,
+               "incomplete admission capture is rejected", result.stdout)
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        captures[0], "O0")
+        expect(code == 1 and "already exists" in out,
+               "evidence cannot reuse a stale directory", out)
+        source.write_text("//@ execution-profile: concurrent\nint main() { return 0; }\n")
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "concurrent", "O0")
+        expect(code == 0 and "ExecutionProfile.Concurrent" in
+               (root / "concurrent/plan.txt").read_text(),
+               "evidence preserves the input execution profile", out)
+        library = root / "library.gti"
+        library.write_text("int seed() { return 7; }\nmut int current = seed();\n"
+                           "int answer(int value) { return current; }\n")
+        request = {"source": "library.gti", "execution-profile": "single-threaded",
+                   "program": {"kind": "library", "exports": [
+                       {"function": "answer", "symbol": "embedded_answer"}]}}
+        inputs.write_text(json.dumps([request]))
+        library_captures = [root / "library-before", root / "library-after"]
+        for output in library_captures:
+            result = subprocess.run(
+                [sys.executable, str(tool), "capture", "--root", str(root),
+                 "--runner", str(runner), "--output", str(output),
+                 "--inputs", str(inputs), "--validation"],
+                capture_output=True, text=True, timeout=120)
+            expect(result.returncode == 0, "library evidence preserves exports",
+                   result.stdout + result.stderr)
+        command = [sys.executable, str(tool), "compare", *map(str, library_captures)]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        expect(result.returncode == 0, "library evidence compares exact artifacts",
+               result.stdout + result.stderr)
+        manifest_path = library_captures[1] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        entry = next(iter(manifest["cases"].values()))
+        ir = (library_captures[1] / entry["directory"] / "module.ll").read_text()
+        expect("embedded_answer" in ir, "library export reaches LLVM evidence", ir[:300])
+        manifest["configurations"]["library.gti"]["program"]["exports"][0]["symbol"] = "other"
+        manifest_path.write_text(json.dumps(manifest))
+        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        expect(result.returncode == 1 and "incomparable input configurations" in result.stdout,
+               "different export requests cannot compare as equivalent", result.stdout)
+        code, out = run(runner, "--llvm-admission-evidence", library,
+                        root / "invalid-export", "O0", "--library", "answer=")
+        expect(code == 1 and "invalid evidence library export" in out,
+               "malformed export request is rejected", out)
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "explicit-profile", "O0", "--execution-profile", "single-threaded")
+        expect(code == 0 and "ExecutionProfile.Concurrent" not in
+               (root / "explicit-profile/plan.txt").read_text(),
+               "provider-selected profile overrides standalone directive", out)
+        source.write_text("int main() { return undefined_name; }\n")
+        code, out = run(runner, "--llvm-admission-evidence", source,
+                        root / "invalid", "O0")
+        expect(code == 1 and "GTI-S2001" in out,
+               "failed compilation cannot become admission evidence", out)
+
+def ui_evidence_test(runner):
+    # The existing coverage claim must follow actual shard selection, not the
+    # self-test/tidy entry or a second implementation of the shard hash.
+    sys.path.insert(0, str(ROOT / "tests"))
+    try:
+        audit = runpy.run_path(str(ROOT / "tests/llvm_coverage_evidence_test.py"))
+    finally:
+        sys.path.pop(0)
+    with tempfile.TemporaryDirectory(prefix="gti-ui-evidence-") as raw:
+        root = Path(raw).resolve()
+        relative = "tests/ui/owner.gti"
+        source = root / relative
+        source.parent.mkdir(parents=True)
+        original = "// Execution evidence.\n//@ run-pass\nint main() { return 0; }\n"
+        source.write_text(original)
+        report = {"rows": [{"state": "implemented", "acceptance": {
+            "test": "gti_test_ui", "assertion": relative}}]}
+        inventory = {f"gti_test_ui_{i}": {
+            "command": [str(runner), str(source.parent), "--shard", f"{i}/2"],
+            "properties": [{"name": "LABELS", "value": ["gti-test-ui"]},
+                           {"name": "WORKING_DIRECTORY", "value": str(root)}]}
+            for i in (1, 2)}
+        resolve = audit["ui_profile_sources"]
+        records = resolve(report, root, inventory)
+        expect(records[relative]["source"] == original and
+               records[relative]["execution-profile"] == "single-threaded" and
+               records[relative]["shard"] in inventory,
+               "UI evidence uses the exact source and registered shard", records)
+        source.write_text(original.replace("//@ run-pass", "//@ run-pass\n//@ execution-profile: concurrent"))
+        expect(resolve(report, root, inventory)[relative]["execution-profile"] == "concurrent",
+               "UI evidence preserves the parsed execution profile", records)
+
+        def rejected(entries, message):
+            try:
+                resolve(report, root, entries)
+            except AssertionError as error:
+                expect(message in str(error), "UI evidence rejection", str(error))
+            else:
+                raise AssertionError("invalid UI execution evidence was accepted")
+
+        for directive in ("check-pass", "run-pass\n//@ define: EXTRA",
+                          "run-pass\n//@ opt: O3\n//@ reason: control"):
+            source.write_text(original.replace("run-pass", directive))
+            rejected(inventory, "not probe-compatible")
+        source.write_text(original)
+        rejected({}, "exactly one registered")
+        duplicate = dict(inventory)
+        duplicate["duplicate"] = inventory[records[relative]["shard"]]
+        rejected(duplicate, "exactly one registered")
+
+
 def self_test(runner):
+    admission_evidence_test(runner)
+    ui_evidence_test(runner)
     code, out = run(runner, FIXTURES / "pass", "--jobs", "2")
     expect(code == 0 and "RESULT ok: 8 passed, 0 failed" in out,
            "passing fixtures pass", out)

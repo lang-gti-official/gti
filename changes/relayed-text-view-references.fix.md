@@ -1,0 +1,1 @@
+Fix an internal compiler error and rejected writes for text-view references (`std::string_view&<o>`) returned through a stored reference to their owner, including iterator element references over text arrays.

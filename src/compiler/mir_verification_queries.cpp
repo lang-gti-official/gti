@@ -1880,10 +1880,23 @@ const MirInstruction *callResultReferenceAliases(const MirBody &body,
         if (instruction.operands.front().place != 0) {
           const auto *referent =
               body.findPlace(instruction.operands.front().place);
-          if (!referent || referent->root != MirPlaceRootKind::Loan ||
-              referent->loan != loan.id || !referent->projections.empty() ||
-              referent->type != producer->info.type ||
-              referent->access != loan.access)
+          // Or the referent of another alias carrying this same result: an
+          // alias of an alias names the same address.
+          const bool throughAlias =
+              referent && referent->root == MirPlaceRootKind::Binding &&
+              referent->binding != binding &&
+              referent->projections.size() == 1 &&
+              referent->projections.front().kind ==
+                  MirProjectionKind::Dereference &&
+              std::find(loan.carriers.begin(), loan.carriers.end(),
+                        referent->binding) != loan.carriers.end() &&
+              referent->type == producer->info.type;
+          if (!referent ||
+              (!throughAlias &&
+               (referent->root != MirPlaceRootKind::Loan ||
+                referent->loan != loan.id || !referent->projections.empty() ||
+                referent->type != producer->info.type ||
+                referent->access != loan.access)))
             return nullptr;
         }
         initializer = &instruction;
