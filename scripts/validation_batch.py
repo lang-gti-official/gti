@@ -176,7 +176,7 @@ class Batches:
                 raise WorkflowError("Resume a batch with its original member list and worktree")
             if state is None:
                 state = self.flow.start(task, "Integrate validated compiler fixes: " + ", ".join(selected),
-                                        worktree, "codex/" + task)
+                                        worktree, self.flow.branch_prefix() + task)
                 state["batch"] = {"tasks": selected, "members": members, "base": state["base"],
                                   "manifest": checks.BATCH_DIRECTORY + task + ".json"}
                 self.flow.save(state, "preparing-batch")
