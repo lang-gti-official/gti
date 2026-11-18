@@ -1,0 +1,29 @@
+// Failed replacement preserves the command and captures native errors; NULs reject locally.
+//@ run-pass
+import std.process;
+int main() {
+  std::process::command missing{"/gti-missing-executable-5481"};
+  auto failure = missing.exec();
+  if (failure.code() != std::process::errc::execute_failed || failure.native_code() == 0) { return 1; }
+  auto again = missing.exec();
+  if (again.native_code() != failure.native_code() || !missing.valid()) { return 2; }
+  std::process::command empty{""};
+  auto invalid = empty.exec();
+  if (invalid.code() != std::process::errc::invalid_argument || invalid.native_code() != 0) { return 3; }
+  mut std::process::command nul{"/bin/sh"};
+  nul.arg("a\0b");
+  auto rejected = nul.exec();
+  if (rejected.code() != std::process::errc::invalid_argument || rejected.native_code() != 0) { return 4; }
+  std::process::command directory{"/"};
+  auto denied = directory.exec();
+  if (denied.code() != std::process::errc::execute_failed || denied.native_code() == 0) { return 5; }
+  std::process::command path_lookup{"sh"};
+  auto not_searched = path_lookup.exec();
+  if (not_searched.code() != std::process::errc::execute_failed || not_searched.native_code() == 0) { return 7; }
+  mut std::process::command child{"/bin/sh"};
+  child.arg("-c");
+  child.arg("exit 7");
+  auto result = child.run();
+  if (!result || result.value().exit_code() != 7) { return 6; }
+  return 0;
+}
