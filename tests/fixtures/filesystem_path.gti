@@ -238,6 +238,21 @@ void concatenation() {
   check("operator/ leaves the left operand unchanged", operatorLeft, "/alpha");
   check("operator/ leaves the right operand unchanged", operatorRight, "beta");
 
+  // String-view operands compose with path operands on either side of a chain.
+  std::filesystem::path root = "/opt";
+  std::filesystem::path tool = "gti";
+  auto path = root / "bin" / tool;
+  check("operator/ chains literals and paths", path, "/opt/bin/gti");
+  check("chained operator/ leaves root unchanged", root, "/opt");
+  check("chained operator/ leaves tool unchanged", tool, "gti");
+  std::string_view segment = "lib";
+  auto viewed = root / segment;
+  check("operator/ accepts a string-view variable", viewed, "/opt/lib");
+  auto absolute = root / "/replacement";
+  check("operator/ replaces with an absolute view", absolute, "/replacement");
+  auto trailing = root / "";
+  check("operator/ preserves an empty trailing view", trailing, "/opt/");
+
   operatorLeft /= operatorRight;
   check("operator/= joins in place", operatorLeft, "/alpha/beta");
 
