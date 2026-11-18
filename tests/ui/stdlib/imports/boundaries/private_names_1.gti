@@ -1,0 +1,33 @@
+// Standard-library implementation names under std::detail are not visible through public modules.
+//@ check-fail
+import std.charconv;
+import std.map;
+import std.memory;
+import std.resource;
+import std.vector;
+
+namespace case_map_sentinel {
+int entry() { std::detail::map_sentinel hidden{0}; return 0; }  //~ ERROR GTI-S2024
+}
+
+namespace case_numeric_format {
+int entry() { return int(std::detail::numeric_format(std::chars_format::general)); }  //~ ERROR GTI-S2024
+}
+
+namespace case_vector_sentinel {
+int entry() { std::detail::vector_sentinel hidden{0}; return 0; }  //~ ERROR GTI-S2024
+}
+
+namespace case_prefix_owner {
+int entry() { std::detail::prefix_owner<int> hidden{uint64_t(1)}; return 0; }  //~ ERROR GTI-S2024
+}
+
+namespace case_raw_allocation {
+int entry() { std::detail::raw_allocation hidden{}; return 0; }  //~ ERROR GTI-S2024
+}
+
+namespace case_resource_lease {
+int entry() { std::process_resource provider{}; unsafe { auto binding = std::bind_resource(provider); std::detail::resource_lease<std::process_resource> hidden{binding}; } return 0; }  //~ ERROR GTI-S2024
+}
+
+int main() { return 0; }

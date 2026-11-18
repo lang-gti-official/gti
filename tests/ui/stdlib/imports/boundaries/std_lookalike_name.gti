@@ -1,0 +1,8 @@
+// A module name merely starting with the letters std is not reserved.
+//@ check-pass
+// --- std_lookalike_name.gti
+import "lookalike.gti";
+int main() { return value(); }
+// --- lookalike.gti
+export module stdx;
+export int value() { return 0; }

@@ -1,0 +1,4 @@
+// An implementation interface of the standard library cannot be imported.
+//@ check-fail
+import std.detail.map_entry;  //~ ERROR GTI-I0012
+int main() { return 0; }

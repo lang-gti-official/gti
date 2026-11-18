@@ -1,0 +1,9 @@
+// Standard-library implementation names under std::detail are not visible through public modules.
+//@ check-fail
+import std.utility;
+
+namespace case_map_entry {
+int entry() { std::detail::map_entry<int, int> hidden{1, 2}; return 0; }  //~ ERROR GTI-S2000
+}
+
+int main() { return 0; }

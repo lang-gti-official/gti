@@ -1,0 +1,45 @@
+// Public set, hash set, charconv, shared/weak owner, raw allocation and resource vector APIs work through their public modules.
+//@ run-pass
+import std.set;
+import std.unordered_set;
+import std.charconv;
+import std.string;
+import std.resource_vector;
+import std.resource;
+import std.memory;
+mut int drops = 0;
+class Payload {
+public:
+  int value;
+  Payload(int value) : value(value) {}
+  ~Payload() { drops += 1; }
+};
+int main() {
+  mut std::set<int> ordered{};
+  ordered.insert(7);
+  mut std::unordered_set<int> hashed{};
+  hashed.insert(9);
+  auto first = ordered.begin();
+  auto second = hashed.begin();
+  mut int value = 0;
+  auto parsed = std::from_chars("26", value);
+  if (parsed.ec != std::parse_errc::none) { return 1; }
+  if (*first + *second + value != 42) { return 2; }
+  {
+    mut auto owner = std::make_shared<Payload>(42);
+    auto observer = owner.downgrade();
+    { auto locked = observer.lock(); if (!locked || locked->value != 42) { return 3; } }
+    owner.reset();
+    if (!observer.expired() || drops != 1) { return 4; }
+  }
+  std::raw_allocation vacant{};
+  if (vacant.address != nullptr) { return 5; }
+  std::process_resource process{};
+  unsafe {
+    auto resource = std::bind_resource(process);
+    mut std::resource_vector<int, std::process_resource> items{resource};
+    items.push_back(42);
+    if (items[std::size_t(0)] != 42) { return 6; }
+  }
+  return 0;
+}

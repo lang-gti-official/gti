@@ -1,0 +1,8 @@
+// Application source cannot claim the reserved module name `std.memory` (implementation).
+//@ check-fail
+// --- reserved_std_name_4.gti
+import "claimed_std.gti";  //~ ERROR GTI-I0012
+int main() { return value(); }
+// --- claimed_std.gti
+module std.memory;  //~ ERROR GTI-I0012 The module name 'std' is reserved for the standard library. //~ ERROR GTI-I0012
+export int value() { return 0; }

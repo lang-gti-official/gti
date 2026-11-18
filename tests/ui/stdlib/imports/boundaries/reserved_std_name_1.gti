@@ -1,0 +1,8 @@
+// Application source cannot claim the reserved module name `std` (interface).
+//@ check-fail
+// --- reserved_std_name_1.gti
+import "claimed_std.gti";
+int main() { return value(); }
+// --- claimed_std.gti
+export module std;  //~ ERROR GTI-I0012 The module name 'std' is reserved for the standard library.
+export int value() { return 0; }
