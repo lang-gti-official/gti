@@ -4916,7 +4916,8 @@ do not expose C++ object layout as GTI semantics.
   query selects a uniform optional output channel for class-bound symbolic
   results and every connected override. Native-record instances use indirect
   publication; scalar and owning instances retain their existing return/drop
-  convention. The optimized `raw_native_record_transport_runtime` gate passes
+  convention. The optimized `raw_native_record_transport_runtime` gate (now
+  `tests/ui/unsafe/native_record_transport/`) passed
   C++20/C++23 at O0/O2/O3 for unrelated generic interface/model relays,
   nongeneric overrides of generic bases, and exactly-once owning-result
   cleanup. This preserves a family accepted by the canonical `Release`
@@ -5662,7 +5663,7 @@ cleanup fixture (#165); the fully tested implementation revision is `fa72b523`.
 | --- | --- |
 | Source request policy and canonical platform boundary | `gti_internal::process_resource` is an ordinary class in `stdlib/std/memory.gti`; no compiler source recognises its name. `process_provider_target_contract` selects POSIX/CRT calls for macOS, Linux and Windows; the C ABI smoke fixes their exact signatures. |
 | Default typed clients and source metadata | `std::allocator::try_storage`, process leases and `try_allocate_sparse` use two same-provider regions. `process_storage_policy.gti` observes their exact requests, one metadata byte per slot, zero/invalid/overflow requests, first/second acquisition failure, rollback, simultaneous owners, immovable owning elements, slot reuse, owner movement and element-before-region release. |
-| Existing custom resources and checked safety | `resource_protocol_contract`, `programmable_allocators_runtime`, `storage_adoption_contract`, source-storage/lifetime matrices and allocator Off/Warn parity retain resource/element borrow rejection, malformed descriptor checks, failed growth, constructor/destructor failure and original release authority. |
+| Existing custom resources and checked safety | `resource_protocol_contract`, `tests/ui/memory/resources/`, `storage_adoption_contract`, source-storage/lifetime matrices and allocator Off/Warn parity retain resource/element borrow rejection, malformed descriptor checks, failed growth, constructor/destructor failure and original release authority. |
 | Retired and remaining mechanisms | Production `include`, `src`, `stdlib` and `runtime` contain no old `gti_rt_memory_allocate_v1`/`release_v1`, sparse capability or sparse backend allocator. The [allocation inventory](../architecture/standard-library-and-runtime.md#allocation-inventory-and-remaining-boundaries) identifies remaining prefix, unique/shared and host-service families. |
 | Installed and runnable clients | The provider matrix has an explicit installed mode that rejects missing stage resources and pins their exact paths, preventing build-tree fallback. CI and release staging run it; the installed library smoke links the native memory boundary. Examples 119–121, 125–126, 128–129 and `libc-region-provider` exercise the existing public APIs. Their source, example index and census identities are unchanged. |
 | Broad, platform and performance acceptance | The clean optimized `fa72b523` candidate passes the full 558-test production/tooling suite, 13 installed consumers, both native/installed provider matrices and 14 staged example executions. A quiet-host frozen comparison records a material runtime regression (process 3.68×, resource 2.12× baseline), unchanged scalar/destructor state and the deliberate doubling of resource acquisitions for source metadata. [Completion evidence](../architecture/verification.md#completion-acceptance-2026-10-08) includes the investigation and [performance follow-up #169](https://git.internal.howetotech.dev/gti-lang/gti/issues/169). Local execution is macOS arm64; Linux native CI is queued without a runner and Windows native execution is unavailable. Target/ABI checks are retained without claiming native execution on those platforms. |
@@ -5876,7 +5877,7 @@ PR lifecycle and local-main synchronization; installation remains opt-in.
     - owning callables and boxed payloads: `owning_function_policy_failure` and
       `inline_polymorphic_runtime`.
   - Fallible families keep their exact `expected` results in
-    `allocator_storage_runtime` and `programmable_allocators_runtime`.
+    `allocator_storage_runtime` and `tests/ui/memory/resources/`.
   - `process_allocation_elision` shows the unused owning temporary's
     allocation removed at O3 while an escaping owner still allocates.
     `resource_container_usage` requires exact arena allocation and release
@@ -11988,7 +11989,9 @@ owner proof and has been removed. Focused sealed-owner mutations and native
 O0/O3 duplicate-view execution cover this prerequisite for reuse by O-LLVM-07.
 
 **Named O-LLVM-08/O-LLVM-09 integration proof (passed):**
-`llvm_callable_owned_composition_test.py` is the callable-owned composition
+`llvm_callable_owned_composition_test.py` (since deleted: its success fixture
+runs in `llvm_callable_execution`, its failures are
+`tests/ui/callables/owned_composition/`) was the callable-owned composition
 proof and is intentionally not part of the passing O-LLVM-09 component gate.
 It uses an unrelated source-defined `Stored<F>` adapter and covers a returned/
 stored consuming closure whose environment contains ordinary owned values and

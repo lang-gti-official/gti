@@ -1,0 +1,118 @@
+// The optimizer keeps the overflow check of each returned field, borrow or result whose proof went stale (result postconditions); the program itself runs clean.
+//@ slow
+//@ opt: O3
+//@ reason: the optimizer must not reuse a stale pointee or result proof
+//@ run-pass
+//@ revisions: base bad_failed_ticket bad_reassigned_ticket bad_later_call bad_native_call bad_cached_tag
+//@[bad_failed_ticket] args: case
+//@[bad_failed_ticket] run-fail
+//@[bad_failed_ticket] exit-code: 70
+//@[bad_failed_ticket] stderr-contains: result_postconditions.gti:44: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_reassigned_ticket] args: case case
+//@[bad_reassigned_ticket] run-fail
+//@[bad_reassigned_ticket] exit-code: 70
+//@[bad_reassigned_ticket] stderr-contains: result_postconditions.gti:51: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_later_call] args: case case case
+//@[bad_later_call] run-fail
+//@[bad_later_call] exit-code: 70
+//@[bad_later_call] stderr-contains: result_postconditions.gti:58: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_native_call] args: case case case case
+//@[bad_native_call] run-fail
+//@[bad_native_call] exit-code: 70
+//@[bad_native_call] stderr-contains: result_postconditions.gti:65: runtime error[GTI-R0001]: integer_overflow in addition
+//@[bad_cached_tag] args: case case case case case
+//@[bad_cached_tag] run-fail
+//@[bad_cached_tag] exit-code: 70
+//@[bad_cached_tag] stderr-contains: result_postconditions.gti:73: runtime error[GTI-R0001]: integer_overflow in addition
+// --- result_postconditions.gti
+import std.string;
+import std.vector;
+extern "C" { void opaque_pointer_effect(int* pointer); }
+
+class Ticket {
+public:
+  mut int count = 0;
+  expected<void, int> publish(bool accepted) mut {
+    if (!accepted) {
+      this.count = 2147483647;
+      return unexpected(1);
+    }
+    this.count = 7;
+    return;
+  }
+  expected<void, int> deny(bool accepted) mut {
+    if (accepted) { this.count = 2147483647; return; }
+    this.count = 7;
+    return unexpected(1);
+  }
+public:
+  Ticket() = default;
+};
+
+expected<void, int> relay(mut Ticket& ticket, bool accepted) {
+  return ticket.publish(accepted);
+}
+
+int accepted_ticket(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int denied_ticket(mut Ticket& ticket) {
+  auto status = ticket.deny(false);
+  if (status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_failed_ticket(mut Ticket& ticket) {
+  auto status = relay(ticket, false);
+  if (status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_reassigned_ticket(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  ticket.count = 2147483647;
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_later_call(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  [[discard]] relay(ticket, false);
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_native_call(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  unsafe { opaque_pointer_effect(&ticket.count); }
+  if (!status) return 0;
+  return ticket.count + 1;
+}
+
+int bad_cached_tag(mut Ticket& ticket) {
+  auto status = relay(ticket, true);
+  bool accepted = status.has_value();
+  ticket.count = 2147483647;
+  if (!accepted) return 0;
+  return ticket.count + 1;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  mut Ticket ticket{};
+  if (argc == 2) return bad_failed_ticket(ticket);
+  if (argc == 3) return bad_reassigned_ticket(ticket);
+  if (argc == 4) return bad_later_call(ticket);
+  if (argc == 5) return bad_native_call(ticket);
+  if (argc == 6) return bad_cached_tag(ticket);
+  return accepted_ticket(ticket) == 8 && denied_ticket(ticket) == 8 ? 0 : 1;
+}
+// --- optimizer_returned_field_address_native.cpp
+#include <cstdint>
+#include <limits>
+
+extern "C" void opaque_pointer_effect(std::int32_t *pointer) {
+  *pointer = std::numeric_limits<std::int32_t>::max();
+}

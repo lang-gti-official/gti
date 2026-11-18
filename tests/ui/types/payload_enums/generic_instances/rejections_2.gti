@@ -1,0 +1,154 @@
+// Generic enum instances reject mismatched construction and arguments, invalid patterns, escaping loans, recursive by-value layout and bare-enum misuse.
+//@ check-fail
+import std.optional;
+import std.vector;
+
+namespace case_use_after_owning_move {
+mut int32_t drops = 0;
+mut int32_t cleanup_divisor = 1;
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+    if (this.identity == 2) {
+      int32_t checked = int32_t(1) / cleanup_divisor;
+    }
+  }
+  int32_t id() { return this.identity; }
+};
+
+enum Event<T, uint64_t Channel = 3> { idle, item(T value) };
+
+concept identified<T> = requires(T& value) { { value.id() } -> int32_t; };
+
+int32_t id<T, uint64_t Channel>(Event<T, Channel>& event) requires identified<T> {
+  switch (event) {
+    case Event<T, Channel>::idle: return 0;
+    case Event<T, Channel>::item(auto& value): return value.id();
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+class Envelope<T> {
+  mut T value;
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+};
+
+int entry() {
+  Event<Resource> source = Event<Resource>::item(Resource(1));
+  Event<Resource> destination = std::move(source);
+  return id(source);  //~ ERROR GTI-S2018
+}
+}
+
+namespace case_immutable_mut_pattern {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() {
+  Event<int32_t> event = Event<int32_t>::item(1);
+  switch (event) {
+    case Event<int32_t>::item(mut auto& value): value = 3; return value;  //~ ERROR GTI-S2067
+    default: return 1;
+  }
+}
+}
+
+namespace case_temporary_pattern_loan {
+enum Event<T, U = T, uint64_t Channel = 3> {
+  idle,
+  item(T value),
+  pair(T first, U second)
+};
+
+int entry() {
+  switch (Event<int32_t>::item(1)) {
+    case Event<int32_t>::item(auto& value): return value;  //~ ERROR GTI-S2067
+    default: return 1;
+  }
+}
+}
+
+namespace case_escaping_local_payload_loan {
+mut int32_t drops = 0;
+mut int32_t cleanup_divisor = 1;
+
+class Resource {
+  int32_t identity;
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource& other) = delete;
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+    if (this.identity == 2) {
+      int32_t checked = int32_t(1) / cleanup_divisor;
+    }
+  }
+  int32_t id() { return this.identity; }
+};
+
+enum Event<T, uint64_t Channel = 3> { idle, item(T value) };
+
+concept identified<T> = requires(T& value) { { value.id() } -> int32_t; };
+
+int32_t id<T, uint64_t Channel>(Event<T, Channel>& event) requires identified<T> {
+  switch (event) {
+    case Event<T, Channel>::idle: return 0;
+    case Event<T, Channel>::item(auto& value): return value.id();
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+class Envelope<T> {
+  mut T value;
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+};
+
+Resource& escape() {  //~ ERROR GTI-S2017
+  Event<Resource> event = Event<Resource>::item(Resource(1));
+  switch (event) {
+    case Event<Resource>::idle: return escape();
+    case Event<Resource>::item(auto& value): return value;
+  }
+}
+int entry() { return 0; }
+}
+
+namespace case_recursive_by_value_layout {
+enum Link<T> { node(T value) };
+struct Node { Link<Node> next; };  //~ ERROR GTI-S2082 //~ ERROR GTI-S2067
+int entry() { return 0; }
+}
+
+namespace case_bare_enum_unqualified_case {
+enum State { idle, item(int32_t value) };
+int entry() { State state = idle; return 0; }  //~ ERROR GTI-S2001
+}
+
+namespace case_bare_enum_integer_conversion {
+enum State : uint8_t { idle, ready = 4 };
+int entry() { int32_t value = State::ready; return value; }  //~ ERROR GTI-S2003
+}
+
+int main() { return 0; }

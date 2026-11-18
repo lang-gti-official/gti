@@ -1,0 +1,17 @@
+// A failing outer index (grouped address) fails before the inner index is evaluated.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: row
+//@ stdout: guard dropped
+//@ stderr-contains: main.gti:14: runtime error[GTI-R0007]: index_out_of_bounds in fixed_array
+class Guard { public: Guard() {} ~Guard() { std::println("guard dropped"); } };
+int row() { std::println("row"); return 2; }
+int column() { std::println("column"); return 0; }
+int main() {
+  Guard guard{};
+  mut int values[2][2] = {{1, 2}, {3, 4}};
+  int* element = &(0, values
+    [row()])
+    [column()];
+  unsafe { return *element; }
+}

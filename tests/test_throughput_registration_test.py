@@ -224,7 +224,7 @@ def main():
     tests = inventory(build)
     clients = verify(tests, repository)
     for target_name, mutation in ((name, kind)
-                                 for name in ("stdlib_surface", "generic_payload_enum_runtime")
+                                 for name in ("stdlib_surface", "lambda_pack_invocation_runtime")
                                  for kind in ("allocation", "full", "disabled", "cost", "timeout")):
         changed = copy.deepcopy(tests)
         target = next(test for test in changed if test["name"] == target_name)

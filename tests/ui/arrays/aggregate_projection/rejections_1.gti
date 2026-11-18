@@ -1,0 +1,34 @@
+// Fixed-array field and element projections reject unchecked raw access, const writes, invalid or copying bindings and overlapping element borrows.
+//@ check-fail
+import std.string;
+import std.utility;
+
+namespace case_unsafe_required {
+struct F{int values[2]={1,2}; public: F() = default; };int entry(){F f{};const F* p=&f;return p->values[0];}  //~ ERROR GTI-S2055
+}
+
+namespace case_const_write {
+struct F{mut int values[2]={1,2}; public: F() = default; };int entry(){F f{};const F* p=&f;unsafe{p->values[0]=7;}return 0;}  //~ ERROR GTI-S2002
+}
+
+namespace case_binding_readonly {
+struct V{mut int n;V(int n):n(n){}};int entry(){V values[2]={V(1),V(2)};auto[first,second]=values;first.n=3;return 0;}  //~ ERROR GTI-S2000
+}
+
+namespace case_binding_arity {
+struct V{int n;V(int n):n(n){}};int entry(){V values[2]={V(1),V(2)};auto[first]=values;return 0;}  //~ ERROR GTI-S2048
+}
+
+namespace case_binding_copy_owner {
+class V{public:std::string n;V(std::string n):n(std::move(n)){}};int entry(){V values[2]={V(std::string("one")),V(std::string("two"))};auto[first,second]=values;return 0;}  //~ ERROR GTI-S2003
+}
+
+namespace case_element_reference_immutable {
+int entry(){int values[2]={1,2};mut int& element=values[0];element=3;return 0;}  //~ ERROR GTI-S2017
+}
+
+namespace case_binding_moved_source {
+class V{public:int n;V(int n):n(n){}};int entry(){V values[2]={V(1),V(2)};auto[first,second]=std::move(values);return values[0].n;}  //~ ERROR GTI-S2018
+}
+
+int main() { return 0; }
