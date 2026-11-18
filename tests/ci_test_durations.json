@@ -219,7 +219,6 @@
   "llvm_case_context_controls": 0.5,
   "llvm_checked_offset_runtime": 19.2,
   "llvm_checked_range_runtime": 25.4,
-  "llvm_checked_reduction_runtime": 48.1,
   "llvm_checked_square_runtime": 8.0,
   "llvm_clang_coexistence": 0.4,
   "llvm_class_execution": 206.0,

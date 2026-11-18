@@ -2085,8 +2085,10 @@ this profile.
 
 `llvm_checked_reductions` exhaustively compares small-width checked and
 transformed executions, including fallback, wraparound, effects and poison
-controls. `llvm_checked_reduction_runtime` checks native results, exact failure
-locations and destructor order at LLVM O0/O2/O3 against the existing C++ oracle.
+controls. `tests/slow/optimizer/checked_reductions/` checks native results, exact
+failure locations and destructor order at LLVM O3 against an exact oracle for
+every mode and count; `tests/ui/optimizer/checked_reductions/` runs one count per
+mode at O0.
 These are correctness gates; comparative performance workloads remain manual.
 
 ### Guarded checked scans

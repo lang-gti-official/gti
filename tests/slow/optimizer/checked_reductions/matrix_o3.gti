@@ -1,0 +1,4171 @@
+// Checked reductions (masked, remainder, conditional, nested, keyed and clamped accumulations) keep their results, overflow sites and the cleanup order of the iteration that fails, for every mode and count, optimized.
+//@ slow
+//@ opt: O3
+//@ reason: the matrix checks the optimizer's reduction rewrites against an exact oracle
+//@ run-pass
+//@ revisions: m0_0 m4_0 m0_1 m4_1 m0_2 m4_2 m0_3 m4_3 m0_7 m4_7 m0_31 m4_31 m0_64 m4_64 m0_127 m4_127 m0_255 m4_255 m1_0 m1_1 m1_2 m1_3 m1_4 m1_31 m2_0 m2_1 m2_2 m2_3 m2_4 m2_31 m3_0 m3_1 m3_2 m3_3 m3_4 m3_31 m5_0 m6_0 m7_0 m8_0 m9_0 m5_1 m6_1 m7_1 m8_1 m9_1 m5_2 m6_2 m7_2 m8_2 m9_2 m5_3 m6_3 m7_3 m8_3 m9_3 m5_4 m6_4 m7_4 m8_4 m9_4 m5_7 m6_7 m7_7 m8_7 m9_7 m5_31 m6_31 m7_31 m8_31 m9_31 m5_64 m6_64 m7_64 m8_64 m9_64 m5_127 m6_127 m7_127 m8_127 m9_127 m5_255 m6_255 m7_255 m8_255 m9_255 m10_0 m11_0 m12_0 m13_0 m10_1 m11_1 m12_1 m13_1 m10_2 m11_2 m12_2 m13_2 m10_3 m11_3 m12_3 m13_3 m10_4 m11_4 m12_4 m13_4 m10_7 m11_7 m12_7 m13_7 m10_31 m11_31 m12_31 m13_31 m10_64 m11_64 m12_64 m13_64 m10_127 m11_127 m12_127 m13_127 m10_255 m11_255 m12_255 m13_255 m14_0 m17_0 m15_0 m16_0 m14_1 m17_1 m15_1 m16_1 m14_2 m17_2 m15_2 m16_2 m14_3 m17_3 m15_3 m16_3 m14_4 m17_4 m15_4 m16_4 m14_7 m17_7 m15_7 m16_7 m14_31 m17_31 m15_31 m16_31 m14_64 m17_64 m15_64 m16_64 m14_127 m17_127 m15_127 m16_127 m14_255 m17_255 m15_255 m16_255 m18_0 m19_0 m20_0 m21_0 m22_0 m18_1 m19_1 m20_1 m21_1 m22_1 m18_2 m19_2 m20_2 m21_2 m22_2 m18_3 m19_3 m20_3 m21_3 m22_3 m18_4 m19_4 m20_4 m21_4 m22_4 m18_7 m19_7 m20_7 m21_7 m22_7 m18_31 m19_31 m20_31 m21_31 m22_31 m18_64 m19_64 m20_64 m21_64 m22_64 m18_127 m19_127 m20_127 m21_127 m22_127 m18_255 m19_255 m20_255 m21_255 m22_255 m23_0 m24_0 m25_0 m26_0 m27_0 m23_1 m24_1 m25_1 m26_1 m27_1 m23_2 m24_2 m25_2 m26_2 m27_2 m23_3 m24_3 m25_3 m26_3 m27_3 m23_4 m24_4 m25_4 m26_4 m27_4 m23_7 m24_7 m25_7 m26_7 m27_7 m23_15 m24_15 m25_15 m26_15 m27_15 m23_31 m24_31 m25_31 m26_31 m27_31 m23_32 m24_32 m25_32 m26_32 m27_32 m23_63 m24_63 m25_63 m26_63 m27_63 m23_127 m24_127 m25_127 m26_127 m27_127 m23_255 m24_255 m25_255 m26_255 m27_255 m28_0 m29_0 m30_0 m28_1 m29_1 m30_1 m28_2 m29_2 m30_2 m28_3 m29_3 m30_3 m28_4 m29_4 m30_4 m28_7 m29_7 m30_7 m28_12 m29_12 m30_12 m28_13 m29_13 m30_13 m28_31 m29_31 m30_31 m28_32 m29_32 m30_32 m28_33 m29_33 m30_33 m28_63 m29_63 m30_63 m28_127 m29_127 m30_127 m28_255 m29_255 m30_255
+//@[m0_0] args: '' ''
+//@[m0_0] stdout: 0
+//@[m0_0] stdout: 0
+//@[m0_0] stdout: 7
+//@[m0_0] stdout: 2
+//@[m0_0] stdout: 0
+//@[m0_0] stdout: 1
+//@[m4_0] args: mmmm ''
+//@[m4_0] stdout: 2
+//@[m4_0] stdout: 5
+//@[m4_0] stdout: 1
+//@[m0_1] args: '' x
+//@[m0_1] stdout: 1
+//@[m0_1] stdout: 1
+//@[m0_1] stdout: 12
+//@[m0_1] stdout: 2
+//@[m0_1] stdout: 1
+//@[m0_1] stdout: 1
+//@[m4_1] args: mmmm x
+//@[m4_1] stdout: 2
+//@[m4_1] stdout: 4
+//@[m4_1] stdout: 1
+//@[m0_2] args: '' xx
+//@[m0_2] stdout: 2
+//@[m0_2] stdout: 1
+//@[m0_2] stdout: 12
+//@[m0_2] stdout: 2
+//@[m0_2] stdout: 1
+//@[m0_2] stdout: 1
+//@[m4_2] args: mmmm xx
+//@[m4_2] stdout: 2
+//@[m4_2] stdout: 5
+//@[m4_2] stdout: 1
+//@[m0_3] args: '' xxx
+//@[m0_3] stdout: 3
+//@[m0_3] stdout: 2
+//@[m0_3] stdout: 17
+//@[m0_3] stdout: 2
+//@[m0_3] stdout: 2
+//@[m0_3] stdout: 1
+//@[m4_3] args: mmmm xxx
+//@[m4_3] stdout: 2
+//@[m4_3] stdout: 8
+//@[m4_3] stdout: 1
+//@[m0_7] args: '' xxxxxxx
+//@[m0_7] stdout: 7
+//@[m0_7] stdout: 5
+//@[m0_7] stdout: 32
+//@[m0_7] stdout: 2
+//@[m0_7] stdout: 5
+//@[m0_7] stdout: 1
+//@[m4_7] args: mmmm xxxxxxx
+//@[m4_7] stdout: 2
+//@[m4_7] stdout: 35
+//@[m4_7] stdout: 1
+//@[m0_31] args: '' xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m0_31] stdout: 31
+//@[m0_31] stdout: 21
+//@[m0_31] stdout: 112
+//@[m0_31] stdout: 2
+//@[m0_31] stdout: 21
+//@[m0_31] stdout: 1
+//@[m4_31] args: mmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m4_31] stdout: 2
+//@[m4_31] stdout: 179
+//@[m4_31] stdout: 1
+//@[m0_64] args: '' xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m0_64] stdout: 64
+//@[m0_64] stdout: 43
+//@[m0_64] stdout: 222
+//@[m0_64] stdout: 2
+//@[m0_64] stdout: 43
+//@[m0_64] stdout: 1
+//@[m4_64] args: mmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m4_64] stdout: 2
+//@[m4_64] stdout: 377
+//@[m4_64] stdout: 1
+//@[m0_127] args: '' xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m0_127] stdout: 127
+//@[m0_127] stdout: 85
+//@[m0_127] stdout: 432
+//@[m0_127] stdout: 2
+//@[m0_127] stdout: 85
+//@[m0_127] stdout: 1
+//@[m4_127] args: mmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m4_127] stdout: 2
+//@[m4_127] stdout: 755
+//@[m4_127] stdout: 1
+//@[m0_255] args: '' xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m0_255] stdout: 255
+//@[m0_255] stdout: 170
+//@[m0_255] stdout: 857
+//@[m0_255] stdout: 2
+//@[m0_255] stdout: 170
+//@[m0_255] stdout: 1
+//@[m4_255] args: mmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m4_255] stdout: 2
+//@[m4_255] stdout: 1523
+//@[m4_255] stdout: 1
+//@[m1_0] args: m ''
+//@[m1_0] stdout: 2
+//@[m1_0] stdout: 2147483640
+//@[m1_0] stdout: 1
+//@[m1_1] args: m x
+//@[m1_1] stdout: 9
+//@[m1_1] stdout: 2
+//@[m1_1] stdout: 2147483643
+//@[m1_1] stdout: 1
+//@[m1_2] args: m xx
+//@[m1_2] stdout: 9
+//@[m1_2] stdout: 9
+//@[m1_2] stdout: 2
+//@[m1_2] stdout: 2147483646
+//@[m1_2] stdout: 1
+//@[m1_3] args: m xxx
+//@[m1_3] stdout: 9
+//@[m1_3] stdout: 9
+//@[m1_3] stdout: 9
+//@[m1_3] stdout: 2
+//@[m1_3] stdout: 1
+//@[m1_3] run-fail
+//@[m1_3] exit-code: 70
+//@[m1_3] stderr-contains: main.gti:3909: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m1_4] args: m xxxx
+//@[m1_4] stdout: 9
+//@[m1_4] stdout: 9
+//@[m1_4] stdout: 9
+//@[m1_4] stdout: 2
+//@[m1_4] stdout: 1
+//@[m1_4] run-fail
+//@[m1_4] exit-code: 70
+//@[m1_4] stderr-contains: main.gti:3909: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m1_31] args: m xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m1_31] stdout: 9
+//@[m1_31] stdout: 9
+//@[m1_31] stdout: 9
+//@[m1_31] stdout: 2
+//@[m1_31] stdout: 1
+//@[m1_31] run-fail
+//@[m1_31] exit-code: 70
+//@[m1_31] stderr-contains: main.gti:3909: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m2_0] args: mm ''
+//@[m2_0] stdout: 2
+//@[m2_0] stdout: 4294967290
+//@[m2_0] stdout: 1
+//@[m2_1] args: mm x
+//@[m2_1] stdout: 9
+//@[m2_1] stdout: 2
+//@[m2_1] stdout: 4294967292
+//@[m2_1] stdout: 1
+//@[m2_2] args: mm xx
+//@[m2_2] stdout: 9
+//@[m2_2] stdout: 9
+//@[m2_2] stdout: 2
+//@[m2_2] stdout: 4294967294
+//@[m2_2] stdout: 1
+//@[m2_3] args: mm xxx
+//@[m2_3] stdout: 9
+//@[m2_3] stdout: 9
+//@[m2_3] stdout: 9
+//@[m2_3] stdout: 2
+//@[m2_3] stdout: 1
+//@[m2_3] run-fail
+//@[m2_3] exit-code: 70
+//@[m2_3] stderr-contains: main.gti:3919: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m2_4] args: mm xxxx
+//@[m2_4] stdout: 9
+//@[m2_4] stdout: 9
+//@[m2_4] stdout: 9
+//@[m2_4] stdout: 2
+//@[m2_4] stdout: 1
+//@[m2_4] run-fail
+//@[m2_4] exit-code: 70
+//@[m2_4] stderr-contains: main.gti:3919: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m2_31] args: mm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m2_31] stdout: 9
+//@[m2_31] stdout: 9
+//@[m2_31] stdout: 9
+//@[m2_31] stdout: 2
+//@[m2_31] stdout: 1
+//@[m2_31] run-fail
+//@[m2_31] exit-code: 70
+//@[m2_31] stderr-contains: main.gti:3919: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m3_0] args: mmm ''
+//@[m3_0] stdout: 2
+//@[m3_0] stdout: 120
+//@[m3_0] stdout: 1
+//@[m3_1] args: mmm x
+//@[m3_1] stdout: 9
+//@[m3_1] stdout: 2
+//@[m3_1] stdout: 123
+//@[m3_1] stdout: 1
+//@[m3_2] args: mmm xx
+//@[m3_2] stdout: 9
+//@[m3_2] stdout: 9
+//@[m3_2] stdout: 2
+//@[m3_2] stdout: 126
+//@[m3_2] stdout: 1
+//@[m3_3] args: mmm xxx
+//@[m3_3] stdout: 9
+//@[m3_3] stdout: 9
+//@[m3_3] stdout: 9
+//@[m3_3] stdout: 2
+//@[m3_3] stdout: 1
+//@[m3_3] run-fail
+//@[m3_3] exit-code: 70
+//@[m3_3] stderr-contains: main.gti:3929: runtime error[GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[m3_4] args: mmm xxxx
+//@[m3_4] stdout: 9
+//@[m3_4] stdout: 9
+//@[m3_4] stdout: 9
+//@[m3_4] stdout: 2
+//@[m3_4] stdout: 1
+//@[m3_4] run-fail
+//@[m3_4] exit-code: 70
+//@[m3_4] stderr-contains: main.gti:3929: runtime error[GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[m3_31] args: mmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m3_31] stdout: 9
+//@[m3_31] stdout: 9
+//@[m3_31] stdout: 9
+//@[m3_31] stdout: 2
+//@[m3_31] stdout: 1
+//@[m3_31] run-fail
+//@[m3_31] exit-code: 70
+//@[m3_31] stderr-contains: main.gti:3929: runtime error[GTI-R0006]: numeric_conversion_out_of_range in numeric_cast
+//@[m5_0] args: mmmmm ''
+//@[m5_0] stdout: 0
+//@[m5_0] stdout: 3
+//@[m5_0] stdout: 5
+//@[m5_0] stdout: 7
+//@[m5_0] stdout: 13
+//@[m5_0] stdout: 2
+//@[m5_0] stdout: 11
+//@[m5_0] stdout: 1
+//@[m6_0] args: mmmmmm ''
+//@[m6_0] stdout: 0
+//@[m6_0] stdout: 3
+//@[m6_0] stdout: 5
+//@[m6_0] stdout: 7
+//@[m6_0] stdout: 13
+//@[m6_0] stdout: 2
+//@[m6_0] stdout: 11
+//@[m6_0] stdout: 1
+//@[m7_0] args: mmmmmmm ''
+//@[m7_0] stdout: 2
+//@[m7_0] stdout: 4294967291
+//@[m7_0] stdout: 1
+//@[m8_0] args: mmmmmmmm ''
+//@[m8_0] stdout: 2
+//@[m8_0] stdout: 2147483640
+//@[m8_0] stdout: 1
+//@[m9_0] args: mmmmmmmmm ''
+//@[m9_0] stdout: 2
+//@[m9_0] stdout: 4294967291
+//@[m9_0] stdout: 1
+//@[m5_1] args: mmmmm x
+//@[m5_1] stdout: 1
+//@[m5_1] stdout: 11
+//@[m5_1] stdout: 6
+//@[m5_1] stdout: 127
+//@[m5_1] stdout: 23
+//@[m5_1] stdout: 2
+//@[m5_1] stdout: 131
+//@[m5_1] stdout: 1
+//@[m6_1] args: mmmmmm x
+//@[m6_1] stdout: 1
+//@[m6_1] stdout: 11
+//@[m6_1] stdout: 6
+//@[m6_1] stdout: 127
+//@[m6_1] stdout: 23
+//@[m6_1] stdout: 2
+//@[m6_1] stdout: 131
+//@[m6_1] stdout: 1
+//@[m7_1] args: mmmmmmm x
+//@[m7_1] stdout: 9
+//@[m7_1] stdout: 2
+//@[m7_1] stdout: 4294967294
+//@[m7_1] stdout: 1
+//@[m8_1] args: mmmmmmmm x
+//@[m8_1] stdout: 9
+//@[m8_1] stdout: 2
+//@[m8_1] stdout: 2147483643
+//@[m8_1] stdout: 1
+//@[m9_1] args: mmmmmmmmm x
+//@[m9_1] stdout: 9
+//@[m9_1] stdout: 2
+//@[m9_1] stdout: 4294967294
+//@[m9_1] stdout: 1
+//@[m5_2] args: mmmmm xx
+//@[m5_2] stdout: 2
+//@[m5_2] stdout: 22
+//@[m5_2] stdout: 12
+//@[m5_2] stdout: 266
+//@[m5_2] stdout: 15
+//@[m5_2] stdout: 2
+//@[m5_2] stdout: 136
+//@[m5_2] stdout: 1
+//@[m6_2] args: mmmmmm xx
+//@[m6_2] stdout: 2
+//@[m6_2] stdout: 22
+//@[m6_2] stdout: 12
+//@[m6_2] stdout: 266
+//@[m6_2] stdout: 15
+//@[m6_2] stdout: 2
+//@[m6_2] stdout: 136
+//@[m6_2] stdout: 1
+//@[m7_2] args: mmmmmmm xx
+//@[m7_2] stdout: 9
+//@[m7_2] stdout: 9
+//@[m7_2] stdout: 2
+//@[m7_2] stdout: 4294967294
+//@[m7_2] stdout: 1
+//@[m8_2] args: mmmmmmmm xx
+//@[m8_2] stdout: 9
+//@[m8_2] stdout: 9
+//@[m8_2] stdout: 2
+//@[m8_2] stdout: 2147483644
+//@[m8_2] stdout: 1
+//@[m9_2] args: mmmmmmmmm xx
+//@[m9_2] stdout: 9
+//@[m9_2] stdout: 9
+//@[m9_2] stdout: 2
+//@[m9_2] stdout: 4294967294
+//@[m9_2] stdout: 1
+//@[m5_3] args: mmmmm xxx
+//@[m5_3] stdout: 3
+//@[m5_3] stdout: 36
+//@[m5_3] stdout: 16
+//@[m5_3] stdout: 424
+//@[m5_3] stdout: 19
+//@[m5_3] stdout: 2
+//@[m5_3] stdout: 296
+//@[m5_3] stdout: 1
+//@[m6_3] args: mmmmmm xxx
+//@[m6_3] stdout: 3
+//@[m6_3] stdout: 36
+//@[m6_3] stdout: 16
+//@[m6_3] stdout: 424
+//@[m6_3] stdout: 19
+//@[m6_3] stdout: 2
+//@[m6_3] stdout: 296
+//@[m6_3] stdout: 1
+//@[m7_3] args: mmmmmmm xxx
+//@[m7_3] stdout: 9
+//@[m7_3] stdout: 9
+//@[m7_3] stdout: 2
+//@[m7_3] stdout: 1
+//@[m7_3] run-fail
+//@[m7_3] exit-code: 70
+//@[m7_3] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_3] args: mmmmmmmm xxx
+//@[m8_3] stdout: 9
+//@[m8_3] stdout: 9
+//@[m8_3] stdout: 9
+//@[m8_3] stdout: 2
+//@[m8_3] stdout: 2147483643
+//@[m8_3] stdout: 1
+//@[m9_3] args: mmmmmmmmm xxx
+//@[m9_3] stdout: 9
+//@[m9_3] stdout: 9
+//@[m9_3] stdout: 2
+//@[m9_3] stdout: 1
+//@[m9_3] run-fail
+//@[m9_3] exit-code: 70
+//@[m9_3] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m5_4] args: mmmmm xxxx
+//@[m5_4] stdout: 4
+//@[m5_4] stdout: 53
+//@[m5_4] stdout: 18
+//@[m5_4] stdout: 601
+//@[m5_4] stdout: 20
+//@[m5_4] stdout: 2
+//@[m5_4] stdout: 308
+//@[m5_4] stdout: 1
+//@[m6_4] args: mmmmmm xxxx
+//@[m6_4] stdout: 3
+//@[m6_4] stdout: 39
+//@[m6_4] stdout: 12
+//@[m6_4] stdout: 427
+//@[m6_4] stdout: 18
+//@[m6_4] stdout: 2
+//@[m6_4] stdout: 301
+//@[m6_4] stdout: 1
+//@[m7_4] args: mmmmmmm xxxx
+//@[m7_4] stdout: 9
+//@[m7_4] stdout: 9
+//@[m7_4] stdout: 9
+//@[m7_4] stdout: 2
+//@[m7_4] stdout: 1
+//@[m7_4] run-fail
+//@[m7_4] exit-code: 70
+//@[m7_4] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_4] args: mmmmmmmm xxxx
+//@[m8_4] stdout: 9
+//@[m8_4] stdout: 9
+//@[m8_4] stdout: 9
+//@[m8_4] stdout: 9
+//@[m8_4] stdout: 2
+//@[m8_4] stdout: 1
+//@[m8_4] run-fail
+//@[m8_4] exit-code: 70
+//@[m8_4] stderr-contains: main.gti:4003: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m9_4] args: mmmmmmmmm xxxx
+//@[m9_4] stdout: 9
+//@[m9_4] stdout: 9
+//@[m9_4] stdout: 9
+//@[m9_4] stdout: 2
+//@[m9_4] stdout: 4294967295
+//@[m9_4] stdout: 1
+//@[m5_7] args: mmmmm xxxxxxx
+//@[m5_7] stdout: 7
+//@[m5_7] stdout: 42
+//@[m5_7] stdout: 26
+//@[m5_7] stdout: 1246
+//@[m5_7] stdout: 46
+//@[m5_7] stdout: 2
+//@[m5_7] stdout: 741
+//@[m5_7] stdout: 1
+//@[m6_7] args: mmmmmm xxxxxxx
+//@[m6_7] stdout: 3
+//@[m6_7] stdout: 32
+//@[m6_7] stdout: 14
+//@[m6_7] stdout: 436
+//@[m6_7] stdout: 27
+//@[m6_7] stdout: 2
+//@[m6_7] stdout: 306
+//@[m6_7] stdout: 1
+//@[m7_7] args: mmmmmmm xxxxxxx
+//@[m7_7] stdout: 9
+//@[m7_7] stdout: 9
+//@[m7_7] stdout: 9
+//@[m7_7] stdout: 2
+//@[m7_7] stdout: 1
+//@[m7_7] run-fail
+//@[m7_7] exit-code: 70
+//@[m7_7] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_7] args: mmmmmmmm xxxxxxx
+//@[m8_7] stdout: 9
+//@[m8_7] stdout: 9
+//@[m8_7] stdout: 9
+//@[m8_7] stdout: 9
+//@[m8_7] stdout: 9
+//@[m8_7] stdout: 2
+//@[m8_7] stdout: 1
+//@[m8_7] run-fail
+//@[m8_7] exit-code: 70
+//@[m8_7] stderr-contains: main.gti:4003: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m9_7] args: mmmmmmmmm xxxxxxx
+//@[m9_7] stdout: 9
+//@[m9_7] stdout: 9
+//@[m9_7] stdout: 9
+//@[m9_7] stdout: 2
+//@[m9_7] stdout: 4294967295
+//@[m9_7] stdout: 1
+//@[m5_31] args: mmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m5_31] stdout: 31
+//@[m5_31] stdout: 238
+//@[m5_31] stdout: 100
+//@[m5_31] stdout: 3777
+//@[m5_31] stdout: 133
+//@[m5_31] stdout: 2
+//@[m5_31] stdout: 2077
+//@[m5_31] stdout: 1
+//@[m6_31] args: mmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m6_31] stdout: 3
+//@[m6_31] stdout: 24
+//@[m6_31] stdout: 16
+//@[m6_31] stdout: 508
+//@[m6_31] stdout: 31
+//@[m6_31] stdout: 2
+//@[m6_31] stdout: 357
+//@[m6_31] stdout: 1
+//@[m7_31] args: mmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m7_31] stdout: 9
+//@[m7_31] stdout: 9
+//@[m7_31] stdout: 9
+//@[m7_31] stdout: 2
+//@[m7_31] stdout: 1
+//@[m7_31] run-fail
+//@[m7_31] exit-code: 70
+//@[m7_31] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_31] args: mmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 9
+//@[m8_31] stdout: 2
+//@[m8_31] stdout: 1
+//@[m8_31] run-fail
+//@[m8_31] exit-code: 70
+//@[m8_31] stderr-contains: main.gti:4003: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m9_31] args: mmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m9_31] stdout: 9
+//@[m9_31] stdout: 9
+//@[m9_31] stdout: 9
+//@[m9_31] stdout: 2
+//@[m9_31] stdout: 4294967295
+//@[m9_31] stdout: 1
+//@[m5_64] args: mmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m5_64] stdout: 64
+//@[m5_64] stdout: 483
+//@[m5_64] stdout: 195
+//@[m5_64] stdout: 8341
+//@[m5_64] stdout: 204
+//@[m5_64] stdout: 2
+//@[m5_64] stdout: 4350
+//@[m5_64] stdout: 1
+//@[m6_64] args: mmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m6_64] stdout: 3
+//@[m6_64] stdout: 27
+//@[m6_64] stdout: 10
+//@[m6_64] stdout: 607
+//@[m6_64] stdout: 28
+//@[m6_64] stdout: 2
+//@[m6_64] stdout: 417
+//@[m6_64] stdout: 1
+//@[m7_64] args: mmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m7_64] stdout: 9
+//@[m7_64] stdout: 9
+//@[m7_64] stdout: 9
+//@[m7_64] stdout: 2
+//@[m7_64] stdout: 1
+//@[m7_64] run-fail
+//@[m7_64] exit-code: 70
+//@[m7_64] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_64] args: mmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m8_64] stdout: 9
+//@[m8_64] stdout: 9
+//@[m8_64] stdout: 9
+//@[m8_64] stdout: 9
+//@[m8_64] stdout: 2
+//@[m8_64] stdout: 1
+//@[m8_64] run-fail
+//@[m8_64] exit-code: 70
+//@[m8_64] stderr-contains: main.gti:4003: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m9_64] args: mmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m9_64] stdout: 9
+//@[m9_64] stdout: 9
+//@[m9_64] stdout: 9
+//@[m9_64] stdout: 2
+//@[m9_64] stdout: 4294967295
+//@[m9_64] stdout: 1
+//@[m5_127] args: mmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m5_127] stdout: 127
+//@[m5_127] stdout: 958
+//@[m5_127] stdout: 384
+//@[m5_127] stdout: 15662
+//@[m5_127] stdout: 465
+//@[m5_127] stdout: 2
+//@[m5_127] stdout: 8437
+//@[m5_127] stdout: 1
+//@[m6_127] args: mmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m6_127] stdout: 3
+//@[m6_127] stdout: 24
+//@[m6_127] stdout: 10
+//@[m6_127] stdout: 294
+//@[m6_127] stdout: 25
+//@[m6_127] stdout: 2
+//@[m6_127] stdout: 295
+//@[m6_127] stdout: 1
+//@[m7_127] args: mmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m7_127] stdout: 9
+//@[m7_127] stdout: 9
+//@[m7_127] stdout: 9
+//@[m7_127] stdout: 2
+//@[m7_127] stdout: 1
+//@[m7_127] run-fail
+//@[m7_127] exit-code: 70
+//@[m7_127] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_127] args: mmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m8_127] stdout: 9
+//@[m8_127] stdout: 9
+//@[m8_127] stdout: 9
+//@[m8_127] stdout: 9
+//@[m8_127] stdout: 9
+//@[m8_127] stdout: 2
+//@[m8_127] stdout: 1
+//@[m8_127] run-fail
+//@[m8_127] exit-code: 70
+//@[m8_127] stderr-contains: main.gti:4003: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m9_127] args: mmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m9_127] stdout: 9
+//@[m9_127] stdout: 9
+//@[m9_127] stdout: 9
+//@[m9_127] stdout: 2
+//@[m9_127] stdout: 4294967295
+//@[m9_127] stdout: 1
+//@[m5_255] args: mmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m5_255] stdout: 255
+//@[m5_255] stdout: 1918
+//@[m5_255] stdout: 772
+//@[m5_255] stdout: 31976
+//@[m5_255] stdout: 894
+//@[m5_255] stdout: 2
+//@[m5_255] stdout: 16900
+//@[m5_255] stdout: 1
+//@[m6_255] args: mmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m6_255] stdout: 3
+//@[m6_255] stdout: 24
+//@[m6_255] stdout: 16
+//@[m6_255] stdout: 427
+//@[m6_255] stdout: 17
+//@[m6_255] stdout: 2
+//@[m6_255] stdout: 306
+//@[m6_255] stdout: 1
+//@[m7_255] args: mmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m7_255] stdout: 9
+//@[m7_255] stdout: 9
+//@[m7_255] stdout: 2
+//@[m7_255] stdout: 1
+//@[m7_255] run-fail
+//@[m7_255] exit-code: 70
+//@[m7_255] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m8_255] args: mmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m8_255] stdout: 9
+//@[m8_255] stdout: 9
+//@[m8_255] stdout: 9
+//@[m8_255] stdout: 2
+//@[m8_255] stdout: 1
+//@[m8_255] run-fail
+//@[m8_255] exit-code: 70
+//@[m8_255] stderr-contains: main.gti:4003: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m9_255] args: mmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m9_255] stdout: 9
+//@[m9_255] stdout: 9
+//@[m9_255] stdout: 2
+//@[m9_255] stdout: 1
+//@[m9_255] run-fail
+//@[m9_255] exit-code: 70
+//@[m9_255] stderr-contains: main.gti:3991: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_0] args: mmmmmmmmmm ''
+//@[m10_0] stdout: 0
+//@[m10_0] stdout: 0
+//@[m10_0] stdout: 0
+//@[m10_0] stdout: 0
+//@[m10_0] stdout: 0
+//@[m10_0] stdout: 2
+//@[m10_0] stdout: 0
+//@[m10_0] stdout: 1
+//@[m11_0] args: mmmmmmmmmmm ''
+//@[m11_0] stdout: 2
+//@[m11_0] stdout: 4294967290
+//@[m11_0] stdout: 1
+//@[m12_0] args: mmmmmmmmmmmm ''
+//@[m12_0] stdout: 2
+//@[m12_0] stdout: 4294967290
+//@[m12_0] stdout: 1
+//@[m13_0] args: mmmmmmmmmmmmm ''
+//@[m13_0] stdout: 2
+//@[m13_0] stdout: 2147483640
+//@[m13_0] stdout: 1
+//@[m10_1] args: mmmmmmmmmm x
+//@[m10_1] stdout: 5
+//@[m10_1] stdout: 5
+//@[m10_1] stdout: 11
+//@[m10_1] stdout: 11
+//@[m10_1] stdout: 4
+//@[m10_1] stdout: 2
+//@[m10_1] stdout: 11
+//@[m10_1] stdout: 1
+//@[m11_1] args: mmmmmmmmmmm x
+//@[m11_1] stdout: 9
+//@[m11_1] stdout: 2
+//@[m11_1] stdout: 4294967294
+//@[m11_1] stdout: 1
+//@[m12_1] args: mmmmmmmmmmmm x
+//@[m12_1] stdout: 9
+//@[m12_1] stdout: 2
+//@[m12_1] stdout: 4294967294
+//@[m12_1] stdout: 1
+//@[m13_1] args: mmmmmmmmmmmmm x
+//@[m13_1] stdout: 9
+//@[m13_1] stdout: 2
+//@[m13_1] stdout: 2147483644
+//@[m13_1] stdout: 1
+//@[m10_2] args: mmmmmmmmmm xx
+//@[m10_2] stdout: 7
+//@[m10_2] stdout: 11
+//@[m10_2] stdout: 18
+//@[m10_2] stdout: 24
+//@[m10_2] stdout: 8
+//@[m10_2] stdout: 2
+//@[m10_2] stdout: 24
+//@[m10_2] stdout: 1
+//@[m11_2] args: mmmmmmmmmmm xx
+//@[m11_2] stdout: 9
+//@[m11_2] stdout: 9
+//@[m11_2] stdout: 2
+//@[m11_2] stdout: 4294967295
+//@[m11_2] stdout: 1
+//@[m12_2] args: mmmmmmmmmmmm xx
+//@[m12_2] stdout: 9
+//@[m12_2] stdout: 9
+//@[m12_2] stdout: 2
+//@[m12_2] stdout: 4294967295
+//@[m12_2] stdout: 1
+//@[m13_2] args: mmmmmmmmmmmmm xx
+//@[m13_2] stdout: 9
+//@[m13_2] stdout: 9
+//@[m13_2] stdout: 2
+//@[m13_2] stdout: 2147483645
+//@[m13_2] stdout: 1
+//@[m10_3] args: mmmmmmmmmm xxx
+//@[m10_3] stdout: 15
+//@[m10_3] stdout: 20
+//@[m10_3] stdout: 29
+//@[m10_3] stdout: 29
+//@[m10_3] stdout: 12
+//@[m10_3] stdout: 2
+//@[m10_3] stdout: 29
+//@[m10_3] stdout: 1
+//@[m11_3] args: mmmmmmmmmmm xxx
+//@[m11_3] stdout: 9
+//@[m11_3] stdout: 9
+//@[m11_3] stdout: 2
+//@[m11_3] stdout: 1
+//@[m11_3] run-fail
+//@[m11_3] exit-code: 70
+//@[m11_3] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_3] args: mmmmmmmmmmmm xxx
+//@[m12_3] stdout: 9
+//@[m12_3] stdout: 9
+//@[m12_3] stdout: 2
+//@[m12_3] stdout: 1
+//@[m12_3] run-fail
+//@[m12_3] exit-code: 70
+//@[m12_3] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m13_3] args: mmmmmmmmmmmmm xxx
+//@[m13_3] stdout: 9
+//@[m13_3] stdout: 9
+//@[m13_3] stdout: 2
+//@[m13_3] stdout: 1
+//@[m13_3] run-fail
+//@[m13_3] exit-code: 70
+//@[m13_3] stderr-contains: main.gti:4046: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_4] args: mmmmmmmmmm xxxx
+//@[m10_4] stdout: 18
+//@[m10_4] stdout: 27
+//@[m10_4] stdout: 38
+//@[m10_4] stdout: 44
+//@[m10_4] stdout: 16
+//@[m10_4] stdout: 2
+//@[m10_4] stdout: 44
+//@[m10_4] stdout: 1
+//@[m11_4] args: mmmmmmmmmmm xxxx
+//@[m11_4] stdout: 9
+//@[m11_4] stdout: 2
+//@[m11_4] stdout: 1
+//@[m11_4] run-fail
+//@[m11_4] exit-code: 70
+//@[m11_4] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_4] args: mmmmmmmmmmmm xxxx
+//@[m12_4] stdout: 9
+//@[m12_4] stdout: 2
+//@[m12_4] stdout: 1
+//@[m12_4] run-fail
+//@[m12_4] exit-code: 70
+//@[m12_4] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m13_4] args: mmmmmmmmmmmmm xxxx
+//@[m13_4] stdout: 9
+//@[m13_4] stdout: 9
+//@[m13_4] stdout: 2
+//@[m13_4] stdout: 1
+//@[m13_4] run-fail
+//@[m13_4] exit-code: 70
+//@[m13_4] stderr-contains: main.gti:4046: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_7] args: mmmmmmmmmm xxxxxxx
+//@[m10_7] stdout: 27
+//@[m10_7] stdout: 41
+//@[m10_7] stdout: 62
+//@[m10_7] stdout: 75
+//@[m10_7] stdout: 28
+//@[m10_7] stdout: 2
+//@[m10_7] stdout: 75
+//@[m10_7] stdout: 1
+//@[m11_7] args: mmmmmmmmmmm xxxxxxx
+//@[m11_7] stdout: 9
+//@[m11_7] stdout: 9
+//@[m11_7] stdout: 2
+//@[m11_7] stdout: 1
+//@[m11_7] run-fail
+//@[m11_7] exit-code: 70
+//@[m11_7] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_7] args: mmmmmmmmmmmm xxxxxxx
+//@[m12_7] stdout: 9
+//@[m12_7] stdout: 9
+//@[m12_7] stdout: 2
+//@[m12_7] stdout: 1
+//@[m12_7] run-fail
+//@[m12_7] exit-code: 70
+//@[m12_7] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m13_7] args: mmmmmmmmmmmmm xxxxxxx
+//@[m13_7] stdout: 9
+//@[m13_7] stdout: 9
+//@[m13_7] stdout: 9
+//@[m13_7] stdout: 9
+//@[m13_7] stdout: 2
+//@[m13_7] stdout: 1
+//@[m13_7] run-fail
+//@[m13_7] exit-code: 70
+//@[m13_7] stderr-contains: main.gti:4046: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_31] args: mmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m10_31] stdout: 89
+//@[m10_31] stdout: 150
+//@[m10_31] stdout: 229
+//@[m10_31] stdout: 285
+//@[m10_31] stdout: 124
+//@[m10_31] stdout: 2
+//@[m10_31] stdout: 285
+//@[m10_31] stdout: 1
+//@[m11_31] args: mmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m11_31] stdout: 9
+//@[m11_31] stdout: 9
+//@[m11_31] stdout: 9
+//@[m11_31] stdout: 2
+//@[m11_31] stdout: 1
+//@[m11_31] run-fail
+//@[m11_31] exit-code: 70
+//@[m11_31] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_31] args: mmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m12_31] stdout: 9
+//@[m12_31] stdout: 9
+//@[m12_31] stdout: 9
+//@[m12_31] stdout: 2
+//@[m12_31] stdout: 4294967295
+//@[m12_31] stdout: 1
+//@[m13_31] args: mmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 9
+//@[m13_31] stdout: 2
+//@[m13_31] stdout: 1
+//@[m13_31] run-fail
+//@[m13_31] exit-code: 70
+//@[m13_31] stderr-contains: main.gti:4046: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_64] args: mmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m10_64] stdout: 157
+//@[m10_64] stdout: 283
+//@[m10_64] stdout: 441
+//@[m10_64] stdout: 568
+//@[m10_64] stdout: 256
+//@[m10_64] stdout: 2
+//@[m10_64] stdout: 568
+//@[m10_64] stdout: 1
+//@[m11_64] args: mmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m11_64] stdout: 9
+//@[m11_64] stdout: 2
+//@[m11_64] stdout: 1
+//@[m11_64] run-fail
+//@[m11_64] exit-code: 70
+//@[m11_64] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_64] args: mmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m12_64] stdout: 9
+//@[m12_64] stdout: 2
+//@[m12_64] stdout: 1
+//@[m12_64] run-fail
+//@[m12_64] exit-code: 70
+//@[m12_64] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m13_64] args: mmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m13_64] stdout: 9
+//@[m13_64] stdout: 9
+//@[m13_64] stdout: 2
+//@[m13_64] stdout: 1
+//@[m13_64] run-fail
+//@[m13_64] exit-code: 70
+//@[m13_64] stderr-contains: main.gti:4046: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_127] args: mmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m10_127] stdout: 325
+//@[m10_127] stdout: 576
+//@[m10_127] stdout: 896
+//@[m10_127] stdout: 1147
+//@[m10_127] stdout: 508
+//@[m10_127] stdout: 2
+//@[m10_127] stdout: 1147
+//@[m10_127] stdout: 1
+//@[m11_127] args: mmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m11_127] stdout: 9
+//@[m11_127] stdout: 9
+//@[m11_127] stdout: 2
+//@[m11_127] stdout: 1
+//@[m11_127] run-fail
+//@[m11_127] exit-code: 70
+//@[m11_127] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_127] args: mmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m12_127] stdout: 9
+//@[m12_127] stdout: 9
+//@[m12_127] stdout: 2
+//@[m12_127] stdout: 1
+//@[m12_127] run-fail
+//@[m12_127] exit-code: 70
+//@[m12_127] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m13_127] args: mmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m13_127] stdout: 9
+//@[m13_127] stdout: 9
+//@[m13_127] stdout: 9
+//@[m13_127] stdout: 9
+//@[m13_127] stdout: 2
+//@[m13_127] stdout: 1
+//@[m13_127] run-fail
+//@[m13_127] exit-code: 70
+//@[m13_127] stderr-contains: main.gti:4046: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m10_255] args: mmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m10_255] stdout: 649
+//@[m10_255] stdout: 1158
+//@[m10_255] stdout: 1797
+//@[m10_255] stdout: 2301
+//@[m10_255] stdout: 1020
+//@[m10_255] stdout: 2
+//@[m10_255] stdout: 2301
+//@[m10_255] stdout: 1
+//@[m11_255] args: mmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m11_255] stdout: 9
+//@[m11_255] stdout: 9
+//@[m11_255] stdout: 9
+//@[m11_255] stdout: 2
+//@[m11_255] stdout: 1
+//@[m11_255] run-fail
+//@[m11_255] exit-code: 70
+//@[m11_255] stderr-contains: main.gti:4035: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m12_255] args: mmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m12_255] stdout: 9
+//@[m12_255] stdout: 9
+//@[m12_255] stdout: 9
+//@[m12_255] stdout: 2
+//@[m12_255] stdout: 4294967295
+//@[m12_255] stdout: 1
+//@[m13_255] args: mmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m13_255] stdout: 9
+//@[m13_255] stdout: 9
+//@[m13_255] stdout: 2
+//@[m13_255] stdout: 1
+//@[m13_255] run-fail
+//@[m13_255] exit-code: 70
+//@[m13_255] stderr-contains: main.gti:4046: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_0] args: mmmmmmmmmmmmmm ''
+//@[m14_0] stdout: 114
+//@[m14_0] stdout: 228
+//@[m14_0] stdout: 342
+//@[m14_0] stdout: 456
+//@[m14_0] stdout: 36
+//@[m14_0] stdout: 2
+//@[m14_0] stdout: 456
+//@[m14_0] stdout: 1
+//@[m17_0] args: mmmmmmmmmmmmmmmmm ''
+//@[m17_0] stdout: 28
+//@[m17_0] stdout: 56
+//@[m17_0] stdout: 84
+//@[m17_0] stdout: 112
+//@[m17_0] stdout: 12
+//@[m17_0] stdout: 2
+//@[m17_0] stdout: 112
+//@[m17_0] stdout: 1
+//@[m15_0] args: mmmmmmmmmmmmmmm ''
+//@[m15_0] stdout: 9
+//@[m15_0] stdout: 2
+//@[m15_0] stdout: 1
+//@[m15_0] run-fail
+//@[m15_0] exit-code: 70
+//@[m15_0] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_0] args: mmmmmmmmmmmmmmmm ''
+//@[m16_0] stdout: 9
+//@[m16_0] stdout: 2
+//@[m16_0] stdout: 1
+//@[m16_0] run-fail
+//@[m16_0] exit-code: 70
+//@[m16_0] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_1] args: mmmmmmmmmmmmmm x
+//@[m14_1] stdout: 131
+//@[m14_1] stdout: 261
+//@[m14_1] stdout: 391
+//@[m14_1] stdout: 521
+//@[m14_1] stdout: 40
+//@[m14_1] stdout: 2
+//@[m14_1] stdout: 521
+//@[m14_1] stdout: 1
+//@[m17_1] args: mmmmmmmmmmmmmmmmm x
+//@[m17_1] stdout: 29
+//@[m17_1] stdout: 57
+//@[m17_1] stdout: 85
+//@[m17_1] stdout: 113
+//@[m17_1] stdout: 12
+//@[m17_1] stdout: 2
+//@[m17_1] stdout: 113
+//@[m17_1] stdout: 1
+//@[m15_1] args: mmmmmmmmmmmmmmm x
+//@[m15_1] stdout: 9
+//@[m15_1] stdout: 2
+//@[m15_1] stdout: 1
+//@[m15_1] run-fail
+//@[m15_1] exit-code: 70
+//@[m15_1] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_1] args: mmmmmmmmmmmmmmmm x
+//@[m16_1] stdout: 9
+//@[m16_1] stdout: 2
+//@[m16_1] stdout: 1
+//@[m16_1] run-fail
+//@[m16_1] exit-code: 70
+//@[m16_1] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_2] args: mmmmmmmmmmmmmm xx
+//@[m14_2] stdout: 150
+//@[m14_2] stdout: 298
+//@[m14_2] stdout: 446
+//@[m14_2] stdout: 594
+//@[m14_2] stdout: 44
+//@[m14_2] stdout: 2
+//@[m14_2] stdout: 594
+//@[m14_2] stdout: 1
+//@[m17_2] args: mmmmmmmmmmmmmmmmm xx
+//@[m17_2] stdout: 30
+//@[m17_2] stdout: 58
+//@[m17_2] stdout: 86
+//@[m17_2] stdout: 114
+//@[m17_2] stdout: 12
+//@[m17_2] stdout: 2
+//@[m17_2] stdout: 114
+//@[m17_2] stdout: 1
+//@[m15_2] args: mmmmmmmmmmmmmmm xx
+//@[m15_2] stdout: 9
+//@[m15_2] stdout: 2
+//@[m15_2] stdout: 1
+//@[m15_2] run-fail
+//@[m15_2] exit-code: 70
+//@[m15_2] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_2] args: mmmmmmmmmmmmmmmm xx
+//@[m16_2] stdout: 9
+//@[m16_2] stdout: 2
+//@[m16_2] stdout: 1
+//@[m16_2] run-fail
+//@[m16_2] exit-code: 70
+//@[m16_2] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_3] args: mmmmmmmmmmmmmm xxx
+//@[m14_3] stdout: 171
+//@[m14_3] stdout: 339
+//@[m14_3] stdout: 507
+//@[m14_3] stdout: 675
+//@[m14_3] stdout: 48
+//@[m14_3] stdout: 2
+//@[m14_3] stdout: 675
+//@[m14_3] stdout: 1
+//@[m17_3] args: mmmmmmmmmmmmmmmmm xxx
+//@[m17_3] stdout: 31
+//@[m17_3] stdout: 59
+//@[m17_3] stdout: 87
+//@[m17_3] stdout: 115
+//@[m17_3] stdout: 12
+//@[m17_3] stdout: 2
+//@[m17_3] stdout: 115
+//@[m17_3] stdout: 1
+//@[m15_3] args: mmmmmmmmmmmmmmm xxx
+//@[m15_3] stdout: 9
+//@[m15_3] stdout: 2
+//@[m15_3] stdout: 1
+//@[m15_3] run-fail
+//@[m15_3] exit-code: 70
+//@[m15_3] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_3] args: mmmmmmmmmmmmmmmm xxx
+//@[m16_3] stdout: 9
+//@[m16_3] stdout: 2
+//@[m16_3] stdout: 1
+//@[m16_3] run-fail
+//@[m16_3] exit-code: 70
+//@[m16_3] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_4] args: mmmmmmmmmmmmmm xxxx
+//@[m14_4] stdout: 194
+//@[m14_4] stdout: 384
+//@[m14_4] stdout: 574
+//@[m14_4] stdout: 764
+//@[m14_4] stdout: 52
+//@[m14_4] stdout: 2
+//@[m14_4] stdout: 764
+//@[m14_4] stdout: 1
+//@[m17_4] args: mmmmmmmmmmmmmmmmm xxxx
+//@[m17_4] stdout: 32
+//@[m17_4] stdout: 60
+//@[m17_4] stdout: 88
+//@[m17_4] stdout: 116
+//@[m17_4] stdout: 12
+//@[m17_4] stdout: 2
+//@[m17_4] stdout: 116
+//@[m17_4] stdout: 1
+//@[m15_4] args: mmmmmmmmmmmmmmm xxxx
+//@[m15_4] stdout: 9
+//@[m15_4] stdout: 2
+//@[m15_4] stdout: 1
+//@[m15_4] run-fail
+//@[m15_4] exit-code: 70
+//@[m15_4] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_4] args: mmmmmmmmmmmmmmmm xxxx
+//@[m16_4] stdout: 9
+//@[m16_4] stdout: 2
+//@[m16_4] stdout: 1
+//@[m16_4] run-fail
+//@[m16_4] exit-code: 70
+//@[m16_4] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_7] args: mmmmmmmmmmmmmm xxxxxxx
+//@[m14_7] stdout: 256
+//@[m14_7] stdout: 512
+//@[m14_7] stdout: 768
+//@[m14_7] stdout: 1024
+//@[m14_7] stdout: 64
+//@[m14_7] stdout: 2
+//@[m14_7] stdout: 1024
+//@[m14_7] stdout: 1
+//@[m17_7] args: mmmmmmmmmmmmmmmmm xxxxxxx
+//@[m17_7] stdout: 28
+//@[m17_7] stdout: 56
+//@[m17_7] stdout: 84
+//@[m17_7] stdout: 112
+//@[m17_7] stdout: 12
+//@[m17_7] stdout: 2
+//@[m17_7] stdout: 112
+//@[m17_7] stdout: 1
+//@[m15_7] args: mmmmmmmmmmmmmmm xxxxxxx
+//@[m15_7] stdout: 9
+//@[m15_7] stdout: 9
+//@[m15_7] stdout: 2
+//@[m15_7] stdout: 1
+//@[m15_7] run-fail
+//@[m15_7] exit-code: 70
+//@[m15_7] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_7] args: mmmmmmmmmmmmmmmm xxxxxxx
+//@[m16_7] stdout: 9
+//@[m16_7] stdout: 9
+//@[m16_7] stdout: 2
+//@[m16_7] stdout: 1
+//@[m16_7] run-fail
+//@[m16_7] exit-code: 70
+//@[m16_7] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_31] args: mmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m14_31] stdout: 259
+//@[m14_31] stdout: 515
+//@[m14_31] stdout: 771
+//@[m14_31] stdout: 1027
+//@[m14_31] stdout: 64
+//@[m14_31] stdout: 2
+//@[m14_31] stdout: 1027
+//@[m14_31] stdout: 1
+//@[m17_31] args: mmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m17_31] stdout: 31
+//@[m17_31] stdout: 59
+//@[m17_31] stdout: 87
+//@[m17_31] stdout: 115
+//@[m17_31] stdout: 12
+//@[m17_31] stdout: 2
+//@[m17_31] stdout: 115
+//@[m17_31] stdout: 1
+//@[m15_31] args: mmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m15_31] stdout: 9
+//@[m15_31] stdout: 2
+//@[m15_31] stdout: 1
+//@[m15_31] run-fail
+//@[m15_31] exit-code: 70
+//@[m15_31] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_31] args: mmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m16_31] stdout: 9
+//@[m16_31] stdout: 9
+//@[m16_31] stdout: 2
+//@[m16_31] stdout: 1
+//@[m16_31] run-fail
+//@[m16_31] exit-code: 70
+//@[m16_31] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_64] args: mmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m14_64] stdout: 115
+//@[m14_64] stdout: 229
+//@[m14_64] stdout: 343
+//@[m14_64] stdout: 457
+//@[m14_64] stdout: 36
+//@[m14_64] stdout: 2
+//@[m14_64] stdout: 457
+//@[m14_64] stdout: 1
+//@[m17_64] args: mmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m17_64] stdout: 29
+//@[m17_64] stdout: 57
+//@[m17_64] stdout: 85
+//@[m17_64] stdout: 113
+//@[m17_64] stdout: 12
+//@[m17_64] stdout: 2
+//@[m17_64] stdout: 113
+//@[m17_64] stdout: 1
+//@[m15_64] args: mmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m15_64] stdout: 9
+//@[m15_64] stdout: 9
+//@[m15_64] stdout: 2
+//@[m15_64] stdout: 1
+//@[m15_64] run-fail
+//@[m15_64] exit-code: 70
+//@[m15_64] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_64] args: mmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m16_64] stdout: 9
+//@[m16_64] stdout: 9
+//@[m16_64] stdout: 9
+//@[m16_64] stdout: 2
+//@[m16_64] stdout: 1
+//@[m16_64] run-fail
+//@[m16_64] exit-code: 70
+//@[m16_64] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_127] args: mmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m14_127] stdout: 257
+//@[m14_127] stdout: 513
+//@[m14_127] stdout: 769
+//@[m14_127] stdout: 1025
+//@[m14_127] stdout: 64
+//@[m14_127] stdout: 2
+//@[m14_127] stdout: 1025
+//@[m14_127] stdout: 1
+//@[m17_127] args: mmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m17_127] stdout: 29
+//@[m17_127] stdout: 57
+//@[m17_127] stdout: 85
+//@[m17_127] stdout: 113
+//@[m17_127] stdout: 12
+//@[m17_127] stdout: 2
+//@[m17_127] stdout: 113
+//@[m17_127] stdout: 1
+//@[m15_127] args: mmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m15_127] stdout: 9
+//@[m15_127] stdout: 9
+//@[m15_127] stdout: 2
+//@[m15_127] stdout: 1
+//@[m15_127] run-fail
+//@[m15_127] exit-code: 70
+//@[m15_127] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_127] args: mmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m16_127] stdout: 9
+//@[m16_127] stdout: 9
+//@[m16_127] stdout: 2
+//@[m16_127] stdout: 1
+//@[m16_127] run-fail
+//@[m16_127] exit-code: 70
+//@[m16_127] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m14_255] args: mmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m14_255] stdout: 259
+//@[m14_255] stdout: 515
+//@[m14_255] stdout: 771
+//@[m14_255] stdout: 1027
+//@[m14_255] stdout: 64
+//@[m14_255] stdout: 2
+//@[m14_255] stdout: 1027
+//@[m14_255] stdout: 1
+//@[m17_255] args: mmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m17_255] stdout: 31
+//@[m17_255] stdout: 59
+//@[m17_255] stdout: 87
+//@[m17_255] stdout: 115
+//@[m17_255] stdout: 12
+//@[m17_255] stdout: 2
+//@[m17_255] stdout: 115
+//@[m17_255] stdout: 1
+//@[m15_255] args: mmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m15_255] stdout: 9
+//@[m15_255] stdout: 9
+//@[m15_255] stdout: 2
+//@[m15_255] stdout: 1
+//@[m15_255] run-fail
+//@[m15_255] exit-code: 70
+//@[m15_255] stderr-contains: main.gti:4075: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m16_255] args: mmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m16_255] stdout: 9
+//@[m16_255] stdout: 2
+//@[m16_255] stdout: 1
+//@[m16_255] run-fail
+//@[m16_255] exit-code: 70
+//@[m16_255] stderr-contains: main.gti:4086: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m18_0] args: mmmmmmmmmmmmmmmmmm ''
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 9
+//@[m18_0] stdout: 2
+//@[m18_0] stdout: 22
+//@[m18_0] stdout: 1
+//@[m19_0] args: mmmmmmmmmmmmmmmmmmm ''
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 9
+//@[m19_0] stdout: 2
+//@[m19_0] stdout: 22
+//@[m19_0] stdout: 1
+//@[m20_0] args: mmmmmmmmmmmmmmmmmmmm ''
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 9
+//@[m20_0] stdout: 2
+//@[m20_0] stdout: 26
+//@[m20_0] stdout: 1
+//@[m21_0] args: mmmmmmmmmmmmmmmmmmmmm ''
+//@[m21_0] stdout: 9
+//@[m21_0] stdout: 2
+//@[m21_0] stdout: 1
+//@[m21_0] run-fail
+//@[m21_0] exit-code: 70
+//@[m21_0] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_0] args: mmmmmmmmmmmmmmmmmmmmmm ''
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 9
+//@[m22_0] stdout: 2
+//@[m22_0] stdout: 22
+//@[m22_0] stdout: 1
+//@[m18_1] args: mmmmmmmmmmmmmmmmmm x
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 9
+//@[m18_1] stdout: 2
+//@[m18_1] stdout: 27
+//@[m18_1] stdout: 1
+//@[m19_1] args: mmmmmmmmmmmmmmmmmmm x
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 9
+//@[m19_1] stdout: 2
+//@[m19_1] stdout: 28
+//@[m19_1] stdout: 1
+//@[m20_1] args: mmmmmmmmmmmmmmmmmmmm x
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 9
+//@[m20_1] stdout: 2
+//@[m20_1] stdout: 33
+//@[m20_1] stdout: 1
+//@[m21_1] args: mmmmmmmmmmmmmmmmmmmmm x
+//@[m21_1] stdout: 9
+//@[m21_1] stdout: 2
+//@[m21_1] stdout: 1
+//@[m21_1] run-fail
+//@[m21_1] exit-code: 70
+//@[m21_1] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_1] args: mmmmmmmmmmmmmmmmmmmmmm x
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 9
+//@[m22_1] stdout: 2
+//@[m22_1] stdout: 27
+//@[m22_1] stdout: 1
+//@[m18_2] args: mmmmmmmmmmmmmmmmmm xx
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 9
+//@[m18_2] stdout: 2
+//@[m18_2] stdout: 35
+//@[m18_2] stdout: 1
+//@[m19_2] args: mmmmmmmmmmmmmmmmmmm xx
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 9
+//@[m19_2] stdout: 2
+//@[m19_2] stdout: 37
+//@[m19_2] stdout: 1
+//@[m20_2] args: mmmmmmmmmmmmmmmmmmmm xx
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 9
+//@[m20_2] stdout: 2
+//@[m20_2] stdout: 36
+//@[m20_2] stdout: 1
+//@[m21_2] args: mmmmmmmmmmmmmmmmmmmmm xx
+//@[m21_2] stdout: 9
+//@[m21_2] stdout: 2
+//@[m21_2] stdout: 1
+//@[m21_2] run-fail
+//@[m21_2] exit-code: 70
+//@[m21_2] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_2] args: mmmmmmmmmmmmmmmmmmmmmm xx
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 9
+//@[m22_2] stdout: 2
+//@[m22_2] stdout: 35
+//@[m22_2] stdout: 1
+//@[m18_3] args: mmmmmmmmmmmmmmmmmm xxx
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 9
+//@[m18_3] stdout: 2
+//@[m18_3] stdout: 39
+//@[m18_3] stdout: 1
+//@[m19_3] args: mmmmmmmmmmmmmmmmmmm xxx
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 9
+//@[m19_3] stdout: 2
+//@[m19_3] stdout: 42
+//@[m19_3] stdout: 1
+//@[m20_3] args: mmmmmmmmmmmmmmmmmmmm xxx
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 9
+//@[m20_3] stdout: 2
+//@[m20_3] stdout: 35
+//@[m20_3] stdout: 1
+//@[m21_3] args: mmmmmmmmmmmmmmmmmmmmm xxx
+//@[m21_3] stdout: 9
+//@[m21_3] stdout: 2
+//@[m21_3] stdout: 1
+//@[m21_3] run-fail
+//@[m21_3] exit-code: 70
+//@[m21_3] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_3] args: mmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 9
+//@[m22_3] stdout: 2
+//@[m22_3] stdout: 39
+//@[m22_3] stdout: 1
+//@[m18_4] args: mmmmmmmmmmmmmmmmmm xxxx
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 9
+//@[m18_4] stdout: 2
+//@[m18_4] stdout: 39
+//@[m18_4] stdout: 1
+//@[m19_4] args: mmmmmmmmmmmmmmmmmmm xxxx
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 9
+//@[m19_4] stdout: 2
+//@[m19_4] stdout: 43
+//@[m19_4] stdout: 1
+//@[m20_4] args: mmmmmmmmmmmmmmmmmmmm xxxx
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 9
+//@[m20_4] stdout: 2
+//@[m20_4] stdout: 37
+//@[m20_4] stdout: 1
+//@[m21_4] args: mmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m21_4] stdout: 9
+//@[m21_4] stdout: 2
+//@[m21_4] stdout: 1
+//@[m21_4] run-fail
+//@[m21_4] exit-code: 70
+//@[m21_4] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_4] args: mmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 9
+//@[m22_4] stdout: 2
+//@[m22_4] stdout: 39
+//@[m22_4] stdout: 1
+//@[m18_7] args: mmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 9
+//@[m18_7] stdout: 2
+//@[m18_7] stdout: 43
+//@[m18_7] stdout: 1
+//@[m19_7] args: mmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 9
+//@[m19_7] stdout: 2
+//@[m19_7] stdout: 50
+//@[m19_7] stdout: 1
+//@[m20_7] args: mmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 9
+//@[m20_7] stdout: 2
+//@[m20_7] stdout: 47
+//@[m20_7] stdout: 1
+//@[m21_7] args: mmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m21_7] stdout: 9
+//@[m21_7] stdout: 9
+//@[m21_7] stdout: 2
+//@[m21_7] stdout: 1
+//@[m21_7] run-fail
+//@[m21_7] exit-code: 70
+//@[m21_7] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_7] args: mmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 9
+//@[m22_7] stdout: 2
+//@[m22_7] stdout: 43
+//@[m22_7] stdout: 1
+//@[m18_31] args: mmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 9
+//@[m18_31] stdout: 2
+//@[m18_31] stdout: 43
+//@[m18_31] stdout: 1
+//@[m19_31] args: mmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 9
+//@[m19_31] stdout: 2
+//@[m19_31] stdout: 57
+//@[m19_31] stdout: 1
+//@[m20_31] args: mmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 9
+//@[m20_31] stdout: 2
+//@[m20_31] stdout: 47
+//@[m20_31] stdout: 1
+//@[m21_31] args: mmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m21_31] stdout: 9
+//@[m21_31] stdout: 2
+//@[m21_31] stdout: 1
+//@[m21_31] run-fail
+//@[m21_31] exit-code: 70
+//@[m21_31] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_31] args: mmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 9
+//@[m22_31] stdout: 2
+//@[m22_31] stdout: 45
+//@[m22_31] stdout: 1
+//@[m18_64] args: mmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 9
+//@[m18_64] stdout: 2
+//@[m18_64] stdout: 27
+//@[m18_64] stdout: 1
+//@[m19_64] args: mmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 9
+//@[m19_64] stdout: 2
+//@[m19_64] stdout: 40
+//@[m19_64] stdout: 1
+//@[m20_64] args: mmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 9
+//@[m20_64] stdout: 2
+//@[m20_64] stdout: 26
+//@[m20_64] stdout: 1
+//@[m21_64] args: mmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m21_64] stdout: 9
+//@[m21_64] stdout: 9
+//@[m21_64] stdout: 9
+//@[m21_64] stdout: 9
+//@[m21_64] stdout: 9
+//@[m21_64] stdout: 9
+//@[m21_64] stdout: 9
+//@[m21_64] stdout: 2
+//@[m21_64] stdout: 1
+//@[m21_64] run-fail
+//@[m21_64] exit-code: 70
+//@[m21_64] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_64] args: mmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 9
+//@[m22_64] stdout: 2
+//@[m22_64] stdout: 22
+//@[m22_64] stdout: 1
+//@[m18_127] args: mmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 9
+//@[m18_127] stdout: 2
+//@[m18_127] stdout: 45
+//@[m18_127] stdout: 1
+//@[m19_127] args: mmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 9
+//@[m19_127] stdout: 2
+//@[m19_127] stdout: 53
+//@[m19_127] stdout: 1
+//@[m20_127] args: mmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 9
+//@[m20_127] stdout: 2
+//@[m20_127] stdout: 47
+//@[m20_127] stdout: 1
+//@[m21_127] args: mmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m21_127] stdout: 9
+//@[m21_127] stdout: 9
+//@[m21_127] stdout: 9
+//@[m21_127] stdout: 9
+//@[m21_127] stdout: 9
+//@[m21_127] stdout: 2
+//@[m21_127] stdout: 1
+//@[m21_127] run-fail
+//@[m21_127] exit-code: 70
+//@[m21_127] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_127] args: mmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 9
+//@[m22_127] stdout: 2
+//@[m22_127] stdout: 45
+//@[m22_127] stdout: 1
+//@[m18_255] args: mmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 9
+//@[m18_255] stdout: 2
+//@[m18_255] stdout: 43
+//@[m18_255] stdout: 1
+//@[m19_255] args: mmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 9
+//@[m19_255] stdout: 2
+//@[m19_255] stdout: 43
+//@[m19_255] stdout: 1
+//@[m20_255] args: mmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 9
+//@[m20_255] stdout: 2
+//@[m20_255] stdout: 47
+//@[m20_255] stdout: 1
+//@[m21_255] args: mmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m21_255] stdout: 9
+//@[m21_255] stdout: 9
+//@[m21_255] stdout: 9
+//@[m21_255] stdout: 2
+//@[m21_255] stdout: 1
+//@[m21_255] run-fail
+//@[m21_255] exit-code: 70
+//@[m21_255] stderr-contains: main.gti:4101: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m22_255] args: mmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 9
+//@[m22_255] stdout: 2
+//@[m22_255] stdout: 45
+//@[m22_255] stdout: 1
+//@[m23_0] args: mmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m23_0] stdout: 2
+//@[m23_0] stdout: 1
+//@[m24_0] args: mmmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m24_0] stdout: 2
+//@[m24_0] stdout: 1
+//@[m25_0] args: mmmmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m25_0] stdout: 2
+//@[m25_0] stdout: 1
+//@[m26_0] args: mmmmmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m26_0] stdout: 2
+//@[m26_0] stdout: 1
+//@[m27_0] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m27_0] stdout: 2
+//@[m27_0] stdout: 1
+//@[m23_1] args: mmmmmmmmmmmmmmmmmmmmmmm x
+//@[m23_1] stdout: 1
+//@[m23_1] stdout: 9
+//@[m23_1] stdout: 1
+//@[m23_1] stdout: 2
+//@[m23_1] stdout: 1
+//@[m24_1] args: mmmmmmmmmmmmmmmmmmmmmmmm x
+//@[m24_1] stdout: 4294967294
+//@[m24_1] stdout: 9
+//@[m24_1] stdout: 4294967294
+//@[m24_1] stdout: 2
+//@[m24_1] stdout: 1
+//@[m25_1] args: mmmmmmmmmmmmmmmmmmmmmmmmm x
+//@[m25_1] stdout: 1
+//@[m25_1] stdout: 9
+//@[m25_1] stdout: 1
+//@[m25_1] stdout: 2
+//@[m25_1] stdout: 1
+//@[m26_1] args: mmmmmmmmmmmmmmmmmmmmmmmmmm x
+//@[m26_1] stdout: 1
+//@[m26_1] stdout: 9
+//@[m26_1] stdout: 1
+//@[m26_1] stdout: 2
+//@[m26_1] stdout: 1
+//@[m27_1] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm x
+//@[m27_1] stdout: 4294967294
+//@[m27_1] stdout: 9
+//@[m27_1] stdout: 4294967294
+//@[m27_1] stdout: 2
+//@[m27_1] stdout: 1
+//@[m23_2] args: mmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m23_2] stdout: 2
+//@[m23_2] stdout: 9
+//@[m23_2] stdout: 9
+//@[m23_2] stdout: 9
+//@[m23_2] stdout: 2
+//@[m23_2] stdout: 9
+//@[m23_2] stdout: 2
+//@[m23_2] stdout: 1
+//@[m24_2] args: mmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m24_2] stdout: 4294967293
+//@[m24_2] stdout: 9
+//@[m24_2] stdout: 9
+//@[m24_2] stdout: 2
+//@[m24_2] stdout: 1
+//@[m24_2] run-fail
+//@[m24_2] exit-code: 70
+//@[m24_2] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_2] args: mmmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m25_2] stdout: 2
+//@[m25_2] stdout: 9
+//@[m25_2] stdout: 9
+//@[m25_2] stdout: 9
+//@[m25_2] stdout: 2
+//@[m25_2] stdout: 9
+//@[m25_2] stdout: 2
+//@[m25_2] stdout: 1
+//@[m26_2] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m26_2] stdout: 2
+//@[m26_2] stdout: 9
+//@[m26_2] stdout: 6
+//@[m26_2] stdout: 9
+//@[m26_2] stdout: 2
+//@[m26_2] stdout: 6
+//@[m26_2] stdout: 2
+//@[m26_2] stdout: 1
+//@[m27_2] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m27_2] stdout: 4294967293
+//@[m27_2] stdout: 9
+//@[m27_2] stdout: 9
+//@[m27_2] stdout: 2
+//@[m27_2] stdout: 1
+//@[m27_2] run-fail
+//@[m27_2] exit-code: 70
+//@[m27_2] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_3] args: mmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m23_3] stdout: 3
+//@[m23_3] stdout: 9
+//@[m23_3] stdout: 10
+//@[m23_3] stdout: 9
+//@[m23_3] stdout: 17
+//@[m23_3] stdout: 9
+//@[m23_3] stdout: 3
+//@[m23_3] stdout: 10
+//@[m23_3] stdout: 17
+//@[m23_3] stdout: 2
+//@[m23_3] stdout: 1
+//@[m24_3] args: mmmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m24_3] stdout: 4294967292
+//@[m24_3] stdout: 9
+//@[m24_3] stdout: 9
+//@[m24_3] stdout: 2
+//@[m24_3] stdout: 1
+//@[m24_3] run-fail
+//@[m24_3] exit-code: 70
+//@[m24_3] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_3] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m25_3] stdout: 3
+//@[m25_3] stdout: 9
+//@[m25_3] stdout: 10
+//@[m25_3] stdout: 9
+//@[m25_3] stdout: 9
+//@[m25_3] stdout: 3
+//@[m25_3] stdout: 10
+//@[m25_3] stdout: 2
+//@[m25_3] stdout: 1
+//@[m26_3] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m26_3] stdout: 3
+//@[m26_3] stdout: 9
+//@[m26_3] stdout: 7
+//@[m26_3] stdout: 9
+//@[m26_3] stdout: 11
+//@[m26_3] stdout: 9
+//@[m26_3] stdout: 3
+//@[m26_3] stdout: 7
+//@[m26_3] stdout: 11
+//@[m26_3] stdout: 2
+//@[m26_3] stdout: 1
+//@[m27_3] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m27_3] stdout: 4294967292
+//@[m27_3] stdout: 9
+//@[m27_3] stdout: 9
+//@[m27_3] stdout: 2
+//@[m27_3] stdout: 1
+//@[m27_3] run-fail
+//@[m27_3] exit-code: 70
+//@[m27_3] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_4] args: mmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m23_4] stdout: 4
+//@[m23_4] stdout: 9
+//@[m23_4] stdout: 11
+//@[m23_4] stdout: 9
+//@[m23_4] stdout: 18
+//@[m23_4] stdout: 9
+//@[m23_4] stdout: 25
+//@[m23_4] stdout: 9
+//@[m23_4] stdout: 4
+//@[m23_4] stdout: 11
+//@[m23_4] stdout: 18
+//@[m23_4] stdout: 25
+//@[m23_4] stdout: 2
+//@[m23_4] stdout: 1
+//@[m24_4] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m24_4] stdout: 4294967291
+//@[m24_4] stdout: 9
+//@[m24_4] stdout: 9
+//@[m24_4] stdout: 2
+//@[m24_4] stdout: 1
+//@[m24_4] run-fail
+//@[m24_4] exit-code: 70
+//@[m24_4] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_4] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m25_4] stdout: 4
+//@[m25_4] stdout: 9
+//@[m25_4] stdout: 11
+//@[m25_4] stdout: 9
+//@[m25_4] stdout: 9
+//@[m25_4] stdout: 4
+//@[m25_4] stdout: 11
+//@[m25_4] stdout: 2
+//@[m25_4] stdout: 1
+//@[m26_4] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m26_4] stdout: 4
+//@[m26_4] stdout: 9
+//@[m26_4] stdout: 8
+//@[m26_4] stdout: 9
+//@[m26_4] stdout: 12
+//@[m26_4] stdout: 9
+//@[m26_4] stdout: 16
+//@[m26_4] stdout: 9
+//@[m26_4] stdout: 4
+//@[m26_4] stdout: 8
+//@[m26_4] stdout: 12
+//@[m26_4] stdout: 16
+//@[m26_4] stdout: 2
+//@[m26_4] stdout: 1
+//@[m27_4] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m27_4] stdout: 4294967291
+//@[m27_4] stdout: 9
+//@[m27_4] stdout: 4294967295
+//@[m27_4] stdout: 9
+//@[m27_4] stdout: 9
+//@[m27_4] stdout: 2
+//@[m27_4] stdout: 1
+//@[m27_4] run-fail
+//@[m27_4] exit-code: 70
+//@[m27_4] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_7] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m23_7] stdout: 7
+//@[m23_7] stdout: 9
+//@[m23_7] stdout: 14
+//@[m23_7] stdout: 9
+//@[m23_7] stdout: 21
+//@[m23_7] stdout: 9
+//@[m23_7] stdout: 28
+//@[m23_7] stdout: 9
+//@[m23_7] stdout: 35
+//@[m23_7] stdout: 9
+//@[m23_7] stdout: 42
+//@[m23_7] stdout: 9
+//@[m23_7] stdout: 49
+//@[m23_7] stdout: 9
+//@[m23_7] stdout: 7
+//@[m23_7] stdout: 14
+//@[m23_7] stdout: 21
+//@[m23_7] stdout: 28
+//@[m23_7] stdout: 35
+//@[m23_7] stdout: 42
+//@[m23_7] stdout: 49
+//@[m23_7] stdout: 2
+//@[m23_7] stdout: 1
+//@[m24_7] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m24_7] stdout: 4294967288
+//@[m24_7] stdout: 9
+//@[m24_7] stdout: 4294967295
+//@[m24_7] stdout: 9
+//@[m24_7] stdout: 9
+//@[m24_7] stdout: 2
+//@[m24_7] stdout: 1
+//@[m24_7] run-fail
+//@[m24_7] exit-code: 70
+//@[m24_7] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_7] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m25_7] stdout: 7
+//@[m25_7] stdout: 9
+//@[m25_7] stdout: 14
+//@[m25_7] stdout: 9
+//@[m25_7] stdout: 9
+//@[m25_7] stdout: 7
+//@[m25_7] stdout: 14
+//@[m25_7] stdout: 2
+//@[m25_7] stdout: 1
+//@[m26_7] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m26_7] stdout: 7
+//@[m26_7] stdout: 9
+//@[m26_7] stdout: 11
+//@[m26_7] stdout: 9
+//@[m26_7] stdout: 15
+//@[m26_7] stdout: 9
+//@[m26_7] stdout: 19
+//@[m26_7] stdout: 9
+//@[m26_7] stdout: 23
+//@[m26_7] stdout: 9
+//@[m26_7] stdout: 27
+//@[m26_7] stdout: 9
+//@[m26_7] stdout: 31
+//@[m26_7] stdout: 9
+//@[m26_7] stdout: 7
+//@[m26_7] stdout: 11
+//@[m26_7] stdout: 15
+//@[m26_7] stdout: 19
+//@[m26_7] stdout: 23
+//@[m26_7] stdout: 27
+//@[m26_7] stdout: 31
+//@[m26_7] stdout: 2
+//@[m26_7] stdout: 1
+//@[m27_7] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m27_7] stdout: 4294967288
+//@[m27_7] stdout: 9
+//@[m27_7] stdout: 4294967292
+//@[m27_7] stdout: 9
+//@[m27_7] stdout: 9
+//@[m27_7] stdout: 2
+//@[m27_7] stdout: 1
+//@[m27_7] run-fail
+//@[m27_7] exit-code: 70
+//@[m27_7] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_15] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxx
+//@[m23_15] stdout: 15
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 22
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 29
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 36
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 43
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 50
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 57
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 64
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 71
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 78
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 85
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 92
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 99
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 106
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 113
+//@[m23_15] stdout: 9
+//@[m23_15] stdout: 15
+//@[m23_15] stdout: 22
+//@[m23_15] stdout: 29
+//@[m23_15] stdout: 36
+//@[m23_15] stdout: 43
+//@[m23_15] stdout: 50
+//@[m23_15] stdout: 57
+//@[m23_15] stdout: 64
+//@[m23_15] stdout: 71
+//@[m23_15] stdout: 78
+//@[m23_15] stdout: 85
+//@[m23_15] stdout: 92
+//@[m23_15] stdout: 99
+//@[m23_15] stdout: 106
+//@[m23_15] stdout: 113
+//@[m23_15] stdout: 2
+//@[m23_15] stdout: 1
+//@[m24_15] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxx
+//@[m24_15] stdout: 4294967280
+//@[m24_15] stdout: 9
+//@[m24_15] stdout: 4294967287
+//@[m24_15] stdout: 9
+//@[m24_15] stdout: 4294967294
+//@[m24_15] stdout: 9
+//@[m24_15] stdout: 9
+//@[m24_15] stdout: 2
+//@[m24_15] stdout: 1
+//@[m24_15] run-fail
+//@[m24_15] exit-code: 70
+//@[m24_15] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_15] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxx
+//@[m25_15] stdout: 15
+//@[m25_15] stdout: 9
+//@[m25_15] stdout: 22
+//@[m25_15] stdout: 9
+//@[m25_15] stdout: 9
+//@[m25_15] stdout: 15
+//@[m25_15] stdout: 22
+//@[m25_15] stdout: 2
+//@[m25_15] stdout: 1
+//@[m26_15] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxx
+//@[m26_15] stdout: 15
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 19
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 23
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 27
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 31
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 35
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 39
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 43
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 47
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 51
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 55
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 59
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 63
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 67
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 71
+//@[m26_15] stdout: 9
+//@[m26_15] stdout: 15
+//@[m26_15] stdout: 19
+//@[m26_15] stdout: 23
+//@[m26_15] stdout: 27
+//@[m26_15] stdout: 31
+//@[m26_15] stdout: 35
+//@[m26_15] stdout: 39
+//@[m26_15] stdout: 43
+//@[m26_15] stdout: 47
+//@[m26_15] stdout: 51
+//@[m26_15] stdout: 55
+//@[m26_15] stdout: 59
+//@[m26_15] stdout: 63
+//@[m26_15] stdout: 67
+//@[m26_15] stdout: 71
+//@[m26_15] stdout: 2
+//@[m26_15] stdout: 1
+//@[m27_15] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxx
+//@[m27_15] stdout: 4294967280
+//@[m27_15] stdout: 9
+//@[m27_15] stdout: 4294967284
+//@[m27_15] stdout: 9
+//@[m27_15] stdout: 4294967288
+//@[m27_15] stdout: 9
+//@[m27_15] stdout: 4294967292
+//@[m27_15] stdout: 9
+//@[m27_15] stdout: 9
+//@[m27_15] stdout: 2
+//@[m27_15] stdout: 1
+//@[m27_15] run-fail
+//@[m27_15] exit-code: 70
+//@[m27_15] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_31] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m23_31] stdout: 14
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 21
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 28
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 35
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 42
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 49
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 56
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 63
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 70
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 77
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 84
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 91
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 98
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 105
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 112
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 119
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 126
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 133
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 140
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 147
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 154
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 161
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 168
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 175
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 182
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 189
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 196
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 203
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 210
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 217
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 224
+//@[m23_31] stdout: 9
+//@[m23_31] stdout: 14
+//@[m23_31] stdout: 21
+//@[m23_31] stdout: 28
+//@[m23_31] stdout: 35
+//@[m23_31] stdout: 42
+//@[m23_31] stdout: 49
+//@[m23_31] stdout: 56
+//@[m23_31] stdout: 63
+//@[m23_31] stdout: 70
+//@[m23_31] stdout: 77
+//@[m23_31] stdout: 84
+//@[m23_31] stdout: 91
+//@[m23_31] stdout: 98
+//@[m23_31] stdout: 105
+//@[m23_31] stdout: 112
+//@[m23_31] stdout: 119
+//@[m23_31] stdout: 126
+//@[m23_31] stdout: 133
+//@[m23_31] stdout: 140
+//@[m23_31] stdout: 147
+//@[m23_31] stdout: 154
+//@[m23_31] stdout: 161
+//@[m23_31] stdout: 168
+//@[m23_31] stdout: 175
+//@[m23_31] stdout: 182
+//@[m23_31] stdout: 189
+//@[m23_31] stdout: 196
+//@[m23_31] stdout: 203
+//@[m23_31] stdout: 210
+//@[m23_31] stdout: 217
+//@[m23_31] stdout: 224
+//@[m23_31] stdout: 2
+//@[m23_31] stdout: 1
+//@[m24_31] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m24_31] stdout: 4294967295
+//@[m24_31] stdout: 9
+//@[m24_31] stdout: 9
+//@[m24_31] stdout: 2
+//@[m24_31] stdout: 1
+//@[m24_31] run-fail
+//@[m24_31] exit-code: 70
+//@[m24_31] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_31] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m25_31] stdout: 14
+//@[m25_31] stdout: 9
+//@[m25_31] stdout: 21
+//@[m25_31] stdout: 9
+//@[m25_31] stdout: 9
+//@[m25_31] stdout: 14
+//@[m25_31] stdout: 21
+//@[m25_31] stdout: 2
+//@[m25_31] stdout: 1
+//@[m26_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m26_31] stdout: 14
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 18
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 22
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 26
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 30
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 34
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 38
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 42
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 46
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 50
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 54
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 58
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 62
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 66
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 70
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 74
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 78
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 82
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 86
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 90
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 94
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 98
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 102
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 106
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 110
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 114
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 118
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 122
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 126
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 130
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 134
+//@[m26_31] stdout: 9
+//@[m26_31] stdout: 14
+//@[m26_31] stdout: 18
+//@[m26_31] stdout: 22
+//@[m26_31] stdout: 26
+//@[m26_31] stdout: 30
+//@[m26_31] stdout: 34
+//@[m26_31] stdout: 38
+//@[m26_31] stdout: 42
+//@[m26_31] stdout: 46
+//@[m26_31] stdout: 50
+//@[m26_31] stdout: 54
+//@[m26_31] stdout: 58
+//@[m26_31] stdout: 62
+//@[m26_31] stdout: 66
+//@[m26_31] stdout: 70
+//@[m26_31] stdout: 74
+//@[m26_31] stdout: 78
+//@[m26_31] stdout: 82
+//@[m26_31] stdout: 86
+//@[m26_31] stdout: 90
+//@[m26_31] stdout: 94
+//@[m26_31] stdout: 98
+//@[m26_31] stdout: 102
+//@[m26_31] stdout: 106
+//@[m26_31] stdout: 110
+//@[m26_31] stdout: 114
+//@[m26_31] stdout: 118
+//@[m26_31] stdout: 122
+//@[m26_31] stdout: 126
+//@[m26_31] stdout: 130
+//@[m26_31] stdout: 134
+//@[m26_31] stdout: 2
+//@[m26_31] stdout: 1
+//@[m27_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m27_31] stdout: 4294967295
+//@[m27_31] stdout: 9
+//@[m27_31] stdout: 9
+//@[m27_31] stdout: 2
+//@[m27_31] stdout: 1
+//@[m27_31] run-fail
+//@[m27_31] exit-code: 70
+//@[m27_31] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_32] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m23_32] stdout: 2
+//@[m23_32] stdout: 1
+//@[m24_32] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m24_32] stdout: 2
+//@[m24_32] stdout: 1
+//@[m25_32] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m25_32] stdout: 2
+//@[m25_32] stdout: 1
+//@[m26_32] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m26_32] stdout: 2
+//@[m26_32] stdout: 1
+//@[m27_32] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m27_32] stdout: 2
+//@[m27_32] stdout: 1
+//@[m23_63] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m23_63] stdout: 12
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 19
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 26
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 33
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 40
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 47
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 54
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 61
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 68
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 75
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 82
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 89
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 96
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 103
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 110
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 117
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 124
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 131
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 138
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 145
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 152
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 159
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 166
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 173
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 180
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 187
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 194
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 201
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 208
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 215
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 222
+//@[m23_63] stdout: 9
+//@[m23_63] stdout: 12
+//@[m23_63] stdout: 19
+//@[m23_63] stdout: 26
+//@[m23_63] stdout: 33
+//@[m23_63] stdout: 40
+//@[m23_63] stdout: 47
+//@[m23_63] stdout: 54
+//@[m23_63] stdout: 61
+//@[m23_63] stdout: 68
+//@[m23_63] stdout: 75
+//@[m23_63] stdout: 82
+//@[m23_63] stdout: 89
+//@[m23_63] stdout: 96
+//@[m23_63] stdout: 103
+//@[m23_63] stdout: 110
+//@[m23_63] stdout: 117
+//@[m23_63] stdout: 124
+//@[m23_63] stdout: 131
+//@[m23_63] stdout: 138
+//@[m23_63] stdout: 145
+//@[m23_63] stdout: 152
+//@[m23_63] stdout: 159
+//@[m23_63] stdout: 166
+//@[m23_63] stdout: 173
+//@[m23_63] stdout: 180
+//@[m23_63] stdout: 187
+//@[m23_63] stdout: 194
+//@[m23_63] stdout: 201
+//@[m23_63] stdout: 208
+//@[m23_63] stdout: 215
+//@[m23_63] stdout: 222
+//@[m23_63] stdout: 2
+//@[m23_63] stdout: 1
+//@[m24_63] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m24_63] stdout: 4294967294
+//@[m24_63] stdout: 9
+//@[m24_63] stdout: 9
+//@[m24_63] stdout: 2
+//@[m24_63] stdout: 1
+//@[m24_63] run-fail
+//@[m24_63] exit-code: 70
+//@[m24_63] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_63] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m25_63] stdout: 12
+//@[m25_63] stdout: 9
+//@[m25_63] stdout: 19
+//@[m25_63] stdout: 9
+//@[m25_63] stdout: 9
+//@[m25_63] stdout: 12
+//@[m25_63] stdout: 19
+//@[m25_63] stdout: 2
+//@[m25_63] stdout: 1
+//@[m26_63] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m26_63] stdout: 12
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 16
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 20
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 24
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 28
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 32
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 36
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 40
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 44
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 48
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 52
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 56
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 60
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 64
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 68
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 72
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 76
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 80
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 84
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 88
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 92
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 96
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 100
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 104
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 108
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 112
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 116
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 120
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 124
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 128
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 132
+//@[m26_63] stdout: 9
+//@[m26_63] stdout: 12
+//@[m26_63] stdout: 16
+//@[m26_63] stdout: 20
+//@[m26_63] stdout: 24
+//@[m26_63] stdout: 28
+//@[m26_63] stdout: 32
+//@[m26_63] stdout: 36
+//@[m26_63] stdout: 40
+//@[m26_63] stdout: 44
+//@[m26_63] stdout: 48
+//@[m26_63] stdout: 52
+//@[m26_63] stdout: 56
+//@[m26_63] stdout: 60
+//@[m26_63] stdout: 64
+//@[m26_63] stdout: 68
+//@[m26_63] stdout: 72
+//@[m26_63] stdout: 76
+//@[m26_63] stdout: 80
+//@[m26_63] stdout: 84
+//@[m26_63] stdout: 88
+//@[m26_63] stdout: 92
+//@[m26_63] stdout: 96
+//@[m26_63] stdout: 100
+//@[m26_63] stdout: 104
+//@[m26_63] stdout: 108
+//@[m26_63] stdout: 112
+//@[m26_63] stdout: 116
+//@[m26_63] stdout: 120
+//@[m26_63] stdout: 124
+//@[m26_63] stdout: 128
+//@[m26_63] stdout: 132
+//@[m26_63] stdout: 2
+//@[m26_63] stdout: 1
+//@[m27_63] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m27_63] stdout: 4294967294
+//@[m27_63] stdout: 9
+//@[m27_63] stdout: 9
+//@[m27_63] stdout: 2
+//@[m27_63] stdout: 1
+//@[m27_63] run-fail
+//@[m27_63] exit-code: 70
+//@[m27_63] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_127] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m23_127] stdout: 8
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 15
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 22
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 29
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 36
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 43
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 50
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 57
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 64
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 71
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 78
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 85
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 92
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 99
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 106
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 113
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 120
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 127
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 134
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 141
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 148
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 155
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 162
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 169
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 176
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 183
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 190
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 197
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 204
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 211
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 218
+//@[m23_127] stdout: 9
+//@[m23_127] stdout: 8
+//@[m23_127] stdout: 15
+//@[m23_127] stdout: 22
+//@[m23_127] stdout: 29
+//@[m23_127] stdout: 36
+//@[m23_127] stdout: 43
+//@[m23_127] stdout: 50
+//@[m23_127] stdout: 57
+//@[m23_127] stdout: 64
+//@[m23_127] stdout: 71
+//@[m23_127] stdout: 78
+//@[m23_127] stdout: 85
+//@[m23_127] stdout: 92
+//@[m23_127] stdout: 99
+//@[m23_127] stdout: 106
+//@[m23_127] stdout: 113
+//@[m23_127] stdout: 120
+//@[m23_127] stdout: 127
+//@[m23_127] stdout: 134
+//@[m23_127] stdout: 141
+//@[m23_127] stdout: 148
+//@[m23_127] stdout: 155
+//@[m23_127] stdout: 162
+//@[m23_127] stdout: 169
+//@[m23_127] stdout: 176
+//@[m23_127] stdout: 183
+//@[m23_127] stdout: 190
+//@[m23_127] stdout: 197
+//@[m23_127] stdout: 204
+//@[m23_127] stdout: 211
+//@[m23_127] stdout: 218
+//@[m23_127] stdout: 2
+//@[m23_127] stdout: 1
+//@[m24_127] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m24_127] stdout: 4294967292
+//@[m24_127] stdout: 9
+//@[m24_127] stdout: 9
+//@[m24_127] stdout: 2
+//@[m24_127] stdout: 1
+//@[m24_127] run-fail
+//@[m24_127] exit-code: 70
+//@[m24_127] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_127] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m25_127] stdout: 8
+//@[m25_127] stdout: 9
+//@[m25_127] stdout: 15
+//@[m25_127] stdout: 9
+//@[m25_127] stdout: 9
+//@[m25_127] stdout: 8
+//@[m25_127] stdout: 15
+//@[m25_127] stdout: 2
+//@[m25_127] stdout: 1
+//@[m26_127] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m26_127] stdout: 8
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 12
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 16
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 20
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 24
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 28
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 32
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 36
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 40
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 44
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 48
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 52
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 56
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 60
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 64
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 68
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 72
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 76
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 80
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 84
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 88
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 92
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 96
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 100
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 104
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 108
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 112
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 116
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 120
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 124
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 128
+//@[m26_127] stdout: 9
+//@[m26_127] stdout: 8
+//@[m26_127] stdout: 12
+//@[m26_127] stdout: 16
+//@[m26_127] stdout: 20
+//@[m26_127] stdout: 24
+//@[m26_127] stdout: 28
+//@[m26_127] stdout: 32
+//@[m26_127] stdout: 36
+//@[m26_127] stdout: 40
+//@[m26_127] stdout: 44
+//@[m26_127] stdout: 48
+//@[m26_127] stdout: 52
+//@[m26_127] stdout: 56
+//@[m26_127] stdout: 60
+//@[m26_127] stdout: 64
+//@[m26_127] stdout: 68
+//@[m26_127] stdout: 72
+//@[m26_127] stdout: 76
+//@[m26_127] stdout: 80
+//@[m26_127] stdout: 84
+//@[m26_127] stdout: 88
+//@[m26_127] stdout: 92
+//@[m26_127] stdout: 96
+//@[m26_127] stdout: 100
+//@[m26_127] stdout: 104
+//@[m26_127] stdout: 108
+//@[m26_127] stdout: 112
+//@[m26_127] stdout: 116
+//@[m26_127] stdout: 120
+//@[m26_127] stdout: 124
+//@[m26_127] stdout: 128
+//@[m26_127] stdout: 2
+//@[m26_127] stdout: 1
+//@[m27_127] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m27_127] stdout: 4294967292
+//@[m27_127] stdout: 9
+//@[m27_127] stdout: 9
+//@[m27_127] stdout: 2
+//@[m27_127] stdout: 1
+//@[m27_127] run-fail
+//@[m27_127] exit-code: 70
+//@[m27_127] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m23_255] args: mmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m23_255] stdout: 0
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 7
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 14
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 21
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 28
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 35
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 42
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 49
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 56
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 63
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 70
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 77
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 84
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 91
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 98
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 105
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 112
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 119
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 126
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 133
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 140
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 147
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 154
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 161
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 168
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 175
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 182
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 189
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 196
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 203
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 210
+//@[m23_255] stdout: 9
+//@[m23_255] stdout: 0
+//@[m23_255] stdout: 7
+//@[m23_255] stdout: 14
+//@[m23_255] stdout: 21
+//@[m23_255] stdout: 28
+//@[m23_255] stdout: 35
+//@[m23_255] stdout: 42
+//@[m23_255] stdout: 49
+//@[m23_255] stdout: 56
+//@[m23_255] stdout: 63
+//@[m23_255] stdout: 70
+//@[m23_255] stdout: 77
+//@[m23_255] stdout: 84
+//@[m23_255] stdout: 91
+//@[m23_255] stdout: 98
+//@[m23_255] stdout: 105
+//@[m23_255] stdout: 112
+//@[m23_255] stdout: 119
+//@[m23_255] stdout: 126
+//@[m23_255] stdout: 133
+//@[m23_255] stdout: 140
+//@[m23_255] stdout: 147
+//@[m23_255] stdout: 154
+//@[m23_255] stdout: 161
+//@[m23_255] stdout: 168
+//@[m23_255] stdout: 175
+//@[m23_255] stdout: 182
+//@[m23_255] stdout: 189
+//@[m23_255] stdout: 196
+//@[m23_255] stdout: 203
+//@[m23_255] stdout: 210
+//@[m23_255] stdout: 2
+//@[m23_255] stdout: 1
+//@[m24_255] args: mmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m24_255] stdout: 4294967288
+//@[m24_255] stdout: 9
+//@[m24_255] stdout: 4294967295
+//@[m24_255] stdout: 9
+//@[m24_255] stdout: 9
+//@[m24_255] stdout: 2
+//@[m24_255] stdout: 1
+//@[m24_255] run-fail
+//@[m24_255] exit-code: 70
+//@[m24_255] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m25_255] args: mmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m25_255] stdout: 0
+//@[m25_255] stdout: 9
+//@[m25_255] stdout: 7
+//@[m25_255] stdout: 9
+//@[m25_255] stdout: 9
+//@[m25_255] stdout: 0
+//@[m25_255] stdout: 7
+//@[m25_255] stdout: 2
+//@[m25_255] stdout: 1
+//@[m26_255] args: mmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m26_255] stdout: 0
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 4
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 8
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 12
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 16
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 20
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 24
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 28
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 32
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 36
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 40
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 44
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 48
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 52
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 56
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 60
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 64
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 68
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 72
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 76
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 80
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 84
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 88
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 92
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 96
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 100
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 104
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 108
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 112
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 116
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 120
+//@[m26_255] stdout: 9
+//@[m26_255] stdout: 0
+//@[m26_255] stdout: 4
+//@[m26_255] stdout: 8
+//@[m26_255] stdout: 12
+//@[m26_255] stdout: 16
+//@[m26_255] stdout: 20
+//@[m26_255] stdout: 24
+//@[m26_255] stdout: 28
+//@[m26_255] stdout: 32
+//@[m26_255] stdout: 36
+//@[m26_255] stdout: 40
+//@[m26_255] stdout: 44
+//@[m26_255] stdout: 48
+//@[m26_255] stdout: 52
+//@[m26_255] stdout: 56
+//@[m26_255] stdout: 60
+//@[m26_255] stdout: 64
+//@[m26_255] stdout: 68
+//@[m26_255] stdout: 72
+//@[m26_255] stdout: 76
+//@[m26_255] stdout: 80
+//@[m26_255] stdout: 84
+//@[m26_255] stdout: 88
+//@[m26_255] stdout: 92
+//@[m26_255] stdout: 96
+//@[m26_255] stdout: 100
+//@[m26_255] stdout: 104
+//@[m26_255] stdout: 108
+//@[m26_255] stdout: 112
+//@[m26_255] stdout: 116
+//@[m26_255] stdout: 120
+//@[m26_255] stdout: 2
+//@[m26_255] stdout: 1
+//@[m27_255] args: mmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m27_255] stdout: 4294967288
+//@[m27_255] stdout: 9
+//@[m27_255] stdout: 4294967292
+//@[m27_255] stdout: 9
+//@[m27_255] stdout: 9
+//@[m27_255] stdout: 2
+//@[m27_255] stdout: 1
+//@[m27_255] run-fail
+//@[m27_255] exit-code: 70
+//@[m27_255] stderr-contains: main.gti:4121: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m28_0] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m28_0] stdout: 2
+//@[m28_0] stdout: 0
+//@[m28_0] stdout: 1
+//@[m29_0] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m29_0] stdout: 2
+//@[m29_0] stdout: 4294967295
+//@[m29_0] stdout: 1
+//@[m30_0] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm ''
+//@[m30_0] stdout: 2
+//@[m30_0] stdout: 4294967295
+//@[m30_0] stdout: 1
+//@[m28_1] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm x
+//@[m28_1] stdout: 9
+//@[m28_1] stdout: 2
+//@[m28_1] stdout: 1
+//@[m28_1] stdout: 1
+//@[m29_1] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm x
+//@[m29_1] stdout: 9
+//@[m29_1] stdout: 2
+//@[m29_1] stdout: 4294967294
+//@[m29_1] stdout: 1
+//@[m30_1] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm x
+//@[m30_1] stdout: 9
+//@[m30_1] stdout: 2
+//@[m30_1] stdout: 4294967294
+//@[m30_1] stdout: 1
+//@[m28_2] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m28_2] stdout: 9
+//@[m28_2] stdout: 9
+//@[m28_2] stdout: 2
+//@[m28_2] stdout: 5
+//@[m28_2] stdout: 1
+//@[m29_2] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m29_2] stdout: 9
+//@[m29_2] stdout: 9
+//@[m29_2] stdout: 2
+//@[m29_2] stdout: 1
+//@[m29_2] run-fail
+//@[m29_2] exit-code: 70
+//@[m29_2] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_2] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xx
+//@[m30_2] stdout: 9
+//@[m30_2] stdout: 9
+//@[m30_2] stdout: 2
+//@[m30_2] stdout: 1
+//@[m30_2] run-fail
+//@[m30_2] exit-code: 70
+//@[m30_2] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m28_3] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m28_3] stdout: 9
+//@[m28_3] stdout: 9
+//@[m28_3] stdout: 9
+//@[m28_3] stdout: 2
+//@[m28_3] stdout: 7
+//@[m28_3] stdout: 1
+//@[m29_3] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m29_3] stdout: 9
+//@[m29_3] stdout: 9
+//@[m29_3] stdout: 9
+//@[m29_3] stdout: 2
+//@[m29_3] stdout: 1
+//@[m29_3] run-fail
+//@[m29_3] exit-code: 70
+//@[m29_3] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_3] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxx
+//@[m30_3] stdout: 9
+//@[m30_3] stdout: 9
+//@[m30_3] stdout: 9
+//@[m30_3] stdout: 2
+//@[m30_3] stdout: 4294967293
+//@[m30_3] stdout: 1
+//@[m28_4] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m28_4] stdout: 9
+//@[m28_4] stdout: 9
+//@[m28_4] stdout: 9
+//@[m28_4] stdout: 9
+//@[m28_4] stdout: 2
+//@[m28_4] stdout: 9
+//@[m28_4] stdout: 1
+//@[m29_4] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m29_4] stdout: 9
+//@[m29_4] stdout: 9
+//@[m29_4] stdout: 9
+//@[m29_4] stdout: 2
+//@[m29_4] stdout: 1
+//@[m29_4] run-fail
+//@[m29_4] exit-code: 70
+//@[m29_4] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_4] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxx
+//@[m30_4] stdout: 9
+//@[m30_4] stdout: 9
+//@[m30_4] stdout: 9
+//@[m30_4] stdout: 2
+//@[m30_4] stdout: 4294967293
+//@[m30_4] stdout: 1
+//@[m28_7] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m28_7] stdout: 9
+//@[m28_7] stdout: 9
+//@[m28_7] stdout: 9
+//@[m28_7] stdout: 9
+//@[m28_7] stdout: 9
+//@[m28_7] stdout: 9
+//@[m28_7] stdout: 9
+//@[m28_7] stdout: 2
+//@[m28_7] stdout: 15
+//@[m28_7] stdout: 1
+//@[m29_7] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m29_7] stdout: 9
+//@[m29_7] stdout: 9
+//@[m29_7] stdout: 9
+//@[m29_7] stdout: 9
+//@[m29_7] stdout: 9
+//@[m29_7] stdout: 2
+//@[m29_7] stdout: 1
+//@[m29_7] run-fail
+//@[m29_7] exit-code: 70
+//@[m29_7] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_7] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxx
+//@[m30_7] stdout: 9
+//@[m30_7] stdout: 9
+//@[m30_7] stdout: 9
+//@[m30_7] stdout: 2
+//@[m30_7] stdout: 4294967290
+//@[m30_7] stdout: 1
+//@[m28_12] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxx
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 9
+//@[m28_12] stdout: 2
+//@[m28_12] stdout: 38
+//@[m28_12] stdout: 1
+//@[m29_12] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxx
+//@[m29_12] stdout: 9
+//@[m29_12] stdout: 9
+//@[m29_12] stdout: 9
+//@[m29_12] stdout: 9
+//@[m29_12] stdout: 9
+//@[m29_12] stdout: 9
+//@[m29_12] stdout: 2
+//@[m29_12] stdout: 1
+//@[m29_12] run-fail
+//@[m29_12] exit-code: 70
+//@[m29_12] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_12] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxx
+//@[m30_12] stdout: 9
+//@[m30_12] stdout: 9
+//@[m30_12] stdout: 9
+//@[m30_12] stdout: 2
+//@[m30_12] stdout: 4294967284
+//@[m30_12] stdout: 1
+//@[m28_13] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxx
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 9
+//@[m28_13] stdout: 2
+//@[m28_13] stdout: 41
+//@[m28_13] stdout: 1
+//@[m29_13] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxx
+//@[m29_13] stdout: 9
+//@[m29_13] stdout: 9
+//@[m29_13] stdout: 2
+//@[m29_13] stdout: 1
+//@[m29_13] run-fail
+//@[m29_13] exit-code: 70
+//@[m29_13] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_13] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxx
+//@[m30_13] stdout: 9
+//@[m30_13] stdout: 9
+//@[m30_13] stdout: 2
+//@[m30_13] stdout: 1
+//@[m30_13] run-fail
+//@[m30_13] exit-code: 70
+//@[m30_13] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m28_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 9
+//@[m28_31] stdout: 2
+//@[m28_31] stdout: 98
+//@[m28_31] stdout: 1
+//@[m29_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 9
+//@[m29_31] stdout: 2
+//@[m29_31] stdout: 1
+//@[m29_31] run-fail
+//@[m29_31] exit-code: 70
+//@[m29_31] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_31] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m30_31] stdout: 9
+//@[m30_31] stdout: 9
+//@[m30_31] stdout: 9
+//@[m30_31] stdout: 2
+//@[m30_31] stdout: 4294967292
+//@[m30_31] stdout: 1
+//@[m28_32] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 9
+//@[m28_32] stdout: 2
+//@[m28_32] stdout: 106
+//@[m28_32] stdout: 1
+//@[m29_32] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m29_32] stdout: 9
+//@[m29_32] stdout: 9
+//@[m29_32] stdout: 9
+//@[m29_32] stdout: 9
+//@[m29_32] stdout: 2
+//@[m29_32] stdout: 1
+//@[m29_32] run-fail
+//@[m29_32] exit-code: 70
+//@[m29_32] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_32] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m30_32] stdout: 9
+//@[m30_32] stdout: 9
+//@[m30_32] stdout: 9
+//@[m30_32] stdout: 2
+//@[m30_32] stdout: 4294967292
+//@[m30_32] stdout: 1
+//@[m28_33] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 9
+//@[m28_33] stdout: 2
+//@[m28_33] stdout: 103
+//@[m28_33] stdout: 1
+//@[m29_33] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m29_33] stdout: 9
+//@[m29_33] stdout: 9
+//@[m29_33] stdout: 9
+//@[m29_33] stdout: 9
+//@[m29_33] stdout: 2
+//@[m29_33] stdout: 1
+//@[m29_33] run-fail
+//@[m29_33] exit-code: 70
+//@[m29_33] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_33] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m30_33] stdout: 9
+//@[m30_33] stdout: 9
+//@[m30_33] stdout: 9
+//@[m30_33] stdout: 2
+//@[m30_33] stdout: 4294967289
+//@[m30_33] stdout: 1
+//@[m28_63] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 9
+//@[m28_63] stdout: 2
+//@[m28_63] stdout: 98
+//@[m28_63] stdout: 1
+//@[m29_63] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m29_63] stdout: 9
+//@[m29_63] stdout: 9
+//@[m29_63] stdout: 9
+//@[m29_63] stdout: 9
+//@[m29_63] stdout: 9
+//@[m29_63] stdout: 9
+//@[m29_63] stdout: 2
+//@[m29_63] stdout: 1
+//@[m29_63] run-fail
+//@[m29_63] exit-code: 70
+//@[m29_63] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_63] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m30_63] stdout: 9
+//@[m30_63] stdout: 9
+//@[m30_63] stdout: 9
+//@[m30_63] stdout: 2
+//@[m30_63] stdout: 4294967285
+//@[m30_63] stdout: 1
+//@[m28_127] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 9
+//@[m28_127] stdout: 2
+//@[m28_127] stdout: 101
+//@[m28_127] stdout: 1
+//@[m29_127] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m29_127] stdout: 9
+//@[m29_127] stdout: 9
+//@[m29_127] stdout: 9
+//@[m29_127] stdout: 9
+//@[m29_127] stdout: 9
+//@[m29_127] stdout: 9
+//@[m29_127] stdout: 2
+//@[m29_127] stdout: 1
+//@[m29_127] run-fail
+//@[m29_127] exit-code: 70
+//@[m29_127] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_127] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m30_127] stdout: 9
+//@[m30_127] stdout: 9
+//@[m30_127] stdout: 9
+//@[m30_127] stdout: 2
+//@[m30_127] stdout: 4294967287
+//@[m30_127] stdout: 1
+//@[m28_255] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 9
+//@[m28_255] stdout: 2
+//@[m28_255] stdout: 101
+//@[m28_255] stdout: 1
+//@[m29_255] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m29_255] stdout: 9
+//@[m29_255] stdout: 9
+//@[m29_255] stdout: 9
+//@[m29_255] stdout: 9
+//@[m29_255] stdout: 9
+//@[m29_255] stdout: 9
+//@[m29_255] stdout: 2
+//@[m29_255] stdout: 1
+//@[m29_255] run-fail
+//@[m29_255] exit-code: 70
+//@[m29_255] stderr-contains: main.gti:4142: runtime error[GTI-R0001]: integer_overflow in addition
+//@[m30_255] args: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmm xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+//@[m30_255] stdout: 9
+//@[m30_255] stdout: 9
+//@[m30_255] stdout: 9
+//@[m30_255] stdout: 2
+//@[m30_255] stdout: 4294967288
+//@[m30_255] stdout: 1
+import std.algorithm;
+import std.string;
+import std.vector;
+
+class ReductionCleanup {
+  int identity;
+public:
+  ReductionCleanup(int identity) : identity(identity) {}
+  ~ReductionCleanup() { std::println(this.identity); }
+};
+
+// This predicate is user-defined ordinary source, not a standard-library hook.
+class SelectRemainder {
+  int excluded;
+public:
+  SelectRemainder(int excluded) : excluded(excluded) {}
+  bool accepts(int value) { return value % 3 != this.excluded; }
+};
+
+int ordinary(int limit) {
+  ReductionCleanup inner{2};
+  SelectRemainder predicate{1};
+  mut int count = 0;
+  mut int sum = 7;
+  mut int visits = 0;
+  for (mut int index = 0; index < limit; index++) {
+    visits += 1;
+    if (predicate.accepts(index)) {
+      count += 1;
+      sum += 2;
+      sum += 3;
+    }
+  }
+  // Exercise the generic iterator/captured-callable consumer independently.
+  mut std::vector<int> values{};
+  for (mut int index = 0; index < limit; index++) values.push_back(index);
+  int excluded = 1;
+  int selected = int(std::count_if(values, [excluded](int &value) -> bool {
+    return value % 3 != excluded;
+  }));
+  std::println(visits);
+  std::println(selected);
+  std::println(sum);
+  return count;
+}
+
+int signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640;
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += 3; // signed-boundary
+  }
+  return total;
+}
+
+uint32_t unsigned_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967290);
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += uint32_t(2); // unsigned-boundary
+  }
+  return total;
+}
+
+int narrow_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int8_t total = int8_t(120);
+  for (mut int index = 0; index < limit; index++) {
+    ReductionCleanup iteration{9};
+    total += 3; // narrow-boundary
+  }
+  return int(total);
+}
+
+int alternative(int limit) {
+  ReductionCleanup inner{2};
+  mut int decreasing = 0;
+  mut int dynamic = 5;
+  for (mut int index = 0; index < limit; index++) {
+    decreasing -= 2;
+    dynamic += limit;
+    if (index == 5) break;
+  }
+  return decreasing + dynamic;
+}
+
+// All bounds below come from source operations, not from an overflow check.
+// The traversal starts at seven and uses equality to exercise modular distance.
+uint32_t bounded_dynamic(int limit, bool early) {
+  ReductionCleanup inner{2};
+  uint32_t seed = uint32_t(limit);
+  uint32_t finish = uint32_t(7) + seed;
+  mut uint32_t masked = 3;
+  mut uint32_t remainder = 5;
+  mut uint32_t extended = 7;
+  mut uint32_t selected = 11;
+  mut uint32_t choice = 13;
+  mut uint32_t visits = 0;
+  for (mut uint32_t index = 7; index != finish; index++) {
+    if (early && index == uint32_t(10)) break;
+    uint32_t input = index * uint32_t(17) + seed;
+    uint8_t narrow = uint8_t(input % uint32_t(251));
+    masked += input & uint32_t(15);
+    remainder += input % uint32_t(7);
+    extended += uint32_t(narrow);
+    if ((index & uint32_t(1)) == uint32_t(0)) {
+      selected += (input & uint32_t(7)) + uint32_t(1);
+    } else {
+      selected += input % uint32_t(5);
+      selected += uint32_t(narrow);
+    }
+    choice += (index & uint32_t(1)) == uint32_t(0)
+        ? input & uint32_t(3) : input % uint32_t(11);
+    visits++;
+  }
+  std::println(visits);
+  std::println(masked);
+  std::println(remainder);
+  std::println(extended);
+  std::println(choice);
+  return selected;
+}
+
+uint32_t dynamic_unsigned_boundary(int limit, bool early) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967291);
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(9)) break;
+    uint32_t increment = (index + uint32_t(limit)) % uint32_t(3) + uint32_t(1);
+    total += increment; // dynamic-unsigned-boundary
+  }
+  return total;
+}
+
+int dynamic_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    int increment = int((index + uint32_t(limit)) % uint32_t(5));
+    total += increment; // dynamic-signed-boundary
+  }
+  return total;
+}
+
+// The inner header starts with the result of the previous outer traversal.
+uint32_t outer_accumulation(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(limit) & uint32_t(7);
+  mut uint32_t visits = 0;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (((index + round) & uint32_t(1)) != uint32_t(0)) {
+        total += (index + round + uint32_t(limit)) % uint32_t(7);
+        total += index & uint32_t(3);
+      }
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t initial_unsigned_boundary(int limit, bool early) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967290) + uint32_t(limit % 5);
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(9)) break;
+    total += (index + uint32_t(limit)) % uint32_t(3) + uint32_t(1); // initial-unsigned-boundary
+  }
+  return total;
+}
+
+int initial_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483640 + limit % 6;
+  uint32_t finish = uint32_t(7) + uint32_t(limit);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int((index + uint32_t(limit)) % uint32_t(3) + uint32_t(1)); // initial-signed-boundary
+  }
+  return total;
+}
+
+uint32_t weighted_outer(int limit, bool early) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  mut uint32_t total = uint32_t(limit) % uint32_t(7);
+  mut uint32_t visits = 0;
+  for (mut uint32_t round = 0; round < uint32_t(4); round++) {
+    for (mut uint32_t index = 7; index != finish; index++) {
+      if (early && index == uint32_t(10)) break;
+      total += index;
+      total += index & uint32_t(3);
+      visits++;
+    }
+    std::println(total);
+  }
+  std::println(visits);
+  return total;
+}
+
+uint32_t weighted_unsigned_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut uint32_t total = uint32_t(4294967295) - uint32_t(limit % 13);
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += index; // weighted-unsigned-boundary
+  }
+  return total;
+}
+
+int weighted_signed_boundary(int limit) {
+  ReductionCleanup inner{2};
+  mut int total = 2147483647 - limit % 23;
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    total += int(index); // weighted-signed-boundary
+  }
+  return total;
+}
+
+uint32_t indexed_key_sum(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(16) + uint32_t(limit) % uint32_t(8);
+  mut uint32_t base = uint32_t(limit) % uint32_t(17);
+  if (mode == 20) base = finish;
+  if (mode == 21) base = uint32_t(4294967295) - uint32_t(limit % 13);
+  if (mode == 22) base = uint32_t(limit) & uint32_t(15);
+  mut uint32_t total = mode == 19 ? base : uint32_t(0);
+  for (mut uint32_t index = 7; index != finish; index++) {
+    ReductionCleanup iteration{9};
+    uint32_t key = base + index; // ancillary-key-boundary
+    total += key % uint32_t(7);
+  }
+  return total;
+}
+
+// Stores need the same bounded-key proof even when there is no reduction.
+void fill_keys(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = uint32_t(limit) % uint32_t(32);
+  bool early = mode == 25;
+  bool shifted = mode >= 26;
+  uint32_t base = mode == 24 || mode == 27
+                    ? uint32_t(4294967295) - uint32_t(limit % 31)
+                    : uint32_t(limit % 17);
+  mut uint32_t keys[32] = {};
+  for (mut uint32_t index = 0; index < finish; index++) {
+    ReductionCleanup iteration{9};
+    if (early && index == uint32_t(2)) break;
+    uint32_t offset = shifted ? index << uint32_t(2) : index * uint32_t(7);
+    uint32_t key = base + offset; // standalone-key-boundary
+    keys[index] = key;
+    std::println(key);
+  }
+  for (mut uint32_t index = 0; index < finish; index++) {
+    if (early && index == uint32_t(2)) break;
+    std::println(keys[index]);
+  }
+}
+
+// Both the traversal and conditional increment are clamped. Overflow still
+// belongs to the actual selected addition, with the original cleanup order.
+uint32_t clamped_sum(int limit, int mode) {
+  ReductionCleanup inner{2};
+  uint32_t finish = std::min(uint32_t(limit), uint32_t(32));
+  mut uint32_t total = mode == 28 ? uint32_t(limit % 7)
+                                : uint32_t(4294967295) - uint32_t(limit % 13);
+  for (mut uint32_t index = 0; index < finish; index++) {
+    ReductionCleanup iteration{9};
+    if (mode == 30 && index == uint32_t(2)) break;
+    if ((index + uint32_t(limit)) % uint32_t(3) != uint32_t(1)) {
+      total += std::max(std::min(index + uint32_t(1), uint32_t(5)), uint32_t(1)); // clamped-boundary
+    }
+  }
+  return total;
+}
+
+int main(int argc, std::vector<std::string> argv) {
+  if (argc != 3) return 10;
+  int mode = int(argv[std::size_t(1)].size());
+  int limit = int(argv[std::size_t(2)].size());
+  ReductionCleanup outer{1};
+  if (mode == 0) std::println(ordinary(limit));
+  else if (mode == 1) std::println(signed_boundary(limit));
+  else if (mode == 2) std::println(unsigned_boundary(limit));
+  else if (mode == 3) std::println(narrow_boundary(limit));
+  else if (mode == 4) std::println(alternative(limit));
+  else if (mode == 5 || mode == 6) std::println(bounded_dynamic(limit, mode == 6));
+  else if (mode == 7 || mode == 9) std::println(dynamic_unsigned_boundary(limit, mode == 9));
+  else if (mode == 8) std::println(dynamic_signed_boundary(limit));
+  else if (mode == 10) std::println(outer_accumulation(limit));
+  else if (mode == 11 || mode == 12) std::println(initial_unsigned_boundary(limit, mode == 12));
+  else if (mode == 13) std::println(initial_signed_boundary(limit));
+  else if (mode == 14 || mode == 17) std::println(weighted_outer(limit, mode == 17));
+  else if (mode == 15) std::println(weighted_unsigned_boundary(limit));
+  else if (mode == 16) std::println(weighted_signed_boundary(limit));
+  else if (mode >= 28) std::println(clamped_sum(limit, mode));
+  else if (mode >= 23) fill_keys(limit, mode);
+  else std::println(indexed_key_sum(limit, mode));
+  return 0;
+}

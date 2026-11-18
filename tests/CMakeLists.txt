@@ -1366,10 +1366,6 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_offset_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(llvm_checked_offset_runtime PROPERTIES TIMEOUT 600)
-  add_test(NAME llvm_checked_reduction_runtime
-           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_reduction_runtime_test.py"
-                   "$<TARGET_FILE:gti>")
-  set_tests_properties(llvm_checked_reduction_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_checked_range_runtime
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_range_runtime_test.py"
                    "$<TARGET_FILE:gti>")
