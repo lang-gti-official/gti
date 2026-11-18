@@ -159,8 +159,7 @@ integration is complete contributor work; report it as deferred, never as passed
    which checks ran, and "complete suite deferred to full validation". Unless
    the change is automation-only, end it with a `Validation:` block whose `T0`
    and `T1` items list the CTest names you ran, comma-separated (a new
-   `gti-test` case runs in `gti_test_ui_shard_1` through `_4`;
-   `gti_test_ui` alone runs only self-tests/tidy). Other items (`tier`, `T2`,
+   `gti-test` case is `gti_test_ui`); other items (`tier`, `T2`,
    `reproduction`, `unaffected`, `expectations`, `T3`) are prose. A PR that
    also changes the compiler and removes an annotation, deletes a test or
    downgrades a mode gives the one-line reason as `expectations`:
