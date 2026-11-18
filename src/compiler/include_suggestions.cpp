@@ -1,6 +1,7 @@
 #include "gti/include_suggestions.h"
 
 #include "gti/frontend.h"
+#include "gti/frontend_work.h"
 #include "gti/language_queries.h"
 #include "gti/lexer.h"
 #include "gti/source_owner.h"
@@ -13,6 +14,7 @@
 #include <mutex>
 #include <set>
 #include <system_error>
+#include <tuple>
 
 namespace lang {
 
@@ -21,7 +23,8 @@ public:
   // Every token spelling of one exact source text. Rows are immutable.
   struct Lexicon {
     std::uint64_t digest = 0;
-    std::vector<std::string> spellings; // sorted and unique
+    std::vector<std::string> spellings;     // sorted and unique
+    std::set<std::string> typeDeclarations; // ranking hints, never proof
     std::size_t reexports = 0;
     bool hadError = false;
 
@@ -93,6 +96,17 @@ public:
   void countTrial(bool skipped) {
     const std::lock_guard lock(mutex);
     ++(skipped ? counters.qualifierSkips : counters.trials);
+  }
+
+  void recordTrial(const FrontendWorkMetrics &work, std::size_t elapsed) {
+    const std::lock_guard lock(mutex);
+    counters.trialMicroseconds += elapsed;
+    counters.trialSemanticMicroseconds += work.semanticMicroseconds;
+    counters.trialHirMicroseconds += work.hirMicroseconds;
+    counters.trialPreambleBuildMicroseconds +=
+        work.semanticPreambleBuildMicroseconds;
+    counters.trialPreambleAdoptMicroseconds +=
+        work.semanticPreambleAdoptMicroseconds;
   }
 
   void invalidate(std::string_view path) {
@@ -440,6 +454,17 @@ std::shared_ptr<const Lexicon> lexiconFor(IncludeDiscoveryCache::Rows &rows,
     if (tokens[index - 1].kind == TokenKind::EXPORT &&
         tokens[index].kind == TokenKind::IMPORT)
       ++row->reexports;
+  // Prefer an actual type-declaration spelling to a use in a function body.
+  // Attributes, generated declarations and aliases can evade this pattern;
+  // absence therefore never removes a candidate.
+  for (std::size_t index = 1; index < tokens.size(); ++index) {
+    const auto previous = tokens[index - 1].kind;
+    if (tokens[index].kind == TokenKind::IDENTIFIER &&
+        (previous == TokenKind::CLASS || previous == TokenKind::STRUCT ||
+         previous == TokenKind::ENUM || previous == TokenKind::USING ||
+         previous == TokenKind::CONCEPT))
+      row->typeDeclarations.insert(tokens[index].lexeme);
+  }
   row->spellings.reserve(tokens.size());
   for (const auto &token : tokens)
     row->spellings.push_back(token.lexeme);
@@ -674,18 +699,37 @@ IncludeSuggestionResult discoverIncludeSuggestions(
     const std::vector<std::filesystem::path> &standardLibraryRoots,
     const std::vector<PackageSourceRoot> &packageSourceRoots) {
   IncludeSuggestionResult advice{.diagnostics = result.diagnostics};
+  const auto started = std::chrono::steady_clock::now();
+  std::size_t trialsRun = 0;
+  std::size_t scansRun = 0;
+  const auto exhausted = [&] {
+    const auto &limits = options.includeDiscoveryLimits;
+    advice.budgetExhausted =
+        trialsRun >= limits.maximumTrials ||
+        limits.maximumCandidateScans == 0 ||
+        limits.timeBudget <= std::chrono::milliseconds::zero() ||
+        (trialsRun != 0 &&
+         limits.timeBudget != std::chrono::milliseconds::max() &&
+         std::chrono::steady_clock::now() - started >= limits.timeBudget);
+    return advice.budgetExhausted;
+  };
   const auto stopped = [&] {
     advice.cancelled = result.cancelled ||
                        (options.cancellation &&
                         options.cancellation->load(std::memory_order_relaxed));
     return advice.cancelled;
   };
-  if (stopped() || !canSuggestIncludes(result))
+  if (stopped() || !canSuggestIncludes(result) || exhausted())
     return advice;
   std::set<std::string> requested;
+  std::set<std::string> requestedTypes;
   for (const auto &diagnostic : result.diagnostics) {
     if (!diagnostic.missingIncludeName.empty()) {
       requested.insert(diagnostic.missingIncludeName);
+      // A type-declaration spelling is useful for an unknown-type diagnostic,
+      // not for an unrelated unknown value with the same name.
+      if (diagnostic.code == "GTI-S2000")
+        requestedTypes.insert(diagnostic.missingIncludeName);
     }
   }
   // Adding an import cannot repair syntax in the frozen source graph. Every
@@ -715,6 +759,11 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   trialOptions.requireEntryPoint = false;
   trialOptions.toolingOccurrences = true;
   trialOptions.workMetrics = nullptr;
+  // A proposed import changes the source graph, so the original snapshot's
+  // preamble normally cannot match. Do not build a new complete preamble for
+  // a throwaway trial; reuse an existing matching one or take the normal
+  // analysis path. Its deferred build is never scheduled by discovery.
+  trialOptions.deferPreambleBuild = true;
   trialOptions.completionOffset.reset();
   // Reuse the bounded parsed-unit cache, never semantic identities.
   if (!trialOptions.cache)
@@ -768,9 +817,20 @@ IncludeSuggestionResult discoverIncludeSuggestions(
   const SourceUnit *entryUnit = std::as_const(result.sourceGraph)
                                     .findUnit(result.sourceGraph.entryUnit());
   std::vector<std::pair<std::size_t, Candidate>> prepared;
+  std::set<std::filesystem::path> declaresRequestedType;
+  // Written qualifiers no analysed source spells (`api` in `api::value`): a
+  // repairing surface must spell them, so a candidate that does is tried
+  // before ones that merely spell the last name. Ranking only; a surface may
+  // still spell them through its own imports.
+  std::set<std::string> requestedQualifiers;
+  for (const auto &names : qualifiers)
+    requestedQualifiers.insert(names.begin(), names.end());
+  std::set<std::filesystem::path> spellsRequestedQualifier;
   for (const auto &candidate : searchCandidates) {
     if (stopped())
       return advice;
+    if (exhausted())
+      break;
     if (entryUnit != nullptr && candidate.path == entryUnit->path)
       continue;
     const bool accessible = std::any_of(
@@ -809,19 +869,45 @@ IncludeSuggestionResult discoverIncludeSuggestions(
                       [&](const auto &name) { return lexicon->spells(name); })))
       continue;
 
+    if (std::any_of(requestedTypes.begin(), requestedTypes.end(),
+                    [&](const auto &name) {
+                      return lexicon->typeDeclarations.contains(name);
+                    }))
+      declaresRequestedType.insert(candidate.path);
+    if (std::any_of(requestedQualifiers.begin(), requestedQualifiers.end(),
+                    [&](const auto &name) { return lexicon->spells(name); }))
+      spellsRequestedQualifier.insert(candidate.path);
     prepared.emplace_back(lexicon->reexports, candidate);
   }
   // Prefer direct public APIs and smaller facades. Once a precise import is
   // proved, loading an aggregate facade adds visibility and expensive trials
   // without repairing anything else at that occurrence.
+  const auto rank = [&](const auto &entry) {
+    // File spelling is only a priority hint, never evidence of an export.
+    // This makes a focused module likely to receive the bounded proof budget
+    // before unrelated surfaces with common member names such as set/value.
+    const auto stem = entry.second.path.stem().string();
+    const bool named =
+        requested.contains(stem) || requestedQualifiers.contains(stem);
+    return std::tuple{entry.first != 0,
+                      !named,
+                      !spellsRequestedQualifier.contains(entry.second.path),
+                      !declaresRequestedType.contains(entry.second.path),
+                      entry.first,
+                      entry.second.path};
+  };
   std::sort(prepared.begin(), prepared.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.first, left.second.path) <
-                     std::tie(right.first, right.second.path);
+            [&](const auto &left, const auto &right) {
+              return rank(left) < rank(right);
             });
   for (const auto &[reexports, candidate] : prepared) {
     if (stopped())
       return advice;
+    if (exhausted() ||
+        scansRun >= options.includeDiscoveryLimits.maximumCandidateScans) {
+      advice.budgetExhausted = true;
+      break;
+    }
     if (reexports &&
         std::none_of(advice.diagnostics.begin(), advice.diagnostics.end(),
                      [](const auto &diagnostic) {
@@ -831,6 +917,7 @@ IncludeSuggestionResult discoverIncludeSuggestions(
       continue;
     const auto &text = overrides.at(candidate.path.string());
 
+    ++scansRun;
     auto scan = rows.scan(candidate.path.string());
     const bool reused = scan && reusable(*scan, context, current);
     rows.countScan(reused);
@@ -886,16 +973,30 @@ IncludeSuggestionResult discoverIncludeSuggestions(
           directive + newline;
       auto found = trials.find(sourceName);
       if (found == trials.end()) {
+        if (exhausted())
+          break;
+        ++trialsRun;
         auto modified = overrides;
         modified[sourceName] = *source;
         modified[sourceName].insert(insertion, replacement);
         trialOptions.stopAfter = options.stopAfter == FrontendPhase::Mir
                                      ? FrontendPhase::Hir
                                      : options.stopAfter;
+        FrontendWorkMetrics work;
+        trialOptions.workMetrics =
+            options.includeDiscoveryLimits.collectTimings ? &work : nullptr;
+        const auto trialStarted = std::chrono::steady_clock::now();
         auto trial =
             Frontend(trialOptions)
                 .analyze(entryPath, std::nullopt, preludePaths, modified,
                          standardLibraryRoots, packageSourceRoots);
+        trialOptions.workMetrics = nullptr;
+        trial.deferredPreambleBuild.reset();
+        rows.recordTrial(
+            work, static_cast<std::size_t>(
+                      std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::steady_clock::now() - trialStarted)
+                          .count()));
         rows.countTrial(false);
         found = trials.emplace(sourceName, std::move(trial)).first;
       }

@@ -92,6 +92,7 @@ struct FrontendOptions {
   // Candidate scans shared across discoveries (see IncludeDiscoveryCache).
   // Editor snapshots set it; one-shot checks and builds do not.
   std::shared_ptr<IncludeDiscoveryCache> includeDiscoveryCache;
+  IncludeDiscoveryLimits includeDiscoveryLimits;
   // Lower to MIR only the instances reachable from the program roots. The
   // complete program is still analyzed, so diagnostics are unchanged; artifact
   // builds set this, while inspection of every declaration's lowering does
