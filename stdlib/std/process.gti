@@ -1,6 +1,6 @@
 export module process;
 
-// <std/process> — exact synchronous child-process execution.
+// <std/process> — exact argument vectors for child execution and replacement.
 //
 // This first public process slice deliberately does not invoke a shell. A
 // command owns one executable plus its exact argument vector, inherits the
@@ -20,6 +20,8 @@ import std.string;
 export namespace gti_internal {
 namespace process_runtime {
 extern "C" {
+uint32_t gti_rt_process_exec_v1(
+    gti_internal::text_view arguments, int32_t* native_code);
 uint32_t gti_rt_process_run_v1(
     gti_internal::text_view arguments, int32_t* termination_kind,
     int32_t* termination_value, int32_t* native_code);
@@ -37,6 +39,19 @@ enum class errc {
   spawn_failed,
   execute_failed,
   wait_failed,
+};
+
+/// A failed process-image replacement. Success never returns this value.
+class exec_error {
+  errc category;
+  int32_t native_value;
+public:
+  exec_error(errc code, int32_t native_code)
+      : category(code), native_value(native_code) {}
+  /// Portable failure category.
+  errc code() { return this.category; }
+  /// Captured POSIX errno, or zero for source validation/unsupported failures.
+  int32_t native_code() { return this.native_value; }
 };
 
 /// The completed termination state of one child process.
@@ -119,6 +134,29 @@ public:
 
   std::size_t argument_count() {
     return this.count_value;
+  }
+
+  /// Replaces this process using the exact executable path (no PATH search).
+  /// Success does not return or run GTI destructors; failure leaves this
+  /// command intact and returns its category and captured native error.
+  exec_error exec() {
+    if (!this.valid()) {
+      return exec_error(errc::invalid_argument, int32_t(0));
+    }
+    mut int32_t native_code = int32_t(0);
+    mut uint32_t result = uint32_t(0);
+    unsafe {
+      result = gti_internal::process_runtime::gti_rt_process_exec_v1(
+          this.encoded.view(), &native_code);
+    }
+    switch (result) {
+    case uint32_t(1):
+      return exec_error(errc::invalid_argument, native_code);
+    case uint32_t(2):
+      return exec_error(errc::unsupported, native_code);
+    default:
+      return exec_error(errc::execute_failed, native_code);
+    }
   }
 
   /// Executes and waits for the child while inheriting the caller's current

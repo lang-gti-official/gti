@@ -1,0 +1,19 @@
+// Dynamic text cannot enter a relayed text-view owner, directly or through the relayed reference (#565).
+import std.string;
+struct Box { mut std::string_view text = ""; public: Box() = default; };
+class Cur<lifetime o> {
+  mut Box&<o> box;
+public:
+  Cur(mut Box&<o> b) : box(b) {}
+  std::string_view&<o> get() { return this.box.text; }
+  mut std::string_view&<o> slot() mut { return this.box.text; }
+};
+int main() {
+  std::string owner{"dynamic"};
+  mut Box b{};
+  b.text = owner.view(); //~ ERROR GTI-S2045
+  mut Cur c = Cur(b);
+  c.slot() = owner.view(); //~ ERROR GTI-S2045
+  std::string_view& t = c.get();
+  return int(t.size());
+}

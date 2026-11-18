@@ -1,0 +1,19 @@
+// Process replacement preserves exact arguments, argv0, PID, and has no continuation.
+//@ run-pass
+//@ env: GTI_EXEC_INHERITED=preserved
+import std.process;
+import std.string;
+extern "C" { int32_t getpid(); }
+int main() {
+  auto pid = getpid();
+  mut std::process::command command{"/bin/sh"};
+  command.arg("-c");
+  command.arg("test \"$GTI_EXEC_INHERITED\" = preserved && test \"$0\" = /bin/sh && test \"$1\" = 'space value' && test -z \"$2\" && test \"$$\" = \"$3\"");
+  command.arg("/bin/sh");
+  command.arg("space value");
+  command.arg("");
+  auto pid_text = std::to_string(pid);
+  command.arg(pid_text.view());
+  auto failure = command.exec();
+  return 99;
+}

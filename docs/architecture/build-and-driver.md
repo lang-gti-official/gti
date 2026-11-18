@@ -906,9 +906,10 @@ off. The regions are the driver phases (`gti-source-load`, `gti-parse`,
 each optimizer pass (`mir-pass` with the pass name as detail, plus
 `hir-compatibility-folding`, `mir-verify-input` and
 `mir-verify-output-coherence`), the lowered-program builder's verification
-and collection steps (`lowered-verify-*`, `lowered-collect`), the backend
-(`backend-verify-lowered-program`, `backend-plan`, `backend-plan-program`,
-`backend-write`), HIR's concrete instance analyses (`hir-instance-analysis`
+and collection steps (`lowered-verify-*`, `lowered-collect`), the LLVM backend
+(`llvm-admission`, `llvm-admission-inventory`, `llvm-lower`,
+`llvm-module-transforms`, `llvm-optimize`, `llvm-codegen`, and
+`llvm-codegen-unit`, with LLVM pass events inside optimization), HIR's concrete instance analyses (`hir-instance-analysis`
 with the declaration as detail, `hir-verify-plans`), staged constant
 evaluation (`constexpr-staged-*`, `constexpr-for`), the safety analysis
 (`mir-safety-analysis`) and the optimization coherence verifier's replays
@@ -2986,9 +2987,16 @@ development escape hatch for running possibly stale output.
 ## Current Limits
 
 The executable cache is whole-program and workspace-local. It does not yet
-persist individual parsed units, HIR/MIR bodies, independently reusable native
-objects, or remote/shared
-artifacts. The separate in-process frontend cache used by editor analysis is
+persist individual parsed units, HIR/MIR bodies, or remote/shared artifacts.
+When a declared `-l` library cannot be resolved inside the declared search
+directories, an ordinary LLVM executable can reuse its whole-program GTI
+object on a later project build. The driver always recompiles the native
+sources and relinks with the current system libraries. The managed
+`compile-object-v1` record binds the compiler and LLVM identity, frontend
+policy, target and source graph to a checksummed object. Only diagnostic-free
+builds can populate this record. Test catalogs, embedding companions, compiled
+imports, build reports and requested optimization outputs require their existing
+build paths. The separate in-process frontend cache used by editor analysis is
 not a project executable-cache entry.
 Git dependencies support pinned full revisions only; mutable branch/tag
 selectors and replacement/override authority are not implemented. Registry

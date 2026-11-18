@@ -3,13 +3,14 @@
 #include "atomic_types.h"
 #include "closure_environment.h"
 #include "gti/backend.h"
+#include "gti/lowered_program.h"
 #include "gti/mir_effects.h"
 #include "memory_types.h"
 #include "mutexes.h"
 #include "threads.h"
+#include "type_hash.h"
 
 #include <algorithm>
-#include <exception>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
@@ -93,11 +94,7 @@ bool isFreshHierarchyAggregate(const MirProgram &program,
   } else {
     return false;
   }
-  try {
-    return containsHierarchyStorage(program, producer.info.type);
-  } catch (const BackendUnsupportedError &) {
-    return false;
-  }
+  return classifyHierarchyStorage(program, producer.info.type).contains();
 }
 
 std::optional<MirPlaceId>
@@ -499,57 +496,72 @@ bool uniqueOwnerPointee(const MirProgram &program,
 
 namespace {
 
-[[nodiscard]] bool computeHierarchyStorage(const MirProgram &program,
-                                           const SemanticType &type) {
+[[nodiscard]] HierarchyStorageOutcome
+computeHierarchyStorage(const MirProgram &program, const SemanticType &type) {
   // These keys and results live only for this immutable program query. A
   // completed sibling is not a cycle; only the current inline path is active.
   std::set<const void *> visiting;
   std::map<const void *, bool> completed;
-  const auto reject = [](const char *message) -> void {
-    throw BackendUnsupportedError(message);
+  const char *reason = nullptr;
+  const auto reject = [&](const char *message) -> std::optional<bool> {
+    reason = message;
+    return std::nullopt;
   };
   const auto visit = [&](const auto &self,
-                         const SemanticType &selected) -> bool {
+                         const SemanticType &selected) -> std::optional<bool> {
+    const auto include = [&](bool &result, const SemanticType &child) {
+      const auto answer = self(self, child);
+      if (!answer)
+        return false;
+      result = *answer || result;
+      return true;
+    };
     if (selected.kind == SemanticType::Reference ||
         selected.kind == SemanticType::RawPointer) {
       if (selected.arguments.size() != 1 ||
           selected.arguments.front().kind == SemanticType::Unknown ||
           selected.arguments.front().kind == SemanticType::TypeParameter)
-        reject("LLVM hierarchy exclusion requires an exact indirection type");
+        return reject(
+            "LLVM hierarchy exclusion requires an exact indirection type");
       return false;
     }
     if (selected.kind == SemanticType::UniqueOwner) {
       if (selected.arguments.size() != 1 ||
           !uniqueOwnerPointee(program, selected.arguments.front()))
-        reject("LLVM hierarchy exclusion requires an exact owner handle");
+        return reject(
+            "LLVM hierarchy exclusion requires an exact owner handle");
       // The handle is indirect. Construction and cleanup still need their
       // independent owner/pointee proofs, including hierarchy exclusions.
       return false;
     }
     if (selected.kind == SemanticType::Array) {
       if (selected.arguments.size() != 1 || selected.arrayLengthParameterId)
-        reject("LLVM hierarchy exclusion requires a concrete array element");
+        return reject(
+            "LLVM hierarchy exclusion requires a concrete array element");
       return self(self, selected.arguments.front());
     }
     if (selected.kind == SemanticType::TypePack) {
       if (!selected.concretePack)
-        reject("LLVM hierarchy exclusion requires a concrete type pack");
+        return reject("LLVM hierarchy exclusion requires a concrete type pack");
       bool result = false;
       for (const auto &element : selected.arguments)
-        result = self(self, element) || result;
+        if (!include(result, element))
+          return std::nullopt;
       return result;
     }
 
     const auto inspect = [&](const void *identity,
-                             const auto &contents) -> bool {
+                             const auto &contents) -> std::optional<bool> {
       if (visiting.contains(identity))
-        reject("LLVM hierarchy exclusion has recursive inline object storage");
+        return reject(
+            "LLVM hierarchy exclusion has recursive inline object storage");
       if (const auto found = completed.find(identity); found != completed.end())
         return found->second;
       visiting.insert(identity);
-      const bool result = contents();
+      const auto result = contents();
       visiting.erase(identity);
-      completed.emplace(identity, result);
+      if (result)
+        completed.emplace(identity, *result);
       return result;
     };
 
@@ -564,7 +576,7 @@ namespace {
           !std::equal(environment->captureTypes.begin(),
                       environment->captureTypes.end(),
                       selected.lambdaCaptureTypes().begin()))
-        reject(
+        return reject(
             "LLVM hierarchy exclusion requires an exact closure environment");
       const MirLambdaInstance *representation = nullptr;
       for (const auto &candidate : program.lambdaInstances()) {
@@ -580,7 +592,8 @@ namespace {
             candidate.captureTypes.size() != candidate.captureModes.size() ||
             candidate.captureTypes.size() !=
                 candidate.captureRequiresActiveCleanup.size())
-          reject("LLVM hierarchy exclusion has an ambiguous closure identity");
+          return reject(
+              "LLVM hierarchy exclusion has an ambiguous closure identity");
         std::set<SymbolId> symbols;
         for (std::size_t index = 0; index < candidate.captureTypes.size();
              ++index) {
@@ -596,20 +609,22 @@ namespace {
                 capture.referenceAccess != (mode == LambdaCaptureMode::BorrowMut
                                                 ? AccessMode::Mutable
                                                 : AccessMode::ReadOnly))))
-            reject("LLVM hierarchy exclusion requires verified capture storage "
-                   "modes");
+            return reject(
+                "LLVM hierarchy exclusion requires verified capture storage "
+                "modes");
         }
         if (!representation)
           representation = &candidate;
       }
       if (!representation)
-        reject("LLVM hierarchy exclusion lost its closure inventory");
+        return reject("LLVM hierarchy exclusion lost its closure inventory");
       // Agreement came from closureEnvironmentLayout. This key selects only
       // the shared inline graph, never an invocation or cleanup body.
-      return inspect(representation, [&] {
+      return inspect(representation, [&]() -> std::optional<bool> {
         bool result = false;
         for (const auto &capture : environment->captureTypes)
-          result = self(self, capture) || result;
+          if (!include(result, capture))
+            return std::nullopt;
         return result;
       });
     }
@@ -619,19 +634,22 @@ namespace {
       for (const auto &row : program.integralEnums())
         if (row.type == selected) {
           if (integral)
-            reject("LLVM hierarchy exclusion has an ambiguous integral enum");
+            return reject(
+                "LLVM hierarchy exclusion has an ambiguous integral enum");
           integral = &row;
         }
       for (const auto &row : program.payloadEnums())
         if (row.type == selected) {
           if (payload)
-            reject("LLVM hierarchy exclusion has an ambiguous payload enum");
+            return reject(
+                "LLVM hierarchy exclusion has an ambiguous payload enum");
           payload = &row;
         }
       if (!selected.enumId || (integral != nullptr) == (payload != nullptr) ||
           (integral && integral->declaration != selected.enumId) ||
           (payload && payload->declaration != selected.enumId))
-        reject("LLVM hierarchy exclusion requires one exact enum inventory");
+        return reject(
+            "LLVM hierarchy exclusion requires one exact enum inventory");
       if (integral) {
         const auto &underlying = integral->underlyingType;
         if (!underlying.arguments.empty() ||
@@ -639,13 +657,13 @@ namespace {
                underlying.kind <= SemanticType::UInt64) ||
               underlying.kind == SemanticType::Bool ||
               underlying.kind == SemanticType::Char))
-          reject(
+          return reject(
               "LLVM hierarchy exclusion requires a sealed integral enum type");
         return false;
       }
       if (payload->variants.empty())
-        reject("LLVM hierarchy exclusion lost its payload variants");
-      return inspect(payload, [&] {
+        return reject("LLVM hierarchy exclusion lost its payload variants");
+      return inspect(payload, [&]() -> std::optional<bool> {
         bool result = false;
         for (std::size_t index = 0; index < payload->variants.size(); ++index) {
           const auto &variant = payload->variants[index];
@@ -653,10 +671,11 @@ namespace {
               variant.payloadTypes.size() != variant.payloadSymbols.size() ||
               variant.payloadTypes.size() !=
                   variant.payloadRequiresActiveCleanup.size())
-            reject("LLVM hierarchy exclusion lost exact payload field "
-                   "inventories");
+            return reject("LLVM hierarchy exclusion lost exact payload field "
+                          "inventories");
           for (const auto &field : variant.payloadTypes)
-            result = self(self, field) || result;
+            if (!include(result, field))
+              return std::nullopt;
         }
         return result;
       });
@@ -685,14 +704,15 @@ namespace {
       case SemanticType::FunctionSignature:
         return false;
       default:
-        reject("LLVM hierarchy exclusion has no concrete inline-storage proof");
+        return reject(
+            "LLVM hierarchy exclusion has no concrete inline-storage proof");
       }
     }
     const MirClassInstance *owner = nullptr;
     for (const auto &row : program.classInstances())
       if (row.type == selected) {
         if (owner)
-          reject("LLVM hierarchy exclusion has an ambiguous class type");
+          return reject("LLVM hierarchy exclusion has an ambiguous class type");
         owner = &row;
       }
     if (!owner || !owner->id || program.findClassInstance(owner->id) != owner ||
@@ -700,9 +720,9 @@ namespace {
             program.classInstances().begin(), program.classInstances().end(),
             [&](const auto &row) { return row.id == owner->id; }) != 1 ||
         owner->cOpaqueHandle)
-      reject(
+      return reject(
           "LLVM hierarchy exclusion requires an exact inline class identity");
-    return inspect(owner, [&] {
+    return inspect(owner, [&]() -> std::optional<bool> {
       if (sharedOwnerRepresentation(program, *owner))
         return false;
       if (uninitializedStorageRepresentation(program, *owner))
@@ -713,14 +733,16 @@ namespace {
             !owner->declaredFields.empty() || !owner->bases.empty() ||
             !owner->structuralBases.empty() || owner->polymorphic ||
             owner->abstract || owner->unionLayout)
-          reject("LLVM hierarchy exclusion requires an exact function-pointer "
-                 "handle");
+          return reject(
+              "LLVM hierarchy exclusion requires an exact function-pointer "
+              "handle");
         return false;
       }
       if (owner->compilerCapability ==
           CompilerCapabilityTypeKind::AtomicStorage) {
         if (!nativeAtomicElement(program, selected))
-          reject("LLVM hierarchy exclusion requires exact atomic storage");
+          return reject(
+              "LLVM hierarchy exclusion requires exact atomic storage");
         return false;
       }
       if (owner->compilerCapability ==
@@ -730,27 +752,31 @@ namespace {
         const auto payload =
             nativeMutexElement(program, selected, owner->compilerCapability);
         if (!payload)
-          reject("LLVM hierarchy exclusion requires exact mutex storage/token");
-        return owner->compilerCapability ==
-                   CompilerCapabilityTypeKind::MutexStorage &&
-               self(self, *payload);
+          return reject(
+              "LLVM hierarchy exclusion requires exact mutex storage/token");
+        if (owner->compilerCapability ==
+            CompilerCapabilityTypeKind::MutexStorage)
+          return self(self, *payload);
+        return false;
       }
       // An inline polymorphic slot stores a self-relative payload view and
       // dispatch-bearing object bytes: it is hierarchy storage itself.
       if (owner->compilerCapability ==
           CompilerCapabilityTypeKind::PolymorphicStorage) {
         if (!polymorphicStorageRepresentation(program, *owner))
-          reject("LLVM hierarchy exclusion requires an exact inline slot");
+          return reject(
+              "LLVM hierarchy exclusion requires an exact inline slot");
         return true;
       }
       if (owner->compilerCapability ==
           CompilerCapabilityTypeKind::ThreadHandle) {
         if (!nativeThreadHandle(program, selected))
-          reject("LLVM hierarchy exclusion requires an exact thread handle");
+          return reject(
+              "LLVM hierarchy exclusion requires an exact thread handle");
         return false;
       }
       if (owner->compilerCapability != CompilerCapabilityTypeKind::None)
-        reject(
+        return reject(
             "LLVM hierarchy exclusion has no inline capability representation");
       bool result = owner->polymorphic || owner->abstract ||
                     owner->kind == ClassKind::Interface ||
@@ -758,39 +784,31 @@ namespace {
       // All union fields are potential inline storage. This neither selects
       // an active member nor changes its existing unsafe/lifetime contract.
       for (const auto &field : owner->declaredFields)
-        result = self(self, field.type) || result;
-      const auto base = [&](const auto &row) {
+        if (!include(result, field.type))
+          return std::nullopt;
+      const auto base = [&](const auto &row) -> std::optional<bool> {
         const auto *target = program.findClassInstance(row.instance);
         if (!target || target->type != row.type ||
             row.interface != (target->kind == ClassKind::Interface))
-          reject("LLVM hierarchy exclusion lost an exact base identity");
-        result = self(self, row.type) || result;
+          return reject("LLVM hierarchy exclusion lost an exact base identity");
+        return self(self, row.type);
       };
-      for (const auto &row : owner->bases)
-        base(row);
-      for (const auto &row : owner->structuralBases)
-        base(row);
+      for (const auto *rows : {&owner->bases, &owner->structuralBases})
+        for (const auto &row : *rows) {
+          const auto answer = base(row);
+          if (!answer)
+            return std::nullopt;
+          result = *answer || result;
+        }
       return result;
     });
   };
-  return visit(visit, type);
-}
-
-[[nodiscard]] std::size_t outcomeHash(const SemanticType &type) {
-  // Only a bucket selector: equal types collide, and lookup confirms the
-  // complete type with operator==.
-  std::size_t hash = static_cast<std::size_t>(type.kind);
-  const auto mix = [&](std::size_t value) {
-    hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
-  };
-  mix(type.classId);
-  mix(type.enumId);
-  mix(type.lambdaId);
-  mix(type.arrayLength);
-  mix(type.arguments.size());
-  for (const auto &argument : type.arguments)
-    mix(outcomeHash(argument));
-  return hash;
+  const auto result = visit(visit, type);
+  if (!result)
+    return {HierarchyStorageOutcome::Kind::Unknown, reason};
+  return {*result ? HierarchyStorageOutcome::Kind::Contains
+                  : HierarchyStorageOutcome::Kind::Excludes,
+          {}};
 }
 
 } // namespace
@@ -798,8 +816,7 @@ namespace {
 struct HierarchyStorageScope::Outcomes {
   struct Outcome {
     SemanticType type;
-    bool result = false;
-    std::exception_ptr rejection;
+    HierarchyStorageOutcome result;
   };
 
   explicit Outcomes(const MirProgram &program) : program(&program) {}
@@ -807,6 +824,8 @@ struct HierarchyStorageScope::Outcomes {
   const MirProgram *program;
   std::unordered_map<std::size_t, std::vector<Outcome>> buckets;
   std::size_t size = 0;
+  bool measure = loweredProgramSealValidation();
+  HierarchyStorageScope::Statistics statistics;
 };
 
 namespace {
@@ -831,33 +850,49 @@ std::size_t HierarchyStorageScope::cachedTypes() const {
   return outcomes ? outcomes->size : previous->size;
 }
 
-bool containsHierarchyStorage(const MirProgram &program,
-                              const SemanticType &type) {
+HierarchyStorageScope::Statistics HierarchyStorageScope::statistics() const {
+  return outcomes ? outcomes->statistics : previous->statistics;
+}
+
+HierarchyStorageOutcome classifyHierarchyStorage(const MirProgram &program,
+                                                 const SemanticType &type) {
   auto *outcomes = activeHierarchyOutcomes;
   if (outcomes == nullptr || outcomes->program != &program)
     return computeHierarchyStorage(program, type);
-  auto &bucket = outcomes->buckets[outcomeHash(type)];
+  if (outcomes->measure)
+    ++outcomes->statistics.queries;
+  auto &bucket = outcomes->buckets[TypeBucketHash{}(type)];
   for (const auto &outcome : bucket)
     if (outcome.type == type) {
-      if (outcome.rejection)
-        std::rethrow_exception(outcome.rejection);
+      if (outcomes->measure) {
+        ++outcomes->statistics.hits;
+        if (!outcome.result.known())
+          ++outcomes->statistics.rejections;
+        if (computeHierarchyStorage(program, type) != outcome.result)
+          throw std::logic_error(
+              "LLVM hierarchy-storage outcome cache mismatch for type kind " +
+              std::to_string(static_cast<unsigned>(type.kind)) + " class " +
+              std::to_string(type.classId) + " enum " +
+              std::to_string(type.enumId));
+      }
       return outcome.result;
     }
   // Only a completed top-level query is recorded. Its outcome depends on the
   // type's whole reachable storage graph, never on another query's path.
-  HierarchyStorageScope::Outcomes::Outcome outcome{.type = type};
-  try {
-    outcome.result = computeHierarchyStorage(program, type);
-  } catch (const BackendUnsupportedError &) {
-    outcome.rejection = std::current_exception();
-  }
-  const std::exception_ptr rejection = outcome.rejection;
-  const bool result = outcome.result;
-  bucket.push_back(std::move(outcome));
+  const auto result = computeHierarchyStorage(program, type);
+  bucket.push_back({type, result});
   ++outcomes->size;
-  if (rejection)
-    std::rethrow_exception(rejection);
+  if (outcomes->measure && !result.known())
+    ++outcomes->statistics.rejections;
   return result;
+}
+
+bool containsHierarchyStorage(const MirProgram &program,
+                              const SemanticType &type) {
+  const auto outcome = classifyHierarchyStorage(program, type);
+  if (!outcome.known())
+    throw BackendUnsupportedError(std::string(outcome.reason));
+  return outcome.contains();
 }
 
 bool isPayloadFieldMove(const MirInstruction &stage) {

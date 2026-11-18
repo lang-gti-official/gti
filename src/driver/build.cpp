@@ -1054,6 +1054,7 @@ struct ResolvedNativeFramework {
 // then records the resolution so a `-l` name that would answer with a
 // different file cannot reuse an entry.
 struct NativeLinkIdentityPlan {
+  bool hasUnresolvedLibrary = false;
   std::vector<ResolvedNativeLibrary> libraries;
   std::vector<ResolvedNativeFramework> frameworks;
 };
@@ -1475,12 +1476,11 @@ nativeSourceArguments(const std::vector<std::string> &arguments,
   return result;
 }
 
-std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
-                                         const CompilationInputs &inputs,
-                                         const BuildCachePolicy &policy,
-                                         const NativeLinkIdentityPlan &linkPlan,
-                                         std::string &errorMessage,
-                                         std::string &policyBypassDetail) {
+std::optional<std::string>
+buildCacheKey(const ExecutableBuildRequest &request,
+              const CompilationInputs &inputs, const BuildCachePolicy &policy,
+              const NativeLinkIdentityPlan &linkPlan, std::string &errorMessage,
+              std::string &policyBypassDetail, bool compilationOnly = false) {
   IdentityBuilder identity;
   identity.add("cache.schema", buildCacheSchema(request));
   identity.add("compiler.identity", policy.compilerIdentity);
@@ -1634,6 +1634,11 @@ std::optional<std::string> buildCacheKey(const ExecutableBuildRequest &request,
 
   if (!addSourceIdentity(identity, inputs, policy.sourceRoot, errorMessage)) {
     return std::nullopt;
+  }
+
+  if (compilationOnly) {
+    identity.add("artifact.kind", "llvm-compilation-object-v1");
+    return identity.finish();
   }
 
   // Native discovery memos are keyed on the facts that decide what a
@@ -2556,6 +2561,31 @@ bool storeCacheEntry(const ExecutableBuildRequest &request,
                                errorMessage);
 }
 
+// A single atomically published record binds the input key and payload digest
+// to the object, without recording any executable or native dependency.
+std::optional<std::string>
+readCompilationObject(const std::filesystem::path &entry, std::string_view key,
+                      std::optional<std::string> &warning) {
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(entry, error))
+    return std::nullopt;
+  std::string detail;
+  auto record = readTextFile(entry, detail);
+  constexpr std::size_t digestLength = 64;
+  const auto headerSize = key.size() + digestLength;
+  if (record && record->size() > headerSize && record->starts_with(key)) {
+    const auto bytes = std::string_view(*record);
+    if (digestText(bytes.substr(headerSize)) ==
+        bytes.substr(key.size(), digestLength)) {
+      record->erase(0, headerSize);
+      return record;
+    }
+  }
+  warning = "gti: ignored corrupt compiled GTI object cache entry '" +
+            entry.string() + "'";
+  return std::nullopt;
+}
+
 std::optional<std::string>
 loadedSourceCollisionDiagnostic(const std::filesystem::path &artifact,
                                 std::string_view artifactKind,
@@ -2795,6 +2825,7 @@ nativeCacheBypassDetail(const ExecutableBuildRequest &request,
       linkFiles.push_back(resolution.file);
       break;
     case NativeLibraryResolutionStatus::Unresolved:
+      plan.hasUnresolvedLibrary = true;
       return "native library '-l" + library +
              "' does not resolve inside the declared native library search "
              "directories";
@@ -4243,6 +4274,8 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
   };
 
   std::optional<std::filesystem::path> cacheEntry;
+  std::optional<std::filesystem::path> objectEntry;
+  bool reusedObject = false;
   bool corruptCacheEntry = false;
   NativeLinkIdentityPlan linkIdentityPlan;
   if (request.cache()) {
@@ -4261,6 +4294,41 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
                    nativeCacheBypassDetail(request, linkIdentityPlan)) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail = bypassDetail;
+      // An unresolved -l prevents reusing the executable. GTI object
+      // generation consumes no link inputs. Always rebuild native inputs and
+      // relink a reused object; a requested report/catalog must remain
+      // complete.
+      if (linkIdentityPlan.hasUnresolvedLibrary && nativeObjectCache(request) &&
+          request.managedOutput() && !library &&
+          !request.compilation().program().testSuite &&
+          !request.compilation().optimizationOutputs().requested()) {
+        std::string error, policyDetail;
+        if (const auto key =
+                buildCacheKey(request, compilationInputs, *request.cache(),
+                              linkIdentityPlan, error, policyDetail, true)) {
+          objectEntry = request.cache()->root / "compile-object-v1" / *key;
+          if (const auto diagnostic = managedPathDiagnostic(
+                  *request.managedOutput(), *objectEntry, false)) {
+            result.status = ExecutableBuildStatus::OutputDirectoryFailure;
+            result.driverDiagnostic = diagnostic;
+            return result;
+          }
+          if (auto object = readCompilationObject(*objectEntry, *key,
+                                                  result.cache.warning)) {
+            result.compilation.artifact =
+                BackendArtifact{.kind = BackendArtifactKind::Object,
+                                .contents = std::move(*object),
+                                .extension = ".o"};
+            result.compilation.sources = std::move(compilationInputs.sources);
+            result.compilation.diagnostics =
+                std::move(compilationInputs.diagnostics);
+            result.compilation.status = CompilationStatus::Success;
+            reusedObject = true;
+            *result.cache.detail += "; reused compiled GTI object; relinking";
+            cacheProgress.update("reused compiled GTI object; relinking");
+          }
+        }
+      }
     } else if (hasDependencyInjectingNativeEnvironment()) {
       result.cache.status = BuildCacheStatus::Bypassed;
       result.cache.detail =
@@ -4477,7 +4545,7 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
     }
   }
 
-  if (!compiledLibrary && !compiledImport)
+  if (!compiledLibrary && !compiledImport && !reusedObject)
     result.compilation = compileToSelectedBackend(
         request.compilation(), std::move(compilationInputs), progress);
   if (!result.compilation.succeeded()) {
@@ -5016,6 +5084,22 @@ buildResolvedExecutable(const ExecutableBuildRequest &request,
         return result;
       }
     }
+  }
+
+  // Only a diagnostic-free ordinary program can be replayed from bare object
+  // bytes. Preserve warning output and test catalogs by recompiling others.
+  if (objectEntry && !reusedObject && result.compilation.diagnostics.empty() &&
+      result.compilation.testCases.empty()) {
+    const auto &object = result.compilation.artifact->contents;
+    const auto pathError =
+        managedPathDiagnostic(*request.managedOutput(), *objectEntry, true);
+    std::string error;
+    if (pathError || !publishTextAtomically(*objectEntry,
+                                            objectEntry->filename().string() +
+                                                digestText(object) + object,
+                                            error))
+      result.cache.warning = "gti: could not cache compiled GTI object: " +
+                             pathError.value_or(error);
   }
 
   if (cacheEntry && !result.cache.key.empty()) {

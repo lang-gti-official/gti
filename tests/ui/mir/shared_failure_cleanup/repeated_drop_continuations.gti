@@ -1,0 +1,26 @@
+// Cleanup after checked calls destroys each live object exactly once across moved and retained paths.
+//@ run-pass
+//@ opt: O3
+//@ reason: Exercises closed-call safety analysis and independent proof replay.
+//@ stdout: 1
+//@ stdout: 2
+//@ stdout: 4
+//@ stdout: 3
+class Guard {
+  int id;
+public:
+  Guard(int id) : id(id) {}
+  ~Guard() { std::println(char(uint8_t(48 + this.id))); }
+};
+int consume(Guard value, int divisor) { return 12 / divisor; }
+int inner(bool transfer, int divisor, int id) {
+  Guard first{id};
+  Guard second{id + 1};
+  if (transfer) { return consume(std::move(first), divisor); }
+  return consume(std::move(second), divisor);
+}
+int main() {
+  int a = inner(true, 3, 1);
+  int b = inner(false, 4, 3);
+  return a + b == 7 ? 0 : 1;
+}

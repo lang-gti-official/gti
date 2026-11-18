@@ -1,0 +1,42 @@
+// A stored-region union admits only the receiver's stored fields and parameters in its region.
+struct Table {
+  mut int values[4];
+  Table() : values({10, 20, 30, 40}) {}
+  bool has(uint64_t key) { return key < uint64_t(4); }
+  int& at(uint64_t key) { return this.values[key]; }
+  mut int& at_mut(uint64_t key) mut { return this.values[key]; }
+};
+class View<lifetime a> {
+  Table&<a> table;
+  int owned;
+public:
+  View(Table&<a> table) : table(table), owned(1) {}
+  int&<a> get_or(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+  int&<a> take_or(uint64_t key, int&<a> fallback) && {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return fallback;
+  }
+  int&<a> other_region<lifetime b>(int&<b> other) { return other; }  //~ ERROR GTI-S2017
+  int&<a> elided(int& other) { return other; }  //~ ERROR GTI-S2017
+  int&<a> owned_storage(int&<a> fallback) { return this.owned; }  //~ ERROR GTI-S2127
+  int&<a> local_storage(int&<a> fallback) {
+    int local = 2;
+    return local;  //~ ERROR GTI-S2017
+  }
+};
+
+int&<a> local_fallback<lifetime a>(Table&<a> table) {
+  int local = 3;
+  return View(table).take_or(uint64_t(9), local);  //~ ERROR GTI-S2127
+}
+int temporary_receiver() {
+  Table table{};
+  int fallback = 7;
+  int& result = View(table).get_or(uint64_t(1), fallback);  //~ ERROR GTI-S2081
+  //~^ ERROR GTI-S2017
+  return result;
+}
+int main() { return 0; }
