@@ -92,14 +92,101 @@ MirRetainingStoreEffects deriveEffects(const MirFunctionInstance &function,
 MirRetainingStoreEffects
 deriveConstructorEffects(const MirConstructorInstance &constructor,
                          AnalysisContext &context);
+// A sorted-vector map. Flow states are copied for every block visit and most
+// facts are empty sets, so a contiguous copy avoids one heap node per entry.
+template <class K, class V> class FlatMap {
+public:
+  using key_type = K;
+  using mapped_type = V;
+  using value_type = std::pair<K, V>;
+  using iterator = typename std::vector<value_type>::iterator;
+  using const_iterator = typename std::vector<value_type>::const_iterator;
+
+  [[nodiscard]] iterator begin() { return items.begin(); }
+  [[nodiscard]] iterator end() { return items.end(); }
+  [[nodiscard]] const_iterator begin() const { return items.begin(); }
+  [[nodiscard]] const_iterator end() const { return items.end(); }
+  [[nodiscard]] std::size_t size() const { return items.size(); }
+  [[nodiscard]] bool empty() const { return items.empty(); }
+  [[nodiscard]] iterator find(const K &key) {
+    const auto found = lower(key);
+    return found != items.end() && !(key < found->first) ? found : items.end();
+  }
+  [[nodiscard]] const_iterator find(const K &key) const {
+    const auto found = lower(key);
+    return found != items.end() && !(key < found->first) ? found : items.end();
+  }
+  [[nodiscard]] bool contains(const K &key) const {
+    return find(key) != items.end();
+  }
+  template <class... Arguments>
+  std::pair<iterator, bool> emplace(const K &key, Arguments &&...arguments) {
+    auto found = lower(key);
+    if (found != items.end() && !(key < found->first))
+      return {found, false};
+    found = items.emplace(found, key,
+                          V(std::forward<Arguments>(arguments)...));
+    return {found, true};
+  }
+  V &operator[](const K &key) { return emplace(key).first->second; }
+  iterator erase(iterator position) { return items.erase(position); }
+  template <class Predicate> void eraseIf(Predicate predicate) {
+    std::erase_if(items, predicate);
+  }
+  // Path join in one ordered pass: a key absent from either side becomes
+  // unknown (a default value, which every join keeps unknown), and keys on
+  // both sides join their values. Returns whether this map changed.
+  template <class Join>
+  bool joinPaths(const FlatMap &incoming, Join &&joinValues) {
+    bool changed = false;
+    std::vector<value_type> merged;
+    merged.reserve(std::max(items.size(), incoming.items.size()));
+    auto left = items.begin();
+    auto right = incoming.items.begin();
+    while (left != items.end() || right != incoming.items.end()) {
+      if (right == incoming.items.end() ||
+          (left != items.end() && left->first < right->first)) {
+        if (left->second) {
+          left->second.reset();
+          changed = true;
+        }
+        merged.push_back(std::move(*left++));
+      } else if (left == items.end() || right->first < left->first) {
+        merged.emplace_back(right->first, V{});
+        ++right;
+        changed = true;
+      } else {
+        changed = joinValues(left->second, right->second) || changed;
+        merged.push_back(std::move(*left++));
+        ++right;
+      }
+    }
+    items = std::move(merged);
+    return changed;
+  }
+
+private:
+  [[nodiscard]] iterator lower(const K &key) {
+    return std::lower_bound(
+        items.begin(), items.end(), key,
+        [](const value_type &item, const K &probe) { return item.first < probe; });
+  }
+  [[nodiscard]] const_iterator lower(const K &key) const {
+    return std::lower_bound(
+        items.begin(), items.end(), key,
+        [](const value_type &item, const K &probe) { return item.first < probe; });
+  }
+  std::vector<value_type> items;
+};
+
 struct State {
-  std::map<Root, Fact> roots;
-  std::map<MirValueId, Fact> values;
-  std::map<MirValueId, Aliases> aliases;
+  FlatMap<Root, Fact> roots;
+  FlatMap<MirValueId, Fact> values;
+  FlatMap<MirValueId, Aliases> aliases;
   // Expiration belongs to the carried value, not merely to a group ID at a
   // CFG join. Recreating a group cannot repair an older copy of its value.
-  std::map<Root, Fact> expiredRoots;
-  std::map<MirValueId, Fact> expiredValues;
+  FlatMap<Root, Fact> expiredRoots;
+  FlatMap<MirValueId, Fact> expiredValues;
   std::set<MirLoanId> unavailable;
 };
 Fact empty() { return std::vector<MirLoanId>{}; }
@@ -184,8 +271,7 @@ bool join(std::optional<std::vector<T>> &into,
   into->erase(std::unique(into->begin(), into->end()), into->end());
   return changed || into->size() != before;
 }
-template <class Key>
-bool mergeMap(std::map<Key, Fact> &into, const std::map<Key, Fact> &from) {
+template <class Map> bool mergeMap(Map &into, const Map &from) {
   bool changed = false;
   for (const auto &[key, value] : from) {
     const auto [position, inserted] = into.emplace(key, value);
@@ -199,18 +285,9 @@ bool join(State &into, const State &from) {
   // provenance at the join. SSA definitions are overwritten by their own
   // instructions; block arguments have already been bound on the edge.
   const auto mergePaths = [](auto &target, const auto &incoming) {
-    bool changed = false;
-    for (auto &[key, value] : target)
-      if (!incoming.contains(key) && value) {
-        value.reset();
-        changed = true;
-      }
-    for (const auto &[key, value] : incoming) {
-      const auto [found, inserted] = target.emplace(
-          key, typename std::decay_t<decltype(target)>::mapped_type{});
-      changed = inserted || join(found->second, value) || changed;
-    }
-    return changed;
+    return target.joinPaths(incoming, [](auto &into, const auto &from) {
+      return join(into, from);
+    });
   };
   const bool roots = mergePaths(into.roots, from.roots);
   const bool values = mergePaths(into.values, from.values);
@@ -749,11 +826,11 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       return value < alwaysLive.size() && !alwaysLive[value] &&
              !std::binary_search(liveValues.begin(), liveValues.end(), value);
     };
-    std::erase_if(incoming.values,
+    incoming.values.eraseIf(
                   [&](const auto &entry) { return dead(entry.first); });
-    std::erase_if(incoming.expiredValues,
+    incoming.expiredValues.eraseIf(
                   [&](const auto &entry) { return dead(entry.first); });
-    std::erase_if(incoming.aliases,
+    incoming.aliases.eraseIf(
                   [&](const auto &entry) { return dead(entry.first); });
   };
   const auto transfer = [&](const MirBlock &current, State state) {
@@ -2020,11 +2097,14 @@ MirCarrierFlow deriveFlow(const MirBody &body, AnalysisContext &context,
       [](State &into, const State &from, const MirDataflowMergeContext &) {
         return join(into, from);
       },
-      {.widenAfterUpdates = 0});
+      {.widenAfterUpdates = 0, .reversePostorder = true});
   if (context.includeBlockEntries && solved.converged())
     for (std::size_t index = 0; index < solved.incoming.size(); ++index)
       if (solved.incoming[index])
-        result.entryRoots.emplace(index + 1, solved.incoming[index]->roots);
+        result.entryRoots.emplace(
+            index + 1,
+            std::map<Root, Fact>(solved.incoming[index]->roots.begin(),
+                                 solved.incoming[index]->roots.end()));
   result.complete = result.complete && solved.converged();
   result.effectsComplete = result.effectsComplete && solved.converged();
   return result;

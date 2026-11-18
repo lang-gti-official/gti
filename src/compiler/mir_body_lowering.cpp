@@ -8029,6 +8029,22 @@ private:
     return slot->id;
   }
 
+  // Whether a call stages this value as a temporary receiver borrow.
+  [[nodiscard]] bool temporaryReceiverValue(HirValueId id) {
+    if (!temporaryReceivers) {
+      temporaryReceivers.emplace();
+      for (const HirValue &candidate : source.values)
+        if (candidate.callPlan && candidate.callPlan->receiver &&
+            (candidate.callPlan->receiver->kind ==
+                 HirCallInputKind::ReadTemporaryBorrow ||
+             candidate.callPlan->receiver->kind ==
+                 HirCallInputKind::MutableTemporaryBorrow))
+          temporaryReceivers->insert(candidate.callPlan->receiver->value);
+    }
+    return temporaryReceivers->contains(id);
+  }
+  std::optional<std::unordered_set<HirValueId>> temporaryReceivers;
+
   [[nodiscard]] MirOperand
   temporaryBorrowOperand(HirValueId id, AccessMode access,
                          const SemanticType &stagedType,
@@ -11022,11 +11038,10 @@ private:
           output.loans[originLoan - 1].designatedFields ==
               value.borrowFields.front().sourceFields));
     bool copiesReferenceContents = false;
-    // The copied contents are tracked through the local binding the result
-    // initializes. A temporary result (a receiver, an argument) keeps the
-    // ordinary result loan that its temporary borrow stages depend on.
+    // A temporary receiver borrow of the result stages its dependency
+    // through the ordinary result loan, which copied contents would omit.
     if (retainingProgram && value.functionTarget &&
-        initializedBindings.contains(value.id) &&
+        !temporaryReceiverValue(value.id) &&
         value.dispatch == CallDispatch::Static &&
         value.info.category == ValueCategory::Value &&
         value.borrowAccess == AccessMode::ReadOnly) {
