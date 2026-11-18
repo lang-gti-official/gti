@@ -1,0 +1,155 @@
+// Two-owner user ranges reject owner mutation or moves, range moves, read-only element writes, element copies and escapes, and retained proxies across cursor movement.
+//@ slow
+//@ check-fail
+// --- rejections_2.gti
+import "user_dual_range_support.gti";
+import std.vector;
+import std.string;
+import std.panic;
+
+namespace case_first_mutation {
+int entry() {
+mut std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};
+mut std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};  //~ WARN GTI-S2096
+mut auto range = UserDualRange(first.as_span(), second.as_span());
+for (auto& entry : range) { first.clear(); return entry.right().value(); } return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_second_mutation {
+int entry() {
+mut std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};  //~ WARN GTI-S2096
+mut std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};
+mut auto range = UserDualRange(first.as_span(), second.as_span());
+for (auto& entry : range) { second.clear(); return entry.left().value(); } return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_first_move {
+int entry() {
+mut std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};  //~ WARN GTI-S2096
+mut std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};  //~ WARN GTI-S2096
+mut auto range = UserDualRange(first.as_span(), second.as_span());
+for (auto& entry : range) { auto stolen = std::move(first); return entry.right().value(); } return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_second_move {
+int entry() {
+mut std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};  //~ WARN GTI-S2096
+mut std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};  //~ WARN GTI-S2096
+mut auto range = UserDualRange(first.as_span(), second.as_span());
+for (auto& entry : range) { auto stolen = std::move(second); return entry.left().value(); } return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_physical_range_move {
+int entry() {
+mut std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};  //~ WARN GTI-S2096
+mut std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};  //~ WARN GTI-S2096
+mut auto range = UserDualRange(first.as_span(), second.as_span());
+for (auto& entry : range) { auto stolen = std::move(range); return entry.left().value(); } return 0; }  //~ ERROR GTI-S2017
+}
+
+namespace case_proxy_child_movement {
+int entry() {
+mut std::vector<UserDualElement> first = {UserDualElement(1, std::string("left"))};  //~ WARN GTI-S2096
+mut std::vector<UserDualElement> second = {UserDualElement(2, std::string("right"))};  //~ WARN GTI-S2096
+mut auto range = UserDualRange(first.as_span(), second.as_span());
+
+mut auto cursor = range.begin();
+UserDualProxy& retained = *cursor;
+++cursor;  //~ ERROR GTI-S2017
+return retained.left().value();
+}
+}
+
+int main() { return 0; }
+// --- user_dual_range_support.gti
+export module user_dual_range_support;
+import std.span;
+import std.vector;
+import std.string;
+import std.panic;
+
+export extern "C" { void user_dual_range_event(int identity); }
+
+export class UserDualGuard {
+  int identity;
+public:
+  UserDualGuard(int identity) : identity(identity) {}
+  ~UserDualGuard() { user_dual_range_event(this.identity); }
+};
+
+// Owning elements cannot be copied: traversal must use checked references.
+export class UserDualElement {
+  int identity;
+  std::string label;
+public:
+  UserDualElement(int identity, std::string label)
+      : identity(identity), label(std::move(label)) {}
+  UserDualElement(UserDualElement& other) = delete;
+  UserDualElement(UserDualElement&& other) = default;
+  ~UserDualElement() { user_dual_range_event(100 + this.identity); }
+  int value() { return this.identity; }
+  std::string& text() { return this.label; }
+};
+
+export class UserDualEnd {
+  std::size_t limit;
+public:
+  UserDualEnd(std::size_t limit) : limit(limit) {}
+  std::size_t position() { return this.limit; }
+};
+
+export class UserDualProxy {
+  UserDualRange& range;
+  mut std::size_t coordinate;
+public:
+  UserDualProxy(UserDualRange& range, std::size_t coordinate)
+      : range(range), coordinate(coordinate) {
+    if (range.failure_mode() == 1) {
+      UserDualGuard construction{30};
+      std::panic("user dual proxy constructor failure");
+    }
+    if (coordinate > range.size()) { std::panic("invalid user dual cursor position"); }
+  }
+  void validate_element() {
+    if (this.coordinate >= this.range.size()) { std::panic("invalid user dual element position"); }
+  }
+  UserDualElement& left() { this.validate_element(); return this.range.left(this.coordinate); }
+  UserDualElement& right() { this.validate_element(); return this.range.right(this.coordinate); }
+  void next() mut { this.validate_element(); this.coordinate++; }
+  bool finished(UserDualEnd end) { return this.coordinate == end.position(); }
+};
+
+export class UserDualCursor {
+  mut UserDualProxy proxy;
+public:
+  UserDualCursor(UserDualRange& range, std::size_t coordinate)
+      : proxy(UserDualProxy(range, coordinate)) {
+    if (range.failure_mode() == 2) {
+      UserDualGuard construction{40};
+      std::panic("user dual cursor constructor body failure");
+    }
+  }
+  UserDualProxy& operator*() { this.proxy.validate_element(); return this.proxy; }
+  void operator++() mut { this.proxy.next(); }
+  bool operator!=(UserDualEnd end) { return !this.proxy.finished(end); }
+};
+
+// Two independently owned element buffers. The cursor contains its proxy
+// inline and borrows this physical carrier, not a copied owner or element.
+export class UserDualRange {
+  std::span<UserDualElement> first;
+  std::span<UserDualElement> second;
+  int selected_failure;
+public:
+  UserDualRange(std::span<UserDualElement> first, std::span<UserDualElement> second,
+                int failure = 0)
+      : first(std::move(first)), second(std::move(second)), selected_failure(failure) {}
+  int failure_mode() { return this.selected_failure; }
+  std::size_t size() {
+    return this.first.size() < this.second.size() ? this.first.size() : this.second.size();
+  }
+  UserDualElement& left(std::size_t index) { return this.first[index]; }
+  UserDualElement& right(std::size_t index) { return this.second[index]; }
+  UserDualCursor begin() { return UserDualCursor(this, std::size_t(0)); }
+  UserDualEnd end() { return UserDualEnd(this.size()); }
+};

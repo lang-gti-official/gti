@@ -1,3 +1,6 @@
+// A user range with default-moved scalar elements iterates.
+//@ run-pass
+// --- scalar_default_move.gti
 import std.string;
 import std.span;
 import std.vector;
@@ -42,4 +45,11 @@ int main() {
   UserLiteralBetweenViews middle{first.as_span(), second.as_span()};
   UserLiteralBeforeView leading{first.as_span()};
   return middle.total() + leading.total() == 10 ? 0 : 2;
+}
+// --- user_dual_range_events.cpp
+#include <cstdio>
+
+extern "C" void user_dual_range_event(int identity) {
+  std::printf("E%d\n", identity);
+  std::fflush(stdout);
 }

@@ -1,3 +1,6 @@
+// A two-owner range of scalar siblings iterates.
+//@ run-pass
+// --- dual_range_scalar_siblings.gti
 import std.vector;
 import std.span;
 
@@ -40,4 +43,11 @@ int main() {
   MiddleScalarViews middle{3, first.as_span(), second.as_span()};
   TrailingScalarViews trailing{3, first.as_span(), second.as_span()};
   return leading.total() + middle.total() + trailing.total() - 18;
+}
+// --- user_dual_range_events.cpp
+#include <cstdio>
+
+extern "C" void user_dual_range_event(int identity) {
+  std::printf("E%d\n", identity);
+  std::fflush(stdout);
 }

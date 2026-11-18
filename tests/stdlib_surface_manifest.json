@@ -6557,7 +6557,7 @@
       "evidence": [
         "tests/fixtures/paired_span_iterator_completion.gti",
         "tests/ui/stdlib/paired_span/iterators",
-        "tests/user_dual_range_lifetime_test.py",
+        "tests/ui/ranges/user_dual_range_lifetime",
         "examples/144-checked-view-iteration.gti"
       ]
     },

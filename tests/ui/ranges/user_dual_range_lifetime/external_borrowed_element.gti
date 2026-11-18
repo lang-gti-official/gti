@@ -1,3 +1,6 @@
+// A user range over externally borrowed elements iterates.
+//@ run-pass
+// --- external_borrowed_element.gti
 // Dereference returns an external stored-reference field, not cursor storage.
 // A borrowed element type must not by itself select the inline-proxy profile.
 class ExternalElement {
@@ -53,4 +56,11 @@ int main() {
   }
   value = 5;
   return value - 5;
+}
+// --- user_dual_range_events.cpp
+#include <cstdio>
+
+extern "C" void user_dual_range_event(int identity) {
+  std::printf("E%d\n", identity);
+  std::fflush(stdout);
 }

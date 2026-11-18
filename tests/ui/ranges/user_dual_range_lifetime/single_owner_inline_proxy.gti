@@ -1,3 +1,11 @@
+// A single-owner inline proxy range iterates with exact element events.
+//@ run-pass
+//@ stdout: E100
+//@ stdout: E100
+//@ stdout: E100
+//@ stdout: E200
+//@ stdout: E200
+// --- single_owner_inline_proxy.gti
 // An ordinary owning range has no external stored-borrow dependency.
 // Its cursor still protects its physical shell and the inline proxy's shell.
 extern "C" { void user_dual_range_event(int identity); }
@@ -52,4 +60,11 @@ int main() {
   for (auto& entry : range) { total += entry.value(); }
   for (auto& entry : UserSingleRange()) { total += entry.value(); }
   return total == 18 ? 0 : 1;
+}
+// --- user_dual_range_events.cpp
+#include <cstdio>
+
+extern "C" void user_dual_range_event(int identity) {
+  std::printf("E%d\n", identity);
+  std::fflush(stdout);
 }

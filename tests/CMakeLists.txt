@@ -1939,7 +1939,6 @@ if(Python3_Interpreter_FOUND)
   set_tests_properties(string_c_string_runtime PROPERTIES TIMEOUT 300)
   foreach(iterator_gate IN ITEMS
       cursor_carrier_publication
-      user_dual_range_lifetime
       user_owning_reference_replacement
       range_endpoint_parking_runtime)
     add_test(
