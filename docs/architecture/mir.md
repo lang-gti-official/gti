@@ -4816,6 +4816,9 @@ leave the input byte-identical.
 small pass framework. The manager revisions bodies and caches CFG/reachability,
 dominance, value uses, effects, scalar-promotion inputs, safety proofs,
 place-alias/escape facts, natural-loop/range facts, and sparse constants.
+Each reachable block records its immediate dominator and the inclusive preorder
+interval of its dominator subtree. An interval containment test answers each
+dominance query in constant time. Unreachable blocks dominate no block.
 Explicit preservation retains an analysis; unknown preservation invalidates
 conservatively. There is no arbitrary insertion API, ID compaction,
 incremental dominance update, memory SSA, or loop/memory transformation.
