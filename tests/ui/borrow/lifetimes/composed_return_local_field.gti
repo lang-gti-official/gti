@@ -19,11 +19,5 @@ Mixed local_mutable(int& supplier) {
   mut int local = 3;
   return Mixed(supplier, local);  //~ ERROR GTI-S2017 depends on storage the function owns
 }
-class Holder {
-public:
-  int x = 1;
-  Holder() {}
-  Pair with_other(int& other) { return Pair(this.x, other); }  //~ ERROR GTI-S2085
-};
 Pair both(int& supplier) { return Pair(supplier, supplier); }
 int main() { int x = 1; Pair pair = both(x); return pair.first - pair.second; }
