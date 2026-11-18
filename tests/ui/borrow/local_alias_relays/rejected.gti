@@ -1,0 +1,55 @@
+// A local alias relays only what it aliases: owned or other-region storage stays rejected.
+// The alias supplies the region of the place it was bound to, so an alias of
+// a local, of storage the receiver owns, of another region's parameter, or of
+// a part reached without the reference's own region cannot supply the result.
+// A read-only alias cannot be reassigned.
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+struct Holder<lifetime h> {
+  Box&<h> ref;
+  Box owned;
+  Holder(Box&<h> ref) : ref(ref), owned(Box(5)) {}
+};
+int&<a> pass<lifetime a>(Box&<a> box) { return box.value; }
+
+int&<a> local_owner<lifetime a>(Box&<a> box) {
+  Box mine{1};
+  Box& local = mine;
+  return pass(local);  //~ ERROR GTI-S2127 is not declared to outlive the result's region 'a'
+}
+int&<a> other_region<lifetime a, lifetime b>(Box&<a> first, Box&<b> second) {
+  Box& local = second;
+  return pass(local);  //~ ERROR GTI-S2127 supplied by 'b'
+}
+int&<a> shadowed_local<lifetime a>(Box&<a> box) {
+  Box& local = box;
+  {
+    Box mine{2};
+    Box& local = mine;
+    return pass(local);  //~ ERROR GTI-S2127 is not declared to outlive the result's region 'a'
+  }
+}
+// `holder.owned` lives for the reference's elided region, not for `a`.
+int&<a> carrier_part<lifetime a>(Holder<a>& holder) {
+  Box& local = holder.owned;
+  return pass(local);  //~ ERROR GTI-S2127 is not declared to outlive the result's region 'a'
+}
+int&<a> reassigned<lifetime a>(Box&<a> box, Box other) {
+  Box& local = box;
+  local = other;  //~ ERROR GTI-S2002
+  return pass(local);
+}
+
+class Cursor<lifetime owner> {
+  Box&<owner> box;
+  Box owned;
+public:
+  Cursor(Box&<owner> box) : box(box), owned(Box(9)) {}
+  int&<owner> owned_alias() { Box& local = this.owned; return pass(local); }  //~ ERROR GTI-S2127 this return borrows storage the receiver owns
+  int&<owner> local_alias() { Box mine{1}; Box& local = mine; return pass(local); }  //~ ERROR GTI-S2017
+  int& elided_local_alias() { Box mine{1}; Box& local = mine; return pass(local); }  //~ ERROR GTI-S2017
+};
+
+int main() { return 0; }
