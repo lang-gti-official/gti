@@ -172,8 +172,9 @@ owns a unique branch, a separate worktree and one PR. The branch carries the
 agent client's prefix: `claude/` from Claude Code, which marks its shells with
 `CLAUDECODE=1`, and `codex/` from every other client. `start` names the branch
 `<prefix><task>-<8 hex>` unless `--branch` gives one, and every command accepts
-either prefix, so either client can resume a task. The auto-revert bot keeps
-its own `codex/revert-<pr>-<sha10>` names. The worktree
+either prefix, so either client can resume a task. Two automation-owned names
+keep `codex/`: the auto-revert bot's `codex/revert-<pr>-<sha10>` and degraded-mode
+batch branches `codex/<batch>`. The worktree
 must lie outside the primary checkout: `start` refuses nested paths, including
 Claude Code's managed `.claude/worktrees/`, so such clients let `start` create
 the task worktree elsewhere. GitHub PRs and published commits are authoritative
