@@ -1,0 +1,42 @@
+// Requires disjunction: each provided case lifts its trusted fact, or a negated one, through a wrapper storing the parameter by value.
+import std.meta;
+constexpr bool payload_borrows<T>() { return !std::meta::is_borrow_free<T>(); }
+constexpr bool has_borrowed<T>() { return (payload_borrows<T>()); }
+concept borrowing<T> = has_borrowed<T>();
+concept element<T> = std::relocatable<T> || has_borrowed<T>();
+concept stored<T> = std::meta::has_object_layout<T>() && std::move_constructible<T> &&
+                    (std::relocatable<T> || has_borrowed<T>());
+class Node<T> { T data; public: Node(T value) : data(std::move(value)) {} };
+class Cleanup<T> {
+  T data;
+public:
+  Cleanup(T value) : data(std::move(value)) {}
+  ~Cleanup() {}
+};
+class Holder<element T> { T held; public: Holder(T value) : held(std::move(value)) {} };
+class Store<stored T> { T item; public: Store(T value) : item(std::move(value)) {} };
+int need<borrowing T>() { return 0; }
+int wrap<T>(T value) requires element<T> {
+  Holder<Node<Node<T>>> nested =
+      Holder<Node<Node<T>>>(Node<Node<T>>(Node<T>(std::move(value))));
+  return 0;
+}
+int clean<T>(T value) requires element<T> {
+  Holder<Cleanup<T>> held = Holder<Cleanup<T>>(Cleanup<T>(std::move(value)));
+  return 0;
+}
+int fill<T>(T value) requires stored<T> {
+  Store<Node<T>> store = Store<Node<T>>(Node<T>(std::move(value)));
+  return 0;
+}
+int lift<T>() requires borrowing<T> { return need<Node<T>>() + need<Cleanup<Node<T>>>(); }
+struct Borrowed {
+  int& value;
+  Borrowed(int& source) : value(source) {}
+};
+int main() {
+  int source = 1;
+  return wrap<int>(1) + wrap<Borrowed>(Borrowed(source)) + clean<int>(3) +
+         clean<Borrowed>(Borrowed(source)) + fill<int>(2) +
+         fill<Borrowed>(Borrowed(source)) + lift<Borrowed>();
+}

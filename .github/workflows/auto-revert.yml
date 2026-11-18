@@ -1,0 +1,152 @@
+name: Automatic revert
+
+# When a merge turns main red in full validation, open a revert PR for it and
+# put that PR in the merge queue, and tell the original PR what failed; when
+# the failure cannot be pinned on one merge, say so in the `main-broken` issue
+# instead. Conservative by construction (scripts/auto_revert.py holds every
+# rule): only a failed test step counts, the merge must be the only change
+# since a green main, a later green run or an existing revert wins, and at
+# most one automatic revert is open and one is made per 24 hours.
+#
+# Off by default. Unless the repository variable GTI_AUTO_REVERT is `true`,
+# the decision is only written to the job summary and noted on the
+# `main-broken` issue; nothing is pushed, opened, commented on a PR or queued.
+# A dispatch evaluates any run id the same way and writes only the summary.
+# Writes use the rollup bot's GitHub App token (a PR opened with GITHUB_TOKEN
+# would never run its own CI); GITHUB_TOKEN only reads. Only main's own scripts
+# run here. See docs/architecture/agent-workflow.md, "Automatic revert of a
+# red main".
+on:
+  workflow_run:
+    workflows: [Full validation]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Full validation run id to evaluate (report-only)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  evaluate:
+    name: Decide
+    if: >-
+      github.repository == 'lang-gti-official/gti'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event.workflow_run.head_branch == 'main'
+              && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')
+              && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      action: ${{ steps.decide.outputs.action }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide from the run, its jobs and main's history
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          GTI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || '' }}
+          GTI_AUTO_REVERT: ${{ github.event_name == 'workflow_run' && vars.GTI_AUTO_REVERT || '' }}
+        run: |
+          options=()
+          if [[ -n "${GTI_RUN_ATTEMPT}" ]]; then
+            options+=(--attempt "${GTI_RUN_ATTEMPT}")
+          fi
+          python3 scripts/auto_revert.py evaluate --run-id "${GTI_RUN_ID}" "${options[@]}" \
+            --summary "${GITHUB_STEP_SUMMARY}" --output "${GITHUB_OUTPUT}"
+
+  note:
+    # Report-only mode: what the bot would have done goes on the main-broken
+    # issue that full validation's report job keeps, so the trial is visible.
+    name: Note the report-only decision
+    needs: [evaluate]
+    if: >-
+      github.event_name == 'workflow_run' && vars.GTI_AUTO_REVERT != 'true'
+      && (needs.evaluate.outputs.action == 'revert' || needs.evaluate.outputs.action == 'track')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Comment on the main-broken issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GTI_RUN_ID: ${{ github.event.workflow_run.id }}
+          GTI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 scripts/auto_revert.py note --run-id "${GTI_RUN_ID}" --attempt "${GTI_RUN_ATTEMPT}"
+
+  act:
+    name: Revert, track or withdraw
+    needs: [evaluate]
+    if: >-
+      github.event_name == 'workflow_run' && vars.GTI_AUTO_REVERT == 'true'
+      && needs.evaluate.outputs.action != 'none' && needs.evaluate.outputs.action != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # One writer at a time, so the one-open and once-a-day caps hold.
+    concurrency:
+      group: auto-revert
+      cancel-in-progress: false
+    permissions:
+      # GITHUB_TOKEN only reads (runs, jobs, logs); the App token writes.
+      contents: read
+      actions: read
+    steps:
+      - name: Require the rollup GitHub App secrets
+        env:
+          GTI_ROLLUP_APP_ID: ${{ secrets.GTI_ROLLUP_APP_ID }}
+          GTI_ROLLUP_APP_PRIVATE_KEY: ${{ secrets.GTI_ROLLUP_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${GTI_ROLLUP_APP_ID}" || -z "${GTI_ROLLUP_APP_PRIVATE_KEY}" ]]; then
+            echo "::error::The automatic revert writes only with the rollup GitHub App (GTI_ROLLUP_APP_ID, GTI_ROLLUP_APP_PRIVATE_KEY). See .github/README.md."
+            exit 1
+          fi
+      - name: Mint a short-lived installation token for this repository only
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.GTI_ROLLUP_APP_ID }}
+          private-key: ${{ secrets.GTI_ROLLUP_APP_PRIVATE_KEY }}
+          owner: lang-gti-official
+          repositories: gti
+          permission-contents: write
+          permission-pull-requests: write
+          permission-merge-queues: write
+          permission-issues: write
+          permission-metadata: read
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Normalize canonical origin
+        run: git remote set-url origin https://github.com/lang-gti-official/gti.git
+      - name: Decide again and carry the decision out
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GTI_READ_TOKEN: ${{ github.token }}
+          GTI_AUTO_REVERT: ${{ vars.GTI_AUTO_REVERT }}
+          GTI_RUN_ID: ${{ github.event.workflow_run.id }}
+          GTI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          python3 scripts/auto_revert.py act --run-id "${GTI_RUN_ID}" --attempt "${GTI_RUN_ATTEMPT}"
+          --summary "${GITHUB_STEP_SUMMARY}"

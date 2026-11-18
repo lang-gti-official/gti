@@ -3265,6 +3265,11 @@ verifyHirProgramPlans(const SemanticModel &semantics,
         step.requiresActiveCleanup != semantic.requiresActiveCleanup ||
         step.nativeRetirement.has_value() !=
             semantic.requiresNativeRetirement ||
+        step.sourceCleanup.has_value() != semantic.requiresSourceCleanup ||
+        (step.sourceCleanup &&
+         (step.nativeRetirement || semanticBinding == nullptr ||
+          step.sourceCleanup->type != semanticBinding->type ||
+          !step.sourceCleanup->requiresActiveCleanup)) ||
         (step.nativeRetirement &&
          (semanticBinding == nullptr ||
           step.nativeRetirement->type != semanticBinding->type ||

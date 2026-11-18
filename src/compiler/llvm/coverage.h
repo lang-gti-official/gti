@@ -87,6 +87,7 @@ enum class Shape {
   NativeOwnedMutexStorage,
   NativeHierarchyMutexStorage,
   NativeProgramRetirement,
+  NativeProgramCleanup,
   NativeThreadHandle,
   NativeThreadOperation,
   NativeThreadTask,

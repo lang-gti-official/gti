@@ -2374,6 +2374,26 @@ private:
       break;
     }
     case MirInstructionKind::DrainThreadLocals: {
+      const auto &term = current->terminator;
+      if (term.kind == MirTerminatorKind::Invoke &&
+          term.invokeInstruction == instruction.id) {
+        auto *channel = channels.at(term.failureRecord);
+        auto *status = ir.CreateCall(
+            declareRuntimeService(session,
+                                  RuntimeService::DrainThreadLocalsChecked),
+            {failures.record(ir, channel),
+             failures.originAddress(ir, channel)});
+        auto *done = llvm::BasicBlock::Create(session.context(),
+                                              "tls.drain.done", &function);
+        auto *bad = llvm::BasicBlock::Create(session.context(),
+                                             "tls.drain.failed", &function);
+        Failures::branchOnSuccess(ir, ir.CreateICmpNE(status, ir.getInt32(0)),
+                                  done, bad);
+        ir.SetInsertPoint(bad);
+        failedOperation();
+        ir.SetInsertPoint(done);
+        break;
+      }
       auto *null = llvm::ConstantPointerNull::get(session.layouts().pointer());
       auto *channel = current->activeFailure
                           ? channels.at(current->activeFailure)
@@ -2382,6 +2402,34 @@ private:
           declareRuntimeService(session, RuntimeService::DrainThreadLocals),
           {channel ? failures.record(ir, channel) : null,
            channel ? failures.origin(ir, channel) : null});
+      break;
+    }
+    case MirInstructionKind::CleanupProgramStorage: {
+      const auto &term = current->terminator;
+      const bool checked = term.kind == MirTerminatorKind::Invoke &&
+                           term.invokeInstruction == instruction.id;
+      auto *channel =
+          checked ? channels.at(term.failureRecord) : scratchChannel();
+      auto *status = lifetimes.cleanupProgramStorage(
+          ir, channel, current->activeFailure != 0);
+      auto *done = llvm::BasicBlock::Create(session.context(),
+                                            "program.cleanup.done", &function);
+      auto *bad = llvm::BasicBlock::Create(session.context(),
+                                           "program.cleanup.failed", &function);
+      Failures::branchOnSuccess(ir, status, done, bad);
+      ir.SetInsertPoint(bad);
+      if (checked) {
+        failedOperation();
+      } else if (current->activeFailure) {
+        failures.terminateCleanup(ir, channels.at(current->activeFailure),
+                                  channel);
+        if (failures.workerContainment())
+          abandonFrame();
+      } else {
+        // An infallible recipe cannot produce a failure status.
+        ir.CreateUnreachable();
+      }
+      ir.SetInsertPoint(done);
       break;
     }
     case MirInstructionKind::RetireProgramStorage:
