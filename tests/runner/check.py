@@ -92,6 +92,12 @@ def self_test(runner):
            "a failing revision is named and a passing one is not", out)
 
     faults = {"GTI_TEST_TIME_SCALE": "0.1"}
+    # A sanitized runner's handler reports the SIGSEGV itself. On Linux it
+    # then exits with status 1 unless told to abort (macOS aborts by default),
+    # and the runner would report an ordinary exit instead of a signal
+    # (sanitizer run 44292710563). The option means nothing to a plain runner.
+    sanitizer = os.environ.get("ASAN_OPTIONS", "")
+    faults["ASAN_OPTIONS"] = ":".join(filter(None, [sanitizer, "abort_on_error=1"]))
     code, out = run(runner, FIXTURES / "faults", "--jobs", "2", env=faults)
     expect(code == 1, "faults fail the run", out)
     # A sanitized runner's handler reports the SIGSEGV and then aborts.
