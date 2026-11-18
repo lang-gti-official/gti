@@ -1,0 +1,18 @@
+// A destructor may consume a fresh local owner; receiver protection covers only its fields.
+//@ check-pass
+class Callback {
+public:
+  Callback() = default;
+  ~Callback() {}
+  int operator()() && { return 1; }
+};
+class Owner {
+public:
+  ~Owner() {
+    Callback local{};
+    [[discard]] std::move(local)();
+  }
+public:
+  Owner() = default;
+};
+int main() { Owner owner{}; return 0; }

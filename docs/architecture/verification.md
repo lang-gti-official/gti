@@ -8766,9 +8766,10 @@ capabilities/target identities. `consuming_retained_lambda_runtime` passes 96
 outcomes across all eight native modes: fixed/pack calls, single/nested owners,
 invocation failure, and later-argument failure retain captures until the outer
 full-expression boundary. This is not yet evidence for public consuming wrappers.
-`retained_generic_lifecycle` passes source cleanup-body/failure-form checks,
-32 independent malformed cleanup-form/owner-overlay checks, distinct valid
-MIR-body grouping rejection, and a destructor re-consumption negative. Concrete
+`tests/ui/generics/retained_lifecycle/` builds the nested closure owners with
+raising and empty destructors and rejects destructor re-consumption of a
+field; the former C++ test's forged cleanup-form and owner-overlay mutations
+were dropped (the cases run through verified MIR). Concrete
 capture and nested-owner cleanup branches are asserted separately. The affected
 lowered-program contract, C++ program-plan, and representation-snapshot suites
 also pass.

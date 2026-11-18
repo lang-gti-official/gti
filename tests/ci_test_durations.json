@@ -436,7 +436,6 @@
   "remote_runner": 6.2,
   "repository_hosting": 1.3,
   "retained_borrowed_call_result_runtime": 2.8,
-  "retained_generic_lifecycle": 44.2,
   "returned_field_address_runtime": 39.6,
   "rollup": 13.7,
   "runtime_abi_inventory": 1.4,
