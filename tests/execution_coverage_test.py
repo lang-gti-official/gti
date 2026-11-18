@@ -51,7 +51,6 @@ ALLOWED_SPELLINGS = {
     "project_cli_smoke_test.py": "the project CLI contract, including --keep-cpp acceptance",
     "registry_cli_test.py": "the `gti run --std` registry workflow is the contract under test",
     # LLVM-backend harnesses with a C++ differential oracle.
-    "llvm_checked_reduction_runtime_test.py": "LLVM-backend harness; C++ endpoint is a differential oracle",
     "llvm_dispatch_execution_test.py": "LLVM-backend harness; C++ endpoints are a differential oracle",
     "llvm_hosted_cleanup_execution_test.py": "LLVM-backend harness; C++ endpoint is a differential oracle",
     "llvm_hosted_execution_test.py": "LLVM-backend harness; C++ endpoints are a differential oracle",

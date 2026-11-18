@@ -1149,9 +1149,9 @@ def change_review_contract(root):
 
 
 def freeze_contract(root):
-    """The old suite is frozen: a candidate adding a test file or an add_test(
+    """The old suite stays frozen: a candidate adding a test file or an add_test(
     registration fails, with the two-line guidance; edits, deletions, renames,
-    moved registrations and the new runner's directories pass."""
+    moved registrations and exactly the runner's directories pass."""
     script = root / "scripts/check_test_freeze.py"
     with tempfile.TemporaryDirectory(prefix="gti-test-freeze-") as directory:
         work = pathlib.Path(directory)
@@ -1186,14 +1186,17 @@ def freeze_contract(root):
         write("tests/helper_support.py", "helper\n")
         allowed = commit()
         assert check(base, allowed) == (0, "test freeze: the candidate adds no old-suite tests\n")
-        # The new runner's directories and registration file are exempt.
+        # The runner's directories and registration file are exempt.
         for name in ("tests/ui/borrow/x_test.py", "tests/unit/arena_tests.cpp",
-                     "tests/runner/runner_test.py", "tests/runner/CMakeLists.txt"):
+                     "tests/runner/runner_test.py", "tests/runner/CMakeLists.txt",
+                     "tests/lsp/hover/x_test.py", "tests/project/build/x_test.py",
+                     "tests/slow/borrow/x_tests.cpp"):
             write(name, "add_test(NAME runner COMMAND runner)\n")
         write("tests/gti_test.cmake", "add_test(NAME gti_test COMMAND gti-test)\n")
         exempt = commit()
         assert check(allowed, exempt)[0] == 0
         for name, text in (("tests/new_test.py", "x\n"), ("tests/nested/new_tests.cpp", "x\n"),
+                           ("tests/uix/new_test.py", "x\n"), ("tests/coverage/new_test.py", "x\n"),
                            ("tests/CMakeLists.txt", registrations + "add_test(NAME fresh COMMAND fresh)\n"),
                            ("tests/TestThroughput.cmake", "add_test(\n")):
             run(["git", "checkout", "--quiet", "-B", "candidate", exempt], work)
@@ -1201,9 +1204,9 @@ def freeze_contract(root):
             code, output = check(exempt, commit())
             assert code == 1 and name in output, (name, output)
             guidance = output.strip().splitlines()[-2:]
-            assert guidance[0].startswith("The old test suite is frozen") and all(
-                directory in guidance[1] for directory in ("tests/ui/", "tests/lsp/", "tests/project/",
-                                                           "tests/unit/")) \
+            assert guidance[0].startswith("The old test suite is frozen as a standing rule") and all(
+                directory in guidance[1] for directory in ("tests/ui/", "tests/slow/", "tests/lsp/",
+                                                           "tests/project/", "tests/unit/")) \
                 and "never add to an old harness" in guidance[1], output
 
 

@@ -560,14 +560,6 @@ def run(root, build, required, full, targets=(), extra=(), jobs=4, log=None, jun
 # parts are registered.
 SHARDED_AGGREGATES = {
     "allocator_raw_audit_independence": "allocator_raw_audit_independence_",
-    "body_analysis_order": "body_analysis_order_",
-    "instance_reuse": "instance_reuse_",
-}
-# Post-integration full validation runs every registered per-commit test. The
-# merge gate's shards also skip these trusted-body corpus partitions; they
-# stay in the slow tier. This is the gate's test set, not a quarantine.
-GATE_EXCLUDED = {
-    "trusted_body_analysis_1", "trusted_body_analysis_2", "trusted_body_analysis_3",
 }
 # macOS does not repeat the Linux inventory. It runs the `darwin` set from
 # tests/ci_darwin_tests.json: what differs on the platform. Linux proves the
@@ -580,7 +572,7 @@ DARWIN_TESTS = "tests/ci_darwin_tests.json"
 SLOW_LABEL = "slow"
 # Each test set's GTI_TEST_LLVM_LEVELS, set by the shard runner itself so a
 # caller's environment cannot change what a set proves.
-TEST_SET_LEVELS = {"gate": "O0", "full": "O0", "darwin": "O0",
+TEST_SET_LEVELS = {"full": "O0", "darwin": "O0",
                    "slow": "O0,O3", "darwin-slow": "O0,O3", "o3": "O3", "darwin-o3": "O3"}
 TEST_SETS = tuple(TEST_SET_LEVELS)
 # A harness that imports one of these follows GTI_TEST_LLVM_LEVELS; the -O3
@@ -673,11 +665,6 @@ def shard_inventory(expected, test_set="full", darwin=None, slow=frozenset(), se
     names -= set(slow)
     if test_set in ("o3", "darwin-o3"):
         return names & set(sensitive)
-    if test_set == "gate":
-        missing = GATE_EXCLUDED - set(expected)
-        if missing:
-            raise ValueError("Gate exclusions name unregistered tests; update GATE_EXCLUDED: " + ", ".join(sorted(missing)))
-        names -= GATE_EXCLUDED
     return names
 
 

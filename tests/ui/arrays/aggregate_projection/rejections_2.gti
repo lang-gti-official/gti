@@ -1,0 +1,16 @@
+// Fixed-array field and element projections reject unchecked raw access, const writes, invalid or copying bindings and overlapping element borrows.
+//@ check-fail
+
+namespace case_element_reference_overlap {
+int entry(){mut int values[2]={1,2};mut int& element=values[0];int& alias=values[0];element=3;return alias;}  //~ ERROR GTI-S2017
+}
+
+namespace case_element_reference_write_while_live {
+int entry(){mut int values[2]={1,2};mut int& element=values[0];values[0]=5;return element;}  //~ ERROR GTI-S2017
+}
+
+namespace case_element_reference_dynamic_overlap {
+int pick(int n){return n;}int entry(){mut int values[2]={1,2};mut int& first=values[pick(0)];mut int& second=values[pick(1)];first=3;second=4;return 0;}  //~ ERROR GTI-S2017
+}
+
+int main() { return 0; }

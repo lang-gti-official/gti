@@ -922,7 +922,7 @@ loan checking. `tests/project/compiled_borrowing` owns its positive and negative
 [`compiled-dependencies/`](compiled-dependencies/README.md) demonstrates automatic
 library builds through a diamond dependency graph, a shared private counter and
 class static constant, exact dependency receipts and reuse of unchanged libraries.
-`compiled_dependency_project` owns its execution,
+The `tests/slow/project/compiled_dependencies` transcript (a copy of the example) owns its execution,
 failure, freshness and source-free distribution checks.
 
 The [compiled namespace example](compiled-namespaces/README.md) composes distinct

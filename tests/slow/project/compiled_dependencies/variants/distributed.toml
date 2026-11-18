@@ -1,0 +1,22 @@
+manifest-version = 1
+[package]
+name = "distributed"
+version = "0.1.0"
+[targets.app]
+kind = "executable"
+root = "main.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-dependencies"
+target = "base"
+path = "base.gtilib"
+interface = "api/base.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-dependencies"
+target = "left"
+path = "left.gtilib"
+interface = "api/left.gti"
+[[targets.app.compiled-libraries]]
+package = "compiled-dependencies"
+target = "right"
+path = "right.gtilib"
+interface = "api/right.gti"

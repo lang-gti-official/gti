@@ -576,9 +576,6 @@ if(Python3_Interpreter_FOUND)
                    "${PROJECT_SOURCE_DIR}/tests/object_destroy_scalar_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(object_destroy_scalar_runtime PROPERTIES TIMEOUT 240)
-  add_test(NAME programmable_allocators_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/programmable_allocators_runtime_test.py" $<TARGET_FILE:gti>)
-  set_tests_properties(programmable_allocators_runtime PROPERTIES TIMEOUT 900)
   add_test(NAME allocator_raw_audit_independence
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/allocator_raw_audit_independence_test.py" $<TARGET_FILE:gti>)
   # 36 compilations, two thirds of them auditing every trusted body: about
@@ -713,11 +710,6 @@ add_test(NAME optimizer_bounds_postconditions
                  "${PROJECT_SOURCE_DIR}/tests/optimizer_bounds_postconditions_test.py"
                  "$<TARGET_FILE:gti>")
 set_tests_properties(optimizer_bounds_postconditions PROPERTIES TIMEOUT 300)
-add_test(NAME optimizer_interpolation
-         COMMAND "${Python3_EXECUTABLE}"
-                 "${PROJECT_SOURCE_DIR}/tests/optimizer_interpolation_test.py"
-                 "$<TARGET_FILE:gti>")
-set_tests_properties(optimizer_interpolation PROPERTIES TIMEOUT 300)
 add_test(NAME optimizer_recurrence_capture
          COMMAND "${Python3_EXECUTABLE}"
                  "${PROJECT_SOURCE_DIR}/tests/optimizer_recurrence_capture_test.py"
@@ -736,10 +728,6 @@ set_tests_properties(llvm_bounded_recursion_runtime PROPERTIES TIMEOUT 300)
 add_executable(gti_optimizer_prefix_relocation_tests optimizer_prefix_relocation_tests.cpp)
 target_link_libraries(gti_optimizer_prefix_relocation_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_prefix_relocation COMMAND gti_optimizer_prefix_relocation_tests)
-add_test(NAME returned_field_address_runtime
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/returned_field_address_runtime_test.py"
-    $<TARGET_FILE:gti>)
-set_tests_properties(returned_field_address_runtime PROPERTIES TIMEOUT 1200)
 add_executable(gti_optimizer_intrinsic_context_tests optimizer_intrinsic_context_tests.cpp)
 target_link_libraries(gti_optimizer_intrinsic_context_tests PRIVATE gti_compiler)
 add_test(NAME optimizer_intrinsic_context COMMAND gti_optimizer_intrinsic_context_tests)
@@ -1369,10 +1357,6 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_offset_runtime_test.py"
                    "$<TARGET_FILE:gti>")
   set_tests_properties(llvm_checked_offset_runtime PROPERTIES TIMEOUT 600)
-  add_test(NAME llvm_checked_reduction_runtime
-           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_reduction_runtime_test.py"
-                   "$<TARGET_FILE:gti>")
-  set_tests_properties(llvm_checked_reduction_runtime PROPERTIES TIMEOUT 600)
   add_test(NAME llvm_checked_range_runtime
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_checked_range_runtime_test.py"
                    "$<TARGET_FILE:gti>")
@@ -1524,10 +1508,6 @@ if(Python3_Interpreter_FOUND)
     llvm_callable_execution
     "${PROJECT_SOURCE_DIR}/tests/llvm_callable_execution_test.py"
   )
-  add_test(NAME llvm_callable_owned_composition
-           COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_owned_composition_test.py"
-                   "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
-  set_tests_properties(llvm_callable_owned_composition PROPERTIES TIMEOUT 300)
   add_test(NAME llvm_callable_null_owner_rollback
            COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/llvm_callable_null_owner_rollback_test.py"
                    "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
@@ -1562,9 +1542,6 @@ add_test(NAME expected_passive_publication COMMAND gti_expected_passive_publicat
 add_executable(gti_abstract_generic_failure_contract_tests abstract_generic_failure_contract_tests.cpp)
 target_link_libraries(gti_abstract_generic_failure_contract_tests PRIVATE gti_llvm_backend)
 add_test(NAME abstract_generic_failure_contract COMMAND gti_abstract_generic_failure_contract_tests)
-add_executable(gti_retained_generic_lifecycle_tests retained_generic_lifecycle_tests.cpp)
-target_link_libraries(gti_retained_generic_lifecycle_tests PRIVATE gti_llvm_backend)
-add_test(NAME retained_generic_lifecycle COMMAND gti_retained_generic_lifecycle_tests)
 
 add_executable(gti_owned_pointee_projection_tests owned_pointee_projection_tests.cpp)
 target_link_libraries(gti_owned_pointee_projection_tests PRIVATE gti_compiler)
@@ -1593,11 +1570,6 @@ add_executable(gti_aggregate_projection_tests aggregate_projection_tests.cpp)
 target_link_libraries(gti_aggregate_projection_tests PRIVATE gti_llvm_backend)
 add_test(NAME aggregate_projection COMMAND gti_aggregate_projection_tests)
 if(Python3_Interpreter_FOUND)
-  add_test(NAME aggregate_projection_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/aggregate_projection_runtime_test.py"
-            "$<TARGET_FILE:gti>" "${PROJECT_SOURCE_DIR}")
-  set_tests_properties(aggregate_projection_runtime PROPERTIES TIMEOUT 300)
   add_test(NAME passive_fixed_array_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/passive_fixed_array_runtime_test.py"
@@ -2336,13 +2308,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(stdlib_include_sweep PROPERTIES TIMEOUT 600)
   add_test(
-    NAME checked_integer_overflow_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/checked_integer_overflow_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(checked_integer_overflow_runtime PROPERTIES TIMEOUT 300)
-  add_test(
     NAME binary64_runtime
     COMMAND "${Python3_EXECUTABLE}"
             "${PROJECT_SOURCE_DIR}/tests/binary64_runtime_test.py"
@@ -2402,13 +2367,6 @@ if(Python3_Interpreter_FOUND)
   )
   set_tests_properties(issues_122_124_field_initializers_runtime
                        PROPERTIES TIMEOUT 180)
-  add_test(
-    NAME vector_construction_only_runtime
-    COMMAND "${Python3_EXECUTABLE}"
-            "${PROJECT_SOURCE_DIR}/tests/vector_construction_only_runtime_test.py"
-            "$<TARGET_FILE:gti>"
-  )
-  set_tests_properties(vector_construction_only_runtime PROPERTIES TIMEOUT 240)
   add_test(
     NAME vector_scalar_constructor_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2774,10 +2732,6 @@ if(Python3_Interpreter_FOUND)
     COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_record_containers_runtime_test.py"
             "$<TARGET_FILE:gti>")
   set_tests_properties(raw_record_containers_runtime PROPERTIES TIMEOUT 600)
-  add_test(NAME raw_native_record_transport_runtime
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/raw_native_record_transport_runtime_test.py"
-            "$<TARGET_FILE:gti>")
-  set_tests_properties(raw_native_record_transport_runtime PROPERTIES TIMEOUT 600)
   add_test(
     NAME expected_payload_pair_arguments_runtime
     COMMAND "${Python3_EXECUTABLE}"
@@ -2870,20 +2824,6 @@ if(Python3_Interpreter_FOUND)
     )
     set_tests_properties(payload_enum_containment_runtime
                          PROPERTIES TIMEOUT 240)
-    add_test(
-      NAME generic_payload_enum_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/generic_payload_enum_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(generic_payload_enum_runtime PROPERTIES TIMEOUT 300)
-    add_test(
-      NAME generic_enum_instances_runtime
-      COMMAND "${Python3_EXECUTABLE}"
-              "${PROJECT_SOURCE_DIR}/tests/generic_enum_instances_runtime_test.py"
-              "$<TARGET_FILE:gti>"
-    )
-    set_tests_properties(generic_enum_instances_runtime PROPERTIES TIMEOUT 600)
     add_test(
       NAME field_subscript_store_runtime
       COMMAND "${Python3_EXECUTABLE}"
@@ -3044,10 +2984,6 @@ if(Python3_Interpreter_FOUND)
             "${PROJECT_SOURCE_DIR}/tests/project_cli_smoke_test.py"
             "$<TARGET_FILE:gti>"
   )
-  add_test(NAME test_command_controls
-    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/test_command_controls_test.py"
-            "$<TARGET_FILE:gti>")
-  set_tests_properties(test_command_controls PROPERTIES TIMEOUT 600)
   add_test(
     NAME objective_cpp_bridge
     COMMAND "${Python3_EXECUTABLE}"
@@ -3387,10 +3323,6 @@ add_executable(gti_compiled_interface_types_tests compiled_interface_types_tests
 target_link_libraries(gti_compiled_interface_types_tests PRIVATE gti_compiler)
 add_test(NAME compiled_interface_types COMMAND gti_compiled_interface_types_tests)
 
-add_test(NAME compiled_dependency_project
-  COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tests/compiled_dependency_project_test.py"
-  "$<TARGET_FILE:gti>" --output-dir "${CMAKE_BINARY_DIR}/compiled-dependency-project")
-set_tests_properties(compiled_dependency_project PROPERTIES TIMEOUT 600)
 
 
 

@@ -1,0 +1,4 @@
+
+[targets.other-tests]
+kind = "test"
+root = "tests/other.gti"

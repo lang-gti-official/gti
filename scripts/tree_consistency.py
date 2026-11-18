@@ -20,11 +20,13 @@ say why they still need a build. A labelled test that starts needing a binary
 fails in the gate, which builds nothing, and `run_errors` rejects a labelled
 test that was skipped or not run, so it cannot pass by skipping.
 
-Two generic reference checks run with it (`repository_errors`): every module
+Generic reference checks run with it (`repository_errors`): every module
 a Python file under tests/ or scripts/ imports exists, and every bare
 `<name>_test.py` (or `.lua`) string in a collection literal there (the
 expectation tables meta-tests keep, such as harness lists) names a file in
-tests/.
+tests/. In a Git checkout it also rejects any file under the gti-test roots
+(tests/ui, tests/lsp, tests/project, tests/slow, tests/unit) that Git
+ignores, because `git add` would skip it without a word.
 
 Usage:
   tree_consistency.py check --build <dir> [--ctest <ctest>]
@@ -70,6 +72,10 @@ HARNESS_NAME = re.compile(r"[A-Za-z0-9_]+_test\.(?:py|lua)\Z")
 # Executables a configure-only tree must not contain: their presence would let
 # a labelled test pass on a binary the gate never builds.
 BUILT_PRODUCTS = ("gti", "gti_lsp", "gti-test")
+# Directories whose files gti-test discovers as tests; none may be ignored.
+TEST_ROOTS = ("tests/ui", "tests/lsp", "tests/project", "tests/slow", "tests/unit")
+# Editor and OS droppings the root .gitignore rightly ignores anywhere.
+JUNK = (r"\.DS_Store", r".*\.sw[op]", r".*~", r"__pycache__", r".*\.py[cod]")
 
 
 def registrations(root: Path) -> dict[str, str]:
@@ -254,6 +260,39 @@ def repository_errors(root: Path) -> list[str]:
                         not (root / "tests" / element.value).is_file() and
                         not (source.parent / element.value).is_file()):
                     errors.append(f"{relative}:{element.lineno}: names {element.value}, which is not in tests/")
+    return errors + ignored_test_errors(root)
+
+
+def ignored_test_errors(root: Path) -> list[str]:
+    """Files under the test roots that Git ignores: `git add` skips them
+    silently, so a test written there never reaches a commit. A fresh CI
+    checkout has none; this guards the local checkout the tree-consistency run
+    is required in before a hand-off. Outside a Git checkout it checks nothing."""
+    try:
+        top = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=60)
+        if top.returncode or Path(top.stdout.strip()).resolve() != root.resolve():
+            return []
+        listed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
+             "--directory", "--", *TEST_ROOTS],
+            capture_output=True, text=True, timeout=60)
+        tracked = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached", "--ignored", "--exclude-standard",
+             "--", *TEST_ROOTS],
+            capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if listed.returncode or tracked.returncode:
+        return []
+    errors = []
+    for path in sorted(set(filter(None, listed.stdout.split("\0") + tracked.stdout.split("\0")))):
+        if any(re.fullmatch(pattern, part) for part in path.rstrip("/").split("/") for pattern in JUNK):
+            continue
+        rule = subprocess.run(["git", "-C", str(root), "check-ignore", "-v", "--no-index", path.rstrip("/")],
+                              capture_output=True, text=True, timeout=60).stdout.split("\t", 1)[0]
+        errors.append(f"{path}: ignored by git ({rule or 'an ignore rule'}), so `git add` skips it; "
+                      "narrow that pattern rather than force-adding")
     return errors
 
 
@@ -349,6 +388,24 @@ def self_test() -> None:
         assert len(errors) == 3 and "deleted_wrapper_test" in errors[0] and "helper" in errors[1] \
             and "deleted_test.py" in errors[2], errors
 
+        # A test directory an over-broad ignore pattern swallows (as `Testing/`
+        # once swallowed tests/ui/stdlib/testing/ on a case-insensitive disk),
+        # and a tracked test the pattern matches; OS droppings are fine.
+        checkout = Path(temporary) / "checkout"
+        (checkout / "tests/ui/testing").mkdir(parents=True)
+        (checkout / "tests/lsp").mkdir(parents=True)
+        (checkout / ".gitignore").write_text("testing/\n*.out\n.DS_Store\n", encoding="utf-8")
+        (checkout / "tests/ui/testing/check.gti").write_text("", encoding="utf-8")
+        (checkout / "tests/ui/kept.gti").write_text("", encoding="utf-8")
+        (checkout / "tests/ui/.DS_Store").write_text("", encoding="utf-8")
+        (checkout / "tests/lsp/hover.out").write_text("", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(checkout)], check=True, timeout=60)
+        subprocess.run(["git", "-C", str(checkout), "add", "-f", "tests/lsp/hover.out"], check=True, timeout=60)
+        errors = ignored_test_errors(checkout)
+        assert len(errors) == 2 and errors[0].startswith("tests/lsp/hover.out: ignored by git (.gitignore:2:") \
+            and errors[1].startswith("tests/ui/testing/: ignored by git (.gitignore:1:"), errors
+        assert ignored_test_errors(root) == []
+
         # The gate's run: every labelled test ran and passed, none skipped.
         report = Path(temporary) / "report.xml"
 
@@ -365,7 +422,7 @@ def self_test() -> None:
         (build / "gti").write_text("")
         assert any("configure-only" in error for error in junit(*passed))
     print("tree consistency: self-test rejected unlabelled, mislabelled, stale, broken-import, "
-          "missing-harness, skipped and built-tree forgeries")
+          "missing-harness, ignored-test, skipped and built-tree forgeries")
 
 
 def report(title: str, errors: list[str]) -> int:

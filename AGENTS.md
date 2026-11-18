@@ -390,12 +390,13 @@ one-off implementation-note or redesign files when an existing category fits.
   project transcript 20 s. A test over half its limit goes to `tests/slow/`
   with `//@ slow`. `//@ opt: O3` and `//@ only:` need a `//@ reason:` line.
   Per-commit runs are `-O0`; the daily slow tier runs `tests/slow/` and `-O3`.
-- The old harnesses are frozen: `scripts/check_test_freeze.py` rejects a new
-  `tests/**/*_test.py`, `*_tests.cpp` or `add_test(` outside the new
-  directories. When a change breaks a case in an old harness, fix that case
-  or convert it to a new-style test and delete it there; never add to it. Add
-  no CMake registration, `tests/ownership.toml` entry, census baseline or
-  manifest for a new test.
+- The old harnesses are frozen, as a standing rule:
+  `scripts/check_test_freeze.py` rejects a new `tests/**/*_test.py`,
+  `*_tests.cpp` or `add_test(` outside `tests/{ui,slow,lsp,project,unit,runner}/`
+  and `tests/gti_test.cmake`. When a change breaks a case in an old harness,
+  fix that case or convert it to a new-style test and delete it there; never
+  add to it. Add no CMake registration, `tests/ownership.toml` entry, census
+  baseline or manifest for a new test.
 - Deleting, adding or renaming a test file, script or fixture can break a
   meta-test that cross-references the tree. Before pushing, run the
   `tree-consistency` label from a configure-only tree (the CI gate runs it too):
@@ -416,10 +417,14 @@ one-off implementation-note or redesign files when an existing category fits.
   Do not run sanitizers, `-O3`, corpus walks or the complete suite to finish
   a task.
 
-Until the migration completes, the old suite still runs in full validation;
-the `compiler_pipeline` aggregate is gone (its suites are `tests/ui` cases),
-and the families already converted are listed in the
-[campaign section](docs/plans/implementation-sequence.md#test-suite-redesign-campaign-2026-11-16).
+The conversion campaign is closed. The old-style entries that remain run in
+full validation and stay deliberately: tooling, CI and release scripts,
+installed-toolchain smokes (`cli_workflow`, `project_cli_workflow`,
+`lsp_protocol`), genuine C++ unit tests, terminal, fake-server, binary-probe
+and evidence-manifest tests, mutation machinery, and convertible entries that
+need runner features not built. The
+[plan's end state](docs/plans/test-suite-redesign.md#end-state-2026-11-18)
+lists them.
 
 ## Release Channels And VERSION
 

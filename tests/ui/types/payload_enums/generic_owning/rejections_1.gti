@@ -1,0 +1,116 @@
+// Generic owning sums reject implicit copies, use after move, live element borrows across clear and assignment of a borrow-carrying class.
+//@ check-fail
+import std.optional;
+import std.vector;
+
+namespace case_implicit_copy {
+mut int32_t drops = 0;
+
+class Resource {
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+  }
+  int32_t id() { return this.identity; }
+private:
+  int32_t identity;
+};
+
+enum class Event { message(Resource resource), idle };
+
+int32_t id(Event& event) {
+  switch (event) {
+  case Event::message(auto& resource): return resource.id();
+  case Event::idle: return 0;
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+// Deliberately unrelated to a public container: generic ownership must use
+// the exact concrete field and callable identities, not library spellings.
+class Envelope<T> {
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+private:
+  mut T value;
+};
+
+
+int entry() {
+  Event event = Event::message(Resource(1));
+  mut std::vector<Event> events{};
+  events.push_back(event);  //~ ERROR GTI-S2018
+  return 0;
+}
+}
+
+namespace case_moved_owner {
+mut int32_t drops = 0;
+
+class Resource {
+public:
+  Resource(int32_t identity) : identity(identity) {}
+  Resource(Resource&& other) = default;
+  ~Resource() {
+    drops = drops + 1;
+    std::println(this.identity);
+  }
+  int32_t id() { return this.identity; }
+private:
+  int32_t identity;
+};
+
+enum class Event { message(Resource resource), idle };
+
+int32_t id(Event& event) {
+  switch (event) {
+  case Event::message(auto& resource): return resource.id();
+  case Event::idle: return 0;
+  }
+}
+
+T relay<T>(T value) { return std::move(value); }
+
+// Deliberately unrelated to a public container: generic ownership must use
+// the exact concrete field and callable identities, not library spellings.
+class Envelope<T> {
+public:
+  Envelope(T value) : value(std::move(value)) {}
+  T& get() { return this.value; }
+  void replace(T replacement) mut { this.value = std::move(replacement); }
+  T extract() && { return std::move(this.value); }
+private:
+  mut T value;
+};
+
+
+int entry() {
+  Event event = Event::message(Resource(1));
+  std::optional<Event> held = std::optional<Event>(std::move(event));
+  return id(event);  //~ ERROR GTI-S2018
+}
+}
+
+namespace case_construction_only_assignment {
+class Borrowed {
+  int& owner;
+public:
+  Borrowed(int& owner) : owner(owner) {}
+};
+int entry() {
+  int owner = 1;
+  Borrowed source = Borrowed(owner);
+  mut Borrowed destination = Borrowed(owner);
+  destination = std::move(source);  //~ ERROR GTI-S2003
+  return 0;
+}
+}
+
+int main() { return 0; }

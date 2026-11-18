@@ -1,0 +1,23 @@
+// Vectors reject copying move-only elements, non-relocatable or borrowing element types and growth under a live element borrow.
+//@ check-fail
+import std.optional;
+import std.string;
+import std.vector;
+
+namespace case_live_borrow {
+struct Envelope {
+  std::optional<std::string> payload{};
+public:
+  Envelope() = default;
+};
+
+int entry() {
+  mut std::vector<Envelope> values{};
+  values.push_back(Envelope());
+  Envelope& borrowed = values[std::size_t(0)];
+  values.reserve(std::size_t(8));  //~ ERROR GTI-S2017
+  return borrowed.payload.has_value() ? 1 : 0;
+}
+}
+
+int main() { return 0; }

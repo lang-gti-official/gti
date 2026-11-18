@@ -1,0 +1,26 @@
+// A failing inner index (middle index) reports its own site after the outer index, cleaning up in order.
+//@ run-fail
+//@ exit-code: 70
+//@ stdout: row
+//@ stdout: column
+//@ stdout: guard dropped
+//@ stderr-contains: main.gti:23: runtime error[GTI-R0007]: index_out_of_bounds in fixed_array
+class Guard { public: Guard() {} ~Guard() { std::println("guard dropped"); } };
+class Resource { int id; public: Resource(int value) : id(value) {}
+Resource(Resource& other) = delete; ~Resource() { std::println(this.id); }
+int get() { return this.id; } };
+class Plain { int id; public: Plain(int value) : id(value) {} int get() { return this.id; } };
+int read_arg(Resource& value, int later) { return value.get() + later; }
+int copy_arg(Plain value, int later) { return value.get() + later; }
+int row() { std::println("row"); return 1; }
+int column() { std::println("column"); return 2; }
+int depth() { std::println("depth"); return 0; }
+int main() {
+  Guard guard{};
+  mut int values[2][2][2] = {{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}};
+  int* element = &values
+    [row()]
+    [column()]
+    [depth()];
+  unsafe { return *element; }
+}
