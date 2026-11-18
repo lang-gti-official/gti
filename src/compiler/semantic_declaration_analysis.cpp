@@ -1461,6 +1461,9 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
             pattern.mutableReceiver = fact->mutableReceiver;
             pattern.requiresUnsafe = fact->requiresUnsafe;
             pattern.borrowSource = fact->borrowSource;
+            pattern.freeCallQuery = fact->freeCallQuery;
+            if (pattern.freeCallQuery)
+              pattern.freeCallScope = conceptInfo.namespaceScope;
             for (const auto &type : fact->arguments)
               pattern.arguments.push_back({.concrete = type});
             leafStructuralConstraints[requirementIndex].push_back(
@@ -1584,6 +1587,8 @@ auto SemanticVisitor::Impl::resolveConcept(ConceptId id, const Token *use)
         mapped.mutableReceiver = pattern.mutableReceiver;
         mapped.requiresUnsafe = pattern.requiresUnsafe;
         mapped.borrowSource = pattern.borrowSource;
+        mapped.freeCallQuery = pattern.freeCallQuery;
+        mapped.freeCallScope = pattern.freeCallScope;
         std::vector<SemanticType> mappedTypes;
         for (const auto &argument : argumentMap)
           mappedTypes.push_back(

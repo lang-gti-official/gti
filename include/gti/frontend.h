@@ -22,12 +22,15 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace lang {
+
+class SemanticVisitor;
 
 enum class FrontendPhase {
   Parsing,
@@ -51,6 +54,9 @@ struct FrontendOptions {
   // Reuse never changes which requests succeed; tests clear it to prove so.
   bool reuseConstantEvaluations = true;
   bool analyzeRecoveredProgram = false;
+  // Retain the declaration environment for isolated editor queries on a
+  // subsequently edited body. Batch compilation releases it as usual.
+  bool retainBodyQueryContext = false;
   // Editor-only partial snapshots may inspect available units after a load
   // failure. The graph stays invalid and never reaches HIR or code generation.
   bool analyzeRecoveredSourceGraph = false;
@@ -86,6 +92,7 @@ struct FrontendOptions {
   // Candidate scans shared across discoveries (see IncludeDiscoveryCache).
   // Editor snapshots set it; one-shot checks and builds do not.
   std::shared_ptr<IncludeDiscoveryCache> includeDiscoveryCache;
+  IncludeDiscoveryLimits includeDiscoveryLimits;
   // Lower to MIR only the instances reachable from the program roots. The
   // complete program is still analyzed, so diagnostics are unchanged; artifact
   // builds set this, while inspection of every declaration's lowering does
@@ -220,6 +227,31 @@ struct FrontendResult {
     return sourceValid && syntaxValid && semanticValid && hirValid &&
            failureMetadataValid && mirValid;
   }
+
+private:
+  friend class Frontend;
+  friend class EditorBodyDiagnostics;
+  std::shared_ptr<const SemanticVisitor> bodyQueryContext;
+};
+
+// An edited body can be type-checked against a verified declaration
+// environment. The context and the snapshot whose identities it uses have
+// one owner. A partial result is for editor diagnostics only.
+class EditorBodyDiagnostics {
+public:
+  static std::shared_ptr<const EditorBodyDiagnostics>
+  takeFrom(const std::shared_ptr<FrontendResult> &snapshot);
+  std::optional<std::vector<Diagnostic>>
+  check(const std::string &source,
+        const std::atomic<bool> *cancel = nullptr) const;
+
+private:
+  explicit EditorBodyDiagnostics(
+      const std::shared_ptr<FrontendResult> &snapshot);
+  std::shared_ptr<const FrontendResult> baseline;
+  std::shared_ptr<const SemanticVisitor> context;
+  // The visitor reuses its sealed lookup catalog across successive queries.
+  mutable std::mutex queryMutex;
 };
 
 class Frontend {

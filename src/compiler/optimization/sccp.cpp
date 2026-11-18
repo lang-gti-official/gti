@@ -22,23 +22,6 @@ namespace {
 // produced, and the solver never mutates a stored fact in place.
 using SharedFact = std::shared_ptr<const MirSccpValueFact>;
 
-struct State {
-  std::vector<SharedFact> values;
-};
-
-[[nodiscard]] SharedFact share(MirSccpValueFact fact) {
-  return std::make_shared<const MirSccpValueFact>(std::move(fact));
-}
-
-// Stores `fact` into `slot` unless the slot already holds an equal fact, in
-// which case the existing allocation stays shared with every other state.
-void assign(SharedFact &slot, MirSccpValueFact fact) {
-  if (slot && *slot == fact) {
-    return;
-  }
-  slot = share(std::move(fact));
-}
-
 template <typename T> void appendUnique(std::vector<T> &target, T value) {
   optimization_detail::insertEvidenceId(target, value);
 }
@@ -96,11 +79,77 @@ template <typename T> void appendUnique(std::vector<T> &target, T value) {
   return result;
 }
 
+// Successor states usually change only a few neighbouring SSA values. Share
+// whole pages on a fork and copy a page only on the first changed slot.
+// A shared page at a join is already equal, including every fact's evidence.
+class State {
+public:
+  explicit State(const MirBody &body) : valueCount(body.values.size()) {
+    for (std::size_t first = 0; first < valueCount; first += pageSize) {
+      const auto count = std::min(pageSize, valueCount - first);
+      auto page = std::make_shared<Page>();
+      page->reserve(count);
+      for (std::size_t i = first; i < first + count; ++i)
+        page->push_back(
+            std::make_shared<const MirSccpValueFact>(unknown(body.values[i])));
+      pages.push_back(std::move(page));
+    }
+  }
+
+  std::size_t size() const { return valueCount; }
+  const MirSccpValueFact &valueAt(std::size_t index) const {
+    return *(*pages[index / pageSize])[index % pageSize];
+  }
+
+  void assign(std::size_t index, MirSccpValueFact value) {
+    if (valueAt(index) != value)
+      write(index, std::make_shared<const MirSccpValueFact>(std::move(value)));
+  }
+
+  bool merge(const State &incoming) {
+    if (valueCount != incoming.valueCount)
+      return false;
+    bool changed = false;
+    for (std::size_t page = 0; page < pages.size(); ++page) {
+      if (pages[page] == incoming.pages[page])
+        continue;
+      const auto &source = *incoming.pages[page];
+      for (std::size_t slot = 0; slot < source.size(); ++slot) {
+        const auto &current = (*pages[page])[slot];
+        const auto &next = source[slot];
+        if (current == next || *current == *next)
+          continue;
+        auto joined = meet(*current, *next);
+        if (*current == joined)
+          continue;
+        write(page * pageSize + slot,
+              joined == *next ? next
+                              : std::make_shared<const MirSccpValueFact>(
+                                    std::move(joined)));
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+private:
+  using Page = std::vector<SharedFact>;
+  static constexpr std::size_t pageSize = 64;
+  std::size_t valueCount;
+  std::vector<std::shared_ptr<Page>> pages;
+
+  void write(std::size_t index, SharedFact value) {
+    auto &page = pages[index / pageSize];
+    if (page.use_count() != 1)
+      page = std::make_shared<Page>(*page);
+    (*page)[index % pageSize] = std::move(value);
+  }
+};
+
 [[nodiscard]] const MirSccpValueFact *fact(const State &state,
                                            MirValueId value) {
-  return value == 0 || value > state.values.size()
-             ? nullptr
-             : state.values[value - 1].get();
+  return value == 0 || value > state.size() ? nullptr
+                                            : &state.valueAt(value - 1);
 }
 
 [[nodiscard]] MirSccpValueFact operandFact(const MirBody &body,
@@ -200,11 +249,11 @@ void transferInstructions(const MirBody &body, const MirBlock &block,
                           State &state) {
   for (const MirInstruction &instruction : block.instructions) {
     if (!instruction.result || *instruction.result == 0 ||
-        *instruction.result > state.values.size()) {
+        *instruction.result > state.size()) {
       continue;
     }
-    assign(state.values[*instruction.result - 1],
-           evaluateInstruction(body, block, instruction, state));
+    state.assign(*instruction.result - 1,
+                 evaluateInstruction(body, block, instruction, state));
   }
 }
 
@@ -216,7 +265,7 @@ void bindArguments(const MirBody &body, MirBlockId target,
   }
   for (std::size_t index = 0; index < arguments.size(); ++index) {
     const MirValueId parameter = block->parameters[index].value;
-    if (parameter == 0 || parameter > state.values.size()) {
+    if (parameter == 0 || parameter > state.size()) {
       continue;
     }
     MirSccpValueFact bound = operandFact(body, state, arguments[index]);
@@ -224,7 +273,7 @@ void bindArguments(const MirBody &body, MirBlockId target,
     bound.type = block->parameters[index].type;
     appendUnique(bound.evidence.blocks, target);
     appendUnique(bound.evidence.values, parameter);
-    assign(state.values[parameter - 1], std::move(bound));
+    state.assign(parameter - 1, std::move(bound));
   }
 }
 
@@ -286,29 +335,6 @@ outgoing(const MirBody &body, const MirBlock &block, State state) {
   return result;
 }
 
-[[nodiscard]] bool mergeState(State &target, const State &incoming) {
-  if (target.values.size() != incoming.values.size()) {
-    return false;
-  }
-  bool changed = false;
-  for (std::size_t index = 0; index < target.values.size(); ++index) {
-    SharedFact &current = target.values[index];
-    const SharedFact &next = incoming.values[index];
-    // The meet is idempotent, including its canonical evidence. Avoid copying
-    // every type and evidence vector just to rediscover an unchanged fact.
-    if (current == next || *current == *next) {
-      continue;
-    }
-    MirSccpValueFact joined = meet(*current, *next);
-    if (*current != joined) {
-      // A join that adopts the incoming fact shares its allocation.
-      current = joined == *next ? next : share(std::move(joined));
-      changed = true;
-    }
-  }
-  return changed;
-}
-
 } // namespace
 
 const MirSccpValueFact *MirSccpAnalysis::find(MirValueId value) const {
@@ -329,18 +355,15 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
   if (body == nullptr || !verifyMirOptimizationVocabulary(*body).valid()) {
     return result;
   }
-  State entry;
-  entry.values.reserve(body->values.size());
-  for (const MirValue &value : body->values) {
-    entry.values.push_back(share(unknown(value)));
-  }
+  State entry(*body);
   const MirBlock *entryBlock = body->findBlock(body->entry);
   if (entryBlock == nullptr) {
     return result;
   }
   for (const MirBlockParameter &parameter : entryBlock->parameters) {
-    if (parameter.value != 0 && parameter.value <= entry.values.size()) {
-      entry.values[parameter.value - 1] = share(
+    if (parameter.value != 0 && parameter.value <= entry.size()) {
+      entry.assign(
+          parameter.value - 1,
           overdefined(body->values[parameter.value - 1],
                       {.blocks = {body->entry}, .values = {parameter.value}}));
     }
@@ -351,7 +374,7 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
         return outgoing(*body, block, incoming);
       },
       [](State &target, const State &incoming, MirDataflowMergeContext) {
-        return mergeState(target, incoming);
+        return target.merge(incoming);
       },
       {.widenAfterUpdates = 0});
   if (!solved.converged()) {
@@ -370,18 +393,18 @@ MirSccpAnalysis analyzeMirSccp(const MirProgram &program,
     result.executableBlocks.push_back(block.id);
     State state = *solved.incoming[index];
     for (const MirBlockParameter &parameter : block.parameters) {
-      if (parameter.value != 0 && parameter.value <= state.values.size()) {
+      if (parameter.value != 0 && parameter.value <= state.size()) {
         result.values[parameter.value - 1] =
             meet(result.values[parameter.value - 1],
-                 *state.values[parameter.value - 1]);
+                 state.valueAt(parameter.value - 1));
       }
     }
     transferInstructions(*body, block, state);
     for (const MirInstruction &instruction : block.instructions) {
-      if (instruction.result && *instruction.result <= state.values.size()) {
+      if (instruction.result && *instruction.result <= state.size()) {
         result.values[*instruction.result - 1] =
             meet(result.values[*instruction.result - 1],
-                 *state.values[*instruction.result - 1]);
+                 state.valueAt(*instruction.result - 1));
       }
     }
     if (block.terminator.kind == MirTerminatorKind::Branch &&

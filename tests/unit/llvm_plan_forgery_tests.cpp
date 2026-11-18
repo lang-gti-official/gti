@@ -1176,7 +1176,8 @@ void testLedger() {
     if (entry.state == LlvmCoverageState::Implemented) {
       const bool hasEvidence = !entry.positiveTest.empty() &&
                                !entry.positiveAssertion.empty() &&
-                               entry.positiveTest != "llvm_admission";
+                               entry.positiveTest != "llvm_admission" &&
+                               entry.positiveTest != "gti_unit_tests";
       const bool hasGap = !entry.positiveEvidenceGap.empty();
       expect(hasEvidence != hasGap,
              "implemented rows name execution evidence or one explicit gap");
@@ -1185,8 +1186,8 @@ void testLedger() {
                  entry.positiveEvidenceGap.empty(),
              "pending rows cannot masquerade as accepted execution");
     } else {
-      expect(entry.positiveTest == "llvm_admission" &&
-                 entry.positiveAssertion == "ledger.nonexecuting" &&
+      expect(entry.positiveTest == "gti_unit_tests" &&
+                 entry.positiveAssertion == "llvm_admission_ledger" &&
                  entry.positiveEvidenceGap.empty() &&
                  entry.nonExecuting != LlvmNonExecutingRule::None,
              "nonexecuting rows retain structural evidence");

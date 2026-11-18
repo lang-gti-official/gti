@@ -1,0 +1,44 @@
+// A stored-region union result may relay a named parameter through a region call or a local alias of it.
+//@ run-pass
+//@ exit-code: 0
+
+// The lane `fallback` supplies `int&<a>` beside the receiver's table, so
+// `pick(fallback)` and `int& local = fallback; return pick(local);` relay
+// it as they would in a free function binding `a` (#507's alias relay).
+struct Table {
+  mut int values[4];
+  Table() : values({10, 20, 30, 40}) {}
+  bool has(uint64_t key) { return key < uint64_t(4); }
+  int& at(uint64_t key) { return this.values[key]; }
+};
+int&<r> pick<lifetime r>(int&<r> only) { return only; }
+class View<lifetime a> {
+  Table&<a> table;
+public:
+  View(Table&<a> table) : table(table) {}
+  int&<a> via_call(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    return pick(fallback);
+  }
+  int&<a> via_alias(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    int& local = fallback;
+    return pick(local);
+  }
+  int&<a> alias_direct(uint64_t key, int&<a> fallback) {
+    if (this.table.has(key)) { return this.table.at(key); }
+    int& local = fallback;
+    return local;
+  }
+};
+
+int main() {
+  Table table{};
+  int fallback = 7;
+  View view{table};
+  int& a = view.via_call(uint64_t(9), fallback);
+  int& b = view.via_alias(uint64_t(9), fallback);
+  int& c = view.alias_direct(uint64_t(9), fallback);
+  int& d = view.via_alias(uint64_t(1), fallback);
+  return a + b + c + d == 41 ? 0 : 1;
+}

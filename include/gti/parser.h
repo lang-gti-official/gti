@@ -44,6 +44,7 @@ public:
   void setErrorLimit(std::size_t limit);
   Program parse();
   ExprPtr parseExpression();
+  std::unique_ptr<BlockStmt> parseFunctionBody();
   [[nodiscard]] bool hadError() const;
   [[nodiscard]] const std::vector<ParseDiagnostic> &errors() const;
   [[nodiscard]] const std::optional<SyntaxCompletionContext> &

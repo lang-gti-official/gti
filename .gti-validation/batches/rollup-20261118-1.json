@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "base": "de1566daa03f08534a7b07edeb77a9e8827804b3",
+  "members": [
+    {
+      "pr": 558,
+      "head": "b9798b2ce816ac69b0e8fd56b0272a72660e6bdc",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #558: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate; its tier was not declared, so it is recorded as T2",
+        "regressions": [
+          "editor_mir_diagnostics_lsp"
+        ],
+        "owning": [
+          "gti_test_ui",
+          "gti_unit_tests"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #558; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "gti_test_ui",
+          "gti_unit_tests"
+        ]
+      }
+    },
+    {
+      "pr": 556,
+      "head": "e912a55a30b8979818547df9da5f39565c6a26e5",
+      "plan": {
+        "tier": "T2",
+        "rationale": "Rollup member #556: its declared Validation T0/T1 tests; the merge queue runs the complete suite on the combined candidate",
+        "regressions": [
+          "gti_test_ui"
+        ],
+        "owning": [
+          "protocol_requirements_runtime",
+          "unsafe_function_contract",
+          "llvm_callable_execution"
+        ],
+        "cross_phase": [],
+        "unaffected": "Not assessed per member by the rollup bot; the merge queue runs every registered test",
+        "targets": [
+          "gti"
+        ],
+        "platforms": [
+          "darwin",
+          "linux"
+        ],
+        "reproduction": {
+          "exception": "Recorded in the description of #556; a rollup reproduces no member failure"
+        },
+        "broader": [
+          "protocol_requirements_runtime",
+          "unsafe_function_contract",
+          "llvm_callable_execution"
+        ]
+      }
+    }
+  ]
+}

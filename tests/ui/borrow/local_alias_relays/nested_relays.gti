@@ -1,0 +1,65 @@
+// A returned region call relays a nested region call and an alias of a stored reference.
+//@ run-pass
+//@ exit-code: 0
+
+// `pass(same(box))` is supplied by what supplies `same(box)`: `box`. An
+// alias bound to `holder.ref` designates what that stored reference holds,
+// in the region the parameter's type binds for it, not the parameter's own.
+import std.memory;
+
+struct Box {
+  mut int value;
+  Box(int v) : value(v) {}
+};
+struct Holder<lifetime h> {
+  Box&<h> ref;
+  Box owned;
+  Holder(Box&<h> ref) : ref(ref), owned(Box(5)) {}
+};
+struct Outer<lifetime o> {
+  Holder<o> inner;
+  Outer(Box&<o> box) : inner(Holder<o>(box)) {}
+};
+int&<a> pass<lifetime a>(Box&<a> box) { return box.value; }
+Box&<a> same<lifetime a>(Box&<a> box) { return box; }
+Box&<a> pick<lifetime a>(Box&<a> left, Box&<a> right) { return right; }
+
+int&<a> nested<lifetime a>(Box&<a> box) { return pass(same(box)); }
+int&<a> nested_deep<lifetime a>(Box&<a> box) { return pass(same(same(box))); }
+int&<a> nested_two<lifetime a>(Box&<a> left, Box&<a> right) {
+  return pass(pick(left, right));
+}
+// The holder reference's own region is elided; what `ref` holds lives for `a`.
+int&<a> stored<lifetime a>(Holder<a>& holder) {
+  Box& local = holder.ref;
+  return pass(local);
+}
+int&<a> stored_nested<lifetime a>(Holder<a>& holder) {
+  Box& local = holder.ref;
+  return pass(same(local));
+}
+int&<a> stored_carrier<lifetime a>(Outer<a>& outer) {
+  Box& local = outer.inner.ref;
+  return pass(local);
+}
+// An alias of what an owning pointer holds lives for the pointer's region.
+int&<a> owned_target<lifetime a>(std::unique_ptr<Box>&<a> owner) {
+  Box& local = *owner;
+  return pass(local);
+}
+
+int main() {
+  Box box{4};
+  Box other{6};
+  Holder holder = Holder(box);
+  Outer outer = Outer(other);
+  std::unique_ptr<Box> owner = std::make_unique<Box>(Box(7));
+  if (nested(box) != 4 || nested_deep(box) != 4 || nested_two(box, other) != 6) {
+    return 1;
+  }
+  if (stored(holder) != 4 || stored_nested(holder) != 4 ||
+      stored_carrier(outer) != 6 || owned_target(owner) != 7) {
+    return 2;
+  }
+  return 0;
+}

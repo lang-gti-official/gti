@@ -53,6 +53,7 @@ struct FrontendWorkMetrics {
   std::size_t semanticPreambleAdoptMicroseconds = 0;
   std::size_t semanticPreambleBodies = 0;
   std::size_t semanticPreambleReachedBodies = 0;
+  std::size_t hirPasses = 0;
   std::size_t hirMicroseconds = 0;
   // Function instances HIR lowered, including any beyond the reachable prefix.
   std::size_t hirFunctionInstances = 0;
@@ -134,6 +135,7 @@ struct FrontendWorkMetrics {
     semanticPreambleAdoptMicroseconds = 0;
     semanticPreambleBodies = 0;
     semanticPreambleReachedBodies = 0;
+    hirPasses = 0;
     hirMicroseconds = 0;
     hirFunctionInstances = 0;
     semanticInstanceReuseHits = 0;

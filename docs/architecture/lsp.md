@@ -147,6 +147,21 @@ JSON-RPC/LSP
   -> LanguageQueries / SemanticDatabase
 ```
 
+For a warm edit inside one function, the server can publish body-local type
+errors as soon as the compiler checks that function. The parser records the
+function's braces. The query requires identical source outside those braces,
+reparses the body, and uses the original declaration and its lookup environment
+in an isolated semantic model. One foreground worker retains the most recent
+clean, verified root. Dependency and project changes invalidate it. Newer
+edits cancel earlier queries, and publication checks the document generation.
+
+A clean local result retracts only errors this query previously published.
+The complete frontend still checks callers, lifetimes, cleanup and MIR for
+every settled edit. Its diagnostics replace the partial result and its snapshot
+serves navigation and other requests. Edits to declarations, generic or
+compile-time bodies, or functions with inferred reference results use that
+complete analysis directly.
+
 Missing-definition diagnostics from concrete generic instances retain the
 frontend's outer requesting call as primary, including calls through an included
 library or a constructor. Related locations still identify the selected internal
@@ -950,9 +965,14 @@ summary only against a lowered body, so a signature-only analysis can be
 rejected where complete lowering is accepted, never the reverse. The LSP
 therefore publishes a signature-only analysis that MIR accepts, and when MIR
 rejects one it analyses the snapshot again with library-only bodies and
-publishes that result: the published diagnostics are always those of complete
-lowering. The trace's `analysis` record reports `hirOmittedInstanceBodies`
-and `mirSignatureOnlyFallback` (see "Current Limits"). An instance of the
+publishes that result. After a clean confirmation, up to eight subsequent
+successful edits in the same open document start with complete library bodies.
+An error before HIR preserves this preference. Closing the file, analysing a
+dependency or project change, or exhausting the window restores the ordinary
+order. When a complete-first pass produces diagnostics after entering HIR,
+the editor checks the scoped result to preserve which diagnostics it exposes.
+The trace records the number of frontend passes as `frontendPasses`, alongside
+`hirOmittedInstanceBodies` and `mirSignatureOnlyFallback`. An instance of the
 open file's own types is lowered completely and reaches what `gti check`
 reaches.
 The LSP releases HIR, failure metadata and MIR as soon as the analysis
@@ -1002,11 +1022,13 @@ frontend trace reports `semanticLateDemandBodies`,
 
 The LSP also owns a `SemanticPreambleCache` beside its parse and instance
 caches and passes it through `FrontendOptions::preambleCache`: the open
-file's standard-library prefix is analysed once per import graph and every
-later snapshot resumes from a copy of that analysis, registering and
-analysing only the file's own declarations (see "Trusted Prefix Preamble" in
-[semantic-analysis.md](semantic-analysis.md)). A changed or re-parsed library
-unit selects a new preamble. No snapshot waits for a build: analysis and
+file can reuse checked bodies from imported project and package modules as
+well as the standard library. This applies when the compiler can establish
+that every imported module can be checked independently of the open file.
+The frontend still checks every body in the open file, including callers of
+an edited function. Changing an imported body selects a new preamble for
+dependent files. See "Trusted Prefix Preamble" in
+[semantic-analysis.md](semantic-analysis.md). No snapshot waits for a build: analysis and
 completion set `FrontendOptions::deferPreambleBuild`, so a snapshot whose
 import graph has no cached preamble is analysed without one (bounded
 analysis, which reports the same diagnostics) and hands the build to a
@@ -1320,6 +1342,30 @@ whose bodies live in registered implementations. Candidate discovery remains a
 syntax filter; a speculative compile validates the selected canonical exported
 symbol and the actual requesting program before offering an edit.
 
+Optional discovery has per-invocation caps of sixteen candidate scans and eight
+speculative analyses, plus a 250 ms cooperative time budget, configurable through
+`FrontendOptions::includeDiscoveryLimits`. Within the scan cap, one confirmation
+may finish before elapsed time prevents additional work. Elapsed preparation
+time alone therefore cannot suppress the first confirmation, including one for
+a declaration exposed through re-exports. A zero allowance disables work. The budget is checked between
+operations; preparation and an in-flight analysis can exceed it. Exhaustion
+preserves ordinary diagnostics and finalizes already-proved fixes; it does not
+cancel or invalidate the original snapshot. This bounds repeated speculation,
+not the latency of one analysis. Direct modules take precedence over facades,
+and a filename matching a requested name gets priority within that ordering.
+Lexical type-declaration spellings rank before mere uses of a name. These are
+search heuristics, never semantic evidence or reasons to exclude a candidate.
+
+Trials reuse matching cached preambles but defer construction on a miss, since
+an inserted import changes the graph used in the preamble key. Discovery never
+schedules these throwaway deferred builds. Candidate-cache statistics expose trial wall time. With
+`includeDiscoveryLimits.collectTimings`, they also expose semantic/HIR and
+preamble build/adoption time. The owning test executable accepts
+`--profile <repository-root> [plain|preamble] [unlimited|bounded] [name]`
+to compare cold and repeated discovery, optionally for one requested name.
+`bounded` exercises the production defaults; the default probe removes the
+time limit and raises the trial allowance to measure the underlying work.
+
 `include_suggestions.cpp` uses the lexer as a cheap candidate filter and the
 existing source loader/parser to discover declaration names. `FrontendPhase::Parsing`
 stops the canonical frontend before semantic analysis; it is not another
@@ -1356,8 +1402,9 @@ the same discovery implementation and proof requirements.
 
 The service shares the bounded parsed-unit cache but retains no semantic IDs
 across snapshots. Edits preserve BOM/CRLF and follow a module header when the
-requesting file has one. Multiple valid files produce separate, deterministic,
-non-preferred alternatives rather than silently choosing a declaration.
+requesting file has one. Within the search budget, multiple proved files produce separate,
+deterministic, non-preferred alternatives rather than silently choosing a
+declaration.
 
 The editor also shares an `IncludeDiscoveryCache` across snapshots. It keeps
 only syntax-level facts derived from source text: each candidate text's token
@@ -1440,7 +1487,7 @@ function-local names: identities visible outside the entry document's
   accepts the call to the lowered body (see "Signature-only declarations" in
   [mir.md](mir.md)). A snapshot MIR rejects is analysed a second time with
   library-only bodies (`mirSignatureOnlyFallback` in the trace), so such a
-  snapshot costs both analyses. Measured with a message-flow probe
+  snapshot costs both analyses on the first confirmation. Measured with a message-flow probe
   (`didOpen`, then `didChange` edits with `GTI_LSP_UPDATE_DEBOUNCE_MS=0`, time
   to the matching `publishDiagnostics`, phases from `GTI_LSP_FRONTEND_TRACE`)
   on `examples/089-library-workflow.gti`, a steady edit fell from about
